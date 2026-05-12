@@ -35,6 +35,20 @@ pub union union_EncodedJSValue {
 }
 pub type EncodedJSValue = union_EncodedJSValue;
 
+impl union_EncodedJSValue {
+    /// Raw 64-bit encoding. Safe: every union arm is an 8-byte POD scalar with
+    /// no invalid bit patterns, so the `i64` view is always initialized
+    /// regardless of which arm wrote it (same-size bit-reinterpret into a
+    /// fully-inhabited type — the canonical `bytemuck::cast` precondition).
+    #[inline]
+    pub const fn bits(self) -> i64 {
+        // SAFETY: `#[repr(C)]` union of 8-byte POD scalars (i64 / f64 / ptr /
+        // `JSValue` = `repr(transparent)` usize); reading `as_int64` is sound
+        // for any initialization.
+        unsafe { self.as_int64 }
+    }
+}
+
 // PORTING.md §Global mutable state: never mutated → would be `const`, but kept
 // as `#[no_mangle] static` to preserve the exported symbol for TinyCC-compiled
 // FFI stubs. `RacyCell` is `repr(transparent)` so the symbol's bytes are
@@ -54,22 +68,19 @@ pub type JSContext = *mut c_void;
 
 #[inline]
 pub fn jsvalue_is_cell(val: EncodedJSValue) -> bool {
-    // SAFETY: reading the i64 arm of a #[repr(C)] union of 8-byte scalars; all bit patterns valid.
-    let bits = unsafe { val.as_int64 } as c_ulonglong;
+    let bits = val.bits() as c_ulonglong;
     ((bits & NUMBER_TAG) | (2 as c_ulonglong)) == 0
 }
 
 #[inline]
 pub fn jsvalue_is_int32(val: EncodedJSValue) -> bool {
-    // SAFETY: see jsvalue_is_cell.
-    let bits = unsafe { val.as_int64 } as c_ulonglong;
+    let bits = val.bits() as c_ulonglong;
     (bits & NUMBER_TAG) == NUMBER_TAG
 }
 
 #[inline]
 pub fn jsvalue_is_number(val: EncodedJSValue) -> bool {
-    // SAFETY: see jsvalue_is_cell.
-    let bits = unsafe { val.as_int64 } as c_ulonglong;
+    let bits = val.bits() as c_ulonglong;
     (bits & NUMBER_TAG) != 0
 }
 
@@ -153,12 +164,11 @@ pub fn int32_to_jsvalue(val: i32) -> EncodedJSValue {
 
 #[inline]
 pub fn double_to_jsvalue(val: f64) -> EncodedJSValue {
-    let mut res = EncodedJSValue { as_double: val };
-    // SAFETY: type-punning f64 bits as i64 inside a #[repr(C)] union — defined for POD scalars.
-    unsafe {
-        res.as_int64 = res.as_int64.wrapping_add((1 as c_longlong) << 49);
+    // `f64::to_bits` is the stdlib safe bit-reinterpret (replaces the
+    // translate-c union pun `res.as_double = val; res.as_int64 += 1<<49`).
+    EncodedJSValue {
+        as_int64: (val.to_bits() as i64).wrapping_add((1 as c_longlong) << 49),
     }
-    res
 }
 
 #[inline]
@@ -179,8 +189,7 @@ pub fn boolean_to_jsvalue(val: bool) -> EncodedJSValue {
 
 #[inline]
 pub fn jsvalue_to_int32(val: EncodedJSValue) -> i32 {
-    // SAFETY: see jsvalue_is_cell.
-    (unsafe { val.as_int64 } as c_int) as i32
+    (val.bits() as c_int) as i32
 }
 
 #[inline]
@@ -189,18 +198,15 @@ pub fn jsvalue_to_float(val: EncodedJSValue) -> f32 {
 }
 
 #[inline]
-pub fn jsvalue_to_double(mut val: EncodedJSValue) -> f64 {
-    // SAFETY: type-punning i64 bits as f64 inside a #[repr(C)] union.
-    unsafe {
-        val.as_int64 = val.as_int64.wrapping_sub((1 as c_longlong) << 49);
-        val.as_double
-    }
+pub fn jsvalue_to_double(val: EncodedJSValue) -> f64 {
+    // `f64::from_bits` is the stdlib safe bit-reinterpret (replaces the
+    // translate-c union pun `val.as_int64 -= 1<<49; val.as_double`).
+    f64::from_bits(val.bits().wrapping_sub((1 as c_longlong) << 49) as u64)
 }
 
 #[inline]
 pub fn jsvalue_to_bool(val: EncodedJSValue) -> bool {
-    // SAFETY: see jsvalue_is_cell.
-    unsafe { val.as_int64 == ((2 | 4) | 1) as c_longlong }
+    val.bits() == ((2 | 4) | 1) as c_longlong
 }
 
 // TODO(port): move to jsc_sys

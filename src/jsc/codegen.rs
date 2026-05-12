@@ -1,7 +1,11 @@
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
-pub type CallbackGetterFn = unsafe extern "C" fn(JSValue) -> JSValue;
-pub type CallbackSetterFn = unsafe extern "C" fn(JSValue, JSValue);
+// These fn pointers carry no caller-side preconditions: `JSValue` is a value
+// type (`#[repr(transparent)]` over an encoded i64), and the C++ codegen'd
+// getters/setters they point to only read/write a JS field — so the fn-pointer
+// type is safe-to-call (Zig spec: plain `fn (JSValue) callconv(.c) JSValue`).
+pub type CallbackGetterFn = extern "C" fn(JSValue) -> JSValue;
+pub type CallbackSetterFn = extern "C" fn(JSValue, JSValue);
 
 // Zig: `fn CallbackWrapper(comptime Getter, comptime Setter) type { return struct { ... } }`
 // Rust const generics cannot carry function pointers, so the getter/setter are stored as
@@ -28,8 +32,7 @@ impl CallbackWrapper {
 
     #[inline]
     pub fn get(self) -> Option<JSValue> {
-        // SAFETY: get_fn is a codegen'd C++ getter; container is a live JSCell on the stack.
-        let res = unsafe { (self.get_fn)(self.container) };
+        let res = (self.get_fn)(self.container);
         if res.is_empty_or_undefined_or_null() {
             return None;
         }
@@ -38,8 +41,7 @@ impl CallbackWrapper {
 
     #[inline]
     pub fn set(self, value: JSValue) {
-        // SAFETY: set_fn is a codegen'd C++ setter; container is a live JSCell on the stack.
-        unsafe { (self.set_fn)(self.container, value) };
+        (self.set_fn)(self.container, value);
     }
 
     #[inline]

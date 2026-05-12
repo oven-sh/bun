@@ -1428,9 +1428,10 @@ impl Lockfile {
         // PORT NOTE: `tree::Builder` stores `lockfile: ParentRef<Lockfile>` so
         // the `&mut buffers.resolutions` split-borrow below can coexist with
         // the read-only lockfile view inside the builder (see Tree.rs note).
-        // SAFETY: `self` is `&mut Lockfile`; the `Builder` does not outlive
-        // this borrow (dropped before `hoist` returns).
-        let lockfile_ref = unsafe { bun_ptr::ParentRef::<Lockfile>::from_raw(&raw const *self) };
+        // `ParentRef::new` captures `SharedReadOnly` provenance from `&*self`,
+        // which is exactly what `Builder` needs (it only ever `Deref`s); the
+        // `Builder` does not outlive this `&mut self` borrow.
+        let lockfile_ref = bun_ptr::ParentRef::<Lockfile>::new(&*self);
         let mut builder = tree::Builder::<METHOD> {
             queue: tree::TreeFiller::init(),
             resolution_lists: slice.items_resolutions(),

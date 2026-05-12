@@ -900,9 +900,10 @@ impl PackageManager {
     }
 
     pub fn has_enough_time_passed_between_waiting_messages() -> bool {
-        // SAFETY: main-thread only (also guards TIME_PASSER_LAST_TIME below); reads
+        // Main-thread only (also guards TIME_PASSER_LAST_TIME below); reads
         // event_loop.iteration_number which is written only by the same main-thread tick loop.
-        let iter = unsafe { (*get()).event_loop.iteration_number() };
+        // `Self::get()` is the safe `&'static PackageManager` singleton accessor.
+        let iter = Self::get().event_loop.iteration_number();
         if TIME_PASSER_LAST_TIME.load(core::sync::atomic::Ordering::Relaxed) < iter {
             TIME_PASSER_LAST_TIME.store(iter, core::sync::atomic::Ordering::Relaxed);
             return true;
@@ -954,12 +955,11 @@ impl PackageManager {
         // PORT NOTE: Zig `LazyBool.get` recovers `*PackageManager` via
         // `@fieldParentPtr("ci_mode", self)`. Rust has no field-parent-pointer,
         // so pass the parent explicitly. `ci_mode.value` is a `Cell` so a
-        // shared `&self` projection suffices and does not alias the implicit
-        // shared `&PackageManager` the getter receives.
-        // SAFETY: `self` is a valid `*const PackageManager`; both projections
-        // are shared reads of disjoint state (`ci_mode` Cell vs. `env`).
-        let parent: *const PackageManager = self;
-        unsafe { (*parent).ci_mode.get(&*parent) }
+        // shared `&self` projection suffices — both the receiver `&self.ci_mode`
+        // and the `&PackageManager` arg are shared reborrows of `*self` and may
+        // freely overlap.
+        let this: &PackageManager = self;
+        this.ci_mode.get(this)
     }
 
     pub fn fail_root_resolution(

@@ -127,27 +127,23 @@ pub fn install_hoisted_packages(
         },
     );
 
-    let mut root_node: *mut ProgressNode = core::ptr::null_mut();
     let mut download_node: ProgressNode = ProgressNode::default();
     let mut install_node: ProgressNode = ProgressNode::default();
     let mut scripts_node: ProgressNode = ProgressNode::default();
 
     if log_level.show_progress() {
+        // Hoist before the `&mut this.progress` borrow so the disjoint
+        // `this.lockfile` read doesn't overlap the live `root_node` reborrow.
+        let hoisted_len = this.lockfile.buffers.hoisted_dependencies.len();
         let progress = &mut this.progress;
         progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        root_node = progress.start(b"", 0);
-        // SAFETY: `root_node` was just set by `progress.start()` and is non-null
-        // for the remainder of this `show_progress()` branch.
-        download_node = unsafe { (*root_node).start(ProgressStrings::download(), 0) };
-        // SAFETY: same `root_node` validity as above.
-        install_node = unsafe {
-            (*root_node).start(
-                ProgressStrings::install(),
-                this.lockfile.buffers.hoisted_dependencies.len(),
-            )
-        };
-        // SAFETY: same `root_node` validity as above.
-        scripts_node = unsafe { (*root_node).start(ProgressStrings::script(), 0) };
+        // `Progress::start` returns `&mut Node` (points into `progress.root`);
+        // keep it as a safe reborrow — it's only used to spawn the three
+        // children below and is dead before any other `this.*` write.
+        let root_node = progress.start(b"", 0);
+        download_node = root_node.start(ProgressStrings::download(), 0);
+        install_node = root_node.start(ProgressStrings::install(), hoisted_len);
+        scripts_node = root_node.start(ProgressStrings::script(), 0);
         this.downloads_node = Some(core::ptr::addr_of_mut!(download_node));
         this.scripts_node = NonNull::new(&raw mut scripts_node);
         // TODO(port): storing pointers to stack locals into `this` — Phase B must reshape

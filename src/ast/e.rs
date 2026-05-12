@@ -897,10 +897,11 @@ pub struct Rope {
 }
 impl Rope {
     pub fn append(&mut self, expr: Expr, bump: &Bump) -> Result<*mut Rope, AllocError> {
-        if let Some(next) = core::ptr::NonNull::new(self.next) {
-            // SAFETY: arena-allocated Rope nodes are uniquely owned by the chain at this
-            // point in TOML parsing; Zig mutates them freely.
-            return unsafe { &mut *next.as_ptr() }.append(expr, bump);
+        if let Some(mut next) = core::ptr::NonNull::new(self.next).map(StoreRef::from_non_null) {
+            // Arena-allocated Rope nodes are uniquely owned by the chain at this
+            // point in TOML parsing; route through `StoreRef::DerefMut` (the
+            // arena-backed handle whose deref is centralised in `nodes.rs`).
+            return next.append(expr, bump);
         }
         let rope: *mut Rope = bump.alloc(Rope { head: expr, next: core::ptr::null_mut() });
         self.next = rope;

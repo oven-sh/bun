@@ -1071,8 +1071,9 @@ impl ExportRenamer {
 
                     let entry = self.used.get_or_put(input).expect("unreachable");
                     *entry.value_ptr = tries;
-                    // SAFETY: `to_use` lives in `self.arena`; tie it to `&self`.
-                    return unsafe { &*std::ptr::from_ref::<[u8]>(to_use) };
+                    // `to_use` borrows `self.arena` (disjoint from `self.used`
+                    // above); returnable directly under split-borrow rules.
+                    return to_use;
                 }
             }
         } else {
@@ -1081,10 +1082,8 @@ impl ExportRenamer {
 
         // PORT NOTE: Zig returned `entry.key_ptr.*` (the map's owned copy of `input`).
         // `StringHashMap` does not expose a key pointer; allocate a copy in `self.arena`
-        // so the returned slice is tied to `&self`.
-        let duped: &[u8] = self.arena.alloc_slice_copy(input);
-        // SAFETY: `duped` lives in `self.arena`, which outlives the returned `&self` borrow.
-        unsafe { &*std::ptr::from_ref::<[u8]>(duped) }
+        // so the returned slice is tied to `&self` (sub-borrow of `&mut self`).
+        self.arena.alloc_slice_copy(input)
     }
 
     pub fn next_minified_name(&mut self) -> Result<Vec<u8>, bun_core::Error> {

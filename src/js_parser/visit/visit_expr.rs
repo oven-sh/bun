@@ -154,12 +154,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // TODO: delete import.meta might not work
         let is_delete_target = matches!(p.delete_target, Data::EImportMeta(..));
 
-        if let Some(meta) = p.define.dots.get(b"meta".as_slice()) {
-            // SAFETY: `p.define: &'a Define` outlives `p`; erase the local borrow
-            // so `&mut self` helpers below can be called while iterating.
-            let meta: &[crate::defines::DotDefine] =
-                unsafe { &*std::ptr::from_ref::<[crate::defines::DotDefine]>(meta.as_slice()) };
-            for define in meta {
+        // `p.define: &'a Define` is `Copy`; hoist the reference so the
+        // `dots.get` borrow is tied to `'a`, not `&*p`, and `&mut self`
+        // helpers below can be called while iterating without laundering.
+        let defines = p.define;
+        if let Some(meta) = defines.dots.get(b"meta".as_slice()) {
+            for define in meta.as_slice() {
                 if !p.is_dot_define_match(expr, &define.parts) {
                     continue;
                 }
@@ -264,10 +264,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             && !result.is_inside_with_scope
             && !is_delete_target
         {
-            if let Some(def) = p.define.for_identifier(name) {
-                // SAFETY: `p.define: &'a Define` outlives `p`; erase the local
-                // borrow so `value_for_define(&mut self, ..)` can be called.
-                let def = unsafe { &*std::ptr::from_ref::<crate::defines::DefineData>(def) };
+            // `p.define: &'a Define` is `Copy`; hoist so the returned
+            // `&DefineData` is tied to `'a`, not `&*p`, and `&mut self`
+            // helpers (`value_for_define`) below need no lifetime laundering.
+            let defines = p.define;
+            if let Some(def) = defines.for_identifier(name) {
                 if !def.valueless() {
                     let newvalue: Expr = p.value_for_define(
                         expr.loc,
@@ -1277,12 +1278,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let is_delete_target = matches!(p.delete_target, Data::EDot(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
         let is_call_target = matches!(p.call_target, Data::EDot(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
 
-        if let Some(parts) = p.define.dots.get(e_.name.slice()) {
-            // SAFETY: `p.define: &'a Define` outlives `p`; erase the local
-            // borrow so `&mut self` helpers below can be called while iterating.
-            let parts: &[crate::defines::DotDefine] =
-                unsafe { &*std::ptr::from_ref::<[crate::defines::DotDefine]>(parts.as_slice()) };
-            for define in parts {
+        // `p.define: &'a Define` is `Copy`; hoist so the `dots.get` borrow is
+        // tied to `'a`, not `&*p`, and `&mut self` helpers below can be called
+        // while iterating without laundering.
+        let defines = p.define;
+        if let Some(parts) = defines.dots.get(e_.name.slice()) {
+            for define in parts.as_slice() {
                 if p.is_dot_define_match(expr, &define.parts) {
                     if in_.assign_target == js_ast::AssignTarget::None {
                         // Substitute user-specified defines

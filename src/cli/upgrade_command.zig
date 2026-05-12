@@ -87,6 +87,117 @@ pub const UpgradeCommand = struct {
     var unzip_path_buf: bun.PathBuffer = undefined;
     var tmpdir_path_buf: bun.PathBuffer = undefined;
 
+    /// Result of parsing a single GitHub release entry for the current
+    /// platform's matching asset. `published_at_ms` is the release's
+    /// `published_at` timestamp converted to epoch ms, or `null` when
+    /// GitHub did not return the field (e.g. in mocked responses).
+    const ParsedRelease = struct {
+        version: Version,
+        published_at_ms: ?f64,
+    };
+
+    /// Fill in `version.zip_url` / `version.size` by walking a release's
+    /// `assets` array looking for the zip matching this platform. Returns
+    /// `true` if a matching asset was found. `version.tag` must already be
+    /// populated by the caller.
+    fn findAssetInRelease(
+        allocator: std.mem.Allocator,
+        release_expr: js_ast.Expr,
+        use_profile: bool,
+        version: *Version,
+    ) bool {
+        const assets_ = release_expr.asProperty("assets") orelse return false;
+        var assets = assets_.expr.asArray() orelse return false;
+
+        while (assets.next()) |asset| {
+            if (asset.asProperty("content_type")) |content_type| {
+                const content_type_ = (content_type.expr.asString(allocator)) orelse continue;
+                if (comptime Environment.isDebug) {
+                    Output.prettyln("Content-type: {s}", .{content_type_});
+                    Output.flush();
+                }
+
+                if (!strings.eqlComptime(content_type_, "application/zip")) continue;
+            }
+
+            if (asset.asProperty("name")) |name_| {
+                if (name_.expr.asString(allocator)) |name| {
+                    if (comptime Environment.isDebug) {
+                        const filename = if (!use_profile) Version.zip_filename else Version.profile_zip_filename;
+                        Output.prettyln("Comparing {s} vs {s}", .{ name, filename });
+                        Output.flush();
+                    }
+
+                    if (!use_profile and !strings.eqlComptime(name, Version.zip_filename)) continue;
+                    if (use_profile and !strings.eqlComptime(name, Version.profile_zip_filename)) continue;
+
+                    version.zip_url = (asset.asProperty("browser_download_url") orelse return false).expr.asString(allocator) orelse return false;
+                    if (comptime Environment.isDebug) {
+                        Output.prettyln("Found Zip {s}", .{version.zip_url});
+                        Output.flush();
+                    }
+
+                    if (asset.asProperty("size")) |size_| {
+                        if (size_.expr.data == .e_number) {
+                            version.size = @as(u32, @intCast(@max(@as(i32, @intFromFloat(std.math.ceil(size_.expr.data.e_number.value))), 0)));
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /// Parse a single release object (as returned by the GitHub releases
+    /// API) and extract tag, matching asset, and publish timestamp.
+    ///
+    /// Returns `null` when the release lacks a usable `tag_name` or a
+    /// matching platform asset. `version.buf` is not set here — the
+    /// caller owns the HTTP response body.
+    fn parseReleaseObject(
+        allocator: std.mem.Allocator,
+        release_expr: js_ast.Expr,
+        use_profile: bool,
+    ) ?ParsedRelease {
+        if (release_expr.data != .e_object) return null;
+
+        var version = Version{ .zip_url = "", .tag = "", .buf = MutableString.initEmpty(allocator), .size = 0 };
+
+        if (release_expr.asProperty("tag_name")) |tag_name_| {
+            if (tag_name_.expr.asString(allocator)) |tag_name| {
+                version.tag = tag_name;
+            }
+        }
+
+        if (version.tag.len == 0) return null;
+
+        var published_at_ms: ?f64 = null;
+        if (release_expr.asProperty("published_at")) |published_at_expr| {
+            if (published_at_expr.expr.asString(allocator)) |published_at_str| {
+                if (published_at_str.len > 0) {
+                    if (bun.jsc.wtf.parseES5Date(published_at_str) catch null) |ms| {
+                        published_at_ms = ms;
+                    }
+                }
+            }
+        }
+
+        if (!findAssetInRelease(allocator, release_expr, use_profile, &version)) return null;
+
+        return .{ .version = version, .published_at_ms = published_at_ms };
+    }
+
+    /// Epoch-ms "now" consistent with how the install-side resolver
+    /// computes it from `bun.start_time`. Used to age-gate upgrades.
+    fn currentTimestampMs() f64 {
+        return @floatFromInt(@divTrunc(bun.start_time, std.time.ns_per_ms));
+    }
+
+    fn isReleaseTooRecent(published_at_ms: f64, minimum_release_age_ms: f64) bool {
+        return published_at_ms > currentTimestampMs() - minimum_release_age_ms;
+    }
+
     pub fn getLatestVersion(
         allocator: std.mem.Allocator,
         env_loader: *DotEnv.Loader,
@@ -94,6 +205,7 @@ pub const UpgradeCommand = struct {
         progress: ?*Progress.Node,
         use_profile: bool,
         comptime silent: bool,
+        minimum_release_age_ms: ?f64,
     ) !?Version {
         var headers_buf: string = default_github_headers;
         // gonna have to free memory myself like a goddamn caveman due to a thread safety issue with ArenaAllocator
@@ -184,7 +296,7 @@ pub const UpgradeCommand = struct {
         defer if (comptime silent) log.deinit();
         const source = &logger.Source.initPathString("releases.json", metadata_body.list.items);
         initializeStore();
-        var expr = JSON.parseUTF8(source, &log, allocator) catch |err| {
+        const expr = JSON.parseUTF8(source, &log, allocator) catch |err| {
             if (!silent) {
                 progress.?.end();
                 refresher.?.refresh();
@@ -214,8 +326,6 @@ pub const UpgradeCommand = struct {
             return null;
         }
 
-        var version = Version{ .zip_url = "", .tag = "", .buf = metadata_body, .size = 0 };
-
         if (expr.data != .e_object) {
             if (!silent) {
                 progress.?.end();
@@ -229,77 +339,137 @@ pub const UpgradeCommand = struct {
             return null;
         }
 
-        if (expr.asProperty("tag_name")) |tag_name_| {
-            if (tag_name_.expr.asString(allocator)) |tag_name| {
-                version.tag = tag_name;
-            }
-        }
-
-        if (version.tag.len == 0) {
+        const latest = parseReleaseObject(allocator, expr, use_profile) orelse {
             if (comptime !silent) {
                 progress.?.end();
                 refresher.?.refresh();
 
-                Output.prettyErrorln("JSON Error parsing releases from GitHub: <r><red>tag_name<r> is missing?\n{s}", .{metadata_body.list.items});
-                Global.exit(1);
+                // Distinguish "no tag_name" from "no matching asset" for clearer errors.
+                const has_tag = if (expr.asProperty("tag_name")) |t| t.expr.asString(allocator) != null else false;
+                if (!has_tag) {
+                    Output.prettyErrorln("JSON Error parsing releases from GitHub: <r><red>tag_name<r> is missing?\n{s}", .{metadata_body.list.items});
+                    Global.exit(1);
+                }
+                // Tag name is present but no asset for this platform.
+                var tmp = Version{ .zip_url = "", .tag = "", .buf = MutableString.initEmpty(allocator), .size = 0 };
+                if (expr.asProperty("tag_name")) |t| {
+                    if (t.expr.asString(allocator)) |s| tmp.tag = s;
+                }
+                if (tmp.name()) |name| {
+                    Output.prettyErrorln("Bun v{s} is out, but not for this platform ({s}) yet.", .{
+                        name, Version.triplet,
+                    });
+                }
+                Global.exit(0);
             }
 
             return null;
-        }
+        };
 
-        get_asset: {
-            const assets_ = expr.asProperty("assets") orelse break :get_asset;
-            var assets = assets_.expr.asArray() orelse break :get_asset;
-
-            while (assets.next()) |asset| {
-                if (asset.asProperty("content_type")) |content_type| {
-                    const content_type_ = (content_type.expr.asString(allocator)) orelse continue;
-                    if (comptime Environment.isDebug) {
-                        Output.prettyln("Content-type: {s}", .{content_type_});
-                        Output.flush();
-                    }
-
-                    if (!strings.eqlComptime(content_type_, "application/zip")) continue;
+        // Honor `install.minimumReleaseAge`: if the latest release was
+        // published too recently, fall back to the releases list endpoint
+        // and pick the newest release that passes the window.
+        if (minimum_release_age_ms) |min_age_ms| {
+            if (min_age_ms > 0 and latest.published_at_ms != null and isReleaseTooRecent(latest.published_at_ms.?, min_age_ms)) {
+                if (try findEligibleVersionFromReleasesList(allocator, env_loader, progress, use_profile, silent, github_api_domain, header_entries, headers_buf, min_age_ms)) |fallback| {
+                    return fallback;
                 }
 
-                if (asset.asProperty("name")) |name_| {
-                    if (name_.expr.asString(allocator)) |name| {
-                        if (comptime Environment.isDebug) {
-                            const filename = if (!use_profile) Version.zip_filename else Version.profile_zip_filename;
-                            Output.prettyln("Comparing {s} vs {s}", .{ name, filename });
-                            Output.flush();
-                        }
+                if (comptime !silent) {
+                    progress.?.end();
+                    refresher.?.refresh();
 
-                        if (!use_profile and !strings.eqlComptime(name, Version.zip_filename)) continue;
-                        if (use_profile and !strings.eqlComptime(name, Version.profile_zip_filename)) continue;
-
-                        version.zip_url = (asset.asProperty("browser_download_url") orelse break :get_asset).expr.asString(allocator) orelse break :get_asset;
-                        if (comptime Environment.isDebug) {
-                            Output.prettyln("Found Zip {s}", .{version.zip_url});
-                            Output.flush();
-                        }
-
-                        if (asset.asProperty("size")) |size_| {
-                            if (size_.expr.data == .e_number) {
-                                version.size = @as(u32, @intCast(@max(@as(i32, @intFromFloat(std.math.ceil(size_.expr.data.e_number.value))), 0)));
-                            }
-                        }
-                        return version;
+                    const age_seconds = min_age_ms / std.time.ms_per_s;
+                    if (latest.version.name()) |name| {
+                        Output.prettyErrorln(
+                            "<r><red>error:<r> No Bun release is older than the configured <b>minimumReleaseAge<r> ({d}s). Latest release is <b>v{s}<r>.",
+                            .{ age_seconds, name },
+                        );
+                    } else {
+                        Output.prettyErrorln(
+                            "<r><red>error:<r> No Bun release is older than the configured <b>minimumReleaseAge<r> ({d}s).",
+                            .{age_seconds},
+                        );
                     }
+                    Global.exit(1);
                 }
+                return null;
             }
         }
 
-        if (comptime !silent) {
-            progress.?.end();
-            refresher.?.refresh();
-            if (version.name()) |name| {
-                Output.prettyErrorln("Bun v{s} is out, but not for this platform ({s}) yet.", .{
-                    name, Version.triplet,
-                });
-            }
+        var v = latest.version;
+        v.buf = metadata_body;
+        return v;
+    }
 
-            Global.exit(0);
+    /// Fallback used when the latest release is inside the
+    /// `minimumReleaseAge` window. Fetches `/releases?per_page=10`
+    /// (newest first) and returns the newest release whose
+    /// `published_at` is older than `minimum_release_age_ms`.
+    fn findEligibleVersionFromReleasesList(
+        allocator: std.mem.Allocator,
+        env_loader: *DotEnv.Loader,
+        progress: ?*Progress.Node,
+        use_profile: bool,
+        comptime silent: bool,
+        github_api_domain: string,
+        header_entries: Headers.Entry.List,
+        headers_buf: string,
+        minimum_release_age_ms: f64,
+    ) !?Version {
+        var list_url_buf: bun.PathBuffer = undefined;
+        const list_url = URL.parse(
+            try std.fmt.bufPrint(
+                &list_url_buf,
+                "https://{s}/repos/Jarred-Sumner/bun-releases-for-updater/releases?per_page=10",
+                .{github_api_domain},
+            ),
+        );
+
+        const http_proxy: ?URL = env_loader.getHttpProxyFor(list_url);
+
+        var body = try MutableString.init(allocator, 8192);
+
+        var async_http: *HTTP.AsyncHTTP = try allocator.create(HTTP.AsyncHTTP);
+        async_http.* = HTTP.AsyncHTTP.initSync(
+            allocator,
+            .GET,
+            list_url,
+            header_entries,
+            headers_buf,
+            &body,
+            "",
+            http_proxy,
+            null,
+            HTTP.FetchRedirect.follow,
+        );
+        async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+        if (!silent) async_http.client.progress_node = progress.?;
+
+        const response = try async_http.sendSync();
+        switch (response.status_code) {
+            200 => {},
+            else => return null, // fall back to "no eligible release"
+        }
+
+        var log = logger.Log.init(allocator);
+        defer if (comptime silent) log.deinit();
+
+        const source = &logger.Source.initPathString("releases-list.json", body.list.items);
+        initializeStore();
+        const list_expr = JSON.parseUTF8(source, &log, allocator) catch return null;
+        if (log.errors > 0) return null;
+
+        var releases = list_expr.asArray() orelse return null;
+        while (releases.next()) |release_expr| {
+            const parsed = parseReleaseObject(allocator, release_expr, use_profile) orelse continue;
+            // Skip releases we can't age-gate (missing published_at).
+            const published_at_ms = parsed.published_at_ms orelse continue;
+            if (isReleaseTooRecent(published_at_ms, minimum_release_age_ms)) continue;
+
+            var v = parsed.version;
+            v.buf = body;
+            return v;
         }
 
         return null;
@@ -373,11 +543,16 @@ pub const UpgradeCommand = struct {
 
         const use_profile = strings.containsAny(bun.argv, "--profile");
 
+        // `install.minimumReleaseAge` (seconds → ms) from bunfig, if any.
+        // Only applies to the stable channel — canary upgrades don't use
+        // published_at timestamps and are opted into explicitly.
+        const minimum_release_age_ms: ?f64 = if (ctx.install) |install_config| install_config.minimum_release_age_ms else null;
+
         var version: Version = if (!use_canary) v: {
             var refresher = Progress{};
             var progress = refresher.start("Fetching version tags", 0);
 
-            const version = (try getLatestVersion(ctx.allocator, &env_loader, &refresher, progress, use_profile, false)) orelse return;
+            const version = (try getLatestVersion(ctx.allocator, &env_loader, &refresher, progress, use_profile, false, minimum_release_age_ms)) orelse return;
 
             progress.end();
             refresher.refresh();

@@ -93,6 +93,7 @@ pub const Tag = enum {
             .OutdatedCommand,
             .PublishCommand,
             .AuditCommand,
+            .UpgradeCommand,
             => true,
             else => false,
         };
@@ -136,6 +137,7 @@ pub const Tag = enum {
         .UpdateInteractiveCommand = true,
         .PublishCommand = true,
         .AuditCommand = true,
+        .UpgradeCommand = true,
     });
 
     pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
@@ -153,6 +155,7 @@ pub const Tag = enum {
         .UpdateInteractiveCommand = true,
         .PublishCommand = true,
         .AuditCommand = true,
+        .UpgradeCommand = true,
     });
 
     pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{

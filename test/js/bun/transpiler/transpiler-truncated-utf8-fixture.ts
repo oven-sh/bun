@@ -55,6 +55,11 @@ const cases: Array<[string, number[]]> = [
   ["4-byte lead + 1 continuation", [0x31, 0x40, 0xf0, 0x90]],
   ["4-byte lead + 2 continuations", [0x31, 0x40, 0xf0, 0x90, 0x80]],
   ["sourceMappingURL pragma + 4-byte lead", [...Buffer.from("//# sourceMappingURL=a"), 0xf0]],
+  // After lexing `<!`, the lexer peeks 2 codepoints to check for `<!--`. The peek helper used
+  // to re-read the same codepoint N times instead of advancing, overshooting the end of the
+  // source when fewer than N bytes remained (or when the next codepoint was multi-byte).
+  ["<! + 1 ASCII byte", [0x3c, 0x21, 0x78]],
+  ["<! + 2-byte codepoint", [0x3c, 0x21, 0xc3, 0xb1]],
 ];
 
 for (const [name, bytes] of cases) {

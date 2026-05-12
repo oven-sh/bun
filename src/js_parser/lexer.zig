@@ -273,6 +273,7 @@ fn NewLexer_(
                 const next_codepoint = it.nextCodepointSlice();
                 if (next_codepoint.len == 0) break;
                 end_ix += next_codepoint.len;
+                it.current = end_ix;
             }
 
             return it.source.contents[original_i..end_ix];

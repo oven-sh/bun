@@ -87,12 +87,9 @@ impl<T> Weak<T> {
 
     /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
     pub fn reject_task(&mut self, global: &JSGlobalObject, val: JSValue) {
-        // SAFETY: `VirtualMachine::get()` returns the JS-thread singleton; `event_loop()`
-        // returns the raw VM-owned `*mut EventLoop`, valid for the process lifetime.
-        // `enter_scope` calls `enter()` now and `exit()` on drop (RAII for Zig's
-        // `loop.enter(); defer loop.exit();`).
-        let loop_ = VirtualMachine::get().as_mut().event_loop();
-        let _guard = unsafe { crate::event_loop::EventLoop::enter_scope(loop_) };
+        // RAII for Zig's `loop.enter(); defer loop.exit();` — the safe wrapper
+        // funnels through the single audited deref in `enter_event_loop_scope`.
+        let _guard = VirtualMachine::get().enter_event_loop_scope();
         self.reject(global, val);
     }
 
@@ -102,9 +99,7 @@ impl<T> Weak<T> {
 
     /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
     pub fn resolve_task(&mut self, global: &JSGlobalObject, val: JSValue) {
-        // SAFETY: see `reject_task`.
-        let loop_ = VirtualMachine::get().as_mut().event_loop();
-        let _guard = unsafe { crate::event_loop::EventLoop::enter_scope(loop_) };
+        let _guard = VirtualMachine::get().enter_event_loop_scope();
         self.resolve(global, val);
     }
 
@@ -205,11 +200,9 @@ impl Strong {
 
     /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
     pub fn reject_task(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), JsTerminated> {
-        // SAFETY: `VirtualMachine::get()` returns the JS-thread singleton; `event_loop()`
-        // returns the raw VM-owned `*mut EventLoop`, valid for the process lifetime.
-        // `enter_scope` calls `enter()` now and `exit()` on drop.
-        let loop_ = VirtualMachine::get().as_mut().event_loop();
-        let _guard = unsafe { crate::event_loop::EventLoop::enter_scope(loop_) };
+        // RAII for Zig's `loop.enter(); defer loop.exit();` — the safe wrapper
+        // funnels through the single audited deref in `enter_event_loop_scope`.
+        let _guard = VirtualMachine::get().enter_event_loop_scope();
         self.reject(global, Ok(val))
     }
 
@@ -224,9 +217,7 @@ impl Strong {
 
     /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
     pub fn resolve_task(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), JsTerminated> {
-        // SAFETY: see `reject_task`.
-        let loop_ = VirtualMachine::get().as_mut().event_loop();
-        let _guard = unsafe { crate::event_loop::EventLoop::enter_scope(loop_) };
+        let _guard = VirtualMachine::get().enter_event_loop_scope();
         self.resolve(global, val)
     }
 

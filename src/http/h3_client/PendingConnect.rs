@@ -124,13 +124,12 @@ impl PendingConnect {
         let s = unsafe { &mut *session };
         s.closed = true;
         if let Some(ctx) = super::client_context::ClientContext::get() {
-            // SAFETY: leaked Box, process-lifetime; HTTP-thread only.
-            unsafe { (*ctx.as_ptr()).unregister(s) };
+            super::client_context::ClientContext::as_mut(ctx).unregister(s);
         }
         while !s.pending.is_empty() {
             let stream = s.pending[0];
-            // SAFETY: stream is live while attached to session.pending.
-            let cl = unsafe { (*stream).client };
+            // stream is live while attached to session.pending.
+            let cl = super::client_session::stream_ref(stream).client;
             s.detach(stream);
             if let Some(cl) = cl {
                 // HTTPClient outlives its h3 Stream; detach() nulled stream.client

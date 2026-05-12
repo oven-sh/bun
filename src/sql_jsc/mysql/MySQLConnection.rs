@@ -694,9 +694,9 @@ impl MySQLConnection {
         self.set_status(ConnectionState::Authenticating);
 
         let mut encrypted_password = Auth::caching_sha2_password::EncryptedPassword {
-            password: &raw const *self.password,
-            public_key: std::ptr::from_ref::<[u8]>(response.data.slice()),
-            nonce: &raw const *self.auth_data,
+            password: bun_ptr::RawSlice::new(&self.password),
+            public_key: bun_ptr::RawSlice::new(response.data.slice()),
+            nonce: bun_ptr::RawSlice::new(&self.auth_data),
             sequence_id: self.sequence_id,
         };
         encrypted_password.write(self.writer())?;
@@ -880,17 +880,22 @@ impl MySQLConnection {
         // SAFETY: queue holds a ref on every request; pointer is live. `ScopedRef`
         // bumps the count and derefs on every exit path (Zig: `defer request.deref()`).
         let _request_guard = unsafe { bun_ptr::ScopedRef::new(request) };
+        // SAFETY: `JSMySQLQuery` is a separate heap allocation (never aliases
+        // `*self`) and is fully interior-mutable (R-2: every method is `&self`),
+        // so a single shared deref here replaces the per-site raw `(*request).…`
+        // derefs below — including across the `&mut self` calls, since this
+        // `&JSMySQLQuery` does not borrow `*self`. The `_request_guard` ref keeps
+        // the pointee live for the whole scope.
+        let request: &JSMySQLQuery = unsafe { &*request };
 
         debug!("handleCommand");
-        // SAFETY: see above.
-        if unsafe { (*request).is_simple() } {
+        if request.is_simple() {
             // Regular query response
             return self.handle_result_set(reader, header_length);
         }
 
         // Handle based on request type
-        // SAFETY: see above.
-        if let Some(statement) = unsafe { (*request).get_statement() } {
+        if let Some(statement) = request.get_statement() {
             // PORT NOTE: reshaped for borrowck — `get_statement()` borrows
             // `*request` mutably; downgrade to a raw pointer immediately so
             // `request` can be re-borrowed below and `&mut self` isn't aliased.
@@ -916,17 +921,17 @@ impl MySQLConnection {
                     // moved to explicit call after `on_error_packet` below.
                     self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                     self.queue.mark_as_ready_for_query();
-                    // SAFETY: request is live (ref'd above).
-                    self.queue.mark_current_request_as_finished(unsafe { &*request });
+                    self.queue.mark_current_request_as_finished(request);
                     let connection = self.get_js_connection();
                     // TODO(b2-blocked): ErrorPacket is not Clone in bun_sql; the
                     // Zig passes statement.error_response by value (struct copy).
                     // Send a default packet as a placeholder until ErrorPacket
                     // grows Clone or a borrowed-variant overload lands.
-                    // SAFETY: connection/request are live.
+                    // SAFETY: connection is live (parent of `*self`); kept raw —
+                    // `on_error_packet` may run JS that re-enters `connection_mut()`.
                     unsafe {
                         (*connection)
-                            .on_error_packet(Some(&*request), ErrorPacket::default())
+                            .on_error_packet(Some(request), ErrorPacket::default())
                     };
                     let _ = self.flush_queue();
                 }
@@ -1068,8 +1073,12 @@ impl MySQLConnection {
         // SAFETY: queue holds a ref on every request; pointer is live. `ScopedRef`
         // bumps the count and derefs on every exit path (Zig: `defer request.deref()`).
         let _request_guard = unsafe { bun_ptr::ScopedRef::new(request) };
-        // SAFETY: see above.
-        let Some(statement) = (unsafe { (*request).get_statement() }) else {
+        // SAFETY: separate heap allocation kept live by `_request_guard`;
+        // R-2: every `JSMySQLQuery` method is `&self`, so a single shared
+        // deref here replaces the per-site `(*request)` blocks below and is
+        // sound across the `&mut self` calls (does not borrow `*self`).
+        let request: &JSMySQLQuery = unsafe { &*request };
+        let Some(statement) = request.get_statement() else {
             debug!("Unexpected prepared statement packet missing statement");
             return Err(AnyMySQLError::UnexpectedPacket);
         };
@@ -1181,12 +1190,11 @@ impl MySQLConnection {
                         .map_err(|_| AnyMySQLError::OutOfMemory)?,
                 };
                 self.queue.mark_as_ready_for_query();
-                // SAFETY: request is live (ref'd above).
-                self.queue.mark_current_request_as_finished(unsafe { &*request });
+                self.queue.mark_current_request_as_finished(request);
 
                 let connection = self.get_js_connection();
                 // SAFETY: connection/request are live.
-                unsafe { (*connection).on_error_packet(Some(&*request), err) };
+                unsafe { (*connection).on_error_packet(Some(request), err) };
                 self.advance();
             }
 
@@ -1204,12 +1212,15 @@ impl MySQLConnection {
 
     // PORT NOTE: reshaped for borrowck — `request`/`statement` come from
     // `self.queue` so passing `&mut self` alongside `&mut JSMySQLQuery` would
-    // alias. Take raw pointers (Zig's `*JSMySQLQuery` / `*MySQLStatement`) and
-    // deref locally; the queue's intrusive ref keeps them alive.
-    
+    // alias. `request` is `&JSMySQLQuery` (R-2: fully interior-mutable, so a
+    // shared borrow is sound across the re-entrant `on_query_result` callback);
+    // `statement` stays raw `*mut` because `MySQLStatement` has plain fields
+    // and `on_query_result` may re-enter `request.get_statement()` — holding a
+    // `&mut MySQLStatement` across that would alias. The queue's intrusive ref
+    // keeps both alive.
     fn handle_result_set_ok(
         &mut self,
-        request: *mut JSMySQLQuery,
+        request: &JSMySQLQuery,
         statement: *mut MySQLStatement,
         status_flags: StatusFlags,
         last_insert_id: u64,
@@ -1222,17 +1233,19 @@ impl MySQLConnection {
         self.flags.set(ConnectionFlags::IS_READY_FOR_QUERY, is_last_result);
         if is_last_result {
             self.queue.mark_as_ready_for_query();
-            // SAFETY: request is live (caller holds a ref).
-            self.queue.mark_current_request_as_finished(unsafe { &*request });
+            self.queue.mark_current_request_as_finished(request);
         }
 
         // SAFETY: statement is live (owned by request).
         let result_count = unsafe { (*statement).result_count };
         let connection = self.get_js_connection();
-        // SAFETY: connection/request are live.
+        // SAFETY: connection is live (parent of `*self`); deref kept raw because
+        // `on_query_result` may re-enter `connection_mut()` via JS callbacks, so
+        // no `&JSMySQLConnection` may be held across it that was derived from
+        // `&self` (see `js_connection_ref` doc — read-only callers only).
         unsafe {
             (*connection).on_query_result(
-                &*request,
+                request,
                 MySQLQueryResult { result_count, last_insert_id, affected_rows, is_last_result },
             )
         };
@@ -1300,6 +1313,11 @@ impl MySQLConnection {
         // SAFETY: queue holds a ref on every request; pointer is live. `ScopedRef`
         // bumps the count and derefs on every exit path (Zig: `defer request.deref()`).
         let _request_guard = unsafe { bun_ptr::ScopedRef::new(request) };
+        // SAFETY: separate heap allocation kept live by `_request_guard`;
+        // R-2: every `JSMySQLQuery` method is `&self`, so a single shared
+        // deref here replaces the per-site `(*request)` blocks below and is
+        // sound across the `&mut self` calls (does not borrow `*self`).
+        let request: &JSMySQLQuery = unsafe { &*request };
         let mut ok = OKPacket {
             header: 0,
             affected_rows: 0,
@@ -1316,25 +1334,23 @@ impl MySQLConnection {
                 err.decode_internal(reader)?;
                 // PORT NOTE: reshaped for borrowck — Zig `defer this.flushQueue()`
                 // moved to explicit tail call.
-                // SAFETY: request is live (ref'd above).
-                if let Some(statement) = unsafe { (*request).get_statement() } {
+                if let Some(statement) = request.get_statement() {
                     statement.reset();
                 }
 
                 self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 self.queue.mark_as_ready_for_query();
-                // SAFETY: request is live.
-                self.queue.mark_current_request_as_finished(unsafe { &*request });
+                self.queue.mark_current_request_as_finished(request);
 
                 let connection = self.get_js_connection();
-                // SAFETY: connection/request are live.
-                unsafe { (*connection).on_error_packet(Some(&*request), err) };
+                // SAFETY: connection is live (parent of `*self`); kept raw —
+                // `on_error_packet` may run JS that re-enters `connection_mut()`.
+                unsafe { (*connection).on_error_packet(Some(request), err) };
                 let _ = self.flush_queue();
             }
 
             packet_type => {
-                // SAFETY: request is live (ref'd above).
-                let Some(statement) = (unsafe { (*request).get_statement() }) else {
+                let Some(statement) = request.get_statement() else {
                     debug!("Unexpected result set packet");
                     return Err(AnyMySQLError::UnexpectedPacket);
                 };
@@ -1456,9 +1472,11 @@ impl MySQLConnection {
 
                     let connection = self.get_js_connection();
 
-                    // SAFETY: connection is the parent JSMySQLConnection containing
-                    // self; request is live (ref'd above).
-                    unsafe { (*connection).on_result_row(&*request, statement, reader)? };
+                    // SAFETY: connection is the parent JSMySQLConnection
+                    // containing `*self`; kept raw — `on_result_row` re-enters
+                    // `connection_mut()` (mark_current_request_as_finished), so
+                    // no `&JSMySQLConnection` derived from `&self` may span it.
+                    unsafe { (*connection).on_result_row(request, statement, reader)? };
                 }
             }
         }

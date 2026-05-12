@@ -809,6 +809,17 @@ pub mod data {
         fn instance() -> *mut Backing {
             INSTANCE.get()
         }
+        /// Reborrow the thread-local backing store. Centralises the raw
+        /// deref so `begin`/`reset`/`append` stay safe; `None` iff
+        /// `create()` has not run (or `deinit()` cleared it).
+        #[inline]
+        fn instance_mut<'a>() -> Option<&'a mut Backing> {
+            // SAFETY: `INSTANCE` is thread-local; the `*mut Backing` it holds
+            // is either null or was returned by `Backing::init()` (leaked
+            // `PreAlloc`) and remains valid until `deinit()` clears it.
+            // Single-threaded access — no other `&mut` to the slab is live.
+            unsafe { INSTANCE.get().as_mut() }
+        }
 
         #[inline]
         pub fn memory_allocator() -> *mut ASTMemoryAllocator {
@@ -831,13 +842,13 @@ pub mod data {
             if !memory_allocator().is_null() {
                 return;
             }
-            if instance().is_null() {
-                create();
-                return;
-            }
-            if !DISABLE_RESET.get() {
-                // SAFETY: checked non-null above; thread-local, no concurrent mutation.
-                Backing::reset(unsafe { &mut *instance() });
+            match instance_mut() {
+                None => create(),
+                Some(store) => {
+                    if !DISABLE_RESET.get() {
+                        Backing::reset(store);
+                    }
+                }
             }
         }
 
@@ -845,8 +856,8 @@ pub mod data {
             if DISABLE_RESET.get() || !memory_allocator().is_null() {
                 return;
             }
-            // SAFETY: caller contract — instance is set when reset() is called.
-            Backing::reset(unsafe { &mut *instance() });
+            // Caller contract — instance is set when reset() is called.
+            Backing::reset(instance_mut().expect("Stmt Store::reset: instance not set"));
         }
 
         /// Zig: `Stmt.Data.Store.disable_reset = b;` — toggled by long-lived
@@ -886,8 +897,11 @@ pub mod data {
                 return unsafe { &*ma }.append(value);
             }
             Disabler::assert();
-            // SAFETY: assert() guarantees instance is non-null on this thread.
-            StoreRef::from(Backing::append(unsafe { &mut *instance() }, value))
+            // assert() guarantees instance is non-null on this thread.
+            StoreRef::from(Backing::append(
+                instance_mut().expect("Stmt Store must be init'd"),
+                value,
+            ))
         }
     }
 }

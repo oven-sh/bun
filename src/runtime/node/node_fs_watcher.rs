@@ -489,10 +489,23 @@ impl FSWatchTaskWindows {
 }
 
 impl FSWatcher {
+    /// Recover `&FSWatcher` from the `*mut c_void` userdata stashed in `init`.
+    ///
+    /// Centralises the set-once `Option<*mut c_void> → &FSWatcher` deref so the
+    /// three watcher-backend callbacks (`on_path_update_*`, `on_update_end`)
+    /// stay safe at the call site. R-2: deref as shared — all `FSWatcher`
+    /// mutation goes through `Cell`/`JsCell`.
+    #[inline]
+    fn from_ctx<'a>(ctx: Option<*mut c_void>) -> &'a FSWatcher {
+        // SAFETY: ctx was registered as `*mut FSWatcher` cast to `*mut c_void`
+        // in `init`. The FSWatcher is heap-stable (`heap::into_raw`) and
+        // outlives every watcher callback — it owns the `path_watcher`
+        // registration, which is dropped before the FSWatcher in `finalize`.
+        unsafe { &*ctx.unwrap().cast::<FSWatcher>() }
+    }
+
     pub fn on_path_update_posix(ctx: Option<*mut c_void>, event: Event, is_file: bool) {
-        // SAFETY: ctx was registered as `*mut FSWatcher` cast to `*mut c_void` in `init`.
-        // R-2: deref as shared (`&*const`) — mutation goes through `JsCell`.
-        let this = unsafe { &*ctx.unwrap().cast::<FSWatcher>() };
+        let this = Self::from_ctx(ctx);
 
         if this.verbose {
             match &event {
@@ -522,9 +535,7 @@ impl FSWatcher {
     }
 
     pub fn on_path_update_windows(ctx: Option<*mut c_void>, event: Event, is_file: bool) {
-        // SAFETY: ctx was registered as `*mut FSWatcher` cast to `*mut c_void` in `init`.
-        // R-2: deref as shared (`&*const`).
-        let this = unsafe { &*ctx.unwrap().cast::<FSWatcher>() };
+        let this = Self::from_ctx(ctx);
 
         if this.verbose {
             match &event {
@@ -563,9 +574,7 @@ impl FSWatcher {
     pub const ON_PATH_UPDATE: fn(Option<*mut c_void>, Event, bool) = Self::on_path_update_posix;
 
     pub fn on_update_end(ctx: Option<*mut c_void>) {
-        // SAFETY: ctx was registered as `*mut FSWatcher` cast to `*mut c_void` in `init`.
-        // R-2: deref as shared (`&*const`).
-        let this = unsafe { &*ctx.unwrap().cast::<FSWatcher>() };
+        let this = Self::from_ctx(ctx);
         if this.verbose {
             Output::flush();
         }

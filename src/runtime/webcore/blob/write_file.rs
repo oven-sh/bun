@@ -1218,7 +1218,10 @@ impl WriteFileWaitFromLockedValueTask {
         // SAFETY: this is a Box-allocated task (see Blob.zig:1581).
         let this_ref = unsafe { &mut *this };
         // `get()` returns a GC-owned cell, valid past `heap::take(this)`.
-        let promise: *mut JSPromise = this_ref.promise.get();
+        // SAFETY: GC-heap allocation (not inside `*this`); sole `&mut` borrow on
+        // the single JS thread. Hoisted once so each match arm calls through it
+        // safely instead of repeating `unsafe { &mut *promise }` per site.
+        let promise: &mut JSPromise = unsafe { &mut *this_ref.promise.get() };
         // Copy the `BackRef` out so the borrow is detached from `this_ref`
         // (must coexist with `&mut this_ref` and survive `heap::take(this)`).
         let global_ref = this_ref.global_this;
@@ -1240,16 +1243,14 @@ impl WriteFileWaitFromLockedValueTask {
                 let _ = value.use_();
                 // SAFETY: consume Box allocation (drops `promise`/`file_blob` Strongs).
                 unsafe { drop(bun_core::heap::take(this)) };
-                // SAFETY: GC-owned cell; sole `&mut` borrow.
-                unsafe { &mut *promise }.reject_with_async_stack(global_this, Ok(err))?;
+                promise.reject_with_async_stack(global_this, Ok(err))?;
             }
             body::Value::Used => {
                 file_blob.detach();
                 let _ = value.use_();
                 // SAFETY: consume Box allocation.
                 unsafe { drop(bun_core::heap::take(this)) };
-                // SAFETY: GC-owned cell; sole `&mut` borrow.
-                unsafe { &mut *promise }.reject(
+                promise.reject(
                     global_this,
                     Ok(ZigString::init(b"Body was used after it was consumed")
                         .to_error_instance(global_this)),
@@ -1276,8 +1277,7 @@ impl WriteFileWaitFromLockedValueTask {
                         file_blob.detach();
                         // SAFETY: consume Box allocation.
                         unsafe { drop(bun_core::heap::take(this)) };
-                        // SAFETY: GC-owned cell; sole `&mut` borrow.
-                        unsafe { &mut *promise }.reject(global_this, Err(err))?;
+                        promise.reject(global_this, Err(err))?;
                         return Ok(());
                     }
                 };
@@ -1295,16 +1295,13 @@ impl WriteFileWaitFromLockedValueTask {
                     match p.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
                         // Fulfill the new promise using the pending promise
                         jsc::PromiseResult::Pending => {
-                            // SAFETY: GC-owned cell; sole `&mut` borrow.
-                            unsafe { &mut *promise }.resolve(global_this, new_promise)?
+                            promise.resolve(global_this, new_promise)?
                         }
                         jsc::PromiseResult::Rejected(err) => {
-                            // SAFETY: GC-owned cell; sole `&mut` borrow.
-                            unsafe { &mut *promise }.reject(global_this, Ok(err))?
+                            promise.reject(global_this, Ok(err))?
                         }
                         jsc::PromiseResult::Fulfilled(result) => {
-                            // SAFETY: GC-owned cell; sole `&mut` borrow.
-                            unsafe { &mut *promise }.resolve(global_this, result)?
+                            promise.resolve(global_this, result)?
                         }
                     }
                 }

@@ -1803,12 +1803,7 @@ impl EnsureRouteCtx for RequestEnsureRouteBundledCtx {
     fn on_failure(&mut self) -> JsResult<()> { Self::on_failure(self) }
     fn on_plugin_error(&mut self) -> JsResult<()> { Self::on_plugin_error(self) }
     fn to_dev_response(&mut self) -> DevResponse<'_> { Self::to_dev_response(self) }
-    // SAFETY: `self.dev` is set from a live `&mut DevServer` at ctx
-    // construction and outlives the ctx (the ctx is stack-local in the request
-    // handler scope).
-    fn dev(&mut self) -> &mut DevServer {
-        unsafe { &mut *self.dev }
-    }
+    fn dev(&mut self) -> &mut DevServer { self.dev_mut() }
     fn route_bundle_index(&self) -> route_bundle::Index { self.route_bundle_index }
 }
 
@@ -6242,6 +6237,18 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         unsafe { &mut *self.dev }
     }
 
+    /// Reborrow the GC-heap `JSPromise` set in [`ensure_promise`]. Single
+    /// `unsafe` site for the set-once `p: Option<*mut JSPromise>` self-borrow
+    /// field; both deref callers (`on_loaded` / `on_plugin_error`) call
+    /// `ensure_promise` immediately before this.
+    #[inline]
+    fn promise_mut(&mut self) -> &mut jsc::JSPromise {
+        // SAFETY: `p` is `Some(ptr::from_mut(strong.get()))` after
+        // `ensure_promise`; the JSPromise GC cell is rooted by
+        // `self.promise: JSPromiseStrong` for the lifetime of `self`.
+        unsafe { &mut *self.p.expect("infallible: promise bound") }
+    }
+
     fn ensure_promise(&mut self) -> jsc::JSPromiseStrong {
         if self.promise.is_none() {
             let strong = jsc::JSPromiseStrong::init(self.global);
@@ -6304,8 +6311,8 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
 
     fn on_loaded(&mut self) -> JsResult<()> {
         let _ = self.ensure_promise();
-        // SAFETY: p was set by ensure_promise
-        unsafe { &mut *self.p.expect("infallible: promise bound") }.resolve(self.global, JSValue::TRUE)?;
+        let global = self.global;
+        self.promise_mut().resolve(global, JSValue::TRUE)?;
         // SAFETY: dev.vm is JSC_BORROW — valid for DevServer lifetime
         self.dev_mut().vm_mut().drain_microtasks();
         Ok(())
@@ -6342,9 +6349,9 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
 
     fn on_plugin_error(&mut self) -> JsResult<()> {
         let _ = self.ensure_promise();
-        // SAFETY: p was set by ensure_promise
-        unsafe { &mut *self.p.expect("infallible: promise bound") }
-            .reject(self.global, BunString::static_("Plugin error").to_js(self.global))?;
+        let global = self.global;
+        self.promise_mut()
+            .reject(global, BunString::static_("Plugin error").to_js(global))?;
         // SAFETY: dev.vm is JSC_BORROW — valid for DevServer lifetime
         self.dev_mut().vm_mut().drain_microtasks();
         Ok(())
@@ -6374,11 +6381,7 @@ impl<'a> EnsureRouteCtx for PromiseEnsureRouteBundledCtx<'a> {
     fn to_dev_response(&mut self) -> DevResponse<'_> {
         PromiseEnsureRouteBundledCtx::to_dev_response(self)
     }
-    fn dev(&mut self) -> &mut DevServer {
-        // SAFETY: `self.dev` set from a live `&mut DevServer` at ctx construction;
-        // ctx is stack-local in the request handler scope.
-        unsafe { &mut *self.dev }
-    }
+    fn dev(&mut self) -> &mut DevServer { self.dev_mut() }
     fn route_bundle_index(&self) -> route_bundle::Index {
         self.route_bundle_index
     }

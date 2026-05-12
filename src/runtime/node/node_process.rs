@@ -50,11 +50,10 @@ pub extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
 pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
     let vm = global_object.bun_vm().as_mut();
     vm.exit_handler.exit_code = code;
-    if let Some(worker) = vm.worker {
+    if let Some(worker) = vm.worker_ref() {
         // TODO(@190n) we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner
-        // SAFETY: worker pointer is valid for the lifetime of the VM.
-        unsafe { (*worker.cast::<WebWorker>()).exit() };
+        worker.exit();
     } else {
         vm.on_exit();
         vm.global_exit();
@@ -165,10 +164,7 @@ fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
     // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
     let vm = global_object.bun_vm();
 
-    if let Some(worker) = vm.worker {
-        // SAFETY: `vm.worker` is a BACKREF `*const c_void` set by `init_worker`
-        // to the live `WebWorker` for this VM; valid while the VM is.
-        let worker = unsafe { &*worker.cast::<WebWorker>() };
+    if let Some(worker) = vm.worker_ref() {
         // was explicitly overridden for the worker?
         if let Some(exec_argv) = worker.exec_argv() {
             let array = JSValue::create_empty_array(global_object, exec_argv.len())?;
@@ -308,9 +304,7 @@ pub extern "C" fn create_argv(global_object: &JSGlobalObject) -> JSValue {
 
     // PERF(port): was stack-fallback alloc (32 * sizeof(ZigString) + MAX_PATH_BYTES + 1 + 32) — profile in Phase B
 
-    // SAFETY: `vm.worker` is a BACKREF `*const c_void` set by `init_worker` to
-    // the live `WebWorker` for this VM; valid while the VM is.
-    let worker: Option<&WebWorker> = vm.worker.map(|w| unsafe { &*w.cast::<WebWorker>() });
+    let worker: Option<&WebWorker> = vm.worker_ref();
 
     let args_count: usize = match worker {
         Some(w) => w.argv().len(),

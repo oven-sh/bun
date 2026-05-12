@@ -2294,8 +2294,7 @@ impl<'a> HTTPClient<'a> {
                     h3::AltSvc::lookup(self.url.hostname, self.url.get_port_auto())
                 {
                     if let Some(ctx) = h3::ClientContext::get_or_create(http_thread().uws_loop) {
-                        // SAFETY: leaked Box, process-lifetime; HTTP-thread only.
-                        if !unsafe { (*ctx.as_ptr()).connect(self, self.url.hostname, alt_port) } {
+                        if !h3::ClientContext::as_mut(ctx).connect(self, self.url.hostname, alt_port) {
                             self.fail(err!(ConnectionRefused));
                         }
                         self.complete_connecting_process();
@@ -2322,8 +2321,7 @@ impl<'a> HTTPClient<'a> {
                 self.complete_connecting_process();
                 return;
             };
-            // SAFETY: leaked Box, process-lifetime; HTTP-thread only.
-            if !unsafe { (*ctx.as_ptr()).connect(self, self.url.hostname, self.url.get_port_auto()) } {
+            if !h3::ClientContext::as_mut(ctx).connect(self, self.url.hostname, self.url.get_port_auto()) {
                 self.fail(err!(ConnectionRefused));
             }
             self.complete_connecting_process();
@@ -3177,9 +3175,8 @@ impl<'a> HTTPClient<'a> {
         };
         // pc drops at scope exit (was `defer pc.deinit()`)
 
-        for mut waiter_ptr in pc.waiters.iter().copied() {
-            // SAFETY: waiters are live HTTPClients pinned in their AsyncHTTP slots
-            let waiter = unsafe { waiter_ptr.as_mut() };
+        for waiter_ptr in pc.waiters.iter().copied() {
+            let waiter = h2::PendingConnect::waiter_mut(waiter_ptr);
             if waiter.signals.get(signals::Field::Aborted) {
                 waiter.fail(err!(Aborted));
                 continue;

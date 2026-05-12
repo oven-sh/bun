@@ -992,9 +992,9 @@ fn set_tls_default_ciphers_from_js(
         return Err(global_this.throw_invalid_argument_type_value(b"ciphers", b"string", ciphers));
     }
     let sliced = ciphers.to_slice(global_this)?;
-    // SAFETY: bun_vm_ptr returns the live per-thread VM (Stacked-Borrows note
-    // on `bun_vm_ptr`); JS thread is single-threaded so &mut is unique.
-    unsafe { (*global_this.bun_vm_ptr()).rare_data() }.set_tls_default_ciphers(sliced.slice());
+    // `bun_vm()` is the safe BACKREF accessor for the per-thread VM; `as_mut()`
+    // is the audited single-JS-thread `&mut` escape hatch.
+    global_this.bun_vm().as_mut().rare_data().set_tls_default_ciphers(sliced.slice());
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1003,8 +1003,8 @@ fn get_tls_default_ciphers_from_js(
     global_this: &JSGlobalObject,
     _callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    // SAFETY: see above.
-    let rare = unsafe { (*global_this.bun_vm_ptr()).rare_data() };
+    // `bun_vm()` is the safe BACKREF accessor; see above.
+    let rare = global_this.bun_vm().as_mut().rare_data();
     let bytes = match rare.tls_default_ciphers() {
         Some(c) => c,
         None => uws::get_default_ciphers().as_bytes(),

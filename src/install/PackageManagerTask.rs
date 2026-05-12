@@ -388,10 +388,10 @@ impl<'a> Task<'a> {
                                     Loc::EMPTY,
                                     format_args!(
                                         "404 - GET {}",
-                                        // SAFETY: tag == PackageManifest
-                                        bstr::BStr::new(unsafe {
-                                            (*this.request.package_manifest).name.slice()
-                                        }),
+                                        // `manifest` (split-borrow of
+                                        // `this.request`) is still live; reuse
+                                        // it instead of a fresh union deref.
+                                        bstr::BStr::new(manifest.name.slice()),
                                     ),
                                 );
                             this.status = Status::Fail;

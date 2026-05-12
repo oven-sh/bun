@@ -33,7 +33,7 @@ pub use bun_uws::MaybeAnySocket as Socket;
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ProxyTunnel {
     pub wrapper: Option<ProxyTunnelWrapper>,
-    pub shutdown_err: Error,
+    pub shutdown_err: Cell<Error>,
     /// active socket is the socket that is currently being used
     pub socket: Socket,
     pub write_buffer: bun_io::StreamBuffer,
@@ -57,7 +57,7 @@ impl Default for ProxyTunnel {
     fn default() -> Self {
         Self {
             wrapper: None,
-            shutdown_err: err!(ConnectionClosed),
+            shutdown_err: Cell::new(err!(ConnectionClosed)),
             socket: Socket::None,
             write_buffer: bun_io::StreamBuffer::default(),
             did_have_handshaking_error: false,
@@ -106,11 +106,12 @@ impl ProxyTunnel {
         unsafe { &mut *addr_of_mut!((*this.as_ptr()).write_buffer) }
     }
 
-    /// Read `shutdown_err` (Copy; disjoint from `wrapper`).
+    /// Shared access to `shutdown_err` (a `Cell<Error>`; disjoint from
+    /// `wrapper`). Callers use `.get()`/`.set()` — no `&mut` needed.
     #[inline]
-    fn shutdown_err_of(this: NonNull<Self>) -> Error {
+    fn shutdown_err_of<'a>(this: NonNull<Self>) -> &'a Cell<Error> {
         // SAFETY: see [`Self::socket_of`].
-        unsafe { *addr_of!((*this.as_ptr()).shutdown_err) }
+        unsafe { &*addr_of!((*this.as_ptr()).shutdown_err) }
     }
 
     /// Callback-safe close: sets `shutdown_err` then drives `wrapper.shutdown()`.
@@ -124,7 +125,7 @@ impl ProxyTunnel {
     #[inline]
     fn close_from_callback(this: NonNull<Self>, err: Error) {
         // SAFETY: see INVARIANT above.
-        unsafe { Self::close_raw(this.as_ptr(), err) };
+        unsafe { Self::close_raw(this, err) };
     }
 
     /// Read the inner-TLS `SSL*` from `wrapper`.
@@ -510,7 +511,7 @@ fn on_close(ctx: *mut HTTPClient) {
     }
 
     // Otherwise, treat as failure.
-    let err = ProxyTunnel::shutdown_err_of(proxy_nn);
+    let err = ProxyTunnel::shutdown_err_of(proxy_nn).get();
     match ProxyTunnel::socket_of(proxy_nn) {
         &Socket::Ssl(socket) => {
             this.close_and_fail::<true>(err, socket);
@@ -608,25 +609,25 @@ impl ProxyTunnel {
         // SAFETY: `&mut self` was derived from the heap::alloc pointer; the
         // receiver is never used again after this line so the raw call's
         // disjoint field projections do not alias it.
-        unsafe { Self::close_raw(self, err) };
+        unsafe { Self::close_raw(NonNull::from(&mut *self), err) };
     }
 
     /// Raw-pointer close: sets `shutdown_err` then drives `wrapper.shutdown()`.
-    /// Takes `*mut Self` so the SSLWrapper close callback (which reenters
+    /// Takes `NonNull<Self>` so the SSLWrapper close callback (which reenters
     /// on_close and reborrows tunnel fields via raw projection) does not alias
     /// a held `&mut ProxyTunnel`.
     ///
     /// # Safety
     /// `this` must be live; caller must not hold `&mut ProxyTunnel` or
     /// `&mut HTTPClient` across this call.
-    pub unsafe fn close_raw(this: *mut Self, err: Error) {
-        // SAFETY: write to `shutdown_err` only — disjoint from `wrapper`.
-        unsafe { *addr_of_mut!((*this).shutdown_err) = err };
+    pub unsafe fn close_raw(this: NonNull<Self>, err: Error) {
+        // `shutdown_err` is a `Cell<Error>` disjoint from `wrapper`; safe set.
+        Self::shutdown_err_of(this).set(err);
         // shutdown() fires on_close synchronously, which accesses only
         // disjoint tunnel fields via `addr_of!` (see on_close), so the
         // `&mut SSLWrapper` from `wrapper_mut` remains the sole unique borrow
         // of its memory across the reentrant call.
-        if let Some(wrapper) = ProxyTunnel::wrapper_mut(this) {
+        if let Some(wrapper) = ProxyTunnel::wrapper_mut(this.as_ptr()) {
             // fast shutdown the connection
             let _ = wrapper.shutdown(true);
         }

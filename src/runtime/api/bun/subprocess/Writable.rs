@@ -39,7 +39,7 @@ impl<'a> Writable<'a> {
     /// (see `on_close` / `Subprocess::on_close_io`). Callers therefore hold a
     /// `&NonNull<FileSink>` borrowed from a still-live `Writable::Pipe`.
     #[inline]
-    fn pipe_sink(pipe: &NonNull<FileSink>) -> &FileSink {
+    pub(super) fn pipe_sink(pipe: &NonNull<FileSink>) -> &FileSink {
         // SAFETY: `Writable::Pipe` owns a +1 intrusive ref; pointee is live and
         // pinned for the duration of any borrow of `pipe`. Single JS thread.
         unsafe { pipe.as_ref() }

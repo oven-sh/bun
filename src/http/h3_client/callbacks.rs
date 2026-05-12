@@ -14,7 +14,7 @@ use bun_core::err;
 use bun_uws::quic;
 
 use super::client_context::ClientContext;
-use super::client_session::ClientSession;
+use super::client_session::{stream_ref, ClientSession};
 use super::encode;
 use super::stream::Stream;
 use crate::h3_client as H3;
@@ -110,15 +110,14 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
         BStr::new(bun_string::slice_to_nul(&buf)),
     );
     if let Some(ctx) = ClientContext::get() {
-        // SAFETY: leaked Box, process-lifetime; HTTP-thread only.
-        unsafe { (*ctx.as_ptr()).unregister(session) };
+        ClientContext::as_mut(ctx).unregister(session);
     }
     while !session.pending.is_empty() {
         // lsquic fires on_stream_close for every bound stream before
         // on_conn_closed, so anything still here never got a qstream.
         let stream = session.pending[0];
-        // SAFETY: pending holds live Stream pointers owned by the session.
-        debug_assert!(unsafe { (*stream).qstream.is_none() });
+        // pending holds live Stream pointers owned by the session.
+        debug_assert!(stream_ref(stream).qstream.is_none());
         session.retry_or_fail(
             stream,
             if session.handshake_done {
@@ -150,8 +149,8 @@ extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
     // Bind the next pending request to this stream.
     let stream: *mut Stream = 'find: {
         for &st in session.pending.iter() {
-            // SAFETY: pending holds live Stream pointers owned by the session.
-            if unsafe { (*st).qstream.is_none() } {
+            // pending holds live Stream pointers owned by the session.
+            if stream_ref(st).qstream.is_none() {
                 break 'find st;
             }
         }

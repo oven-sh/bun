@@ -247,19 +247,15 @@ pub const ARCH: Architecture = if IS_WASM {
 // TODO(port): helper for const &str slicing; replace with build.rs precompute or
 // const_format in Phase B if this doesn't const-eval cleanly.
 const fn const_str_slice(s: &'static str, start: usize, end: usize) -> &'static str {
-    let bytes = s.as_bytes();
-    let mut i = start;
-    while i < end {
-        // ASCII-only check (git SHA is hex, always ASCII)
-        assert!(bytes[i].is_ascii());
-        i += 1;
-    }
-    // SAFETY: verified ASCII range above; slice is within bounds and at char boundaries.
-    unsafe {
-        core::str::from_utf8_unchecked(core::slice::from_raw_parts(
-            bytes.as_ptr().add(start),
-            end - start,
-        ))
+    // `[u8]::split_at` and `str::from_utf8` are both `const` on stable, so the
+    // sub-slice + UTF-8 check happens entirely at compile time without raw
+    // pointer arithmetic.
+    let (head, _) = s.as_bytes().split_at(end);
+    let (_, sub) = head.split_at(start);
+    match core::str::from_utf8(sub) {
+        Ok(s) => s,
+        // Unreachable for git-SHA inputs (hex ASCII); fail the const-eval if not.
+        Err(_) => panic!("const_str_slice: not at a UTF-8 boundary"),
     }
 }
 

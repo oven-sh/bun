@@ -51,10 +51,10 @@ pub struct StatWatcherScheduler {
     current_interval: AtomicI32,
     task: WorkPoolTask,
     main_thread: ThreadId,
-    // JSC_BORROW per LIFETIMES.tsv — VM outlives the scheduler. Stored raw so we
-    // can recover `&mut` for `rare_data()` / `enqueue_task_concurrent` without
-    // an `&self → &mut` UB cast.
-    vm: *mut VirtualMachine,
+    // JSC_BORROW per LIFETIMES.tsv — VM outlives the scheduler. `BackRef` gives
+    // safe `&VirtualMachine` projection (Deref) at every read site;
+    // `event_loop_shared()` / `enqueue_task_concurrent` take `&self`.
+    vm: BackRef<VirtualMachine>,
     watchers: WatcherQueue,
 
     pub event_loop_timer: EventLoopTimer,
@@ -146,13 +146,11 @@ impl StatWatcherScheduler {
 
     /// Borrow the per-thread `VirtualMachine` this scheduler is bound to.
     ///
-    /// SAFETY (invariant): `vm` is the live per-thread VM pointer captured at
-    /// [`init`]; the VM owns the event loop / timer heap that drives this
-    /// scheduler and outlives it (JSC_BORROW). Never null.
+    /// `vm` is a `BackRef` (JSC_BORROW): the VM owns the event loop / timer
+    /// heap that drives this scheduler and outlives it.
     #[inline]
     fn vm(&self) -> &VirtualMachine {
-        // SAFETY: see doc comment — JSC_BORROW backref valid for `'_`.
-        unsafe { &*self.vm }
+        self.vm.get()
     }
 
     pub fn init(vm: *mut VirtualMachine) -> RefPtr<StatWatcherScheduler> {
@@ -163,7 +161,8 @@ impl StatWatcherScheduler {
                 callback: Self::work_pool_callback,
             },
             main_thread: thread::current().id(),
-            vm,
+            // JSC_BORROW: `vm` is the live per-thread VM (never null).
+            vm: BackRef::from(core::ptr::NonNull::new(vm).expect("vm")),
             watchers: WatcherQueue::default(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::StatWatcherScheduler),
             ref_count: ThreadSafeRefCount::init(),
@@ -288,7 +287,7 @@ impl StatWatcherScheduler {
                 ctx: core::ptr::NonNull::new(holder_ptr.cast()),
                 callback: update_timer,
             };
-            (*(*(*this).vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create(
+            (*this).vm.event_loop_shared().enqueue_task_concurrent(ConcurrentTask::create(
                 Task::init(core::ptr::addr_of_mut!((*holder_ptr).task)),
             ));
         }
@@ -385,9 +384,11 @@ impl StatWatcherScheduler {
 pub struct StatWatcher {
     pub next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
 
-    // JSC_BORROW per LIFETIMES.tsv — VM outlives the watcher. Stored raw so we
-    // can recover `&mut` for `rare_data()` without an `&self → &mut` UB cast.
-    ctx: *mut VirtualMachine,
+    // JSC_BORROW per LIFETIMES.tsv — VM outlives the watcher. `BackRef` gives
+    // safe `&VirtualMachine` projection (Deref) at every read site. Constructed
+    // via `From<NonNull>` from `bun_vm_ptr()` so `as_ptr()` retains write
+    // provenance for the one `rare_data()` (`&mut self`) call in `deinit`.
+    ctx: BackRef<VirtualMachine>,
 
     ref_count: ThreadSafeRefCount<StatWatcher>,
 
@@ -513,7 +514,7 @@ impl StatWatcher {
 
     #[inline]
     fn ctx_el_ctx(&self) -> bun_io::EventLoopCtx {
-        VirtualMachine::event_loop_ctx(self.ctx)
+        VirtualMachine::event_loop_ctx(self.ctx.as_ptr())
     }
 
     /// `self`'s address as `*mut Self` for `ConcurrentTask` ctx slots. The
@@ -526,13 +527,14 @@ impl StatWatcher {
     }
 
     pub fn event_loop(&self) -> *mut EventLoop {
-        // SAFETY: `ctx` is the live per-thread VM (JSC_BORROW).
-        unsafe { (*self.ctx).event_loop() }
+        // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
+        self.ctx.event_loop()
     }
 
     pub fn enqueue_task_concurrent(&self, task: *mut bun_event_loop::ConcurrentTask::ConcurrentTask) {
-        // SAFETY: `event_loop()` returns the VM's live self-pointer.
-        unsafe { (*self.event_loop()).enqueue_task_concurrent(task) };
+        // `event_loop_shared()` returns the VM's live `&EventLoop`;
+        // `enqueue_task_concurrent` takes `&self`.
+        self.ctx.event_loop_shared().enqueue_task_concurrent(task);
     }
 
     /// Copy the last stat by value.
@@ -563,16 +565,18 @@ impl StatWatcher {
         // all field mutation goes through Cell/JsCell/Atomic so `&` suffices.
         let this_ref = unsafe { &*this };
 
-        // SAFETY: `ctx` is the live per-thread VM (JSC_BORROW).
-        if unsafe { (*this_ref.ctx).test_isolation_enabled } {
-            // SAFETY: `ctx` is live; called on the JS thread.
-            unsafe { (*this_ref.ctx).rare_data() }
+        // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
+        if this_ref.ctx.test_isolation_enabled {
+            // SAFETY: `ctx` is live; called on the JS thread. `rare_data()` is
+            // `&mut self`, so go through the raw pointer (write provenance
+            // preserved — see `ctx` field doc).
+            unsafe { (*this_ref.ctx.as_ptr()).rare_data() }
                 .remove_stat_watcher_for_isolation(this.cast::<c_void>());
         }
         this_ref.persistent.set(false);
         if cfg!(debug_assertions) {
             if this_ref.poll_ref.get().is_active() {
-                debug_assert!(core::ptr::eq(VirtualMachine::get(), this_ref.ctx)); // We cannot unref() on another thread this way.
+                debug_assert!(core::ptr::eq(VirtualMachine::get(), this_ref.ctx.as_ptr())); // We cannot unref() on another thread this way.
             }
         }
         let el_ctx = this_ref.ctx_el_ctx();
@@ -831,7 +835,9 @@ impl StatWatcher {
         let vm = args.global_this.bun_vm_ptr();
         let this = Box::new(StatWatcher {
             next: bun_threading::Link::new(),
-            ctx: vm,
+            // JSC_BORROW: `vm` is the live per-thread VM (never null). `From<NonNull>`
+            // preserves the FFI write provenance for the `rare_data()` call in `deinit`.
+            ctx: BackRef::from(core::ptr::NonNull::new(vm).expect("vm")),
             ref_count: ThreadSafeRefCount::init(),
             closed: AtomicBool::new(false),
             path: alloc_file_path,

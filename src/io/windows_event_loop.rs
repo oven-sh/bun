@@ -502,10 +502,12 @@ impl Store {
 }
 
 pub struct Waker {
-    // Raw `*mut`, not `&'static mut`: `WindowsLoop::get()` hands out a shared
-    // process-global; multiple `Waker`s and the event-loop thread all alias it.
-    // Holding `&'static mut` would be UB the moment a second borrow exists.
-    loop_: *mut WindowsLoop,
+    // `BackRef<WindowsLoop>`: `WindowsLoop::get()` hands out the shared
+    // process-global singleton; the pointee strictly outlives every `Waker`.
+    // Safe `Deref` only — `wait`/`wake` route the raw `as_ptr()` straight to
+    // the C entry points so no `&mut WindowsLoop` is ever materialised (a
+    // concurrent `wake()` from a worker thread cannot alias).
+    loop_: bun_ptr::BackRef<WindowsLoop>,
 }
 // SAFETY: `Waker::wake()` only forwards to `WindowsLoop::wakeup()`, which is
 // the documented cross-thread wake path (uv_async_send under the hood).
@@ -516,7 +518,9 @@ impl Waker {
     pub fn init() -> Result<Waker, bun_core::Error> {
         // TODO(port): narrow error set
         Ok(Waker {
-            loop_: WindowsLoop::get(),
+            loop_: bun_ptr::BackRef::from(
+                ptr::NonNull::new(WindowsLoop::get()).expect("WindowsLoop::get() singleton"),
+            ),
         })
     }
 
@@ -526,9 +530,10 @@ impl Waker {
     /// against the shared global.
     #[inline]
     pub fn uv_loop(&self) -> *mut uv::Loop {
-        // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton; its
-        // `uv_loop` is set by `us_create_loop` and immutable for the process.
-        unsafe { (*self.loop_).uv_loop }
+        // `BackRef` deref is safe (pointee outlives holder); `uv_loop` is a
+        // `Copy` field set once by `us_create_loop` and immutable for the
+        // process.
+        self.loop_.uv_loop
     }
 
     // TODO(port): Zig used @compileError here; on Windows these must never be linked.
@@ -552,7 +557,7 @@ impl Waker {
         // a bare `*WindowsLoop` with no exclusivity; mirror that by calling
         // the C entry point with the raw pointer directly.
         // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton.
-        unsafe { waker_c::us_loop_run(self.loop_) };
+        unsafe { waker_c::us_loop_run(self.loop_.as_ptr()) };
     }
 
     pub fn wake(&self) {
@@ -561,7 +566,7 @@ impl Waker {
         // event-loop thread's borrow held across `us_loop_run`.
         // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
         // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
-        unsafe { waker_c::us_wakeup_loop(self.loop_) };
+        unsafe { waker_c::us_wakeup_loop(self.loop_.as_ptr()) };
     }
 }
 

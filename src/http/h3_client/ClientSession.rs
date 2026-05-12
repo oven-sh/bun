@@ -70,11 +70,24 @@ impl ClientSession {
             && strings::eql_long(&self.hostname, hostname, true)
     }
 
+    /// Mutable access to the live lsquic connection handle.
+    ///
+    /// INVARIANT: `qsocket` is set by `ClientContext::connect` once
+    /// `us_quic_connect_addr` returns and remains valid until
+    /// `callbacks::on_conn_close` (which sets `closed = true`). The
+    /// `quic::Socket` is an FFI-owned allocation distinct from `self`, so the
+    /// returned `&mut` does not alias `self`. HTTP-thread-only.
+    #[inline]
+    pub(super) fn qsocket_mut<'s>(&self) -> Option<&'s mut quic::Socket> {
+        // SAFETY: see INVARIANT above.
+        self.qsocket.map(|qs| unsafe { &mut *qs.as_ptr() })
+    }
+
     pub fn has_headroom(&self) -> bool {
         if self.closed {
             return false;
         }
-        let Some(qs) = self.qsocket else {
+        let Some(qs) = self.qsocket_mut() else {
             return self.pending.len() < 64;
         };
         // After handshake every pending entry has had make_stream called, so
@@ -84,8 +97,7 @@ impl ClientSession {
         if !self.handshake_done {
             return self.pending.len() < 64;
         }
-        // SAFETY: qsocket is valid while !closed (checked above).
-        unsafe { (*qs.as_ptr()).streams_avail() > 0 }
+        qs.streams_avail() > 0
     }
 
     /// Queue `client` for a stream on this connection. The lsquic stream is
@@ -104,8 +116,8 @@ impl ClientSession {
         self.ref_();
 
         if self.handshake_done {
-            // SAFETY: handshake_done implies qsocket is Some and valid.
-            unsafe { (*self.qsocket.unwrap().as_ptr()).make_stream() };
+            // handshake_done implies qsocket is Some and valid.
+            self.qsocket_mut().unwrap().make_stream();
         }
     }
 
@@ -123,9 +135,8 @@ impl ClientSession {
             if let crate::HTTPRequestBody::Stream(s) = &mut client.state.original_request_body {
                 s.ended = ended;
             }
-            if let Some(mut qs) = stream.qstream {
-                // SAFETY: qstream is a live lsquic stream handle until on_stream_close.
-                encode::drain_send_body(stream, unsafe { qs.as_mut() });
+            if let Some(qs) = stream.qstream_mut() {
+                encode::drain_send_body(stream, qs);
             }
             return;
         }
@@ -137,17 +148,16 @@ impl ClientSession {
             client_mut(cl).h3 = None;
         }
         st.client = None;
-        if let Some(qs) = st.qstream {
-            // SAFETY: qstream is a live lsquic stream handle until we null it below.
-            unsafe { *(*qs.as_ptr()).ext::<Stream>() = None };
+        let request_body_done = st.request_body_done;
+        if let Some(qs) = st.qstream_mut() {
+            *qs.ext::<Stream>() = None;
             // The success path can reach here while the request body is still
             // being written (server responded early). FIN would be a
             // content-length violation; RESET_STREAM(H3_REQUEST_CANCELLED)
             // is the correct "I'm abandoning this send half" so lsquic reaps
             // the stream instead of leaking it on the pooled session.
-            if !st.request_body_done {
-                // SAFETY: same as above.
-                unsafe { (*qs.as_ptr()).reset() };
+            if !request_body_done {
+                qs.reset();
             }
         }
         st.qstream = None;
@@ -215,8 +225,7 @@ impl ClientSession {
         // Formed only after detach() so its Unique tag is not invalidated by
         // detach()'s aliasing write to `client.h3`.
         let client = client_mut(client_ptr);
-        // SAFETY: leaked Box, process-lifetime; HTTP-thread only.
-        if !unsafe { (*ctx.as_ptr()).connect(client, &host, port) } {
+        if !ClientContext::as_mut(ctx).connect(client, &host, port) {
             client.fail_from_h2(err);
         }
         // `host` drops here (was `defer bun.default_allocator.free(host)`).
@@ -229,9 +238,9 @@ impl ClientSession {
         // entry can match — so locate first via raw-ptr reads, then act.
         let mut found: *mut Stream = core::ptr::null_mut();
         for &stream_ptr in self.pending.iter() {
-            // SAFETY: pending entries are live until detach(); read-only raw
-            // field access — no `&mut Stream` materialized.
-            let Some(cl) = (unsafe { (*stream_ptr).client }) else { continue };
+            // pending entries are live until detach(); `stream_ref` reads the
+            // Copy `client` field — no `&mut Stream` materialized.
+            let Some(cl) = stream_ref(stream_ptr).client else { continue };
             // `Stream.client` is a live backref while attached; `ParentRef`
             // reads the Copy `async_http_id` field via shared deref.
             if bun_ptr::ParentRef::from(cl).async_http_id == async_http_id {
@@ -374,9 +383,20 @@ pub(super) fn client_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPCli
 /// until `detach()` reclaims them; HTTP-thread only, so the `&mut` is the sole
 /// live borrow.
 #[inline]
-fn stream_mut<'a>(p: *mut Stream) -> &'a mut Stream {
+pub(super) fn stream_mut<'a>(p: *mut Stream) -> &'a mut Stream {
     // SAFETY: see fn doc.
     unsafe { &mut *p }
+}
+
+/// Shared-borrow a `*mut Stream` (a live `session.pending` entry) to read
+/// `Copy` fields without forming `&mut Stream`. Same liveness invariant as
+/// [`stream_mut`]; used where the caller holds an iterator over `pending` and
+/// only needs a read.
+#[inline]
+pub(super) fn stream_ref<'a>(p: *mut Stream) -> &'a Stream {
+    // SAFETY: see [`stream_mut`] — heap-allocated, live until `detach()`,
+    // HTTP-thread only. `&T` is `SharedReadOnly`.
+    unsafe { &*p }
 }
 
 fn apply_headers(

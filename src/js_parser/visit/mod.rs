@@ -261,9 +261,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let prev_require_to_convert_count = self.imports_to_convert_from_require.len();
                 let prev_macro_call_count = self.macro_call_count;
                 let orig_dead = self.is_control_flow_dead;
-                // PORT NOTE: `replacement` is a raw `*const` (Zig `?*ReplaceableExport`) so the
+                // PORT NOTE: `replacement` is a `BackRef` (Zig `?*ReplaceableExport`) so the
                 // borrow of `self.options` does not survive across `visit_expr_in_out(&mut self)`.
-                let mut replacement: Option<*const crate::parser::Runtime::ReplaceableExport> = None;
+                // `BackRef` invariant: `self.options.features.replace_exports` is never mutated
+                // during the visit pass, so the entry strictly outlives this loop body.
+                let mut replacement: Option<bun_ptr::BackRef<crate::parser::Runtime::ReplaceableExport>> = None;
                 if IS_POSSIBLY_DECL_TO_REMOVE {
                     if let BData::BIdentifier(id) = decl.binding.data {
                         let id_ref = id.r#ref;
@@ -273,12 +275,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             .features
                             .replace_exports
                             .get_ptr(name)
-                            .map(|r| {
-                                (
-                                    std::ptr::from_ref::<crate::parser::Runtime::ReplaceableExport>(r),
-                                    r.is_replace(),
-                                )
-                            });
+                            .map(|r| (bun_ptr::BackRef::new(r), r.is_replace()));
                         if let Some((ptr, is_replace)) = found {
                             replacement = Some(ptr);
                             if self.options.features.dead_code_elimination && !is_replace {
@@ -370,9 +367,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // blocked_on: P::replace_decl_and_possibly_remove is -gated
                             //   (P.rs); un-gate this call when it lands.
                             {
-                                // SAFETY: _ptr points into self.options.features.replace_exports,
+                                // `BackRef::get` — entry lives in `self.options.features.replace_exports`,
                                 // which is not mutated during the visit pass.
-                                let replacer = unsafe { &*_ptr };
+                                let replacer = _ptr.get();
                                 if !self.replace_decl_and_possibly_remove(decl, replacer) {
                                     continue 'outer;
                                 }
@@ -402,14 +399,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         .features
                         .replace_exports
                         .get_ptr(name)
-                        .map(|r| std::ptr::from_ref::<crate::parser::Runtime::ReplaceableExport>(r))
+                        .map(bun_ptr::BackRef::new)
                     {
                         // blocked_on: P::replace_decl_and_possibly_remove is -gated
                         //   (P.rs); un-gate this call when it lands.
                         {
-                            // SAFETY: _ptr points into self.options.features.replace_exports,
+                            // `BackRef::get` — entry lives in `self.options.features.replace_exports`,
                             // which is not mutated during the visit pass.
-                            let replacer = unsafe { &*_ptr };
+                            let replacer = _ptr.get();
                             if !self.replace_decl_and_possibly_remove(decl, replacer) {
                                 let is_after = self.vis_scope().is_after_const_local_prefix;
                                 self.visit_decl(decl, false, was_const && !is_after, false);

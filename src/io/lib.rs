@@ -1736,24 +1736,44 @@ pub mod waker {
 
     #[cfg(windows)]
     pub struct WindowsWaker {
-        pub loop_: *mut bun_uws_sys::WindowsLoop,
+        /// Process-global `WindowsLoop` singleton. `BackRef` invariant (pointee
+        /// outlives holder) holds trivially: the loop is never freed. `None`
+        /// only between [`placeholder`] and [`init`]; every dispatch path
+        /// (`wake`/`wait`/`uv_loop`) unwraps and would have UB-derefed the old
+        /// raw null anyway.
+        ///
+        /// [`placeholder`]: Self::placeholder
+        /// [`init`]: Self::init
+        pub loop_: Option<bun_ptr::BackRef<bun_uws_sys::WindowsLoop>>,
     }
 
     #[cfg(windows)]
     impl WindowsWaker {
         /// Stand-in until `init()` runs (e.g. a `BundleThread` allocated before
-        /// its real waker is created). `loop_` is null and must never be
+        /// its real waker is created). `loop_` is `None` and must never be
         /// dereferenced — overwrite via `ptr::write` before first
         /// `wake()`/`wait()`/`uv_loop()`. Mirrors `LinuxWaker::placeholder` /
         /// `KEventWaker::placeholder` so cross-platform call sites don't fall
-        /// back to `mem::zeroed()` (UB for raw-ptr fields that are later
-        /// dereferenced unconditionally).
+        /// back to `mem::zeroed()` (UB for the niche-optimised `Option<BackRef>`).
         pub const fn placeholder() -> Self {
-            Self { loop_: core::ptr::null_mut() }
+            Self { loop_: None }
         }
 
         pub fn init() -> Result<Self, bun_core::Error> {
-            Ok(Self { loop_: bun_uws_sys::WindowsLoop::get() })
+            Ok(Self {
+                loop_: Some(bun_ptr::BackRef::from(
+                    core::ptr::NonNull::new(bun_uws_sys::WindowsLoop::get())
+                        .expect("WindowsLoop::get() singleton"),
+                )),
+            })
+        }
+
+        /// Unwrap the back-reference. Panics on a `placeholder()` waker, which
+        /// is the same precondition the previous raw-pointer deref carried
+        /// (just loud instead of UB).
+        #[inline]
+        fn loop_ref(&self) -> bun_ptr::BackRef<bun_uws_sys::WindowsLoop> {
+            self.loop_.expect("WindowsWaker used before init()")
         }
 
         pub fn wait(&self) {
@@ -1767,7 +1787,7 @@ pub mod waker {
             // ever formed.
             // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton,
             // non-null after `init()`.
-            unsafe { bun_uws_sys::loop_::us_loop_run(self.loop_) };
+            unsafe { bun_uws_sys::loop_::us_loop_run(self.loop_ref().as_ptr()) };
         }
 
         pub fn wake(&self) {
@@ -1777,7 +1797,7 @@ pub mod waker {
             // thread-safe C wake (`uv_async_send`) instead.
             // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
             // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
-            unsafe { bun_uws_sys::loop_::us_wakeup_loop(self.loop_) };
+            unsafe { bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_ptr()) };
         }
 
         /// Raw libuv `uv_loop_t*` underlying this waker's `WindowsLoop`.
@@ -1789,10 +1809,9 @@ pub mod waker {
         /// chain (BundleThread.zig:79).
         #[inline]
         pub fn uv_loop(&self) -> *mut bun_sys::windows::libuv::Loop {
-            // SAFETY: `loop_` is the process-global `WindowsLoop` singleton,
-            // never null after `init()`, never freed; `uv_loop` is set by
-            // C `us_create_loop` and valid for the loop's lifetime.
-            unsafe { (*self.loop_).uv_loop }
+            // `BackRef` deref is safe (process-lifetime singleton); `uv_loop`
+            // is a `Copy` field set once by C `us_create_loop`.
+            self.loop_ref().uv_loop
         }
     }
 }

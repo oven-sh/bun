@@ -2,6 +2,7 @@ use core::ffi::CStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::{ZBox, ZStr};
+use bun_ptr::BackRef;
 use bun_paths::{resolve_path, PathBuffer};
 
 use crate::shell::builtin::{Builtin, IoKind, Kind};
@@ -228,7 +229,7 @@ impl Mv {
                             target: ZBox::from_bytes(target),
                             target_fd: maybe_fd,
                             cwd,
-                            error_signal: core::ptr::null(),
+                            error_signal: None,
                             err: None,
                             task: ShellTask::new(evtloop),
                         }));
@@ -247,9 +248,9 @@ impl Mv {
                     if let MvState::Executing { error_signal, tasks, .. } =
                         &mut Self::state_mut(interp, cmd).state
                     {
-                        let sig = std::ptr::from_ref::<AtomicBool>(error_signal);
+                        let sig = BackRef::new(&*error_signal);
                         for t in tasks.iter_mut() {
-                            t.error_signal = sig;
+                            t.error_signal = Some(sig);
                             t.task.interp = interp_ptr;
                             // SAFETY: `t` is a `Box<ShellMvBatchedTask>` held by
                             // `MvState::Executing` for the worker call's lifetime.
@@ -461,8 +462,12 @@ pub struct ShellMvBatchedTask {
     pub target: ZBox,
     pub target_fd: Option<bun_sys::Fd>,
     pub cwd: bun_sys::Fd,
-    /// Points at `MvState::Executing::error_signal`.
-    pub error_signal: *const AtomicBool,
+    /// Back-reference into `MvState::Executing::error_signal`. The owning
+    /// `MvState` outlives every batched task (tasks are joined / counted in
+    /// `batched_move_task_done` before the state transitions), so the
+    /// `BackRef` invariant holds. `None` only between construction and
+    /// scheduling — never observed by `run_from_thread_pool`.
+    pub error_signal: Option<BackRef<AtomicBool>>,
     pub err: Option<bun_sys::Error>,
     pub task: ShellTask,
 }
@@ -535,10 +540,9 @@ impl ShellMvBatchedTask {
         // the multi-source-into-non-directory case before scheduling.
         let dir = self.target_fd.expect("target_fd set for multi-source mv");
         for i in 0..self.sources.len() {
-            // SAFETY: error_signal points into MvState which outlives the
-            // task; null only before scheduling.
-            if !self.error_signal.is_null()
-                && unsafe { &*self.error_signal }.load(Ordering::SeqCst)
+            if self
+                .error_signal
+                .is_some_and(|sig| sig.load(Ordering::SeqCst))
             {
                 // Another batch hit an error — abort the move loop, but still
                 // post back to the main thread so `tasks_done` reaches

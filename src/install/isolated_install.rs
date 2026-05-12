@@ -1863,7 +1863,6 @@ pub fn install_isolated_packages(
     };
 
     {
-        let mut root_node: *mut ProgressNode = core::ptr::null_mut();
         // TODO(port): Progress.Node locals are conditionally initialized in Zig;
         // model with Option in Phase B.
         let mut download_node: ProgressNode = ProgressNode::default();
@@ -1877,14 +1876,14 @@ pub fn install_isolated_packages(
 
         if manager.options.log_level.show_progress() {
             progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-            root_node = progress.start(b"", 0);
-            // SAFETY: root_node was just assigned from progress.start() above and is
-            // non-null inside this `log_level.show_progress()` branch.
-            download_node = unsafe { (*root_node).start(ProgressStrings::download(), 0) };
-            // SAFETY: same root_node validity as above.
-            install_node = unsafe { (*root_node).start(ProgressStrings::install(), store.entries.len()) };
-            // SAFETY: same root_node validity as above.
-            scripts_node = unsafe { (*root_node).start(ProgressStrings::script(), 0) };
+            // `Progress::start` returns `&mut Node` (points into `progress.root`);
+            // keep it as a safe reborrow — it's only used to spawn the three
+            // children below and is dead before the `manager.*` writes that
+            // follow (NLL), so no raw-ptr round-trip is needed.
+            let root_node = progress.start(b"", 0);
+            download_node = root_node.start(ProgressStrings::download(), 0);
+            install_node = root_node.start(ProgressStrings::install(), store.entries.len());
+            scripts_node = root_node.start(ProgressStrings::script(), 0);
 
             manager.downloads_node = None;
             manager.scripts_node = Some(core::ptr::NonNull::from(&mut scripts_node));

@@ -1391,6 +1391,83 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.send_without_auto_flusher(buf)
     }
 
+    /// `self.send(&self.readable_slice()[from..])` without laundering a slice
+    /// of `self.buffer` through `from_raw_parts` to dodge the `&mut self`
+    /// borrow. Mirrors `send_without_auto_flusher` but re-slices `self.buffer`
+    /// after each `&mut self` step; `unregister_auto_flusher` and the
+    /// `on_first_write` callback (RequestContext.renderMetadata) only touch
+    /// uWS response state, never `self.buffer`/`self.offset`, so the re-slice
+    /// observes the same bytes the laundered slice would have.
+    fn send_readable(&mut self, from: usize) -> bool {
+        self.unregister_auto_flusher();
+        self.send_readable_without_auto_flusher(from)
+    }
+
+    fn send_readable_without_auto_flusher(&mut self, from: usize) -> bool {
+        debug_assert!(!self.done);
+        let base = self.offset as usize + from;
+
+        let Some(res) = self.any_res() else {
+            bun_core::scoped_log!(
+                HTTPServerWritableLog,
+                "send: {} bytes (backpressure: {})",
+                self.buffer.len().saturating_sub(base),
+                self.has_backpressure
+            );
+            return false;
+        };
+        // `res` is `Copy` (raw uWS handle); see PORT NOTE in
+        // `send_without_auto_flusher` re: holding it across `on_first_write`.
+
+        if self.requested_end && !res.state().is_http_write_called() {
+            self.handle_first_write_if_necessary();
+            let end_len = self.end_len;
+            let success = res.try_end(&self.buffer[base..], end_len, false);
+            if success {
+                self.has_backpressure = false;
+                self.handle_wrote(end_len);
+            } else if self.res.is_some() {
+                self.has_backpressure = true;
+                res.on_writable::<Self, _>(
+                    |this: *mut Self, off, _r| {
+                        // SAFETY: `this` was registered as a live `*mut Self`;
+                        // uWS invokes the callback while the sink is alive.
+                        unsafe { (*this).on_writable(off, core::ptr::null_mut()) }
+                    },
+                    std::ptr::from_mut::<Self>(self),
+                );
+            }
+            bun_core::scoped_log!(
+                HTTPServerWritableLog,
+                "send: {} bytes (backpressure: {})",
+                self.buffer.len().saturating_sub(base),
+                self.has_backpressure
+            );
+            return success;
+        }
+        // clean this so we know when its relevant or not
+        self.end_len = 0;
+        // we clear the onWritable handler so uWS can handle the backpressure for us
+        res.clear_on_writable();
+        self.handle_first_write_if_necessary();
+        let buf_len = self.buffer.len().saturating_sub(base);
+        if self.requested_end {
+            res.end(&self.buffer[base..], false);
+            self.has_backpressure = false;
+        } else {
+            self.has_backpressure =
+                matches!(res.write(&self.buffer[base..]), uws::WriteResult::Backpressure(_));
+        }
+        self.handle_wrote(buf_len);
+        bun_core::scoped_log!(
+            HTTPServerWritableLog,
+            "send: {} bytes (backpressure: {})",
+            buf_len,
+            self.has_backpressure
+        );
+        true
+    }
+
     fn readable_slice(&self) -> &[u8] {
         // Zig `this.buffer.ptr[this.offset..this.buffer.len]`; `handle_wrote`
         // maintains `offset <= buffer.len()`.
@@ -1427,10 +1504,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 return true;
             }
         } else {
-            // SAFETY: chunk slice is valid until send() mutates buffer; copy ptr/len for FFI call
-            let chunk_ptr = unsafe { self.readable_slice().as_ptr().add(chunk_start) };
-            let chunk = unsafe { core::slice::from_raw_parts(chunk_ptr, chunk_len) };
-            if !self.send(chunk) {
+            if !self.send_readable(chunk_start) {
                 // if we were unable to send it, retry
                 return false;
             }
@@ -1531,12 +1605,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return 0;
         }
 
-        // PORT NOTE: reshaped for borrowck — capture ptr/len before &mut self.send()
-        let slice_ptr = self.readable_slice().as_ptr();
-        // SAFETY: slice valid for duration of send (buffer not freed until handle_wrote at most resets len)
-        let slice = unsafe { core::slice::from_raw_parts(slice_ptr, slice_len) };
-        let success = self.send(slice);
-        if success {
+        if self.send_readable(0) {
             return slice_len;
         }
 
@@ -1570,12 +1639,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         if !self.has_backpressure_and_is_try_end() {
             let slice_len = self.readable_slice().len();
             debug_assert!(slice_len > 0);
-            // PORT NOTE: reshaped for borrowck
-            let slice_ptr = self.readable_slice().as_ptr();
-            // SAFETY: see flush_no_wait
-            let slice = unsafe { core::slice::from_raw_parts(slice_ptr, slice_len) };
-            let success = self.send(slice);
-            if success {
+            if self.send_readable(0) {
                 return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                     global_this,
                     JSValue::js_number(slice_len as f64),
@@ -1635,12 +1699,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             if self.buffer.write(bytes).is_err() {
                 return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
-            // PORT NOTE: reshaped for borrowck
-            let slice_ptr = self.readable_slice().as_ptr();
-            let slice_len = self.readable_slice().len();
-            // SAFETY: see flush_no_wait
-            let slice = unsafe { core::slice::from_raw_parts(slice_ptr, slice_len) };
-            if self.send(slice) {
+            if self.send_readable(0) {
                 return Writable::Owned(len);
             }
         } else {
@@ -1694,12 +1753,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             }
 
             if do_send {
-                // PORT NOTE: reshaped for borrowck
-                let slice_ptr = self.readable_slice().as_ptr();
-                let slice_len = self.readable_slice().len();
-                // SAFETY: see flush_no_wait
-                let slice = unsafe { core::slice::from_raw_parts(slice_ptr, slice_len) };
-                if self.send(slice) {
+                if self.send_readable(0) {
                     return Writable::Owned(len);
                 }
             }
@@ -1710,12 +1764,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             if self.buffer.write_latin1(bytes).is_err() {
                 return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
-            // PORT NOTE: reshaped for borrowck
-            let slice_ptr = self.readable_slice().as_ptr();
-            let slice_len = self.readable_slice().len();
-            // SAFETY: see flush_no_wait
-            let readable = unsafe { core::slice::from_raw_parts(slice_ptr, slice_len) };
-            if self.send(readable) {
+            if self.send_readable(0) {
                 return Writable::Owned(len);
             }
         } else {
@@ -1759,11 +1808,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         let readable_len = self.readable_slice().len();
         if readable_len >= self.high_water_mark as usize || self.has_backpressure() {
-            // PORT NOTE: reshaped for borrowck
-            let slice_ptr = self.readable_slice().as_ptr();
-            // SAFETY: see flush_no_wait
-            let readable = unsafe { core::slice::from_raw_parts(slice_ptr, readable_len) };
-            if self.send(readable) {
+            if self.send_readable(0) {
                 return Writable::Owned(written as BlobSizeType);
             }
         }
@@ -1833,11 +1878,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.end_len = readable_len;
 
         if readable_len > 0 {
-            // PORT NOTE: reshaped for borrowck
-            let slice_ptr = self.readable_slice().as_ptr();
-            // SAFETY: see flush_no_wait
-            let readable = unsafe { core::slice::from_raw_parts(slice_ptr, readable_len) };
-            if !self.send(readable) {
+            if !self.send_readable(0) {
                 self.pending_flush = Some(JSPromise::create(global_this));
                 self.global_this = Some(BackRef::new(global_this));
                 // SAFETY: just created
@@ -1908,11 +1949,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return false;
         }
 
-        // PORT NOTE: reshaped for borrowck
-        let slice_ptr = self.readable_slice().as_ptr();
-        // SAFETY: see flush_no_wait
-        let readable = unsafe { core::slice::from_raw_parts(slice_ptr, readable_len) };
-        if !self.send_without_auto_flusher(readable) {
+        if !self.send_readable_without_auto_flusher(0) {
             self.auto_flusher.registered = true;
             return true;
         }

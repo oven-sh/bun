@@ -1501,10 +1501,10 @@ where
         let arg = iter
             .next_eat()
             .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing Request object")))?;
-        let request = <Request as bun_jsc::JsClass>::from_js(arg)
+        let request = arg
+            .as_class_ref::<Request>()
             .ok_or_else(|| global.throw_invalid_arguments(format_args!("Expected Request object")))?;
-        // SAFETY: from_js returns a live *mut Request
-        self.request_ip(unsafe { &*request })
+        self.request_ip(request)
     }
 
     /// `pub const doReload = onReload`

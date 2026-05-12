@@ -371,18 +371,22 @@ impl MySQLQuery {
             if entry.found_existing {
                 let stmt: *mut MySQLStatement = *entry.value_ptr;
                 // SAFETY: `found_existing` ⇒ the map already holds a live, ref-counted
-                // `*mut MySQLStatement`; this thread is the only mutator.
-                if unsafe { (*stmt).status } == my_sql_statement::Status::Failed {
-                    // SAFETY: same as above.
-                    let error_response = unsafe { (*stmt).error_response.to_js(global_object) };
+                // `*mut MySQLStatement` (separate heap allocation, never aliases
+                // `*self`); this thread is the only mutator. Every access in this
+                // branch is a shared read (`status`, `error_response.to_js`,
+                // `ref_()` are `&self`), so a single `ParentRef` deref covers all
+                // three former per-site raw `(*stmt).…` derefs.
+                let stmt_ref =
+                    bun_ptr::ParentRef::from(unsafe { core::ptr::NonNull::new_unchecked(stmt) });
+                if stmt_ref.status == my_sql_statement::Status::Failed {
+                    let error_response = stmt_ref.error_response.to_js(global_object);
                     // If the statement failed, we need to throw the error
                     let _ = global_object.throw_value(error_response);
                     return Err(bun_core::err!("JSError"));
                 }
                 // Zig: `this.#statement = stmt; stmt.ref();`
                 self.statement = stmt;
-                // SAFETY: `stmt` is a live boxed `MySQLStatement` (owned by the map).
-                unsafe { (*stmt).ref_() };
+                stmt_ref.ref_();
                 drop(signature);
                 signature = Signature::default();
                 let _ = signature; // matches Zig reassign-to-empty; silences unused.
@@ -402,13 +406,18 @@ impl MySQLQuery {
         }
         let stmt: *mut MySQLStatement = self.statement;
         debug_assert!(!stmt.is_null(), "set above");
-        // SAFETY: `stmt` is non-null and kept alive by the intrusive ref in
-        // `self.statement`; this thread is the only mutator.
-        match unsafe { (*stmt).status } {
+        // SAFETY: `stmt` is non-null (debug-asserted) and kept alive by the
+        // intrusive ref in `self.statement`; separate heap allocation (never
+        // aliases `*self`). `ParentRef` collapses the read-only `(*stmt).status`
+        // / `(*stmt).error_response` derefs below into one safe `Deref`; the
+        // single write site (`.Pending` arm) keeps its own `unsafe` because
+        // `status` is a plain field (no interior mutability).
+        let stmt_ref =
+            bun_ptr::ParentRef::from(unsafe { core::ptr::NonNull::new_unchecked(stmt) });
+        match stmt_ref.status {
             my_sql_statement::Status::Failed => {
                 debug!("failed");
-                // SAFETY: `stmt` is live (intrusive ref held by `self.statement`).
-                let error_response = unsafe { (*stmt).error_response.to_js(global_object) };
+                let error_response = stmt_ref.error_response.to_js(global_object);
                 // If the statement failed, we need to throw the error
                 let _ = global_object.throw_value(error_response);
                 return Err(bun_core::err!("JSError"));

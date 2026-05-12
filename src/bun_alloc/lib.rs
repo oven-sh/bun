@@ -959,11 +959,25 @@ impl String {
         value: StringImpl { zig_string: ZigString::EMPTY },
     };
 
+    /// Borrow the live `WTF::StringImpl` backing this string.
+    ///
+    /// Centralises the union-field read + raw-ptr deref that `to_zig_string` /
+    /// `length` / `is_8bit` each open-coded. Callers branch on
+    /// `self.tag == WTFStringImpl` first (debug-asserted).
+    #[inline(always)]
+    fn wtf_impl(&self) -> &WTFStringImplStruct {
+        debug_assert_eq!(self.tag, Tag::WTFStringImpl);
+        // SAFETY: `tag == WTFStringImpl` ⇒ `wtf_string_impl` is the active
+        // union field and a non-null, live `*mut WTFStringImplStruct`
+        // (refcount ≥ 1 for the `String`'s lifetime).
+        unsafe { &*self.value.wtf_string_impl }
+    }
+
     #[inline]
     pub fn to_zig_string(&self) -> ZigString {
         match self.tag {
             Tag::StaticZigString | Tag::ZigString => unsafe { self.value.zig_string },
-            Tag::WTFStringImpl => unsafe { (*self.value.wtf_string_impl).to_zig_string() },
+            Tag::WTFStringImpl => self.wtf_impl().to_zig_string(),
             _ => ZigString::EMPTY,
         }
     }
@@ -971,8 +985,7 @@ impl String {
     #[inline]
     pub fn length(&self) -> usize {
         if self.tag == Tag::WTFStringImpl {
-            // SAFETY: tag == WTFStringImpl ⇒ non-null.
-            unsafe { (*self.value.wtf_string_impl).length() as usize }
+            self.wtf_impl().length() as usize
         } else {
             self.to_zig_string().length()
         }
@@ -983,7 +996,7 @@ impl String {
     #[inline]
     pub fn is_8bit(&self) -> bool {
         match self.tag {
-            Tag::WTFStringImpl => unsafe { (*self.value.wtf_string_impl).is_8bit() },
+            Tag::WTFStringImpl => self.wtf_impl().is_8bit(),
             Tag::ZigString => unsafe { !self.value.zig_string.is_16bit() },
             _ => true,
         }

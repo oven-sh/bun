@@ -125,14 +125,12 @@ pub fn bun_create_object_url(
     if arguments.len < 1 {
         return Err(global_object.throw_not_enough_arguments("createObjectURL", 1, arguments.len));
     }
-    let Some(blob) = arguments.ptr[0].as_::<Blob>() else {
+    let Some(blob) = arguments.ptr[0].as_class_ref::<Blob>() else {
         return Err(global_object
             .throw_invalid_arguments(format_args!("createObjectURL expects a Blob object")));
     };
     let registry = ObjectURLRegistry::singleton();
-    // SAFETY: `JSValue::as_::<Blob>()` returns a non-null `*mut Blob` backed by
-    // the JS object's wrapped native cell, valid for the duration of this call.
-    let uuid = registry.register(global_object.bun_vm_ptr(), unsafe { &*blob });
+    let uuid = registry.register(global_object.bun_vm_ptr(), blob);
     let mut str = bun_str::String::create_format(format_args!("blob:{}", uuid));
     str.transfer_to_js(global_object)
 }

@@ -714,6 +714,19 @@ pub mod codegen {
                 let p = unsafe { $from_js(v) };
                 if p.is_null() { None } else { Some(p.cast::<$payload>()) }
             }
+            /// [`from_js`] as a [`ParentRef`] — encapsulates the per-call-site
+            /// raw-pointer backref deref. The payload is the live `m_ctx`
+            /// of the JS wrapper `v`, which is GC-rooted by the caller's
+            /// `CallFrame` for the duration of the host call, so the
+            /// `ParentRef` invariant (pointee outlives holder) holds for any
+            /// stack-scoped use.
+            pub fn from_js_ref(v: JSValue) -> Option<::bun_ptr::ParentRef<$payload>> {
+                // `from_js` already filtered null → `NonNull::new` cannot fail;
+                // `and_then` keeps this branch-free in the `None` case.
+                from_js(v)
+                    .and_then(core::ptr::NonNull::new)
+                    .map(::bun_ptr::ParentRef::from)
+            }
             pub fn from_js_direct(v: JSValue) -> Option<*mut $payload> {
                 // SAFETY: codegen returns null when `v` is not the wrapper type.
                 let p = unsafe { $from_js_direct(v) };

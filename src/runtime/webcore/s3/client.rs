@@ -597,6 +597,21 @@ impl S3UploadStreamWrapper {
         }
     }
 
+    /// Exclusive borrow of the `MultiPartUpload` this wrapper holds a counted
+    /// ref on (released in `Drop`). Detached lifetime so the borrow does not
+    /// conflict with disjoint `&mut self` field access at call sites — `task`
+    /// is a separate heap allocation, not inside `*self`.
+    ///
+    /// SAFETY (encapsulated): `task` is set once at construction from
+    /// `MultiPartUpload::create` and intrusive-ref'd for this wrapper's entire
+    /// lifetime; single-threaded JS — no overlapping `&mut` from elsewhere.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn task_mut<'r>(&self) -> &'r mut MultiPartUpload {
+        // SAFETY: see doc comment — counted ref keeps pointee live; sole writer.
+        unsafe { &mut *self.task }
+    }
+
     pub fn on_writable(task: &mut MultiPartUpload, self_: &mut Self, _: u64) {
         bun_output::scoped_log!(
             S3UploadStream,
@@ -617,8 +632,7 @@ impl S3UploadStreamWrapper {
 
     pub fn write_request_data(&mut self, data: &[u8]) -> ResumableSinkBackpressure {
         bun_output::scoped_log!(S3UploadStream, "writeRequestData {}", data.len());
-        // SAFETY: `task` is live (intrusive-ref'd) for the lifetime of this wrapper.
-        unsafe { (*self.task).write_bytes(data, false) }.expect("OOM")
+        self.task_mut().write_bytes(data, false).expect("OOM")
     }
 
     pub fn write_end_request(&mut self, err: Option<JSValue>) {
@@ -638,17 +652,15 @@ impl S3UploadStreamWrapper {
                 let _ = self.end_promise.reject(&self.global, Ok(js_err)); // TODO: properly propagate exception upwards
                 self.end_promise = bun_jsc::JSPromiseStrong::empty();
             }
-            // SAFETY: `task` is live (intrusive-ref'd) for the lifetime of this wrapper.
-            if !unsafe { (*self.task).ended } {
-                let _ = unsafe { &mut *self.task }.fail(Error::S3Error {
+            if !self.task_mut().ended {
+                let _ = self.task_mut().fail(Error::S3Error {
                     code: b"UnknownError",
                     message: b"ReadableStream ended with an error",
                 }); // TODO: properly propagate exception upwards
             }
         } else {
-            // SAFETY: `task` is live (intrusive-ref'd) for the lifetime of this wrapper.
             // Zig spec: `_ = bun.handleOom(this.task.writeBytes("", true))` — abort on OOM.
-            let _ = unsafe { &mut *self.task }.write_bytes(b"", true).expect("OOM");
+            let _ = self.task_mut().write_bytes(b"", true).expect("OOM");
         }
     }
 

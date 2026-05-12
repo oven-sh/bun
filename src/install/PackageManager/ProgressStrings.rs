@@ -134,33 +134,25 @@ impl PackageManager {
             ProgressStrings::DOWNLOAD_NO_EMOJI_.as_bytes(),
             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
         );
-        // SAFETY: `node` points into `self.progress.root`, live for as long as
-        // `self.progress` is.
-        unsafe {
-            (*node).set_estimated_total_items(
-                (self.total_tasks + self.extracted_count) as usize,
-            );
-            (*node).set_completed_items(
-                (self.total_tasks - self.pending_task_count()) as usize,
-            );
-            (*node).activate();
-        }
+        // `downloads_node` was just stashed above; route through the accessor
+        // (single unsafe site) instead of re-dereffing the raw `node` here.
+        let dn = self.downloads_node_mut();
+        dn.set_estimated_total_items((self.total_tasks + self.extracted_count) as usize);
+        dn.set_completed_items((self.total_tasks - self.pending_task_count()) as usize);
+        dn.activate();
         self.progress.refresh();
     }
 
     pub fn end_progress_bar(&mut self) {
-        let Some(downloads_node) = self.downloads_node else {
+        if self.downloads_node.is_none() {
             return;
-        };
-        // SAFETY: `downloads_node` was stashed from `self.progress.start()` and
-        // remains valid until `self.progress` is reset below.
-        unsafe {
-            let total = (*downloads_node)
-                .unprotected_estimated_total_items
-                .load(Ordering::Relaxed);
-            (*downloads_node).set_estimated_total_items(total);
-            (*downloads_node).set_completed_items(total);
         }
+        // Route through the accessor (single unsafe site) instead of a raw
+        // `(*downloads_node)` deref here.
+        let dn = self.downloads_node_mut();
+        let total = dn.unprotected_estimated_total_items.load(Ordering::Relaxed);
+        dn.set_estimated_total_items(total);
+        dn.set_completed_items(total);
         self.progress.refresh();
         self.progress.root.end();
         self.progress = Default::default();

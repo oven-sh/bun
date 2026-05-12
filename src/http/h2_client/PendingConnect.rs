@@ -38,6 +38,20 @@ impl PendingConnect {
         Box::new(init)
     }
 
+    /// Upgrade a `waiters` back-ref to `&mut HTTPClient`.
+    ///
+    /// INVARIANT: every entry in `waiters` is a back-ref to a live
+    /// `HTTPClient` embedded in its `AsyncHTTP`, registered via
+    /// `HTTPContext::connect` and removed before that client's terminal
+    /// callback. HTTP-thread-only, so the returned `&mut` is the sole live
+    /// borrow. Centralises the raw `NonNull::as_mut` upgrade at the two
+    /// drain sites (`abort_h2_waiter` / `resolve_pending_h2`).
+    #[inline]
+    pub fn waiter_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPClient<'static> {
+        // SAFETY: see INVARIANT above.
+        unsafe { &mut *p.as_ptr() }
+    }
+
     pub fn matches(
         &self,
         hostname: &[u8],

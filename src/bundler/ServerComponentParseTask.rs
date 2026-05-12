@@ -107,8 +107,10 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     let result = bun_core::heap::into_raw(result);
 
     // Zig matched `worker.ctx.loop().*` on `AnyEventLoop::{js, mini}`.
-    // SAFETY: `worker.ctx` is a live BACKREF.
-    let r#loop = *unsafe { &mut *(worker.ctx as *mut BundleV2<'static>) }.r#loop();
+    // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); `linker.r#loop` is
+    // a live AnyEventLoop owned by the BundleThread / runtime for the duration
+    // of the bundle.
+    let r#loop = worker.ctx.linker.r#loop;
     worker.unget();
     let Some(any_loop) = r#loop else {
         // No event loop registered (e.g., synchronous CLI bundling) — run inline.

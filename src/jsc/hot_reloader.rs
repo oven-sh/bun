@@ -848,13 +848,23 @@ where
         }
     }
 
+    /// Single audited `&mut Ctx` reborrow through the [`BackRef`]. The owning
+    /// context outlives this reloader (set once at init, never reassigned —
+    /// see field doc), and `&mut self` ensures no other reborrow through this
+    /// reloader is live. Centralizes the per-call-site `BackRef::get_mut`
+    /// deref previously open-coded at each `bust_dir_cache` site.
+    #[inline]
+    fn ctx_mut(&mut self) -> &mut Ctx {
+        // SAFETY: BACKREF invariant — ctx outlives the reloader; `&mut self`
+        // gives exclusivity for the returned borrow's duration.
+        unsafe { self.ctx.get_mut() }
+    }
+
     pub fn get_context(&mut self) -> &mut Watcher {
         // PORT NOTE: Zig branched three ways on `@TypeOf(this.ctx.bun_watcher)`
         // (ImportWatcher / Option / bare). Folded into `HotReloaderCtx::bun_watcher_mut`;
         // each impl picks the right unwrap.
-        // SAFETY: `&mut` through the BACKREF — ctx outlives the reloader and
-        // no other borrow of it is live here.
-        unsafe { self.ctx.get_mut() }.bun_watcher_mut()
+        self.ctx_mut().bun_watcher_mut()
     }
 
     #[inline(never)]
@@ -983,9 +993,8 @@ where
                         // on windows we receive file events for all items affected by a directory change
                         // so we only need to clear the directory cache. all other effects will be handled
                         // by the file events
-                        // SAFETY: `&mut` through the BACKREF (Zig held `*Ctx`);
-                        // ctx outlives the reloader.
-                        let _ = unsafe { &mut *self.ctx.as_ptr() }
+                        let _ = self
+                            .ctx_mut()
                             .bust_dir_cache(strings::paths::without_trailing_slash_windows_path(
                                 file_path,
                             ));
@@ -1110,9 +1119,7 @@ where
                             }
                         }
 
-                        // SAFETY: `&mut` through the BACKREF (Zig held `*Ctx`);
-                        // ctx outlives the reloader.
-                        let _ = unsafe { &mut *self.ctx.as_ptr() }.bust_dir_cache(
+                        let _ = self.ctx_mut().bust_dir_cache(
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
 

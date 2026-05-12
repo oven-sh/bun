@@ -2017,16 +2017,19 @@ impl JSValue {
         callback: ForEachPropertyCallback,
     ) -> JsResult<()> {
         unsafe extern "C" {
-            fn JSC__JSValue__forEachProperty(
+            // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle
+            // (`&` is ABI-identical to non-null `*const`); `ctx` is an opaque
+            // round-trip pointer C++ only forwards to `callback` (same contract
+            // as `JSC__JSValue__forEach` above).
+            safe fn JSC__JSValue__forEachProperty(
                 this: JSValue,
-                global: *const JSGlobalObject,
+                global: &JSGlobalObject,
                 ctx: *mut c_void,
                 callback: ForEachPropertyCallback,
             );
         }
         crate::top_scope!(scope, global);
-        // SAFETY: `global` is live; `callback` has C ABI.
-        unsafe { JSC__JSValue__forEachProperty(self, global, ctx, callback) };
+        JSC__JSValue__forEachProperty(self, global, ctx, callback);
         scope.return_if_exception()
     }
     /// `JSValue.forEachPropertyNonIndexed` (JSValue.zig:87) — like
@@ -2039,16 +2042,16 @@ impl JSValue {
         callback: ForEachPropertyCallback,
     ) -> JsResult<()> {
         unsafe extern "C" {
-            fn JSC__JSValue__forEachPropertyNonIndexed(
+            // safe: same contract as `JSC__JSValue__forEachProperty` above.
+            safe fn JSC__JSValue__forEachPropertyNonIndexed(
                 this: JSValue,
-                global: *const JSGlobalObject,
+                global: &JSGlobalObject,
                 ctx: *mut c_void,
                 callback: ForEachPropertyCallback,
             );
         }
         crate::top_scope!(scope, global);
-        // SAFETY: `global` is live; `callback` has C ABI.
-        unsafe { JSC__JSValue__forEachPropertyNonIndexed(self, global, ctx, callback) };
+        JSC__JSValue__forEachPropertyNonIndexed(self, global, ctx, callback);
         scope.return_if_exception()
     }
     /// `JSValue.forEachPropertyOrdered` (JSValue.zig:105) — like
@@ -2063,17 +2066,17 @@ impl JSValue {
         callback: ForEachPropertyCallback,
     ) -> JsResult<()> {
         unsafe extern "C" {
-            fn JSC__JSValue__forEachPropertyOrdered(
+            // safe: same contract as `JSC__JSValue__forEachProperty` above.
+            safe fn JSC__JSValue__forEachPropertyOrdered(
                 this: JSValue,
-                global: *const JSGlobalObject,
+                global: &JSGlobalObject,
                 ctx: *mut c_void,
                 callback: ForEachPropertyCallback,
             );
         }
         let mut scope_storage = core::mem::MaybeUninit::uninit();
         let scope = crate::TopExceptionScope::init(&mut scope_storage, global);
-        // SAFETY: `global` is live; `callback` has C ABI.
-        unsafe { JSC__JSValue__forEachPropertyOrdered(self, global, ctx, callback) };
+        JSC__JSValue__forEachPropertyOrdered(self, global, ctx, callback);
         let result = scope.return_if_exception();
         // SAFETY: `scope` was init'd above and is destroyed exactly once.
         unsafe { crate::TopExceptionScope::destroy(scope) };

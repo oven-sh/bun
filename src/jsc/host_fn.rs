@@ -389,32 +389,28 @@ pub fn host_fn_static_passthrough(
 /// to [`JsHostFn`] when Rust passes it as a callback (e.g. `JSValue::then2`).
 /// All other thunks take references directly.
 ///
-/// # Safety
-/// `global` and `callframe` must be non-null, properly aligned, and valid for
-/// the duration of the call. The C++ JSC trampoline guarantees this.
+/// Panics if `global` or `callframe` is null. Both are `opaque_ffi!` ZST
+/// handles, so the `*mut → &` conversion is the centralised
+/// [`bun_opaque::opaque_deref`] proof (zero-byte deref, null-checked).
 #[track_caller]
 #[inline]
-pub unsafe fn host_fn_static_raw<R: IntoHostFnReturn>(
+pub fn host_fn_static_raw<R: IntoHostFnReturn>(
     global: *mut JSGlobalObject,
     callframe: *mut CallFrame,
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> R,
 ) -> JSValue {
-    // SAFETY: caller contract.
-    host_fn_static(unsafe { &*global }, unsafe { &*callframe }, f)
+    host_fn_static(JSGlobalObject::opaque_ref(global), CallFrame::opaque_ref(callframe), f)
 }
 
 /// Raw-pointer entry for `host`-shape exports, no exception scope.
-///
-/// # Safety
 /// See [`host_fn_static_raw`].
 #[inline]
-pub unsafe fn host_fn_static_passthrough_raw(
+pub fn host_fn_static_passthrough_raw(
     global: *mut JSGlobalObject,
     callframe: *mut CallFrame,
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> JSValue,
 ) -> JSValue {
-    // SAFETY: caller contract.
-    host_fn_static_passthrough(unsafe { &*global }, unsafe { &*callframe }, f)
+    host_fn_static_passthrough(JSGlobalObject::opaque_ref(global), CallFrame::opaque_ref(callframe), f)
 }
 
 /// Lazy property creator / free getter: `fn(&JSGlobalObject) -> R`. Used by

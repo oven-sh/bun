@@ -807,11 +807,7 @@ impl JSGlobalObject {
         function: unsafe extern "C" fn(*mut c_void),
     ) {
         crate::mark_binding();
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; `ctx_val` is caller-supplied
-        // opaque context; `function` is a valid `extern "C"` fn pointer.
-        unsafe {
-            JSC__JSGlobalObject__queueMicrotaskCallback(self, ctx_val.cast::<c_void>(), function);
-        }
+        JSC__JSGlobalObject__queueMicrotaskCallback(self, ctx_val.cast::<c_void>(), function);
     }
 
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
@@ -1588,8 +1584,11 @@ unsafe extern "C" {
         target: BunPluginTarget,
     ) -> JSValue;
 
-    fn JSC__JSGlobalObject__queueMicrotaskCallback(
-        this: *const JSGlobalObject,
+    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
+    // ABI-identical to non-null `*const`); `ctx` is an opaque round-trip pointer
+    // C++ only stores and forwards to `function` (never dereferenced as Rust data).
+    safe fn JSC__JSGlobalObject__queueMicrotaskCallback(
+        this: &JSGlobalObject,
         ctx: *mut c_void,
         function: unsafe extern "C" fn(*mut c_void),
     );

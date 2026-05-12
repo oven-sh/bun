@@ -26,14 +26,20 @@ unsafe extern "C" {
         exception: *mut JSValue,
     ) -> JSValue;
 
-    fn JSC__JSModuleLoader__loadAndEvaluateModule(
-        arg0: *const JSGlobalObject,
-        arg1: *const BunString,
+    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
+    // ABI-identical to non-null `*const`); `Option<&BunString>` is ABI-identical
+    // to a nullable `*const BunString` via the guaranteed null-pointer optimization.
+    // The returned `*mut JSInternalPromise` is nullable; callers check before deref.
+    safe fn JSC__JSModuleLoader__loadAndEvaluateModule(
+        arg0: &JSGlobalObject,
+        arg1: Option<&BunString>,
     ) -> *mut JSInternalPromise;
 
-    fn JSModuleLoader__import(
-        arg0: *const JSGlobalObject,
-        arg1: *const BunString,
+    // safe: same handle/reference contract as `loadAndEvaluateModule` above;
+    // `arg1` is always non-null at every Rust call site.
+    safe fn JSModuleLoader__import(
+        arg0: &JSGlobalObject,
+        arg1: &BunString,
     ) -> *mut JSInternalPromise;
 }
 
@@ -72,16 +78,11 @@ impl JSModuleLoader {
         global_object: &'a JSGlobalObject,
         module_name: Option<&BunString>,
     ) -> Option<&'a JSInternalPromise> {
-        // SAFETY: C++ side accepts a nullable `const BunString*` and returns a nullable
-        // JSInternalPromise cell pointer owned by the JSC heap. `global_object` is an
-        // opaque ZST handle passed as `*const` per the FFI convention in `JSGlobalObject.rs`.
-        unsafe {
-            JSC__JSModuleLoader__loadAndEvaluateModule(
-                global_object,
-                module_name.map_or(core::ptr::null(), |p| std::ptr::from_ref(p)),
-            )
-            .as_ref()
-        }
+        // C++ returns a nullable JSInternalPromise cell pointer owned by the JSC
+        // heap. `JSInternalPromise` is an opaque ZST handle so the deref is the
+        // centralised `opaque_ref` proof.
+        let p = JSC__JSModuleLoader__loadAndEvaluateModule(global_object, module_name);
+        (!p.is_null()).then(|| JSInternalPromise::opaque_ref(p))
     }
 
     /// Raw-pointer variant of [`load_and_evaluate_module`]. Returns the FFI
@@ -91,28 +92,25 @@ impl JSModuleLoader {
         global_object: *mut JSGlobalObject,
         module_name: Option<&BunString>,
     ) -> Option<core::ptr::NonNull<JSInternalPromise>> {
-        // SAFETY: C++ side accepts a nullable `const BunString*` and returns a
-        // nullable JSInternalPromise cell pointer owned by the JSC heap.
-        core::ptr::NonNull::new(unsafe {
-            JSC__JSModuleLoader__loadAndEvaluateModule(
-                global_object,
-                module_name.map_or(core::ptr::null(), |p| std::ptr::from_ref(p)),
-            )
-        })
+        // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
+        // centralised zero-byte deref proof (panics on null).
+        core::ptr::NonNull::new(JSC__JSModuleLoader__loadAndEvaluateModule(
+            JSGlobalObject::opaque_ref(global_object),
+            module_name,
+        ))
     }
 
     pub fn import<'a>(
         global_object: &'a JSGlobalObject,
         module_name: &BunString,
     ) -> JsResult<&'a JSInternalPromise> {
-        // SAFETY: C++ side returns null iff an exception was thrown on the VM.
-        // `global_object` is an opaque ZST handle passed as `*const` per the FFI
-        // convention in `JSGlobalObject.rs`.
-        unsafe {
-            JSModuleLoader__import(global_object, std::ptr::from_ref(module_name))
-                .as_ref()
-        }
-        .ok_or(JsError::Thrown)
+        // C++ returns null iff an exception was thrown on the VM.
+        // `JSInternalPromise` is an opaque ZST handle so the deref is the
+        // centralised `opaque_ref` proof.
+        let p = JSModuleLoader__import(global_object, module_name);
+        (!p.is_null())
+            .then(|| JSInternalPromise::opaque_ref(p))
+            .ok_or(JsError::Thrown)
     }
 
     /// Raw-pointer variant of [`Self::import`]. Returns the FFI
@@ -124,10 +122,12 @@ impl JSModuleLoader {
         global_object: *mut JSGlobalObject,
         module_name: &BunString,
     ) -> JsResult<core::ptr::NonNull<JSInternalPromise>> {
-        // SAFETY: C++ side returns null iff an exception was thrown on the VM.
-        core::ptr::NonNull::new(unsafe {
-            JSModuleLoader__import(global_object, std::ptr::from_ref(module_name))
-        })
+        // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
+        // centralised zero-byte deref proof (panics on null).
+        core::ptr::NonNull::new(JSModuleLoader__import(
+            JSGlobalObject::opaque_ref(global_object),
+            module_name,
+        ))
         .ok_or(JsError::Thrown)
     }
 }

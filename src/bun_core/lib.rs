@@ -2313,15 +2313,23 @@ pub(crate) mod strings_impl {
     /// the written sub-slice. Infallible: Zig's `![]const u8` has an empty
     /// inferred error set, so every `catch` at call sites is dead code. The
     /// caller is responsible for sizing `out` for the worst case (≤ 3× input
-    /// code units); this is the implicit precondition the Zig original relies
-    /// on by passing `out` straight to simdutf without a bounds check.
+    /// code units).
+    ///
+    /// PORT NOTE: Zig passes `out` straight to simdutf with no bounds check
+    /// (UB if undersized). We assert in release too — one extra SIMD length
+    /// scan is cheap, and a panic beats heap corruption if a future caller
+    /// gets the sizing wrong. All current callers (~10, Windows wide-path
+    /// code) size `out` at `3 * utf16.len()` or `MAX_PATH * 3`, so this never
+    /// fires in practice.
     pub fn convert_utf16_to_utf8_in_buffer<'a>(out: &'a mut [u8], utf16: &[u16]) -> &'a mut [u8] {
         if utf16.is_empty() {
             return &mut out[..0];
         }
-        debug_assert!(
-            simdutf::length::utf8::from::utf16::le(utf16) <= out.len(),
-            "caller must size buffer for worst-case UTF-8",
+        let need = simdutf::length::utf8::from::utf16::le(utf16);
+        assert!(
+            need <= out.len(),
+            "convert_utf16_to_utf8_in_buffer: out too small (need {need}, have {})",
+            out.len(),
         );
         let result = simdutf::convert::utf16::to::utf8::le(utf16, out);
         &mut out[..result]

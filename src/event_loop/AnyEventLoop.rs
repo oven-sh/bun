@@ -202,9 +202,12 @@ impl<'a> AnyEventLoop<'a> {
     /// while the callback runs. Zig spec (`jsc.EventLoop.tick`) has no such
     /// constraint because Zig `*T` is non-exclusive.
     ///
-    /// SAFETY: `this` must be valid for `&mut` access for the duration of the
-    /// call, *except* while `is_done` is executing (when the callback may hold
-    /// a competing `&mut` to a parent struct).
+    /// # Safety
+    /// `this` must be valid for `&mut` access for the duration of the call,
+    /// *except* while `is_done` is executing (when the callback may hold a
+    /// competing `&mut` to a parent struct). (Not eligible for
+    /// `unsafe-fn-narrow`: the per-iteration `&mut *this` reborrow is sound
+    /// only under this caller-supplied aliasing window.)
     pub unsafe fn tick_raw(
         this: *mut Self,
         context: *mut core::ffi::c_void,

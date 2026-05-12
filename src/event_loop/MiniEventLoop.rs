@@ -284,8 +284,11 @@ impl<'a> MiniEventLoop<'a> {
     /// accessor lazy-inits the store via `addr_of_mut!` on the field only,
     /// never materializing a `&mut Self`.
     ///
-    /// SAFETY: `this` must point to a live `MiniEventLoop`. Caller must not
-    /// hold a live `&mut` to `file_polls_` itself across this call.
+    /// # Safety
+    /// `this` must point to a live `MiniEventLoop`. Caller must not hold a
+    /// live `&mut` to `file_polls_` itself across this call. (Not eligible for
+    /// `unsafe-fn-narrow`: every unsafe op below derefs the caller-supplied
+    /// `this`; the body cannot discharge that precondition.)
     pub unsafe fn file_polls_raw(this: *mut Self) -> *mut FilePollStore {
         unsafe {
             let slot = core::ptr::addr_of_mut!((*this).file_polls_);

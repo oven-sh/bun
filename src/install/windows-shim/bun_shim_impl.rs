@@ -200,8 +200,13 @@ macro_rules! debug {
     }};
 }
 
+/// # Safety
+/// `str.Buffer` must be non-null and valid for reads of `str.Length` bytes,
+/// 2-byte aligned, and live for `'a` (Win32 `UNICODE_STRING` contract — the
+/// struct carries a raw pointer, so `&UNICODE_STRING` alone does not prove
+/// the pointee is live).
 unsafe fn unicode_string_to_u16<'a>(str: &'a UNICODE_STRING) -> &'a [u16] {
-    // SAFETY: caller guarantees UNICODE_STRING.Buffer is valid for Length bytes per Win32 contract.
+    // SAFETY: discharged by caller per fn-level # Safety.
     unsafe { bun_core::ffi::slice(str.Buffer, (str.Length / 2) as usize) }
 }
 

@@ -649,6 +649,21 @@ describe("Bun.build", () => {
       expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
     },
   );
+
+  test.concurrent("many custom conditions does not crash", async () => {
+    // The capacity reserved for the ESM conditions map was miscomputed when
+    // node-addons were enabled (the default), so enough custom conditions
+    // would overflow the reserved capacity and assert/corrupt.
+    const dir = tempDirWithFiles("bun-build-conditions", {
+      "entry.ts": `export const x = 1;`,
+    });
+    const build = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      conditions: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"],
+    });
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(1);
+  });
 });
 
 test.concurrent("macro with nested object", async () => {

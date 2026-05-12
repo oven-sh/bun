@@ -823,6 +823,14 @@ pub const SendQueue = struct {
     }
     pub fn serializeAndSend(self: *SendQueue, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, callback: jsc.JSValue, handle: ?Handle) SerializeAndSendResult {
         log("SendQueue#serializeAndSend", .{});
+        // Snapshot the "items already queued behind an outstanding handle ACK"
+        // bit BEFORE `startMessage` appends the new message, so we measure
+        // prior backlog rather than counting the send we're currently making.
+        // Node's `lib/internal/child_process.js` matches this shape: when the
+        // channel has a non-empty `_handleQueue`, a non-handle send pushes and
+        // `return this._handleQueue.length === 1` — the first queued-behind
+        // item returns true, only the second onward returns false.
+        const had_queued_behind_ack = self.waiting_for_ack != null and self.queue.items.len > 0;
         const msg = self.startMessage(global, callback, handle) catch return .failure;
         const start_offset = msg.data.list.items.len;
 
@@ -833,38 +841,15 @@ pub const SendQueue = struct {
         log("IPC call continueSend() from serializeAndSend", .{});
         self.continueSend(global, .new_message_appended);
 
-        // Backpressure: anything still buffered in userspace after the send attempt
-        // means the kernel could not absorb the full write. Match Node's semantics
-        // (return value driven by libuv's write_queue_size) so producers observe
-        // `process.send()` returning false and can wait for the drain callback.
-        if (self.hasBufferedData()) return .backoff;
+        // Backpressure: anything still buffered in userspace after the send
+        // attempt means the kernel could not absorb the full write. Match
+        // Node's semantics (return value driven by libuv's write_queue_size)
+        // so producers observe `process.send()` returning false and can wait
+        // for the drain callback.
+        if (had_queued_behind_ack or self.bufferedBytes() >= BACKPRESSURE_THRESHOLD_BYTES) {
+            return .backoff;
+        }
         return .success;
-    }
-    /// Matches Node's `ChildProcess.send()` threshold — the channel is
-    /// considered backpressured only once queued userspace bytes exceed
-    /// `BACKPRESSURE_THRESHOLD_BYTES`, or when a handle ACK is pending and
-    /// further items are already stacked up behind it (no further data can
-    /// ship until the receiver acks).
-    ///
-    /// A byte threshold (rather than "queue non-empty") is what handles the
-    /// case where a transparent plumbing packet — e.g. the 5-byte advanced-
-    /// mode version header, or a back-to-back send in the same tick — is
-    /// still mid-flight when the user's next send runs on Windows. libuv's
-    /// `uv_write` is always async, so on Windows the prior write stays
-    /// pending while the new message enqueues behind it; without a byte
-    /// threshold every such send would report backpressure even though the
-    /// kernel has absorbed everything.
-    ///
-    /// The `waiting_for_ack` check is deliberately gated on `queue.items.len`:
-    /// on POSIX `_onWriteComplete` runs inline, so a send that ships a handle
-    /// moves straight into `waiting_for_ack` before this helper runs. That
-    /// `send()` itself handed all bytes to the kernel and should return true;
-    /// only *subsequent* sends behind it are actual backpressure.
-    fn hasBufferedData(self: *const SendQueue) bool {
-        if (self.waiting_for_ack != null and self.queue.items.len > 0) return true;
-        // `>=` mirrors Node's `writeQueueSize < 65536 * 2`: at exactly
-        // `BACKPRESSURE_THRESHOLD_BYTES` Node returns false (not less-than).
-        return self.bufferedBytes() >= BACKPRESSURE_THRESHOLD_BYTES;
     }
     /// Bytes sitting in userspace that the kernel hasn't accepted yet. On
     /// Windows an in-flight `uv_write` leaves the source item in place on

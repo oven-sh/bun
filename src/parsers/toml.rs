@@ -3,7 +3,7 @@ use core::cell::RefCell;
 
 use bun_alloc::Arena as Bump;
 
-use bun_ast::{self, self as js_ast, E, Expr};
+use bun_ast::{self, self as js_ast, E, Expr, LexerLog as _};
 use bun_core::{self, StackCheck};
 
 #[path = "toml/lexer.rs"]

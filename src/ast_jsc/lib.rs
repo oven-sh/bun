@@ -108,16 +108,7 @@ pub fn log_to_js_aggregate_error(
 
 pub fn log_to_js_array(this: &Log, global: &JSGlobalObject) -> JsResult<JSValue> {
     let msgs: &[Msg] = this.msgs.as_slice();
-
-    let arr = JSValue::create_empty_array(global, msgs.len())?;
-    for (i, msg) in msgs.iter().enumerate() {
-        arr.put_index(
-            global,
-            u32::try_from(i).expect("int cast"),
-            msg_to_js(msg.clone(), global)?,
-        )?;
-    }
-    Ok(arr)
+    JSValue::create_array_from_iter(global, msgs.iter(), |msg| msg_to_js(msg.clone(), global))
 }
 
 // ported from: src/logger_jsc/logger_jsc.zig

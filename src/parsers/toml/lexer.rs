@@ -3,6 +3,8 @@ use core::fmt;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_alloc::ArenaVecExt as _;
 use bun_ast as js_ast;
+use bun_ast::LexerLog;
+use bun_core::fmt::hex_digit_value_u32;
 use bun_core::strings;
 // In Zig it's `bun.CodePoint` (i32); lives at `bun_core::strings::CodePoint`.
 use bun_core::strings::CodePoint;
@@ -98,156 +100,50 @@ bun_core::oom_from_alloc!(Error);
 
 bun_core::named_error_set!(Error);
 
+impl<'a> LexerLog<'a> for Lexer<'a> {
+    type Err = Error;
+    #[inline]
+    fn log_mut(&mut self) -> &mut bun_ast::Log {
+        &mut *self.log
+    }
+    #[inline]
+    fn source(&self) -> &'a bun_ast::Source {
+        self.source
+    }
+    #[inline]
+    fn prev_error_loc_mut(&mut self) -> &mut bun_ast::Loc {
+        &mut self.prev_error_loc
+    }
+    #[inline]
+    fn start(&self) -> usize {
+        self.start
+    }
+    #[inline]
+    fn should_redact(&self) -> bool {
+        self.should_redact_logs
+    }
+    #[inline]
+    fn syntax_err() -> Error {
+        Error::SyntaxError
+    }
+}
+
 impl<'a> Lexer<'a> {
     #[inline]
     pub fn loc(&self) -> bun_ast::Loc {
         bun_ast::usize2loc(self.start)
     }
 
-    #[cold]
-    pub fn syntax_error(&mut self) -> Result<(), Error> {
-        // Only add this if there is not already an error.
-        // It is possible that there is a more descriptive error already emitted.
-        if !self.log.has_errors() {
-            self.add_error(self.start, format_args!("Syntax Error"));
-        }
-
-        Err(Error::SyntaxError)
-    }
-
-    #[cold]
-    pub fn add_error(&mut self, _loc: usize, args: fmt::Arguments<'_>) {
-        let __loc = bun_ast::usize2loc(_loc);
-        if __loc.eql(self.prev_error_loc) {
-            return;
-        }
-
-        self.log.add_error_fmt_opts(
-            // TODO(port): Zig passed `self.log.msgs.allocator`; Rust Log owns its allocator.
-            args,
-            bun_ast::AddErrorOptions {
-                source: Some(self.source),
-                loc: __loc,
-                redact_sensitive_information: self.should_redact_logs,
-                ..Default::default()
-            },
-        );
-        self.prev_error_loc = __loc;
-    }
-
-    #[cold]
-    pub fn add_default_error(&mut self, msg: &[u8]) -> Result<(), Error> {
-        self.add_error(self.start, format_args!("{}", bstr::BStr::new(msg)));
-        Err(Error::SyntaxError)
-    }
-
-    #[cold]
-    pub fn add_syntax_error(&mut self, _loc: usize, args: fmt::Arguments<'_>) -> Result<(), Error> {
-        self.add_error(_loc, args);
-        Err(Error::SyntaxError)
-    }
-
-    #[cold]
-    pub fn add_range_error(
-        &mut self,
-        r: bun_ast::Range,
-        args: fmt::Arguments<'_>,
-    ) -> Result<(), Error> {
-        if self.prev_error_loc.eql(r.loc) {
-            return Ok(());
-        }
-
-        // std.fmt.allocPrint → bun_ast::add_error_fmt_opts builds the buffer.
-        self.log.add_error_fmt_opts(
-            args,
-            bun_ast::AddErrorOptions {
-                source: Some(self.source),
-                loc: r.loc,
-                len: r.len,
-                redact_sensitive_information: self.should_redact_logs,
-                ..Default::default()
-            },
-        );
-        self.prev_error_loc = r.loc;
-        Ok(())
-    }
-
     /// Look ahead at the next n codepoints without advancing the iterator.
     /// If fewer than n codepoints are available, then return the remainder of the string.
-    fn peek(&mut self, n: usize) -> &'a [u8] {
-        let original_i = self.current;
-
-        let mut end_ix = original_i;
-        let mut found: usize = 0;
-        while found < n {
-            let next_codepoint = self.next_codepoint_slice();
-            if next_codepoint.is_empty() {
-                break;
-            }
-            end_ix += next_codepoint.len();
-            found += 1;
-        }
-
-        // PORT NOTE: Zig used `defer it.current = original_i;` — restore here.
-        // TODO(port): the Zig loop never advances `it.current`, so `next_codepoint_slice`
-        // returns the same slice every iteration. Ported faithfully; verify upstream intent.
-        self.current = original_i;
-
-        &self.source.contents[original_i..end_ix]
+    #[inline]
+    fn peek(&self, n: usize) -> &[u8] {
+        strings::peek_n_codepoints_wtf8(&self.source.contents, self.current, n)
     }
 
-    #[inline]
-    fn next_codepoint_slice(&self) -> &'a [u8] {
-        if self.current >= self.source.contents.len() {
-            return b"";
-        }
-        let cp_len =
-            strings::wtf8_byte_sequence_length_with_invalid(self.source.contents[self.current])
-                as usize;
-        if !(cp_len + self.current > self.source.contents.len()) {
-            &self.source.contents[self.current..cp_len + self.current]
-        } else {
-            b""
-        }
-    }
-
-    #[inline]
+    #[inline(always)]
     fn next_codepoint(&mut self) -> CodePoint {
-        if self.current >= self.source.contents.len() {
-            self.end = self.source.contents.len();
-            return -1;
-        }
-        let cp_len =
-            strings::wtf8_byte_sequence_length_with_invalid(self.source.contents[self.current])
-                as usize;
-        let slice: &[u8] = if !(cp_len + self.current > self.source.contents.len()) {
-            &self.source.contents[self.current..cp_len + self.current]
-        } else {
-            b""
-        };
-
-        let code_point: CodePoint = match slice.len() {
-            0 => -1,
-            1 => slice[0] as CodePoint,
-            _ => strings::decode_wtf8_rune_t_multibyte(
-                // SAFETY: contents has at least 4 bytes available from `current` when cp_len > 1
-                // (matches Zig `slice.ptr[0..4]` which over-reads up to 4 bytes).
-                // TODO(port): verify bun_str signature; may take &[u8; 4] or *const u8.
-                unsafe { &*slice.as_ptr().cast::<[u8; 4]>() },
-                u8::try_from(slice.len()).expect("int cast"), // @intCast to u3
-                strings::UNICODE_REPLACEMENT as CodePoint,
-            ),
-        };
-
-        self.end = self.current;
-
-        self.current += if code_point != strings::UNICODE_REPLACEMENT as CodePoint {
-            cp_len
-        } else {
-            1
-        };
-
-        code_point
+        strings::lexer_step::next_codepoint(&self.source.contents, &mut self.current, &mut self.end)
     }
 
     #[inline]
@@ -1131,17 +1027,9 @@ impl<'a> Lexer<'a> {
                             }
                             c3 = iter.c;
                             width3 = iter.width;
-                            match c3 {
-                                c if ('0' as CodePoint..='9' as CodePoint).contains(&c) => {
-                                    value = value * 16 | (c3 - '0' as CodePoint);
-                                }
-                                c if ('a' as CodePoint..='f' as CodePoint).contains(&c) => {
-                                    value = value * 16 | (c3 + 10 - 'a' as CodePoint);
-                                }
-                                c if ('A' as CodePoint..='F' as CodePoint).contains(&c) => {
-                                    value = value * 16 | (c3 + 10 - 'A' as CodePoint);
-                                }
-                                _ => {
+                            match hex_digit_value_u32(c3 as u32) {
+                                Some(d) => value = value * 16 | d as CodePoint,
+                                None => {
                                     self.end = start + iter.i as usize - width3 as usize;
                                     return self.syntax_error();
                                 }
@@ -1152,17 +1040,9 @@ impl<'a> Lexer<'a> {
                             }
                             c3 = iter.c;
                             width3 = iter.width;
-                            match c3 {
-                                c if ('0' as CodePoint..='9' as CodePoint).contains(&c) => {
-                                    value = value * 16 | (c3 - '0' as CodePoint);
-                                }
-                                c if ('a' as CodePoint..='f' as CodePoint).contains(&c) => {
-                                    value = value * 16 | (c3 + 10 - 'a' as CodePoint);
-                                }
-                                c if ('A' as CodePoint..='F' as CodePoint).contains(&c) => {
-                                    value = value * 16 | (c3 + 10 - 'A' as CodePoint);
-                                }
-                                _ => {
+                            match hex_digit_value_u32(c3 as u32) {
+                                Some(d) => value = value * 16 | d as CodePoint,
+                                None => {
                                     self.end = start + iter.i as usize - width3 as usize;
                                     return self.syntax_error();
                                 }
@@ -1195,27 +1075,17 @@ impl<'a> Lexer<'a> {
                                     }
                                     c3 = iter.c;
 
-                                    match c3 {
-                                        c if ('0' as CodePoint..='9' as CodePoint).contains(&c) => {
-                                            value = value * 16 | (c3 - '0' as CodePoint) as i64;
+                                    if c3 == '}' as CodePoint {
+                                        if is_first {
+                                            self.end =
+                                                start + iter.i as usize - width3 as usize;
+                                            return self.syntax_error();
                                         }
-                                        c if ('a' as CodePoint..='f' as CodePoint).contains(&c) => {
-                                            value =
-                                                value * 16 | (c3 + 10 - 'a' as CodePoint) as i64;
-                                        }
-                                        c if ('A' as CodePoint..='F' as CodePoint).contains(&c) => {
-                                            value =
-                                                value * 16 | (c3 + 10 - 'A' as CodePoint) as i64;
-                                        }
-                                        c if c == '}' as CodePoint => {
-                                            if is_first {
-                                                self.end =
-                                                    start + iter.i as usize - width3 as usize;
-                                                return self.syntax_error();
-                                            }
-                                            break 'variable_length;
-                                        }
-                                        _ => {
+                                        break 'variable_length;
+                                    }
+                                    match hex_digit_value_u32(c3 as u32) {
+                                        Some(d) => value = value * 16 | d as i64,
+                                        None => {
                                             self.end = start + iter.i as usize - width3 as usize;
                                             return self.syntax_error();
                                         }
@@ -1250,19 +1120,9 @@ impl<'a> Lexer<'a> {
                                 // comptime var j: usize = 0;
                                 let mut j: usize = 0;
                                 while j < 4 {
-                                    match c3 {
-                                        c if ('0' as CodePoint..='9' as CodePoint).contains(&c) => {
-                                            value = value * 16 | (c3 - '0' as CodePoint) as i64;
-                                        }
-                                        c if ('a' as CodePoint..='f' as CodePoint).contains(&c) => {
-                                            value =
-                                                value * 16 | (c3 + 10 - 'a' as CodePoint) as i64;
-                                        }
-                                        c if ('A' as CodePoint..='F' as CodePoint).contains(&c) => {
-                                            value =
-                                                value * 16 | (c3 + 10 - 'A' as CodePoint) as i64;
-                                        }
-                                        _ => {
+                                    match hex_digit_value_u32(c3 as u32) {
+                                        Some(d) => value = value * 16 | d as i64,
+                                        None => {
                                             self.end = start + iter.i as usize - width3 as usize;
                                             return self.syntax_error();
                                         }

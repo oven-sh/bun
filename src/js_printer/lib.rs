@@ -733,18 +733,6 @@ use bun_core::printer::{
 /// For support JavaScriptCore
 const ASCII_ONLY_ALWAYS_ON_UNLESS_MINIFYING: bool = true;
 
-fn format_unsigned_integer_between<const LEN: usize>(buf: &mut [u8; LEN], val: u64) {
-    let mut remainder = val;
-    // Write out the number from the end to the front
-    let mut i = LEN;
-    while i > 0 {
-        i -= 1;
-        buf[i] = u8::try_from(remainder % 10).expect("int cast") + b'0';
-        remainder /= 10;
-    }
-    // PERF(port): was comptime `inline while` unrolling — profile
-}
-
 pub fn write_module_id(writer: &mut impl core::fmt::Write, module_id: u32) {
     debug_assert!(module_id != 0); // either module_id is forgotten or it should be disabled
     writer.write_str("$").expect("unreachable");
@@ -1653,48 +1641,7 @@ pub mod __gated_printer {
         }
     }
 
-    // ── local string helpers not yet exported by `bun_core::strings` ────────
-    // TODO(b2-blocked): bun_core::contains_non_bmp_code_point_or_is_invalid_identifier
-    #[inline]
-    pub(crate) fn contains_non_bmp_code_point_or_is_invalid_identifier(alias: &[u8]) -> bool {
-        // Mirrors src/string/immutable/unicode.zig:containsNonBmpCodePointOrIsInvalidIdentifier.
-        // NB: `is_identifier` *accepts* non-BMP ID chars; the Zig deliberately also flags any
-        // c > 0xFFFF (even valid identifier chars) so the printer quotes such aliases.
-        let iter = CodepointIterator::init(alias);
-        let mut curs = strings::Cursor::default();
-
-        if !iter.next(&mut curs) {
-            return true;
-        }
-        if curs.c > 0xFFFF || !lexer::is_identifier_start(curs.c) {
-            return true;
-        }
-        while iter.next(&mut curs) {
-            if curs.c > 0xFFFF || !lexer::is_identifier_continue(curs.c) {
-                return true;
-            }
-        }
-        false
-    }
-    // TODO(b2-blocked): bun_core::encode_wtf8_rune_t (generic CodeUnit variant)
-    #[inline]
-    pub(crate) fn encode_wtf8_rune_t(tmp: &mut [u8; 4], c: u32) -> usize {
-        bun_core::encode_wtf8_rune(tmp, c) as usize
-    }
-    /// Zig `JSLexer.isLatin1Identifier(comptime []const u16, name)` — u16 overload
-    /// of the identifier predicate. `pub` so `bun_jsc::ConsoleObject` can reuse the
-    /// canonical impl instead of duplicating it.
-    #[inline]
-    pub fn is_latin1_identifier_u16(name: &[u16]) -> bool {
-        // Zig generic walks code units; for u16 the fast path is "all units ≤ 0xFF
-        // and the latin-1 byte sequence is an identifier". Fall back to that.
-        if name.iter().any(|&c| c > 0xFF) {
-            return false;
-        }
-        let bytes: Vec<u8> = name.iter().map(|&c| c as u8).collect();
-        lexer::is_latin1_identifier(&bytes[..])
-    }
-
+    pub(crate) use bun_core::strings::encode_wtf8_rune as encode_wtf8_rune_t;
     /// `fn NewPrinter(...) type` → generic struct.
     pub struct Printer<
         'a,
@@ -1974,13 +1921,7 @@ pub mod __gated_printer {
             // TODO(port): implement `count` over fmt::Arguments to match.
             let mut buf: Vec<u8> = Vec::new();
             Write::write_fmt(&mut buf, format_args!("{}", args)).expect("unreachable");
-            let ptr = self.writer.reserve(buf.len() as u64)?;
-            // SAFETY: writer reserved buf.len() bytes
-            unsafe {
-                core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, buf.len());
-            }
-            self.writer.advance(buf.len() as u64);
-            Ok(())
+            self.writer.write_reserved(&buf)
         }
 
         pub fn print_buffer(&mut self, str: &[u8]) {
@@ -1993,13 +1934,7 @@ pub mod __gated_printer {
         /// in `print_slice`.
         #[inline(always)]
         fn print_reserved_n<const N: usize>(&mut self, bytes: &[u8; N]) {
-            let buf = self.writer.reserve(N as u64).expect("unreachable");
-            // SAFETY: `reserve(N)` returned a writable region of at least `N` bytes
-            // disjoint from `bytes` (writer-owned vs. caller stack).
-            unsafe {
-                core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, N);
-            }
-            self.writer.advance(N as u64);
+            self.writer.write_reserved(bytes).expect("unreachable");
         }
 
         /// Polymorphic print: bytes or single char.
@@ -2570,7 +2505,7 @@ pub mod __gated_printer {
         pub fn print_clause_alias(&mut self, alias: &[u8]) {
             debug_assert!(!alias.is_empty());
 
-            if !contains_non_bmp_code_point_or_is_invalid_identifier(alias) {
+            if !strings::contains_non_bmp_code_point_or_is_invalid_identifier(alias) {
                 self.print_space_before_identifier();
                 self.print_identifier(alias);
             } else {
@@ -2714,70 +2649,13 @@ pub mod __gated_printer {
                 // However, they could also be signed or unsigned int 32 (when doing bit shifts)
                 // In this case, it's always going to unsigned since that conversion has already happened.
                 let val = float as u64;
-                match val {
-                    0 => self.print(b"0"),
-                    1..=9 => {
-                        let bytes = [b'0' + u8::try_from(val).expect("int cast")];
-                        self.print(&bytes[..]);
-                    }
-                    10 => self.print(b"10"),
-                    11..=99 => {
-                        let mut tmp = [0u8; 2];
-                        format_unsigned_integer_between::<2>(&mut tmp, val);
-                        self.print_reserved_n(&tmp);
-                    }
-                    100 => self.print(b"100"),
-                    101..=999 => {
-                        let mut tmp = [0u8; 3];
-                        format_unsigned_integer_between::<3>(&mut tmp, val);
-                        self.print_reserved_n(&tmp);
-                    }
-                    1000 => self.print(b"1000"),
-                    1001..=9999 => {
-                        let mut tmp = [0u8; 4];
-                        format_unsigned_integer_between::<4>(&mut tmp, val);
-                        self.print_reserved_n(&tmp);
-                    }
-                    10000 => self.print(b"1e4"),
-                    100000 => self.print(b"1e5"),
-                    1000000 => self.print(b"1e6"),
-                    10000000 => self.print(b"1e7"),
-                    100000000 => self.print(b"1e8"),
-                    1000000000 => self.print(b"1e9"),
-                    10001..=99999 => {
-                        let mut tmp = [0u8; 5];
-                        format_unsigned_integer_between::<5>(&mut tmp, val);
-                        self.print_reserved_n(&tmp);
-                    }
-                    100001..=999999 => {
-                        let mut tmp = [0u8; 6];
-                        format_unsigned_integer_between::<6>(&mut tmp, val);
-                        self.print_reserved_n(&tmp);
-                    }
-                    1_000_001..=9_999_999 => {
-                        let mut tmp = [0u8; 7];
-                        format_unsigned_integer_between::<7>(&mut tmp, val);
-                        self.print_reserved_n(&tmp);
-                    }
-                    10_000_001..=99_999_999 => {
-                        let mut tmp = [0u8; 8];
-                        format_unsigned_integer_between::<8>(&mut tmp, val);
-                        self.print_reserved_n(&tmp);
-                    }
-                    100_000_001..=999_999_999 => {
-                        let mut tmp = [0u8; 9];
-                        format_unsigned_integer_between::<9>(&mut tmp, val);
-                        self.print_reserved_n(&tmp);
-                    }
-                    1_000_000_001..=9_999_999_999 => {
-                        let mut tmp = [0u8; 10];
-                        format_unsigned_integer_between::<10>(&mut tmp, val);
-                        self.print_reserved_n(&tmp);
-                    }
-                    _ => {
-                        let _ = self.fmt(format_args!("{}", val));
-                    }
+                if let Some(e) = bun_core::fmt::pow10_exp_1e4_to_1e9(val) {
+                    self.print(b"1e");
+                    self.print(&[b'0' + e]);
+                    return;
                 }
+                let mut buf = bun_core::fmt::ItoaBuf::new();
+                self.print(bun_core::fmt::itoa(&mut buf, val));
                 return;
             }
 
@@ -3264,7 +3142,7 @@ pub mod __gated_printer {
         #[inline]
         pub fn can_print_identifier_utf16(&self, name: &[u16]) -> bool {
             if ASCII_ONLY || ASCII_ONLY_ALWAYS_ON_UNLESS_MINIFYING {
-                is_latin1_identifier_u16(name)
+                lexer::is_latin1_identifier_u16(name)
             } else {
                 lexer::is_identifier_utf16(name)
             }
@@ -6985,28 +6863,18 @@ pub mod __gated_printer {
                         0..=0xFFFF => self.print(&bmp_escape(c)[..]),
                         _ => {
                             self.print(b"\\u");
-                            let buf_ptr = self.writer.reserve(4).expect("unreachable");
                             let mut tmp = [0u8; 4];
                             let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                            // SAFETY: reserved 4 bytes; `len <= 4`; `tmp` is stack-local.
-                            unsafe {
-                                core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf_ptr, len);
-                            }
-                            self.writer.advance(len as u64);
+                            self.writer.write_reserved(&tmp[..len]).expect("unreachable");
                         }
                     }
                     continue;
                 }
 
                 {
-                    let buf_ptr = self.writer.reserve(4).expect("unreachable");
                     let mut tmp = [0u8; 4];
                     let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                    // SAFETY: reserved 4 bytes; `len <= 4`; `tmp` is stack-local.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf_ptr, len);
-                    }
-                    self.writer.advance(len as u64);
+                    self.writer.write_reserved(&tmp[..len]).expect("unreachable");
                 }
             }
             Ok(())
@@ -7392,6 +7260,18 @@ pub trait WriterTrait {
     fn print_slice(&mut self, s: &[u8]);
     fn reserve(&mut self, count: u64) -> Result<*mut u8, bun_core::Error>;
     fn advance(&mut self, count: u64);
+    /// Reserve `bytes.len()`, memcpy `bytes` into the reserved region, then advance.
+    /// Centralizes the open-coded `reserve + copy_nonoverlapping + advance` triplet
+    /// (Zig js_printer.zig:874, 1505-1573, 5332, 5340 all open-code this).
+    #[inline]
+    fn write_reserved(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
+        let ptr = self.reserve(bytes.len() as u64)?;
+        // SAFETY: `reserve(n)` returns a writable region of >= n bytes owned by the
+        // writer's internal buffer, which is disjoint from caller-provided `bytes`.
+        unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len()) };
+        self.advance(bytes.len() as u64);
+        Ok(())
+    }
     fn slice(&self) -> &[u8];
     fn get_error(&self) -> Result<(), bun_core::Error>;
     fn done(&mut self) -> Result<(), bun_core::Error>;
@@ -7760,21 +7640,14 @@ impl BufferWriter {
 
     pub fn reserve_next(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> {
         let n = usize::try_from(count).expect("int cast");
-        // advance_by() commits len after the caller writes into this region.
-        Ok(self.buffer.list.reserve_spare(n).as_mut_ptr().cast())
+        // SAFETY: caller treats as write-only; advance_by() commits via commit_spare.
+        Ok(unsafe { bun_core::vec::reserve_spare_bytes(&mut self.buffer.list, n) }.as_mut_ptr())
     }
 
     pub fn advance_by(&mut self, count: u64) {
         let count_usize = usize::try_from(count).expect("int cast");
-        if cfg!(debug_assertions) {
-            debug_assert!(self.buffer.list.len() + count_usize <= self.buffer.list.capacity());
-        }
-        // SAFETY: reserve_next was called and the bytes were initialized
-        unsafe {
-            self.buffer
-                .list
-                .set_len(self.buffer.list.len() + count_usize);
-        }
+        // SAFETY: reserve_next reserved and the caller initialized [len..len+count).
+        unsafe { bun_core::vec::commit_spare(&mut self.buffer.list, count_usize) };
 
         let len = self.buffer.list.len();
         if count >= 2 {

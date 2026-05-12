@@ -1,10 +1,9 @@
-use core::cell::Cell;
 #[cfg(debug_assertions)]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::expr::{self, Expr};
 use crate::s as S;
-use crate::{ASTMemoryAllocator, DebugOnlyDisabler, NewBatcher, StoreRef};
+use crate::{DebugOnlyDisabler, NewBatcher, StoreRef};
 
 #[derive(Clone, Copy)]
 pub struct Stmt {
@@ -1021,132 +1020,7 @@ crate::new_store!(
 
 pub mod data {
     use super::*;
-
-    #[allow(non_snake_case)]
-    pub mod Store {
-        use super::*;
-        use stmt_store::Store as Backing;
-
-        // `#[thread_local]` (bare `__thread` slot) — `memory_allocator()` is
-        // read on every `Stmt::alloc`, and the `thread_local!` macro's
-        // `LocalKey` wrapper showed up in next-lint profiles. All three are
-        // `Cell<ptr|bool>` (no destructor, const init) so no dtor
-        // registration is needed; matches Zig `threadlocal var`.
-        // `*mut Backing` (not NonNull) because the Zig stores raw `?*StoreType`.
-        #[thread_local]
-        pub static INSTANCE: Cell<*mut Backing> = Cell::new(core::ptr::null_mut());
-        /// Back-reference to the `ASTMemoryAllocator` installed by the
-        /// enclosing `ASTMemoryAllocatorScope` stack frame. Stored as
-        /// `Option<BackRef>` (vs. raw `*mut`) so `append()` can read it via
-        /// safe `Deref`; the back-reference invariant (pointee outlives every
-        /// copy) is upheld by `ASTMemoryAllocatorScope::{enter,exit}`, which
-        /// always restores the previous value before its frame returns.
-        #[thread_local]
-        pub static MEMORY_ALLOCATOR: Cell<Option<bun_ptr::BackRef<ASTMemoryAllocator>>> =
-            Cell::new(None);
-        #[thread_local]
-        pub static DISABLE_RESET: Cell<bool> = Cell::new(false);
-
-        #[inline]
-        fn instance() -> *mut Backing {
-            INSTANCE.get()
-        }
-        /// Reborrow the thread-local backing store. Centralises the raw
-        /// deref so `begin`/`reset`/`append` stay safe; `None` iff
-        /// `create()` has not run (or `deinit()` cleared it).
-        #[inline]
-        fn instance_mut<'a>() -> Option<&'a mut Backing> {
-            // SAFETY: `INSTANCE` is thread-local; the `*mut Backing` it holds
-            // is either null or was returned by `Backing::init()` (leaked
-            // `PreAlloc`) and remains valid until `deinit()` clears it.
-            // Single-threaded access — no other `&mut` to the slab is live.
-            unsafe { INSTANCE.get().as_mut() }
-        }
-
-        #[inline]
-        pub fn memory_allocator() -> *mut ASTMemoryAllocator {
-            MEMORY_ALLOCATOR
-                .get()
-                .map_or(core::ptr::null_mut(), bun_ptr::BackRef::as_ptr)
-        }
-        #[inline]
-        pub fn set_memory_allocator(p: *mut ASTMemoryAllocator) {
-            MEMORY_ALLOCATOR.set(core::ptr::NonNull::new(p).map(bun_ptr::BackRef::from));
-        }
-
-        pub fn create() {
-            if !instance().is_null() || !memory_allocator().is_null() {
-                return;
-            }
-            INSTANCE.set(Backing::init());
-        }
-
-        /// create || reset
-        pub fn begin() {
-            if !memory_allocator().is_null() {
-                return;
-            }
-            match instance_mut() {
-                None => create(),
-                Some(store) => {
-                    if !DISABLE_RESET.get() {
-                        Backing::reset(store);
-                    }
-                }
-            }
-        }
-
-        pub fn reset() {
-            if DISABLE_RESET.get() || !memory_allocator().is_null() {
-                return;
-            }
-            // Caller contract — instance is set when reset() is called.
-            Backing::reset(instance_mut().expect("Stmt Store::reset: instance not set"));
-        }
-
-        /// Zig: `Stmt.Data.Store.disable_reset = b;` — toggled by long-lived
-        /// callers that want the Store to persist across multiple parse calls.
-        #[inline]
-        pub fn set_disable_reset(b: bool) {
-            DISABLE_RESET.set(b);
-        }
-        #[inline]
-        pub fn disable_reset() -> bool {
-            DISABLE_RESET.get()
-        }
-
-        pub fn deinit() {
-            if instance().is_null() || !memory_allocator().is_null() {
-                return;
-            }
-            // SAFETY: checked non-null above; destroy frees the PreAlloc.
-            unsafe { Backing::destroy(instance()) };
-            INSTANCE.set(core::ptr::null_mut());
-        }
-
-        #[inline]
-        pub fn assert() {
-            if cfg!(debug_assertions) {
-                if instance().is_null() && memory_allocator().is_null() {
-                    unreachable!("Store must be init'd");
-                }
-            }
-        }
-
-        #[inline]
-        pub fn append<T>(value: T) -> StoreRef<T> {
-            if let Some(ma) = MEMORY_ALLOCATOR.get() {
-                // `BackRef<ASTMemoryAllocator>: Deref` — owning scope outlives this call.
-                return ma.append(value);
-            }
-            Disabler::assert();
-            // assert() guarantees instance is non-null on this thread.
-            StoreRef::from(Backing::append(
-                instance_mut().expect("Stmt Store must be init'd"),
-                value,
-            ))
-        }
-    }
+    crate::thread_local_ast_store!(stmt_store::Store, "Stmt");
 }
 
 // Zig `pub fn StoredData(tag: Tag) type` — returns the payload type for a tag,

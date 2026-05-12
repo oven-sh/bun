@@ -277,12 +277,15 @@ static X509_STORE *us_build_default_ca_store_locked() {
 
   // If JS overrode the defaults via tls.setDefaultCACertificates(), honour
   // that exclusively — Node.js does not merge bundled/system/extra back in.
+  // X509_STORE_add_cert() takes its own reference, so no up_ref here —
+  // unlike the bundled/extra/system blocks below (whose certs are
+  // process-lifetime statics so the extra ref is harmless), user_root_certs
+  // is freed on every subsequent setDefaultCACertificates() and an extra
+  // ref would leak.
   if (has_user_root_certs) {
     if (user_root_certs) {
       for (int i = 0; i < (int)sk_X509_num(user_root_certs); i++) {
-        X509 *cert = sk_X509_value(user_root_certs, i);
-        X509_up_ref(cert);
-        X509_STORE_add_cert(store, cert);
+        X509_STORE_add_cert(store, sk_X509_value(user_root_certs, i));
       }
     }
     return store;

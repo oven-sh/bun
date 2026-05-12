@@ -148,6 +148,17 @@ pub mod ffi {
 
         // ── X509 ─────────────────────────────────────────────────────────
         pub safe fn X509_up_ref(x: &X509) -> c_int;
+        // ffi-safe-fn: BoringSSL's `sk_value` takes `const OPENSSL_STACK *` and
+        // returns the element at `i` (or NULL if out-of-range — see
+        // `crypto/stack/stack.cc`); it never dereferences past the header it
+        // owns. The Rust `struct_stack_st_X509` is an `opaque_ffi!` ZST, so
+        // `&struct_stack_st_X509` is a thin non-null pointer with no
+        // `dereferenceable`/`noalias` obligation, and the `*mut X509` return is
+        // a mut→mut narrowing of the C `void *` slot. No remaining caller-side
+        // precondition; convert via `struct_stack_st_X509::opaque_ref` (panics
+        // on null, which both call sites already guard).
+        #[link_name = "sk_value"]
+        pub safe fn sk_X509_value(sk: &struct_stack_st_X509, i: usize) -> *mut X509;
 
         // ── EVP / EC ──────────────────────────────────────────────────────
         pub safe fn EVP_PKEY_id(pkey: &EVP_PKEY) -> c_int;
@@ -335,8 +346,7 @@ pub fn get_peer_certificate(this: &This, global: &JSGlobalObject, frame: &CallFr
         if cert_chain.is_null() {
             return Ok(JSValue::UNDEFINED);
         }
-        // SAFETY: cert_chain is a non-null STACK_OF(X509) just returned by SSL_get_peer_cert_chain.
-        let cert = unsafe { boringssl::sk_X509_value(cert_chain, 0) };
+        let cert = ffi::sk_X509_value(boringssl::struct_stack_st_X509::opaque_ref(cert_chain), 0);
         if cert.is_null() {
             return Ok(JSValue::UNDEFINED);
         }
@@ -359,8 +369,7 @@ pub fn get_peer_certificate(this: &This, global: &JSGlobalObject, frame: &CallFr
     let first_cert: *mut boringssl::X509 = if !cert.is_null() {
         cert
     } else if !cert_chain.is_null() {
-        // SAFETY: cert_chain is a non-null STACK_OF(X509) just returned by SSL_get_peer_cert_chain.
-        unsafe { boringssl::sk_X509_value(cert_chain, 0) }
+        ffi::sk_X509_value(boringssl::struct_stack_st_X509::opaque_ref(cert_chain), 0)
     } else {
         core::ptr::null_mut()
     };

@@ -387,8 +387,7 @@ impl TimerObjectInternals {
         // SAFETY: `vm` is live; `global` is the per-VM JSGlobalObject pointer.
         let global_this = unsafe { (*vm).global };
         s.this_value.with_mut(|r| r.downgrade());
-        // SAFETY: `event_loop_timer()` derives a pointer into the live parent.
-        unsafe { (*s.event_loop_timer()).state = EventLoopTimerState::FIRED };
+        s.set_event_loop_timer_state(EventLoopTimerState::FIRED);
         s.set_enable_keeping_event_loop_alive(vm, false);
         timer.ensure_still_alive();
 
@@ -410,10 +409,9 @@ impl TimerObjectInternals {
             // moved to tail of this block; `Self::run` has no early return so
             // ordering is preserved. After the second `deref()` `*this` may be
             // freed; do not touch it past this block.
-            // SAFETY: `event_loop_timer()` still valid — `ref_()` above pins.
-            // Fresh raw-place read: re-entrant `cancel()`/`refresh()` may have
-            // changed `state`.
-            if unsafe { (*s.event_loop_timer()).state } == EventLoopTimerState::FIRED {
+            // Fresh read: re-entrant `cancel()`/`refresh()` may have changed
+            // `state` (`ref_()` above pins the parent).
+            if s.event_loop_timer_state() == EventLoopTimerState::FIRED {
                 s.deref();
             }
             s.deref();
@@ -467,17 +465,14 @@ impl TimerObjectInternals {
         let id = s.id;
         let kind: KindBig = s.flags.get().kind().into();
         let async_id = ID { id, kind };
-        // SAFETY: `event_loop_timer()` derives a pointer into the live parent.
-        let has_been_cleared = unsafe { (*s.event_loop_timer()).state }
-            == EventLoopTimerState::CANCELLED
+        let has_been_cleared = s.event_loop_timer_state() == EventLoopTimerState::CANCELLED
             || s.flags.get().has_cleared_timer()
             // SAFETY: `vm` is the live per-thread VM (hook contract).
             || unsafe { (*vm).script_execution_status() } != ScriptExecutionStatus::Running
             // SAFETY: `vm` live per hook contract.
             || s.generation != unsafe { (*vm).test_isolation_generation };
 
-        // SAFETY: `event_loop_timer()` derives a pointer into the live parent.
-        unsafe { (*s.event_loop_timer()).state = EventLoopTimerState::FIRED };
+        s.set_event_loop_timer_state(EventLoopTimerState::FIRED);
 
         // SAFETY: `vm` is live; `global` is the per-VM JSGlobalObject pointer.
         let global_this = unsafe { (*vm).global };
@@ -592,8 +587,8 @@ impl TimerObjectInternals {
                     if !s.should_reschedule_timer(repeat, idle_timeout) {
                         break 'is_timer_done true;
                     }
-                    // SAFETY: `event_loop_timer()` still valid — `ref_()` above pins.
-                    match unsafe { (*s.event_loop_timer()).state } {
+                    // `ref_()` above pins the parent across the deref.
+                    match s.event_loop_timer_state() {
                         EventLoopTimerState::FIRED => {
                             // If we didn't clear the setInterval, reschedule it starting from
                             // SAFETY: `state` is the boxed per-thread `RuntimeState`;
@@ -641,8 +636,8 @@ impl TimerObjectInternals {
                         }
                     }
 
-                    // SAFETY: `event_loop_timer()` still valid — `ref_()` above pins.
-                    match unsafe { (*s.event_loop_timer()).state } {
+                    // `ref_()` above pins the parent across the deref.
+                    match s.event_loop_timer_state() {
                         EventLoopTimerState::FIRED => {
                             break 'is_timer_done true;
                         }
@@ -763,9 +758,7 @@ impl TimerObjectInternals {
 
         let now = Timespec::now(TimespecMockMode::AllowMockedTime);
         let scheduled_time = now.add_ms(i64::from(self.interval.get()));
-        // SAFETY: `event_loop_timer()` derives a pointer into the live parent.
-        let was_active =
-            unsafe { (*self.event_loop_timer()).state } == EventLoopTimerState::ACTIVE;
+        let was_active = self.event_loop_timer_state() == EventLoopTimerState::ACTIVE;
         if was_active {
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; fresh
             // `&mut` to `.timer` for this call only.
@@ -821,12 +814,10 @@ impl TimerObjectInternals {
         // (b) `vm.timer.remove(eventLoopTimer())` if state == .ACTIVE — without
         //     this the freed parent stays linked into `All.timers` and the next
         //     `delete_min`/`drain_timers` dereferences freed memory.
-        let elt = self.event_loop_timer();
-        // SAFETY: `elt` derived from the live parent (see fn contract).
-        if unsafe { (*elt).state } == EventLoopTimerState::ACTIVE {
+        if self.event_loop_timer_state() == EventLoopTimerState::ACTIVE {
             // SAFETY: `state` is the boxed per-thread `RuntimeState`;
             // single-threaded JS heap so no concurrent `&mut` to `.timer`.
-            unsafe { (*state).timer.remove(elt) };
+            unsafe { (*state).timer.remove(self.event_loop_timer()) };
         }
 
         // (c) `vm.timer.maps.get(kind).orderedRemove(id)` if
@@ -858,9 +849,23 @@ impl TimerObjectInternals {
 // ──────────────────────────────────────────────────────────────────────────
 impl TimerObjectInternals {
     /// Read-only `container_of` to the owning `EventLoopTimer.state`.
+    ///
+    /// Single back-ref deref site for the read path: every former
+    /// `unsafe { (*self.event_loop_timer()).state }` routes through here.
     fn event_loop_timer_state(&self) -> EventLoopTimerState {
         // SAFETY: ptr into the live parent per `parent_ptr()`; read-only deref.
         unsafe { (*self.event_loop_timer()).state }
+    }
+
+    /// Write the owning `EventLoopTimer.state`. Paired write-side accessor for
+    /// [`event_loop_timer_state`]; centralises the back-ref deref so call sites
+    /// stay safe.
+    fn set_event_loop_timer_state(&self, state: EventLoopTimerState) {
+        // SAFETY: ptr into the live parent per `parent_ptr()`. `state` is a
+        // plain `Copy` enum; writes happen on the single JS thread, and
+        // `event_loop_timer()` returns a raw `*mut` precisely so re-entrant
+        // `cancel()`/`refresh()` cannot alias a `&mut` (see its doc comment).
+        unsafe { (*self.event_loop_timer()).state = state };
     }
 
     /// Spec TimerObjectInternals.zig `doRef`.
@@ -990,11 +995,8 @@ impl TimerObjectInternals {
             return;
         }
 
-        let elt = self.event_loop_timer();
-        // SAFETY: `elt` derived from the live parent (see `event_loop_timer`).
-        let was_active = unsafe { (*elt).state } == EventLoopTimerState::ACTIVE;
-        // SAFETY: as above.
-        unsafe { (*elt).state = EventLoopTimerState::CANCELLED };
+        let was_active = self.event_loop_timer_state() == EventLoopTimerState::ACTIVE;
+        self.set_event_loop_timer_state(EventLoopTimerState::CANCELLED);
         self.this_value.with_mut(|r| r.downgrade());
 
         if was_active {
@@ -1002,7 +1004,7 @@ impl TimerObjectInternals {
             debug_assert!(!state.is_null(), "RuntimeState not installed");
             // SAFETY: `state` is the boxed per-thread `RuntimeState`;
             // single-threaded JS heap so no concurrent `&mut` to `.timer`.
-            unsafe { (*state).timer.remove(elt) };
+            unsafe { (*state).timer.remove(self.event_loop_timer()) };
             self.deref();
         }
     }

@@ -424,6 +424,21 @@ impl HotReloadEvent {
         (self.files.count() + self.dirs.count()) == 0
     }
 
+    /// Debug-asserts that the owning [`DevServer`]'s watcher thread-lock is
+    /// held. Centralises the back-ref deref so the four call sites in
+    /// `watcher_acquire_event` / `watcher_release_and_submit_event` (both the
+    /// `WatcherAtomics` impl here and the duplicate in
+    /// `DevServer/WatcherAtomics.rs`) stay safe.
+    #[inline]
+    pub fn assert_watcher_thread_locked(&self) {
+        // SAFETY: BACKREF — `owner` is the DevServer whose
+        // `watcher_atomics.events` array contains `self`; DevServer outlives
+        // every HotReloadEvent it holds. Raw place projection (no `&DevServer`
+        // intermediate) so this does not alias any live `&mut HotReloadEvent`.
+        // `bun_watcher` is field-disjoint from `watcher_atomics`.
+        unsafe { (*self.owner).bun_watcher.thread_lock.assert_locked() };
+    }
+
     /// `HotReloadEvent.processFileList` — HotReloadEvent.zig:78.
     /// Invalidates items in IncrementalGraph, appending all new items to `entry_points`.
     pub fn process_file_list(
@@ -841,9 +856,7 @@ impl WatcherAtomics {
             ev_ref.timer = std::time::Instant::now();
         }
 
-        // SAFETY: `owner` is a BACKREF to the DevServer that owns the WatcherAtomics array
-        // containing this event; DevServer outlives all HotReloadEvents it holds.
-        unsafe { (*ev_ref.owner).bun_watcher.thread_lock.assert_locked() };
+        ev_ref.assert_watcher_thread_locked();
 
         #[cfg(debug_assertions)]
         debug_assert!(ev_ref.debug_mutex.try_lock());
@@ -860,8 +873,7 @@ impl WatcherAtomics {
         // the watcher thread has exclusive access until it is submitted below.
         let ev_ref = unsafe { &mut *ev };
 
-        // SAFETY: `owner` is a BACKREF to the DevServer; valid for the event's lifetime.
-        unsafe { (*ev_ref.owner).bun_watcher.thread_lock.assert_locked() };
+        ev_ref.assert_watcher_thread_locked();
 
         #[cfg(debug_assertions)]
         {

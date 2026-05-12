@@ -113,9 +113,7 @@ impl WatcherAtomics {
             ev_ref.timer = std::time::Instant::now();
         }
 
-        // SAFETY: `owner` is a BACKREF to the DevServer that owns the WatcherAtomics array
-        // containing this event; DevServer outlives all HotReloadEvents it holds.
-        unsafe { (*ev_ref.owner).bun_watcher.thread_lock.assert_locked() };
+        ev_ref.assert_watcher_thread_locked();
 
         #[cfg(debug_assertions)]
         debug_assert!(ev_ref.debug_mutex.try_lock());
@@ -132,8 +130,7 @@ impl WatcherAtomics {
         // the watcher thread has exclusive access until it is submitted below.
         let ev_ref = unsafe { &mut *ev };
 
-        // SAFETY: `owner` is a BACKREF to the DevServer; valid for the event's lifetime.
-        unsafe { (*ev_ref.owner).bun_watcher.thread_lock.assert_locked() };
+        ev_ref.assert_watcher_thread_locked();
 
         #[cfg(debug_assertions)]
         {

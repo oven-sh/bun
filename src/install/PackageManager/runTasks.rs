@@ -1150,9 +1150,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     &mut package_id,
                     dependency_id,
                     resolution,
-                    // SAFETY: `task.tag` is Extract/LocalTarball — `data.extract`
-                    // is the active union arm.
-                    unsafe { &task.data.extract },
+                    // Tag-checked accessor (debug_asserts Extract|LocalTarball);
+                    // shared `&task` here coexists with the field-disjoint
+                    // `&task.request` borrow held via `resolution` above.
+                    task.data_extract(),
                     log_level,
                 ) {
                     'handle_pkg: {
@@ -1487,9 +1488,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     &mut package_id,
                     git_checkout.dependency_id,
                     resolution,
-                    // SAFETY: `task.tag == GitCheckout` — `data.git_checkout` is the
-                    // active union arm.
-                    unsafe { &task.data.git_checkout },
+                    // Tag-checked accessor (debug_asserts GitCheckout); shared
+                    // `&task` here coexists with the field-disjoint
+                    // `&task.request` borrow held via `git_checkout` above.
+                    task.data_git_checkout(),
                     log_level,
                 ) {
                     'handle_pkg: {

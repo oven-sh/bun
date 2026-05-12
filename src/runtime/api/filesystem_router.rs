@@ -585,9 +585,7 @@ impl FileSystemRouter {
         // detach the slice from `path`'s ownership here. The bytes stay valid: `path` is
         // never dropped on any path between here and `MatchedRoute::init` taking ownership
         // (early returns above this point already dropped/replaced `path`).
-        let path_bytes: &[u8] = unsafe {
-            core::slice::from_raw_parts(path.slice().as_ptr(), path.slice().len())
-        };
+        let path_bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(path.slice()) };
         let url_path = match URLPath::parse(path_bytes) {
             Ok(v) => v,
             Err(err) => {

@@ -977,12 +977,8 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                         // SAFETY: `name_storage` lives in a thread_local that
                         // outlives any caller; we never reallocate it while
                         // `edit.name` is observed (single-threaded JS VM).
-                        edit.name = unsafe {
-                            core::slice::from_raw_parts(
-                                slot.name_storage.as_ptr(),
-                                slot.name_storage.len(),
-                            )
-                        };
+                        edit.name =
+                            unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
                         edit.detect_editor(env);
                         editor_choice = edit.editor;
                         if editor_choice.is_none() {
@@ -998,12 +994,8 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                             // dangling-alias it.
                             slot.name_storage = edit.path.to_vec();
                             // SAFETY: see above.
-                            edit.name = unsafe {
-                                core::slice::from_raw_parts(
-                                    slot.name_storage.as_ptr(),
-                                    slot.name_storage.len(),
-                                )
-                            };
+                            edit.name =
+                                unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
                         }
                     }
                 }

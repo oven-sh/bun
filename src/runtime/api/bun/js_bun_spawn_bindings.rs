@@ -1990,12 +1990,7 @@ pub fn append_envp_from_js(
             // SAFETY: `line` is moved into `storage` below (a `Vec<ZBox>` that
             // outlives every read of `*path`), and `ZBox` is heap-backed so the
             // bytes don't move when the `ZBox` value itself is moved.
-            *path = unsafe {
-                core::slice::from_raw_parts(
-                    line.as_bytes().as_ptr().add(b"PATH=".len()),
-                    line.len() - b"PATH=".len(),
-                )
-            };
+            *path = unsafe { bun_ptr::detach_lifetime(&line.as_bytes()[b"PATH=".len()..]) };
         }
 
         envp.push(line.as_ptr());

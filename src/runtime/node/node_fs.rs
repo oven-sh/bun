@@ -5260,12 +5260,8 @@ impl NodeFS {
         // the slice via raw-pointer round-trip — same bytes Zig's `[]const u8` saw.
         // SAFETY: `async_task.root_path`'s backing storage is fixed at `create()` and
         // outlives every `enqueue` call below.
-        let root_basename: &[u8] = unsafe {
-            core::slice::from_raw_parts(
-                async_task.root_path.slice().as_ptr(),
-                async_task.root_path.slice().len(),
-            )
-        };
+        let root_basename: &[u8] =
+            unsafe { bun_ptr::detach_lifetime(async_task.root_path.slice()) };
         let flags = sys::O::DIRECTORY | sys::O::RDONLY;
         let atfd = if is_root { FD::cwd() } else { async_task.root_fd };
         #[cfg(not(windows))]

@@ -361,16 +361,20 @@ pub struct VirtualMachine {
 // ──────────────────────────────────────────────────────────────────────────
 
 // TODO(port): move to jsc_sys
+//
+// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle, so
+// `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*` and C++
+// mutating VM/process state through it is interior mutation invisible to Rust.
 unsafe extern "C" {
-    fn Bun__handleUncaughtException(global: *mut JSGlobalObject, err: JSValue, is_rejection: c_int) -> c_int;
-    fn Bun__handleUnhandledRejection(global: *mut JSGlobalObject, reason: JSValue, promise: JSValue) -> c_int;
-    fn Bun__emitHandledPromiseEvent(global: *mut JSGlobalObject, promise: JSValue) -> bool;
+    safe fn Bun__handleUncaughtException(global: &JSGlobalObject, err: JSValue, is_rejection: c_int) -> c_int;
+    safe fn Bun__handleUnhandledRejection(global: &JSGlobalObject, reason: JSValue, promise: JSValue) -> c_int;
+    safe fn Bun__emitHandledPromiseEvent(global: &JSGlobalObject, promise: JSValue) -> bool;
 
-    fn Process__dispatchOnBeforeExit(global: *mut JSGlobalObject, code: u8);
-    fn Process__dispatchOnExit(global: *mut JSGlobalObject, code: u8);
-    fn Bun__closeAllSQLiteDatabasesForTermination();
-    fn Bun__WebView__closeAllForTermination();
-    fn Zig__GlobalObject__destructOnExit(global: *mut JSGlobalObject);
+    safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
+    safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
+    safe fn Bun__closeAllSQLiteDatabasesForTermination();
+    safe fn Bun__WebView__closeAllForTermination();
+    safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
 }
 
 /// `hot_reload` is stored as `u8` (TODO(b2-cycle): widen to
@@ -521,13 +525,10 @@ impl ExitHandler {
     /// reference instead; the body re-enters JS so no `&mut` is held.
     pub fn dispatch_on_exit(vm: &VirtualMachine) {
         let exit_code = vm.exit_handler.exit_code;
-        // SAFETY: extern "C" FFI; vm.global valid for VM lifetime
-        unsafe { Process__dispatchOnExit(vm.global, exit_code) };
+        Process__dispatchOnExit(vm.global(), exit_code);
         if vm.worker.is_none() {
-            // SAFETY: extern "C" FFI; main-thread-only termination hooks
-            unsafe { Bun__closeAllSQLiteDatabasesForTermination() };
-            // SAFETY: extern "C" FFI; main-thread-only termination hooks
-            unsafe { Bun__WebView__closeAllForTermination() };
+            Bun__closeAllSQLiteDatabasesForTermination();
+            Bun__WebView__closeAllForTermination();
         }
     }
 
@@ -536,8 +537,8 @@ impl ExitHandler {
     pub fn dispatch_on_before_exit(vm: &VirtualMachine) {
         let exit_code = vm.exit_handler.exit_code;
         let global = vm.global();
-        let _ = jsc::from_js_host_call_generic(global, || unsafe {
-            Process__dispatchOnBeforeExit(vm.global, exit_code)
+        let _ = jsc::from_js_host_call_generic(global, || {
+            Process__dispatchOnBeforeExit(global, exit_code)
         });
     }
 }
@@ -841,6 +842,25 @@ impl VirtualMachine {
         unsafe { &mut *self.uws_loop() }
     }
 
+    /// Safe `&mut PlatformEventLoop` accessor for `event_loop_handle` (the
+    /// uws loop on POSIX, libuv loop on Windows). `None` only before
+    /// `ensure_waker()` runs. Consolidates the open-coded raw deref of
+    /// `self.event_loop_handle.unwrap()` at the `EventLoop::tick*` /
+    /// `update_counts` call sites into one SAFETY block.
+    ///
+    /// Same single-JS-thread soundness contract as [`Self::uws_loop_mut`] —
+    /// the `PlatformEventLoop` is a separate heap allocation (uws/uv-owned),
+    /// so the returned `&mut` cannot alias any field of `self`.
+    #[inline(always)]
+    #[allow(clippy::mut_from_ref)]
+    pub fn platform_loop_opt(&self) -> Option<&mut PlatformEventLoop> {
+        // SAFETY: when `Some`, `event_loop_handle` was set in `init()` /
+        // `ensure_waker()` to the live per-VM uws/uv loop and remains valid
+        // for the VM lifetime. Single-JS-thread invariant per `unsafe impl
+        // Sync` — only the owning JS thread reborrows mutably.
+        self.event_loop_handle.map(|h| unsafe { &mut *h })
+    }
+
     /// Read-then-zero `pending_unref_counter`. Wraps the common
     /// `let n = vm.pending_unref_counter; if n > 0 { vm.pending_unref_counter = 0; ... }`
     /// pattern so callers don't open-code two raw-ptr writes.
@@ -982,10 +1002,9 @@ impl VirtualMachine {
 
     pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
         let el = self.event_loop_shared();
-        // SAFETY: event_loop_handle is live for the VM lifetime when set.
         let active = self
-            .event_loop_handle
-            .map(|h| unsafe { &*h }.is_active())
+            .platform_loop_opt()
+            .map(|h| h.is_active())
             .unwrap_or(false);
         self.unhandled_error_counter == 0
             && ((active as usize)
@@ -1035,8 +1054,7 @@ impl VirtualMachine {
         if self.is_shutting_down() {
             return true;
         }
-        // SAFETY: extern "C" FFI; const→mut cast required by C ABI, callee does not mutate
-        unsafe { Bun__emitHandledPromiseEvent(global_object.as_ptr(), promise) }
+        Bun__emitHandledPromiseEvent(global_object, promise)
     }
 
     pub fn default_on_unhandled_rejection(this: &mut VirtualMachine, _: &JSGlobalObject, value: JSValue) {
@@ -1101,8 +1119,8 @@ impl VirtualMachine {
     pub fn prepare_loop(&mut self) {}
 
     pub fn enter_uws_loop(&mut self) {
-        // SAFETY: event_loop_handle is set in ensure_waker before any caller reaches here.
-        unsafe { (*self.event_loop_handle.unwrap()).run() };
+        // event_loop_handle is set in ensure_waker before any caller reaches here.
+        self.platform_loop_opt().expect("event_loop_handle").run();
     }
 
     pub fn enqueue_task(&mut self, task: bun_event_loop::Task) {
@@ -1340,14 +1358,11 @@ impl VirtualMachine {
             panic!("made it past process.exit()");
         }
         self.is_handling_uncaught_exception = true;
-        // SAFETY: extern "C" FFI; `global_object` is the live VM global.
-        let handled = unsafe {
-            Bun__handleUncaughtException(
-                global_object.as_ptr(),
-                err.to_error().unwrap_or(err),
-                if is_rejection { 1 } else { 0 },
-            )
-        } > 0;
+        let handled = Bun__handleUncaughtException(
+            global_object,
+            err.to_error().unwrap_or(err),
+            if is_rejection { 1 } else { 0 },
+        ) > 0;
         if !handled {
             // TODO maybe we want a separate code path for uncaught exceptions
             self.unhandled_error_counter += 1;
@@ -1494,8 +1509,7 @@ impl VirtualMachine {
                     .close_all_socket_groups(vm_ref);
             }
 
-            // SAFETY: extern "C" FFI; `self.global` is the live VM global.
-            unsafe { Zig__GlobalObject__destructOnExit(self.global) };
+            Zig__GlobalObject__destructOnExit(self.global());
 
             // lastChanceToFinalize() above runs Listener/Server finalize →
             // their own embedded group.closeAll() → sockets land in
@@ -2773,8 +2787,7 @@ impl IPCInstance {
             (hooks.ipc_child_singleton_deinit)();
         }
         event_loop.enter();
-        // SAFETY: extern "C" FFI; `vm.global` is the live VM global.
-        unsafe { Process__emitDisconnectEvent(vm.global) };
+        Process__emitDisconnectEvent(vm.global());
         event_loop.exit();
         // Group is embedded in RareData and shared with subprocess IPC; nothing
         // to free here.
@@ -2782,9 +2795,13 @@ impl IPCInstance {
     }
 }
 
+// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle, so
+// `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*`.
+// `Process__emitMessageEvent` keeps the raw pointer because its sole caller
+// holds a `*const JSGlobalObject` (IPCInstance field) and must deref it anyway.
 unsafe extern "C" {
     fn Process__emitMessageEvent(global: *mut JSGlobalObject, value: JSValue, handle: JSValue);
-    fn Process__emitDisconnectEvent(global: *mut JSGlobalObject);
+    safe fn Process__emitDisconnectEvent(global: &JSGlobalObject);
 }
 
 /// `IPC.SendQueue` owner dispatch for the child-side `IPCInstance`. Mirrors
@@ -2885,15 +2902,18 @@ crate::jsc_abi_extern! {
     #[allow(improper_ctypes)]
     fn Bake__getAsyncLocalStorage(global: *mut JSGlobalObject) -> JSValue;
 }
+// `JSGlobalObject` / `VM` are opaque `UnsafeCell`-backed ZST handles, so
+// `&T` is ABI-identical to a non-null `T*`. `BakeCreateProdGlobal` keeps a raw
+// `*mut c_void` console ptr and stays `unsafe`.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
-    fn Bun__promises__isErrorLike(global: *mut JSGlobalObject, reason: JSValue) -> bool;
-    fn Bun__promises__emitUnhandledRejectionWarning(
-        global: *mut JSGlobalObject,
+    safe fn Bun__promises__isErrorLike(global: &JSGlobalObject, reason: JSValue) -> bool;
+    safe fn Bun__promises__emitUnhandledRejectionWarning(
+        global: &JSGlobalObject,
         reason: JSValue,
         promise: JSValue,
     );
-    fn Bun__noSideEffectsToString(vm: *mut VM, global: *mut JSGlobalObject, reason: JSValue) -> JSValue;
+    safe fn Bun__noSideEffectsToString(vm: &VM, global: &JSGlobalObject, reason: JSValue) -> JSValue;
     fn BakeCreateProdGlobal(console_ptr: *mut c_void) -> *mut JSGlobalObject;
 }
 
@@ -3133,24 +3153,20 @@ impl VirtualMachine {
             return;
         }
 
-        let global = global_object.as_ptr();
         // PORT NOTE: Zig `defer eventLoop().drainMicrotasks()` per-arm —
         // hoisted into a closure.
         let drain = |this: &mut Self| {
             let _ = this.event_loop_mut().drain_microtasks();
         };
-        // Safe wrapper over the `Bun__handleUnhandledRejection` FFI call
-        // (returns whether a JS handler claimed it). Captures `global` /
-        // `reason` / `promise` so the six branches below don't each need their
-        // own `unsafe` block.
+        // Wrapper over the `Bun__handleUnhandledRejection` FFI call (returns
+        // whether a JS handler claimed it). Captures `global_object` / `reason`
+        // / `promise` so the six branches below stay concise.
         let handle_unhandled = || -> bool {
-            // SAFETY: extern "C" FFI; `global` valid for VM lifetime;
-            // `reason`/`promise` are live JSC heap cells.
-            unsafe { Bun__handleUnhandledRejection(global, reason, promise) > 0 }
+            Bun__handleUnhandledRejection(global_object, reason, promise) > 0
         };
         let emit_warning = |this: &mut Self| {
-            let r = jsc::from_js_host_call_generic(global_object, || unsafe {
-                Bun__promises__emitUnhandledRejectionWarning(global, reason, promise)
+            let r = jsc::from_js_host_call_generic(global_object, || {
+                Bun__promises__emitUnhandledRejectionWarning(global_object, reason, promise)
             });
             if let Err(e) = r {
                 let exc = global_object.take_exception(e);
@@ -6363,8 +6379,8 @@ impl VirtualMachine {
 use core::fmt::Write as _;
 
 fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bool> {
-    jsc::from_js_host_call_generic(global_object, || unsafe {
-        Bun__promises__isErrorLike(global_object.as_ptr(), reason)
+    jsc::from_js_host_call_generic(global_object, || {
+        Bun__promises__isErrorLike(global_object, reason)
     })
 }
 
@@ -6379,10 +6395,6 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
     if like {
         return reason;
     }
-    // SAFETY: extern "C" FFI; `global_object` is the live VM global.
-    // `vm_ptr()` returns the FFI `*mut VM` directly so the C++ side
-    // (`JSC::VM&`) receives a pointer with mutable provenance.
-    //
     // Zig (VirtualMachine.zig:581-585) opens an explicit `TopExceptionScope`
     // around the call and clears any exception via the scope; the C++ side has a
     // `DECLARE_THROW_SCOPE`, so under `BUN_JSC_validateExceptionChecks=1` the
@@ -6390,13 +6402,7 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
     // without a Rust-side scope live across the call.
     let reason_str = {
         crate::top_scope!(scope, global_object);
-        let r = unsafe {
-            Bun__noSideEffectsToString(
-                global_object.vm_ptr(),
-                global_object.as_ptr(),
-                reason,
-            )
-        };
+        let r = Bun__noSideEffectsToString(global_object.vm(), global_object, reason);
         if scope.exception().is_some() {
             scope.clear_exception();
         }

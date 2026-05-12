@@ -575,10 +575,8 @@ impl EventLoop {
         // PORT NOTE: spec event_loop.zig:283-284 unwraps `event_loop_handle.?`
         // (panic). Do NOT silently drop the swapped delta when the handle is
         // missing — refs queued via `ref_concurrently()` would be lost forever.
-        let loop_ = self.vm_ref().event_loop_handle.expect("event_loop_handle");
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
-        // SAFETY: `event_loop_handle` is a live uws/uv loop for the VM lifetime.
-        let loop_ = unsafe { &mut *loop_ };
+        let loop_ = self.vm_ref().platform_loop_opt().expect("event_loop_handle");
         #[cfg(windows)]
         {
             if delta > 0 {
@@ -947,9 +945,10 @@ impl EventLoop {
 impl EventLoop {
     pub fn tick_while_paused(&mut self, done: &mut bool) {
         while !*done {
-            // SAFETY: `event_loop_handle` is the live uws/uv loop for the VM
-            // lifetime once `ensure_waker()` has run.
-            unsafe { (*self.vm_ref().event_loop_handle.unwrap()).tick() };
+            self.vm_ref()
+                .platform_loop_opt()
+                .expect("event_loop_handle")
+                .tick();
         }
     }
 

@@ -1143,7 +1143,13 @@ unsafe fn drain_callback(task: *mut thread_pool::Task) {
 /// are currently buffered in `reading`; if none, returns `ARCHIVE_RETRY`
 /// (when more data is still expected) so libarchive unwinds with a
 /// resumable status, or `0` (EOF) once the HTTP response is complete.
-unsafe extern "C" fn archive_read_callback(
+///
+/// Safe-fn: only ever invoked by libarchive itself (never from Rust), with
+/// `ctx`/`out_buffer` it threaded through from `open_archive()`. Every
+/// pointer dereference inside carries its own SAFETY justification grounded
+/// in that setup, so there is no caller-side precondition to encode in the
+/// signature. The fn-pointer still coerces to the binding's expected type.
+extern "C" fn archive_read_callback(
     _a: *mut lib::Archive,
     ctx: *mut c_void,
     out_buffer: *mut *const c_void,

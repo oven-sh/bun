@@ -43,7 +43,7 @@ impl<SemverInt: VersionInt> Default for ResolutionType<SemverInt> {
 }
 
 /// Rust-side equivalent of `bun.meta.Tagged(Value, Tag)` — a tagged view of `Value`
-/// used by `ResolutionType::init` / `Value::init` to construct a zero-padded union.
+/// used by [`ResolutionType::init`] / [`value_init`] to construct a zero-padded union.
 pub enum TaggedValue<SemverInt: VersionInt> {
     Uninitialized,
     Root,
@@ -95,7 +95,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         Self {
             tag: value.tag(),
             _padding: [0; 7],
-            value: Value::init(value),
+            value: value_init(value),
         }
     }
 
@@ -448,31 +448,31 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         B: StringBuilderLike,
     {
         let value = match self.tag {
-            Tag::Npm => Value::init(TaggedValue::Npm(self.npm().clone(buf, builder))),
-            Tag::LocalTarball => Value::init(TaggedValue::LocalTarball(
+            Tag::Npm => value_init(TaggedValue::Npm(self.npm().clone(buf, builder))),
+            Tag::LocalTarball => value_init(TaggedValue::LocalTarball(
                 builder.append::<String>(self.local_tarball().slice(buf)),
             )),
-            Tag::Folder => Value::init(TaggedValue::Folder(
+            Tag::Folder => value_init(TaggedValue::Folder(
                 builder.append::<String>(self.folder().slice(buf)),
             )),
-            Tag::RemoteTarball => Value::init(TaggedValue::RemoteTarball(
+            Tag::RemoteTarball => value_init(TaggedValue::RemoteTarball(
                 builder.append::<String>(self.remote_tarball().slice(buf)),
             )),
-            Tag::Workspace => Value::init(TaggedValue::Workspace(
+            Tag::Workspace => value_init(TaggedValue::Workspace(
                 builder.append::<String>(self.workspace().slice(buf)),
             )),
-            Tag::Symlink => Value::init(TaggedValue::Symlink(
+            Tag::Symlink => value_init(TaggedValue::Symlink(
                 builder.append::<String>(self.symlink().slice(buf)),
             )),
-            Tag::SingleFileModule => Value::init(TaggedValue::SingleFileModule(
+            Tag::SingleFileModule => value_init(TaggedValue::SingleFileModule(
                 builder.append::<String>(self.single_file_module().slice(buf)),
             )),
-            Tag::Git => Value::init(TaggedValue::Git(self.git().clone(buf, builder))),
+            Tag::Git => value_init(TaggedValue::Git(self.git().clone(buf, builder))),
             Tag::Github => {
-                Value::init(TaggedValue::Github(self.github().clone(buf, builder)))
+                value_init(TaggedValue::Github(self.github().clone(buf, builder)))
             }
-            Tag::Root => Value::init(TaggedValue::Root),
-            Tag::Uninitialized => Value::init(TaggedValue::Uninitialized),
+            Tag::Root => value_init(TaggedValue::Root),
+            Tag::Uninitialized => value_init(TaggedValue::Uninitialized),
             _ => panic!("Internal error: unexpected resolution tag: {}", self.tag.0),
         };
         Self {
@@ -798,68 +798,41 @@ impl<'a, SemverInt: VersionInt> fmt::Display for DebugFormatter<'a, SemverInt> {
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union Value<SemverInt: VersionInt> {
-    pub uninitialized: (),
-    pub root: (),
+/// Re-export of the lower-tier `#[repr(C)]` union — `bun_install_types` owns the
+/// data definition so the resolver-side `hooks::Resolution` and the install-side
+/// [`ResolutionType`] share the SAME nominal `value` type. Sharing the nominal
+/// type (rather than a layout-identical local duplicate) lets
+/// `auto_installer::resolution_from_hooks` copy `value` by plain assignment
+/// instead of `transmute`. Constructors that need the install-side
+/// zero-padded-init contract live below as free fns ([`value_zero`] /
+/// [`value_init`]) since inherent impls on a foreign type are forbidden.
+pub type Value<SemverInt> = bun_install_types::resolver_hooks::ResolutionValue<SemverInt>;
 
-    pub npm: VersionedURLType<SemverInt>,
-
-    pub folder: String,
-
-    /// File path to a tarball relative to the package root
-    pub local_tarball: String,
-
-    pub github: Repository,
-
-    pub git: Repository,
-
-    /// global link
-    pub symlink: String,
-
-    pub workspace: String,
-
-    /// URL to a tarball.
-    pub remote_tarball: String,
-
-    pub single_file_module: String,
+#[inline]
+pub fn value_zero<SemverInt: VersionInt>() -> Value<SemverInt> {
+    // SAFETY: all-zero is a valid Value — every variant is POD with a valid
+    // all-zero representation (Semver String, Repository, VersionedURLType are
+    // all #[repr(C)] with no NonNull/NonZero fields).
+    unsafe { bun_core::ffi::zeroed_unchecked() }
 }
 
-impl<SemverInt: VersionInt> Default for Value<SemverInt> {
-    #[inline]
-    fn default() -> Self {
-        Self::zero()
+/// To avoid undefined memory between union values, we must zero initialize the union first.
+pub fn value_init<SemverInt: VersionInt>(field: TaggedValue<SemverInt>) -> Value<SemverInt> {
+    let mut value = value_zero::<SemverInt>();
+    match field {
+        TaggedValue::Uninitialized => value.uninitialized = (),
+        TaggedValue::Root => value.root = (),
+        TaggedValue::Npm(v) => value.npm = v,
+        TaggedValue::Folder(v) => value.folder = v,
+        TaggedValue::LocalTarball(v) => value.local_tarball = v,
+        TaggedValue::Github(v) => value.github = v,
+        TaggedValue::Git(v) => value.git = v,
+        TaggedValue::Symlink(v) => value.symlink = v,
+        TaggedValue::Workspace(v) => value.workspace = v,
+        TaggedValue::RemoteTarball(v) => value.remote_tarball = v,
+        TaggedValue::SingleFileModule(v) => value.single_file_module = v,
     }
-}
-
-impl<SemverInt: VersionInt> Value<SemverInt> {
-    #[inline]
-    pub fn zero() -> Self {
-        // SAFETY: all-zero is a valid Value — every variant is POD with a valid
-        // all-zero representation (Semver String, Repository, VersionedURLType are
-        // all #[repr(C)] with no NonNull/NonZero fields).
-        unsafe { bun_core::ffi::zeroed_unchecked() }
-    }
-
-    /// To avoid undefined memory between union values, we must zero initialize the union first.
-    pub fn init(field: TaggedValue<SemverInt>) -> Self {
-        let mut value = Self::zero();
-        match field {
-            TaggedValue::Uninitialized => value.uninitialized = (),
-            TaggedValue::Root => value.root = (),
-            TaggedValue::Npm(v) => value.npm = v,
-            TaggedValue::Folder(v) => value.folder = v,
-            TaggedValue::LocalTarball(v) => value.local_tarball = v,
-            TaggedValue::Github(v) => value.github = v,
-            TaggedValue::Git(v) => value.git = v,
-            TaggedValue::Symlink(v) => value.symlink = v,
-            TaggedValue::Workspace(v) => value.workspace = v,
-            TaggedValue::RemoteTarball(v) => value.remote_tarball = v,
-            TaggedValue::SingleFileModule(v) => value.single_file_module = v,
-        }
-        value
-    }
+    value
 }
 
 // Zig `enum(u8) { ..., _ }` is non-exhaustive — values outside the named set are

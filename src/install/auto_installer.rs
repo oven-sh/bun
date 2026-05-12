@@ -11,14 +11,14 @@
 //! dependency-side surface.
 //!
 //! `resolution::Resolution` is still the install-side `ResolutionType<u64>`
-//! (a `#[repr(C)]` struct whose `Value` union mirrors
-//! `hooks::ResolutionValue<u64>`). [`resolution_to_hooks`] /
+//! (a `#[repr(C)]` struct whose `value` field IS `hooks::ResolutionValue<u64>`
+//! — `resolution::Value<I>` is now a type alias). [`resolution_to_hooks`] /
 //! [`resolution_from_hooks`] bridge them by explicit field copy — the `tag`
 //! fields have different validity domains (open `u8` newtype vs closed
-//! `#[repr(u8)] enum`), so a whole-struct transmute would be unsound. The
-//! to-hooks direction copies the active variant via `ResolutionType`'s safe
-//! tag-checked accessors; only the from-hooks direction reinterprets the
-//! invariant-free `value` union (no safe accessors on the lower-tier type).
+//! `#[repr(u8)] enum`), so a whole-struct transmute would be unsound. Both
+//! directions are fully safe: to-hooks copies the active variant via
+//! `ResolutionType`'s tag-checked accessors, from-hooks copies the shared
+//! `value` union by plain assignment.
 
 use core::mem::{align_of, size_of};
 
@@ -37,16 +37,16 @@ use crate::{DependencyID, Features, PackageID, PackageManager, PreinstallState};
 // ─── Static layout asserts (Resolution overlay) ───────────────────────────
 // `resolution::ResolutionType<u64>` and `hooks::Resolution` are distinct
 // `#[repr(C)]` structs with identical field order
-// (`tag: u8, _padding: [u8;7], value: 40 B`). Pin that contract.
+// (`tag: u8, _padding: [u8;7], value: ResolutionValue<u64>`). Pin that
+// contract. The `value` fields are the SAME nominal type (`resolution::Value`
+// aliases `hooks::ResolutionValue`), so only the whole-struct layout needs
+// pinning.
 //
 // NB: size/align equality is necessary but NOT sufficient for a whole-struct
 // transmute — the two `tag` fields have different validity domains (open `u8`
 // newtype vs closed `#[repr(u8)] enum`). The bridge below therefore copies
-// fields explicitly and only reinterprets the `value` union, which carries no
-// validity invariant beyond size/align.
+// fields explicitly.
 
-const _: () = assert!(size_of::<resolution::Value<u64>>() == size_of::<hooks::ResolutionValue<u64>>());
-const _: () = assert!(align_of::<resolution::Value<u64>>() == align_of::<hooks::ResolutionValue<u64>>());
 const _: () = assert!(size_of::<resolution::Resolution>() == size_of::<hooks::Resolution>());
 const _: () = assert!(align_of::<resolution::Resolution>() == align_of::<hooks::Resolution>());
 
@@ -94,28 +94,11 @@ fn tag_to_hooks(t: resolution::Tag) -> hooks::ResolutionTag {
 
 #[inline]
 fn resolution_to_hooks(r: resolution::Resolution) -> hooks::Resolution {
-    // Both unions name the SAME nominal payload types (`()`, `SemverString`,
-    // `Repository`, `VersionedURLType<u64>` — re-exported from
-    // `bun_install_types`), so a tag-dispatched field copy is a pure move of
-    // the active variant. `ResolutionType`'s tag-checked accessors keep this
-    // path free of `unsafe`; `hooks::Resolution` is in-memory only (never
-    // byte-serialized), so the trailing union bytes need not be zeroed.
-    let value = match r.tag {
-        resolution::Tag::Npm => hooks::ResolutionValue { npm: *r.npm() },
-        resolution::Tag::Folder => hooks::ResolutionValue { folder: *r.folder() },
-        resolution::Tag::LocalTarball => hooks::ResolutionValue { local_tarball: *r.local_tarball() },
-        resolution::Tag::Github => hooks::ResolutionValue { github: *r.github() },
-        resolution::Tag::Git => hooks::ResolutionValue { git: *r.git() },
-        resolution::Tag::Symlink => hooks::ResolutionValue { symlink: *r.symlink() },
-        resolution::Tag::Workspace => hooks::ResolutionValue { workspace: *r.workspace() },
-        resolution::Tag::RemoteTarball => hooks::ResolutionValue { remote_tarball: *r.remote_tarball() },
-        resolution::Tag::SingleFileModule => {
-            hooks::ResolutionValue { single_file_module: *r.single_file_module() }
-        }
-        // Uninitialized | Root | unknown — payload is `()`.
-        _ => hooks::ResolutionValue::default(),
-    };
-    hooks::Resolution { tag: tag_to_hooks(r.tag), _padding: r._padding, value }
+    // `resolution::Value<u64>` is a type alias for `hooks::ResolutionValue<u64>`,
+    // so `value` copies as the SAME nominal type. `hooks::Resolution` is
+    // in-memory only (never byte-serialized), so trailing union bytes carrying
+    // over from the install-side zero-init contract is fine.
+    hooks::Resolution { tag: tag_to_hooks(r.tag), _padding: r._padding, value: r.value }
 }
 
 #[inline]
@@ -126,22 +109,9 @@ fn resolution_from_hooks(r: &hooks::Resolution) -> resolution::Resolution {
         // direction needs no checked match.
         tag: resolution::Tag(r.tag as u8),
         _padding: r._padding,
-        // SAFETY: `hooks::ResolutionValue<u64>` and `resolution::Value<u64>` are
-        // distinct `#[repr(C)]` unions with an identical member set at the SAME
-        // nominal payload types (`()`, `SemverString`, `Repository`,
-        // `VersionedURLType<u64>` — all re-exports of the `bun_install_types`
-        // definitions). A `repr(C)` union has no validity invariant beyond
-        // size/align (pinned by the `const _` asserts above), so this by-value
-        // reinterpretation is sound regardless of the active variant.
-        // `hooks::ResolutionValue` lives in `bun_install_types` and exposes no
-        // tag-checked safe accessors, so the reverse direction cannot be
-        // expressed as a safe field copy from this crate; `bytemuck::cast` is
-        // likewise blocked by orphan rules (foreign union × foreign trait) —
-        // collapsing this to a safe cast requires `Pod`/`Zeroable` impls on
-        // `ResolutionValue<I>` upstream in `bun_install_types`.
-        value: unsafe {
-            core::mem::transmute::<hooks::ResolutionValue<u64>, resolution::Value<u64>>(r.value)
-        },
+        // `resolution::Value<u64>` is a type alias for
+        // `hooks::ResolutionValue<u64>` — same nominal type, plain `Copy`.
+        value: r.value,
     }
 }
 

@@ -402,6 +402,21 @@ pub enum AddServerNameError {
 }
 bun_core::impl_tag_error!(AddServerNameError);
 
+/// Stamps one `pub fn $name<UD, H>(&mut self, p, ud, h)` per HTTP verb,
+/// each forwarding to [`App::route`] with the matching [`RouteKind`].
+/// `connect`/`trace` are intentionally omitted — h3 exposes those only via
+/// [`App::method`], matching h3.zig.
+macro_rules! h3_route_methods {
+    ($($name:ident => $kind:ident),* $(,)?) => {$(
+        pub fn $name<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
+        where
+            H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
+        {
+            Self::route(RouteKind::$kind, self, p, ud, h);
+        }
+    )*};
+}
+
 impl App {
     pub fn create(opts: BunSocketContextOptions, idle_timeout_s: u32) -> Option<*mut App> {
         // SAFETY: opts is `#[repr(C)]` passed by value; uws owns the returned handle
@@ -477,54 +492,17 @@ impl App {
         }
     }
 
-    pub fn get<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
-    where
-        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
-    {
-        Self::route(RouteKind::Get, self, p, ud, h);
+    h3_route_methods! {
+        get     => Get,
+        post    => Post,
+        put     => Put,
+        delete  => Delete,
+        patch   => Patch,
+        head    => Head,
+        options => Options,
+        any     => Any,
     }
-    pub fn post<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
-    where
-        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
-    {
-        Self::route(RouteKind::Post, self, p, ud, h);
-    }
-    pub fn put<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
-    where
-        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
-    {
-        Self::route(RouteKind::Put, self, p, ud, h);
-    }
-    pub fn delete<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
-    where
-        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
-    {
-        Self::route(RouteKind::Delete, self, p, ud, h);
-    }
-    pub fn patch<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
-    where
-        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
-    {
-        Self::route(RouteKind::Patch, self, p, ud, h);
-    }
-    pub fn head<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
-    where
-        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
-    {
-        Self::route(RouteKind::Head, self, p, ud, h);
-    }
-    pub fn options<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
-    where
-        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
-    {
-        Self::route(RouteKind::Options, self, p, ud, h);
-    }
-    pub fn any<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
-    where
-        H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
-    {
-        Self::route(RouteKind::Any, self, p, ud, h);
-    }
+
     pub fn method<UD, H>(&mut self, m: bun_http_types::Method::Method, p: &[u8], ud: *mut UD, h: H)
     where
         H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,

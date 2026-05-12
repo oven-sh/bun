@@ -37,7 +37,7 @@ impl ListenSocket {
 
     pub fn socket<const IS_SSL: bool>(
         &mut self,
-    ) -> crate::socket::NewSocketHandler<'static, IS_SSL> {
+    ) -> crate::socket::NewSocketHandler<IS_SSL> {
         // NewSocketHandler is local (crate::socket); no upward dep.
         crate::socket::NewSocketHandler::<IS_SSL>::from(std::ptr::from_mut::<us_socket_t>(
             self.get_socket(),

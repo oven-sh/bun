@@ -29,17 +29,12 @@ pub fn parse_frames(session: &mut ClientSession, buf: &[u8]) -> usize {
         if remaining.len() < wire::FrameHeader::BYTE_SIZE {
             break;
         }
-        let mut header = wire::FrameHeader::default();
-        wire::FrameHeader::from::<true>(
-            &mut header,
-            &remaining[0..wire::FrameHeader::BYTE_SIZE],
-            0,
+        let mut header = wire::FrameHeader::decode(
+            remaining[0..wire::FrameHeader::BYTE_SIZE].try_into().unwrap(),
         );
-        // PORT NOTE: brace-expr `{packed.field}` performs an unaligned copy;
-        // assignment to a packed field is an unaligned store. No `unsafe`.
-        let sid = wire::UInt31WithReserved::from({ header.stream_identifier }).uint31();
+        let sid = wire::UInt31WithReserved::from(header.stream_identifier).uint31();
         header.stream_identifier = sid;
-        let length = header.length();
+        let length = header.length;
         // RFC 9113 §4.2: a frame larger than the local SETTINGS_MAX_FRAME_SIZE
         // (we never advertise above the 16384 default) is a connection
         // FRAME_SIZE_ERROR. Bounding here also caps `read_buffer` growth.
@@ -53,7 +48,7 @@ pub fn parse_frames(session: &mut ClientSession, buf: &[u8]) -> usize {
         }
         dispatch_frame(
             session,
-            header.r#type,
+            header.type_,
             header.flags,
             sid,
             length,
@@ -81,10 +76,10 @@ const FT_GOAWAY: u8 = wire::FrameType::HTTP_FRAME_GOAWAY as u8;
 const FT_WINDOW_UPDATE: u8 = wire::FrameType::HTTP_FRAME_WINDOW_UPDATE as u8;
 const FT_CONTINUATION: u8 = wire::FrameType::HTTP_FRAME_CONTINUATION as u8;
 
-const ST_HEADER_TABLE_SIZE: u16 = wire::SettingsType::SETTINGS_HEADER_TABLE_SIZE as u16;
-const ST_MAX_CONCURRENT_STREAMS: u16 = wire::SettingsType::SETTINGS_MAX_CONCURRENT_STREAMS as u16;
-const ST_INITIAL_WINDOW_SIZE: u16 = wire::SettingsType::SETTINGS_INITIAL_WINDOW_SIZE as u16;
-const ST_MAX_FRAME_SIZE: u16 = wire::SettingsType::SETTINGS_MAX_FRAME_SIZE as u16;
+const ST_HEADER_TABLE_SIZE: u16 = wire::SettingsType::SETTINGS_HEADER_TABLE_SIZE.0;
+const ST_MAX_CONCURRENT_STREAMS: u16 = wire::SettingsType::SETTINGS_MAX_CONCURRENT_STREAMS.0;
+const ST_INITIAL_WINDOW_SIZE: u16 = wire::SettingsType::SETTINGS_INITIAL_WINDOW_SIZE.0;
+const ST_MAX_FRAME_SIZE: u16 = wire::SettingsType::SETTINGS_MAX_FRAME_SIZE.0;
 
 pub fn dispatch_frame(
     session: &mut ClientSession,
@@ -137,17 +132,14 @@ pub fn dispatch_frame(
             }
             let mut i: usize = 0;
             while i + wire::SettingsPayloadUnit::BYTE_SIZE <= payload.len() {
-                let mut unit = wire::SettingsPayloadUnit {
-                    r#type: 0,
-                    value: 0,
-                };
+                let mut unit = wire::SettingsPayloadUnit::default();
                 wire::SettingsPayloadUnit::from::<true>(
                     &mut unit,
                     &payload[i..i + wire::SettingsPayloadUnit::BYTE_SIZE],
                     0,
                 );
                 // PORT NOTE: brace-expr copies of packed fields (unaligned-safe).
-                let utype = { unit.r#type };
+                let utype = { unit.type_ };
                 let uvalue = { unit.value };
                 match utype {
                     ST_MAX_FRAME_SIZE => {
@@ -494,14 +486,14 @@ pub fn dispatch_frame(
             // valid only if END_STREAM had already arrived. Otherwise the
             // body is truncated and must surface as an error.
             stream.fatal_error = match code {
-                x if x == wire::ErrorCode::NO_ERROR as u32 => {
+                x if x == wire::ErrorCode::NO_ERROR.0 => {
                     if had_response {
                         None
                     } else {
                         Some(err!(HTTP2StreamReset))
                     }
                 }
-                x if x == wire::ErrorCode::REFUSED_STREAM as u32 => Some(err!(HTTP2RefusedStream)),
+                x if x == wire::ErrorCode::REFUSED_STREAM.0 => Some(err!(HTTP2RefusedStream)),
                 _ => Some(err!(HTTP2StreamReset)),
             };
         }
@@ -518,7 +510,7 @@ pub fn dispatch_frame(
             session.goaway_last_stream_id =
                 wire::UInt31WithReserved::from_bytes(&payload[0..4]).uint31();
             let code: u32 = wire::u32_from_bytes(&payload[4..8]);
-            let graceful = code == wire::ErrorCode::NO_ERROR as u32;
+            let graceful = code == wire::ErrorCode::NO_ERROR.0;
             let last_id = session.goaway_last_stream_id;
             for &s_ptr in session.streams.values() {
                 // SAFETY: stream pointer valid for session lifetime.

@@ -1255,23 +1255,22 @@ impl<const SSL: bool> HTTPClient<SSL> {
             match header.name().len() {
                 len if len == b"Connection".len() => {
                     if connection_header.name().is_empty()
-                        && strings::eql_case_insensitive_ascii(header.name(), b"Connection", false)
+                        && strings::eql_case_insensitive_ascii_ignore_length(header.name(), b"Connection")
                     {
                         connection_header = *header;
                     }
                 }
                 len if len == b"Upgrade".len() => {
                     if upgrade_header.name().is_empty()
-                        && strings::eql_case_insensitive_ascii(header.name(), b"Upgrade", false)
+                        && strings::eql_case_insensitive_ascii_ignore_length(header.name(), b"Upgrade")
                     {
                         upgrade_header = *header;
                     }
                 }
                 len if len == b"Sec-WebSocket-Version".len() => {
-                    if strings::eql_case_insensitive_ascii(
+                    if strings::eql_case_insensitive_ascii_ignore_length(
                         header.name(),
                         b"Sec-WebSocket-Version",
-                        false,
                     ) {
                         if !strings::eql_comptime_ignore_len(header.value(), b"13") {
                             // SAFETY: no `&mut Self` is live across this call.
@@ -1282,20 +1281,18 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 }
                 len if len == b"Sec-WebSocket-Accept".len() => {
                     if websocket_accept_header.name().is_empty()
-                        && strings::eql_case_insensitive_ascii(
+                        && strings::eql_case_insensitive_ascii_ignore_length(
                             header.name(),
                             b"Sec-WebSocket-Accept",
-                            false,
                         )
                     {
                         websocket_accept_header = *header;
                     }
                 }
                 len if len == b"Sec-WebSocket-Protocol".len() => {
-                    if strings::eql_case_insensitive_ascii(
+                    if strings::eql_case_insensitive_ascii_ignore_length(
                         header.name(),
                         b"Sec-WebSocket-Protocol",
-                        false,
                     ) {
                         let valid = 'brk: {
                             // Can't have multiple protocol headers in the response.
@@ -1343,10 +1340,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     }
                 }
                 len if len == b"Sec-WebSocket-Extensions".len() => {
-                    if strings::eql_case_insensitive_ascii(
+                    if strings::eql_case_insensitive_ascii_ignore_length(
                         header.name(),
                         b"Sec-WebSocket-Extensions",
-                        false,
                     ) {
                         // Per RFC 6455 §9.1, the server MUST NOT respond with an
                         // extension the client did not offer. Match upstream `ws`

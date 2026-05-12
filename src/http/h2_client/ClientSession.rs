@@ -6,11 +6,10 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_collections::ArrayHashMap;
+use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::strings;
 use bun_core::{Error, err};
 
-use super::bridge::socket_is_closed_or_has_error;
 use super::stream::{State as StreamState, Stream};
 use super::{dispatch, encode};
 use crate::h2_frame_parser as wire;
@@ -217,7 +216,7 @@ impl ClientSession {
         }
         stream.rst_done = true;
         stream.state = StreamState::Closed;
-        let value: [u8; 4] = (code as u32).to_be_bytes();
+        let value: [u8; 4] = code.0.to_be_bytes();
         self.write_frame(wire::FrameType::HTTP_FRAME_RST_STREAM, 0, stream.id, &value);
     }
 
@@ -655,11 +654,7 @@ impl ClientSession {
             // holds for the call.
             let buf = bun_ptr::RawSlice::new(self.read_buffer.as_slice());
             let consumed = dispatch::parse_frames(self, buf.slice());
-            let tail = self.read_buffer.len() - consumed;
-            if tail > 0 && consumed > 0 {
-                self.read_buffer.copy_within(consumed.., 0);
-            }
-            self.read_buffer.truncate(tail);
+            self.read_buffer.drain_front(consumed);
         }
 
         if self.flush().is_err() {
@@ -800,10 +795,10 @@ impl ClientSession {
         // RFC 9113 §5.4.1: an endpoint that encounters a connection error
         // SHOULD first send GOAWAY. Best-effort only; the socket may already
         // be dead.
-        if !socket_is_closed_or_has_error(&sock) {
+        if !sock.is_closed_or_has_error() {
             let mut goaway = [0u8; 8];
             goaway[0..4].copy_from_slice(&0u32.to_be_bytes());
-            goaway[4..8].copy_from_slice(&(dispatch::error_code_for(err) as u32).to_be_bytes());
+            goaway[4..8].copy_from_slice(&dispatch::error_code_for(err).0.to_be_bytes());
             self.write_frame(wire::FrameType::HTTP_FRAME_GOAWAY, 0, 0, &goaway);
             let _ = self.flush();
         }
@@ -883,7 +878,7 @@ impl ClientSession {
         // materialise a second `&mut NewHTTPContext` from the backref —
         // unregister_h2_raw operates via raw-ptr place projection instead.
         unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, self) };
-        if self.can_pool() && !socket_is_closed_or_has_error(&self.socket) {
+        if self.can_pool() && !self.socket.is_closed_or_has_error() {
             // Pool stores the live *ClientSession so a later fetch can resume
             // the multiplexed connection. SAFETY: `self` is heap-owned and
             // outlives the pool entry (release_socket takes the strong ref).

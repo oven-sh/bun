@@ -22,3 +22,4 @@ bun_boringssl.workspace = true
 bun_core.workspace = true
 bun_jsc_macros.workspace = true
 bun_uws_sys.workspace = true
+bun_ptr.workspace = true

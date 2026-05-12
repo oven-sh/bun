@@ -1335,20 +1335,8 @@ pub mod fs {
     }
 
     impl EntriesOption {
-        #[inline]
-        pub fn entries(&self) -> &DirEntry {
-            match self {
-                EntriesOption::Entries(p) => p,
-                _ => unreachable!("EntriesOption::entries called on Err variant"),
-            }
-        }
-        #[inline]
-        pub fn entries_mut(&mut self) -> &mut DirEntry {
-            match self {
-                EntriesOption::Entries(p) => p,
-                _ => unreachable!("EntriesOption::entries_mut called on Err variant"),
-            }
-        }
+        // Payload is `&'static mut DirEntry`; auto-deref coerces to `&DirEntry` / `&mut DirEntry`.
+        bun_core::enum_unwrap!(pub EntriesOption, Entries => fn entries / entries_mut -> DirEntry);
     }
 
     /// Downstream-facing alias — `bun_glob::GlobWalker` named the result of
@@ -2098,9 +2086,11 @@ pub mod fs {
     // The Phase-A resolver body addresses types via `Fs::file_system::*` (the
     // Zig nesting was `FileSystem.RealFS.EntriesOption` etc.). Re-export the
     // flat types under the nested module paths the body expects.
-    /// Re-export `BOM` from the full `fs.rs` port so `cache::Fs::read_handle_into`
-    /// can strip/transcode without duplicating the detect tables here.
-    pub use super::fs_full::BOM;
+    /// Re-exports from the full `fs.rs` port: `BOM` (detect/strip tables) and
+    /// the canonical read-file helpers, so `cache::Fs` (here and in
+    /// `bun_bundler::cache`) routes through ONE body instead of inlining a
+    /// subset of `readFileWithHandleAndAllocator`.
+    pub use super::fs_full::{BOM, read_file_contents, read_file_with_handle_impl, PathContentsPair};
 
     /// Re-export `StatHash` from the full `fs.rs` port so `bun_runtime::server::FileRoute`
     /// can hash mtimes/sizes without inlining the formatter (Zig: `bun.fs.StatHash`).
@@ -2580,6 +2570,23 @@ pub mod cache {
         }
     }
 
+    /// Adapter for the canonical `fs::read_file_contents` (returns
+    /// `Cow<'buf,[u8]>` per the spec `PathContentsPair` shape). `Borrowed`
+    /// always points into the per-thread `shared_buffer` on the
+    /// `use_shared_buffer=true` path → tag as `SharedBuffer` so `deinit` is a
+    /// no-op; `Owned` is the heap arm.
+    impl<'buf> From<std::borrow::Cow<'buf, [u8]>> for Contents {
+        fn from(c: std::borrow::Cow<'buf, [u8]>) -> Self {
+            match c {
+                std::borrow::Cow::Borrowed(s) if s.is_empty() => Contents::Empty,
+                std::borrow::Cow::Borrowed(s) => {
+                    Contents::SharedBuffer { ptr: s.as_ptr(), len: s.len() }
+                }
+                std::borrow::Cow::Owned(v) => Contents::from(v),
+            }
+        }
+    }
+
     /// Port of `Fs.Entry` (cache.zig:19). `contents` is provenance-tagged (see
     /// [`Contents`]); callers feed `entry.contents()` into `bun_ast::Source`.
     /// Ownership is **manual** (`deinit`), matching Zig — callers frequently
@@ -2699,7 +2706,7 @@ pub mod cache {
             });
 
             let contents =
-                match Self::read_handle_into(&file_handle, path.as_bytes(), true, shared, self.stream) {
+                match fs_mod::read_file_contents(&file_handle, path.as_bytes(), true, shared, self.stream).map(Contents::from) {
                     Ok(c) => c,
                     Err(err) => {
                         if cfg!(debug_assertions) {
@@ -2800,7 +2807,7 @@ pub mod cache {
             let shared = self.shared_buffer();
 
             let contents =
-                match Self::read_handle_into(&file_handle, path, use_shared_buffer, shared, stream) {
+                match fs_mod::read_file_contents(&file_handle, path, use_shared_buffer, shared, stream).map(Contents::from) {
                     Ok(c) => c,
                     Err(err) => {
                         if cfg!(debug_assertions) {
@@ -2819,133 +2826,6 @@ pub mod cache {
                 fd: if feature_flags::STORE_FILE_DESCRIPTORS && !will_close { fd } else { Fd::INVALID },
                 external_free_function: ExternalFreeFunction::NONE,
             })
-        }
-
-        /// Inlined subset of `RealFS.readFileWithHandleAndAllocator` (fs.zig:1564) —
-        /// the resolver's full port of that method is in the gated `fs.rs` Phase-A
-        /// draft, so we go to `bun_sys` directly. Returns a [`Contents`] per the
-        /// `Entry` contract above (borrows `shared_buffer` when `use_shared_buffer`,
-        /// else owns a `Vec`).
-        ///
-        /// `stream` selects the HMR path (cache.zig:114-127 / fs.zig
-        /// `readFileWithHandle` `stream=true` arm): after `read_all` hits EOF,
-        /// re-stat via `get_end_pos()` and keep reading if the file grew
-        /// concurrently (fs.zig:1221-1236).
-        // TODO(port): switch back to `rfs.read_file_with_handle_and_allocator` once
-        // `fs_full` un-gates.
-        fn read_handle_into(
-            file: &bun_sys::File,
-            _path: &[u8],
-            use_shared_buffer: bool,
-            shared: &mut MutableString,
-            stream: bool,
-        ) -> Result<Contents, bun_core::Error> {
-            if use_shared_buffer {
-                shared.reset();
-
-                // Pre-size via fstat (fs.zig:1182-1188).
-                let mut size = file.get_end_pos().map_err(bun_core::Error::from)?;
-                if size == 0 {
-                    return Ok(Contents::Empty);
-                }
-
-                let mut bytes_read: usize = 0;
-                shared.list.reserve(size + 1);
-                // SAFETY: u8 is always-init; `set_len(capacity)` only exposes
-                // uninit-but-valid bytes that `read_all` immediately overwrites
-                // before any read.
-                unsafe { shared.list.set_len(shared.list.capacity()) };
-
-                // if you press save on a large file we might not read all the
-                // bytes in the first few pread() calls. we only handle this on
-                // stream because we assume that this only realistically happens
-                // during HMR (fs.zig:1204-1238).
-                loop {
-                    let read_count = file
-                        .read_all(&mut shared.list[bytes_read..])
-                        .map_err(bun_core::Error::from)?;
-                    shared.list.truncate(read_count + bytes_read);
-
-                    if stream {
-                        // Re-stat to catch concurrent growth (fs.zig:1221-1236).
-                        let new_size = file.get_end_pos().map_err(bun_core::Error::from)?;
-                        bytes_read += read_count;
-                        // don't infinite loop if we're still not reading more
-                        if read_count == 0 {
-                            break;
-                        }
-                        if bytes_read < new_size {
-                            let need = new_size + 1;
-                            if shared.list.capacity() < need {
-                                shared.list.reserve(need - shared.list.len());
-                            }
-                            // SAFETY: see above.
-                            unsafe { shared.list.set_len(shared.list.capacity()) };
-                            size = new_size;
-                            continue;
-                        }
-                    }
-                    break;
-                }
-                let _ = size;
-
-                let mut n = shared.list.len();
-                if n == 0 {
-                    return Ok(Contents::Empty);
-                }
-                // Sentinel NUL past len when capacity allows (matches fs.zig:1671).
-                if shared.list.capacity() > n {
-                    // SAFETY: capacity > len, so writing one byte past len is in-bounds.
-                    unsafe { *shared.list.as_mut_ptr().add(n) = 0 };
-                }
-                // BOM strip / UTF-16→UTF-8 transcode (fs.zig:1245-1248).
-                if let Some(bom) = fs_mod::BOM::detect(&shared.list[..n]) {
-                    let converted =
-                        bom.remove_and_convert_to_utf8_without_dealloc(&mut shared.list);
-                    n = converted.len();
-                }
-                // ARENA — caller owns `shared` and resets it via
-                // `reset_shared_buffer` before reuse. `Contents::SharedBuffer`
-                // records provenance so `deinit()` is a no-op for this variant.
-                Ok(Contents::SharedBuffer { ptr: shared.list.as_ptr(), len: n })
-            } else {
-                // 16 KiB stack-buffer fast-path (fs.zig:1250-1301): try a
-                // sequential `read()` loop into a stack buffer FIRST. The
-                // overwhelmingly common case (package.json, .d.ts shims, small
-                // sources) fits in 16K, so we avoid the `fstat` + `pread(0)`
-                // round-trip of `read_to_end()` and allocate exactly once.
-                const STACK_BUF_LEN: usize = 16 * 1024;
-                // PORT NOTE: zero-init (vs Zig's `undefined`) — the 16K memset
-                // is sub-µs and dominated by the `read()` syscall it precedes;
-                // matches the precedent in `io/ParentDeathWatchdog.rs`. Avoids
-                // the `&mut [u8]`-to-uninit forge that `from_raw_parts_mut`
-                // required.
-                let mut initial_buf = [0u8; STACK_BUF_LEN];
-                let initial_slice: &mut [u8] = &mut initial_buf[..];
-                let n = file.read_all(initial_slice).map_err(bun_core::Error::from)?;
-
-                let mut bytes: Vec<u8> = if n + 1 < STACK_BUF_LEN {
-                    // Hit EOF inside the stack buffer — single exact-sized
-                    // alloc, no fstat (fs.zig:1260-1270).
-                    initial_slice[..n].to_vec()
-                } else {
-                    // ≥16383 bytes: fall through. Only NOW pay for `fstat` to
-                    // pre-size, seed with the already-read prefix, and continue
-                    // *sequential* `read()` from the current cursor — NOT
-                    // `read_to_end()`/`pread(0)`, which would re-read the
-                    // prefix (fs.zig:1276-1296).
-                    let size = file.get_end_pos().map_err(bun_core::Error::from)?;
-                    let mut v = Vec::with_capacity(size.max(n) + 1);
-                    v.extend_from_slice(&initial_slice[..n]);
-                    file.read_to_end_into(&mut v).map_err(bun_core::Error::from)?;
-                    v
-                };
-                // BOM strip / UTF-16→UTF-8 transcode (fs.zig:1264-1266 / 1299-1301).
-                if let Some(bom) = fs_mod::BOM::detect(&bytes) {
-                    bytes = bom.remove_and_convert_to_utf8_and_free(bytes);
-                }
-                Ok(Contents::from(bytes))
-            }
         }
     }
 
@@ -2969,29 +2849,7 @@ pub mod cache {
     }
 }
 
-pub fn is_package_path(path: &[u8]) -> bool {
-    // Always check for posix absolute paths (starts with "/")
-    // But don't check window's style on posix
-    // For a more in depth explanation, look above where `isPackagePathNotAbsolute` is used.
-    !bun_paths::is_absolute(path) && is_package_path_not_absolute(path)
-}
-
-pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
-    if cfg!(debug_assertions) {
-        debug_assert!(!bun_paths::is_absolute(non_absolute_path));
-        debug_assert!(!non_absolute_path.starts_with(b"/"));
-    }
-
-    !non_absolute_path.starts_with(b"./")
-        && !non_absolute_path.starts_with(b"../")
-        && non_absolute_path != b"."
-        && non_absolute_path != b".."
-        && if cfg!(windows) {
-            !non_absolute_path.starts_with(b".\\") && !non_absolute_path.starts_with(b"..\\")
-        } else {
-            true
-        }
-}
+pub use ::bun_paths::{is_package_path, is_package_path_not_absolute};
 
 pub mod __phase_a_body {
 use super::{is_package_path, is_package_path_not_absolute};
@@ -3657,10 +3515,7 @@ fn intern_tsconfig_contents(contents: crate::cache::Contents) -> &'static [u8] {
 // `declare_scope!` is one static per ident; route both through the `.hidden`
 // declaration (matches the file-top binding) and let `BUN_DEBUG_Resolver=1`
 // surface the bust log.
-bun_core::declare_scope!(Resolver, hidden);
-macro_rules! debuglog {
-    ($($arg:tt)*) => { ::bun_core::scoped_log!(Resolver, $($arg)*) };
-}
+bun_core::define_scoped_log!(debuglog, Resolver, hidden);
 
 // PORT NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
 // DirnameStore/FilenameStore). Alias here so the ~80 bare-`Path` use sites
@@ -5642,8 +5497,7 @@ impl<'a> Resolver<'a> {
         if check_relative {
             if let Some(custom_paths) = self.custom_dir_paths {
                 // @branchHint(.unlikely)
-                #[cold] fn cold() {}
-                cold();
+                bun_core::hint::cold();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8_without_ref();
                     match self.check_relative_path(custom_utf8.slice(), import_path, kind, global_cache) {
@@ -5745,8 +5599,7 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(custom_paths) = self.custom_dir_paths {
-                #[cold] fn cold() {}
-                cold();
+                bun_core::hint::cold();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8_without_ref();
                     match self.check_package_path(custom_utf8.slice(), import_path, kind, global_cache) {
@@ -9481,6 +9334,9 @@ const NODE_MODULE_ROOT_STRING: &[u8] = const_format::concatcp!(SEP_STR, "node_mo
 pub struct Dirname;
 
 impl Dirname {
+    /// NOT `std.fs.path.dirname`. Resolver-specific upward-traversal dirname
+    /// (resolver.zig:4297): returns trailing-sep-INCLUSIVE slice, never `None`,
+    /// `is_sep_any` on all platforms. Do NOT replace with `bun_core::dirname`.
     pub fn dirname(path: &[u8]) -> &[u8] {
         if path.is_empty() {
             return SEP_STR.as_bytes();

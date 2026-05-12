@@ -15,11 +15,6 @@ pub enum EncodeError {
 bun_core::named_error_set!(EncodeError);
 
 impl PercentEncoding {
-    /// returns true if c is a hexadecimal digit
-    pub fn is_hex(c: u8) -> bool {
-        matches!(c, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')
-    }
-
     /// returns true if str starts with a valid path character or a percent encoded octet
     pub fn is_pchar(str: &[u8]) -> bool {
         if cfg!(debug_assertions) {
@@ -46,7 +41,7 @@ impl PercentEncoding {
             | b'='
             | b':'
             | b'@' => true,
-            b'%' => str.len() >= 3 && Self::is_hex(str[1]) && Self::is_hex(str[2]),
+            b'%' => str.len() >= 3 && str[1].is_ascii_hexdigit() && str[2].is_ascii_hexdigit(),
             _ => false,
         }
     }
@@ -70,8 +65,8 @@ impl PercentEncoding {
         while i < path.len() {
             if path[i] == b'%'
                 && path[i..].len() >= 3
-                && Self::is_hex(path[i + 1])
-                && Self::is_hex(path[i + 2])
+                && path[i + 1].is_ascii_hexdigit()
+                && path[i + 2].is_ascii_hexdigit()
             {
                 if ret.is_none() {
                     let mut buf = vec![0u8; path.len()];
@@ -81,15 +76,8 @@ impl PercentEncoding {
                 }
 
                 // charToDigit can't fail because the chars are validated earlier
-                let mut new = u8::try_from(
-                    (path[i + 1] as char).to_digit(16).expect("unreachable"),
-                )
-                .unwrap()
-                    << 4;
-                new |= u8::try_from(
-                    (path[i + 2] as char).to_digit(16).expect("unreachable"),
-                )
-                .unwrap();
+                let mut new = bun_core::fmt::hex_digit_value(path[i + 1]).unwrap() << 4;
+                new |= bun_core::fmt::hex_digit_value(path[i + 2]).unwrap();
                 ret.as_mut().unwrap()[ret_index] = new;
                 ret_index += 1;
                 i += 2;
@@ -224,8 +212,6 @@ impl<'a> DataURL<'a> {
         mime_type: &[u8],
         text: &[u8],
     ) -> bool {
-        const HEX: &[u8; 16] = b"0123456789ABCDEF";
-
         buf.append_slice(b"data:");
         buf.append_slice(mime_type);
         buf.append(b',');
@@ -260,16 +246,17 @@ impl<'a> DataURL<'a> {
                 || i >= trailing_start
                 || (first_byte == b'%'
                     && i + 2 < text.len()
-                    && PercentEncoding::is_hex(text[i + 1])
-                    && PercentEncoding::is_hex(text[i + 2]));
+                    && text[i + 1].is_ascii_hexdigit()
+                    && text[i + 2].is_ascii_hexdigit());
 
             if needs_escape {
                 if run_start < i {
                     buf.append_slice(&text[run_start..i]);
                 }
+                let [hi, lo] = bun_core::fmt::hex_byte_upper(first_byte);
                 buf.append(b'%');
-                buf.append(HEX[(first_byte >> 4) as usize]);
-                buf.append(HEX[(first_byte & 15) as usize]);
+                buf.append(hi);
+                buf.append(lo);
                 run_start = i + 1;
             }
 

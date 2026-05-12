@@ -32,21 +32,12 @@ pub mod kernel32 {
     use super::{
         BOOL, DWORD, HANDLE, LPCWSTR, LPVOID, LPWSTR, PWSTR, ULONG, ULONG_PTR,
         OVERLAPPED, LPOVERLAPPED, LPOVERLAPPED_COMPLETION_ROUTINE,
-        FileNotifyChangeFilter, STARTUPINFOW, PROCESS_INFORMATION,
+        FileNotifyChangeFilter,
         SRWLOCK, CONDITION_VARIABLE,
     };
     pub use bun_windows_sys::kernel32::*;
     pub use bun_windows_sys::externs::SetEndOfFile;
     pub use bun_windows_sys::externs::{GetConsoleMode, SetConsoleMode, GetExitCodeProcess};
-
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        /// `SetHandleInformation` (handleapi.h). Used by `bun_shim_impl` to
-        /// strip `HANDLE_FLAG_INHERIT` before `CreateProcessW`.
-        // safe: `HANDLE` is a by-value opaque (bad handle → BOOL 0, no UB);
-        // remaining args are by-value DWORD flags.
-        pub safe fn SetHandleInformation(hObject: HANDLE, dwMask: DWORD, dwFlags: DWORD) -> BOOL;
-    }
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
@@ -77,19 +68,6 @@ pub mod kernel32 {
             lpCompletionRoutine: LPOVERLAPPED_COMPLETION_ROUTINE,
         ) -> BOOL;
 
-        // ── process creation ──
-        pub fn CreateProcessW(
-            lpApplicationName: LPCWSTR,
-            lpCommandLine: LPWSTR,
-            lpProcessAttributes: *mut c_void,
-            lpThreadAttributes: *mut c_void,
-            bInheritHandles: BOOL,
-            dwCreationFlags: DWORD,
-            lpEnvironment: *mut c_void,
-            lpCurrentDirectory: LPCWSTR,
-            lpStartupInfo: *mut STARTUPINFOW,
-            lpProcessInformation: *mut PROCESS_INFORMATION,
-        ) -> BOOL;
         // safe: by-value `HANDLE` + `DWORD`; a bad handle yields
         // `WAIT_FAILED` + GetLastError, no UB.
         pub safe fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
@@ -235,19 +213,6 @@ pub const NT_OBJECT_PREFIX: [u16; 4] = [b'\\' as u16, b'?' as u16, b'?' as u16, 
 pub const NT_UNC_OBJECT_PREFIX: [u16; 8] = [b'\\' as u16, b'?' as u16, b'?' as u16, b'\\' as u16, b'U' as u16, b'N' as u16, b'C' as u16, b'\\' as u16];
 pub const LONG_PATH_PREFIX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
 
-/// `std.mem.len` for `[*:0]const u16` — count code units up to (excluding) the
-/// terminating NUL. Windows-only helper for places that received an LPCWSTR
-/// from a C API and need the length to slice it.
-///
-/// SAFETY: `p` must be non-null and point to a NUL-terminated UTF-16 string.
-#[inline]
-pub unsafe fn wcslen(p: *const u16) -> usize {
-    let mut n = 0usize;
-    // SAFETY: caller guarantees NUL-termination
-    while unsafe { *p.add(n) } != 0 { n += 1; }
-    n
-}
-
 pub const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
 pub const NT_UNC_OBJECT_PREFIX_U8: [u8; 8] = *b"\\??\\UNC\\";
 pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
@@ -265,8 +230,7 @@ pub use bun_windows_sys::HMODULE;
 // `bun_crash_handler`, `bun_threading`, `bun_install` (B-2 un-gate batch).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `ULONG_PTR` — pointer-sized unsigned (winnt.h).
-pub type ULONG_PTR = usize;
+pub use bun_windows_sys::ULONG_PTR;
 /// `HRESULT` — 32-bit signed result code.
 pub type HRESULT = i32;
 /// `WaitForSingleObject` infinite timeout sentinel.
@@ -340,54 +304,14 @@ pub struct FILE_NOTIFY_INFORMATION {
     pub FileName: [WCHAR; 1],
 }
 
-/// `OVERLAPPED` (`minwinbase.h`).
-#[repr(C)]
-pub struct OVERLAPPED {
-    pub Internal: ULONG_PTR,
-    pub InternalHigh: ULONG_PTR,
-    pub Offset: DWORD,
-    pub OffsetHigh: DWORD,
-    pub hEvent: HANDLE,
-}
+pub use bun_windows_sys::OVERLAPPED;
 pub type LPOVERLAPPED = *mut OVERLAPPED;
 pub type LPOVERLAPPED_COMPLETION_ROUTINE =
     Option<unsafe extern "system" fn(DWORD, DWORD, *mut OVERLAPPED)>;
 
-/// `STARTUPINFOW` (`processthreadsapi.h`).
-#[repr(C)]
-pub struct STARTUPINFOW {
-    pub cb: DWORD,
-    pub lpReserved: PWSTR,
-    pub lpDesktop: PWSTR,
-    pub lpTitle: PWSTR,
-    pub dwX: DWORD,
-    pub dwY: DWORD,
-    pub dwXSize: DWORD,
-    pub dwYSize: DWORD,
-    pub dwXCountChars: DWORD,
-    pub dwYCountChars: DWORD,
-    pub dwFillAttribute: DWORD,
-    pub dwFlags: DWORD,
-    pub wShowWindow: WORD,
-    pub cbReserved2: WORD,
-    pub lpReserved2: *mut u8,
-    pub hStdInput: HANDLE,
-    pub hStdOutput: HANDLE,
-    pub hStdError: HANDLE,
-}
-
-/// `PROCESS_INFORMATION` (`processthreadsapi.h`).
-#[repr(C)]
-pub struct PROCESS_INFORMATION {
-    pub hProcess: HANDLE,
-    pub hThread: HANDLE,
-    pub dwProcessId: DWORD,
-    pub dwThreadId: DWORD,
-}
-// SAFETY: `#[repr(C)]` POD — two raw-pointer HANDLEs (null-valid) + two u32.
-unsafe impl bun_core::ffi::Zeroable for PROCESS_INFORMATION {}
-// SAFETY: `#[repr(C)]` POD — ULONG_PTR/DWORD integers + raw-pointer HANDLE.
-unsafe impl bun_core::ffi::Zeroable for OVERLAPPED {}
+pub use bun_windows_sys::{PROCESS_INFORMATION, STARTUPINFOW, STARTUPINFOEXW};
+// `Zeroable for {OVERLAPPED, PROCESS_INFORMATION}` lives in `bun_core::ffi`
+// (orphan rule — trait owned by bun_core, type owned by bun_windows_sys).
 
 /// `std.os.windows.CreateIoCompletionPort` — wraps the kernel32 call and
 /// returns `Err` on `NULL` (matching Zig's `error.Unexpected`).
@@ -3441,9 +3365,9 @@ pub fn CreateHardLinkW(
     #[cfg(debug_assertions)]
     {
         // SAFETY: caller guarantees both LPCWSTR args are NUL-terminated wide strings
-        let new_w = unsafe { bun_core::ffi::slice(new_file_name, wcslen(new_file_name)) };
+        let new_w = unsafe { bun_core::ffi::wstr_units(new_file_name) };
         // SAFETY: caller guarantees both LPCWSTR args are NUL-terminated wide strings
-        let existing_w = unsafe { bun_core::ffi::slice(existing_file_name, wcslen(existing_file_name)) };
+        let existing_w = unsafe { bun_core::ffi::wstr_units(existing_file_name) };
         bun_sys::syslog!(
             "CreateHardLinkW({}, {}) = {}",
             bun_core::fmt::utf16(new_w),
@@ -3555,52 +3479,7 @@ pub mod ntdll_context {
     }
 }
 
-/// Minimal `TEB` view (only `ProcessEnvironmentBlock` is read). The full
-/// `_TEB` is enormous; the ported callers (`bun_shim_impl`) only walk
-/// `Teb→Peb→ProcessParameters`, which `bun_core::windows_sys::PebView` already
-/// models — so re-export that and supply a thin `TEB` wrapper around it.
-#[repr(C)]
-pub struct TEB {
-    /// `NT_TIB` is 7 pointers on x64 (`ExceptionList`, `StackBase`,
-    /// `StackLimit`, `SubSystemTib`, `FiberData`/`Version`, `ArbitraryUserPointer`,
-    /// `Self`).
-    _nt_tib: [*mut core::ffi::c_void; 7],
-    pub EnvironmentPointer: *mut core::ffi::c_void,
-    /// `CLIENT_ID` — `{UniqueProcess, UniqueThread}`.
-    _client_id: [*mut core::ffi::c_void; 2],
-    pub ActiveRpcHandle: *mut core::ffi::c_void,
-    pub ThreadLocalStoragePointer: *mut core::ffi::c_void,
-    pub ProcessEnvironmentBlock: *mut PEB,
-    // (fields beyond ProcessEnvironmentBlock are not read here)
-}
-const _: () = assert!(core::mem::offset_of!(TEB, ProcessEnvironmentBlock) == 0x60);
-
-pub use bun_core::windows_sys::PebView as PEB;
-pub use bun_core::windows_sys::ProcessParameters as RTL_USER_PROCESS_PARAMETERS;
-
-/// `std.os.windows.teb()` — `gs:[0x30]` (x64) / `x18` (ARM64).
-///
-/// Obtaining the TEB pointer has no preconditions on Windows (the segment
-/// register / `x18` is set up by the loader for every thread); only the
-/// inline `asm!` is guarded, so the wrapper is a safe fn and the deref
-/// obligation lives with the caller of the returned `*mut TEB`.
-#[inline]
-pub fn teb() -> *mut TEB {
-    #[cfg(target_arch = "x86_64")]
-    // SAFETY: pure read of `gs:[0x30]`; no memory writes, no side effects.
-    unsafe {
-        let p: *mut TEB;
-        core::arch::asm!("mov {}, gs:[0x30]", out(reg) p, options(nostack, pure, readonly));
-        p
-    }
-    #[cfg(target_arch = "aarch64")]
-    // SAFETY: pure read of `x18` (TEB on Windows ARM64 ABI).
-    unsafe {
-        let p: *mut TEB;
-        core::arch::asm!("mov {}, x18", out(reg) p, options(nostack, pure, readonly));
-        p
-    }
-}
+pub use bun_windows_sys::{PEB, RTL_USER_PROCESS_PARAMETERS, TEB, teb};
 
 pub use bun_windows_sys::externs::CreateJobObjectA;
 
@@ -3693,65 +3572,10 @@ pub fn exe_path_w() -> &'static bun_str::WStr {
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union KEY_EVENT_RECORD_uChar {
-    pub UnicodeChar: WCHAR,
-    pub AsciiChar: CHAR,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct KEY_EVENT_RECORD {
-    pub bKeyDown: BOOL,
-    pub wRepeatCount: WORD,
-    pub wVirtualKeyCode: WORD,
-    pub wVirtualScanCode: WORD,
-    pub uChar: KEY_EVENT_RECORD_uChar,
-    pub dwControlKeyState: DWORD,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct MOUSE_EVENT_RECORD {
-    pub dwMousePosition: COORD,
-    pub dwButtonState: COORD,
-    pub dwControlKeyState: DWORD,
-    pub dwEventFlags: DWORD,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct WINDOW_BUFFER_SIZE_EVENT {
-    pub dwSize: COORD,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct MENU_EVENT_RECORD {
-    pub dwCommandId: UINT,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct FOCUS_EVENT_RECORD {
-    pub bSetFocus: BOOL,
-}
-
-#[repr(C)]
-pub union INPUT_RECORD_Event {
-    pub KeyEvent: KEY_EVENT_RECORD,
-    pub MouseEvent: MOUSE_EVENT_RECORD,
-    pub WindowBufferSizeEvent: WINDOW_BUFFER_SIZE_EVENT,
-    pub MenuEvent: MENU_EVENT_RECORD,
-    pub FocusEvent: FOCUS_EVENT_RECORD,
-}
-
-#[repr(C)]
-pub struct INPUT_RECORD {
-    pub EventType: WORD,
-    pub Event: INPUT_RECORD_Event,
-}
+pub use bun_windows_sys::{
+    FOCUS_EVENT_RECORD, INPUT_RECORD, INPUT_RECORD_Event, KEY_EVENT_RECORD,
+    KEY_EVENT_RECORD_uChar, MENU_EVENT_RECORD, MOUSE_EVENT_RECORD, WINDOW_BUFFER_SIZE_EVENT,
+};
 
 // Bun__UVSignalHandle__{init,close}: see src/runtime/node/uv_signal_handle_windows.zig
 
@@ -4217,12 +4041,6 @@ pub fn detect_runtime_version() -> &'static str {
     })
 }
 
-#[repr(C)]
-pub struct STARTUPINFOEXW {
-    pub StartupInfo: STARTUPINFOW,
-    pub lpAttributeList: *mut u8,
-}
-
 pub use bun_windows_sys::externs::InitializeProcThreadAttributeList;
 
 pub use bun_windows_sys::externs::UpdateProcThreadAttribute;
@@ -4353,8 +4171,7 @@ pub mod rescle {
                 if parts_count >= 4 {
                     return Err(RescleError::InvalidVersionFormat.into());
                 }
-                // TODO(port): std.fmt.parseInt(u16, part, 10)
-                let Ok(_num) = core::str::from_utf8(part).ok().and_then(|s| s.parse::<u16>().ok()).ok_or(()) else {
+                let Ok(_num) = bun_core::fmt::parse_int::<u16>(part, 10) else {
                     return Err(RescleError::InvalidVersionFormat.into());
                 };
                 // u16 already ensures value is 0-65535

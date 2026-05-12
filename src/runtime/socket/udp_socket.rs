@@ -1074,9 +1074,9 @@ impl UDPSocket {
         let mut payloads: Vec<*const u8> = vec![core::ptr::null(); len];
         let mut lens: Vec<usize> = vec![0; len];
         let mut addr_ptrs: Vec<*const c_void> = vec![core::ptr::null(); len];
-        let mut addrs: Vec<sockaddr_storage> = Vec::with_capacity(len);
-        // SAFETY: sockaddr_storage is POD; entries written before read in phase 1/2.
-        unsafe { addrs.set_len(len) };
+        // `sockaddr_storage` is POD (`Zeroable + Copy`); zero-init so phase 1/2
+        // can index safely (no `set_len` over uninit memory).
+        let mut addrs: Vec<sockaddr_storage> = vec![bun_core::ffi::zeroed(); len];
 
         let mut iter = arg.array_iterator(global_this)?;
 

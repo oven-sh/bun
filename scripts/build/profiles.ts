@@ -115,6 +115,10 @@ export const profiles = {
     buildType: "Release",
     webkit: "prebuilt",
     lto: true,
+    // Pin the build dir so `--profile=btg` alone lands here and can never
+    // be confused with `--profile=release --build-dir=build/btg` (which
+    // would persist lto:false and silently de-LTO the bench binary).
+    buildDir: "build/btg",
   },
 
   /** Release with local WebKit. */

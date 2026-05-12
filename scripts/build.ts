@@ -33,9 +33,8 @@ import {
   uploadArtifacts,
 } from "./build/ci.ts";
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
-import { configure, type ConfigureResult } from "./build/configure.ts";
+import { configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
-import { getProfile } from "./build/profiles.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
 
@@ -85,11 +84,15 @@ async function main(): Promise<void> {
     await maybeBypassProxyForCratesIo();
   }
 
-  // Resolve PartialConfig: either from --config-file (ninja's generator rule
+  // Resolve ConfigureInput: either from --config-file (ninja's generator rule
   // replaying a previous configure) or from --profile + overrides (normal use).
-  const partial: PartialConfig = args.configFile
+  // We pass the *unresolved* {profile, overrides} pair through — configure()
+  // expands the profile itself and persists the unresolved form, so editing
+  // profiles.ts propagates to existing build dirs on the next regen instead
+  // of being frozen at first-configure time.
+  const input: ConfigureInput = args.configFile
     ? loadConfigFile(args.configFile)
-    : { ...getProfile(args.profile), ...args.overrides };
+    : { profile: args.profile, overrides: args.overrides };
 
   const ninjaArgv = (cfg: { buildDir: string }) => ["-C", cfg.buildDir, ...args.ninjaArgs, ...args.ninjaTargets];
   const ninjaEnv = (env: Record<string, string>) => ({ ...process.env, ...env });
@@ -97,7 +100,7 @@ async function main(): Promise<void> {
   if (isCI) {
     // CI: machine/env dump + collapsible groups + annotation-on-failure.
     printEnvironment();
-    const result = (await startGroup("Configure", () => configure(partial))) as ConfigureResult;
+    const result = (await startGroup("Configure", () => configure(input))) as ConfigureResult;
     if (args.configureOnly) return;
 
     // link-only: download cpp-only + rust-only artifacts before ninja.
@@ -121,7 +124,7 @@ async function main(): Promise<void> {
     }
   } else {
     // Local: configure, then spawn ninja.
-    const result = await configure(partial);
+    const result = await configure(input);
 
     // Quiet one-liner when configure was a no-op — the full banner only
     // prints when build.ninja changed. Timing matters: a regression here
@@ -274,13 +277,26 @@ async function maybeBypassProxyForCratesIo(): Promise<void> {
   process.env.no_proxy = merged;
 }
 
-/** Load a PartialConfig from JSON (for ninja's generator rule replay). */
-function loadConfigFile(path: string): PartialConfig {
+/**
+ * Load a ConfigureInput from JSON (for ninja's generator rule replay).
+ *
+ * Current format: `{ profile?: string, overrides?: PartialConfig }`.
+ * Legacy format (pre profile-name persistence): a flat PartialConfig — if we
+ * see neither `profile` nor `overrides` keys, wrap the whole object as
+ * overrides so old build dirs still regen.
+ */
+function loadConfigFile(path: string): ConfigureInput {
+  let raw: Record<string, unknown>;
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as PartialConfig;
+    raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
   } catch (cause) {
     throw new BuildError(`Failed to load config file: ${path}`, { cause });
   }
+  if ("profile" in raw || "overrides" in raw) {
+    return raw as ConfigureInput;
+  }
+  // Legacy flat PartialConfig.
+  return { overrides: raw as PartialConfig };
 }
 
 // ───────────────────────────────────────────────────────────────────────────

@@ -18,8 +18,8 @@ use bun_sys::{self, Fd, FdExt as _};
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
 
-/// `bun.cli.start_time` accessor — Zig had a mutable global; Rust keeps it as
-/// `crate::cli::START_TIME` (written once in `Cli::start`).
+/// `bun.cli.start_time` accessor — Zig had a mutable global; Rust keeps the
+/// single backing `OnceLock` in `bun_core` (written once in `Cli::start`).
 #[inline]
 fn cli_start_time() -> i128 {
     crate::cli::start_time()

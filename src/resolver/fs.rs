@@ -935,7 +935,7 @@ impl FileSystem {
         JOIN_BUF.with_borrow_mut(|buf| {
             let s = path_handler::join_string_buf::<platform::Loose>(&mut buf[..], parts);
             // SAFETY: borrows the threadlocal buffer; matches Zig pattern
-            unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
+            unsafe { bun_ptr::detach_lifetime(s) }
         })
     }
 
@@ -1510,7 +1510,7 @@ impl ModKey {
                 .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
             let written = len - cursor.len();
             // SAFETY: threadlocal buffer outlives caller's use (matches Zig pattern)
-            Ok(unsafe { core::slice::from_raw_parts(buf.as_ptr(), written) })
+            Ok(unsafe { bun_ptr::detach_lifetime(&buf[..written]) })
         })
     }
 

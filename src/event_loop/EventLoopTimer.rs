@@ -32,10 +32,19 @@ const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 unsafe extern "Rust" {
     /// Runtime owns the tag→variant `match`; `vm` is an erased
     /// `*mut VirtualMachine`. Defined in `bun_runtime::dispatch`.
+    ///
+    /// SAFETY (genuine FFI precondition — NOT a `safe fn` candidate): impl
+    /// derefs `t`/`now`, recovers the tier-6 container via `container_of`
+    /// keyed on `(*t).tag`, and may free that container. Caller must pass a
+    /// live timer just popped from `All.timers` and must not touch `t` after.
     fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const timespec, vm: *mut ());
     /// Returns the JS-timer epoch (TimerObjectInternals.flags.epoch) for
     /// TimeoutObject/ImmediateObject/AbortSignalTimeout, else `None`.
     /// Defined in `bun_runtime::dispatch`.
+    ///
+    /// SAFETY (genuine FFI precondition — NOT a `safe fn` candidate): impl
+    /// recovers the parent struct via `container_of` keyed on `tag`; `t` must
+    /// be the `event_loop_timer` field of that container (tag invariant).
     fn __bun_js_timer_epoch(tag: Tag, t: *const EventLoopTimer) -> Option<u32>;
 }
 // ────────────────────────────────────────────────────────────────────────────

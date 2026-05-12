@@ -83,6 +83,41 @@ pub type z_free_fn = free_func;
 pub type z_alloc_func = alloc_func;
 pub type z_free_func = free_func;
 
+// ---------------------------------------------------------------------------
+// zconf.h scalar typedefs — single source of truth.
+//
+// Previously duplicated in win32.rs (translate-c output) and bun_zlib::lib.rs
+// (hand-port of zlib.zig). All resolve to ABI-identical primitives on every
+// target Bun ships; `uLong` = `unsigned long` (4B on LLP64 Windows, 8B on LP64
+// Unix) for the same reason zStream_struct above uses `c_ulong` directly.
+// ---------------------------------------------------------------------------
+pub type Byte = u8;
+pub type Bytef = u8;
+pub type uInt = c_uint;
+pub type uLong = c_ulong;
+pub type uLongf = uLong;
+pub type voidpf = *mut c_void;
+
+// ---------------------------------------------------------------------------
+// gzFile — opaque handle.
+//
+// zlib.h exposes `struct gzFile_s { unsigned have; unsigned char *next;
+// z_off64_t pos; }` purely so the `gzgetc()` macro can inline a fast path;
+// every other API treats `gzFile` as an opaque pointer. Bun never derefs it,
+// so one definition suffices for all targets. `pos` is `z_off64_t` — `__int64`
+// on Windows, `off64_t` on LP64 Unix — i.e. `i64` everywhere Bun ships, hence
+// the divergence between the old win32.rs (`c_longlong`) and bun_zlib
+// (`c_long`) copies was immaterial.
+// ---------------------------------------------------------------------------
+#[repr(C)]
+pub struct struct_gzFile_s {
+    pub have: c_uint,
+    pub next: *mut u8,
+    pub pos: i64,
+}
+pub type gzFile_s = struct_gzFile_s;
+pub type gzFile = *mut struct_gzFile_s;
+
 /// zlib's opaque `struct internal_state { int dummy; }` stub — applications
 /// never look inside, only carry the pointer.
 #[repr(C)]

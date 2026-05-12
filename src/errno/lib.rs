@@ -89,6 +89,103 @@ macro_rules! __decl_uv_e {
     };
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// __uv_e_rows! — single source of truth for the 69 `(IDENT, E*, UV_E*)` rows
+// that every per-OS `uv_e` module declares.
+//
+// The (IDENT, "E…") column pair is byte-for-byte identical across
+// linux/darwin/freebsd/windows; only the middle `i32` value differs by design
+// (native `SystemErrno::$e as i32` on POSIX vs libuv-synthetic
+// `-bun_libuv_sys::UV_E*` on Windows / for codes the host OS lacks). Rather
+// than re-list the rows 4×, the caller supplies a tiny *value-producer* macro
+// `$cb!($id, $e, $uv) -> i32-expr` and this forwards each row to the existing
+// `__decl_uv_e!` expander (consts + reverse `name()` fn).
+//
+// `$id`/`$e`/`$uv` are passed as **literal** tokens (never captured as
+// `:ident`), so the per-OS `$cb` can override individual rows by literal-token
+// match — e.g. `(CHARSET, $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv }` — while
+// a final `($i:tt, $e:tt, $uv:tt)` arm handles the native default. Row order
+// mirrors the original Zig `UV_E` struct (node_util_binding.zig).
+// ──────────────────────────────────────────────────────────────────────────
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __uv_e_rows {
+    ($cb:ident) => {
+        $crate::__decl_uv_e! {
+            // Zig `@"2BIG"` — Rust idents can't start with a digit → `_2BIG`.
+            _2BIG          = $cb!(_2BIG,          E2BIG,           UV_E2BIG)           => "E2BIG",
+            ACCES          = $cb!(ACCES,          EACCES,          UV_EACCES)          => "EACCES",
+            ADDRINUSE      = $cb!(ADDRINUSE,      EADDRINUSE,      UV_EADDRINUSE)      => "EADDRINUSE",
+            ADDRNOTAVAIL   = $cb!(ADDRNOTAVAIL,   EADDRNOTAVAIL,   UV_EADDRNOTAVAIL)   => "EADDRNOTAVAIL",
+            AFNOSUPPORT    = $cb!(AFNOSUPPORT,    EAFNOSUPPORT,    UV_EAFNOSUPPORT)    => "EAFNOSUPPORT",
+            AGAIN          = $cb!(AGAIN,          EAGAIN,          UV_EAGAIN)          => "EAGAIN",
+            ALREADY        = $cb!(ALREADY,        EALREADY,        UV_EALREADY)        => "EALREADY",
+            BADF           = $cb!(BADF,           EBADF,           UV_EBADF)           => "EBADF",
+            BUSY           = $cb!(BUSY,           EBUSY,           UV_EBUSY)           => "EBUSY",
+            CANCELED       = $cb!(CANCELED,       ECANCELED,       UV_ECANCELED)       => "ECANCELED",
+            CHARSET        = $cb!(CHARSET,        ECHARSET,        UV_ECHARSET)        => "ECHARSET",
+            CONNABORTED    = $cb!(CONNABORTED,    ECONNABORTED,    UV_ECONNABORTED)    => "ECONNABORTED",
+            CONNREFUSED    = $cb!(CONNREFUSED,    ECONNREFUSED,    UV_ECONNREFUSED)    => "ECONNREFUSED",
+            CONNRESET      = $cb!(CONNRESET,      ECONNRESET,      UV_ECONNRESET)      => "ECONNRESET",
+            DESTADDRREQ    = $cb!(DESTADDRREQ,    EDESTADDRREQ,    UV_EDESTADDRREQ)    => "EDESTADDRREQ",
+            EXIST          = $cb!(EXIST,          EEXIST,          UV_EEXIST)          => "EEXIST",
+            FAULT          = $cb!(FAULT,          EFAULT,          UV_EFAULT)          => "EFAULT",
+            HOSTUNREACH    = $cb!(HOSTUNREACH,    EHOSTUNREACH,    UV_EHOSTUNREACH)    => "EHOSTUNREACH",
+            INTR           = $cb!(INTR,           EINTR,           UV_EINTR)           => "EINTR",
+            INVAL          = $cb!(INVAL,          EINVAL,          UV_EINVAL)          => "EINVAL",
+            IO             = $cb!(IO,             EIO,             UV_EIO)             => "EIO",
+            ISCONN         = $cb!(ISCONN,         EISCONN,         UV_EISCONN)         => "EISCONN",
+            ISDIR          = $cb!(ISDIR,          EISDIR,          UV_EISDIR)          => "EISDIR",
+            LOOP           = $cb!(LOOP,           ELOOP,           UV_ELOOP)           => "ELOOP",
+            MFILE          = $cb!(MFILE,          EMFILE,          UV_EMFILE)          => "EMFILE",
+            MSGSIZE        = $cb!(MSGSIZE,        EMSGSIZE,        UV_EMSGSIZE)        => "EMSGSIZE",
+            NAMETOOLONG    = $cb!(NAMETOOLONG,    ENAMETOOLONG,    UV_ENAMETOOLONG)    => "ENAMETOOLONG",
+            NETDOWN        = $cb!(NETDOWN,        ENETDOWN,        UV_ENETDOWN)        => "ENETDOWN",
+            NETUNREACH     = $cb!(NETUNREACH,     ENETUNREACH,     UV_ENETUNREACH)     => "ENETUNREACH",
+            NFILE          = $cb!(NFILE,          ENFILE,          UV_ENFILE)          => "ENFILE",
+            NOBUFS         = $cb!(NOBUFS,         ENOBUFS,         UV_ENOBUFS)         => "ENOBUFS",
+            NODEV          = $cb!(NODEV,          ENODEV,          UV_ENODEV)          => "ENODEV",
+            NOENT          = $cb!(NOENT,          ENOENT,          UV_ENOENT)          => "ENOENT",
+            NOMEM          = $cb!(NOMEM,          ENOMEM,          UV_ENOMEM)          => "ENOMEM",
+            NONET          = $cb!(NONET,          ENONET,          UV_ENONET)          => "ENONET",
+            NOSPC          = $cb!(NOSPC,          ENOSPC,          UV_ENOSPC)          => "ENOSPC",
+            NOSYS          = $cb!(NOSYS,          ENOSYS,          UV_ENOSYS)          => "ENOSYS",
+            NOTCONN        = $cb!(NOTCONN,        ENOTCONN,        UV_ENOTCONN)        => "ENOTCONN",
+            NOTDIR         = $cb!(NOTDIR,         ENOTDIR,         UV_ENOTDIR)         => "ENOTDIR",
+            NOTEMPTY       = $cb!(NOTEMPTY,       ENOTEMPTY,       UV_ENOTEMPTY)       => "ENOTEMPTY",
+            NOTSOCK        = $cb!(NOTSOCK,        ENOTSOCK,        UV_ENOTSOCK)        => "ENOTSOCK",
+            NOTSUP         = $cb!(NOTSUP,         ENOTSUP,         UV_ENOTSUP)         => "ENOTSUP",
+            PERM           = $cb!(PERM,           EPERM,           UV_EPERM)           => "EPERM",
+            PIPE           = $cb!(PIPE,           EPIPE,           UV_EPIPE)           => "EPIPE",
+            PROTO          = $cb!(PROTO,          EPROTO,          UV_EPROTO)          => "EPROTO",
+            PROTONOSUPPORT = $cb!(PROTONOSUPPORT, EPROTONOSUPPORT, UV_EPROTONOSUPPORT) => "EPROTONOSUPPORT",
+            PROTOTYPE      = $cb!(PROTOTYPE,      EPROTOTYPE,      UV_EPROTOTYPE)      => "EPROTOTYPE",
+            ROFS           = $cb!(ROFS,           EROFS,           UV_EROFS)           => "EROFS",
+            SHUTDOWN       = $cb!(SHUTDOWN,       ESHUTDOWN,       UV_ESHUTDOWN)       => "ESHUTDOWN",
+            SPIPE          = $cb!(SPIPE,          ESPIPE,          UV_ESPIPE)          => "ESPIPE",
+            SRCH           = $cb!(SRCH,           ESRCH,           UV_ESRCH)           => "ESRCH",
+            TIMEDOUT       = $cb!(TIMEDOUT,       ETIMEDOUT,       UV_ETIMEDOUT)       => "ETIMEDOUT",
+            TXTBSY         = $cb!(TXTBSY,         ETXTBSY,         UV_ETXTBSY)         => "ETXTBSY",
+            XDEV           = $cb!(XDEV,           EXDEV,           UV_EXDEV)           => "EXDEV",
+            FBIG           = $cb!(FBIG,           EFBIG,           UV_EFBIG)           => "EFBIG",
+            NOPROTOOPT     = $cb!(NOPROTOOPT,     ENOPROTOOPT,     UV_ENOPROTOOPT)     => "ENOPROTOOPT",
+            RANGE          = $cb!(RANGE,          ERANGE,          UV_ERANGE)          => "ERANGE",
+            NXIO           = $cb!(NXIO,           ENXIO,           UV_ENXIO)           => "ENXIO",
+            MLINK          = $cb!(MLINK,          EMLINK,          UV_EMLINK)          => "EMLINK",
+            HOSTDOWN       = $cb!(HOSTDOWN,       EHOSTDOWN,       UV_EHOSTDOWN)       => "EHOSTDOWN",
+            REMOTEIO       = $cb!(REMOTEIO,       EREMOTEIO,       UV_EREMOTEIO)       => "EREMOTEIO",
+            NOTTY          = $cb!(NOTTY,          ENOTTY,          UV_ENOTTY)          => "ENOTTY",
+            FTYPE          = $cb!(FTYPE,          EFTYPE,          UV_EFTYPE)          => "EFTYPE",
+            ILSEQ          = $cb!(ILSEQ,          EILSEQ,          UV_EILSEQ)          => "EILSEQ",
+            OVERFLOW       = $cb!(OVERFLOW,       EOVERFLOW,       UV_EOVERFLOW)       => "EOVERFLOW",
+            SOCKTNOSUPPORT = $cb!(SOCKTNOSUPPORT, ESOCKTNOSUPPORT, UV_ESOCKTNOSUPPORT) => "ESOCKTNOSUPPORT",
+            NODATA         = $cb!(NODATA,         ENODATA,         UV_ENODATA)         => "ENODATA",
+            UNATCH         = $cb!(UNATCH,         EUNATCH,         UV_EUNATCH)         => "EUNATCH",
+            NOEXEC         = $cb!(NOEXEC,         ENOEXEC,         UV_ENOEXEC)         => "ENOEXEC",
+        }
+    };
+}
+
 #[cfg(target_os = "macos")]
 pub mod darwin_errno;
 #[cfg(target_os = "macos")]

@@ -1,7 +1,7 @@
 // @link "deps/zlib/libz.a"
 
 #![warn(unreachable_pub)]
-use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
+use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::mem::size_of;
 
 use bun_collections::VecExt as _;
@@ -36,33 +36,8 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
-#[repr(C)]
-#[allow(non_camel_case_types)]
-pub struct struct_gzFile_s {
-    pub have: c_uint,
-    pub next: *mut u8,
-    pub pos: c_long,
-}
-#[allow(non_camel_case_types)]
-pub type gzFile = *mut struct_gzFile_s;
-
-// https://zlib.net/manual.html#Stream
-#[allow(non_camel_case_types)]
-type Byte = u8;
-#[allow(non_camel_case_types)]
-type uInt = u32;
-// zlib-ng compat (and stock zlib) use `unsigned long` — 4 bytes on Windows
-// LLP64, 8 on LP64 unix. cloudflare/zlib hard-coded uint64_t, which is why
-// this was u64. Must match the C side or compress()/compressBound()/adler32()
-// have an ABI mismatch on Windows.
-#[allow(non_camel_case_types)]
-pub type uLong = c_ulong;
-#[allow(non_camel_case_types)]
-type Bytef = Byte;
-#[allow(non_camel_case_types)]
-pub type uLongf = uLong;
-#[allow(non_camel_case_types, dead_code)]
-type voidpf = *mut c_void;
+#[allow(non_camel_case_types, unused_imports)]
+pub use bun_zlib_sys::shared::{Byte, Bytef, gzFile, struct_gzFile_s, uInt, uLong, uLongf, voidpf};
 
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));

@@ -192,11 +192,7 @@ pub enum ZstdError {
 
 bun_core::impl_tag_error!(ZstdError);
 
-impl From<ZstdError> for bun_core::Error {
-    fn from(e: ZstdError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-    }
-}
+bun_core::named_error_set!(ZstdError);
 
 /// ZSTD_compress() :
 ///  Compresses `src` content as a single zstd compressed frame into already allocated `dst`.

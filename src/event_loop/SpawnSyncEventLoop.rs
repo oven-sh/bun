@@ -242,6 +242,31 @@ impl SpawnSyncEventLoop {
         // guarantees no other safe borrow of the loop is live.
         unsafe { self.uws_loop.as_mut() }
     }
+
+    /// Unique borrow of the heap-owned libuv timeout timer (Windows only).
+    ///
+    /// Single deref site for the `uv_timer: Option<NonNull<_>>` field —
+    /// collapses the per-site `(*t.as_ptr()).method()` raw derefs in
+    /// `prepare_timer_on_windows` / `cleanup` / `tick_with_timeout`. The
+    /// pointee is `Box`-allocated in [`prepare_timer_on_windows`] (via
+    /// `heap::into_raw_nn`) and freed only by the `on_close_uv_timer` callback
+    /// scheduled in `Drop`, so it is valid for all of `self`'s lifetime
+    /// whenever the field is `Some`. `&mut self` ensures the returned
+    /// `&mut Timer` is the sole live Rust reference.
+    ///
+    /// Same re-entrancy hazard as [`uws_loop_mut`](Self::uws_loop_mut): do
+    /// **NOT** call between the `timer.data = self as *mut Self` store and the
+    /// uws tick in `tick_with_timeout` — the `&mut self` receiver reborrow is
+    /// a Unique retag over `*self` and would pop the raw `*mut Self`'s
+    /// Stacked-Borrows tag at `did_timeout`'s bytes.
+    #[cfg(windows)]
+    #[inline]
+    fn uv_timer_mut(&mut self) -> Option<&mut libuv::Timer> {
+        // SAFETY: see doc — heap-owned, valid while `Some`, `&mut self` ⇒
+        // exclusive Rust access (libuv only touches the handle from inside
+        // `uv_run`, never concurrently with a caller of this accessor).
+        self.uv_timer.as_mut().map(|p| unsafe { p.as_mut() })
+    }
 }
 
 #[cfg(windows)]
@@ -302,12 +327,9 @@ impl SpawnSyncEventLoop {
 
         #[cfg(windows)]
         {
-            if let Some(timer) = self.uv_timer {
-                // SAFETY: timer is a live libuv handle.
-                unsafe {
-                    (*timer.as_ptr()).stop();
-                    (*timer.as_ptr()).unref();
-                }
+            if let Some(timer) = self.uv_timer_mut() {
+                timer.stop();
+                timer.unref();
             }
         }
     }
@@ -349,26 +371,24 @@ pub enum TickState {
 impl SpawnSyncEventLoop {
     #[cfg(windows)]
     fn prepare_timer_on_windows(&mut self, ts: &Timespec) {
-        let timer: NonNull<libuv::Timer> = match self.uv_timer {
-            Some(t) => t,
-            None => 'brk: {
-                let uv_timer: Box<libuv::Timer> = Box::new(bun_core::ffi::zeroed());
-                let uv_timer = bun_core::heap::into_raw_nn(uv_timer);
-                // SAFETY: uv_timer just allocated; `uv_loop` is set by C `us_create_loop`.
-                unsafe { (*uv_timer.as_ptr()).init(self.uws_loop().uv_loop) };
-                break 'brk uv_timer;
-            }
-        };
+        if self.uv_timer.is_none() {
+            let uv_timer: Box<libuv::Timer> = Box::new(bun_core::ffi::zeroed());
+            // Leak to raw *before* `uv_timer_init` so libuv's stored handle
+            // pointer derives from the post-`into_raw` provenance (not a
+            // `Box`-`noalias` reborrow that `into_raw` would later pop).
+            self.uv_timer = Some(bun_core::heap::into_raw_nn(uv_timer));
+            // `uv_loop` is set by C `us_create_loop`. Read it (a `*mut`, Copy)
+            // before borrowing `self` mutably via the timer accessor.
+            let uv_loop = self.uws_loop().uv_loop;
+            self.uv_timer_mut().expect("just set").init(uv_loop);
+        }
 
-        // SAFETY: timer is a valid initialized libuv timer handle.
         // NOTE: `timer.data` is assigned later in `tick_with_timeout`, immediately before the
         // uws tick, so the stored `*mut Self` derives directly from that frame's live `&mut self`
         // (not from this function's reborrow, which would be invalidated on return).
-        unsafe {
-            (*timer.as_ptr()).start(ts.ms_unsigned(), 0, Some(on_uv_timer));
-            (*timer.as_ptr()).ref_();
-        }
-        self.uv_timer = Some(timer);
+        let timer = self.uv_timer_mut().expect("set above");
+        timer.start(ts.ms_unsigned(), 0, Some(on_uv_timer));
+        timer.ref_();
     }
 
     /// Tick the isolated event loop with an optional timeout
@@ -431,12 +451,15 @@ impl SpawnSyncEventLoop {
         if let Some(ts) = timeout {
             #[cfg(windows)]
             {
-                // SAFETY: uv_timer is Some when timeout is Some (set in prepare_timer_on_windows).
-                let t = self.uv_timer.unwrap();
-                unsafe {
-                    (*t.as_ptr()).unref();
-                    (*t.as_ptr()).stop();
-                }
+                // `uv_timer` is `Some` when `timeout` is `Some` (set in
+                // `prepare_timer_on_windows`). The re-entrant `on_uv_timer`
+                // callback can only fire from inside the uws tick above; once
+                // that returns no callback runs until the next `uv_run`, so the
+                // `&mut self` receiver reborrow in `uv_timer_mut` is sound here
+                // (the raw `*mut Self` in `timer.data` is dead until restarted).
+                let t = self.uv_timer_mut().expect("set in prepare_timer_on_windows");
+                t.unref();
+                t.stop();
             }
             #[cfg(not(windows))]
             {

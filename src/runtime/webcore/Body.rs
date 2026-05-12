@@ -2296,30 +2296,39 @@ impl<'a> ValueBufferer<'a> {
         }
     }
 
+    /// Reclaim the `*mut Self` smuggled through a `NativePromiseContext` cell
+    /// as an exclusive borrow. Centralises the `Option<NonNull<Self>>` deref
+    /// for the two host-fn entry points below (one accessor, N safe callers).
+    ///
+    /// # Safety (encapsulated)
+    /// `NativePromiseContext::take` returns the live ctx pointer set in
+    /// `create()` (caller stashed `&mut Self` and held a +1 ref); the cell is
+    /// nulled on take so this is the sole owner. `ValueBufferer` is heap-
+    /// pinned by its caller for the stream's duration.
+    #[inline]
+    fn take_ctx<'r>(cell: JSValue) -> Option<&'r mut Self> {
+        // SAFETY: see fn doc — +1 ref transferred back; sole live `&mut`.
+        crate::api::NativePromiseContext::take::<Self>(cell).map(|mut p| unsafe { p.as_mut() })
+    }
+
     // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn on_resolve_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<2>();
-        let Some(mut sink) =
-            crate::api::NativePromiseContext::take::<Self>(args.ptr[args.len - 1])
-        else {
+        let Some(sink) = Self::take_ctx(args.ptr[args.len - 1]) else {
             return Ok(JSValue::UNDEFINED);
         };
-        // SAFETY: NativePromiseContext::take returns the live ctx pointer set in create().
-        unsafe { sink.as_mut() }.handle_resolve_stream(true);
+        sink.handle_resolve_stream(true);
         Ok(JSValue::UNDEFINED)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn on_reject_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<2>();
-        let Some(mut sink) =
-            crate::api::NativePromiseContext::take::<Self>(args.ptr[args.len - 1])
-        else {
+        let Some(sink) = Self::take_ctx(args.ptr[args.len - 1]) else {
             return Ok(JSValue::UNDEFINED);
         };
         let err = args.ptr[0];
-        // SAFETY: NativePromiseContext::take returns the live ctx pointer set in create().
-        unsafe { sink.as_mut() }.handle_reject_stream(err, true);
+        sink.handle_reject_stream(err, true);
         Ok(JSValue::UNDEFINED)
     }
 

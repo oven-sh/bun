@@ -420,6 +420,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.vm.get()
     }
 
+    /// Shared borrow of the intrusively-refcounted [`ServePlugins`] this
+    /// server holds a counted ref on (see field doc). Centralises the
+    /// `Option<NonNull>` deref so callers (`AnyServer::plugins`,
+    /// `get_plugins`) read it as a plain `Option<&T>`.
+    ///
+    /// # Safety (encapsulated)
+    /// `plugins` is set once from `ServePlugins::init` (heap-allocated, +1
+    /// ref) and released only in `Drop for NewServer`, so while `Some` the
+    /// pointee is live for `&self`'s duration. Single-threaded JS context;
+    /// no `&mut ServePlugins` is live across a `&self` borrow.
+    #[inline(always)]
+    pub fn plugins_ref(&self) -> Option<&ServePlugins> {
+        // SAFETY: see fn doc — counted ref keeps pointee live for `&self`.
+        self.plugins.map(|p| unsafe { &*p.as_ptr() })
+    }
+
     /// Raw mutable pointer to the process-static VM. Returned as `*mut` (not
     /// `&mut`) because the VM is mutated across re-entrant JS callbacks
     /// (`drain_microtasks`, event-loop ticks) while other `&VirtualMachine`
@@ -1039,20 +1055,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let response_value = bun_jsc::host_fn::from_js_host_call(
             global,
             || {
-                // SAFETY: FFI — `Bun__ServerRouteList__callRoute` is the
-                // generated C++ dispatcher; all pointer args are live for this
-                // frame, `js_request` is an out-param overwritten in place.
-                unsafe {
-                    Bun__ServerRouteList__callRoute(
-                        global,
-                        index,
-                        prepared.request_object,
-                        server_js,
-                        server_request_list,
-                        &raw mut prepared.js_request,
-                        core::ptr::from_mut(req).cast::<c_void>(),
-                    )
-                }
+                Bun__ServerRouteList__callRoute(
+                    global,
+                    index,
+                    prepared.request_object,
+                    server_js,
+                    server_request_list,
+                    &mut prepared.js_request,
+                    core::ptr::from_mut(req).cast::<c_void>(),
+                )
             },
         )
         .unwrap_or_else(|err| global.take_exception(err));
@@ -1132,21 +1143,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             ffi::NodeHTTPServer__onRequest_http
         };
         let result: JSValue = bun_jsc::host_fn::from_js_host_call(global, || {
-            // SAFETY: FFI — all pointer args are live for this frame; C++
-            // writes `*node_response_ptr` exactly once (or leaves it null).
-            unsafe {
-                on_request_ffi(
-                    any_server_packed,
-                    global,
-                    this_object,
-                    callback,
-                    method_string,
-                    req,
-                    std::ptr::from_mut::<uws_sys::NewAppResponse<SSL>>(resp).cast(),
-                    upgrade_ctx.cast(),
-                    &raw mut node_http_response,
-                )
-            }
+            on_request_ffi(
+                any_server_packed,
+                global,
+                this_object,
+                callback,
+                method_string,
+                req,
+                std::ptr::from_mut::<uws_sys::NewAppResponse<SSL>>(resp).cast(),
+                upgrade_ctx.cast(),
+                &mut node_http_response,
+            )
         })
         .unwrap_or_else(|err| global.take_exception(err));
 
@@ -2759,28 +2766,32 @@ mod ffi {
         /// [`NodeHTTPResponse`] (returned via `node_response_ptr` with one ref
         /// taken), and invokes `callback(req, res)`. The plain-HTTP and HTTPS
         /// monomorphizations differ only in the `Response<SSL>` opaque type.
-        pub fn NodeHTTPServer__onRequest_http(
+        ///
+        /// `&JSGlobalObject` / `&mut *mut _` discharge the deref'd-param
+        /// preconditions; `request`/`response`/`upgrade_ctx` are opaque uws
+        /// handles (module-private — sole caller passes live pointers).
+        pub safe fn NodeHTTPServer__onRequest_http(
             any_server: usize,
-            global: *const jsc::JSGlobalObject,
+            global: &jsc::JSGlobalObject,
             this_value: jsc::JSValue,
             callback: jsc::JSValue,
             method_string: jsc::JSValue,
             request: *mut uws_sys::Request,
             response: *mut c_void, // *uws.NewApp(false).Response
             upgrade_ctx: *mut c_void,
-            node_response_ptr: *mut *mut NodeHTTPResponse,
+            node_response_ptr: &mut *mut NodeHTTPResponse,
         ) -> jsc::JSValue;
 
-        pub fn NodeHTTPServer__onRequest_https(
+        pub safe fn NodeHTTPServer__onRequest_https(
             any_server: usize,
-            global: *const jsc::JSGlobalObject,
+            global: &jsc::JSGlobalObject,
             this_value: jsc::JSValue,
             callback: jsc::JSValue,
             method_string: jsc::JSValue,
             request: *mut uws_sys::Request,
             response: *mut c_void, // *uws.NewApp(true).Response
             upgrade_ctx: *mut c_void,
-            node_response_ptr: *mut *mut NodeHTTPResponse,
+            node_response_ptr: &mut *mut NodeHTTPResponse,
         ) -> jsc::JSValue;
     }
 }
@@ -3051,8 +3062,7 @@ impl AnyServer {
     }
 
     pub fn plugins(&self) -> Option<&ServePlugins> {
-        // SAFETY: `plugins` holds a counted ref; live while the server is.
-        any_server_dispatch!(self, |s| s.plugins.map(|p| unsafe { &*p.as_ptr() }))
+        any_server_dispatch!(self, |s| s.plugins_ref())
     }
 
     pub fn get_plugins(&self) -> PluginsResult<'_> {

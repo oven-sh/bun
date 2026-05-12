@@ -20,8 +20,10 @@ mod array_buffer_sink_abi {
     use super::*;
     unsafe extern "C" {
         pub(super) safe fn ArrayBufferSink__fromJS(value: JSValue) -> usize;
-        pub(super) fn ArrayBufferSink__createObject(
-            global: *mut JSGlobalObject,
+        // `&JSGlobalObject` discharges the only deref'd-param precondition;
+        // `object`/`destructor` are stored opaquely in the JS wrapper.
+        pub(super) safe fn ArrayBufferSink__createObject(
+            global: &JSGlobalObject,
             object: *mut c_void,
             destructor: usize,
         ) -> JSValue;
@@ -47,9 +49,7 @@ impl JsSinkAbi for ArrayBufferSink {
         object: *mut c_void,
         destructor: usize,
     ) -> JSValue {
-        // SAFETY: FFI into generated C++ sink glue; `global.as_ptr()` is the
-        // sanctioned &self → *mut for opaque JSC handles.
-        unsafe { array_buffer_sink_abi::ArrayBufferSink__createObject(global.as_ptr(), object, destructor) }
+        array_buffer_sink_abi::ArrayBufferSink__createObject(global, object, destructor)
     }
     fn set_destroy_callback_extern(value: JSValue, callback: usize) {
         array_buffer_sink_abi::ArrayBufferSink__setDestroyCallback(value, callback)
@@ -1122,8 +1122,8 @@ macro_rules! js_sink {
                 #[link_name = concat!($abi_name, "__onStart")]
                 safe fn on_start_extern(ptr: JSValue, global: &JSGlobalObject);
                 #[link_name = concat!($abi_name, "__createObject")]
-                fn create_object_extern(
-                    global: *mut JSGlobalObject,
+                safe fn create_object_extern(
+                    global: &JSGlobalObject,
                     object: *mut c_void,
                     destructor: usize,
                 ) -> JSValue;
@@ -1168,9 +1168,7 @@ macro_rules! js_sink {
 
             pub fn create_object(global: &JSGlobalObject, object: *mut c_void, destructor: usize) -> JSValue {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
-                // SAFETY: FFI call into generated C++ sink glue. `JSGlobalObject` is an
-                // opaque ZST handle; `.as_ptr()` is the sanctioned &self → *mut for FFI.
-                unsafe { create_object_extern(global.as_ptr(), object, destructor) }
+                create_object_extern(global, object, destructor)
             }
 
             pub fn set_destroy_callback(value: JSValue, callback: usize) {

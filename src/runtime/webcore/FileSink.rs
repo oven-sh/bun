@@ -1153,8 +1153,10 @@ unsafe extern "C" {
     #[link_name = "FileSink__fromJS"]
     safe fn FileSink__fromJS(value: JSValue) -> usize;
     #[link_name = "FileSink__createObject"]
-    fn FileSink__createObject(
-        global: *mut JSGlobalObject,
+    // `&JSGlobalObject` discharges the only deref'd-param precondition;
+    // `object`/`destructor` are stored opaquely in the JS wrapper.
+    safe fn FileSink__createObject(
+        global: &JSGlobalObject,
         object: *mut c_void,
         destructor: usize,
     ) -> JSValue;
@@ -1250,9 +1252,7 @@ impl crate::webcore::sink::JsSinkAbi for FileSink {
         object: *mut c_void,
         destructor: usize,
     ) -> JSValue {
-        // SAFETY: FFI into generated C++ sink glue; `global.as_ptr()` is the
-        // sanctioned &self → *mut for opaque JSC handles.
-        unsafe { FileSink__createObject(global.as_ptr(), object, destructor) }
+        FileSink__createObject(global, object, destructor)
     }
     fn set_destroy_callback_extern(value: JSValue, callback: usize) {
         FileSink__setDestroyCallback(value, callback)

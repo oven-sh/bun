@@ -1353,10 +1353,9 @@ where
 
 
     pub fn get_plugins(&self) -> PluginsResult<'_> {
-        match self.plugins {
+        match self.plugins_ref() {
             None => PluginsResult::Found(None),
-            // SAFETY: `plugins` holds a counted ref; live while `self` is.
-            Some(p) => match unsafe { &(*p.as_ptr()).state } {
+            Some(p) => match &p.state {
                 ServePluginsState::Unqueued(_) | ServePluginsState::Pending { .. } => PluginsResult::Pending,
                 ServePluginsState::Loaded(plugin) => PluginsResult::Found(Some(plugin.as_ref())),
                 ServePluginsState::Err => PluginsResult::Err,
@@ -2631,14 +2630,14 @@ where
         let server_request_list = Self::js_route_list_get_cached(server.js_value_assert_alive()).unwrap();
         let call_route = if Ctx::IS_H3 { Bun__ServerRouteList__callRouteH3 } else { Bun__ServerRouteList__callRoute };
         let global = server.global_this();
-        let response_value = match jsc::from_js_host_call(global, || unsafe {
+        let response_value = match jsc::from_js_host_call(global, || {
             call_route(
                 global,
                 index,
                 prepared.request_object,
                 server.js_value_assert_alive(),
                 server_request_list,
-                &raw mut prepared.js_request,
+                &mut prepared.js_request,
                 std::ptr::from_mut(req).cast::<c_void>(),
             )
         }) {
@@ -2985,14 +2984,14 @@ where
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
         // SAFETY (server_ptr field read): server_ptr is live for the request's duration.
         let global = bun_opaque::opaque_deref(unsafe { (*server_ptr).global_this });
-        let response_value = match jsc::from_js_host_call(global, || unsafe {
+        let response_value = match jsc::from_js_host_call(global, || {
             Bun__ServerRouteList__callRoute(
                 global,
                 index,
                 prepared.request_object,
                 server_js,
                 server_request_list,
-                &raw mut prepared.js_request,
+                &mut prepared.js_request,
                 std::ptr::from_mut(req).cast::<c_void>(),
             )
         }) {
@@ -3519,23 +3518,26 @@ unsafe extern "C" {
         global: &JSGlobalObject,
     ) -> JSValue;
 
-    pub(super) fn Bun__ServerRouteList__callRoute(
-        global: *const JSGlobalObject,
+    // `&JSGlobalObject` / `&mut JSValue` discharge the deref'd-param
+    // preconditions; `request_ptr`/`req` are opaque handles that C++ stores or
+    // forwards (module-private — sole callers pass live pointers).
+    pub(super) safe fn Bun__ServerRouteList__callRoute(
+        global: &JSGlobalObject,
         index: u32,
         request_ptr: *mut Request,
         server_object: JSValue,
         route_list_object: JSValue,
-        request_object: *mut JSValue,
+        request_object: &mut JSValue,
         req: *mut c_void, // *uws.Request
     ) -> JSValue;
 
-    fn Bun__ServerRouteList__callRouteH3(
-        global: *const JSGlobalObject,
+    safe fn Bun__ServerRouteList__callRouteH3(
+        global: &JSGlobalObject,
         index: u32,
         request_ptr: *mut Request,
         server_object: JSValue,
         route_list_object: JSValue,
-        request_object: *mut JSValue,
+        request_object: &mut JSValue,
         req: *mut c_void,
     ) -> JSValue;
 

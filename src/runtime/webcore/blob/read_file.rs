@@ -724,29 +724,23 @@ impl ReadFile {
         {
             return; // why
         }
+        // we hold a 64 KB stack buffer incase the amount of data to
+        // be read is greater than the reported amount
+        //
+        // 64 KB is large, but since this is running in a thread
+        // with it's own stack, it should have sufficient space.
+        // PORT NOTE: hoisted out of the loop and zero-initialized once — the
+        // one-time 64 KB memset is negligible next to the per-iteration
+        // syscall, and avoids the `MaybeUninit<u8>` → `&mut [u8]` cast (uninit
+        // bytes behind a `&[u8]` is technically UB even when never read).
+        let mut stack_buffer = [0u8; 64 * 1024];
         while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
-            // we hold a 64 KB stack buffer incase the amount of data to
-            // be read is greater than the reported amount
-            //
-            // 64 KB is large, but since this is running in a thread
-            // with it's own stack, it should have sufficient space.
-            // SAFETY: [MaybeUninit<u8>; N] is itself a valid value when uninitialized;
-            // no byte is read before being written by read(2).
-            let mut stack_buffer: [MaybeUninit<u8>; 64 * 1024] =
-                unsafe { MaybeUninit::uninit().assume_init() };
-            // SAFETY: u8 is POD; treating uninit bytes as &mut [u8] for read(2) target is fine.
-            let stack_buffer: &mut [u8] = unsafe {
-                core::slice::from_raw_parts_mut(
-                    stack_buffer.as_mut_ptr().cast::<u8>(),
-                    stack_buffer.len(),
-                )
-            };
             // PORT NOTE: reshaped for borrowck — keep the read target as a raw
             // (ptr, len) across the `&mut self` `do_read` call; no `&mut [u8]`
             // to `self.buffer`'s spare capacity is ever live alongside
             // `&mut self`.
             let stack_ptr = stack_buffer.as_mut_ptr();
-            let (buf_ptr, buf_len) = self.remaining_buffer(stack_buffer);
+            let (buf_ptr, buf_len) = self.remaining_buffer(&mut stack_buffer);
 
             if buf_len > 0 && self.errno.is_none() && !self.read_eof {
                 let mut read_amount: usize = 0;

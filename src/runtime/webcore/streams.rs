@@ -600,8 +600,8 @@ impl Writable {
             Writable::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM classification
                 let prom = unsafe { &mut *pending }.promise(global_this);
-                // SAFETY: prom is a live GC-rooted JSPromise
-                unsafe { &*prom }.to_js()
+                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+                JSPromise::opaque_ref(prom).to_js()
             }
         }
     }
@@ -803,9 +803,9 @@ impl StreamResult {
         // same promise. Keep the raw pointers and form a fresh temporary `&mut` per
         // call so no two `&mut` are live at once.
         let event_loop = vm.event_loop();
-        // SAFETY: promise is GC-rooted via protect(); sole `&` for this read-only call.
+        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
         // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
-        let _unprotect = jsc::js_value::Protected::adopt(unsafe { &*promise }.to_js());
+        let _unprotect = jsc::js_value::Protected::adopt(JSPromise::opaque_ref(promise).to_js());
 
         // SAFETY: event_loop is the VM's singleton loop; sole `&mut` for this call.
         unsafe { &mut *event_loop }.enter();
@@ -823,14 +823,15 @@ impl StreamResult {
                     break 'brk js_err;
                 };
                 *result = StreamResult::Temporary(RawSlice::EMPTY);
-                // SAFETY: promise GC-rooted; fresh temp `&mut` is sole borrow across
-                // this re-entrant call (no long-lived `&mut JSPromise` held).
-                let _ = unsafe { &mut *promise }.reject_with_async_stack(global_this, Ok(value));
+                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut`
+                // deref. Fresh temp `&mut` is the sole borrow across this
+                // re-entrant call (no long-lived `&mut JSPromise` held).
+                let _ = JSPromise::opaque_mut(promise).reject_with_async_stack(global_this, Ok(value));
                 // TODO: properly propagate exception upwards
             }
             StreamResult::Done => {
-                // SAFETY: see reject_with_async_stack above; fresh temp `&mut`.
-                let _ = unsafe { &mut *promise }.resolve(global_this, JSValue::FALSE);
+                // S008: see reject_with_async_stack above; fresh temp `&mut`.
+                let _ = JSPromise::opaque_mut(promise).resolve(global_this, JSValue::FALSE);
                 // TODO: properly propagate exception upwards
             }
             _ => {
@@ -838,8 +839,8 @@ impl StreamResult {
                     Ok(v) => v,
                     Err(err) => {
                         *result = StreamResult::Temporary(RawSlice::EMPTY);
-                        // SAFETY: see reject_with_async_stack above; fresh temp `&mut`.
-                        let _ = unsafe { &mut *promise }.reject(global_this, Err(err));
+                        // S008: see reject_with_async_stack above; fresh temp `&mut`.
+                        let _ = JSPromise::opaque_mut(promise).reject(global_this, Err(err));
                         // TODO: properly propagate exception upwards
                         // SAFETY: see enter() above; sole `&mut` for this call.
                         unsafe { &mut *event_loop }.exit();
@@ -849,8 +850,8 @@ impl StreamResult {
                 value.ensure_still_alive();
 
                 *result = StreamResult::Temporary(RawSlice::EMPTY);
-                // SAFETY: see reject_with_async_stack above; fresh temp `&mut`.
-                let _ = unsafe { &mut *promise }.resolve(global_this, value);
+                // S008: see reject_with_async_stack above; fresh temp `&mut`.
+                let _ = JSPromise::opaque_mut(promise).resolve(global_this, value);
                 // TODO: properly propagate exception upwards
             }
         }
@@ -899,8 +900,8 @@ impl StreamResult {
             StreamResult::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM classification
                 let promise = unsafe { &mut **pending }.promise(global_this);
-                // SAFETY: promise just created
-                let promise_js = unsafe { &*promise }.to_js();
+                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+                let promise_js = JSPromise::opaque_ref(promise).to_js();
                 promise_js.protect();
                 Ok(promise_js)
             }
@@ -1179,7 +1180,7 @@ mod http_sink_abi {
                     #[link_name = concat!($abi, "__fromJS")]
                     pub safe fn from_js(value: JSValue) -> usize;
                     #[link_name = concat!($abi, "__createObject")]
-                    pub fn create_object(g: *mut JSGlobalObject, o: *mut c_void, d: usize) -> JSValue;
+                    pub safe fn create_object(g: &JSGlobalObject, o: *mut c_void, d: usize) -> JSValue;
                     #[link_name = concat!($abi, "__setDestroyCallback")]
                     pub safe fn set_destroy_callback(v: JSValue, cb: usize);
                     #[link_name = concat!($abi, "__assignToStream")]
@@ -1235,9 +1236,7 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
         object: *mut c_void,
         destructor: usize,
     ) -> JSValue {
-        // SAFETY: FFI into generated C++ sink glue; `global.as_ptr()` is the
-        // sanctioned &self → *mut for opaque JSC handles.
-        http_sink_dispatch!(unsafe create_object(global.as_ptr(), object, destructor))
+        http_sink_dispatch!(create_object(global, object, destructor))
     }
     fn set_destroy_callback_extern(value: JSValue, callback: usize) {
         http_sink_dispatch!(set_destroy_callback(value, callback))
@@ -1625,8 +1624,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         if let Some(prom) = self.pending_flush {
-            // SAFETY: prom is GC-rooted via protect()
-            return bun_sys::Result::Ok(unsafe { &*prom }.to_js());
+            // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+            return bun_sys::Result::Ok(JSPromise::opaque_ref(prom).to_js());
         }
 
         if self.buffer.len() == 0 || self.done {
@@ -1649,8 +1648,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.wrote_at_start_of_flush = self.wrote;
         self.pending_flush = Some(JSPromise::create(global_this));
         self.global_this = Some(BackRef::new(global_this));
-        // SAFETY: just created
-        let promise_value = unsafe { &*self.pending_flush.unwrap() }.to_js();
+        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+        let promise_value = JSPromise::opaque_ref(self.pending_flush.unwrap()).to_js();
         promise_value.protect();
 
         bun_sys::Result::Ok(promise_value)
@@ -1881,8 +1880,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             if !self.send_readable(0) {
                 self.pending_flush = Some(JSPromise::create(global_this));
                 self.global_this = Some(BackRef::new(global_this));
-                // SAFETY: just created
-                let value = unsafe { &*self.pending_flush.unwrap() }.to_js();
+                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+                let value = JSPromise::opaque_ref(self.pending_flush.unwrap()).to_js();
                 value.protect();
                 return bun_sys::Result::Ok(value);
             }
@@ -1967,8 +1966,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // flushPromise() (e.g. handleResolveStream / handleRejectStream).
         // Drop the GC root so the promise can be collected.
         if let Some(prom) = this.pending_flush.take() {
-            // SAFETY: prom is GC-rooted
-            unsafe { &*prom }.to_js().unprotect();
+            // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+            JSPromise::opaque_ref(prom).to_js().unprotect();
         }
         this.buffer.clear_and_free();
         this.unregister_auto_flusher();
@@ -2034,9 +2033,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             bun_core::scoped_log!(HTTPServerWritableLog, "flushPromise()");
 
             let global_this = self.global_this();
-            // SAFETY: prom is GC-rooted
-            unsafe { &*prom }.to_js().unprotect();
-            let result = unsafe { &mut *prom }.resolve(
+            // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `* → &`/`&mut` deref.
+            JSPromise::opaque_ref(prom).to_js().unprotect();
+            let result = JSPromise::opaque_mut(prom).resolve(
                 global_this,
                 JSValue::js_number(self.wrote.saturating_sub(self.wrote_at_start_of_flush) as f64),
             );
@@ -2473,8 +2472,10 @@ impl SinkHandler for NetworkSink {
 // can dispatch (see FileSink for the same pattern).
 unsafe extern "C" {
     safe fn NetworkSink__fromJS(value: JSValue) -> usize;
-    fn NetworkSink__createObject(
-        global: *mut JSGlobalObject,
+    // `&JSGlobalObject` discharges the only deref'd-param precondition;
+    // `object`/`destructor` are stored opaquely in the JS wrapper.
+    safe fn NetworkSink__createObject(
+        global: &JSGlobalObject,
         object: *mut c_void,
         destructor: usize,
     ) -> JSValue;
@@ -2498,9 +2499,7 @@ impl crate::webcore::sink::JsSinkAbi for NetworkSink {
         object: *mut c_void,
         destructor: usize,
     ) -> JSValue {
-        // SAFETY: FFI into generated C++ sink glue; `global.as_ptr()` is the
-        // sanctioned &self → *mut for opaque JSC handles.
-        unsafe { NetworkSink__createObject(global.as_ptr(), object, destructor) }
+        NetworkSink__createObject(global, object, destructor)
     }
     fn set_destroy_callback_extern(value: JSValue, callback: usize) {
         NetworkSink__setDestroyCallback(value, callback)
@@ -2611,8 +2610,8 @@ impl BufferAction {
         global: &JSGlobalObject,
         err: StreamError,
     ) -> core::result::Result<(), jsc::JsTerminated> {
-        // SAFETY: swap returns valid promise ptr
-        unsafe { &mut *self.swap() }.reject(global, Ok(err.to_js_weak(global).0))
+        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
+        JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js_weak(global).0))
     }
 
     pub fn resolve(
@@ -2620,8 +2619,8 @@ impl BufferAction {
         global: &JSGlobalObject,
         result: JSValue,
     ) -> core::result::Result<(), jsc::JsTerminated> {
-        // SAFETY: swap returns valid promise ptr
-        unsafe { &mut *self.swap() }.resolve(global, result)
+        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
+        JSPromise::opaque_mut(self.swap()).resolve(global, result)
     }
 
     pub fn value(&self) -> JSValue {

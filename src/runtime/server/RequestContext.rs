@@ -209,11 +209,9 @@ where
     }
 
     pub fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
-        let server = self.server?;
-        // SAFETY: server is valid while RequestContext is alive (BACKREF);
-        // raw deref keeps the borrow's lifetime unconstrained so it can be
-        // returned as `&'self` (the server outlives `self`).
-        unsafe { (*server.as_ptr()).dev_server() }
+        // `server` is a `BackRef` (BACKREF — server outlives `self`); safe
+        // `Deref` ties the borrow to `&self.server`, which is `&'self`.
+        self.server.as_ref()?.dev_server()
     }
 }
 
@@ -1912,8 +1910,8 @@ where
         let mut effective_result = assignment_result;
         if effective_result.is_empty_or_undefined_or_null() {
             if let Some(flush) = response_stream.sink.pending_flush {
-                // SAFETY: pending_flush is a GC-rooted *JSPromise set by the sink.
-                effective_result = unsafe { (*flush).to_js() };
+                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+                effective_result = jsc::JSPromise::opaque_ref(flush).to_js();
             }
         }
 

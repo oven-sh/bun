@@ -296,7 +296,7 @@ impl SavedSourceMap {
     pub fn put_mappings(
         &mut self,
         source: &bun_ast::Source,
-        mappings: MutableString,
+        mut mappings: MutableString,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // --hot can re-read a file mid-rewrite (truncate + write) and transpile
@@ -322,13 +322,15 @@ impl SavedSourceMap {
         }
 
         // PORT NOTE: Zig `default_allocator.dupe(u8, mappings.list.items)` —
-        // `MutableString.list` is `Vec<u8>`; box a copy so the table owns the
-        // blob (the incoming `MutableString` may be backed by the printer's
-        // recycled buffer or a moved-in cache record). `heap::alloc` is NOT a
-        // leak: ownership transfers to the table via `put_value`, and is
-        // reclaimed by `InternalSourceMap::free_owned` (see `put_value` /
+        // Zig dups because the printer's `MutableString` is backed by a
+        // recycled buffer it does not own. In Rust every caller MOVES an owned
+        // `Vec<u8>` here (printer chunk by value, cache hit via `mem::take`),
+        // so `into_boxed_slice()` transfers the existing allocation without
+        // re-alloc+memcpy (1.38 MB for `_tsc.js`'s cached map). `heap::alloc`
+        // is NOT a leak: ownership transfers to the table via `put_value`, and
+        // is reclaimed by `InternalSourceMap::free_owned` (see `put_value` /
         // `Drop`). On the error path the Box is reconstituted and dropped.
-        let blob: Box<[u8]> = Box::<[u8]>::from(mappings.list.as_slice());
+        let blob: Box<[u8]> = core::mem::take(&mut mappings.list).into_boxed_slice();
         let blob_ptr: *mut [u8] = bun_core::heap::into_raw(blob);
         // errdefer: on error, reconstitute and drop the Box.
         match self.put_value(

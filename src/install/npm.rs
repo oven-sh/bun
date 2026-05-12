@@ -1186,20 +1186,19 @@ pub mod package_manifest {
                 task: PoolTask,
             }
 
+            bun_threading::intrusive_work_task!(['a] SaveTask<'a>, task);
+
             impl<'a> SaveTask<'a> {
                 pub fn new(init: SaveTask<'a>) -> Box<SaveTask<'a>> {
                     Box::new(init)
                 }
 
                 pub unsafe fn run(task: *mut PoolTask) {
+                    use bun_threading::IntrusiveWorkTask as _;
                     let _tracer = bun_core::perf::trace("PackageManifest.Serializer.save");
 
-                    // SAFETY: task points to SaveTask.task
-                    let save_task: *mut SaveTask<'_> = unsafe {
-                        bun_core::from_field_ptr!(SaveTask<'_>, task, task)
-                    };
-                    // SAFETY: allocated via heap::alloc in save_async
-                    let save_task = unsafe { bun_core::heap::take(save_task) };
+                    // SAFETY: task points to SaveTask.task; allocated via heap::alloc in save_async.
+                    let save_task = unsafe { bun_core::heap::take(SaveTask::from_task_ptr(task)) };
 
                     if let Err(err) = Serializer::save(
                         &save_task.manifest,
@@ -1824,14 +1823,12 @@ impl PackageManifest {
 // TODO(b2): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
 type ExternalStringMapDeduper = HashMap<u64, ExternalStringList>;
 
-struct DependencyGroup {
-    prop: &'static [u8],
-    field: &'static str,
-}
+use bun_install_types::DependencyGroup;
+/// Abbreviated registry metadata never carries `devDependencies` — keep this 3-wide intentionally.
 const DEPENDENCY_GROUPS: [DependencyGroup; 3] = [
-    DependencyGroup { prop: b"dependencies", field: "dependencies" },
-    DependencyGroup { prop: b"optionalDependencies", field: "optional_dependencies" },
-    DependencyGroup { prop: b"peerDependencies", field: "peer_dependencies" },
+    DependencyGroup::DEPENDENCIES,
+    DependencyGroup::OPTIONAL,
+    DependencyGroup::PEER,
 ];
 
 impl PackageManifest {

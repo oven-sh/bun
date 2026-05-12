@@ -26,7 +26,8 @@ pub use crate::ArrayBinding;
 // Zig: `union(Binding.Tag)` — tag enum lives on `Binding::Tag`.
 // PORT NOTE: arena ptrs are raw `*mut` in Phase A (LIFETIMES.tsv: ARENA → raw);
 // 'bump threaded crate-wide (`&'bump mut T`).
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, bun_core::EnumTag)]
+#[enum_tag(existing = super::binding::Tag)]
 pub enum B {
     // let x = ...
     BIdentifier(StoreRef<Identifier>),
@@ -112,18 +113,6 @@ impl Object {
 }
 
 impl B {
-    // Zig: `union(Binding.Tag)` — TODO(port): ensure `Binding::Tag` discriminants
-    // match this enum's variant order so `tag()` stays a transmute/match.
-    pub fn tag(&self) -> super::binding::Tag {
-        use super::binding::Tag;
-        match self {
-            B::BIdentifier(_) => Tag::BIdentifier,
-            B::BArray(_) => Tag::BArray,
-            B::BObject(_) => Tag::BObject,
-            B::BMissing(_) => Tag::BMissing,
-        }
-    }
-
     /// This hash function is currently only used for React Fast Refresh transform.
     /// This doesn't include the `is_single_line` properties, as they only affect whitespace.
     pub fn write_to_hasher<H, S>(&self, hasher: &mut H, symbol_table: &mut S)

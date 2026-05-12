@@ -289,16 +289,38 @@ pub mod bun_core {
                 unsafe { core::slice::from_raw_parts_mut(ptr, len) }
             }
         }
+
+        /// Mirrors `bun_core::ffi::wcslen`.
+        ///
+        /// # Safety
+        /// `p` is non-null and NUL-terminated.
+        #[inline(always)]
+        pub unsafe fn wcslen(p: *const u16) -> usize {
+            debug_assert!(!p.is_null(), "ffi::wcslen: null pointer");
+            let mut n = 0usize;
+            // SAFETY: caller contract — non-null, NUL-terminated.
+            while unsafe { *p.add(n) } != 0 {
+                n += 1;
+            }
+            n
+        }
+
+        /// Mirrors `bun_core::ffi::wstr_units`.
+        ///
+        /// # Safety
+        /// As [`wcslen`]; borrow must not outlive `p`'s allocation.
+        #[inline(always)]
+        pub unsafe fn wstr_units<'a>(p: *const u16) -> &'a [u16] {
+            // SAFETY: forwarded to `wcslen`.
+            unsafe { core::slice::from_raw_parts(p, wcslen(p)) }
+        }
     }
 }
 
-/// `bun_sys::windows` stand-in. Re-exports the leaf `bun_windows_sys`
-/// surface and locally declares the handful of items that live in
-/// `bun_sys::windows` / `bun_core::windows_sys` proper (CreateProcessW,
-/// STARTUPINFOW, PROCESS_INFORMATION, TEB→PEB→ProcessParameters chain,
-/// teb()). Layouts/signatures must match the originals; the `const _: () =
-/// assert!(offset_of!...)` checks below pin the field offsets the shim
-/// actually reads.
+/// `bun_sys::windows` stand-in. Re-exports the leaf `bun_windows_sys` surface
+/// (which now owns CreateProcessW, STARTUPINFOW / PROCESS_INFORMATION, the
+/// TEB→PEB→ProcessParameters chain, and `teb()`/`peb()`); only the shim-local
+/// `PVOID` alias and console-mode flag remain here.
 #[cfg(windows)]
 pub mod compat {
     use core::ffi::c_void;
@@ -314,130 +336,9 @@ pub mod compat {
     // ── kernel32 surface (bun_sys::windows::kernel32 layers extras on top
     //    of bun_windows_sys::kernel32; mirror just what the shim calls) ──
     pub mod kernel32 {
-        use super::*;
         pub use bun_windows_sys::kernel32::*;
         pub use bun_windows_sys::externs::{
             GetConsoleMode, GetExitCodeProcess, SetConsoleMode, WaitForSingleObject,
         };
-        // SAFETY: standard Win32 externs; signatures match SDK.
-        #[link(name = "kernel32")]
-        unsafe extern "system" {
-            /// No pointer preconditions: `hObject` is an opaque kernel handle
-            /// (validated kernel-side; bad handle → `FALSE` + `GetLastError`),
-            /// `dwMask`/`dwFlags` are by-value.
-            pub safe fn SetHandleInformation(hObject: HANDLE, dwMask: DWORD, dwFlags: DWORD) -> BOOL;
-            pub fn CreateProcessW(
-                lpApplicationName: LPCWSTR,
-                lpCommandLine: LPWSTR,
-                lpProcessAttributes: *mut c_void,
-                lpThreadAttributes: *mut c_void,
-                bInheritHandles: BOOL,
-                dwCreationFlags: DWORD,
-                lpEnvironment: *mut c_void,
-                lpCurrentDirectory: LPCWSTR,
-                lpStartupInfo: *mut STARTUPINFOW,
-                lpProcessInformation: *mut PROCESS_INFORMATION,
-            ) -> BOOL;
-        }
-    }
-
-    // ── process-creation POD (processthreadsapi.h) ──
-    #[repr(C)]
-    pub struct STARTUPINFOW {
-        pub cb: DWORD,
-        pub lpReserved: PWSTR,
-        pub lpDesktop: PWSTR,
-        pub lpTitle: PWSTR,
-        pub dwX: DWORD,
-        pub dwY: DWORD,
-        pub dwXSize: DWORD,
-        pub dwYSize: DWORD,
-        pub dwXCountChars: DWORD,
-        pub dwYCountChars: DWORD,
-        pub dwFillAttribute: DWORD,
-        pub dwFlags: DWORD,
-        pub wShowWindow: WORD,
-        pub cbReserved2: WORD,
-        pub lpReserved2: *mut u8,
-        pub hStdInput: HANDLE,
-        pub hStdOutput: HANDLE,
-        pub hStdError: HANDLE,
-    }
-    #[repr(C)]
-    pub struct PROCESS_INFORMATION {
-        pub hProcess: HANDLE,
-        pub hThread: HANDLE,
-        pub dwProcessId: DWORD,
-        pub dwThreadId: DWORD,
-    }
-
-    // ── TEB → PEB → RTL_USER_PROCESS_PARAMETERS chain (winternl/phnt) ──
-    // Mirrors the minimal views in bun_core::windows_sys + bun_sys::windows.
-    // Only the fields the shim dereferences are modelled; `offset_of!`
-    // asserts pin them to the documented x64 offsets so a typo in the
-    // padding arrays fails at compile time, not at runtime.
-    #[repr(C)]
-    pub struct Curdir {
-        pub DosPath: UNICODE_STRING,
-        pub Handle: HANDLE,
-    }
-    #[repr(C)]
-    pub struct RTL_USER_PROCESS_PARAMETERS {
-        _reserved1: [u8; 16],
-        _reserved2: [*mut c_void; 2],
-        pub hStdInput: HANDLE,
-        pub hStdOutput: HANDLE,
-        pub hStdError: HANDLE,
-        pub CurrentDirectory: Curdir,
-        pub DllPath: UNICODE_STRING,
-        pub ImagePathName: UNICODE_STRING,
-        pub CommandLine: UNICODE_STRING,
-    }
-    const _: () = assert!(core::mem::offset_of!(RTL_USER_PROCESS_PARAMETERS, hStdInput) == 0x20);
-    const _: () = assert!(core::mem::offset_of!(RTL_USER_PROCESS_PARAMETERS, ImagePathName) == 0x60);
-    #[repr(C)]
-    pub struct PEB {
-        _reserved1: [u8; 2],
-        pub BeingDebugged: u8,
-        _reserved2: [u8; 1],
-        _reserved3: [*mut c_void; 2],
-        pub Ldr: *mut c_void,
-        pub ProcessParameters: *const RTL_USER_PROCESS_PARAMETERS,
-    }
-    #[repr(C)]
-    pub struct TEB {
-        _nt_tib: [*mut c_void; 7],
-        pub EnvironmentPointer: *mut c_void,
-        _client_id: [*mut c_void; 2],
-        pub ActiveRpcHandle: *mut c_void,
-        pub ThreadLocalStoragePointer: *mut c_void,
-        pub ProcessEnvironmentBlock: *mut PEB,
-    }
-    const _: () = assert!(core::mem::offset_of!(TEB, ProcessEnvironmentBlock) == 0x60);
-
-    /// `gs:[0x30]` (x64) / `x18` (ARM64) — Zig `std.os.windows.teb()`.
-    ///
-    /// Safe fn (mirrors `bun_sys::windows::teb`): the only precondition —
-    /// that the segment register / x18 reservation is the OS thread-block
-    /// pointer — is guaranteed by `#[cfg(windows)]` on the enclosing module,
-    /// so there is no caller-side obligation to discharge.
-    #[inline(always)]
-    pub fn teb() -> *mut TEB {
-        #[cfg(target_arch = "x86_64")]
-        // SAFETY: on Windows x64 `gs:[0x30]` is the OS-maintained TEB self-
-        // pointer; reading it has no side effects and is always valid.
-        unsafe {
-            let p: *mut TEB;
-            core::arch::asm!("mov {}, gs:[0x30]", out(reg) p, options(nostack, pure, readonly));
-            p
-        }
-        #[cfg(target_arch = "aarch64")]
-        // SAFETY: on Windows ARM64 `x18` is the reserved OS thread-block
-        // pointer; reading it has no side effects and is always valid.
-        unsafe {
-            let p: *mut TEB;
-            core::arch::asm!("mov {}, x18", out(reg) p, options(nostack, pure, readonly));
-            p
-        }
     }
 }

@@ -29,10 +29,7 @@ type CodepointCursor = strings::Cursor;
 pub struct JSValueRaw(pub usize);
 type JSValue = JSValueRaw;
 
-bun_core::declare_scope!(SHELL, hidden);
-macro_rules! log {
-    ($($arg:tt)*) => { bun_core::scoped_log!(SHELL, $($arg)*) };
-}
+bun_core::define_scoped_log!(log, SHELL, hidden);
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr, Clone, Copy, PartialEq, Eq)]
 pub enum ParseError {
@@ -102,7 +99,8 @@ pub mod ast {
         }
     }
 
-    #[derive(Clone, Copy, strum::IntoStaticStr)]
+    #[derive(Clone, Copy, strum::IntoStaticStr, bun_core::EnumTag)]
+    #[enum_tag(existing = ExprTag)]
     pub enum Expr<'arena> {
         Assign(&'arena [Assign<'arena>]),
         Binary(&'arena Binary<'arena>),
@@ -135,19 +133,6 @@ pub mod ast {
     }
 
     impl<'arena> Expr<'arena> {
-        pub fn tag(&self) -> ExprTag {
-            match self {
-                Expr::Assign(_) => ExprTag::Assign,
-                Expr::Binary(_) => ExprTag::Binary,
-                Expr::Pipeline(_) => ExprTag::Pipeline,
-                Expr::Cmd(_) => ExprTag::Cmd,
-                Expr::Subshell(_) => ExprTag::Subshell,
-                Expr::If(_) => ExprTag::If,
-                Expr::CondExpr(_) => ExprTag::CondExpr,
-                Expr::Async(_) => ExprTag::Async,
-            }
-        }
-
         pub fn memory_cost(&self) -> usize {
             match self {
                 Expr::Assign(assign) => {
@@ -2067,7 +2052,8 @@ pub enum TokenTag {
     Eof,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, bun_core::EnumTag)]
+#[enum_tag(existing = TokenTag)]
 pub enum Token {
     /// |
     Pipe,
@@ -2143,40 +2129,6 @@ impl TextRange {
 }
 
 impl Token {
-    pub fn tag(self) -> TokenTag {
-        match self {
-            Token::Pipe => TokenTag::Pipe,
-            Token::DoublePipe => TokenTag::DoublePipe,
-            Token::Ampersand => TokenTag::Ampersand,
-            Token::DoubleAmpersand => TokenTag::DoubleAmpersand,
-            Token::Redirect(_) => TokenTag::Redirect,
-            Token::Dollar => TokenTag::Dollar,
-            Token::Asterisk => TokenTag::Asterisk,
-            Token::DoubleAsterisk => TokenTag::DoubleAsterisk,
-            Token::Eq => TokenTag::Eq,
-            Token::Semicolon => TokenTag::Semicolon,
-            Token::Newline => TokenTag::Newline,
-            Token::BraceBegin => TokenTag::BraceBegin,
-            Token::Comma => TokenTag::Comma,
-            Token::BraceEnd => TokenTag::BraceEnd,
-            Token::CmdSubstBegin => TokenTag::CmdSubstBegin,
-            Token::CmdSubstQuoted => TokenTag::CmdSubstQuoted,
-            Token::CmdSubstEnd => TokenTag::CmdSubstEnd,
-            Token::OpenParen => TokenTag::OpenParen,
-            Token::CloseParen => TokenTag::CloseParen,
-            Token::Var(_) => TokenTag::Var,
-            Token::VarArgv(_) => TokenTag::VarArgv,
-            Token::Text(_) => TokenTag::Text,
-            Token::SingleQuotedText(_) => TokenTag::SingleQuotedText,
-            Token::DoubleQuotedText(_) => TokenTag::DoubleQuotedText,
-            Token::JSObjRef(_) => TokenTag::JSObjRef,
-            Token::DoubleBracketOpen => TokenTag::DoubleBracketOpen,
-            Token::DoubleBracketClose => TokenTag::DoubleBracketClose,
-            Token::Delimit => TokenTag::Delimit,
-            Token::Eof => TokenTag::Eof,
-        }
-    }
-
     pub fn as_human_readable(self, strpool: &[u8]) -> &[u8] {
         // TODO(port): Zig builds varargv_strings as a 10x[2]u8 stack array; in Rust we'd need
         // a thread_local or to return Cow. For Phase A use static lookup.
@@ -3254,13 +3206,11 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         }
                     }
 
-                    let num = match buf[..count].iter().try_fold(0usize, |acc, &d| {
-                        acc.checked_mul(10).and_then(|a| a.checked_add((d - b'0') as usize))
-                    }) {
-                        Some(n) => n,
+                    let num = match strings::parse_int::<usize>(&buf[..count], 10) {
+                        Ok(n) => n,
                         // This means the number was really large, meaning it
                         // probably was supposed to be a string
-                        None => return None,
+                        Err(_) => return None,
                     };
 
                     match num {
@@ -3367,11 +3317,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             return None;
         }
 
-        let num = match buf[..count].iter().try_fold(0usize, |acc, &d| {
-            acc.checked_mul(10).and_then(|a| a.checked_add((d - b'0') as usize))
-        }) {
-            Some(n) => n,
-            None => {
+        let num = match strings::parse_int::<usize>(&buf[..count], 10) {
+            Ok(n) => n,
+            Err(_) => {
                 self.backtrack(snap);
                 return None;
             }
@@ -3549,11 +3497,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 return None;
             }
 
-            let idx = match digit_buf[..digit_buf_count as usize].iter().try_fold(0usize, |acc, &d| {
-                acc.checked_mul(10).and_then(|a| a.checked_add((d - b'0') as usize))
-            }) {
-                Some(n) => n,
-                None => {
+            let idx = match strings::parse_int::<usize>(&digit_buf[..digit_buf_count as usize], 10) {
+                Ok(n) => n,
+                Err(_) => {
                     let mut e = Vec::new();
                     write!(&mut e, "Invalid {} ref ", name).expect("infallible: in-memory write");
                     self.add_error(&e);

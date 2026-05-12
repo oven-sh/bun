@@ -368,6 +368,8 @@ pub struct ExpansionVariants {
     pub end: u16,
 }
 
+#[derive(bun_core::EnumTag)]
+#[enum_tag(existing = TokenTag)]
 pub enum Token {
     Open(ExpansionVariants),
     Comma,
@@ -405,17 +407,6 @@ pub enum TokenTag {
 }
 
 impl Token {
-    #[inline]
-    pub fn tag(&self) -> TokenTag {
-        match self {
-            Token::Open(_) => TokenTag::Open,
-            Token::Comma => TokenTag::Comma,
-            Token::Text(_) => TokenTag::Text,
-            Token::Close => TokenTag::Close,
-            Token::Eof => TokenTag::Eof,
-        }
-    }
-
     pub fn to_text(&self) -> SmolStr {
         match self {
             Token::Open(_) => SmolStr::from_char(b'{'),

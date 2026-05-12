@@ -6,20 +6,21 @@ use bun_ast::{E, Expr, G};
 use bun_semver as semver;
 use bun_str::strings;
 
-use bun_install::dependency::{self, Behavior, TagExt as _};
+use bun_install::dependency::{self, TagExt as _};
 use bun_install::lockfile::package::{PackageColumns as _, PackageColumns as _};
 use bun_install::{resolution, Dependency, INVALID_PACKAGE_ID};
+use bun_install_types::DependencyGroup;
 
 use super::package_manager_options::{Do, Enable};
 use super::{PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};
 
 type ExprDisabler = bun_ast::expr::Disabler;
 
-const DEPENDENCY_GROUPS: &[(&[u8], Behavior)] = &[
-    (b"optionalDependencies", Behavior::OPTIONAL),
-    (b"devDependencies", Behavior::DEV),
-    (b"dependencies", Behavior::PROD),
-    (b"peerDependencies", Behavior::PEER),
+const DEPENDENCY_GROUPS: [DependencyGroup; 4] = [
+    DependencyGroup::OPTIONAL,
+    DependencyGroup::DEV,
+    DependencyGroup::DEPENDENCIES,
+    DependencyGroup::PEER,
 ];
 
 #[derive(Default, Clone, Copy)]
@@ -264,7 +265,7 @@ pub fn edit_update_no_args(
     let arena = &manager.ast_arena;
 
     for group in DEPENDENCY_GROUPS {
-        let group_str = group.0;
+        let group_str = group.prop;
 
         if let Some(mut root) = current_package_json.as_property(group_str) {
             if matches!(root.expr.data, bun_ast::ExprData::EObject(_)) {
@@ -588,12 +589,8 @@ pub fn edit(
             let mut i: usize = 0;
             'loop_: while i < updates.len() {
                 let request = &mut updates[i];
-                for list in [
-                    b"dependencies".as_slice(),
-                    b"devDependencies".as_slice(),
-                    b"optionalDependencies".as_slice(),
-                    b"peerDependencies".as_slice(),
-                ] {
+                // order-insensitive scan: `FOUR` is fine here
+                for list in DependencyGroup::FOUR.map(|g| g.prop) {
                     if let Some(query) = current_package_json.as_property(list) {
                         if matches!(query.expr.data, bun_ast::ExprData::EObject(_)) {
                             let name = request.get_name();

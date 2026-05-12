@@ -1161,7 +1161,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // Copy into the caller-provided buffer so the returned pointer outlives this stack
         // frame (covers both the buf1-backed no-shebang path and the buf2-backed shebang path).
         // SAFETY: spawn_command_line is NUL-terminated (terminator written above).
-        let len = unsafe { span_u16(spawn_command_line) }.len();
+        let len = unsafe { bun_core::ffi::wstr_units(spawn_command_line) }.len();
         let dst = bun_ctx
             .out_buf()
             .expect("ReadWithoutLaunch requires BunCtx::out_buf() (would otherwise return a dangling stack pointer)");
@@ -1254,7 +1254,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 // SAFETY: spawn_command_line is NUL-terminated (we wrote the terminator above).
                 debug!(
                     "lpCommandLine: {}\n",
-                    fmt16(unsafe { span_u16(spawn_command_line) })
+                    fmt16(unsafe { bun_core::ffi::wstr_units(spawn_command_line) })
                 );
             }
             // SAFETY: all pointers are valid; spawn_command_line is NUL-terminated mutable buffer.
@@ -1307,7 +1307,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                     // here applies for when the binary is launched directly (user shell, double click, etc...)
                                     debug_assert!(flags.has_shebang());
                                     if DBG {
-                                        debug_assert!(unsafe { span_u16(spawn_command_line) }
+                                        debug_assert!(unsafe { bun_core::ffi::wstr_units(spawn_command_line) }
                                             .starts_with(bun_str::w!("node ")));
                                     }
 
@@ -1335,7 +1335,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                 if flags.is_node_or_bun() {
                                     // This script calls for 'bun', but it was not found.
                                     if DBG {
-                                        debug_assert!(unsafe { span_u16(spawn_command_line) }
+                                        debug_assert!(unsafe { bun_core::ffi::wstr_units(spawn_command_line) }
                                             .starts_with(bun_str::w!("bun ")));
                                     }
                                     return LauncherMode::fail(MODE, FailReason::InterpreterNotFoundBun);
@@ -1345,7 +1345,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                             // if attempt_number == 1, we already tried rewriting this to bun, and will now fail for real
                             if attempt_number == 1 {
                                 if DBG {
-                                    debug_assert!(unsafe { span_u16(spawn_command_line) }
+                                    debug_assert!(unsafe { bun_core::ffi::wstr_units(spawn_command_line) }
                                         .starts_with(bun_str::w!("bun ")));
                                 }
                                 return LauncherMode::fail(MODE, FailReason::InterpreterNotFoundBun);
@@ -1586,17 +1586,6 @@ pub fn main() -> ! {
 }
 
 // ───── helpers ─────
-
-/// Zig `std.mem.span` on `[*:0]u16`.
-#[inline]
-unsafe fn span_u16(p: *const u16) -> &'static [u16] {
-    let mut len = 0usize;
-    // SAFETY: caller guarantees p is NUL-terminated.
-    while unsafe { *p.add(len) } != 0 {
-        len += 1;
-    }
-    unsafe { bun_core::ffi::slice(p, len) }
-}
 
 /// Zig `std.unicode.fmtUtf16Le`.
 // TODO(port): provide a proper UTF-16-LE Display adapter in `bun_str`; for now this lossy

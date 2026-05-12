@@ -44,6 +44,10 @@ impl<SemverInt: VersionInt> Default for ResolutionType<SemverInt> {
 
 /// Rust-side equivalent of `bun.meta.Tagged(Value, Tag)` — a tagged view of `Value`
 /// used by [`ResolutionType::init`] / [`value_init`] to construct a zero-padded union.
+// `Tag` is a `#[repr(transparent)] struct Tag(u8)` with sparse `pub const`
+// associated values; the derive maps `Self::Variant` → `Tag::Variant` by name.
+#[derive(bun_core::EnumTag)]
+#[enum_tag(existing = Tag)]
 pub enum TaggedValue<SemverInt: VersionInt> {
     Uninitialized,
     Root,
@@ -56,25 +60,6 @@ pub enum TaggedValue<SemverInt: VersionInt> {
     Workspace(String),
     RemoteTarball(String),
     SingleFileModule(String),
-}
-
-impl<SemverInt: VersionInt> TaggedValue<SemverInt> {
-    #[inline]
-    fn tag(&self) -> Tag {
-        match self {
-            TaggedValue::Uninitialized => Tag::Uninitialized,
-            TaggedValue::Root => Tag::Root,
-            TaggedValue::Npm(_) => Tag::Npm,
-            TaggedValue::Folder(_) => Tag::Folder,
-            TaggedValue::LocalTarball(_) => Tag::LocalTarball,
-            TaggedValue::Github(_) => Tag::Github,
-            TaggedValue::Git(_) => Tag::Git,
-            TaggedValue::Symlink(_) => Tag::Symlink,
-            TaggedValue::Workspace(_) => Tag::Workspace,
-            TaggedValue::RemoteTarball(_) => Tag::RemoteTarball,
-            TaggedValue::SingleFileModule(_) => Tag::SingleFileModule,
-        }
-    }
 }
 
 impl<SemverInt: VersionInt> ResolutionType<SemverInt> {

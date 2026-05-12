@@ -1,5 +1,4 @@
 use crate::lockfile::package::PackageColumns as _;
-use core::mem::offset_of;
 use core::ptr;
 
 use bstr::BStr;
@@ -12,6 +11,7 @@ use bun_semver::String as SemverString;
 use bun_string::{strings, ZStr};
 use bun_core::ZBox;
 use bun_sys::{self as sys, Fd, FdExt};
+use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{self as thread_pool, Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
 use bun_wyhash::Wyhash11;
 
@@ -59,6 +59,8 @@ pub struct PatchTask {
     pub pre: bool,
     pub next: bun_threading::Link<PatchTask>,
 }
+
+bun_threading::intrusive_work_task!(PatchTask, task);
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue(PatchTask, .next)`.
 unsafe impl bun_threading::Linked for PatchTask {
@@ -164,9 +166,7 @@ impl PatchTask {
 
     pub unsafe fn run_from_thread_pool(task: *mut ThreadPoolTask) {
         // SAFETY: `task` points to the `task` field of a live `PatchTask` (set at construction).
-        let patch_task: &mut PatchTask = unsafe {
-            &mut *bun_core::from_field_ptr!(PatchTask, task, task)
-        };
+        let patch_task = unsafe { &mut *PatchTask::from_task_ptr(task) };
         patch_task.run_from_thread_pool_impl();
     }
 

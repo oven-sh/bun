@@ -352,7 +352,8 @@ impl Tag {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, bun_core::EnumTag)]
+#[enum_tag(existing = Tag)]
 pub enum Data {
     SBlock(StoreRef<S::Block>),
     SBreak(StoreRef<S::Break>),
@@ -461,47 +462,6 @@ impl PartialEq for Data {
     }
 }
 impl Eq for Data {}
-
-impl Data {
-    // Zig got this for free from `union(Tag)`. Hand-mapped Data → Tag.
-    pub fn tag(&self) -> Tag {
-        match self {
-            Data::SBlock(_) => Tag::SBlock,
-            Data::SBreak(_) => Tag::SBreak,
-            Data::SClass(_) => Tag::SClass,
-            Data::SComment(_) => Tag::SComment,
-            Data::SContinue(_) => Tag::SContinue,
-            Data::SDirective(_) => Tag::SDirective,
-            Data::SDoWhile(_) => Tag::SDoWhile,
-            Data::SEnum(_) => Tag::SEnum,
-            Data::SExportClause(_) => Tag::SExportClause,
-            Data::SExportDefault(_) => Tag::SExportDefault,
-            Data::SExportEquals(_) => Tag::SExportEquals,
-            Data::SExportFrom(_) => Tag::SExportFrom,
-            Data::SExportStar(_) => Tag::SExportStar,
-            Data::SExpr(_) => Tag::SExpr,
-            Data::SForIn(_) => Tag::SForIn,
-            Data::SForOf(_) => Tag::SForOf,
-            Data::SFor(_) => Tag::SFor,
-            Data::SFunction(_) => Tag::SFunction,
-            Data::SIf(_) => Tag::SIf,
-            Data::SImport(_) => Tag::SImport,
-            Data::SLabel(_) => Tag::SLabel,
-            Data::SLocal(_) => Tag::SLocal,
-            Data::SNamespace(_) => Tag::SNamespace,
-            Data::SReturn(_) => Tag::SReturn,
-            Data::SSwitch(_) => Tag::SSwitch,
-            Data::SThrow(_) => Tag::SThrow,
-            Data::STry(_) => Tag::STry,
-            Data::SWhile(_) => Tag::SWhile,
-            Data::SWith(_) => Tag::SWith,
-            Data::STypeScript(_) => Tag::STypeScript,
-            Data::SEmpty(_) => Tag::SEmpty,
-            Data::SDebugger(_) => Tag::SDebugger,
-            Data::SLazyExport(_) => Tag::SLazyExport,
-        }
-    }
-}
 
 // Zig field-style union accessors (`data.s_function`, `data.s_local`, …).
 // visitStmt and the printer port from Zig's `data.s_local.*` etc., which are

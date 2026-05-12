@@ -36,12 +36,12 @@ impl Scripts {
     /// (name, getter) table mirroring Zig `inline for (std.meta.fieldNames(Lockfile.Scripts))`.
     /// Used by debug JSON serialization in place of comptime field reflection.
     pub const FIELD_NAMES: &'static [(&'static str, fn(&Scripts) -> &SemverString)] = &[
-        ("preinstall", |s| &s.preinstall),
-        ("install", |s| &s.install),
-        ("postinstall", |s| &s.postinstall),
-        ("preprepare", |s| &s.preprepare),
-        ("prepare", |s| &s.prepare),
-        ("postprepare", |s| &s.postprepare),
+        (LockfileScripts::NAMES[0], |s| &s.preinstall),
+        (LockfileScripts::NAMES[1], |s| &s.install),
+        (LockfileScripts::NAMES[2], |s| &s.postinstall),
+        (LockfileScripts::NAMES[3], |s| &s.preprepare),
+        (LockfileScripts::NAMES[4], |s| &s.prepare),
+        (LockfileScripts::NAMES[5], |s| &s.postprepare),
     ];
 
     /// Helper: indexed access matching `Lockfile.Scripts.names` order.

@@ -57,10 +57,7 @@ use store::{
     NodeColumns as _, NodeColumns as _,
 };
 
-bun_output::declare_scope!(IsolatedInstall, visible);
-macro_rules! log {
-    ($($arg:tt)*) => { bun_output::scoped_log!(IsolatedInstall, $($arg)*) };
-}
+bun_output::define_scoped_log!(log, IsolatedInstall, visible);
 
 // ───────────────────────────────────────────────────────────────────────────
 // Inner helper types (hoisted from fn body — Rust does not allow local

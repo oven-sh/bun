@@ -975,63 +975,7 @@ pub fn is_identifier_continue(codepoint: i32) -> bool {
     bun_string::identifier::is_identifier_part(codepoint)
 }
 
-pub fn is_identifier(text: &[u8]) -> bool {
-    if text.is_empty() {
-        return false;
-    }
-
-    let iter = bun_string::strings::CodepointIterator::init(text);
-    let mut cursor = bun_string::strings::Cursor::default();
-    if !iter.next(&mut cursor) {
-        return false;
-    }
-
-    if !is_identifier_start(cursor.c) {
-        return false;
-    }
-
-    while iter.next(&mut cursor) {
-        if !is_identifier_continue(cursor.c) {
-            return false;
-        }
-    }
-
-    true
-}
-
-pub fn is_identifier_utf16(text: &[u16]) -> bool {
-    let n = text.len();
-    if n == 0 {
-        return false;
-    }
-
-    let mut i: usize = 0;
-    while i < n {
-        let is_start = i == 0;
-        let mut codepoint = text[i] as CodePoint;
-        i += 1;
-
-        if (0xD800..=0xDBFF).contains(&codepoint) && i < n {
-            let surrogate = text[i] as CodePoint;
-            if (0xDC00..=0xDFFF).contains(&surrogate) {
-                codepoint = (codepoint << 10) + surrogate
-                    + (0x10000 - (0xD800 << 10) - 0xDC00);
-                i += 1;
-            }
-        }
-        if is_start {
-            if !is_identifier_start(codepoint) {
-                return false;
-            }
-        } else {
-            if !is_identifier_continue(codepoint) {
-                return false;
-            }
-        }
-    }
-
-    true
-}
+pub use bun_string::identifier::{is_identifier, is_identifier_utf16};
 
 pub fn is_latin1_identifier<B: AsRef<[u8]>>(name: B) -> bool {
     // Zig `isLatin1Identifier(comptime Buffer, name)` is generic over `[]const u8`

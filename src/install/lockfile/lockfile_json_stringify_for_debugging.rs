@@ -634,7 +634,6 @@ impl<const N: usize> JsonScalar for &[u8; N] {
 /// the lockfile string buffer never carries lone control bytes outside that
 /// range, so the high-bit passthrough matches Zig's behaviour.
 fn encode_json_string(s: &[u8], out: &mut Vec<u8>) {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
     out.push(b'"');
     for &c in s {
         match c {
@@ -645,8 +644,7 @@ fn encode_json_string(s: &[u8], out: &mut Vec<u8>) {
             b'\t' => out.extend_from_slice(b"\\t"),
             0x00..=0x1F => {
                 out.extend_from_slice(b"\\u00");
-                out.push(HEX[(c >> 4) as usize]);
-                out.push(HEX[(c & 0xF) as usize]);
+                out.extend_from_slice(&bun_core::fmt::hex_byte_lower(c));
             }
             _ => out.push(c),
         }

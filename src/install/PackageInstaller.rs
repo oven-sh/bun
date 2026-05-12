@@ -122,39 +122,7 @@ pub struct PackageInstaller<'a> {
     pub seen_bin_links: StringHashMap<()>,
 }
 
-/// Port of `bun.handleOom` for `Result<T, AllocError>`-shaped fallible
-/// container ops used throughout this file (Zig: `catch bun.outOfMemory()`).
-///
-/// PORT NOTE: deliberately NOT a blanket `impl<T,E>` — `bun.handleOom` is only
-/// valid for `error{OutOfMemory}`, and a blanket impl would silently swallow
-/// real (non-OOM) error variants if a future call site's `E` widened. Each
-/// concrete error type is whitelisted below.
-trait UnwrapOrOom<T> {
-    fn unwrap_or_oom(self) -> T;
-}
-impl<T> UnwrapOrOom<T> for core::result::Result<T, bun_core::AllocError> {
-    #[inline]
-    fn unwrap_or_oom(self) -> T {
-        match self {
-            Ok(v) => v,
-            Err(_) => bun_core::out_of_memory(),
-        }
-    }
-}
-/// `bun.AbsPath(.{}).from()` / `.append()` are infallible in Zig (the default
-/// `check_length = .assume_always_less_than_max_path` panics on overflow).
-/// The Rust port unconditionally returns `Result<T, MaxPathExceeded>` (see
-/// `paths/Path.rs` PORT NOTE), so the `Err` arm here is the same crash, not a
-/// recoverable error being swallowed.
-impl<T> UnwrapOrOom<T> for core::result::Result<T, bun_paths::path_options::Error> {
-    #[inline]
-    fn unwrap_or_oom(self) -> T {
-        match self {
-            Ok(v) => v,
-            Err(_) => bun_core::out_of_memory(),
-        }
-    }
-}
+use bun_core::UnwrapOrOom;
 
 #[derive(Default)]
 pub struct NodeModulesFolder {

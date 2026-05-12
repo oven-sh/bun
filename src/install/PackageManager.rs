@@ -1176,10 +1176,7 @@ fn configure_env_for_scripts_run(
             let t_env = this_transpiler.env_mut();
             if !t_env.has(b"JOBS") {
                 let mut int_buf = [0u8; 10];
-                let mut cursor = &mut int_buf[..];
-                write!(cursor, "{}", thread_count).expect("unreachable");
-                let written = 10 - cursor.len();
-                let jobs_str = &int_buf[..written];
+                let jobs_str = bun_core::fmt::int_as_bytes(&mut int_buf, thread_count);
                 t_env
                     .map
                     .put_alloc_value(b"JOBS", jobs_str)

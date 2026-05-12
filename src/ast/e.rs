@@ -1548,29 +1548,15 @@ impl EString {
         crate::lexer_tables::is_identifier(self.slice(bump))
     }
 
-    fn string_compare_for_javascript<T: Copy + Into<i32>>(a: &[T], b: &[T]) -> Ordering {
-        let n = a.len().min(b.len());
-        let a_slice = &a[..n];
-        let b_slice = &b[..n];
-        debug_assert_eq!(a_slice.len(), b_slice.len());
-        for (a_char, b_char) in a_slice.iter().zip(b_slice) {
-            let delta: i32 = (*a_char).into() - (*b_char).into();
-            if delta != 0 {
-                return if delta < 0 { Ordering::Less } else { Ordering::Greater };
-            }
-        }
-        a.len().cmp(&b.len())
-    }
-
     /// Compares two strings lexicographically for JavaScript semantics.
     /// Both strings must share the same encoding (UTF-8 vs UTF-16).
     #[inline]
     pub fn order(&self, other: &EString) -> Ordering {
         debug_assert!(self.is_utf8() == other.is_utf8());
         if self.is_utf8() {
-            Self::string_compare_for_javascript(&self.data,&other.data)
+            strings::order(&self.data, &other.data)
         } else {
-            Self::string_compare_for_javascript(self.slice16(), other.slice16())
+            strings::order_t(self.slice16(), other.slice16())
         }
     }
 
@@ -1854,18 +1840,7 @@ impl TemplateContents {
         matches!(self, TemplateContents::Cooked(c) if c.is_utf8())
     }
 
-    pub fn cooked(&self) -> &EString {
-        match self {
-            TemplateContents::Cooked(c) => c,
-            _ => unreachable!(),
-        }
-    }
-    pub fn cooked_mut(&mut self) -> &mut EString {
-        match self {
-            TemplateContents::Cooked(c) => c,
-            _ => unreachable!(),
-        }
-    }
+    bun_core::enum_unwrap!(pub TemplateContents, Cooked => fn cooked / cooked_mut -> EString);
 }
 
 

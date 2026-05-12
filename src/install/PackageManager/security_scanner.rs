@@ -1,5 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
-use bun_collections::VecExt;
+use bun_collections::{ByteVecExt, VecExt};
 use std::collections::VecDeque;
 use std::io::Write as _;
 
@@ -1445,12 +1445,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         // capacity as `[]u8`); Rust forbids `&mut [u8]` over uninit bytes, so
         // expose `&mut [MaybeUninit<u8>]`. Caller (BufferedReader) only writes
         // into this region, never reads uninit bytes.
-        let cap = self.ipc_data.capacity();
-        let len = self.ipc_data.len();
-        if cap - len < 4096 {
-            self.ipc_data.reserve((cap + 4096).saturating_sub(len));
-        }
-        self.ipc_data.spare_capacity_mut()
+        // Vec::reserve already amortises by doubling; the explicit cap+4096 dance is unnecessary.
+        self.ipc_data.uv_alloc_spare(4096)
     }
 
     pub fn on_read_chunk(&mut self, chunk: &[u8], _has_more: ReadState) -> bool {

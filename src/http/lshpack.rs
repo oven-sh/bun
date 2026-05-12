@@ -72,14 +72,11 @@ impl HPACK {
     /// DecodeResult name and value uses a thread_local shared buffer and should be copy/cloned before the next decode/encode call
     pub fn decode(&mut self, src: &[u8]) -> Result<DecodeResult, HpackError> {
         let mut header = lshpack_header::default();
-        // SAFETY: genuine FFI — `self` is `&mut HPACK` (non-null, init'd by
-        // `lshpack_wrapper_init`); `src.as_ptr()/.len()` are a live `&[u8]`'s
-        // ptr+len pair so the C side reads in-bounds; `header` is a stack-local
-        // `#[repr(C)]` out-param. The ptr+len contract cannot be discharged at
-        // the type level over the C ABI, so this stays an `unsafe` call.
-        let offset = unsafe {
-            lshpack_wrapper_decode(std::ptr::from_mut::<HPACK>(self), src.as_ptr(), src.len(), &raw mut header)
-        };
+        // SAFETY: genuine FFI — only the `(src.as_ptr(), src.len())` pair carries
+        // an obligation here (in-bounds read), discharged by `src: &[u8]`. The
+        // `self`/`output` preconditions are type-discharged via `&mut` in the
+        // extern signature.
+        let offset = unsafe { lshpack_wrapper_decode(self, src.as_ptr(), src.len(), &mut header) };
         if offset == 0 {
             return Err(HpackError::UnableToDecode);
         }
@@ -117,14 +114,13 @@ impl HPACK {
         dst_buffer: &mut [u8],
         dst_buffer_offset: usize,
     ) -> Result<usize, HpackError> {
-        // SAFETY: genuine FFI — `self` is `&mut HPACK` (non-null, init'd);
-        // `name`/`value`/`dst_buffer` ptr+len pairs come straight from live
-        // borrowed slices so the C side's reads/writes are in-bounds. The
-        // ptr+len contracts cannot be discharged at the type level over the
-        // C ABI, so this stays an `unsafe` call.
+        // SAFETY: genuine FFI — the three (ptr,len) pairs come straight from
+        // live borrowed slices so the C side's reads/writes are in-bounds. The
+        // `self` precondition is type-discharged via `&mut` in the extern
+        // signature; the ptr+len contracts cannot be encoded over the C ABI.
         let offset = unsafe {
             lshpack_wrapper_encode(
-                std::ptr::from_mut::<HPACK>(self),
+                self,
                 name.as_ptr(),
                 name.len(),
                 value.as_ptr(),
@@ -224,14 +220,21 @@ unsafe extern "C" {
     // Frees `self_` (lshpack_{enc,dec}_cleanup + mi_free) — ownership transfer,
     // so this keeps its raw-pointer signature and caller-side safety obligation.
     fn lshpack_wrapper_deinit(self_: *mut HPACK);
+    // `self_`/`output` are tightened to references (ABI-identical thin ptrs) so
+    // those preconditions are type-discharged; the (src,src_len) pair still
+    // carries an in-bounds-read contract that the C ABI cannot encode, so the
+    // declaration stays unsafe.
     fn lshpack_wrapper_decode(
-        self_: *mut HPACK,
+        self_: &mut HPACK,
         src: *const u8,
         src_len: usize,
-        output: *mut lshpack_header,
+        output: &mut lshpack_header,
     ) -> usize;
+    // `self_` tightened to a reference; the three (ptr,len) pairs carry
+    // in-bounds read/write contracts that the C ABI cannot encode, so the
+    // declaration stays unsafe.
     fn lshpack_wrapper_encode(
-        self_: *mut HPACK,
+        self_: &mut HPACK,
         name: *const u8,
         name_len: usize,
         value: *const u8,

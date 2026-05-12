@@ -124,8 +124,7 @@ impl ProxyTunnel {
     /// before this call (every callsite in this module follows that shape).
     #[inline]
     fn close_from_callback(this: NonNull<Self>, err: Error) {
-        // SAFETY: see INVARIANT above.
-        unsafe { Self::close_raw(this, err) };
+        Self::close_raw(this, err);
     }
 
     /// Read the inner-TLS `SSL*` from `wrapper`.
@@ -606,10 +605,10 @@ impl ProxyTunnel {
     }
 
     pub fn close(&mut self, err: Error) {
-        // SAFETY: `&mut self` was derived from the heap::alloc pointer; the
-        // receiver is never used again after this line so the raw call's
-        // disjoint field projections do not alias it.
-        unsafe { Self::close_raw(NonNull::from(&mut *self), err) };
+        // `&mut self` was derived from the heap::alloc pointer; the receiver is
+        // never used again after this line so the raw call's disjoint field
+        // projections do not alias it.
+        Self::close_raw(NonNull::from(&mut *self), err);
     }
 
     /// Raw-pointer close: sets `shutdown_err` then drives `wrapper.shutdown()`.
@@ -617,10 +616,12 @@ impl ProxyTunnel {
     /// on_close and reborrows tunnel fields via raw projection) does not alias
     /// a held `&mut ProxyTunnel`.
     ///
-    /// # Safety
-    /// `this` must be live; caller must not hold `&mut ProxyTunnel` or
-    /// `&mut HTTPClient` across this call.
-    pub unsafe fn close_raw(this: NonNull<Self>, err: Error) {
+    /// All field access goes through the disjoint-field accessors
+    /// ([`Self::shutdown_err_of`], [`Self::wrapper_mut`]), which already
+    /// encode the module INVARIANT that `this` is a live intrusive-refcounted
+    /// tunnel and no whole-struct `&mut ProxyTunnel` is held across the call.
+    /// Callers satisfy that by construction (see [`Self::close_from_callback`]).
+    pub fn close_raw(this: NonNull<Self>, err: Error) {
         // `shutdown_err` is a `Cell<Error>` disjoint from `wrapper`; safe set.
         Self::shutdown_err_of(this).set(err);
         // shutdown() fires on_close synchronously, which accesses only

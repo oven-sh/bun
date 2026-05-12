@@ -2796,7 +2796,7 @@ impl<'a> HTTPClient<'a> {
                 self.set_timeout(socket);
 
                 match &mut self.state.original_request_body {
-                    HTTPRequestBody::Bytes(_) | HTTPRequestBody::Owned(_) => {
+                    HTTPRequestBody::Bytes(_) => {
                         let to_send = self.request_body();
                         if !to_send.is_empty() {
                             let sent = match write_to_socket::<IS_SSL>(socket, to_send) {
@@ -2856,7 +2856,7 @@ impl<'a> HTTPClient<'a> {
                     // `proxy_tunnel::raw_as_mut` INVARIANT).
                     let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
                     match &self.state.original_request_body {
-                        HTTPRequestBody::Bytes(_) | HTTPRequestBody::Owned(_) => {
+                        HTTPRequestBody::Bytes(_) => {
                             self.set_timeout(socket);
 
                             let to_send = self.request_body();
@@ -3543,9 +3543,7 @@ impl<'a> HTTPClient<'a> {
             // Stream/Sendfile are left at Zig parity (they don't track an
             // unsent slice here).
             let request_side_drained = match &self.state.original_request_body {
-                HTTPRequestBody::Bytes(_) | HTTPRequestBody::Owned(_) => {
-                    self.state.request_body.is_empty()
-                }
+                HTTPRequestBody::Bytes(_) => self.state.request_body.is_empty(),
                 _ => true,
             };
 

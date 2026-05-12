@@ -205,7 +205,13 @@ impl File {
     pub fn read_fill_buf<'b>(&self, buf: &'b mut [u8]) -> Maybe<&'b mut [u8]> {
         let mut read_amount: usize = 0;
         while read_amount < buf.len() {
-            match read(self.handle, &mut buf[read_amount..]) {
+            // PORT NOTE: File.zig:278 — POSIX uses pread() from offset 0 so a
+            // pre-advanced cursor doesn't truncate; Windows falls back to read().
+            #[cfg(unix)]
+            let rc = pread(self.handle, &mut buf[read_amount..], read_amount as i64);
+            #[cfg(not(unix))]
+            let rc = read(self.handle, &mut buf[read_amount..]);
+            match rc {
                 Err(err) => return Err(err),
                 Ok(0) => break,
                 Ok(n) => read_amount += n,

@@ -1106,24 +1106,20 @@ impl All {
             #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
             unsafe { &mut *uws_loop }.ref_();
-            // Guard on `data != null`: `uv_ref`/`uv_unref` on a handle that
-            // never went through `uv_timer_init` violates the libuv API
-            // contract (and is a silent no-op on `loop->active_handles`). In
-            // practice `ensure_uv_timer` runs before any JS timer can be
-            // ref'd, but the guard mirrors the `uv_idle` data-null check and
-            // makes the invariant explicit.
+            // Spec Timer.zig:207-213 calls `this.uv_timer.ref()` unconditionally
+            // (no `data != null` guard). Invariant: every path that reaches a
+            // positive `active_timer_count` first inserts a timer, and `insert`
+            // → `ensure_uv_timer` lazily `uv_timer_init`s the handle. Guarding
+            // here would silently drop the ref and let the loop exit early, so
+            // match Zig exactly.
             #[cfg(windows)]
-            if !self.uv_timer.data.is_null() {
-                self.uv_timer.ref_();
-            }
+            self.uv_timer.ref_();
         } else if old > 0 && new <= 0 {
             #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
             unsafe { &mut *uws_loop }.unref();
             #[cfg(windows)]
-            if !self.uv_timer.data.is_null() {
-                self.uv_timer.unref();
-            }
+            self.uv_timer.unref();
         }
         #[cfg(windows)]
         let _ = uws_loop;

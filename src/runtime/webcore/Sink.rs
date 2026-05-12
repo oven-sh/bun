@@ -782,10 +782,11 @@ pub trait JsSinkType: Sized {
         false
     }
     fn flush_from_js(&mut self, _global: &JSGlobalObject, _wait: bool) -> sys::Result<JSValue> {
-        // Guarded by `HAS_FLUSH_FROM_JS`; default impl just delegates to
-        // `flush()` semantics (returns undefined) so the non-override path
-        // is well-defined rather than panicking.
-        sys::Result::Ok(JSValue::UNDEFINED)
+        // Guarded by `HAS_FLUSH_FROM_JS`; default impl delegates to `flush()`
+        // (returning undefined on success) so the non-override path matches
+        // Zig's `!@hasDecl(SinkType, "flushFromJS")` arm — buffered bytes are
+        // still flushed even if a caller bypasses `js_flush`.
+        self.flush().map(|()| JSValue::UNDEFINED)
     }
     fn pending_state_is_pending(&self) -> bool {
         false

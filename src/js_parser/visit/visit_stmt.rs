@@ -1047,6 +1047,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         }
 
+        let mut rr: Result<(), Error> = Ok(());
         if p.options.features.react_fast_refresh {
             if let Some(hook) = react_hook_data.as_mut() {
                 let signature_cb = hook.signature_cb;
@@ -1065,12 +1066,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             if p.current_scope == p.module_scope {
-                p.handle_react_refresh_register(
+                // PORT NOTE: defer-vs-drop-scope — restore hook_ctx_storage/is_control_flow_dead
+                // before propagating Err so the stack-local `react_hook_data` ptr is never left in
+                // p.react_refresh on the OOM path (Zig defer covers all exits).
+                rr = p.handle_react_refresh_register(
                     stmts,
                     original_name,
                     name_ref,
                     ReactRefreshExportKind::Named,
-                )?;
+                );
             }
         }
 
@@ -1080,7 +1084,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if mark_as_dead {
             p.is_control_flow_dead = original_is_dead;
         }
-        Ok(())
+        rr
     }
 
     fn s_class(

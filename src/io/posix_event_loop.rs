@@ -565,12 +565,13 @@ impl FilePoll {
         poll
     }
 
-    pub fn init_with_owner(
-        vm: EventLoopCtx,
-        fd: Fd,
-        flags: FlagsSet,
-        owner: Owner,
-    ) -> *mut FilePoll {
+    // PORT NOTE: Zig `initWithOwner` picks `allocator_type` from comptime
+    // `@TypeOf(vm_) == *jsc.VirtualMachine`; here we derive it from the runtime
+    // `EventLoopCtx` tag. The two agree only when `vm` is built from the
+    // concrete VM/MiniEventLoop (the sole Zig call path, via `init`). Kept
+    // non-`pub` so callers can't pass a re-wrapped handle and diverge.
+    #[allow(dead_code)]
+    fn init_with_owner(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
         let value = Self::new_value(vm, fd, flags, owner);
         let generation_number = value.generation_number;
         let poll = vm.alloc_file_poll(value).as_ptr();
@@ -643,16 +644,31 @@ impl FilePoll {
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "freebsd"
+        ))]
         return self.register_with_fd_impl(loop_, flag, one_shot, fd);
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "freebsd"
+        )))]
         {
             let _ = (loop_, flag, one_shot, fd);
             sys::Result::Ok(())
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "freebsd"
+    ))]
     fn register_with_fd_impl(
         &mut self,
         loop_: &mut Loop,
@@ -676,7 +692,7 @@ impl FilePoll {
             self.flags.insert(Flags::OneShot);
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             use bun_sys::linux::{self, EPOLL};
             let one_shot_flag: u32 = if !self.flags.contains(Flags::OneShot) {
@@ -893,11 +909,11 @@ impl FilePoll {
         self.flags.insert(match flag {
             Flags::Readable => Flags::PollReadable,
             Flags::Process => {
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
                     Flags::PollReadable
                 }
-                #[cfg(not(target_os = "linux"))]
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
                 {
                     Flags::PollProcess
                 }
@@ -924,9 +940,19 @@ impl FilePoll {
         // PORT NOTE: reshaped for borrowck (Zig `defer this.deactivate(loop)`) — compute the
         // syscall result first, then unconditionally deactivate. Avoids the raw-pointer scopeguard
         // the literal translation would require.
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "freebsd"
+        ))]
         let result = self.unregister_with_fd_impl(loop_, fd, force_unregister);
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "freebsd"
+        )))]
         let result: sys::Result<()> = {
             let _ = (fd, force_unregister);
             sys::Result::Ok(())
@@ -935,7 +961,12 @@ impl FilePoll {
         result
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "freebsd"
+    ))]
     fn unregister_with_fd_impl(
         &mut self,
         loop_: &mut Loop,
@@ -996,7 +1027,7 @@ impl FilePoll {
             fd
         );
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             use bun_sys::linux::{self, EPOLL};
             // CTL_DEL keys on fd alone, so both directions are removed together.

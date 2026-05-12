@@ -156,7 +156,7 @@ impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
         ctx.on_package_extracted(task_id);
     }
 
-    fn on_package_download_error(
+    fn on_package_download_error_store(
         ctx: &mut Self::Ctx,
         id: Task::Id,
         name: &[u8],

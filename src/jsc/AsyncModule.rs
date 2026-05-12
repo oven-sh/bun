@@ -294,18 +294,15 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
         ctx.on_package_manifest_error(name, err, url)
     }
 
-    fn on_package_download_error(
+    fn on_package_download_error_pkg(
         ctx: &mut Queue,
-        id: install::package_manager_task::Id,
+        package_id: PackageID,
         name: &[u8],
         resolution: &Resolution,
         err: bun_core::Error,
         url: &[u8],
     ) {
-        // PORT NOTE: non-store-installer call sites wrap `PackageID` as
-        // `Task::Id::from_package_id(pkg_id)` (runTasks.rs); recover the
-        // `u32` here so the body matches AsyncModule.zig:184.
-        ctx.on_package_download_error(id.get() as PackageID, name, resolution, err, url)
+        ctx.on_package_download_error(package_id, name, resolution, err, url)
     }
 }
 

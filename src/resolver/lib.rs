@@ -1734,15 +1734,13 @@ pub mod fs {
             // PORT NOTE: `bun_sys::Stat` is `libc::stat`; Zig's
             // `std.fs.File.stat()` returned a normalized struct with
             // `mtime: i128` ns. Reconstruct from `st_mtime` (sec) +
-            // `st_mtime_nsec` (ns) where available.
-            #[cfg(target_os = "linux")]
-            let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
-            #[cfg(target_os = "macos")]
+            // `st_mtime_nsec` (ns). The `libc` crate flattens BSD/Darwin
+            // `st_mtimespec` into `st_mtime`/`st_mtime_nsec`, so the access is
+            // uniform on all `unix`.
+            #[cfg(unix)]
             let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
             #[cfg(windows)]
             let mtime: i128 = (stat.mtim.sec as i128) * NS_PER_S + stat.mtim.nsec as i128;
-            #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-            let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S;
             let seconds = mtime / NS_PER_S;
 
             // We can't detect changes if the file system zeros out the

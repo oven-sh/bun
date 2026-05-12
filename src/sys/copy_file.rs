@@ -96,9 +96,9 @@ impl Default for LinuxCopyFileState {
 #[derive(Default, Clone, Copy)]
 pub struct EmptyCopyFileState;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub type CopyFileState = LinuxCopyFileState;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 pub type CopyFileState = EmptyCopyFileState;
 
 type CopyFileReturnType = crate::Result<()>;
@@ -134,7 +134,7 @@ pub fn copy_file_with_state(
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         if can_use_ioctl_ficlone()
             && !copy_file_state.contains(LinuxCopyFileState::HAS_SEEN_EXDEV)
@@ -243,7 +243,7 @@ pub fn copy_file_with_state(
         return Ok(());
     }
 
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
     {
         loop {
             match copy_file_read_write_loop(in_.native(), out.native(), (i32::MAX - 1) as usize) {
@@ -269,11 +269,11 @@ static CAN_USE_COPY_FILE_RANGE: AtomicI32 = AtomicI32::new(0);
 
 #[inline]
 pub fn disable_copy_file_range_syscall() {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         return;
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     CAN_USE_COPY_FILE_RANGE.store(-1, Ordering::Relaxed);
 }
 
@@ -312,11 +312,11 @@ pub static CAN_USE_IOCTL_FICLONE_: AtomicI32 = AtomicI32::new(0);
 
 #[inline]
 pub fn disable_ioctl_ficlone() {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         return;
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     CAN_USE_IOCTL_FICLONE_.store(-1, Ordering::Relaxed);
 }
 
@@ -356,7 +356,7 @@ pub fn can_use_ioctl_ficlone() -> bool {
 #[allow(non_camel_case_types)]
 type fd_t = core::ffi::c_int;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn copy_file_range(
     in_: fd_t,
     out: fd_t,

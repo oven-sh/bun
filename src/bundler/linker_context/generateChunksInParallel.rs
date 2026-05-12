@@ -384,7 +384,14 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             chunk.template.placeholder.hash = Some(hash.digest());
 
             let mut rel_path: Vec<u8> = Vec::new();
-            write!(&mut rel_path, "{}", chunk.template).expect("write to Vec<u8>");
+            // PORT NOTE: use the byte-writer (`PathTemplate::print`) directly —
+            // routing through `Display`/`write!` goes via `from_utf8_lossy`,
+            // which would replace non-UTF-8 dir bytes with U+FFFD and corrupt
+            // the output path. Zig's `std.fmt.allocPrint` writes raw bytes.
+            chunk
+                .template
+                .print(&mut rel_path)
+                .expect("write to Vec<u8>");
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
             if path_names_map.get_or_put(&rel_path)?.found_existing {

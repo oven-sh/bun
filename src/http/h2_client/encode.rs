@@ -314,7 +314,7 @@ pub fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: us
     };
     let client = super::client_session::stream_client_mut(client_ptr);
     match &mut client.state.original_request_body {
-        HTTPRequestBody::Bytes(_) | HTTPRequestBody::Owned(_) => {
+        HTTPRequestBody::Bytes(_) => {
             let pending = stream.pending_body;
             let sent = write_data_windowed(session, stream, pending.slice(), true, cap);
             // pending_body[sent..] is a suffix of the original slice.

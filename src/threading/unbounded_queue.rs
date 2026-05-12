@@ -175,23 +175,52 @@ impl<T: Node> Batch<T> {
     }
 }
 
+/// Per-arch cache-half-line aligned wrapper — Zig's `align(queue_padding_length)`
+/// on `UnboundedQueue.back`/`.front`. Rust cannot express per-field alignment
+/// with a non-literal const, so this newtype is `#[repr(align(N))]`-cfg'd to
+/// `CACHE_LINE_LENGTH / 2` per target arch, keeping producer (CAS on `back`)
+/// and consumer (swap on `front`) on separate cache halves.
+#[cfg_attr(
+    any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "powerpc64",
+    ),
+    repr(align(64))
+)]
+#[cfg_attr(
+    any(
+        target_arch = "arm",
+        target_arch = "mips",
+        target_arch = "mips64",
+        target_arch = "riscv64",
+    ),
+    repr(align(16))
+)]
+#[cfg_attr(target_arch = "s390x", repr(align(128)))]
+#[cfg_attr(
+    not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "powerpc64",
+        target_arch = "arm",
+        target_arch = "mips",
+        target_arch = "mips64",
+        target_arch = "riscv64",
+        target_arch = "s390x",
+    )),
+    repr(align(32))
+)]
+pub struct QueuePadded<T>(pub T);
+
 pub struct UnboundedQueue<T: Node> {
-    // TODO(port): Zig declares these fields with `align(queue_padding_length)`
-    // to keep producer/consumer on separate cache halves. Rust cannot express
-    // per-field alignment with a non-literal const; Phase B should wrap each
-    // in a `#[repr(align(N))]` newtype cfg'd per-arch (or use a CachePadded
-    // equivalent).
-    // PERF(port): missing per-field cache-line alignment — profile in Phase B
-    pub back: AtomicPtr<T>,
-    pub front: AtomicPtr<T>,
+    pub back: QueuePadded<AtomicPtr<T>>,
+    pub front: QueuePadded<AtomicPtr<T>>,
 }
 
 impl<T: Node> Default for UnboundedQueue<T> {
     fn default() -> Self {
-        Self {
-            back: AtomicPtr::new(ptr::null_mut()),
-            front: AtomicPtr::new(ptr::null_mut()),
-        }
+        Self::new()
     }
 }
 
@@ -202,8 +231,8 @@ impl<T: Node> UnboundedQueue<T> {
     #[inline]
     pub const fn new() -> Self {
         Self {
-            back: AtomicPtr::new(ptr::null_mut()),
-            front: AtomicPtr::new(ptr::null_mut()),
+            back: QueuePadded(AtomicPtr::new(ptr::null_mut())),
+            front: QueuePadded(AtomicPtr::new(ptr::null_mut())),
         }
     }
 
@@ -227,25 +256,25 @@ impl<T: Node> UnboundedQueue<T> {
             }
             debug_assert!(item == last, "`last` should be reachable from `first`");
         }
-        let old_back = self.back.swap(last, Ordering::AcqRel);
+        let old_back = self.back.0.swap(last, Ordering::AcqRel);
         if !old_back.is_null() {
             // SAFETY: `old_back` was the previous tail, still live (its `next`
             // is null and no consumer has popped past it yet — see `pop`).
             unsafe { T::atomic_store_next(old_back, first, Ordering::Release) };
         } else {
-            self.front.store(first, Ordering::Release);
+            self.front.0.store(first, Ordering::Release);
         }
     }
 
     pub fn pop(&self) -> *mut T {
-        let mut first = self.front.load(Ordering::Acquire);
+        let mut first = self.front.0.load(Ordering::Acquire);
         if first.is_null() {
             return ptr::null_mut();
         }
         let next_item = loop {
             // SAFETY: `first` is non-null (checked above / from failed CAS below).
             let next_ptr = unsafe { T::atomic_load_next(first, Ordering::Acquire) };
-            match self.front.compare_exchange_weak(
+            match self.front.0.compare_exchange_weak(
                 first,
                 next_ptr,
                 // not AcqRel because we already loaded this value with Acquire
@@ -269,7 +298,7 @@ impl<T: Node> UnboundedQueue<T> {
         // Even though this load is Relaxed, it will always be either `first` (in which case
         // the cmpxchg succeeds) or an item pushed *after* `first`, because the Acquire load of
         // `self.front` synchronizes-with the Release store in push/push_batch.
-        match self.back.compare_exchange(
+        match self.back.0.compare_exchange(
             first,
             ptr::null_mut(),
             Ordering::Relaxed,
@@ -295,7 +324,7 @@ impl<T: Node> UnboundedQueue<T> {
             hint::spin_loop();
         };
 
-        self.front.store(new_first, Ordering::Release);
+        self.front.0.store(new_first, Ordering::Release);
         first
     }
 
@@ -304,7 +333,7 @@ impl<T: Node> UnboundedQueue<T> {
 
         // Not AcqRel because another thread that sees this `null` doesn't depend on any
         // visible side-effects from this thread.
-        let first = self.front.swap(ptr::null_mut(), Ordering::Acquire);
+        let first = self.front.0.swap(ptr::null_mut(), Ordering::Acquire);
         if first.is_null() {
             return batch;
         }
@@ -313,7 +342,7 @@ impl<T: Node> UnboundedQueue<T> {
         // Even though this load is Relaxed, it will always be either `first` or an item
         // pushed *after* `first`, because the Acquire load of `self.front` synchronizes-with
         // the Release store in push/push_batch. So we know it's reachable from `first`.
-        let last = self.back.swap(ptr::null_mut(), Ordering::Relaxed);
+        let last = self.back.0.swap(ptr::null_mut(), Ordering::Relaxed);
         debug_assert!(!last.is_null()); // Zig: `.?`
         let mut next_item = first;
         while next_item != last {
@@ -336,7 +365,7 @@ impl<T: Node> UnboundedQueue<T> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.back.load(Ordering::Acquire).is_null()
+        self.back.0.load(Ordering::Acquire).is_null()
     }
 }
 

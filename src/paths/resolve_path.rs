@@ -125,9 +125,9 @@ pub fn is_parent_or_equal(parent_: &[u8], child: &[u8]) -> ParentEqual {
         parent = &parent[..parent.len() - 1];
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     let contains = strings::contains_case_insensitive_ascii;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     let contains = strings::contains;
     if !contains(child, parent) {
         return ParentEqual::Unrelated;

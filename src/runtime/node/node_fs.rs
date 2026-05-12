@@ -4794,14 +4794,9 @@ pub mod ret {
                 Readdir::Files(items) => {
                     // `JSValue.fromAny(_, []const bun.String, _)` — dedicated
                     // arm: `bun.String.toJSArray` then deref every element +
-                    // free the slice. `Box<[BunString]>` drop covers the slice
-                    // free; explicit `deref()` because `BunString` is not
-                    // `Drop`.
-                    let result = bun_jsc::bun_string_jsc::to_js_array(global_object, &items);
-                    for out in items.iter() {
-                        out.deref();
-                    }
-                    result
+                    // free the slice (handled by the `FromAny for
+                    // Box<[bun_core::String]>` impl).
+                    JSValue::from_any(global_object, items)
                 }
             }
         }
@@ -5338,7 +5333,7 @@ impl NodeFS {
             return Ok(());
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let mut src_buf = PathBuffer::uninit();
             let mut dest_buf = PathBuffer::uninit();
@@ -6984,7 +6979,7 @@ impl NodeFS {
         };
         if adjusted_size > bun_jsc::virtual_machine::synthetic_allocation_limit()
             // If they do not have enough memory to open the file and they're on Linux, let's throw an error instead of dealing with the OOM killer.
-            || (cfg!(target_os = "linux") && size as u64 >= bun_core::get_total_memory_size() as u64)
+            || (cfg!(any(target_os = "linux", target_os = "android")) && size as u64 >= bun_core::get_total_memory_size() as u64)
         {
             return Some(sys::Error::from_code(E::ENOMEM, syscall));
         }
@@ -7718,9 +7713,9 @@ impl NodeFS {
             inbuf[path_len] = 0;
             let path = ZStr::from_buf(&inbuf[..], path_len);
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             let flags = sys::O::PATH; // O_PATH is faster
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
             let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
 
             let fd = match sys::open(path, flags, 0) {
@@ -8716,7 +8711,7 @@ impl NodeFS {
             }
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let _ = reuse_stat;
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
@@ -9140,6 +9135,7 @@ impl NodeFS {
         #[cfg(not(any(
             target_os = "macos",
             target_os = "linux",
+            target_os = "android",
             target_os = "freebsd",
             windows
         )))]

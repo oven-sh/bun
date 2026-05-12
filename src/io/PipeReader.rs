@@ -1924,7 +1924,19 @@ impl Drop for WindowsBufferedReader {
         // Do NOT take() source here and let it drop: Box<Pipe>/Box<File> own
         // live uv handles registered with the loop. Let close_impl perform the
         // take + into_raw hand-off so the uv close callback reclaims them.
-        self.close_impl::<false>();
+        // PORT NOTE: Zig `WindowsBufferedReader.deinit` (PipeReader.zig:979)
+        // skips closeImpl when `source.isClosed()` — a uv_close is already
+        // pending on that allocation, so closing again would double-close and
+        // freeing the Box would UAF the handle libuv still references. Mirror
+        // deinit(): leak the already-closing handle (Zig parity).
+        if let Some(source) = self.source.take() {
+            if !source.is_closed() {
+                self.source = Some(source);
+                self.close_impl::<false>();
+            } else {
+                core::mem::forget(source);
+            }
+        }
     }
 }
 

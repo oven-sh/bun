@@ -2841,6 +2841,12 @@ pub mod parse_worker {
         // SAFETY: callback contract — `result` was heap-allocated above; `ctx` is
         // the BACKREF stashed in `result.ctx` (Zig passed `BundleV2` as ParentContext).
         BundleV2::on_parse_task_complete(unsafe { &mut *result }, unsafe { &mut *ctx });
+        // Zig: `defer bun.default_allocator.destroy(parse_result)` (bundle_v2.zig)
+        // — fires after the pending_items diff defer. The &mut borrow above has
+        // ended; reclaim the heap allocation made in `run` (heap::into_raw).
+        // SAFETY: `result` came from `bun_core::heap::into_raw` above and is
+        // uniquely owned by this callback; not used after this point.
+        drop(unsafe { bun_core::heap::take(result) });
     }
 
     pub fn on_complete(result: *mut Result) {
@@ -2852,6 +2858,12 @@ pub mod parse_worker {
         // pass and no other `&mut BundleV2` is live on this (main) thread when the
         // event-loop callback fires. `r` and `*ctx` are disjoint allocations.
         BundleV2::on_parse_task_complete(r, unsafe { ctx.assume_mut() });
+        // Zig: `defer bun.default_allocator.destroy(parse_result)` (bundle_v2.zig)
+        // — fires after the pending_items diff defer. `r`'s borrow has ended;
+        // reclaim the heap allocation made in `run` (heap::into_raw).
+        // SAFETY: `result` came from `bun_core::heap::into_raw` above and is
+        // uniquely owned by this callback; not used after this point.
+        drop(unsafe { bun_core::heap::take(result) });
     }
 } // end mod parse_worker
 

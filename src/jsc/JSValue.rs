@@ -1775,6 +1775,20 @@ impl FromAny for &str {
         bun_string_jsc::create_utf8_for_js(global, self.as_bytes())
     }
 }
+impl FromAny for Box<[bun_core::String]> {
+    /// Zig: `[]const bun.String` arm (JSValue.zig:2378) — `bun.String.toJSArray`
+    /// then `defer { for (value) |out| out.deref(); free(value); }`. The boxed
+    /// slice is consumed: every element's WTF refcount is dropped and the
+    /// backing allocation freed via `Box` drop. `bun_core::String` is `Copy`
+    /// with no `Drop`, so the explicit `deref()` loop is required.
+    fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let result = bun_string_jsc::to_js_array(global, &self);
+        for out in self.iter() {
+            out.deref();
+        }
+        result
+    }
+}
 impl<T: FromAny> FromAny for Option<T> {
     /// Zig: `if (@typeInfo(T) == .optional) ...` — `null` → `undefined`.
     #[inline]

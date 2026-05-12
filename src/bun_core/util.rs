@@ -944,10 +944,11 @@ pub const MAX_PATH_BYTES: usize = if cfg!(target_arch = "wasm32") {
 } else if cfg!(windows) {
     // std.os.windows.PATH_MAX_WIDE * 3 + 1 (UTF-8 worst-case from UTF-16).
     32767 * 3 + 1
-} else if cfg!(target_os = "macos") {
-    1024 // libc::PATH_MAX
-} else {
+} else if cfg!(any(target_os = "linux", target_os = "android")) {
     4096 // Linux libc::PATH_MAX
+} else {
+    // macOS / iOS / FreeBSD / OpenBSD / NetBSD / DragonFly / Solaris (std/c.zig PATH_MAX)
+    1024
 };
 pub const PATH_MAX_WIDE: usize = 32767;
 
@@ -1565,7 +1566,7 @@ impl FdOptional {
 ///
 /// SAFETY: `buf` must be valid for `cap` writable bytes.
 pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut proc = [0u8; 32];
         use std::io::Write as _;
@@ -1626,7 +1627,12 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         unsafe { core::ptr::copy_nonoverlapping(path, buf, n) };
         return n as isize;
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "freebsd"
+    )))]
     {
         let _ = (fd, buf, cap);
         0
@@ -3001,7 +3007,7 @@ pub fn is_writable(fd: Fd) -> Pollable {
 // from. PERF(port): if a hot path needs the BoringSSL DRBG, install a
 // vtable hook from bun_runtime at startup.
 pub fn csprng(bytes: &mut [u8]) {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut filled = 0usize;
         while filled < bytes.len() {

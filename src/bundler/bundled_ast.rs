@@ -7,7 +7,6 @@
 //! So we make a slimmer version of Ast for bundling that doesn't allocate as much memory
 
 use bun_collections::VecExt;
-use std::io::Write as _;
 
 // `bun_css` is a T2 peer crate that does not depend on `bun_js_parser`, so the
 // dep is acyclic. Typing the `css` field concretely removes the `*mut c_void`
@@ -350,11 +349,11 @@ impl<'arena> BundledAst<'arena> {
                 let total_buffer_len = data_url_prefix_len + encode_len;
                 // PERF(port): was arena alloc via `arena.alloc(u8, n)`; using bumpalo here.
                 let encoded: &mut [u8] = bump.alloc_slice_fill_copy(total_buffer_len, 0u8);
-                {
-                    let mut cursor = &mut encoded[0..data_url_prefix_len];
-                    write!(&mut cursor, "data:{};base64,", bstr::BStr::new(mime_type))
-                        .expect("unreachable");
-                }
+                // PORT NOTE: Zig's std.fmt.bufPrint with `{s}` writes raw bytes; BStr's Display
+                // would emit 3-byte U+FFFD for non-UTF-8 input and overflow the fixed prefix slice.
+                encoded[..5].copy_from_slice(b"data:");
+                encoded[5..5 + mime_type.len()].copy_from_slice(mime_type);
+                encoded[5 + mime_type.len()..data_url_prefix_len].copy_from_slice(b";base64,");
                 let len = bun_base64::encode(&mut encoded[data_url_prefix_len..], contents);
                 break 'url_for_css &encoded[0..data_url_prefix_len + len];
             };

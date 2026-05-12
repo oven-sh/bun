@@ -727,21 +727,25 @@ describe("fetch", () => {
   });
 });
 
-it.concurrent("simultaneous HTTPS fetch", async () => {
-  const urls = [httpsServer.url.href, httpsServer.url.href];
-  for (let batch = 0; batch < 4; batch++) {
-    const promises = new Array(20);
-    for (let i = 0; i < 20; i++) {
-      promises[i] = fetch(urls[i % 2], { tls: { ca: httpsServer.ca } });
+it.concurrent(
+  "simultaneous HTTPS fetch",
+  async () => {
+    const urls = [httpsServer.url.href, httpsServer.url.href];
+    for (let batch = 0; batch < 4; batch++) {
+      const promises = new Array(20);
+      for (let i = 0; i < 20; i++) {
+        promises[i] = fetch(urls[i % 2], { tls: { ca: httpsServer.ca } });
+      }
+      const result = await Promise.all(promises);
+      expect(result.length).toBe(20);
+      for (let i = 0; i < 20; i++) {
+        expect(result[i].status).toBe(200);
+        expect(await result[i].text()).toBe(fixture);
+      }
     }
-    const result = await Promise.all(promises);
-    expect(result.length).toBe(20);
-    for (let i = 0; i < 20; i++) {
-      expect(result[i].status).toBe(200);
-      expect(await result[i].text()).toBe(fixture);
-    }
-  }
-}, 30_000);
+  },
+  30_000,
+);
 
 it.concurrent(
   "website with tlsextname",
@@ -1935,33 +1939,37 @@ describe("should handle relative location in the redirect, issue#5635", () => {
   });
 });
 
-it.concurrent("should allow very long redirect URLS", async () => {
-  const Location = "/" + "B".repeat(7 * 1024);
-  using server = Bun.serve({
-    port: 0,
-    async fetch(request: Request) {
-      gc();
-      const url = new URL(request.url);
-      if (url.pathname == "/redirect") {
-        return new Response("redirecting", {
-          headers: {
-            Location,
-          },
-          status: 302,
+it.concurrent(
+  "should allow very long redirect URLS",
+  async () => {
+    const Location = "/" + "B".repeat(7 * 1024);
+    using server = Bun.serve({
+      port: 0,
+      async fetch(request: Request) {
+        gc();
+        const url = new URL(request.url);
+        if (url.pathname == "/redirect") {
+          return new Response("redirecting", {
+            headers: {
+              Location,
+            },
+            status: 302,
+          });
+        }
+        return new Response("Not Found", {
+          status: 404,
         });
-      }
-      return new Response("Not Found", {
-        status: 404,
-      });
-    },
-  });
-  // run it more times to check Malformed_HTTP_Response errors
-  for (let i = 0; i < 100; i++) {
-    const { url, status } = await fetch(`${server.url.origin}/redirect`);
-    expect(url).toBe(`${server.url.origin}${Location}`);
-    expect(status).toBe(404);
-  }
-}, 30_000);
+      },
+    });
+    // run it more times to check Malformed_HTTP_Response errors
+    for (let i = 0; i < 100; i++) {
+      const { url, status } = await fetch(`${server.url.origin}/redirect`);
+      expect(url).toBe(`${server.url.origin}${Location}`);
+      expect(status).toBe(404);
+    }
+  },
+  30_000,
+);
 
 it.concurrent("304 not modified with missing content-length does not cause a request timeout", async () => {
   const server = await Bun.listen({

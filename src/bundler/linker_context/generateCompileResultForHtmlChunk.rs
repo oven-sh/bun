@@ -57,26 +57,22 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     };
     let i = part_range.i as usize;
     let ctx: &GenerateChunkCtx = part_range.ctx;
-    // `GenerateChunkCtx.c` is the embedded `LinkerContext` inside `BundleV2`.
-    // The link step never mutates `LinkerContext` from this task, so a
-    // `*const` (and the derived `&BundleV2` for `Worker::get`) suffices.
-    let c: *const LinkerContext = ctx.c.as_ptr().cast();
     let worker = Worker::get(ctx.bundle());
     let _unget = scopeguard::guard(&mut *worker, |w| w.unget());
 
-    let chunk: *mut Chunk = ctx.chunk;
     // `ctx.chunks` is a `BackRef<[Chunk]>` constructed via `new_mut` (write
     // provenance); recover the raw `*mut [Chunk]` for the HTML loader, which
     // still needs `&mut [Chunk]` for `get_{js,css}_chunk_for_html`.
     let chunks: *mut [Chunk] = ctx.chunks.as_ptr();
-    // SAFETY: `c` / `chunk` carry valid provenance from `GenerateChunkCtx`;
-    // `chunk` is this task's exclusively-owned HTML chunk for the duration of
-    // the compile step.
-    let (c_ref, chunk_ref) = unsafe { (&*c, &*chunk) };
+    // `ctx.c` is `ParentRef<LinkerContext>` and `ctx.chunk` is `BackRef<Chunk>`
+    // — both yield safe shared borrows via `.get()`. `chunk` is this task's
+    // exclusively-owned HTML chunk for the duration of the compile step.
+    let c_ref: &LinkerContext = ctx.c.get();
+    let chunk_ref: &Chunk = ctx.chunk.get();
     let result = generate_compile_result_for_html_chunk_impl(c_ref, chunk_ref, chunks);
     // SAFETY: HTML chunks have exactly one part-range (i == 0); see
     // `Chunk::write_compile_result_slot` for the disjoint-slot contract.
-    unsafe { Chunk::write_compile_result_slot(chunk, i, result) };
+    unsafe { Chunk::write_compile_result_slot(ctx.chunk.as_ptr(), i, result) };
 }
 
 #[derive(Default)]

@@ -28,9 +28,9 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
     #[cfg(feature = "show_crash_trace")]
     // RAII: `ActionGuard` restores the previous `CURRENT_ACTION` on drop.
     let _prev_action_guard = {
-        // SAFETY: `c_ptr` / `chunk_ptr` carry valid provenance (see helper above);
-        // transient shared borrows for the crash-trace vtable only.
-        let (c, chunk) = unsafe { (&*c_ptr, &*chunk_ptr) };
+        // `part_range.ctx.{c,chunk}` are `ParentRef`/`BackRef` — safe shared
+        // borrows for the crash-trace vtable only.
+        let (c, chunk): (&LinkerContext, &Chunk) = (part_range.ctx.c.get(), part_range.ctx.chunk.get());
         crate::linker_context_mod::crash_guard_for_part_range(c, chunk, &part_range.part_range)
     };
 

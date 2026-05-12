@@ -2645,19 +2645,20 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
     let result = bun_core::heap::into_raw(result);
 
     // Zig matched `worker.ctx.loop().*` on `AnyEventLoop::{js, mini}`.
-    // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); `linker.r#loop` is
-    // a live AnyEventLoop owned by the BundleThread / runtime for the duration
-    // of the bundle.
-    let r#loop = worker.ctx.linker.r#loop;
-    worker.unget();
+    // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
+    // of `linker.r#loop` is centralised in `LinkerContext::any_loop_mut`.
+    //
     // Zig `worker.ctx.loop().*` is non-optional (.zig:1416) — `BundleV2::init`
     // always sets `linker.r#loop` before scheduling any ParseTask. Running
     // `on_complete` inline on the worker thread would violate
     // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
     // bundler graph, which is owned by the main/bundler thread).
-    let any_loop = r#loop.expect("BundleV2.linker.loop must be set before scheduling ParseTask");
-    // SAFETY: BACKREF — `any_loop` outlives this parse task.
-    match unsafe { &mut *any_loop.as_ptr() } {
+    match worker
+        .ctx
+        .linker
+        .any_loop_mut()
+        .expect("BundleV2.linker.loop must be set before scheduling ParseTask")
+    {
         bun_event_loop::AnyEventLoop::Js { owner } => {
             owner.enqueue_task_concurrent(
                 bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
@@ -2674,6 +2675,8 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
             );
         }
     }
+    // Zig: `defer worker.unget()` — runs at function exit, i.e. after enqueue.
+    worker.unget();
 }
 
 fn on_complete_mini(result: *mut Result, ctx: *mut BundleV2<'static>) {

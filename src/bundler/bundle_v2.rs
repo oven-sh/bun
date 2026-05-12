@@ -200,12 +200,10 @@ impl<'a> BundleV2<'a> {
     /// `AnyEventLoop` that owns this bundle pass and outlives it.
     #[inline]
     pub fn any_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop<'static> {
-        let ptr = self
-            .linker
-            .r#loop
-            .expect("BundleV2.linker.loop must be set before plugins run");
-        // SAFETY: BACKREF — set by the loop that constructed `BundleV2`; valid for the bundle pass.
-        unsafe { ptr.as_ptr().as_mut().unwrap_unchecked() }
+        // BACKREF deref centralised in `LinkerContext::any_loop_mut`.
+        self.linker
+            .any_loop_mut()
+            .expect("BundleV2.linker.loop must be set before plugins run")
     }
 
     #[inline]

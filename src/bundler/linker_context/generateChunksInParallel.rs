@@ -71,7 +71,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         debug!(" START {} renamers", chunks.len());
         // PORT NOTE: Zig `defer debug(...)` is moved to end-of-scope explicitly below.
         let ctx = GenerateChunkCtx {
-            chunk: &raw mut chunks[0],
+            chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
             // write provenance preserved.
             c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) },
@@ -157,7 +157,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let c_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
             let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new_mut(chunks);
             for chunk in chunks.iter_mut() {
-                chunk_contexts.push(GenerateChunkCtx { c: c_ref, chunks: chunks_ref, chunk: std::ptr::from_mut::<Chunk>(chunk) });
+                chunk_contexts.push(GenerateChunkCtx { c: c_ref, chunks: chunks_ref, chunk: bun_ptr::BackRef::new_mut(chunk) });
                 match &mut chunk.content {
                     crate::chunk::Content::Javascript(js) => {
                         total_count += js.parts_in_chunk_in_order.len();

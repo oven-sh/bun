@@ -107,19 +107,14 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     let result = bun_core::heap::into_raw(result);
 
     // Zig matched `worker.ctx.loop().*` on `AnyEventLoop::{js, mini}`.
-    // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); `linker.r#loop` is
-    // a live AnyEventLoop owned by the BundleThread / runtime for the duration
-    // of the bundle.
-    let r#loop = worker.ctx.linker.r#loop;
-    worker.unget();
-    let Some(any_loop) = r#loop else {
-        // No event loop registered (e.g., synchronous CLI bundling) — run inline.
-        on_complete(result);
-        return;
-    };
-    // SAFETY: BACKREF — `any_loop` outlives this parse task.
-    match unsafe { &mut *any_loop.as_ptr() } {
-        bun_event_loop::AnyEventLoop::Js { owner } => {
+    // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
+    // of `linker.r#loop` is centralised in `LinkerContext::any_loop_mut`.
+    match worker.ctx.linker.any_loop_mut() {
+        None => {
+            // No event loop registered (e.g., synchronous CLI bundling) — run inline.
+            on_complete(result);
+        }
+        Some(bun_event_loop::AnyEventLoop::Js { owner }) => {
             owner.enqueue_task_concurrent(
                 bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
                     result,
@@ -127,7 +122,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
                 ),
             );
         }
-        bun_event_loop::AnyEventLoop::Mini(mini) => {
+        Some(bun_event_loop::AnyEventLoop::Mini(mini)) => {
             mini.enqueue_task_concurrent_with_extra_ctx::<parse_task::Result, BundleV2<'static>>(
                 result,
                 on_complete_mini,
@@ -135,6 +130,8 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
             );
         }
     }
+    // Zig: `defer worker.unget()` — runs at function exit, i.e. after enqueue.
+    worker.unget();
 }
 
 fn on_complete_mini(result: *mut parse_task::Result, _ctx: *mut BundleV2<'static>) {

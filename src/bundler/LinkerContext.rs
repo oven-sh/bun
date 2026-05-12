@@ -329,6 +329,27 @@ impl<'a> LinkerContext<'a> {
             .get()
     }
 
+    /// Mutable projection of the `r#loop` BACKREF for `AnyEventLoop` dispatch
+    /// (`enqueue_task_concurrent*`, `tick`). Centralises the raw `NonNull`
+    /// deref so the three callers (`BundleV2::any_loop_mut`, `ParseTask` /
+    /// `ServerComponentParseTask` completion) are safe.
+    ///
+    /// `&self` receiver (not `&mut self`): the loop storage is **disjoint**
+    /// from `LinkerContext` (it lives in the `BundleThread` / runtime arena —
+    /// see [`EventLoop`]), and worker-thread completions reach this through a
+    /// `BackRef<BundleV2>` (`&` only).
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn any_loop_mut(&self) -> Option<&mut bun_event_loop::AnyEventLoop<'static>> {
+        // SAFETY: BACKREF — set once in `BundleV2::init` from a loop that
+        // outlives the bundle pass; the pointee is disjoint from `*self`.
+        // Exclusivity: `Js { owner }.enqueue_task_concurrent` is `&self`
+        // (MPSC), and `Mini.enqueue_task_concurrent_with_extra_ctx` only
+        // pushes to an MPSC queue + writes the caller-owned intrusive task
+        // node, so concurrent worker completions do not alias loop state.
+        self.r#loop.map(|p| unsafe { &mut *p.as_ptr() })
+    }
+
     /// Shared-read accessor for the bundler log.
     ///
     /// `log` is a backref into `Transpiler.log`, assigned in [`Self::load`]
@@ -1510,7 +1531,11 @@ pub struct GenerateChunkCtx<'a> {
     /// safe `Deref`. Tasks that need write provenance (HTML loader) recover
     /// the raw `*mut [Chunk]` via [`bun_ptr::BackRef::as_ptr`].
     pub chunks: bun_ptr::BackRef<[Chunk]>,
-    pub chunk: *mut Chunk,
+    /// Backref to this task's `Chunk` (an element of `chunks`). Constructed
+    /// via [`bun_ptr::BackRef::new_mut`] so the stored `NonNull` carries write
+    /// provenance; per-task slot writes recover the raw `*mut Chunk` via
+    /// [`bun_ptr::BackRef::as_ptr`], shared reads go through safe `Deref`.
+    pub chunk: bun_ptr::BackRef<Chunk>,
 }
 // SAFETY: see PORT NOTE above — mirrors Zig's freely-aliased `*LinkerContext`.
 unsafe impl<'a> Send for GenerateChunkCtx<'a> {}
@@ -1596,7 +1621,7 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
     };
     let ctx = part_range.ctx;
     let c_ptr: *mut LinkerContext = ctx.c.as_mut_ptr().cast();
-    let chunk_ptr: *mut Chunk = ctx.chunk;
+    let chunk_ptr: *mut Chunk = ctx.chunk.as_ptr();
     let worker = crate::thread_pool::Worker::get(ctx.bundle());
     let worker = scopeguard::guard(worker, |w| w.unget());
     (part_range, c_ptr, chunk_ptr, worker)

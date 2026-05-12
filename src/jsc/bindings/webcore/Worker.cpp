@@ -666,7 +666,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
             JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTF::move(ports));
             RETURN_IF_EXCEPTION(scope, {});
             // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp
-            if (auto* pair = JSC::jsDynamicCast<JSArray*>(deserialized)) {
+            if (auto* pair = dynamicDowncast<JSArray>(deserialized)) {
                 ASSERT(pair->length() == 2);
                 ASSERT(pair->canGetIndexQuickly(0u));
                 ASSERT(pair->canGetIndexQuickly(1u));
@@ -677,8 +677,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
                 environmentData = environmentDataValue ? dynamicDowncast<JSMap>(environmentDataValue) : nullptr;
                 RETURN_IF_EXCEPTION(scope, {});
             } else {
-                ASSERT_WITH_MESSAGE(false, "createNodeWorkerThreadsBinding: deserialized type=%s",
-                    deserialized.isCell() ? deserialized.asCell()->className() : "<primitive>");
+                ASSERT_NOT_REACHED_WITH_MESSAGE("createNodeWorkerThreadsBinding: deserialized is not JSArray");
             }
         }
 

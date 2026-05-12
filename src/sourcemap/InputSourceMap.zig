@@ -235,7 +235,7 @@ fn parseDataUrl(url: []const u8) ?*InputSourceMap {
     while (rest.len > 0 and rest[0] == ';') {
         // Advance past one parameter up to the next ';' or ','.
         const after = rest[1..];
-        const param_end = std.mem.indexOfAny(u8, after, ";,") orelse return null;
+        const param_end = bun.strings.indexAnyComptime(after, ";,") orelse return null;
         const param = after[0..param_end];
         if (bun.strings.eqlComptime(param, "base64")) is_base64 = true;
         rest = after[param_end..];

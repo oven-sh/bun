@@ -851,8 +851,9 @@ impl Watcher {
             }
             path_z[..file_path.len()].copy_from_slice(file_path);
             path_z[file_path.len()] = 0;
-            // SAFETY: path_z[file_path.len()] == 0 written above
-            let z = unsafe { ZStr::from_raw(path_z.as_ptr(), file_path.len()) };
+            // `path_z[file_path.len()] == 0` written above; `from_buf` borrows
+            // `path_z[..len]` as a `&ZStr` with the NUL debug-asserted in-bounds.
+            let z = ZStr::from_buf(&path_z[..], file_path.len());
             match bun_sys::open(z, WATCH_OPEN_FLAGS, 0) {
                 Ok(opened) => fd = opened,
                 Err(_) => return false,

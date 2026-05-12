@@ -1655,14 +1655,17 @@ pub struct Dirent {
 pub type DirentKind = bun_sys::FileKind;
 
 // TODO(port): move to runtime_sys
+// `&JSGlobalObject` / `&mut bun_str::String` are ABI-identical to non-null
+// pointers; `Option<&mut *mut JSString>` uses the niche-optimization layout
+// (`*mut *mut JSString`), so the validity proof lives in the type signature.
 unsafe extern "C" {
     safe fn Bun__JSDirentObjectConstructor(global: &JSGlobalObject) -> JSValue;
-    fn Bun__Dirent__toJS(
-        global: *const JSGlobalObject,
+    safe fn Bun__Dirent__toJS(
+        global: &JSGlobalObject,
         kind: i32,
-        name: *mut bun_str::String,
-        path: *mut bun_str::String,
-        cached_previous_path_jsvalue: *mut *mut jsc::JSString,
+        name: &mut bun_str::String,
+        path: &mut bun_str::String,
+        cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JSValue;
 }
 
@@ -1691,18 +1694,13 @@ impl Dirent {
             DirentKind::SymLink => UV_DIRENT_LINK,
             DirentKind::Whiteout | DirentKind::Door | DirentKind::Unknown => UV_DIRENT_UNKNOWN,
         };
-        let cached_ptr = match cached_previous_path_jsvalue {
-            Some(p) => std::ptr::from_mut::<*mut jsc::JSString>(p),
-            None => core::ptr::null_mut(),
-        };
-        // SAFETY: FFI call wrapped via from_js_host_call.
-        bun_jsc::from_js_host_call(global_object, || unsafe {
+        bun_jsc::from_js_host_call(global_object, || {
             Bun__Dirent__toJS(
                 global_object,
                 kind_int,
-                &raw mut self.name,
-                &raw mut self.path,
-                cached_ptr,
+                &mut self.name,
+                &mut self.path,
+                cached_previous_path_jsvalue,
             )
         })
     }

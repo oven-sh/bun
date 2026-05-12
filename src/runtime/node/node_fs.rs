@@ -4514,13 +4514,12 @@ impl NodeFS {
         { return Syscall::fdatasync(args.fd); }
         #[cfg(not(windows))]
         {
-            // `libc` omits the Darwin binding (fdatasync exists since 10.7).
-            #[cfg(target_os = "macos")]
-            unsafe extern "C" { fn fdatasync(fd: libc::c_int) -> libc::c_int; }
-            #[cfg(all(unix, not(target_os = "macos")))]
-            use libc::fdatasync;
-            // SAFETY: args.fd.native() is a valid open fd; fdatasync is the libc FFI
-            Maybe::<ret::Fdatasync>::errno_sys_fd(unsafe { fdatasync(args.fd.native()) }, sys::Tag::fdatasync, args.fd)
+            // `fdatasync(int)` has no memory-safety preconditions (a bad fd just
+            // yields EBADF), so declare it `safe fn` for all unix instead of
+            // routing through `libc::fdatasync` (which is blanket-`unsafe`).
+            // `libc` also omits the Darwin binding (fdatasync exists since 10.7).
+            unsafe extern "C" { safe fn fdatasync(fd: libc::c_int) -> libc::c_int; }
+            Maybe::<ret::Fdatasync>::errno_sys_fd(fdatasync(args.fd.native()), sys::Tag::fdatasync, args.fd)
                 .unwrap_or(Ok(()))
         }
     }

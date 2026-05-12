@@ -145,12 +145,18 @@ static FSEVENTS_DEFAULT_LOOP: AtomicPtr<FSEventsLoop> = AtomicPtr::new(ptr::null
 
 #[cfg(unix)]
 fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
+    const { assert!(core::mem::size_of::<T>() == core::mem::size_of::<*mut c_void>()) };
     // SAFETY: handle is a valid dlopen handle; symbol is NUL-terminated
     let ptr = unsafe { bun_sys::c::dlsym(handle, symbol.as_ptr()) };
     if ptr.is_null() {
         return None;
     }
-    // SAFETY: caller guarantees T is a fn pointer / data pointer of the symbol's actual type
+    // SAFETY: genuine FFI — dlsym yields an opaque address that must be reinterpreted
+    // as the symbol's true type. Callers monomorphise T to the matching `extern "C" fn`
+    // (or pointer-sized data symbol) declared by CoreFoundation/CoreServices; the const
+    // assert above enforces size parity, and the null check rules out the absent-symbol
+    // case so the resulting fn pointer is always non-null. Not expressible via
+    // bytemuck/as: fn pointers are not Pod and `as` can't cast data→fn pointers.
     Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&ptr) })
 }
 #[cfg(not(unix))]

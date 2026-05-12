@@ -1602,15 +1602,11 @@ impl Stream {
                 };
                 break 'brk data_header.write(&mut writer);
             } else {
-                // PORT NOTE: borrowck reshape — `frame.slice()` borrows `*frame`
-                // immutably, but we mutate `frame.offset` below while the slice
-                // is still live. Detach the lifetime via raw parts (the Vec
-                // backing is stable; no resize while this slice is read).
-                let frame_slice: &[u8] = {
-                    let s = frame.slice();
-                    // SAFETY: `frame.buffer` is not resized while `frame_slice` is live.
-                    unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
-                };
+                // Inline `frame.slice()` so the borrow is on `frame.buffer`
+                // alone — `frame.offset` / `frame.end_stream` stay disjoint
+                // and can be mutated/read below while the slice is live.
+                let frame_slice: &[u8] =
+                    &frame.buffer[frame.offset as usize..frame.len as usize];
                 let max_size = frame_slice
                     .len()
                     .min((self.remote_window_size.saturating_sub(self.remote_used_window_size)) as usize)

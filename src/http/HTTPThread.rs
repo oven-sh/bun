@@ -930,12 +930,18 @@ impl HttpThread {
             "HTTPThread::schedule() called before HTTPThread::init()"
         );
         // SAFETY: `HTTP_THREAD_INIT == true` (checked above) ⇒ `HTTP_THREAD`
-        // is fully written.
-        // `get_unchecked` (no owner assert) + raw-ptr field access so we
-        // never materialize a `&mut HttpThread` that would alias the HTTP
-        // thread's borrow. `queued_tasks.push` takes `&self` (lock-free
-        // MPSC); `wakeup` takes `&self` and only reads atomics / a raw ptr.
-        let this_p = unsafe { (*crate::HTTP_THREAD.get_unchecked()).as_mut_ptr() };
+        // is fully written. `get_unchecked` (no owner assert) so the
+        // `ThreadCell` debug-owner check is skipped on this cross-thread
+        // caller. Wrap the result in a `ParentRef` (process-lifetime backref)
+        // so the `&self`-only calls below — `queued_tasks.push` (lock-free
+        // MPSC) and `wakeup` (atomics + raw uws ptr) — go through the safe
+        // `Deref` impl instead of open-coded `(*this_p)` raw derefs. Only a
+        // shared `&HttpThread` is ever materialised; the HTTP thread itself
+        // never holds a long-lived `&mut HttpThread` across the points these
+        // touch (both fields are designed for cross-thread shared access).
+        let this = unsafe {
+            bun_ptr::ParentRef::<Self>::from_raw((*crate::HTTP_THREAD.get_unchecked()).as_mut_ptr())
+        };
         {
             let mut batch_ = batch;
             while let Some(task) = batch_.pop() {
@@ -943,12 +949,10 @@ impl HttpThread {
                 let http: *mut AsyncHttp = unsafe {
                     bun_core::from_field_ptr!(AsyncHttp, task, task.as_ptr())
                 };
-                // SAFETY: see block comment above.
-                unsafe { (*core::ptr::addr_of!((*this_p).queued_tasks)).push(http); }
+                this.queued_tasks.push(http);
             }
         }
-        // SAFETY: see block comment above.
-        unsafe { (*this_p).wakeup(); }
+        this.wakeup();
     }
 }
 

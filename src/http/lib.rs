@@ -2933,14 +2933,15 @@ impl<'a> HTTPClient<'a> {
         bun_core::scoped_log!(fetch, "handleOnDataHeader data: {}", BStr::new(incoming_data));
         // PORT NOTE: reshaped for borrowck — `to_read` aliases either
         // `incoming_data` or `self.state.response_message_buffer`; hold it as a
-        // raw fat-ptr so subsequent `&mut self` calls don't trip the checker.
-        let mut to_read_ptr: *const [u8] = std::ptr::from_ref::<[u8]>(incoming_data);
-        macro_rules! to_read { () => { unsafe { &*to_read_ptr } } }
+        // `RawSlice` (encapsulated outlives-holder backref, safe `.slice()`)
+        // so subsequent `&mut self` calls don't trip the checker.
+        let mut to_read = bun_ptr::RawSlice::new(incoming_data);
+        macro_rules! to_read { () => { to_read.slice() } }
         let mut needs_move = true;
         if !self.state.response_message_buffer.list.is_empty() {
             // this one probably won't be another chunk, so we use appendSliceExact() to avoid over-allocating
             let _ = self.state.response_message_buffer.append_slice_exact(incoming_data);
-            to_read_ptr = std::ptr::from_ref::<[u8]>(self.state.response_message_buffer.list.as_slice());
+            to_read = bun_ptr::RawSlice::new(self.state.response_message_buffer.list.as_slice());
             needs_move = false;
         }
 
@@ -2975,11 +2976,15 @@ impl<'a> HTTPClient<'a> {
             // we save the successful parsed response
             // SAFETY: response borrows SHARED_RESPONSE_HEADERS_BUF / response_message_buffer,
             // both of which outlive this fn; widen to 'static for storage.
-            self.state.pending_response = Some(unsafe { response.detach_lifetime() });
+            // Rebind `response` to the detached `'static` copy so it no longer
+            // borrows `to_read` (lets the `to_read` reassignment below pass
+            // borrowck — `RawSlice::slice` ties output to `&to_read`).
+            let response = unsafe { response.detach_lifetime() };
+            self.state.pending_response = Some(response);
 
             let bytes_read =
-                (usize::try_from(response.bytes_read).expect("int cast")).min(to_read!().len());
-            to_read_ptr = &raw const to_read!()[bytes_read..];
+                (usize::try_from(response.bytes_read).expect("int cast")).min(to_read.len());
+            to_read = bun_ptr::RawSlice::new(&to_read.slice()[bytes_read..]);
 
             if response.status_code == 101 {
                 if self.flags.upgrade_state == HTTPUpgradeState::None {

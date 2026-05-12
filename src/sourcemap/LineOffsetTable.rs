@@ -159,13 +159,21 @@ impl LineOffsetTable {
 
         let mut remaining = contents;
         while !remaining.is_empty() {
-            let len_ = strings::wtf8_byte_sequence_length_with_invalid(remaining[0]);
-            // Zig passes `remaining.ptr[0..4]` (unchecked 4-byte view); decode_wtf8_rune_t
-            // takes `&[u8; 4]` and only reads `len_` bytes. Pad the tail with zeros.
-            let mut cp_bytes = [0u8; 4];
-            let take = (len_ as usize).min(remaining.len());
-            cp_bytes[..take].copy_from_slice(&remaining[..take]);
-            let c: i32 = strings::decode_wtf8_rune_t::<i32>(&cp_bytes, len_, 0);
+            let b0 = remaining[0];
+            let len_ = strings::wtf8_byte_sequence_length_with_invalid(b0);
+            // Zig passes `remaining.ptr[0..4]` (unchecked 4-byte view) to decodeWTF8RuneT,
+            // which only reads `len_` bytes. After the SIMD skip below lands, the loop head
+            // is overwhelmingly an ASCII '\r'/'\n' or a non-ASCII lead byte, so keep the
+            // 1-byte path branch-only and confine the zero+min+copy pad to the cold
+            // multibyte arm.
+            let c: i32 = if len_ == 1 {
+                b0 as i32
+            } else {
+                let mut cp_bytes = [0u8; 4];
+                let take = (len_ as usize).min(remaining.len());
+                cp_bytes[..take].copy_from_slice(&remaining[..take]);
+                strings::decode_wtf8_rune_t::<i32>(&cp_bytes, len_, 0)
+            };
             let cp_len = len_ as usize;
 
             if column == 0 {

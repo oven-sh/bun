@@ -565,30 +565,27 @@ impl BytesExt for Bytes {
         // zeroed self. `Internal.bytes` is `Vec<u8>` (global allocator), so
         // round-trip only when the storage *is* the global allocator; otherwise
         // copy + free through the original allocator (e.g. memfd → munmap).
-        let bytes = match self.ptr.take() {
-            None => Vec::new(),
-            Some(ptr) => {
-                let len = self.len as usize;
-                let cap = self.cap as usize;
-                if core::ptr::eq(
-                    std::ptr::from_ref(self.allocator.vtable),
-                    std::ptr::from_ref(bun_alloc::basic::C_ALLOCATOR.vtable),
-                ) {
-                    // SAFETY: `init(Vec<u8>)` is the only path that stores
-                    // `C_ALLOCATOR`, and it recorded the exact `(ptr, len, cap)`
-                    // from `Vec::into_raw_parts`-equivalent decomposition.
-                    unsafe { Vec::from_raw_parts(ptr.as_ptr(), len, cap) }
-                } else {
-                    // SAFETY: `ptr[..len]` is a live initialized region per the
-                    // `from_raw_parts` contract; freed via its own allocator below.
-                    let copy = unsafe { core::slice::from_raw_parts(ptr.as_ptr(), len) }.to_vec();
-                    // SAFETY: releasing the `ptr[..cap]` allocation through the
-                    // vtable that owns it (e.g. `LinuxMemFdAllocator` → munmap).
-                    let buf = unsafe { core::slice::from_raw_parts_mut(ptr.as_ptr(), cap) };
-                    self.allocator.raw_free(buf, bun_alloc::Alignment::of::<u8>(), 0);
-                    copy
-                }
-            }
+        let bytes = if self.ptr.is_none() {
+            Vec::new()
+        } else if core::ptr::eq(
+            std::ptr::from_ref(self.allocator.vtable),
+            std::ptr::from_ref(bun_alloc::basic::C_ALLOCATOR.vtable),
+        ) {
+            let len = self.len as usize;
+            let cap = self.cap as usize;
+            let ptr = self.ptr.take().unwrap();
+            // SAFETY: `init(Vec<u8>)` is the only path that stores
+            // `C_ALLOCATOR`, and it recorded the exact `(ptr, len, cap)`
+            // from `Vec::into_raw_parts`-equivalent decomposition.
+            unsafe { Vec::from_raw_parts(ptr.as_ptr(), len, cap) }
+        } else {
+            // Non-global allocator (e.g. memfd → munmap): copy through the
+            // safe `Bytes::slice()` accessor, then free via the owning vtable
+            // — same path `Bytes::drop` takes (`allocator.free(allocated_slice())`).
+            let copy = self.slice().to_vec();
+            self.allocator.free(self.allocated_slice());
+            self.ptr = None;
+            copy
         };
         self.len = 0;
         self.cap = 0;

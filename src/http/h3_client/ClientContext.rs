@@ -84,9 +84,7 @@ impl ClientContext {
                 core::mem::size_of::<*mut Stream>() as c_uint,
             )
         }?;
-        let mut qctx = NonNull::new(qctx).expect("us_create_quic_socket_context returned null");
-        // SAFETY: qctx is a fresh live us_quic_socket_context_t.
-        callbacks::register(unsafe { qctx.as_mut() });
+        let qctx = NonNull::new(qctx).expect("us_create_quic_socket_context returned null");
 
         // Process-lifetime singleton — published into `INSTANCE` below and
         // never torn down (the lsquic engine outlives every request, same as
@@ -96,6 +94,11 @@ impl ClientContext {
             qctx,
             sessions: Vec::new(),
         });
+        // Route through the existing [`qctx_mut`] / [`as_mut`] accessors (one
+        // centralised unsafe each) instead of an open-coded `qctx.as_mut()`.
+        // `self_` is the freshly-boxed sole owner; callbacks don't fire until
+        // the loop runs, so registering after construction is order-neutral.
+        callbacks::register(Self::as_mut(self_).qctx_mut());
         INSTANCE.store(Some(self_));
         Some(self_)
     }

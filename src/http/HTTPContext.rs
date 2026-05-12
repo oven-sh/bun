@@ -365,10 +365,15 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// `registry_index`/`set_registry_index`/`ref_` only touch `Cell` fields,
     /// so a shared borrow is sound regardless of other raw aliases on this
     /// single thread.
+    ///
+    /// Returns a [`bun_ptr::ParentRef`] (the registry's strong ref ⇒ the
+    /// session outlives the handle) so the shared deref goes through the safe
+    /// `Deref` impl instead of an open-coded raw-ptr reborrow.
     #[inline]
-    fn h2_session_ref<'a>(session: *const h2::ClientSession) -> &'a h2::ClientSession {
-        // SAFETY: see fn doc.
-        unsafe { &*session }
+    fn h2_session_ref(session: *const h2::ClientSession) -> bun_ptr::ParentRef<h2::ClientSession> {
+        bun_ptr::ParentRef::from(
+            NonNull::new(session.cast_mut()).expect("h2 registry session is non-null"),
+        )
     }
 
     /// Common tail of [`unregister_h2`]/[`unregister_h2_raw`]: swap-remove the
@@ -950,9 +955,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     // strong ref this `tunnel` holds — so `leak()` it first to
                     // surrender the claim without decrementing.
                     let raw = tunnel.leak();
-                    // SAFETY: `raw` is a live ProxyTunnel; we hold the strong ref
-                    // `adopt` is about to move into `client.proxy_tunnel`.
-                    unsafe { (*raw).adopt::<SSL>(client, sock) };
+                    // `raw` is a live ProxyTunnel; we hold the strong ref `adopt`
+                    // is about to move into `client.proxy_tunnel`. Route through
+                    // the centralised [`proxy_tunnel::raw_as_mut`] backref upgrade.
+                    crate::proxy_tunnel::raw_as_mut(raw).adopt::<SSL>(client, sock);
                     client.on_open::<SSL>(sock)?;
                     client.on_writable::<true, SSL>(sock);
                 } else {

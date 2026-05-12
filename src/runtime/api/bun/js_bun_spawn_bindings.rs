@@ -1495,12 +1495,12 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     let out = if !IS_SYNC {
-        // SAFETY: `subprocess_ptr` came from `heap::alloc` above and has not
-        // yet been wrapped; ownership transfers to the C++ JS cell (released via
+        // `subprocess_ptr` came from `heap::alloc` above and has not yet been
+        // wrapped; ownership transfers to the C++ JS cell (released via
         // `SubprocessClass__finalize`). Zig's `subprocess.toJS(globalThis)` did
         // not re-allocate, so use the raw-ptr entrypoint instead of the
         // by-value `JsClass::to_js` (which would re-box).
-        unsafe { SubprocessT::to_js_from_ptr(subprocess_ptr, global_this) }
+        SubprocessT::to_js_from_ptr(subprocess_ptr, global_this)
     } else {
         JSValue::ZERO
     };

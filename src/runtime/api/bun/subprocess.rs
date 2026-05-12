@@ -192,12 +192,13 @@ const _: () = {
         /// wired before `subprocess.toJS(globalThis)` runs; this is the raw-ptr
         /// entrypoint that avoids re-boxing.
         ///
-        /// # Safety
         /// `ptr` must come from `heap::alloc(Box::new(Subprocess { .. }))` and
         /// not yet be owned by any JS wrapper; ownership transfers to the C++
-        /// side (released via `SubprocessClass__finalize`).
+        /// side (released via `SubprocessClass__finalize`). Thin forwarder to
+        /// the (already safe) generated `js_Subprocess::to_js`, which
+        /// encapsulates the FFI `__create` call internally.
         #[inline]
-        pub unsafe fn to_js_from_ptr(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
+        pub fn to_js_from_ptr(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
             // The codegen wrapper is monomorphized at `'static`; the lifetime
             // parameter is purely a borrow-checker artifact (C++ stores the
             // pointer as opaque `m_ctx`), so erase it via `cast`.

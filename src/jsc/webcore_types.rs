@@ -223,10 +223,12 @@ impl Blob {
     /// patches it in); every JS-reachable `Blob` has it set at construction.
     #[inline]
     pub fn global_this(&self) -> Option<&JSGlobalObject> {
-        // SAFETY: when non-null, `global_this` was stored from a live
-        // `&JSGlobalObject` whose VM outlives this `Blob` (the JS heap that
-        // owns the `Blob` is itself owned by that global).
-        unsafe { self.global_this.get().as_ref() }
+        // When non-null, `global_this` was stored from a live `&JSGlobalObject`
+        // whose VM outlives this `Blob` (the JS heap that owns the `Blob` is
+        // itself owned by that global). `JSGlobalObject` is an `opaque_ffi!`
+        // ZST handle; `opaque_ref` is the centralised non-null-ZST deref proof.
+        let p = self.global_this.get();
+        (!p.is_null()).then(|| JSGlobalObject::opaque_ref(p))
     }
 
     /// Free a heap-owned `content_type` (if any) and reset to the empty

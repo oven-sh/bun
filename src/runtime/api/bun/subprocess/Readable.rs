@@ -54,7 +54,7 @@ impl Readable {
     /// single-JS-mutator-thread.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub(super) fn pipe_reader_mut(pipe: &IntrusiveRc<PipeReader>) -> &mut PipeReader {
+    pub(in crate::api) fn pipe_reader_mut(pipe: &IntrusiveRc<PipeReader>) -> &mut PipeReader {
         // SAFETY: see fn doc — owning IntrusiveRc, heap-disjoint, single-thread.
         unsafe { &mut *pipe.as_ptr() }
     }

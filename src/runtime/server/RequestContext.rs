@@ -2800,10 +2800,13 @@ where
                         }
 
                         readable_stream::Source::Bytes(byte_stream_ptr) => {
-                            // SAFETY: Source::Bytes stores a live *mut ByteStream.
-                            // R-2: `&` (not `&mut`) — all touched ByteStream
-                            // methods/fields are `&self`/interior-mutable.
-                            let byte_stream = unsafe { &*byte_stream_ptr };
+                            // BACKREF: `Source::Bytes` stores a live non-null
+                            // `*mut ByteStream` (the JS wrapper's `m_ctx` heap
+                            // payload, kept alive by `stream`). R-2: all touched
+                            // ByteStream methods/fields are `&self`/interior-mutable.
+                            let byte_stream_nn = NonNull::new(byte_stream_ptr)
+                                .expect("Source::Bytes payload is non-null");
+                            let byte_stream = bun_ptr::BackRef::from(byte_stream_nn);
                             debug_assert!(byte_stream.pipe.get().ctx.is_none());
                             debug_assert!(this.byte_stream.is_none());
                             if this.resp.is_none() {
@@ -2832,9 +2835,7 @@ where
                             this.response_body_readable_stream_ref =
                                 readable_stream::Strong::init(stream, global_this);
 
-                            this.byte_stream = Some(
-                                NonNull::new(byte_stream_ptr).expect("byte_stream_ptr from Source::Bytes"),
-                            );
+                            this.byte_stream = Some(byte_stream_nn);
                             let mut response_buf = byte_stream.drain();
                             this.response_buf_owned = response_buf.move_to_list();
 
@@ -3445,10 +3446,13 @@ where
                 let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
                     return;
                 };
-                // SAFETY: Source::Bytes stores a live *mut ByteStream
-                let _ = unsafe { (*bytes_ptr).on_data(
-                    WebCore::streams::Result::Temporary(borrowed),
-                ) }; // TODO: properly propagate exception upwards
+                // BACKREF: `Source::Bytes` payload is the live non-null `m_ctx`
+                // heap `ByteStream` kept alive by `readable` for this call.
+                let bytes = bun_ptr::BackRef::from(
+                    NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
+                );
+                // TODO: properly propagate exception upwards
+                let _ = bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
             } else {
                 // Moved out so the Strong (and its underlying GC handle) is
                 // released at scope exit via `Drop` on `strong::Optional`.
@@ -3459,10 +3463,13 @@ where
                 let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
                     return;
                 };
-                // SAFETY: Source::Bytes stores a live *mut ByteStream
-                let _ = unsafe { (*bytes_ptr).on_data(
-                    WebCore::streams::Result::TemporaryAndDone(borrowed),
-                ) }; // TODO: properly propagate exception upwards
+                // BACKREF: `Source::Bytes` payload is the live non-null `m_ctx`
+                // heap `ByteStream` kept alive by `readable` for this call.
+                let bytes = bun_ptr::BackRef::from(
+                    NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
+                );
+                // TODO: properly propagate exception upwards
+                let _ = bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
             }
 
             return;

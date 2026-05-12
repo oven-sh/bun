@@ -101,10 +101,12 @@ impl JSObject {
             JSValue::create_empty_object(global, T::FIELD_COUNT)
         };
         debug_assert!(val.is_object());
-        // SAFETY: `val.is_object()` asserted above in debug; JSC guarantees
-        // these constructors return a JSObject cell. A cell-tagged JSValue's
-        // payload IS the cell pointer (NotCellMask bits are zero).
-        let obj = unsafe { &mut *(val.0 as *mut JSObject) };
+        // `val.is_object()` asserted above in debug; JSC guarantees these
+        // constructors return a JSObject cell. A cell-tagged JSValue's payload
+        // IS the cell pointer (NotCellMask bits are zero). `JSObject` is an
+        // `opaque_ffi!` ZST handle; `opaque_mut` is the centralised
+        // non-null-ZST deref proof (zero-byte `&mut` cannot alias).
+        let obj = JSObject::opaque_mut(val.0 as *mut JSObject);
 
         let cell = obj.to_js();
         // PORT NOTE: Zig used `inline for` — each `fromAny` result is `put()` immediately

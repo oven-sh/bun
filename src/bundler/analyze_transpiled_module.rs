@@ -40,8 +40,11 @@ pub type ImportAttributes = FetchParameters;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct RecordKind(pub u8);
 // SAFETY: `#[repr(transparent)]` over `u8` — no padding, every bit pattern is
-// a valid `u8`. Enables `bytemuck::cast_slice` in `slice_as_bytes` below.
-unsafe impl bytemuck::NoUninit for RecordKind {}
+// a valid `u8` (Zig modeled this as a non-exhaustive `enum(u8)`). `Pod` lets
+// `bytemuck::{cast_slice,try_cast_slice}` reinterpret byte buffers and the
+// printer-crate `#[repr(u8)]` enum into `&[RecordKind]` without `unsafe`.
+unsafe impl bytemuck::Zeroable for RecordKind {}
+unsafe impl bytemuck::Pod for RecordKind {}
 
 impl RecordKind {
     /// var_name
@@ -293,21 +296,23 @@ impl ModuleInfoDeserialized {
             &mut rem,
             strings_len as usize * size_of::<u32>(),
         )?)?;
-        let strings_buf: *const [u8] = rem;
+        let strings_buf: &[u8] = rem;
 
         // Disarm the errdefer: ownership moves into the result.
         let duped_raw = scopeguard::ScopeGuard::into_inner(guard);
 
-        // SAFETY: all six views point into `duped_raw` (the boxed allocation
-        // moved into `owner` below); they stay valid and at a stable address
-        // for the lifetime of every `RawSlice` copied from this struct.
+        // All six views borrow `duped_raw` (the boxed allocation moved into
+        // `owner` below); they stay valid and at a stable address for the
+        // lifetime of every `RawSlice` copied from this struct. `RawSlice::new`
+        // erases the borrow lifetime — the structural invariant is upheld by
+        // `owner` outliving the views.
         Ok(Box::new(ModuleInfoDeserialized {
-            strings_buf: unsafe { bun_ptr::RawSlice::from_raw(strings_buf) },
-            strings_lens: unsafe { bun_ptr::RawSlice::from_raw(strings_lens) },
-            requested_modules_keys: unsafe { bun_ptr::RawSlice::from_raw(requested_modules_keys) },
-            requested_modules_values: unsafe { bun_ptr::RawSlice::from_raw(requested_modules_values) },
-            buffer: unsafe { bun_ptr::RawSlice::from_raw(buffer) },
-            record_kinds: unsafe { bun_ptr::RawSlice::from_raw(record_kinds) },
+            strings_buf: bun_ptr::RawSlice::new(strings_buf),
+            strings_lens: bun_ptr::RawSlice::new(strings_lens),
+            requested_modules_keys: bun_ptr::RawSlice::new(requested_modules_keys),
+            requested_modules_values: bun_ptr::RawSlice::new(requested_modules_values),
+            buffer: bun_ptr::RawSlice::new(buffer),
+            record_kinds: bun_ptr::RawSlice::new(record_kinds),
             flags,
             owner: Owner::AllocatedSlice { slice: duped_raw },
         }))
@@ -407,23 +412,16 @@ unsafe fn free_aligned_dup(slice: *mut [u8]) {
 }
 
 /// Reinterpret a byte sub-slice of the [`MODULE_INFO_ALIGN`]-aligned backing
-/// buffer as `*const [T]`. Returns `BadModuleInfo` if `bytes` is not aligned
-/// for `T` (i.e. the format's internal padding was violated) so that the
-/// resulting fat pointer is always safe to materialise as `&[T]`.
+/// buffer as `&[T]`. Returns `BadModuleInfo` if `bytes` is not aligned for `T`
+/// or its length is not a multiple of `size_of::<T>()` (i.e. the format's
+/// internal padding was violated).
 ///
 /// (Zig used `std.mem.bytesAsSlice` → `[]align(1) const T`; Rust has no
-/// under-aligned reference type, so we guarantee alignment instead.)
+/// under-aligned reference type, so we guarantee alignment instead via
+/// `bytemuck::try_cast_slice`, which checks both alignment and size.)
 #[inline]
-fn bytes_as_slice<T>(bytes: &[u8]) -> Result<*const [T], ModuleInfoError> {
-    debug_assert!(bytes.len() % size_of::<T>() == 0);
-    let ptr = bytes.as_ptr();
-    if ptr.align_offset(core::mem::align_of::<T>()) != 0 {
-        return Err(ModuleInfoError::BadModuleInfo);
-    }
-    Ok(core::ptr::slice_from_raw_parts(
-        ptr.cast::<T>(),
-        bytes.len() / size_of::<T>(),
-    ))
+fn bytes_as_slice<T: bytemuck::AnyBitPattern>(bytes: &[u8]) -> Result<&[T], ModuleInfoError> {
+    bytemuck::try_cast_slice(bytes).map_err(|_| ModuleInfoError::BadModuleInfo)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -469,38 +467,37 @@ impl ModuleInfoExt for ModuleInfo {
         if !self.finalized {
             let _ = self.finalize();
         }
-        // PORT NOTE: reshaped for borrowck — capture raw pointers before
-        // `heap::alloc(self)` consumes the box.
+        // PORT NOTE: reshaped for borrowck — capture lifetime-erased `RawSlice`
+        // views before `heap::into_raw(self)` consumes the box.
         let (strings_buf, strings_lens, rm_keys, rm_values, buffer, record_kinds, flags);
         {
             let view = self.as_deserialized();
-            strings_buf = std::ptr::from_ref::<[u8]>(view.strings_buf);
-            strings_lens = std::ptr::from_ref::<[u32]>(view.strings_lens);
-            rm_keys = std::ptr::from_ref::<[StringID]>(view.requested_modules_keys);
-            rm_values = std::ptr::from_ref::<[FetchParameters]>(view.requested_modules_values);
-            buffer = std::ptr::from_ref::<[StringID]>(view.buffer);
-            // Printer's `RecordKind` is `#[repr(u8)]` with the same discriminant
-            // layout as this crate's transparent-newtype `RecordKind`.
-            record_kinds = core::ptr::slice_from_raw_parts(
-                view.record_kinds.as_ptr().cast::<RecordKind>(),
-                view.record_kinds.len(),
-            );
+            strings_buf = bun_ptr::RawSlice::new(view.strings_buf);
+            strings_lens = bun_ptr::RawSlice::new(view.strings_lens);
+            rm_keys = bun_ptr::RawSlice::new(view.requested_modules_keys);
+            rm_values = bun_ptr::RawSlice::new(view.requested_modules_values);
+            buffer = bun_ptr::RawSlice::new(view.buffer);
+            // Printer's `RecordKind` is `#[repr(u8)] NoUninit` with the same
+            // discriminant layout as this crate's `#[repr(transparent)] u8`
+            // `RecordKind` (Pod) — `bytemuck::cast_slice` is the safe reinterpret.
+            record_kinds =
+                bun_ptr::RawSlice::new(bytemuck::cast_slice::<_, RecordKind>(view.record_kinds));
             let mut f = Flags::empty();
             f.set(Flags::CONTAINS_IMPORT_META, view.flags.contains_import_meta);
             f.set(Flags::IS_TYPESCRIPT, view.flags.is_typescript);
             f.set(Flags::HAS_TLA, view.flags.has_tla);
             flags = f;
         }
-        // SAFETY: all six views point into the `Box<ModuleInfo>`'s vectors,
-        // moved into `owner` below; they stay valid and stable for the
-        // lifetime of every `RawSlice` copied from this struct.
+        // All six views point into the `Box<ModuleInfo>`'s vectors, moved into
+        // `owner` below; they stay valid and stable for the lifetime of every
+        // `RawSlice` copied from this struct.
         Box::new(ModuleInfoDeserialized {
-            strings_buf: unsafe { bun_ptr::RawSlice::from_raw(strings_buf) },
-            strings_lens: unsafe { bun_ptr::RawSlice::from_raw(strings_lens) },
-            requested_modules_keys: unsafe { bun_ptr::RawSlice::from_raw(rm_keys) },
-            requested_modules_values: unsafe { bun_ptr::RawSlice::from_raw(rm_values) },
-            buffer: unsafe { bun_ptr::RawSlice::from_raw(buffer) },
-            record_kinds: unsafe { bun_ptr::RawSlice::from_raw(record_kinds) },
+            strings_buf,
+            strings_lens,
+            requested_modules_keys: rm_keys,
+            requested_modules_values: rm_values,
+            buffer,
+            record_kinds,
             flags,
             owner: Owner::ModuleInfo(bun_core::heap::into_raw(self)),
         })

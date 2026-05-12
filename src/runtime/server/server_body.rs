@@ -1049,11 +1049,13 @@ impl ServePlugins {
         };
 
         for route in html_bundle_routes {
-            // SAFETY: route was ref'd when stored. R-2: deref as shared —
-            // `on_plugins_resolved` takes `&self`.
-            let route_ref = unsafe { &*route };
+            // BACKREF: route was ref'd when stored (intrusive +1 keeps it alive
+            // for this call). R-2: `on_plugins_resolved` takes `&self`.
+            let route_nn = NonNull::new(route).expect("html_bundle::Route ref'd when stored");
             // Spec server.zig:457 — `bun.handleOom(route.onPluginsResolved(plugin))`
-            bun_core::handle_oom(route_ref.on_plugins_resolved(Some(NonNull::from(plugin_ref))));
+            bun_core::handle_oom(
+                bun_ptr::BackRef::from(route_nn).on_plugins_resolved(Some(NonNull::from(plugin_ref))),
+            );
             // SAFETY: paired with the `ref_` taken when the route was pushed.
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
@@ -1080,9 +1082,10 @@ impl ServePlugins {
         self.state = ServePluginsState::Err;
 
         for route in html_bundle_routes {
-            // SAFETY: route was ref'd when stored. R-2: deref as shared —
-            // `on_plugins_rejected` takes `&self`.
-            bun_core::handle_oom(unsafe { &*route }.on_plugins_rejected());
+            // BACKREF: route was ref'd when stored (intrusive +1 keeps it alive
+            // for this call). R-2: `on_plugins_rejected` takes `&self`.
+            let route_nn = NonNull::new(route).expect("html_bundle::Route ref'd when stored");
+            bun_core::handle_oom(bun_ptr::BackRef::from(route_nn).on_plugins_rejected());
             // SAFETY: route was ref'd when stored; pair with that ref
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
@@ -2958,8 +2961,13 @@ where
         upgrade_ctx: &mut WebSocketUpgradeContext,
         method: Option<http::Method>,
     ) {
-        // SAFETY: server backref outlives user_route
-        let server_ptr = this.server.cast_mut();
+        // BACKREF: `UserRoute.server` is set at construction from the owning
+        // `NewServer` (which outlives every `UserRoute` in its `user_routes`
+        // vec); non-null by invariant.
+        let server_ref = bun_ptr::BackRef::from(
+            NonNull::new(this.server.cast_mut()).expect("UserRoute.server set at construction"),
+        );
+        let server_ptr = server_ref.as_ptr();
         let index = this.id;
 
         let mut should_deinit_context = false;
@@ -2974,12 +2982,11 @@ where
         ) else { return };
         // SAFETY: `prepared.ctx` is the freshly-allocated RequestContext slot.
         unsafe { (*prepared.ctx).upgrade_context = Some(upgrade_ctx) };
-        // SAFETY: server_ptr is live for the request's duration.
-        let server_js = unsafe { &*server_ptr }.js_value_assert_alive();
+        // BACKREF: `server_ref` outlives this request (see decl above).
+        let server_js = server_ref.js_value_assert_alive();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
-        // SAFETY (server_ptr field read): server_ptr is live for the request's duration.
-        let global = bun_opaque::opaque_deref(unsafe { (*server_ptr).global_this });
+        let global = bun_opaque::opaque_deref(server_ref.global_this);
         let response_value = match jsc::from_js_host_call(global, || {
             Bun__ServerRouteList__callRoute(
                 global,

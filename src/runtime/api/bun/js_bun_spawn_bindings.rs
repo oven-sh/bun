@@ -99,24 +99,23 @@ fn sys_system_error_to_js(err: bun_sys::SystemError, global: &JSGlobalObject) ->
 }
 
 /// `Terminal.CreateResult` — local mirror that flattens `IntrusiveRc<Terminal>`
-/// to the raw `*mut Terminal` used by `Subprocess.terminal`, so the scopeguard /
+/// to a `BackRef<Terminal>` used by `Subprocess.terminal`, so the scopeguard /
 /// field-assignment paths share one pointer type with `existing_terminal`.
 pub struct TerminalCreateResult {
-    pub terminal: *mut Terminal,
+    /// BACKREF — the `IntrusiveRc<Terminal>` pointer leaked via `into_raw()`
+    /// when this struct was populated; the +1 ref is held until
+    /// `Subprocess::finalize` (or the spawn-error scopeguard's
+    /// `abandon_from_spawn`) releases it, so the pointee outlives this struct.
+    pub terminal: bun_ptr::BackRef<Terminal>,
     pub js_value: JSValue,
 }
 
 impl TerminalCreateResult {
-    /// Centralises the set-once `*mut → &Terminal` deref so callers stay safe.
-    ///
-    /// `terminal` is the `IntrusiveRc<Terminal>` pointer leaked via
-    /// `into_raw()` when this struct was populated; the +1 ref is held until
-    /// `Subprocess::finalize` (or the spawn-error scopeguard's
-    /// `abandon_from_spawn`) releases it, so the pointee outlives this struct.
+    /// Shared borrow of the held `Terminal` (BackRef invariant: +1-ref'd
+    /// IntrusiveRc, live while this struct is held).
     #[inline]
     pub fn term(&self) -> &Terminal {
-        // SAFETY: see fn doc — non-null +1-ref'd IntrusiveRc, live while held.
-        unsafe { &*self.terminal }
+        self.terminal.get()
     }
 }
 
@@ -744,7 +743,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                                     // Transfer the +1 ref to `Subprocess.terminal` (released
                                     // in `Subprocess::finalize`); the scopeguard's
                                     // `abandon_from_spawn` path covers the error case.
-                                    terminal: created.terminal.into_raw(),
+                                    // `IntrusiveRc::into_raw` is never null (NonNull-backed).
+                                    terminal: bun_ptr::BackRef::from(
+                                        core::ptr::NonNull::new(created.terminal.into_raw())
+                                            .expect("IntrusiveRc non-null"),
+                                    ),
                                     js_value: created.js_value,
                                 });
                             }
@@ -1186,7 +1189,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         terminal: Cell::new(
             existing_terminal
                 .map(|t| t.as_ptr())
-                .or_else(|| terminal_info.as_ref().map(|info| info.terminal))
+                .or_else(|| terminal_info.as_ref().map(|info| info.terminal.as_ptr()))
                 .and_then(NonNull::new),
         ),
         observable_getters: Default::default(),
@@ -1581,9 +1584,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if let Writable::Buffer(buffer) = subprocess.stdin.get() {
-        // SAFETY: RefPtr has no DerefMut; StaticPipeWriter is single-thread
-        // ref-counted and we hold the owning ref via `subprocess.stdin`.
-        if let Err(err) = unsafe { (*buffer.as_ptr()).start() } {
+        if let Err(err) = Writable::buffer_writer_mut(buffer).start() {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);
@@ -1594,24 +1595,21 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // PORT NOTE: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-        if let Err(err) = unsafe { (*pipe.as_ptr()).start(subprocess_nn, event_loop_nn) } {
+        if let Err(err) = Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn) {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);
         }
         if (IS_SYNC || !lazy) && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stdout.get() {
-                // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-                unsafe { (*pipe.as_ptr()).read_all() };
+                Readable::pipe_reader_mut(pipe).read_all();
             }
         }
     }
 
     if let Readable::Pipe(pipe) = subprocess.stderr.get() {
         // PORT NOTE: see stdout arm above — avoid aliased &mut.
-        // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-        if let Err(err) = unsafe { (*pipe.as_ptr()).start(subprocess_nn, event_loop_nn) } {
+        if let Err(err) = Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn) {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);
@@ -1619,8 +1617,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
         if (IS_SYNC || !lazy) && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stderr.get() {
-                // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-                unsafe { (*pipe.as_ptr()).read_all() };
+                Readable::pipe_reader_mut(pipe).read_all();
             }
         }
     }
@@ -1753,19 +1750,15 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             let has_timespec = !absolute_timespec.eql(&Timespec::EPOCH);
 
             if let Writable::Buffer(buffer) = subprocess.stdin.get() {
-                // SAFETY: RefPtr has no DerefMut; StaticPipeWriter is single-thread
-                // ref-counted and we hold the owning ref via `subprocess.stdin`.
-                unsafe { (*buffer.as_ptr()).watch() };
+                Writable::buffer_writer_mut(buffer).watch();
             }
 
             if let Readable::Pipe(pipe) = subprocess.stderr.get() {
-                // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-                unsafe { (*pipe.as_ptr()).watch() };
+                Readable::pipe_reader_mut(pipe).watch();
             }
 
             if let Readable::Pipe(pipe) = subprocess.stdout.get() {
-                // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-                unsafe { (*pipe.as_ptr()).watch() };
+                Readable::pipe_reader_mut(pipe).watch();
             }
 
             // Tick the isolated event loop without passing timeout to avoid blocking

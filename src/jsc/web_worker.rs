@@ -1371,8 +1371,10 @@ impl WebWorker {
                 .take_exception(e)
                 .as_exception(global.vm().as_mut_ptr())
                 .expect("takeException returned non-Exception");
-            // SAFETY: `exc` is a live JSC `Exception` cell.
-            let _ = jsc::js_global_object::report_uncaught_exception(global, unsafe { &mut *exc });
+            // `Exception` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
+            // centralised non-null-ZST deref proof (`exc` is non-null per the
+            // `expect` above).
+            let _ = jsc::js_global_object::report_uncaught_exception(global, jsc::Exception::opaque_ref(exc));
         }
     }
 }

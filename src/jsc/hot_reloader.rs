@@ -143,6 +143,10 @@ impl HotReloaderCtx for VirtualMachine {
         VirtualMachine::event_loop(self)
     }
 
+    fn event_loop_ref(&self) -> &EventLoop {
+        VirtualMachine::event_loop_shared(self)
+    }
+
     fn bun_watcher_mut(&mut self) -> &mut Watcher {
         // PORT NOTE: Zig's three-way `@TypeOf(this.ctx.bun_watcher)` reflection
         // collapses here — `VirtualMachine.bun_watcher` is the type-erased
@@ -258,6 +262,13 @@ pub trait HotReloaderCtx {
     type EventLoop;
 
     fn event_loop(&self) -> *mut Self::EventLoop;
+
+    /// Safe `&EventLoop` accessor. The event loop is owned by the `Ctx` (a
+    /// sibling field on `VirtualMachine`, or unreachable for the
+    /// `RELOAD_IMMEDIATELY` BundleV2 instantiation) and outlives the reloader,
+    /// so callers go through this instead of dereferencing the raw
+    /// `event_loop()` pointer at each site.
+    fn event_loop_ref(&self) -> &Self::EventLoop;
 
     /// Zig: `this.ctx.bun_watcher` field, with comptime `@TypeOf` reflection
     /// to unwrap `ImportWatcher`/`Option`. Implementor returns the live
@@ -783,10 +794,10 @@ where
             unreachable!();
         }
 
-        // SAFETY: `event_loop()` returns the live event-loop pointer owned by
-        // `Ctx`, which outlives the reloader.
-        let event_loop = unsafe { &*self.event_loop() };
-        EventLoopType::enqueue_task_concurrent(event_loop, task);
+        // `ctx` is a `BackRef<Ctx>` (Deref) and `event_loop_ref` is the safe
+        // accessor on the trait; the event loop is owned by `Ctx` and outlives
+        // the reloader.
+        EventLoopType::enqueue_task_concurrent(self.ctx.event_loop_ref(), task);
     }
 
     pub fn enable_hot_module_reloading(this: *mut Ctx, entry_path: Option<&'static [u8]>) {
@@ -1318,6 +1329,11 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     fn event_loop(&self) -> *mut Self::EventLoop {
         // Zig: BundleV2 has no `eventLoop()`; with RELOAD_IMMEDIATELY=true the
         // only caller (`Task::enqueue` post-diverge) is dead code.
+        unreachable!()
+    }
+
+    fn event_loop_ref(&self) -> &Self::EventLoop {
+        // See `event_loop` above — dead code under RELOAD_IMMEDIATELY=true.
         unreachable!()
     }
 

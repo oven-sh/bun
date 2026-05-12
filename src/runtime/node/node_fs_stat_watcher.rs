@@ -252,20 +252,22 @@ impl StatWatcherScheduler {
     /// Schedule a task to set the timer in the main thread
     fn schedule_timer_update(this: *mut Self) {
         struct Holder {
-            // The outstanding ref on `scheduler` was already taken by
-            // `set_interval`'s `ref_()`; this raw pointer borrows it. The Zig
-            // never deref'd here either — the work-pool callback's
-            // `defer this.deref()` balances it.
-            scheduler: *mut StatWatcherScheduler,
+            // BACKREF — the outstanding ref on `scheduler` was already taken by
+            // `set_interval`'s `ref_()`; this borrows it (the work-pool
+            // callback's `defer this.deref()` balances it). `ParentRef`
+            // preserves the `*mut` provenance for `set_timer` and gives a safe
+            // `&StatWatcherScheduler` projection for `get_interval()`.
+            scheduler: bun_ptr::ParentRef<StatWatcherScheduler>,
             task: AnyTask,
         }
 
         fn update_timer(self_: *mut c_void) -> bun_event_loop::JsResult<()> {
             // SAFETY: `self_` was heap-allocated below; reclaim and drop at end of scope.
             let self_ = unsafe { bun_core::heap::take(self_.cast::<Holder>()) };
-            // SAFETY: `scheduler` is kept alive by the ref taken in `set_interval`.
-            let interval = unsafe { (*self_.scheduler).get_interval() };
-            StatWatcherScheduler::set_timer(self_.scheduler, interval);
+            // `scheduler` is kept alive by the ref taken in `set_interval`
+            // (ParentRef invariant).
+            let interval = self_.scheduler.get_interval();
+            StatWatcherScheduler::set_timer(self_.scheduler.as_mut_ptr(), interval);
             Ok(())
         }
 
@@ -276,7 +278,9 @@ impl StatWatcherScheduler {
         // pointer. With this ordering, `ctx` and `holder_ptr` share the same SRW tag and
         // `heap::take(ctx)` satisfies the "must originate from `heap::alloc`" contract.
         let holder_ptr = bun_core::heap::into_raw(Box::new(Holder {
-            scheduler: this,
+            // `this` is the live ref'd scheduler — never null; `NonNull → ParentRef`
+            // preserves mutable provenance for `set_timer`.
+            scheduler: bun_ptr::ParentRef::from(core::ptr::NonNull::new(this).expect("scheduler")),
             task: AnyTask::default(),
         }));
         // SAFETY: `holder_ptr` was just `heap::alloc`'d and is exclusively owned here

@@ -54,9 +54,10 @@ impl RegularExpression {
         flags: Flags,
     ) -> Result<*mut RegularExpression, RegularExpressionError> {
         let regex = Yarr__RegularExpression__init(pattern, flags as u16);
-        // SAFETY: Yarr__RegularExpression__init always returns a non-null heap allocation.
-        let regex_ref = unsafe { &mut *regex };
-        if !regex_ref.is_valid() {
+        // `RegularExpression` is an `opaque_ffi!` ZST handle; `opaque_mut` is
+        // the centralised non-null-ZST deref proof (panics on null, which
+        // `Yarr__RegularExpression__init` never returns).
+        if !RegularExpression::opaque_mut(regex).is_valid() {
             // SAFETY: `regex` is a valid live Yarr handle we just allocated; consumed here.
             unsafe { Self::destroy(regex) };
             return Err(RegularExpressionError::InvalidRegExp);

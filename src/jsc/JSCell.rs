@@ -14,8 +14,11 @@ impl JSCell {
     /// Use `to_object` to mutate non-objects into objects.
     pub fn get_object(&self) -> Option<&JSObject> {
         // TODO(port): jsc.markMemberBinding(JSCell, @src()) — comptime binding marker, likely drop
-        // SAFETY: returned pointer (if non-null) borrows from `self`'s heap cell.
-        unsafe { JSC__JSCell__getObject(self).as_ref() }
+        // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
+        // centralised non-null-ZST deref proof. Nullable per the C++ contract
+        // (non-object cells return null).
+        let p = JSC__JSCell__getObject(self);
+        (!p.is_null()).then(|| JSObject::opaque_ref(p))
     }
 
     /// Convert a cell to a JSObject.
@@ -45,14 +48,17 @@ impl JSCell {
 
     pub fn get_getter_setter(&self) -> &GetterSetter {
         // TODO(b2-blocked): bun_jsc::JSValue::is_getter_setter (debug_assert dropped while JSValue.rs gated)
-        // SAFETY: caller-asserted invariant — this cell's JSType is GetterSetter.
-        unsafe { &*std::ptr::from_ref::<JSCell>(self).cast::<GetterSetter>() }
+        // Caller-asserted invariant — this cell's JSType is GetterSetter.
+        // `GetterSetter` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
+        // centralised non-null-ZST deref proof (`self` is non-null).
+        GetterSetter::opaque_ref(std::ptr::from_ref::<JSCell>(self).cast::<GetterSetter>())
     }
 
     pub fn get_custom_getter_setter(&self) -> &CustomGetterSetter {
         // TODO(b2-blocked): bun_jsc::JSValue::is_custom_getter_setter (debug_assert dropped while JSValue.rs gated)
-        // SAFETY: caller-asserted invariant — this cell's JSType is CustomGetterSetter.
-        unsafe { &*std::ptr::from_ref::<JSCell>(self).cast::<CustomGetterSetter>() }
+        // Caller-asserted invariant — this cell's JSType is CustomGetterSetter.
+        // `CustomGetterSetter` is an `opaque_ffi!` ZST handle; see `get_getter_setter`.
+        CustomGetterSetter::opaque_ref(std::ptr::from_ref::<JSCell>(self).cast::<CustomGetterSetter>())
     }
 
     pub fn ensure_still_alive(&self) {

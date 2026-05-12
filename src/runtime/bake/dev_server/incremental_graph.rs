@@ -314,6 +314,20 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         unsafe { &mut (*self.owner()).incremental_result }
     }
 
+    /// Safe sibling-projection: borrow the owning [`DevServer`]'s
+    /// `bundling_failures` while holding `&mut self` (same disjoint-field
+    /// rationale as [`dev_incremental_result`](Self::dev_incremental_result)).
+    #[inline]
+    fn dev_bundling_failures(
+        &mut self,
+    ) -> &mut ArrayHashMap<serialized_failure::OwnerPacked, SerializedFailure> {
+        // SAFETY: `owner()` recovers the heap-allocated `DevServer`;
+        // `bundling_failures` is field-disjoint from both `client_graph` and
+        // `server_graph`, so the returned borrow and `&mut self` cover
+        // non-overlapping memory.
+        unsafe { &mut (*self.owner()).bundling_failures }
+    }
+
     /// `IncrementalGraph(side).getFileByIndex` — direct value-slot accessor.
     #[inline]
     pub fn get_file_by_index(&self, index: FileIndex<SIDE>) -> &File {
@@ -604,14 +618,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
                     if existing.failed {
                         let owner = serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
-                        // SAFETY: sibling-field access via `owner()`.
-                        let kv = unsafe { (*dev).bundling_failures.fetch_swap_remove(&owner) };
+                        let kv = self.dev_bundling_failures().fetch_swap_remove(&owner);
                         let kv = kv.unwrap_or_else(|| {
                             bun_core::Output::panic(format_args!(
                                 "Missing SerializedFailure in IncrementalGraph",
                             ))
                         });
-                        unsafe { (*dev).incremental_result.failures_removed.push(kv.1) };
+                        self.dev_incremental_result().failures_removed.push(kv.1);
                     }
 
                     html_route_bundle_index = existing.html_route_bundle_index;
@@ -691,12 +704,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         ..Default::default()
                     };
                     if scb {
-                        // SAFETY: sibling-field access via `owner()`.
-                        unsafe {
-                            (*dev).incremental_result
-                                .client_components_added
-                                .push(ServerFileIndex::init(file_index.get()));
-                        }
+                        self.dev_incremental_result()
+                            .client_components_added
+                            .push(ServerFileIndex::init(file_index.get()));
                     }
                 } else {
                     let scb = ctx.server_to_client_bitset.is_set(index.get() as usize);
@@ -708,12 +718,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     if scb {
                         self.bundled_files.values_mut()[file_index.get() as usize]
                             .is_client_component_boundary = true;
-                        // SAFETY: sibling-field access via `owner()`.
-                        unsafe {
-                            (*dev).incremental_result
-                                .client_components_added
-                                .push(ServerFileIndex::init(file_index.get()));
-                        }
+                        self.dev_incremental_result()
+                            .client_components_added
+                            .push(ServerFileIndex::init(file_index.get()));
                     } else if self.bundled_files.values()[file_index.get() as usize]
                         .is_client_component_boundary
                     {
@@ -734,24 +741,21 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         client_graph.disconnect_and_delete_file(client_index);
                         self.bundled_files.values_mut()[file_index.get() as usize]
                             .is_client_component_boundary = false;
-                        unsafe {
-                            (*dev).incremental_result
-                                .client_components_removed
-                                .push(ServerFileIndex::init(file_index.get()));
-                        }
+                        self.dev_incremental_result()
+                            .client_components_removed
+                            .push(ServerFileIndex::init(file_index.get()));
                     }
 
                     if self.bundled_files.values()[file_index.get() as usize].failed {
                         self.bundled_files.values_mut()[file_index.get() as usize].failed = false;
                         let owner = serialized_failure::OwnerPacked::new(Side::Server, file_index.get());
-                        // SAFETY: sibling-field access via `owner()`.
-                        let kv = unsafe { (*dev).bundling_failures.fetch_swap_remove(&owner) };
+                        let kv = self.dev_bundling_failures().fetch_swap_remove(&owner);
                         let kv = kv.unwrap_or_else(|| {
                             bun_core::Output::panic(format_args!(
                                 "Missing failure in IncrementalGraph",
                             ))
                         });
-                        unsafe { (*dev).incremental_result.failures_removed.push(kv.1) };
+                        self.dev_incremental_result().failures_removed.push(kv.1);
                     }
                 }
 
@@ -1036,8 +1040,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         match SIDE {
             Side::Server => {
-                let file = &self.bundled_files.values()[file_index.get() as usize];
-                if file.is_route {
+                let (is_route, is_scb) = {
+                    let file = &self.bundled_files.values()[file_index.get() as usize];
+                    (file.is_route, file.is_client_component_boundary)
+                };
+                if is_route {
                     // SAFETY: sibling-field access.
                     let route_index = unsafe { (*dev).route_lookup.get(&ServerFileIndex::init(file_index.get())) }
                         .copied()
@@ -1048,16 +1055,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                 bstr::BStr::new(&self.bundled_files.keys()[file_index.get() as usize]),
                             ))
                         });
-                    unsafe {
-                        (*dev).incremental_result.framework_routes_affected.push(route_index);
-                    }
+                    self.dev_incremental_result().framework_routes_affected.push(route_index);
                 }
-                if file.is_client_component_boundary {
-                    unsafe {
-                        (*dev).incremental_result
-                            .client_components_affected
-                            .push(ServerFileIndex::init(file_index.get()));
-                    }
+                if is_scb {
+                    self.dev_incremental_result()
+                        .client_components_affected
+                        .push(ServerFileIndex::init(file_index.get()));
                 }
             }
             Side::Client => {
@@ -1087,13 +1090,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             self.bundled_files.values()[from_file_index.get() as usize].content,
                             Content::Asset(_),
                         );
-                    // SAFETY: sibling-field access.
-                    unsafe {
-                        if hard {
-                            (*dev).incremental_result.html_routes_hard_affected.push(route_bundle_index);
-                        } else {
-                            (*dev).incremental_result.html_routes_soft_affected.push(route_bundle_index);
-                        }
+                    let ir = self.dev_incremental_result();
+                    if hard {
+                        ir.html_routes_hard_affected.push(route_bundle_index);
+                    } else {
+                        ir.html_routes_soft_affected.push(route_bundle_index);
                     }
                     if goal == TraceDependencyGoal::StopAtBoundary {
                         return Ok(());
@@ -1165,11 +1166,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
                 if goal == TraceImportGoal::FindErrors && failed {
                     let owner = serialized_failure::OwnerPacked::new(Side::Server, file_index.get());
-                    // SAFETY: sibling-field access.
-                    let fail = unsafe { (*dev).bundling_failures.get(&owner) }
+                    let fail = self.dev_bundling_failures().get(&owner)
                         .cloned()
                         .expect("Failed to get bundling failure");
-                    unsafe { (*dev).incremental_result.failures_added.push(fail) };
+                    self.dev_incremental_result().failures_added.push(fail);
                 }
             }
             Side::Client => {
@@ -1204,11 +1204,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     && self.bundled_files.values()[file_index.get() as usize].failed
                 {
                     let owner = serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
-                    // SAFETY: sibling-field access.
-                    let fail = unsafe { (*dev).bundling_failures.get(&owner) }
+                    let fail = self.dev_bundling_failures().get(&owner)
                         .cloned()
                         .expect("Failed to get bundling failure");
-                    unsafe { (*dev).incremental_result.failures_added.push(fail) };
+                    self.dev_incremental_result().failures_added.push(fail);
                     return Ok(());
                 }
             }

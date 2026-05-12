@@ -139,10 +139,11 @@ pub fn post_process_css_chunk(
 
     if c.options.source_maps != options::SourceMapOption::None {
         let can_have_shifts = matches!(chunk.intermediate_output, IntermediateOutput::Pieces(_));
-        // SAFETY: resolver backref; raw deref (not `c.resolver()`) because
-        // `output_dir` is passed to `c.generate_source_map_for_chunk(&mut self, …)`
-        // (split borrow).
-        let output_dir = &unsafe { &*c.resolver }.opts.output_dir;
+        // Copy the `ParentRef` out (not `c.resolver()`) so `output_dir`
+        // borrows the local, not `c`, avoiding the split-borrow with
+        // `c.generate_source_map_for_chunk(&mut self, …)` below.
+        let resolver = c.resolver.expect("resolver set in load()");
+        let output_dir = &resolver.opts.output_dir;
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,

@@ -951,33 +951,34 @@ unsafe extern "C" {
 /// upward dependency on `bun_string` and no runtime fn-ptr hook.
 #[allow(non_snake_case)] // Zig namespace `bun.String.StringImplAllocator`
 pub mod StringImplAllocator {
-    use super::{Alignment, AllocatorVTable, WTFStringImpl};
+    use super::{Alignment, AllocatorVTable, WTFStringImplStruct};
 
     unsafe fn alloc(ptr: *mut core::ffi::c_void, len: usize, _: Alignment, _: usize) -> *mut u8 {
-        let this: WTFStringImpl = ptr.cast();
-        // SAFETY: vtable contract — `ptr` is the `WTFStringImpl` passed to
-        // `ref_count_allocator`.
-        let len_ = unsafe { (*this).byte_length() };
-        if len_ != len {
+        // SAFETY: vtable contract — `ptr` is the non-null `WTFStringImpl` passed
+        // to `ref_count_allocator`, live with refcount ≥ 1 for this call. Single
+        // deref site (nonnull-asref reduction) — `byte_length`/`r#ref` are safe
+        // `&self` methods.
+        let this = unsafe { &*ptr.cast::<WTFStringImplStruct>() };
+        if this.byte_length() != len {
             // we don't actually allocate, we just reference count
             return core::ptr::null_mut();
         }
-        // SAFETY: vtable contract — `this` is a live WTFStringImpl with refcount ≥ 1.
-        unsafe { (*this).r#ref() };
+        this.r#ref();
         // we should never actually allocate
-        // SAFETY: m_ptr.latin1 valid for byte_length bytes.
-        unsafe { (*this).m_ptr.latin1.cast_mut() }
+        // SAFETY: `m_ptr.latin1` is the byte-view union arm (both arms share
+        // offset 0); valid for `byte_length()` bytes.
+        unsafe { this.m_ptr.latin1 }.cast_mut()
     }
 
     unsafe fn free(ptr: *mut core::ffi::c_void, buf: &mut [u8], _: Alignment, _: usize) {
-        let this: WTFStringImpl = ptr.cast();
-        // SAFETY: see `alloc`.
-        debug_assert!(unsafe { (*this).m_ptr.latin1 } == buf.as_ptr());
+        // SAFETY: see `alloc` — single deref site for the vtable's `WTFStringImpl`
+        // ctx pointer; `byte_slice`/`byte_length`/`deref` are safe `&self` methods.
+        let this = unsafe { &*ptr.cast::<WTFStringImplStruct>() };
+        debug_assert!(this.byte_slice().as_ptr() == buf.as_ptr());
         // Zig: `bun.assert(this.latin1Slice().len == buf.len)` — `latin1Slice().len` is
         // `byteLength()` (i.e. `m_length * 2` for UTF-16), not the code-unit count.
-        debug_assert!(unsafe { (*this).byte_length() } == buf.len());
-        // SAFETY: vtable contract — `this` is a live WTFStringImpl with refcount ≥ 1.
-        unsafe { (*this).deref() };
+        debug_assert!(this.byte_length() == buf.len());
+        this.deref();
     }
 
     pub static VTABLE: AllocatorVTable = AllocatorVTable {

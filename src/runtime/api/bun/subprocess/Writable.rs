@@ -54,7 +54,7 @@ impl<'a> Writable<'a> {
     /// borrow. Single JS-mutator thread — no concurrent `&mut FileSink`.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub(super) fn pipe_sink_mut(pipe: &NonNull<FileSink>) -> &mut FileSink {
+    pub(in crate::api) fn pipe_sink_mut(pipe: &NonNull<FileSink>) -> &mut FileSink {
         // SAFETY: see fn doc — +1-intrusive-ref'd, heap-disjoint, single-thread.
         unsafe { &mut *pipe.as_ptr() }
     }
@@ -72,7 +72,7 @@ impl<'a> Writable<'a> {
     /// and access is single-JS-mutator-thread.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub(super) fn buffer_writer_mut<'b>(buffer: &'b RefPtr<StaticPipeWriter<'a>>) -> &'b mut StaticPipeWriter<'a> {
+    pub(in crate::api) fn buffer_writer_mut<'b>(buffer: &'b RefPtr<StaticPipeWriter<'a>>) -> &'b mut StaticPipeWriter<'a> {
         // SAFETY: see fn doc — sole-owning RefPtr, heap-disjoint, single-thread.
         unsafe { &mut *buffer.as_ptr() }
     }

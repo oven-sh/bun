@@ -349,31 +349,44 @@ impl VTable {
     };
 
     pub fn wrap<Wrapped: SinkHandler>() -> VTable {
+        /// Recover `&mut W` from the type-erased `Sink.ptr` field. Centralises
+        /// the per-thunk `unsafe { &mut *this.cast() }` so the five vtable
+        /// entries below are safe callers (one accessor, N safe call sites).
+        ///
+        /// # Safety (encapsulated)
+        /// `this` is the `Sink.ptr` field, set once in [`init_with_type`] from
+        /// `&mut W` (a live, exclusively-owned handler). The vtable is only
+        /// ever paired with that exact erased pointer, the `Sink` is `!Send`,
+        /// and `Sink::end`/`write*` borrow `&mut self` so no second `&mut W`
+        /// can be live across a thunk call. Non-null and properly aligned by
+        /// construction.
+        #[inline(always)]
+        fn handler<'r, W: SinkHandler>(this: *mut ()) -> &'r mut W {
+            debug_assert!(!this.is_null());
+            // SAFETY: see fn doc — `this` was erased from `&mut W` in
+            // `init_with_type`; sole live `&mut` for the thunk's duration.
+            unsafe { &mut *this.cast::<W>() }
+        }
         fn on_write<W: SinkHandler>(this: *mut (), data: streams::Result) -> streams::result::Writable {
-            // SAFETY: `this` was erased from `&mut W` in init_with_type.
-            unsafe { &mut *this.cast::<W>() }.write(data)
+            handler::<W>(this).write(data)
         }
         fn on_connect<W: SinkHandler>(this: *mut (), signal: Signal) -> sys::Result<()> {
-            // SAFETY: see on_write
-            unsafe { &mut *this.cast::<W>() }.connect(signal)
+            handler::<W>(this).connect(signal)
         }
         fn on_write_latin1<W: SinkHandler>(
             this: *mut (),
             data: streams::Result,
         ) -> streams::result::Writable {
-            // SAFETY: see on_write
-            unsafe { &mut *this.cast::<W>() }.write_latin1(data)
+            handler::<W>(this).write_latin1(data)
         }
         fn on_write_utf16<W: SinkHandler>(
             this: *mut (),
             data: streams::Result,
         ) -> streams::result::Writable {
-            // SAFETY: see on_write
-            unsafe { &mut *this.cast::<W>() }.write_utf16(data)
+            handler::<W>(this).write_utf16(data)
         }
         fn on_end<W: SinkHandler>(this: *mut (), err: Option<SysError>) -> sys::Result<()> {
-            // SAFETY: see on_write
-            unsafe { &mut *this.cast::<W>() }.end(err)
+            handler::<W>(this).end(err)
         }
 
         VTable {

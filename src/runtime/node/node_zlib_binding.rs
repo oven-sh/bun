@@ -1,6 +1,9 @@
 use core::cell::Cell;
 use core::ffi::{c_char, c_int};
 use core::marker::PhantomData;
+use core::ptr::NonNull;
+
+use bun_ptr::ParentRef;
 
 use bun_io::KeepAlive;
 use bun_event_loop::Taskable;
@@ -425,15 +428,18 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     }
 
     fn async_job_run(this: *mut T) {
-        // SAFETY: `this` is the live heap m_ctx payload (kept alive by the
-        // `ref_()` in `write()`); deref shared (`&*`) — bodies use the `&self`
-        // accessor surface (R-2).
-        let this_ref: &T = unsafe { &*this };
+        // BACKREF — `this` is the live heap m_ctx payload (kept alive by the
+        // `ref_()` in `write()`); bodies use the `&self` accessor surface
+        // (R-2). `ParentRef` Deref collapses the per-site raw deref.
+        let this_ref = ParentRef::from(NonNull::new(this).expect("async_job_run: this"));
         let global_this: &JSGlobalObject = this_ref.global_this();
         // Zig: `bunVMConcurrently()` — thread-safe accessor (skips the
         // JS-thread debug assert; same backing pointer as `bun_vm()`).
-        // SAFETY: `bun_vm_concurrently()` never returns null for a Bun-owned global.
-        let vm = unsafe { &*global_this.bun_vm_concurrently() };
+        // BACKREF — `bun_vm_concurrently()` never returns null for a Bun-owned
+        // global; wrap once so the `event_loop()` read below is safe Deref.
+        let vm = ParentRef::from(
+            NonNull::new(global_this.bun_vm_concurrently()).expect("bun_vm_concurrently"),
+        );
 
         this_ref.stream().with_mut(|s| s.do_work());
 
@@ -462,8 +468,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     /// SAFETY: `this_ptr` is the live heap m_ctx payload; the matching
     /// `ref_()` in `write()` keeps it alive until the trailing `deref()`.
     pub unsafe fn run_from_js_thread(this_ptr: *mut T) {
-        // SAFETY: see fn-level contract.
-        let this: &T = unsafe { &*this_ptr };
+        // BACKREF — see fn-level contract; `ParentRef` Deref gives safe `&T`
+        // for the `&self` accessor surface (R-2).
+        let this = ParentRef::from(NonNull::new(this_ptr).expect("run_from_js_thread: this"));
         let global: &JSGlobalObject = this.global_this();
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
         let vm = global.bun_vm();
@@ -485,7 +492,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         this_value.ensure_still_alive();
 
-        if !Self::check_error(this, global, this_value) {
+        if !Self::check_error(&this, global, this_value) {
             this.poll_ref().with_mut(|p| p.unref(vm));
             // SAFETY: see above.
             unsafe { T::deref(this_ptr) };
@@ -501,10 +508,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             .run_callback(write_callback, global, this_value, &[]);
 
         if this.pending_reset().get() {
-            Self::reset_internal(this, global, this_value);
+            Self::reset_internal(&this, global, this_value);
         }
         if this.pending_close().get() {
-            Self::close_internal(this);
+            Self::close_internal(&this);
         }
 
         this.poll_ref().with_mut(|p| p.unref(vm));

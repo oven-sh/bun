@@ -1,5 +1,6 @@
 use core::cell::Cell;
 use core::ffi::c_void;
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::thread::{self, ThreadId};
 use std::time::Instant;
@@ -16,7 +17,7 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, WorkPool, WorkPoolTask,
 };
 use bun_paths::resolve_path::{self as Path, platform};
-use bun_ptr::{BackRef, RefPtr, ThreadSafeRefCount};
+use bun_ptr::{BackRef, ParentRef, RefPtr, ThreadSafeRefCount};
 use bun_resolver::fs;
 use bun_core::strings;
 use bun_sys::{self, PosixStat};
@@ -175,8 +176,9 @@ impl StatWatcherScheduler {
     // whose generated trait `destructor` upholds the sole-owner contract
     // (called only when ref_count reaches zero; `this` was Box-allocated by RefPtr::new).
     fn deinit(this: *mut StatWatcherScheduler) {
-        // SAFETY: last reference; exclusive access.
-        let this_ref = unsafe { &*this };
+        // BACKREF — `this` is the live ref-counted scheduler (last ref); wrap
+        // once so the field reads below go through safe `ParentRef` Deref.
+        let this_ref = ParentRef::from(NonNull::new(this).expect("deinit: scheduler"));
         bun_core::assertf!(
             this_ref.watchers.is_empty(),
             "destroying StatWatcherScheduler while it still has watchers",
@@ -186,16 +188,17 @@ impl StatWatcherScheduler {
     }
 
     pub fn append(this: *mut Self, watcher: *mut StatWatcher) {
-        // SAFETY: watcher is a live ref-counted StatWatcher; we ref() it below.
-        // R-2: deref as shared (`&*`) — all field access goes through Cell/Atomic.
-        let w = unsafe { &*watcher };
+        // BACKREF — `watcher` is a live ref-counted StatWatcher (we ref() it
+        // below). R-2: shared `&` only — all field access goes through
+        // Cell/Atomic. `ParentRef` Deref collapses the per-site raw deref.
+        let w = ParentRef::from(NonNull::new(watcher).expect("append: watcher"));
         log!("append new watcher {}", bstr::BStr::new(w.path.as_bytes()));
         debug_assert!(!w.closed.load(Ordering::Relaxed));
         debug_assert!(w.next.is_null());
 
         StatWatcher::ref_(watcher);
-        // SAFETY: `this` is live (caller holds a ref).
-        let this_ref = unsafe { &*this };
+        // BACKREF — `this` is live (caller holds a ref).
+        let this_ref = ParentRef::from(NonNull::new(this).expect("append: scheduler"));
         this_ref.watchers.push(watcher);
         log!("push watcher {:x}", watcher as usize);
         let current = this_ref.get_interval();
@@ -212,8 +215,9 @@ impl StatWatcherScheduler {
     /// Update the current interval and set the timer (this function is thread safe)
     fn set_interval(this: *mut Self, interval: i32) {
         Self::ref_(this);
-        // SAFETY: `this` is live (caller holds a ref).
-        let this_ref = unsafe { &*this };
+        // BACKREF — `this` is live (caller holds a ref); `ParentRef` Deref
+        // gives safe `&Self` for the atomic store / thread-id check below.
+        let this_ref = ParentRef::from(NonNull::new(this).expect("set_interval: scheduler"));
         this_ref.current_interval.store(interval, Ordering::Relaxed);
 
         if this_ref.main_thread == thread::current().id() {
@@ -284,7 +288,7 @@ impl StatWatcherScheduler {
         let holder_ptr = bun_core::heap::into_raw(Box::new(Holder {
             // `this` is the live ref'd scheduler — never null; `NonNull → ParentRef`
             // preserves mutable provenance for `set_timer`.
-            scheduler: bun_ptr::ParentRef::from(core::ptr::NonNull::new(this).expect("scheduler")),
+            scheduler: ParentRef::from(NonNull::new(this).expect("scheduler")),
             task: AnyTask::default(),
         }));
         // SAFETY: `holder_ptr` was just `heap::alloc`'d and is exclusively owned here
@@ -328,8 +332,9 @@ impl StatWatcherScheduler {
         // SAFETY: `this` is live; one ref (taken in `set_interval`) is owned by
         // this callback and adopted here.
         let _ref_guard = unsafe { SchedulerRefGuard::adopt(this) };
-        // SAFETY: `this` is alive — ref'd when the timer was scheduled.
-        let this_ref = unsafe { &*this };
+        // BACKREF — `this` is alive (ref'd when the timer was scheduled);
+        // `ParentRef` Deref gives safe `&Self` for the queue/interval reads.
+        let this_ref = ParentRef::from(NonNull::new(this).expect("work_pool_callback: scheduler"));
 
         // Instant.now will not fail on our target platforms.
         let now = Instant::now();
@@ -345,12 +350,12 @@ impl StatWatcherScheduler {
             if watcher.is_null() {
                 break;
             }
-            // SAFETY: `watcher` is a live `*mut StatWatcher` from the intrusive
+            // BACKREF — `watcher` is a live `*mut StatWatcher` from the intrusive
             // queue; alive because we hold a ref on it (taken in `append`).
-            // R-2: deref as shared (`&*`) — `restat()` may enqueue a main-thread
-            // task that derefs the same `StatWatcher` concurrently; aliased `&`
-            // is sound where `&mut` would not be.
-            let w = unsafe { &*watcher };
+            // R-2: shared `&` only — `restat()` may enqueue a main-thread task
+            // that derefs the same `StatWatcher` concurrently; aliased `&` is
+            // sound where `&mut` would not be. `ParentRef` Deref gives that `&`.
+            let w = ParentRef::from(NonNull::new(watcher).expect("work_pool_callback: watcher"));
             if w.closed.load(Ordering::Relaxed) {
                 // SAFETY: we own the ref taken in `append`.
                 unsafe { ThreadSafeRefCount::<StatWatcher>::deref(watcher) };
@@ -575,9 +580,10 @@ impl StatWatcher {
     fn deinit(this: *mut StatWatcher) {
         log!("deinit {:x}", this as usize);
 
-        // SAFETY: last ref; exclusive access. R-2: deref as shared (`&*`) —
-        // all field mutation goes through Cell/JsCell/Atomic so `&` suffices.
-        let this_ref = unsafe { &*this };
+        // BACKREF — last ref; exclusive access. R-2: all field mutation goes
+        // through Cell/JsCell/Atomic so shared `&` suffices; `ParentRef` Deref
+        // collapses the per-site raw deref.
+        let this_ref = ParentRef::from(NonNull::new(this).expect("deinit: watcher"));
 
         // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
         if this_ref.ctx.test_isolation_enabled {
@@ -663,8 +669,9 @@ impl StatWatcher {
         // hold `&*watcher` (see `work_pool_callback`); `Box::into_raw` then
         // `&*ptr` keeps the access shared.
         let this_ptr: *mut Self = bun_core::heap::into_raw(self);
-        // SAFETY: `this_ptr` was just leaked from `Box`; ref_count >= 1.
-        let this = unsafe { &*this_ptr };
+        // BACKREF — `this_ptr` was just leaked from `Box`; ref_count >= 1.
+        // `ParentRef` Deref gives safe `&Self` for the Cell/Atomic writes.
+        let this = ParentRef::from(NonNull::new(this_ptr).expect("finalize: watcher"));
         this.this_value.with_mut(|r| r.finalize());
         this.closed.store(true, Ordering::Relaxed);
         this.scheduler.deref();
@@ -677,9 +684,10 @@ impl StatWatcher {
     ) -> bun_event_loop::JsResult<()> {
         // SAFETY: balance the ref from createAndSchedule(); raw ptr captured (not `&self`).
         let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
-        // SAFETY: `this` is alive — ref'd in InitialStatTask::create_and_schedule.
-        // R-2: deref as shared (`&*`) — all field access via Cell/JsCell/Atomic.
-        let this_ref = unsafe { &*this };
+        // BACKREF — `this` is alive (ref'd in
+        // InitialStatTask::create_and_schedule). R-2: all field access via
+        // Cell/JsCell/Atomic; `ParentRef` Deref gives safe `&Self`.
+        let this_ref = ParentRef::from(NonNull::new(this).expect("initial_stat_success: watcher"));
         if this_ref.closed.load(Ordering::Relaxed) {
             return Ok(());
         }
@@ -707,11 +715,12 @@ impl StatWatcher {
     ) -> bun_event_loop::JsResult<()> {
         // SAFETY: balance the ref from createAndSchedule(); raw ptr captured (not `&self`).
         let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
-        // SAFETY: `this` is alive — ref'd in InitialStatTask::create_and_schedule.
-        // R-2: deref as shared (`&*`) — `cb.call()` below re-enters JS, which may
-        // call `do_close()` → fresh `&Self` from m_ctx; aliased `&` is sound,
-        // aliased `&mut` is not.
-        let this_ref = unsafe { &*this };
+        // BACKREF — `this` is alive (ref'd in
+        // InitialStatTask::create_and_schedule). R-2: `cb.call()` below
+        // re-enters JS, which may call `do_close()` → fresh `&Self` from
+        // m_ctx; aliased `&` is sound, aliased `&mut` is not. `ParentRef`
+        // Deref gives that shared `&`.
+        let this_ref = ParentRef::from(NonNull::new(this).expect("initial_stat_error: watcher"));
         if this_ref.closed.load(Ordering::Relaxed) {
             return Ok(());
         }
@@ -796,11 +805,12 @@ impl StatWatcher {
     ) -> bun_event_loop::JsResult<()> {
         // SAFETY: balance the ref from restat(); raw ptr captured (not `&self`).
         let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
-        // SAFETY: `this` is alive — ref'd in restat(). R-2: deref as shared
-        // (`&*`) — `cb.call()` below re-enters JS, which may call `do_close()`
-        // → fresh `&Self` from m_ctx; aliased `&` is sound, aliased `&mut` is
-        // not (and the work-pool thread may still hold `&*watcher`).
-        let this_ref = unsafe { &*this };
+        // BACKREF — `this` is alive (ref'd in restat()). R-2: `cb.call()`
+        // below re-enters JS, which may call `do_close()` → fresh `&Self` from
+        // m_ctx; aliased `&` is sound, aliased `&mut` is not (and the
+        // work-pool thread may still hold `&*watcher`). `ParentRef` Deref
+        // gives that shared `&`.
+        let this_ref = ParentRef::from(NonNull::new(this).expect("swap_and_call: watcher"));
         let Some(js_this) = this_ref.this_value.get().try_get() else {
             return Ok(());
         };
@@ -872,11 +882,12 @@ impl StatWatcher {
         // errdefer this.deinit() — `p` was heap-allocated above; on the error
         // path we own the only reference (sole-owner contract for `deinit`).
         let guard = scopeguard::guard(this_ptr, |p| Self::deinit(p));
-        // SAFETY: `this_ptr` just leaked from Box; alive until deref drops it.
-        // R-2: deref as shared (`&*`) — all field mutation goes through
-        // Cell/JsCell so `&` suffices (and `to_js_ptr` below creates the JS
-        // wrapper, after which the codegen shim may form its own `&Self`).
-        let this_ref = unsafe { &*this_ptr };
+        // BACKREF — `this_ptr` just leaked from Box; alive until deref drops
+        // it. R-2: all field mutation goes through Cell/JsCell so shared `&`
+        // suffices (and `to_js_ptr` below creates the JS wrapper, after which
+        // the codegen shim may form its own `&Self`). `ParentRef` Deref gives
+        // that shared `&`.
+        let this_ref = ParentRef::from(NonNull::new(this_ptr).expect("init: watcher"));
 
         if this_ref.persistent.get() {
             let el_ctx = this_ref.ctx_el_ctx();
@@ -898,8 +909,15 @@ impl StatWatcher {
             this_ref.ctx.as_mut().rare_data().add_stat_watcher_for_isolation(
                 this_ptr.cast::<c_void>(),
                 // §Dispatch cold-path vtable — `bun_jsc::RareData` stores
-                // (ptr, close-fn) so it can fire close without naming StatWatcher.
-                |p| unsafe { (*p.cast::<StatWatcher>()).close() },
+                // (ptr, close-fn) so it can fire close without naming
+                // StatWatcher. BACKREF — `p` is the live watcher we registered
+                // above; `ParentRef` Deref gives safe `&StatWatcher`.
+                |p| {
+                    ParentRef::from(
+                        NonNull::new(p.cast::<StatWatcher>()).expect("isolation close cb"),
+                    )
+                    .close()
+                },
             );
         }
         InitialStatTask::create_and_schedule(this_ptr);
@@ -992,9 +1010,12 @@ impl Arguments {
     }
 
     pub fn create_stat_watcher(self) -> Result<JSValue, bun_core::Error> {
-        let obj = StatWatcher::init(self)?;
-        // SAFETY: `obj` just returned from init; alive (refcount==1).
-        Ok(unsafe { &*obj }
+        // BACKREF — `init` returns the live heap watcher (refcount==1);
+        // `ParentRef` Deref gives safe field access for the `this_value` read.
+        let obj = ParentRef::from(
+            NonNull::new(StatWatcher::init(self)?).expect("create_stat_watcher: init"),
+        );
+        Ok(obj
             .this_value
             .get()
             .try_get()
@@ -1029,14 +1050,15 @@ impl InitialStatTask {
         // `watcher` is a raw `*mut` (Copy), so dropping the Box does not touch
         // the refcount; matches Zig `bun.destroy(initial_stat_task)`.
         let this: *mut StatWatcher = self.watcher;
-        // SAFETY: `this` is kept alive by the intrusive ref taken in
+        // BACKREF — `this` is kept alive by the intrusive ref taken in
         // `create_and_schedule`. We only need shared access here — `closed` is
         // read-only, `path` is borrowed, and `set_last_stat`/
         // `enqueue_task_concurrent` take `&self` (mutation goes through
         // `Guarded`/atomics). The main thread may concurrently run
         // `close()`/`finalize()` after `init()` returns the watcher to JS;
         // both also deref as shared (R-2), so aliased `&` is sound.
-        let this_ref = unsafe { &*this };
+        // `ParentRef` Deref gives that shared `&`.
+        let this_ref = ParentRef::from(NonNull::new(this).expect("run_owned: watcher"));
 
         if this_ref.closed.load(Ordering::Relaxed) {
             // Balance the ref() from createAndSchedule().

@@ -1886,6 +1886,7 @@ registry = "${mockRegistryUrl}"`,
 
       expect(stderr).toContain("regular-package");
       expect(stderr).toContain("3.0.0");
+      expect(stderr.toLowerCase()).toContain("minimum release age");
       expect(exitCode).toBe(1);
     });
 

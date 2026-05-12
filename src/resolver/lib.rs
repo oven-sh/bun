@@ -1775,9 +1775,13 @@ pub mod dir_entry_accessor {
                 let Some((key, val)) = value.next() else {
                     return Ok(None);
                 };
-                // SAFETY: ARENA — `*mut Entry` points into the EntryStore BSSList
-                // singleton ('static lifetime); `RealFS.entries_mutex` serializes access.
-                let entry: &Entry = unsafe { &**val };
+                // BACKREF: ARENA — `*mut Entry` points into the EntryStore
+                // BSSList singleton ('static lifetime); `RealFS.entries_mutex`
+                // serializes access. `BackRef::from(NonNull)` + `Deref` keeps
+                // the read site safe.
+                let entry = bun_ptr::BackRef::<Entry>::from(
+                    core::ptr::NonNull::new(*val).expect("EntryStore slot"),
+                );
                 let fs: *mut Implementation = &raw mut FS::instance().fs;
                 let kind = entry.kind(fs, true);
                 let fskind = match kind {
@@ -7647,10 +7651,11 @@ impl<'a> Resolver<'a> {
         // `load_index_with_extension` (matches `extra_cjs_extensions` loop below).
         let n = self.opts.ext_order_slice(extension_order).len();
         for i in 0..n {
-            let ext: *const [u8] = &raw const *self.opts.ext_order_slice(extension_order)[i];
-            // SAFETY: `ext` points into a `Box<[u8]>` owned by `self.opts` and
-            // never mutated while the resolver runs; heap buffer is address-stable.
-            if let Some(result) = self.load_index_with_extension(dir_info, unsafe { &*ext }) {
+            // BACKREF: `RawSlice` detaches the `&self.opts` borrow so the loop
+            // body can take `&mut self`. Backing `Box<[u8]>` is owned by
+            // `self.opts` and never mutated while the resolver runs.
+            let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
+            if let Some(result) = self.load_index_with_extension(dir_info, &ext) {
                 return Some(result);
             }
         }
@@ -7659,10 +7664,10 @@ impl<'a> Resolver<'a> {
         // `load_index_with_extension` (avoids the forbidden lifetime-extension cast).
         let n = self.opts.extra_cjs_extensions.len();
         for i in 0..n {
-            let ext: *const [u8] = &raw const *self.opts.extra_cjs_extensions[i];
-            // SAFETY: `extra_cjs_extensions` is owned by `self.opts` and never mutated
-            // while the resolver runs; the heap buffer behind each `Box<[u8]>` is stable.
-            if let Some(result) = self.load_index_with_extension(dir_info, unsafe { &*ext }) {
+            // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
+            // `extra_cjs_extensions` is heap-stable for the resolver's life.
+            let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
+            if let Some(result) = self.load_index_with_extension(dir_info, &ext) {
                 return Some(result);
             }
         }
@@ -7873,9 +7878,11 @@ impl<'a> Resolver<'a> {
             package_json = Some(std::ptr::from_ref(pkg_json));
             if pkg_json.main_fields.count() > 0 {
                 let main_field_values = &pkg_json.main_fields;
-                // PORT NOTE: raw fat ptr — borrows `self.opts.main_fields` heap buffer so
-                // the loop body can take `&mut self` without overlapping borrows.
-                let main_field_keys: *const [Box<[u8]>] = &raw const *self.opts.main_fields;
+                // BACKREF: `RawSlice` detaches the `&self.opts.main_fields`
+                // borrow so the loop body can take `&mut self`. Backing
+                // `Box<[Box<[u8]>]>` heap buffer is owned by `self.opts` and
+                // never mutated during resolve.
+                let main_field_keys = bun_ptr::RawSlice::<Box<[u8]>>::new(&self.opts.main_fields);
                 let mf_ext_order = options::ExtOrder::MainField;
                 // Spec resolver.zig compares the *pointer* of `opts.main_fields`
                 // against the per-target default to detect "user did not pass
@@ -7891,9 +7898,7 @@ impl<'a> Resolver<'a> {
                     ));
                 }
 
-                // SAFETY: `main_field_keys` points into `self.opts.main_fields`, owned by
-                // `self` and never mutated during resolve.
-                for key in unsafe { &*main_field_keys }.iter() {
+                for key in main_field_keys.iter() {
                     let key: &[u8] = key;
                     let field_rel_path = match main_field_values.get(key) {
                         Some(v) => v,
@@ -8104,10 +8109,11 @@ impl<'a> Resolver<'a> {
         // `load_extension` (matches `extra_cjs_extensions` loop below).
         let n = self.opts.ext_order_slice(extension_order).len();
         for i in 0..n {
-            let ext: *const [u8] = &raw const *self.opts.ext_order_slice(extension_order)[i];
-            // SAFETY: `ext` points into a `Box<[u8]>` owned by `self.opts` and
-            // never mutated while the resolver runs; heap buffer is address-stable.
-            if let Some(result) = self.load_extension(base, path, unsafe { &*ext }, entries!()) {
+            // BACKREF: `RawSlice` detaches the `&self.opts` borrow so the loop
+            // body can take `&mut self`. Backing `Box<[u8]>` is owned by
+            // `self.opts` and never mutated while the resolver runs.
+            let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
+            if let Some(result) = self.load_extension(base, path, &ext, entries!()) {
                 dec_ret!(Some(result));
             }
         }
@@ -8117,10 +8123,10 @@ impl<'a> Resolver<'a> {
         // `load_extension` (avoids the forbidden lifetime-extension cast).
         let n = self.opts.extra_cjs_extensions.len();
         for i in 0..n {
-            let ext: *const [u8] = &raw const *self.opts.extra_cjs_extensions[i];
-            // SAFETY: `extra_cjs_extensions` is owned by `self.opts` and never mutated
-            // while the resolver runs; the heap buffer behind each `Box<[u8]>` is stable.
-            if let Some(result) = self.load_extension(base, path, unsafe { &*ext }, entries!()) {
+            // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
+            // `extra_cjs_extensions` is heap-stable for the resolver's life.
+            let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
+            if let Some(result) = self.load_extension(base, path, &ext, entries!()) {
                 dec_ret!(Some(result));
             }
         }

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use bun_sys::FdExt as _;
 
 use bun_http_types::Method::Method;
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 use bun_uws::{self as uws, WebSocketUpgradeContext};
 
 use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult, VirtualMachine};
@@ -3984,7 +3984,7 @@ fn get_content_type(
                 let content_slice = content.to_slice();
                 // Zig: `if (content_slice.allocator.isNull()) null else allocator` —
                 // i.e. dupe only when the latin1/utf16 slice was heap-converted.
-                let dupe = matches!(content_slice, bun_str::ZigStringSlice::Owned(_));
+                let dupe = matches!(content_slice, bun_core::ZigStringSlice::Owned(_));
                 let mt = MimeType::init(
                     content_slice.slice(),
                     dupe,

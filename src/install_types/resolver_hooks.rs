@@ -19,7 +19,7 @@ use core::ptr::NonNull;
 
 use bun_semver::version::VersionInt;
 use bun_semver::{self as semver, ExternalString, String as SemverString, Version as SemverVersion};
-use bun_string::strings;
+use bun_core::strings;
 
 // ─── Identity / sentinel ──────────────────────────────────────────────────
 
@@ -508,7 +508,7 @@ impl Dependency {
         }
         let lhs_name = lhs.name.slice(string_buf);
         let rhs_name = rhs.name.slice(string_buf);
-        bun_string::strings::cmp_strings_asc(&(), lhs_name, rhs_name)
+        bun_core::strings::cmp_strings_asc(&(), lhs_name, rhs_name)
     }
 
     /// Total-order comparator for `slice::sort_by` (Zig's `std.sort.pdq`

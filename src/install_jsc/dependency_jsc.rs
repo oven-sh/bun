@@ -19,7 +19,7 @@ pub fn version_to_js(
     buf: &[u8],
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    use bun_string::String as BunString;
+    use bun_core::String as BunString;
     use bun_install::dependency::{self, version::Tag};
 
     let object = JSValue::create_empty_object(global, 0);
@@ -92,7 +92,7 @@ pub fn version_to_js(
 
 // TODO(port): proc-macro — `#[bun_jsc::host_fn]` ABI wrapper.
 pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    use bun_string::String as BunString;
+    use bun_core::String as BunString;
     use bun_install::dependency::{version::Tag, TagExt};
 
     let arguments = frame.arguments_old::<1>();

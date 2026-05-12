@@ -7,6 +7,7 @@
 //! import resolution failures are solved.
 // TODO: when a file fixes its resolution, there is no code specifically to remove the watchers.
 
+use bun_paths::strings;
 use core::mem::offset_of;
 
 use bun_alloc::AllocError;
@@ -16,7 +17,7 @@ use bun_ast::Loader;
 use bun_collections::ArrayHashMap;
 use bun_core::fmt as bun_fmt;
 use bun_paths::{self as path, path_buffer_pool};
-use bun_str::strings;
+
 use bun_sys::{self, Fd, FdExt, O};
 use bun_watcher::{self, Watcher};
 

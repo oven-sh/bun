@@ -2,7 +2,7 @@ use crate::lockfile::package::PackageColumns as _;
 use core::cmp::Ordering;
 
 use bun_collections::HashMap;
-use bun_str::strings;
+use bun_core::strings;
 use bun_semver::String as SemverString;
 
 use bun_install::PackageID;

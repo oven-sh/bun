@@ -11,8 +11,8 @@ use bun_collections::StringArrayHashMap;
 // PORT NOTE: Zig `bun.threading.ThreadPool` is the *module*; `Batch`/`Task`
 // are free types in that module, not associated types on the struct.
 use bun_threading::thread_pool as ThreadPoolLib;
-use bun_string::strings;
-use bun_string::String as BunString;
+use bun_core::strings;
+use bun_core::String as BunString;
 use bun_paths as path;
 
 use crate::options;
@@ -847,7 +847,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         source_provider_url.ref_();
                         // RAII: `defer source_provider_url.deref()` — `OwnedString::Drop`
                         // releases the ref bumped above on every exit path (incl. `break 'brk`).
-                        let mut source_provider_url = bun_string::OwnedString::new(source_provider_url);
+                        let mut source_provider_url = bun_core::OwnedString::new(source_provider_url);
 
                         if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
                             c.options.output_format,

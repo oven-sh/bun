@@ -6,7 +6,7 @@ use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
 use bun_core::Output;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES, SEP};
 use bun_semver::String as SemverString;
-use bun_str::ZStr;
+use bun_core::ZStr;
 
 use crate::lockfile::{
     DependencyIDList, DependencyIDSlice, DepSorter, Lockfile,

@@ -27,6 +27,10 @@ bun_dispatch.workspace = true
 bun_simdutf_sys.workspace = true
 bun_core_macros.workspace = true
 bun_output_tags.workspace = true
+# merged from bun_string:
+bun_highway.workspace = true
+bun_wyhash.workspace = true
+thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 bun_windows_sys.workspace = true

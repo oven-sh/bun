@@ -5,7 +5,7 @@ use bun_glob as glob;
 use bun_parsers::json;
 use bun_ast::{self, ExprData, Log};
 use bun_paths::{self, platform, resolve_path, PathBuffer};
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_sys;
 
 const SKIP_LIST: &[&[u8]] = &[

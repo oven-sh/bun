@@ -2,7 +2,7 @@ use core::slice;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsError, JsResult, JsClass, StringJsc};
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 
 use crate::node::Encoding;
 
@@ -45,7 +45,7 @@ impl JSGlobalObjectCryptoExt for JSGlobalObject {
             // C++ reads `*this` by value and never writes through it, so a
             // plain `&ZigString` (readonly) is sound here.
             safe fn ZigString__toDOMExceptionInstance(
-                this: &bun_str::ZigString,
+                this: &bun_core::ZigString,
                 global: &JSGlobalObject,
                 code: u8,
             ) -> JSValue;
@@ -54,11 +54,11 @@ impl JSGlobalObjectCryptoExt for JSGlobalObject {
         // here we heap-format. The argument-free fast path (`@sizeOf(args)==0`)
         // is recovered via `Arguments::as_str`.
         let instance = if let Some(s) = args.as_str() {
-            let zs = bun_str::ZigString::init_utf8(s.as_bytes());
+            let zs = bun_core::ZigString::init_utf8(s.as_bytes());
             ZigString__toDOMExceptionInstance(&zs, self, code as u8)
         } else {
             let buf = std::fmt::format(args);
-            let zs = bun_str::ZigString::init_utf8(buf.as_bytes());
+            let zs = bun_core::ZigString::init_utf8(buf.as_bytes());
             ZigString__toDOMExceptionInstance(&zs, self, code as u8)
         };
         self.throw_value(instance)
@@ -456,8 +456,8 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let name_value = arguments.ptr[0];
     let namespace_value = arguments.ptr[1];
 
-    // `name` is a ZigString.Slice in Zig (borrow-or-own UTF-8). Port as bun_str::ZigStringSlice.
-    let name: bun_str::ZigStringSlice = 'brk: {
+    // `name` is a ZigString.Slice in Zig (borrow-or-own UTF-8). Port as bun_core::ZigStringSlice.
+    let name: bun_core::ZigStringSlice = 'brk: {
         if name_value.is_string() {
             let name_str = name_value.to_bun_string(global)?;
             // `defer name_str.deref()` — BunString's Drop handles the deref.
@@ -466,7 +466,7 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
             break 'brk result;
         } else if let Some(array_buffer) = name_value.as_array_buffer(global) {
             let bytes: &[u8] = array_buffer.byte_slice();
-            break 'brk bun_str::ZigStringSlice::from_utf8_never_free(bytes);
+            break 'brk bun_core::ZigStringSlice::from_utf8_never_free(bytes);
         } else {
             return Err(global
                 .err(

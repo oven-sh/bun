@@ -15,7 +15,7 @@ use core::ffi::c_void;
 
 use bun_core::Environment;
 use bun_core::Output;
-use bun_string::ZigString;
+use bun_core::ZigString;
 
 use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 

@@ -19,8 +19,8 @@ use crate::webcore::BlobExt as _;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
 use bun_io::KeepAlive;
 use bun_core::{self, Output, ZBox};
-use bun_str::{self as strings, ZigString};
-use bun_str::zig_string::Slice as ZigStringSlice;
+use bun_core::{strings, ZigString};
+use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_sys::{self, Fd, Mode, FdExt as _, FdDirExt as _};
 use bun_glob as glob;
 use bun_libarchive as libarchive;
@@ -1167,7 +1167,7 @@ impl TaskContext for FilesContext {
                     // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
                     let blob = unsafe { &mut *blob_ptr };
                     blob.is_jsdom_file.set(true);
-                    blob.name.set(bun_str::String::clone_utf8(&entry.path));
+                    blob.name.set(bun_core::String::clone_utf8(&entry.path));
                     blob.last_modified.set((entry.mtime * 1000) as f64);
 
                     let name_js = blob.name.get().to_js(global)?;

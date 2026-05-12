@@ -8,7 +8,7 @@ use bun_ast::server_component_boundary;
 use bun_ast::symbol;
 use bun_ast::{DeclaredSymbol, DeclaredSymbolList, Dependency, Symbol};
 use bun_ast::{ImportKind, ImportRecord};
-use bun_string::PathString;
+use bun_core::PathString;
 
 use crate::IndexStringMap::IndexStringMap;
 use crate::entry_point::EntryPointColumns as _;

@@ -2,6 +2,7 @@
 // for interacting with the filesystem from JavaScript.
 // The top-level functions assume the arguments are already validated
 
+use bun_paths::strings;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -23,7 +24,7 @@ use bun_event_loop::ConcurrentTask::ConcurrentTask as ConcurrentTaskItem;
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
-use bun_string::{self as bstr, strings, String as BunString, ZStr, PathString, ZigString};
+use bun_core::{self as bstr, String as BunString, ZStr, PathString, ZigString};
 use bun_sys::{self as sys, Fd as FD, FdExt as _, Maybe, Mode, SystemErrno, E};
 use bun_threading::work_pool::{IntrusiveWorkTask as _, WorkPool, Task as WorkPoolTask};
 use crate::webcore;
@@ -288,11 +289,11 @@ impl core::ops::DerefMut for UvFsReq {
 // have to be rewritten per-line. Each is a thin forwarder.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `bun.strings.withoutNTPrefix` — lives in `bun_string::strings::paths`
+/// `bun.strings.withoutNTPrefix` — lives in `bun_core::paths`
 /// under the Rust crate split, not at the `strings` root.
 #[inline]
-fn without_nt_prefix<T: bun_string::strings::paths::Ch>(path: &[T]) -> &[T] {
-    bun_string::strings::paths::without_nt_prefix(path)
+fn without_nt_prefix<T: bun_paths::string_paths::Ch>(path: &[T]) -> &[T] {
+    bun_paths::string_paths::without_nt_prefix(path)
 }
 
 /// `bun.paths.OSPathLiteral("")` — Zig comptime string→`[:0]const OSPathChar`.
@@ -350,13 +351,13 @@ fn with_path_like(err: sys::Error, p: &PathOrFileDescriptor) -> sys::Error {
     }
 }
 
-/// `node::Encoding` → `bun_string::NodeEncoding`. Both are `#[repr(u8)]` with the
+/// `node::Encoding` → `bun_core::NodeEncoding`. Both are `#[repr(u8)]` with the
 /// identical discriminant layout (`Utf8..Buffer`); `webcore::encoding` was ported
 /// against the upstream copy, so adapt at the boundary instead of changing
 /// either definition.
 #[inline]
-fn encoding_to_node(e: Encoding) -> bun_string::NodeEncoding {
-    use bun_string::NodeEncoding as N;
+fn encoding_to_node(e: Encoding) -> bun_core::NodeEncoding {
+    use bun_core::NodeEncoding as N;
     match e {
         Encoding::Utf8 => N::Utf8,
         Encoding::Ucs2 => N::Ucs2,
@@ -396,7 +397,7 @@ fn err_from_static(name: &'static str) -> bun_core::Error {
 const PREALLOCATE_SUPPORTED: bool = cfg!(target_os = "linux");
 const PREALLOCATE_LENGTH: usize = 2048 * 1024;
 
-/// `PathString.PathInt` — Zig packed-struct field width. `bun_string::PathString`
+/// `PathString.PathInt` — Zig packed-struct field width. `bun_core::PathString`
 /// stores it as `u32` on the Rust side (see `PathString.rs` POINTER_BITS).
 type PathInt = u32;
 

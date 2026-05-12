@@ -7,7 +7,7 @@ use core::ffi::{c_int, CStr};
 use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_jsc::{bun_string_jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SystemError};
-use bun_str::{self as bstr, strings};
+use bun_core::{self as bstr, strings};
 
 use crate::dns_jsc::options_jsc::{address_to_js, result_to_js};
 
@@ -742,7 +742,7 @@ impl ErrorDeferred {
     }
 }
 
-// Drop: hostname (bun_str::String) and promise (JSPromiseStrong) drop their own resources.
+// Drop: hostname (bun_core::String) and promise (JSPromiseStrong) drop their own resources.
 // Zig's deinit() additionally did `bun.destroy(this)` — handled by Box drop at the call site.
 
 pub fn error_to_deferred(

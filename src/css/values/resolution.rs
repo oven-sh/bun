@@ -1,7 +1,7 @@
 use crate::css_parser as css;
 use crate::css_parser::{CssResult as Result, Maybe, Parser, PrintErr, Printer, Token};
 use crate::values::number::CSSNumber;
-use bun_string::strings;
+use bun_core::strings;
 
 /// A CSS `<resolution>` value.
 #[derive(Clone, Copy, Debug, PartialEq, crate::generics::CssEql, crate::generics::CssHash, crate::generics::DeepClone)]

@@ -7,7 +7,7 @@ use core::ffi::c_void;
 
 use crate::node::Encoding;
 use crate::webcore::encoding as encoder;
-use bun_str::ZigString;
+use bun_core::ZigString;
 
 impl BufferVectorized {
     #[unsafe(export_name = "Bun__Buffer_fill")]

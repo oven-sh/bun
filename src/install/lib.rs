@@ -11,7 +11,7 @@
 // lifecycle_script_runner.rs).
 use bun_collections::VecExt;
 extern crate self as bun_install;
-extern crate bun_string as bun_str;
+extern crate bun_core as bun_str;
 extern crate bun_sha_hmac as bun_sha;
 // `bun_output::declare_scope!` / `scoped_log!` in Phase-A drafts → the macros
 // live at `bun_core` crate root (#[macro_export]); alias the crate so the
@@ -440,7 +440,7 @@ pub mod ShellCompletions {
         /// generic over the string type purely so it could accept both `[]const u8` and
         /// `[:0]const u8`; in Rust both coerce to `&[u8]`.
         pub fn from_env(shell: &[u8]) -> Shell {
-            use bun_string::strings;
+            use bun_core::strings;
             let basename = bun_paths::basename(shell);
             if strings::eql_comptime(basename, b"bash") {
                 Shell::Bash
@@ -670,7 +670,7 @@ impl RunCommand {
 
         #[cfg(windows)]
         {
-            use bun_str::strings;
+            use bun_core::strings;
             use bun_sys::windows as win;
 
             let mut target_path_buffer = bun_paths::WPathBuffer::default();
@@ -729,7 +729,7 @@ impl RunCommand {
                 // the error — the `CreateHardLinkW` retry below already
                 // re-mkdirs on failure, so a lost race here is harmless.
                 let dir_slice_u8 =
-                    bun_str::immutable::to_utf8_alloc_with_type(&target_path_buffer[..dir_slice_len]);
+                    bun_core::immutable::to_utf8_alloc_with_type(&target_path_buffer[..dir_slice_len]);
                 let _ = bun_sys::delete_tree_absolute(&dir_slice_u8);
                 let _ = bun_sys::Dir::cwd().make_dir(&dir_slice_u8);
             }
@@ -950,7 +950,7 @@ impl<'a> fmt::Display for StorePathFormatter<'a> {
         // `fmt::Error` rather than corrupt the path.
         let mut buf = Vec::with_capacity(self.str.len());
         self.write_to(&mut buf).map_err(|_| fmt::Error)?;
-        f.write_str(bun_string::strings::str_utf8(&buf).ok_or(fmt::Error)?)
+        f.write_str(bun_core::str_utf8(&buf).ok_or(fmt::Error)?)
     }
 }
 

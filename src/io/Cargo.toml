@@ -22,7 +22,6 @@ bun_core.workspace = true
 bun_dispatch.workspace = true
 bun_ptr.workspace = true
 bun_collections.workspace = true
-bun_string.workspace = true
 bun_spawn_sys.workspace = true
 bun_sys.workspace = true
 bun_uws_sys.workspace = true

@@ -453,7 +453,7 @@ fn cstr_bytes<'a>(p: CStrPtr) -> &'a [u8] {
 fn cstr_eq(a: CStrPtr, b: CStrPtr) -> bool {
     match (a.is_null(), b.is_null()) {
         (true, true) => true,
-        (false, false) => bun_string::strings::eql_long(cstr_bytes(a), cstr_bytes(b), true),
+        (false, false) => bun_core::strings::eql_long(cstr_bytes(a), cstr_bytes(b), true),
         _ => false,
     }
 }

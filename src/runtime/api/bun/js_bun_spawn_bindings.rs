@@ -15,7 +15,7 @@ use bun_jsc::{
 use bun_jsc::{JsCell, JsClass as _, SysErrorJsc as _};
 use bun_jsc::ipc as IPC;
 use bun_paths::PathBuffer;
-use bun_str::{self as strings_mod, strings, String as BunString, ZStr, ZigString};
+use bun_core::{self as strings_mod, strings, String as BunString, ZStr, ZigString};
 use bun_sys::{self as sys, Fd, FdExt as _, SignalCode};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
@@ -58,7 +58,7 @@ impl JSValueSpawnExt for JSValue {
 
 /// `bun.String.indexOfAsciiChar` — encoding-aware ASCII-char search over the
 /// string's storage code units (Latin-1 bytes or UTF-16 u16s). Matches Zig
-/// `bun.String.indexOfAsciiChar` exactly; `bun_str::String` does not expose it
+/// `bun.String.indexOfAsciiChar` exactly; `bun_core::String` does not expose it
 /// inherently yet.
 trait BunStringSpawnExt {
     fn index_of_ascii_char(&self, chr: u8) -> Option<usize>;

@@ -27,7 +27,7 @@ use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_paths::{self, resolve_path, platform, PathBuffer, SEP};
 use bun_resolver::fs::RealFS;
-use bun_str::{strings, PathString, ZStr};
+use bun_core::{strings, PathString, ZStr};
 use bun_sys as sys;
 
 use crate::api::bun_process::sync as spawn_sync;

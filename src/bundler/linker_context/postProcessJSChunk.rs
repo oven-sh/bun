@@ -18,7 +18,7 @@ use bun_core::perf;
 use bun_ast::{self as js_ast, Binding, Expr, Part, Ref, Scope, Stmt, StmtData, StmtOrExpr, B, E, G, S};
 use bun_ast::{ImportRecord, ImportRecordTag, ImportRecordFlags};
 use bun_sourcemap as SourceMap;
-use bun_string::{strings, MutableString, string_joiner::{StringJoiner, Watcher}};
+use bun_core::{immutable as strings, MutableString, string_joiner::{StringJoiner, Watcher}};
 
 use crate::IndexInt;
 

@@ -10,8 +10,8 @@ use phf::phf_map;
 
 use bun_alloc::AllocError;
 use bun_collections::VecExt;
-use bun_string::strings;
-use bun_string::ZigString;
+use bun_core::strings;
+use bun_core::ZigString;
 
 use bun_alloc::ArenaVecExt as _;
 use crate::{
@@ -1319,7 +1319,7 @@ pub struct EString {
     pub rope_len: u32,
     pub is_utf16: bool,
 }
-// Export under the Zig name `String` as well; `EString` avoids colliding with bun_string::String.
+// Export under the Zig name `String` as well; `EString` avoids colliding with bun_core::String.
 pub use EString as String;
 
 impl Default for EString {
@@ -1413,7 +1413,7 @@ impl EString {
 }
 
 // ── live EString accessor surface (round-E unblock) ────────────────────────
-// Subset of the gated impl below adapted to the current `bun_string` API
+// Subset of the gated impl below adapted to the current `bun_core` API
 // (`eql_long::<CHECK_LEN>`, no bump-arena `to_utf8_alloc`). Heavy
 // transcode/rope-clone paths stay gated.
 impl EString {
@@ -1533,7 +1533,7 @@ impl EString {
 // ── live EString surface (B-2 un-gate) ─────────────────────────────────────
 // Ordering / equality / const-literal / rope-mutation helpers extracted from
 // the round-C draft below. `string_z`/`to_zig_string` remain gated on
-// `bun_string::ZStr` arena constructors.
+// `bun_core::ZStr` arena constructors.
 impl EString {
     pub const CLASS: EString = EString::from_static(b"class");
     pub const EMPTY: EString = EString::from_static(b"");
@@ -1708,7 +1708,7 @@ fn array_sorter_is_less_than(lhs: &Expr, rhs: &Expr) -> Ordering {
 }
 
 impl EString {
-    pub fn string_z<'b>(&self, bump: &'b Bump) -> Result<&'b bun_string::ZStr, AllocError> {
+    pub fn string_z<'b>(&self, bump: &'b Bump) -> Result<&'b bun_core::ZStr, AllocError> {
         // Zig: `if (self.isUTF8()) self.data else strings.toUTF8AllocZ(...)`, NUL-terminated.
         // Port: copy into the bump arena with a trailing NUL and wrap as `ZStr`.
         let bytes: &[u8] = if self.is_utf8() {
@@ -1722,7 +1722,7 @@ impl EString {
         buf.push(0);
         let s = buf.into_bump_slice();
         // SAFETY: `s[len-1] == 0` (just pushed) and `s[..len-1]` is readable for `'b`.
-        Ok(bun_string::ZStr::from_slice_with_nul(&s[..]))
+        Ok(bun_core::ZStr::from_slice_with_nul(&s[..]))
     }
 
     // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
@@ -2011,10 +2011,10 @@ impl RegExp {
                 i -= 1;
             }
 
-            return bun_string::strings::trim(&self.value[..i as usize], b"/");
+            return bun_core::trim(&self.value[..i as usize], b"/");
         }
 
-        bun_string::strings::trim(&self.value, b"/")
+        bun_core::trim(&self.value, b"/")
     }
 
     pub fn flags(&self) -> &[u8] {

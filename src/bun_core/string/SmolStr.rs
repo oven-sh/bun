@@ -2,7 +2,6 @@ use core::mem;
 use core::ptr;
 
 use bun_alloc::AllocError;
-use bun_collections::VecExt;
 
 // NOTE: the tag-bit scheme below only works on little-endian systems (matches Zig comment).
 const _: () = assert!(cfg!(target_endian = "little"));
@@ -66,7 +65,7 @@ impl SmolStr {
 
     // TODO(port): Zig `jsonStringify` participates in std.json's structural protocol;
     // map to whatever bun's JSON-serialize trait becomes in Phase B.
-    pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
+    pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), crate::Error>
     where
         W: JsonWriter,
     {
@@ -143,8 +142,8 @@ impl SmolStr {
     pub fn from_slice(values: &[u8]) -> Result<SmolStr, AllocError> {
         if values.len() > Inlined::MAX_LEN {
             // TODO(port): verify Vec::<u8>::init_capacity / append_slice_assume_capacity API.
-            let mut baby_list = Vec::<u8>::init_capacity(values.len());
-            baby_list.append_slice_assume_capacity(values);
+            let mut baby_list = Vec::<u8>::with_capacity(values.len());
+            baby_list.extend_from_slice(values);
             // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
             return Ok(SmolStr::from_baby_list(baby_list));
         }
@@ -158,7 +157,7 @@ impl SmolStr {
         if self.is_inlined() {
             // On little-endian the low `len` bytes of the backing u128 are the
             // inline data; `u128: Pod` lets us view them safely.
-            return &bun_core::bytes_of(&self.0)[..self.len() as usize];
+            return &crate::bytes_of(&self.0)[..self.len() as usize];
         }
         // SAFETY: heap ptr + raw_len describe a live allocation owned by self.
         unsafe { core::slice::from_raw_parts(self.ptr_const(), self.raw_len() as usize) }
@@ -168,8 +167,8 @@ impl SmolStr {
         if self.is_inlined() {
             let mut inlined = self.to_inlined();
             if inlined.len() as usize + 1 > Inlined::MAX_LEN {
-                let mut baby_list = Vec::<u8>::init_capacity(inlined.len() as usize + 1);
-                baby_list.append_slice_assume_capacity(inlined.slice());
+                let mut baby_list = Vec::<u8>::with_capacity(inlined.len() as usize + 1);
+                baby_list.extend_from_slice(inlined.slice());
                 // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
                 baby_list.push(char);
                 // Old value is inlined (no heap) so `Drop` is a no-op; plain assign is fine.
@@ -201,9 +200,9 @@ impl SmolStr {
             let mut inlined = self.to_inlined();
             let old_len = inlined.len() as usize;
             if old_len + values.len() > Inlined::MAX_LEN {
-                let mut baby_list = Vec::<u8>::init_capacity(old_len + values.len());
-                baby_list.append_slice_assume_capacity(inlined.slice());
-                baby_list.append_slice_assume_capacity(values);
+                let mut baby_list = Vec::<u8>::with_capacity(old_len + values.len());
+                baby_list.extend_from_slice(inlined.slice());
+                baby_list.extend_from_slice(values);
                 // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
                 // Old `*self` is inlined (no heap) so `Drop` is a no-op; plain assign is fine.
                 *self = SmolStr::from_baby_list(baby_list);
@@ -247,7 +246,7 @@ impl Drop for SmolStr {
 
 // TODO(port): placeholder for the std.json `writer: anytype` protocol used by json_stringify.
 pub trait JsonWriter {
-    fn write(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error>;
+    fn write(&mut self, bytes: &[u8]) -> Result<(), crate::Error>;
 }
 
 // ---------------------------------------------------------------------------
@@ -266,9 +265,9 @@ pub enum InlinedError {
     StringTooLong,
 }
 
-impl From<InlinedError> for bun_core::Error {
+impl From<InlinedError> for crate::Error {
     fn from(e: InlinedError) -> Self {
-        bun_core::err!(from e)
+        crate::err!(from e)
     }
 }
 
@@ -311,13 +310,13 @@ impl Inlined {
     pub fn slice(&self) -> &[u8] {
         // Bytes 0..len of the backing u128 are the inline data on little-endian;
         // `u128: Pod` lets us view them safely.
-        &bun_core::bytes_of(&self.0)[..self.len() as usize]
+        &crate::bytes_of(&self.0)[..self.len() as usize]
     }
 
     pub fn slice_mut(&mut self) -> &mut [u8] {
         let len = self.len() as usize;
         // `u128: Pod` lets us view its bytes safely; first `len` are the data.
-        &mut bun_core::bytes_of_mut(&mut self.0)[..len]
+        &mut crate::bytes_of_mut(&mut self.0)[..len]
     }
 
     pub fn all_chars(&mut self) -> &mut [u8; Self::MAX_LEN] {

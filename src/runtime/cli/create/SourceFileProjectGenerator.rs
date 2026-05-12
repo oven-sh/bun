@@ -17,8 +17,8 @@ use bun_ast::Source as LoggerSource;
 use bun_paths as path;
 use bun_paths::resolve_path;
 use bun_paths::fs::FileSystem;
-use bun_str::strings;
-use bun_str::MutableString;
+use bun_core::strings;
+use bun_core::MutableString;
 use bun_sys::{self, Fd, FdExt as _};
 
 // Generate project files based on the entry point and dependencies
@@ -532,7 +532,7 @@ fn has_any_tailwind_classes_in_source_files(
                             let class_name = &source_code[0..end_quote as usize];
                             // search for tailwind patterns
                             for pattern in COMMON_TAILWIND_PATTERNS {
-                                if bun_str::strings::index_of(class_name, pattern).is_some() {
+                                if bun_core::index_of(class_name, pattern).is_some() {
                                     return true;
                                 }
                             }
@@ -567,7 +567,7 @@ fn has_any_tailwind_classes_in_source_files(
                         {
                             // Found a class attribute, now check for Tailwind patterns
                             for pattern in COMMON_TAILWIND_PATTERNS {
-                                if bun_str::strings::index_of(
+                                if bun_core::index_of(
                                     &source_code[j..(j + 1000).min(source_code.len())],
                                     pattern,
                                 )

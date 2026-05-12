@@ -1,4 +1,4 @@
-use bun_string::strings;
+use bun_core::strings;
 
 #[repr(u8)] // Zig: enum(u2)
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

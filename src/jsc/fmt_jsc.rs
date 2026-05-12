@@ -6,7 +6,7 @@ use std::io::Write as _;
 
 use bun_core::fmt;
 use crate::{JSGlobalObject, JsResult};
-use bun_string::{MutableString, String};
+use bun_core::{MutableString, String};
 
 pub mod js_bindings {
     use super::*;

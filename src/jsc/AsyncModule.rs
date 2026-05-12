@@ -24,7 +24,7 @@ use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
 use bun_resolver::fs as Fs;
 use bun_resolver::package_json::PackageJSON;
-use bun_string::{OwnedString, String as BunString, ZigString};
+use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_sys::Fd;
 
 use crate::virtual_machine::VirtualMachine;
@@ -266,7 +266,7 @@ use std::io::Write as _;
 
 use bun_install::package_manager::run_tasks;
 use bun_install::{self as install, LogLevel, PackageID, PackageManager};
-use bun_string::{self as bun_str, strings};
+use bun_core::strings;
 
 use crate::event_loop::{AnyTask, ConcurrentTaskItem, Task};
 
@@ -651,7 +651,7 @@ impl AsyncModule {
         let this_promise = crate::JSPromise::create(global_object).to_js();
         let promise = StrongOptional::create(this_promise, global_object);
 
-        let mut buf = bun_str::StringBuilder::default();
+        let mut buf = bun_core::StringBuilder::default();
         buf.count(opts.referrer);
         buf.count(opts.specifier);
         buf.count(opts.path.text);

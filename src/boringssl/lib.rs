@@ -12,7 +12,7 @@ use std::cell::Cell;
 
 pub use bun_boringssl_sys as boring;
 use bun_cares_sys as c_ares;
-use bun_string::strings;
+use bun_core::strings;
 
 // MOVE_DOWN: ported from `src/runtime/api/bun/x509.zig::isSafeAltName`.
 // Lives here so `boringssl` does not depend on `bun_runtime` (tier-6).

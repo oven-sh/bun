@@ -20,7 +20,7 @@ use bun_install::dependency::VersionTag;
 use bun_parsers::json;
 use bun_ast::ExprData as ExprData;
 use bun_paths::{self, PathBuffer, DELIMITER};
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, O};
 use bun_wyhash::hash;
 use std::env::consts::EXE_SUFFIX;
@@ -204,7 +204,7 @@ impl BunxCommand {
     ///
     /// Returned `Vec<u8>` is NUL-terminated: `v[v.len()-1] == 0` and the content
     /// occupies `v[..v.len()-1]` (matches Zig `[:0]const u8` from `allocSentinel`).
-    // TODO(port): return owned `bun_str::ZString` / `Box<ZStr>` once that type exists,
+    // TODO(port): return owned `bun_core::ZString` / `Box<ZStr>` once that type exists,
     // instead of a Vec<u8> with a trailing-NUL convention.
     pub fn add_create_prefix(input: &[u8]) -> Result<Vec<u8>, AllocError> {
         const PREFIX_LENGTH: usize = b"create-".len();

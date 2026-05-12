@@ -26,7 +26,7 @@ use crate::versioned_url::VersionedURL;
 use crate::bun_json;
 use bun_paths::PathBuffer;
 use bun_semver::{self as Semver, SlicedString, String as SemverString};
-use bun_str::strings;
+use bun_core::strings;
 use bun_sys::Fd;
 
 // TODO(port): lifetime — Entry/YarnLock borrow from the input `data: &[u8]` passed to
@@ -333,7 +333,7 @@ impl<'a> YarnLock<'a> {
         let mut current_dep_type: Option<DependencyType> = None;
 
         while let Some(line_) = lines.next() {
-            let line = bun_str::strings::trim_right(line_, b" \r\t");
+            let line = bun_core::trim_right(line_, b" \r\t");
             if line.is_empty() || line[0] == b'#' {
                 continue;
             }

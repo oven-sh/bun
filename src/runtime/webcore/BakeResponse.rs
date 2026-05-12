@@ -3,7 +3,7 @@ use core::ffi::{c_int, c_void};
 use bun_jsc::{CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsResult};
 use crate::webcore::Response;
 use crate::webcore::response::{HeadersRef, Init};
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 
 pub fn fix_dead_code_elimination() {
     bun_core::keep_symbols!(BakeResponseClass__constructForSSR, BakeResponseClass__constructRender);
@@ -186,7 +186,7 @@ pub fn construct_render(
 
     // Get the path string
     let path_str = path_arg.to_bun_string(global_this)?;
-    // `defer path_str.deref()` → handled by Drop on bun_str::String
+    // `defer path_str.deref()` → handled by Drop on bun_core::String
 
     let path_utf8 = path_str.to_utf8();
     // `defer path_utf8.deinit()` → handled by Drop on the UTF-8 slice guard

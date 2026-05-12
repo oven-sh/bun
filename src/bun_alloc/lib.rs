@@ -262,7 +262,7 @@ pub use allocator_api2::alloc::Allocator as HashbrownAllocator;
 // ── tier-0 local primitives ───────────────────────────────────────────────
 // Real, self-contained helpers used by the BSS containers below. These are the
 // canonical tier-0 definitions, re-exported by higher tiers (`bun_paths::SEP_STR`,
-// `bun_core::strings::trim_right`, `bun_string::strings::trim_right`).
+// `bun_core::strings::trim_right`, `bun_core::strings::trim_right`).
 
 /// Zig: `std.fs.path.sep_str` — `"\\"` on Windows, `"/"` elsewhere.
 /// Canonical tier-0 definition; re-exported by `bun_paths::SEP_STR`.
@@ -305,7 +305,7 @@ pub fn trim<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
 // Sunk from bun_core::strings so bun_alloc::BSSList::append_lower_case can call
 // it without a dep cycle (bun_core → bun_alloc, not the reverse). bun_core
 // re-exports both names so all existing callers of
-// `bun_core::strings::copy_lowercase` / `bun_string::immutable::copy_lowercase`
+// `bun_core::strings::copy_lowercase` / `bun_core::immutable::copy_lowercase`
 // keep compiling unchanged.
 
 /// Zig: `strings.copyLowercase` (src/string/immutable.zig). ASCII-lowercase
@@ -676,14 +676,14 @@ pub enum Tag {
 /// 61 = UTF-8, 60 = static). Untagging masks to the low 53 bits.
 ///
 /// **STORAGE TWIN — not canonical.** The canonical, method-rich `ZigString`
-/// lives in `bun_string::ZigString` (identical `#[repr(C)] { *const u8, usize }`
+/// lives in `bun_core::ZigString` (identical `#[repr(C)] { *const u8, usize }`
 /// layout, same tag-bit scheme — guarded by a `const _ = assert!(size/align)`
 /// in `bun_string`). This copy exists so the T0 `bun_alloc::String` /
 /// `StringImpl` union can name the field type without an upward dep on
 /// `bun_string` (`bun_alloc` is the lowest tier). The handful of methods kept
 /// here are for `bun_alloc`'s internal use only (`WTFStringImplStruct::
 /// to_zig_string`, `String::eql_bytes`, the `Debug` impl). **Do not add new
-/// methods here** — add them to `bun_string::ZigString` and convert via
+/// methods here** — add them to `bun_core::ZigString` and convert via
 /// `from_tagged_ptr` / `_unsafe_ptr_do_not_use`.
 #[doc(hidden)]
 #[repr(C)]
@@ -703,7 +703,7 @@ impl ZigString {
     }
 
     /// Construct from an already-tagged pointer + length. Mirror of
-    /// `bun_string::ZigString::from_tagged_ptr` for field-by-field round-trips
+    /// `bun_core::ZigString::from_tagged_ptr` for field-by-field round-trips
     /// (preferred over `transmute` so a future field reorder fails at compile
     /// time, not at runtime).
     #[inline]

@@ -32,6 +32,153 @@ pub mod wtf;
 #[cfg(windows)]
 pub mod windows_sys;
 
+// ──────────────────────────────────────────────────────────────────────────
+// `string` — the former `bun_string` crate, merged in to break the
+// `bun_core ↔ bun_string` dep cycle. The `bun_string` crate is now a
+// one-line re-export shim over this module.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod string;
+pub use string::{
+    String, OwnedString, OwnedStringCell, ZigString, ZigStringSlice, SliceWithUnderlyingString,
+    MutableString, PathString, HashedString, SmolStr, StringBuilder, NodeEncoding,
+    WTFStringImpl, WTFStringImplExt, WTFStringImplStruct,
+};
+pub use string::string_joiner::StringJoiner;
+pub use string::{slice_to_nul, slice_to_nul_mut, StringPointer, Tag};
+/// `bun.strings` (the full SIMD-backed `immutable` module). Distinct from the
+/// scalar-fallback `crate::strings` shim below — several names
+/// (`index_of_char`, `CodepointIterator`, `Encoding`) differ in signature.
+/// Callers that previously wrote `bun_string::strings::X` import this.
+pub use string::immutable;
+pub use string::{
+    cheap_prefix_normalizer, escape_reg_exp, identifier, lexer, parse_double, printer,
+    quote_for_json, string_joiner, write, zig_string, ByteString,
+    ZigStringGithubActionFormatter, STRING_ALLOCATION_LIMIT,
+};
+pub use ::bstr::{BStr, BString, ByteSlice};
+
+// ──────────────────────────────────────────────────────────────────────────
+// Low-tier homes for types the merged `string` module needs that previously
+// lived in `bun_ptr` / `bun_collections` (both depend on `bun_core`, so the
+// merge would otherwise cycle). The original crates re-export these.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod external_shared;
+pub use external_shared::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional, WTFString};
+pub mod bounded_array;
+pub use bounded_array::{BoundedArray, BoundedArrayAligned};
+
+/// Bit-cast between fn-pointer types. Replaces Zig `@ptrCast` on a function
+/// pointer when erasing only the *pointee type* of one or more thin-pointer
+/// parameters (e.g. `extern "C" fn(*mut Ctx, …)` ↔ `extern "C" fn(*mut c_void,
+/// …)`). Const-generic `transmute` rejects fn types; an as-cast can't change
+/// arity. This stays one audited helper and rejects non-pointer-sized
+/// `F`/`G` at compile time — it does **not** verify that `F`/`G` are
+/// fn-pointer types or that their arity/ABI match (all fn pointers are
+/// pointer-sized regardless of arity); those remain caller contract.
+///
+/// # Safety
+/// `F` and `G` must be fn-pointer types with the **same calling convention,
+/// arity, and ABI** — they may differ only in the nominal pointee type of
+/// thin-pointer parameters that the callee casts back before use.
+#[inline(always)]
+pub const unsafe fn cast_fn_ptr<F: Copy, G: Copy>(f: F) -> G {
+    const {
+        assert!(core::mem::size_of::<F>() == core::mem::size_of::<fn()>());
+        assert!(core::mem::size_of::<G>() == core::mem::size_of::<fn()>());
+        // `read` below pulls a `G` out of a stack slot aligned for `F`; rule
+        // out under-alignment so the bitcast stays defined even if a caller
+        // smuggles in a non-fn-ptr `Copy` type.
+        assert!(core::mem::align_of::<F>() == core::mem::align_of::<fn()>());
+        assert!(core::mem::align_of::<G>() == core::mem::align_of::<fn()>());
+    }
+    // SAFETY: caller contract — `F` and `G` are ABI-identical fn pointers.
+    // `read` of a pointer-sized `Copy` value through a same-size cast is the
+    // bitwise reinterpretation `@ptrCast` performs.
+    unsafe { (&raw const f).cast::<G>().read() }
+}
+
+/// Non-owning borrowed slice whose backing storage outlives the holder.
+///
+/// Runtime sibling of `bun_ast::StoreSlice<T>` for `*const [T]` struct
+/// fields. Same contract as `bun_ptr::BackRef`: the slice memory is owned
+/// elsewhere (parent struct, leaked `Box`, interned string) and remains valid
+/// for the holder's full lifetime. Stores a fat raw pointer (`*const [T]`,
+/// `usize` len) so it is a byte-for-byte drop-in for the Phase-A `*const [T]`
+/// fields it replaces.
+#[repr(transparent)]
+pub struct RawSlice<T>(*const [T]);
+
+impl<T> RawSlice<T> {
+    /// Empty slice (dangling, len 0). Safe to `.slice()`.
+    pub const EMPTY: Self = RawSlice(core::ptr::slice_from_raw_parts(
+        core::ptr::NonNull::<T>::dangling().as_ptr(),
+        0,
+    ));
+    /// Wrap a borrowed slice. Safe: stores the raw pointer; the
+    /// outlives-holder invariant is the caller's structural guarantee.
+    #[inline]
+    pub const fn new(s: &[T]) -> Self { RawSlice(core::ptr::from_ref(s)) }
+    /// Wrap a raw slice pointer.
+    ///
+    /// # Safety
+    /// `p` must either be a (dangling, len 0) empty slice or point to `len`
+    /// initialized `T` that remain live and stable for the lifetime of every
+    /// `RawSlice` copied from the result.
+    #[inline]
+    pub const unsafe fn from_raw(p: *const [T]) -> Self { RawSlice(p) }
+    #[inline]
+    pub const fn as_ptr(self) -> *const [T] { self.0 }
+    #[inline]
+    pub const fn len(self) -> usize { self.0.len() }
+    #[inline]
+    pub const fn is_empty(self) -> bool { self.0.len() == 0 }
+    /// Re-borrow as `&[T]`.
+    ///
+    /// # Safety (encapsulated)
+    /// Sound under the `RawSlice` invariant: backing storage outlives the
+    /// holder, so materialising `&[T]` tied to `&self` is valid. Elements are
+    /// initialized and the data pointer is non-null (`EMPTY` uses a dangling
+    /// non-null pointer with len 0, which `from_raw_parts` accepts).
+    #[inline]
+    pub fn slice(&self) -> &[T] {
+        // SAFETY: RawSlice invariant — pointer is non-null (real allocation or
+        // `NonNull::dangling()` for EMPTY), `len` elements are initialized and
+        // live for at least `'_` (the holder's borrow). No exclusive alias is
+        // live: `RawSlice` only ever vends shared `&[T]`.
+        unsafe { &*self.0 }
+    }
+}
+impl<T> Copy for RawSlice<T> {}
+impl<T> Clone for RawSlice<T> {
+    #[inline]
+    fn clone(&self) -> Self { *self }
+}
+impl<T> Default for RawSlice<T> {
+    #[inline]
+    fn default() -> Self { RawSlice::EMPTY }
+}
+impl<T> core::ops::Deref for RawSlice<T> {
+    type Target = [T];
+    #[inline]
+    fn deref(&self) -> &[T] { self.slice() }
+}
+impl<T> AsRef<[T]> for RawSlice<T> {
+    #[inline]
+    fn as_ref(&self) -> &[T] { self.slice() }
+}
+impl<T> From<&[T]> for RawSlice<T> {
+    #[inline]
+    fn from(s: &[T]) -> Self { RawSlice::new(s) }
+}
+impl<T: core::fmt::Debug> core::fmt::Debug for RawSlice<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { self.slice().fmt(f) }
+}
+// SAFETY: `RawSlice<T>` only ever vends `&[T]` (never `&mut [T]` / owned `T`),
+// so its auto-trait bounds follow `&[T]` exactly: `&[T]: Send ⇔ T: Sync` and
+// `&[T]: Sync ⇔ T: Sync`. The wrapped raw pointer carries no ownership.
+unsafe impl<T: Sync> Send for RawSlice<T> {}
+unsafe impl<T: Sync> Sync for RawSlice<T> {}
+
 /// Port of Zig's `std.os.environ` global (`[][*:0]u8`). On Windows the
 /// startup path `bun_sys::windows::env::convert_env_to_wtf8` overwrites this
 /// with a WTF-8-encoded envp slice; `getenvZ` and `bun_main` then read it via
@@ -157,6 +304,42 @@ pub mod vec {
     pub fn grow_default<T: Default>(v: &mut Vec<T>, n: usize) -> &mut [T] {
         let prev = v.len();
         extend_from_fn(v, n, |_| T::default());
+        &mut v[prev..]
+    }
+
+    /// Reserve `additional`, advance `len` by `additional`, and return the
+    /// newly-exposed (uninitialized) tail. Zig `ArrayList.addManyAsSlice`.
+    /// Generic free-fn form of `bun_collections::VecExt::writable_slice` so
+    /// `bun_core::string` can call it without a `bun_collections` edge.
+    ///
+    /// # Safety
+    /// Caller must fully write the returned slice before any read of
+    /// `v[prev_len..]` (the slots are uninitialized on entry).
+    #[inline]
+    pub unsafe fn writable_slice<T>(v: &mut Vec<T>, additional: usize) -> &mut [T] {
+        v.reserve(additional);
+        let prev = v.len();
+        // SAFETY: caller contract — slice is fully written before any read.
+        unsafe { v.set_len(prev + additional) };
+        &mut v[prev..]
+    }
+
+    /// As [`writable_slice`] but skips `reserve`; caller must guarantee
+    /// `len + additional <= capacity` (debug-asserted). Zig:
+    /// `ArrayList.addManyAsSliceAssumeCapacity`.
+    ///
+    /// # Safety
+    /// `v.len() + additional <= v.capacity()`, and the returned slice must be
+    /// fully written before any read.
+    #[inline]
+    pub unsafe fn writable_slice_assume_capacity<T>(
+        v: &mut Vec<T>,
+        additional: usize,
+    ) -> &mut [T] {
+        debug_assert!(v.len() + additional <= v.capacity());
+        let prev = v.len();
+        // SAFETY: caller contract — capacity asserted; slice fully written before any read.
+        unsafe { v.set_len(prev + additional) };
         &mut v[prev..]
     }
 
@@ -380,7 +563,7 @@ pub mod build_options {
 // ── re-exports (the tier-0 surface downstream crates need) ────────────────
 pub use bun_alloc::{
     is_slice_in_buffer, is_slice_in_buffer_t, out_of_memory, range_of_slice_in_buffer, AllocError,
-    Alignment, Allocator, page_size, ZigString,
+    Alignment, Allocator, page_size,
 };
 pub use bun_alloc::oom_from_alloc;
 // FFI ABI-safety primitives — `bun_opaque` is the zero-dep `#![no_std]` crate
@@ -773,8 +956,65 @@ pub use output as Output;
 // `crate::js_lexer` / `crate::js_printer` resolve to fmt.rs's local subsets.
 pub use fmt::{js_lexer, js_printer, parse_int, ParseIntError};
 
-/// Minimal `bun.strings` subset (full SIMD impl in bun_str via highway FFI).
-pub mod strings {
+// ──────────────────────────────────────────────────────────────────────────
+// Flattened top-level string/fmt API.
+//
+// `string_immutable` is the full ported `bun.strings` namespace (was the
+// `bun_string::immutable` module before the crate merge). The former
+// `pub mod strings { … }` cycle-breaker shim is now an internal
+// `strings_impl` module whose items are glob-re-exported at crate root, and
+// `pub mod strings { pub use super::*; }` keeps `bun_core::strings::X`
+// resolving for callers that haven't been rewritten yet.
+// ──────────────────────────────────────────────────────────────────────────
+pub use crate::string::immutable as string_immutable;
+
+pub use crate::string::immutable::{
+    str_utf8, is_valid_utf8, decode_hex_to_bytes, decode_hex_to_bytes_truncate,
+    encode_bytes_to_hex, DecodeHexError, without_utf8_bom, memmem,
+    is_npm_package_name, is_npm_package_name_ignore_length, to_ascii_hex_value,
+    has_prefix_comptime, has_suffix_comptime, has_prefix_comptime_utf16,
+    eql_comptime, eql_comptime_utf16, eql_any_comptime,
+    without_prefix_comptime, without_suffix_comptime, without_prefix,
+    trim_prefix, trim_suffix, trim_prefix_comptime, trim_suffix_comptime,
+    trim_leading_char, trim_spaces, is_all_whitespace,
+    index_of, index_of_t, last_index_of, last_index_of_t, index_of_scalar,
+    contains_scalar, contains_char, count_char, split, SplitIterator,
+    join, concat_with_length, concat_alloc_t, append, cat, order, order_t,
+    sort_asc, sort_desc, copy, has_prefix, has_prefix_case_insensitive,
+    starts_with_case_insensitive_ascii, ends_with_any, ends_with_comptime,
+    starts_with_char, ends_with_char, ends_with_char_or_is_zero_length,
+    is_ip_address, is_on_char_boundary, is_utf8_char_boundary,
+    length_of_leading_whitespace_ascii, percent_encode_write, PercentEncodeError,
+    StringOrTinyString, LineRange, QuoteEscapeFormatFlags, format_escapes,
+    utf16_eql_string, utf8_byte_sequence_length, to_utf16_alloc,
+    UNICODE_REPLACEMENT, UNICODE_REPLACEMENT_STR, WHITESPACE_CHARS, UUID_LEN,
+    CodePoint, OptionalUsize,
+};
+
+pub use crate::fmt::{
+    parse_int as parse_int_radix, parse_f64, parse_f32, parse_ascii, parse_num,
+    hex2_upper, hex2_lower, hex4_upper, hex4_lower, hex_byte_lower, hex_byte_upper,
+    hex_char_lower, hex_char_upper, hex_digit_value, hex_u8, hex_u16, hex_lower,
+    LOWER_HEX_TABLE, UPPER_HEX_TABLE, HEX_DECODE_TABLE, HEX_INVALID,
+    itoa_u64, print_int, int_as_bytes, count_int, count_float, fast_digit_count,
+    buf_print, buf_print_z, buf_print_len, buf_print_infallible, buf_print_z_infallible,
+    raw, Raw, s, utf16, FormatUTF16, FormatUTF8, fmt_path, fmt_path_u8, fmt_path_u16,
+    fmt_os_path, PathFormatOptions, FormatOSPath,
+    size, size_f64, size_i64, bytes, SizeFormatter, SizeFormatterOptions,
+    bytes_to_hex_lower, bytes_to_hex_lower_string,
+    quote, QuotedFormatter, double, FormatDouble, DoubleFormatter,
+    truncated_hash32, truncated_hash32_bytes, TruncatedHash32,
+    format_latin1, format_utf16_type, count, format_ip,
+    SliceCursor, VecWriter,
+};
+
+/// Surrogate/transcode primitives + scalar-fallback string helpers that
+/// predate the `string::immutable` merge. Glob-re-exported at crate root so
+/// `crate::strings::X` (via the alias module below) and `bun_core::X` both
+/// resolve. Do NOT add a `pub use string::immutable::*` glob here — several
+/// names (`first_non_ascii`, `index_of_char`, `Encoding`, `CodepointIterator`)
+/// have intentionally-different signatures in the two layers.
+pub(crate) mod strings_impl {
     // ─── UTF-16 surrogate-pair encoding (ICU U16_LEAD / U16_TRAIL) ─────────────
     // Zig parity: src/string/immutable/unicode.zig:1480 `u16Lead`/`u16Trail`,
     // re-exported as `strings.u16Lead`/`strings.u16Trail`. Defined here in
@@ -1897,6 +2137,21 @@ pub mod strings {
     }
     /// `bun.strings.withoutTrailingSlash`
     #[inline]
+    /// `bun.strings.removeLeadingDotSlash` (immutable/paths.zig). Hosted at T0
+    /// so `crate::string` (and `bun_paths::string_paths`) can reach it
+    /// without a `bun_paths` edge.
+    #[inline]
+    pub fn remove_leading_dot_slash(slice: &[u8]) -> &[u8] {
+        if slice.len() >= 2 {
+            // PERF(port): Zig bitcast slice[0..2] to u16; direct 2-byte slice
+            // comparison compiles to the same thing.
+            if &slice[..2] == b"./" || (cfg!(windows) && &slice[..2] == b".\\") {
+                return &slice[2..];
+            }
+        }
+        slice
+    }
+
     pub fn without_trailing_slash(s: &[u8]) -> &[u8] {
         let mut e = s.len();
         while e > 1 && (s[e - 1] == b'/' || s[e - 1] == b'\\') { e -= 1; }
@@ -1958,6 +2213,41 @@ pub mod strings {
             4,
         )
     }
+}
+pub use strings_impl::*;
+
+/// Back-compat alias: `bun_core::strings::X` → `bun_core::X`. The full
+/// `bun.strings` namespace is `bun_core::immutable` (formerly
+/// `bun_string::strings`); this alias keeps the ~200 existing
+/// `bun_core::strings::` / `crate::strings::` call sites compiling.
+///
+/// NOTE: a handful of names (`index_of_char`, `eql_long`, `first_non_ascii`,
+/// `Encoding`, `CodepointIterator`) have a different signature here than in
+/// `bun_core::immutable`. Callers that need the Zig-spec
+/// `bun.strings.*` form import `bun_core::immutable as strings` instead.
+pub mod strings {
+    // `bun_core::strings` is the union of the crate-root surface (`super::*`,
+    // which carries the scalar-fallback `strings_impl::*` glob plus every
+    // `bun_core::Foo`) and the full Zig-spec `bun.strings.*` namespace
+    // (`string::immutable::*`). Names that exist in BOTH layers — same
+    // identifier, different signature — are explicitly disambiguated below
+    // in favour of `immutable` (matches every former `bun_string::strings::X`
+    // caller). Internal `bun_core` code that needs the scalar form spells
+    // `crate::strings_impl::X` directly.
+    pub use super::*;
+    pub use crate::string::immutable::*;
+    pub use crate::string::immutable::{
+        concat, contains, contains_newline_or_non_ascii_or_quote,
+        convert_utf16_to_utf8_in_buffer, convert_utf8_to_utf16_in_buffer, ends_with, eql,
+        eql_case_insensitive_ascii, eql_comptime_ignore_len, eql_long, first_non_ascii,
+        first_non_ascii16, includes, index_of_char,
+        index_of_newline_or_non_ascii_or_ansi, is_ipv6_address, last_index_of_char,
+        last_index_of_char_t, remove_leading_dot_slash, starts_with, without_trailing_slash,
+        CodepointIterator, Cursor, Encoding,
+    };
+    // `index_of_any{,_t}` keep the scalar `Option<usize>` form (Zig-spec
+    // `immutable` returns `Option<OptionalUsize>` which no caller wants here).
+    pub use crate::strings_impl::{index_of_any, index_of_any_t};
 }
 
 // bun_alloc stubs Global.rs expects (real consts deferred to B-2 ungate of bun_alloc::basic)

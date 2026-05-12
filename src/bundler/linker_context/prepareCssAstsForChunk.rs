@@ -21,7 +21,7 @@ use bun_ast::{
     ImportRecordFlags, Index as AstIndex, ImportKind, ImportRecord, ImportRecordTag,
 };
 use bun_resolver::DataURL;
-use crate::bun_str::strings;
+use bun_core::strings;
 
 use crate::chunk::{Content, CssImportOrderKind};
 

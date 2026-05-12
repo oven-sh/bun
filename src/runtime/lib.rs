@@ -10,7 +10,7 @@
 // PORTING.md crate map says `bun.String`/`bun.strings` → `bun_str`, but the
 // workspace crate is named `bun_string`. Alias once here so draft modules that
 // followed the guide compile without per-file edits.
-extern crate bun_string as bun_str;
+extern crate bun_core as bun_str;
 
 /// `crate::jsc` is now a thin re-export of the real `bun_jsc` crate. Draft
 /// modules that imported `crate::jsc::…` (instead of `bun_jsc::…`) continue to

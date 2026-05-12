@@ -26,7 +26,7 @@
 
 use core::ffi::{c_char, c_int, c_void};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 
 // ─── ZigGlobalObject.cpp / BunObject.cpp ────────────────────────────────────
 // (populated incrementally — see audit comment in generated_host_exports.rs)

@@ -4679,10 +4679,10 @@ pub mod form_data {
 
     impl Encoding {
         pub fn get(content_type: &[u8]) -> Option<Encoding> {
-            if crate::strings::includes(content_type, b"application/x-www-form-urlencoded") {
+            if crate::strings_impl::includes(content_type, b"application/x-www-form-urlencoded") {
                 return Some(Encoding::URLEncoded);
             }
-            if !crate::strings::includes(content_type, b"multipart/form-data") {
+            if !crate::strings_impl::includes(content_type, b"multipart/form-data") {
                 return None;
             }
             let boundary = get_boundary(content_type)?;
@@ -4698,7 +4698,7 @@ pub mod form_data {
         if begin.is_empty() {
             return None;
         }
-        let end = crate::strings::index_of_char(begin, b';').unwrap_or(begin.len());
+        let end = crate::strings_impl::index_of_char(begin, b';').unwrap_or(begin.len());
         if begin[0] == b'"' {
             if end > 1 && begin[end - 1] == b'"' {
                 return Some(&begin[1..end - 1]);

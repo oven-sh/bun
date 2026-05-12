@@ -15,7 +15,7 @@ use bun_ast::{Ref, Stmt};
 // it from parser-side indices; all consumers only call `.get()`.
 use bun_ast::Index;
 use bun_sourcemap as source_map;
-use bun_string::{strings, string_joiner::StringJoiner};
+use bun_core::{immutable as strings, string_joiner::StringJoiner};
 
 use crate::analyze_transpiled_module;
 use crate::bun_css;

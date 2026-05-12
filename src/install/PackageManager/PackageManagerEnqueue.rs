@@ -6,7 +6,7 @@ use core::sync::atomic::Ordering;
 use bun_core::{fmt as bun_fmt, Output};
 use bun_paths::{self as Path, PathBuffer};
 use bun_semver::{self as Semver, String as SemverString};
-use bun_str::strings::{self, StringOrTinyString};
+use bun_core::{strings, StringOrTinyString};
 use bun_threading::thread_pool as ThreadPool;
 use crate::bun_fs::FileSystem;
 use bun_sys::Fd;

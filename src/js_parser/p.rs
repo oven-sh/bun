@@ -15,7 +15,7 @@ use bun_alloc::ArenaVecExt as _;
 use bun_collections::{HashMap, ArrayHashMap, StringHashMap};
 use bun_core::Output;
 use bun_ast::{ImportRecord, ImportKind};
-use bun_string::strings;
+use bun_core::strings;
 use bun_wyhash::Wyhash;
 
 use crate::lexer as js_lexer;
@@ -1613,7 +1613,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 notes,
                 format_args!(
                     "Multiple exports with the same name \"{}\"",
-                    bstr::BStr::new(bun_string::strings::trim(alias, b"\"'"))
+                    bstr::BStr::new(bun_core::trim(alias, b"\"'"))
                 ),
             );
         } else if !self.is_deoptimized_common_js() {

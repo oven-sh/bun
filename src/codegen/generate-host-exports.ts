@@ -485,7 +485,7 @@ use bun_jsc::{JSInternalPromise, JSObject, JSPromise, ZigStackFrame};
 use bun_jsc::debugger::{
     InspectorBunFrontendDevServerAgentHandle, LifecycleHandle, TestReporterHandle,
 };
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 `;
 
 exportsFound.sort((a, b) => a.symbol.localeCompare(b.symbol));

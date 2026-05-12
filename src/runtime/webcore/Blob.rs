@@ -15,7 +15,7 @@ use bun_core::{self as bun, Output};
 use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
-use bun_str::{self, strings, OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice};
+use bun_core::{strings, OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice};
 use bun_sys::{self, Fd, FdExt as _};
 use bun_jsc::StringJsc as _;
 use bun_http_types::MimeType::MimeType;
@@ -767,7 +767,7 @@ impl BlobExt for Blob {
         };
 
         let mut context = FormDataContext {
-            joiner: bun_str::string_joiner::StringJoiner::default(),
+            joiner: bun_core::string_joiner::StringJoiner::default(),
             boundary,
             failed: false,
             global_this,
@@ -1425,7 +1425,7 @@ impl BlobExt for Blob {
                 let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
                     PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
                     PathOrFileDescriptor::Path(p) => {
-                        webcore::PathOrFileDescriptor::Path(bun_str::ZigStringSlice::init_dupe(p.slice()).expect("oom"))
+                        webcore::PathOrFileDescriptor::Path(bun_core::ZigStringSlice::init_dupe(p.slice()).expect("oom"))
                     }
                 };
                 // input_path drops at scope exit (Zig: `defer input_path.deinit()`).
@@ -1744,7 +1744,7 @@ impl BlobExt for Blob {
             let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
                 PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
                 PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(
-                    bun_str::ZigStringSlice::init_dupe(p.slice()).expect("oom"),
+                    bun_core::ZigStringSlice::init_dupe(p.slice()).expect("oom"),
                 ),
             };
 
@@ -1936,7 +1936,7 @@ impl BlobExt for Blob {
     }
 
     fn get_name_string(&self) -> Option<BunString> {
-        if self.name.get().tag() != bun_str::Tag::Dead {
+        if self.name.get().tag() != bun_core::Tag::Dead {
             return Some(self.name.get());
         }
         if let Some(path) = self.get_file_name() {
@@ -3063,7 +3063,7 @@ impl BlobExt for Blob {
         // JS object graph, so a heap `Vec<JSValue>` is GC-safe and restores Zig's
         // unbounded capacity (the prior `BoundedArray<_, 128>` panicked on overflow).
         let mut stack: Vec<JSValue> = Vec::new();
-        let mut joiner = bun_string::string_joiner::StringJoiner::default();
+        let mut joiner = bun_core::string_joiner::StringJoiner::default();
         let mut could_have_non_ascii = false;
 
         loop {
@@ -3267,7 +3267,7 @@ impl BlobExt for Blob {
                     let copy = core::mem::replace(
                         path_or_fd,
                         PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
-                            bun_str::PathString::default(),
+                            bun_core::PathString::default(),
                         )),
                     );
                     let PathOrFileDescriptor::Path(path) = copy else { unreachable!() };
@@ -3290,7 +3290,7 @@ impl BlobExt for Blob {
                     *path_or_fd = PathOrFileDescriptor::Path(
                         crate::webcore::node_types::PathLike::String(
                             // Heap-dupe: this buffer is freed by `Blob.Store.deinit`.
-                            bun_str::PathString::init_owned(b"\\\\.\\NUL".to_vec()),
+                            bun_core::PathString::init_owned(b"\\\\.\\NUL".to_vec()),
                         ),
                     );
                 }
@@ -3320,7 +3320,7 @@ impl BlobExt for Blob {
                         if !path_or_fd.path().is_string() {
                             *path_or_fd = PathOrFileDescriptor::Path(
                                 crate::webcore::node_types::PathLike::String(
-                                    bun_str::PathString::default(),
+                                    bun_core::PathString::default(),
                                 ),
                             );
                         }
@@ -3332,7 +3332,7 @@ impl BlobExt for Blob {
                 core::mem::replace(
                     path_or_fd,
                     PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
-                        bun_str::PathString::default(),
+                        bun_core::PathString::default(),
                     )),
                 )
             }
@@ -3395,7 +3395,7 @@ impl BlobExt for Blob {
 
 use crate::node as node;
 use crate::image::Image;
-use bun_str::string_joiner::StringJoiner;
+use bun_core::string_joiner::StringJoiner;
 use bun_jsc::SysErrorJsc as _;
 // `crate::webcore::jsc` glob-reexports `bun_jsc::*` but the double-glob loses
 // `JsTerminatedResult`; alias it locally (same shape as bun_jsc::event_loop).
@@ -3412,7 +3412,7 @@ use self::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
 use bun_jsc::{StringJsc as _, JsClass as _};
 #[allow(unused_imports)]
 use bun_bundler::options_impl::LoaderExt as _;
-// `bun_jsc::zig_string::ZigString` re-exports `bun_str::ZigString`; JSC-side
+// `bun_jsc::zig_string::ZigString` re-exports `bun_core::ZigString`; JSC-side
 // methods (`to_js`, …) come from the `ZigStringJsc` extension trait.
 #[allow(unused_imports)]
 use bun_jsc::zig_string::ZigString as JscZigString;
@@ -3667,7 +3667,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                         // `name: Vec<u8>` would drop at the end of this block
                         // and leave `stored_name` dangling. Transfer ownership
                         // into the packed pointer; freed by `Bytes::Drop`.
-                        bytes_store.stored_name = bun_str::PathString::init_owned(name);
+                        bytes_store.stored_name = bun_core::PathString::init_owned(name);
                     }
                 }
                 // else: `name` drops here (Zig: `if (!consumed) free(name)`).
@@ -3703,7 +3703,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     // store adopts the same allocation; borrowing here would
                     // drop `path` at scope end and leave the store dangling.
                     let mut dest = PathOrFileDescriptor::Path(node::PathLike::String(
-                        bun_str::PathString::init_owned(path),
+                        bun_core::PathString::init_owned(path),
                     ));
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut dest,
@@ -3814,7 +3814,7 @@ pub extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
             if bytes.stored_name.is_empty() {
                 // Zig: `path_str.toUTF8Bytes(allocator)` → owned heap slice
                 // adopted by PathString and freed by `Bytes.deinit`.
-                bytes.stored_name = bun_str::PathString::init_owned(path_str.to_owned_slice());
+                bytes.stored_name = bun_core::PathString::init_owned(path_str.to_owned_slice());
             }
         }
     }
@@ -3874,7 +3874,7 @@ pub enum Retry {
 pub fn mkdir_if_not_exists<T: MkdirpTarget>(
     this: &mut T,
     err: bun_sys::Error,
-    path_string: &bun_str::ZStr,
+    path_string: &bun_core::ZStr,
     err_path: &[u8],
 ) -> Retry {
     if err.get_errno() == bun_sys::E::ENOENT && this.mkdirp_if_not_exists() {
@@ -3882,7 +3882,7 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
         if let Some(dirname) = bun_core::dirname(path_string.as_bytes()) {
             let mut node_fs = node::fs::NodeFS::default();
             match node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                path: node::PathLike::String(bun_str::PathString::init(dirname)),
+                path: node::PathLike::String(bun_core::PathString::init(dirname)),
                 recursive: true,
                 always_return_none: true,
                 ..Default::default()
@@ -4008,7 +4008,7 @@ fn write_file_with_empty_source_to_destination(
                                     }
                                 };
                                 let mkdir_result = node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                                    path: node::PathLike::String(bun_str::PathString::init(dirpath)),
+                                    path: node::PathLike::String(bun_core::PathString::init(dirpath)),
                                     recursive: true,
                                     always_return_none: true,
                                     ..Default::default()
@@ -4949,7 +4949,7 @@ pub fn jsdom_file_construct_(
                     // PathString. `to_utf8().slice()` would dangle as soon as the
                     // temporary `ZigStringSlice` drops at end-of-statement.
                     bytes.stored_name =
-                        bun_str::PathString::init_owned(name_value_str.to_owned_slice());
+                        bun_core::PathString::init_owned(name_value_str.to_owned_slice());
                 }
                 store::Data::S3(_) | store::Data::File(_) => {
                     blob.name.set(name_value_str.dupe_ref());
@@ -4959,7 +4959,7 @@ pub fn jsdom_file_construct_(
             // not store but we have a name so we need a store
             blob.store.set(Some(StoreRef::from(Store::new(Store {
                 data: store::Data::Bytes(store::Bytes::init_empty_with_name(
-                    bun_str::PathString::init_owned(name_value_str.to_owned_slice()),
+                    bun_core::PathString::init_owned(name_value_str.to_owned_slice()),
                 )),
                 ref_count: AtomicU32::new(1),
                 mime_type: bun_http_types::MimeType::NONE,
@@ -5586,7 +5586,7 @@ mod zigstring_blob_ext {
     }
 
     /// Local shim for `ZigString.Slice` allocator-identity queries that the
-    /// `bun_str::ZigStringSlice` enum collapsed away. Used by
+    /// `bun_core::ZigStringSlice` enum collapsed away. Used by
     /// `from_js_without_defer_gc` to decide whether a converted slice was
     /// freshly heap-allocated (=> may contain non-ASCII UTF-8) or is a
     /// borrowed WTF Latin-1 view (=> already known ASCII-safe).
@@ -5598,12 +5598,12 @@ mod zigstring_blob_ext {
         /// heap allocation (either default-allocator or WTF-refcounted).
         fn is_allocated(&self) -> bool;
     }
-    impl ZigStringSliceBlobExt for bun_str::ZigStringSlice {
+    impl ZigStringSliceBlobExt for bun_core::ZigStringSlice {
         #[inline] fn is_wtf_backed(&self) -> bool {
-            matches!(self, bun_str::ZigStringSlice::WTF { .. })
+            matches!(self, bun_core::ZigStringSlice::WTF { .. })
         }
         #[inline] fn is_allocated(&self) -> bool {
-            !matches!(self, bun_str::ZigStringSlice::Static(..))
+            !matches!(self, bun_core::ZigStringSlice::Static(..))
         }
     }
 }
@@ -5709,7 +5709,7 @@ impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
 pub enum Any {
     Blob(Blob),
     InternalBlob(Internal),
-    WTFStringImpl(bun_str::WTFStringImpl),
+    WTFStringImpl(bun_core::WTFStringImpl),
 }
 
 impl Any {
@@ -5981,7 +5981,7 @@ impl Any {
                 *self = Any::Blob(Blob::default());
 
                 let out_bytes = str.to_utf8_without_ref();
-                if matches!(out_bytes, bun_str::ZigStringSlice::Owned(_)) {
+                if matches!(out_bytes, bun_core::ZigStringSlice::Owned(_)) {
                     let owned: &mut [u8] = out_bytes.into_vec().leak();
                     return Ok(jsc::ArrayBuffer::from_default_allocator(
                         global,
@@ -6077,7 +6077,7 @@ impl Any {
 // ──────────────────────────────────────────────────────────────────────────
 
 // `to_js` / `to_external_value` / `with_encoding` / `to_json_object` /
-// `external` on `bun_str::ZigString` are provided by `bun_jsc::ZigStringJsc`
+// `external` on `bun_core::ZigString` are provided by `bun_jsc::ZigStringJsc`
 // (imported above). The legacy `ZigStringBlobExt` name is re-exported for
 // sibling modules (`Request.rs`) that still import it under that name.
 pub(crate) use bun_jsc::ZigStringJsc as ZigStringBlobExt;
@@ -6326,7 +6326,7 @@ pub trait FileOpener: Sized {
     fn try_mkdirp(
         &mut self,
         err: bun_sys::Error,
-        path: &bun_str::ZStr,
+        path: &bun_core::ZStr,
         display_path: &[u8],
     ) -> Retry {
         Retry::No

@@ -8,7 +8,7 @@ use core::cell::RefCell;
 use bun_collections::bit_set::{num_masks_for, ArrayBitSet};
 use bun_core::{self, fmt as bun_fmt};
 use bun_paths::resolve_path::{self, platform};
-use bun_string::{self, strings, String as BunString, Tag as BunStringTag};
+use bun_core::{immutable as strings, String as BunString, Tag as BunStringTag};
 use bun_wyhash::hash as wyhash;
 
 // `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`
@@ -115,7 +115,7 @@ pub mod whatwg {
 
     // PORT NOTE: Zig takes `bun.String` by value then `var input = str; f(&input)` to
     // obtain a mutable address for C ABI. We take `&String` (matching existing call sites
-    // in this crate) and — since `bun_string::String: Copy` — bit-copy into a mutable
+    // in this crate) and — since `bun_core::String: Copy` — bit-copy into a mutable
     // local and pass `&mut local`. This mirrors the Zig spec exactly and avoids casting
     // a shared-ref-derived pointer to `*mut` (read-only provenance). The C++ side
     // (`BunString::toWTFString() const`) does not mutate, but the local-copy form is

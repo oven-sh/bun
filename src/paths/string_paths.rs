@@ -1,10 +1,19 @@
-use crate::{immutable as strings, WStr, ZStr};
-use bun_paths::windows;
-use bun_paths::resolve_path;
-use bun_paths::PathChar;
+//! `bun.strings.paths` — Windows path-shape transcoders (`toNTPath`,
+//! `toKernel32Path`, `fromWPath`, …). Hosted in `bun_paths` (not
+//! `bun_core::string::immutable`) because it depends on this crate's
+//! `resolve_path`/`path_buffer_pool`/`Platform` and would cycle if it lived
+//! in `bun_core`. Re-exported as `crate::strings::*` so existing
+//! `bun_core::strings::paths::*` callers (rewritten to `crate::strings`)
+//! resolve unchanged.
+
+use bun_core::string::immutable as strings;
+use bun_core::{WStr, ZStr};
+use crate::windows;
+use crate::resolve_path;
+use crate::PathChar;
 
 // Generic code-unit bound for fns that operate over both u8 and u16 paths.
-// Zig used `comptime T: type`; bound on `bun_paths::PathChar` (provides
+// Zig used `comptime T: type`; bound on `crate::PathChar` (provides
 // `from_u8`/`IS_U16`) plus `Into<u32>` + `NoUninit` for `strings::contains_char_t`.
 pub trait Ch: PathChar + Into<u32> + bun_core::NoUninit {}
 impl Ch for u8 {}
@@ -46,12 +55,12 @@ fn has_prefix_ascii_t<T: Ch>(s: &[T], prefix: &[u8]) -> bool {
 /// this is used for an assertion, and PosixToWinNormalizer can help make
 /// an absolute path contain a drive letter.
 ///
-/// Thin wrapper over the canonical [`bun_core::strings`] impl that additionally
+/// Thin wrapper over the canonical [`crate::strings`] impl that additionally
 /// debug-asserts the Zig precondition `Platform.windows.isAbsoluteT(chars)`
 /// (bun_core can't, as `bun_paths` would be a tier-0 cycle there).
 #[inline]
 pub fn is_windows_absolute_path_missing_drive_letter<T: Ch + From<u8>>(chars: &[T]) -> bool {
-    debug_assert!(bun_paths::Platform::Windows.is_absolute_t(chars));
+    debug_assert!(crate::Platform::Windows.is_absolute_t(chars));
     bun_core::strings::is_windows_absolute_path_missing_drive_letter(chars)
 }
 
@@ -85,7 +94,7 @@ pub fn without_nt_prefix<T: Ch>(path: &[T]) -> &[T] {
 }
 
 pub fn to_nt_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
-    if !bun_paths::is_absolute_windows(utf8) {
+    if !crate::is_absolute_windows(utf8) {
         return to_w_path_normalized(wbuf, utf8);
     }
 
@@ -119,7 +128,7 @@ pub fn to_nt_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
 }
 
 pub fn to_nt_path16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
-    if !bun_paths::is_absolute_windows_t::<u16>(path) {
+    if !crate::is_absolute_windows_t::<u16>(path) {
         return to_w_path_normalized16(wbuf, path);
     }
 
@@ -196,7 +205,7 @@ pub fn to_extended_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a 
 }
 
 pub fn to_w_path_normalize_auto_extend<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
-    if bun_paths::is_absolute_windows(utf8) {
+    if crate::is_absolute_windows(utf8) {
         return to_extended_path_normalized(wbuf, utf8);
     }
 
@@ -204,7 +213,7 @@ pub fn to_w_path_normalize_auto_extend<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> 
 }
 
 pub fn to_w_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
-    let mut renormalized = bun_paths::path_buffer_pool::get();
+    let mut renormalized = crate::path_buffer_pool::get();
 
     let mut path_to_use = normalize_slashes_only(&mut renormalized[..], utf8, b'\\');
 
@@ -237,7 +246,7 @@ pub fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr
 }
 
 pub fn to_path_normalized<'a>(buf: &'a mut [u8], utf8: &[u8]) -> &'a ZStr {
-    let mut renormalized = bun_paths::path_buffer_pool::get();
+    let mut renormalized = crate::path_buffer_pool::get();
 
     let mut path_to_use = normalize_slashes_only(&mut renormalized[..], utf8, b'\\');
 
@@ -330,9 +339,9 @@ pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
 
 fn is_unc_path<T: Ch>(path: &[T]) -> bool {
     path.len() >= 3
-        && bun_paths::Platform::Windows.is_separator_t(path[0])
-        && bun_paths::Platform::Windows.is_separator_t(path[1])
-        && !bun_paths::Platform::Windows.is_separator_t(path[2])
+        && crate::Platform::Windows.is_separator_t(path[0])
+        && crate::Platform::Windows.is_separator_t(path[1])
+        && !crate::Platform::Windows.is_separator_t(path[2])
         && path[2] != ch(b'.')
 }
 
@@ -346,9 +355,9 @@ pub fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
         .len()
         .saturating_sub(1 + (ADD_TRAILING_LASH as usize));
     // PORT NOTE: Zig used `bun.simdutf.convert.utf8.to.utf16.le.with_errors`;
-    // route through `bun_core::strings::convert_utf8_to_utf16_in_buffer` (same
+    // route through `crate::strings::convert_utf8_to_utf16_in_buffer` (same
     // simdutf primitive + WTF-8 fallback) to avoid a `bun_simdutf` crate dep.
-    let mut count = bun_core::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf[..cap], utf8).len();
+    let mut count = crate::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf[..cap], utf8).len();
 
     // Many Windows APIs expect normalized path slashes, particularly when the
     // long path prefix is added or the nt object prefix. To make this easier,
@@ -392,22 +401,22 @@ pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {
     if cfg!(debug_assertions) {
         debug_assert!(!base.is_empty());
     }
-    if base[0] == bun_paths::SEP {
-        buf[0] = bun_paths::SEP;
+    if base[0] == crate::SEP {
+        buf[0] = crate::SEP;
     }
     // PORT NOTE: reshaped for borrowck — track index instead of moving slice ptr.
-    let mut i: usize = (base[0] == bun_paths::SEP) as usize;
+    let mut i: usize = (base[0] == crate::SEP) as usize;
 
-    for token in base.split(|b| *b == bun_paths::SEP).filter(|s| !s.is_empty()) {
+    for token in base.split(|b| *b == crate::SEP).filter(|s| !s.is_empty()) {
         if token.is_empty() {
             continue;
         }
         buf[i..i + token.len()].copy_from_slice(token);
-        buf[i + token.len()] = bun_paths::SEP;
+        buf[i + token.len()] = crate::SEP;
         i += token.len() + 1;
     }
-    if i >= 1 && buf[i - 1] != bun_paths::SEP {
-        buf[i] = bun_paths::SEP;
+    if i >= 1 && buf[i - 1] != crate::SEP {
+        buf[i] = crate::SEP;
         i += 1;
     }
     buf[i] = 0;
@@ -419,9 +428,9 @@ pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {
 pub fn path_contains_node_modules_folder(path: &[u8]) -> bool {
     // PERF(port): was comptime string concatenation
     let needle: &'static [u8] = const_format::concatcp!(
-        bun_paths::SEP_STR,
+        crate::SEP_STR,
         "node_modules",
-        bun_paths::SEP_STR
+        crate::SEP_STR
     )
     .as_bytes();
     strings::index_of(path, needle).is_some()
@@ -447,7 +456,7 @@ pub fn starts_with_windows_drive_letter_t<T: Ch>(s: &[T]) -> bool {
         }
 }
 
-pub use bun_core::strings::without_trailing_slash;
+pub use crate::strings::without_trailing_slash;
 
 /// Does not strip the device root (C:\ or \\Server\Share\ portion off of the path)
 pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
@@ -466,7 +475,7 @@ pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
 
     if cfg!(debug_assertions) {
         debug_assert!(
-            !bun_paths::is_absolute(path)
+            !crate::is_absolute(path)
                 || !is_windows_absolute_path_missing_drive_letter::<u8>(path)
         );
     }
@@ -479,7 +488,7 @@ pub fn without_leading_slash(this: &[u8]) -> &[u8] {
 }
 
 pub fn without_leading_path_separator(this: &[u8]) -> &[u8] {
-    strings::trim_left(this, &[bun_paths::SEP])
+    strings::trim_left(this, &[crate::SEP])
 }
 
 #[inline(always)]
@@ -495,14 +504,14 @@ pub fn remove_leading_dot_slash(slice: &[u8]) -> &[u8] {
 }
 
 // Copied from std, modified to accept input type — canonical impl lives in
-// `bun_paths::{basename_posix, basename_windows}` (generic over `PathChar`);
+// `crate::{basename_posix, basename_windows}` (generic over `PathChar`);
 // this is a thin re-wrapper preserving the `Ch` bound for this module's API.
 #[inline]
 pub fn basename<T: Ch>(input: &[T]) -> &[T] {
     #[cfg(windows)]
-    { return bun_paths::basename_windows::<T>(input); }
+    { return crate::basename_windows::<T>(input); }
     #[cfg(not(windows))]
-    { bun_paths::basename_posix::<T>(input) }
+    { crate::basename_posix::<T>(input) }
 }
 
 // ported from: src/string/immutable/paths.zig

@@ -493,7 +493,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// `server.zig:getURLAsString`.
-    pub fn get_url_as_string(&self) -> Result<bun_str::String, bun_alloc::AllocError> {
+    pub fn get_url_as_string(&self) -> Result<bun_core::String, bun_alloc::AllocError> {
         use bun_core::fmt::{URLFormatter, URLProto};
         use std::io::Write as _;
         let fmt = match &self.config.address {
@@ -527,7 +527,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         let mut buf = Vec::new();
         write!(&mut buf, "{}", fmt).map_err(|_| bun_alloc::AllocError)?;
-        Ok(bun_str::String::clone_utf8(&buf))
+        Ok(bun_core::String::clone_utf8(&buf))
     }
 
     /// `server.zig:jsValueAssertAlive`.
@@ -1622,25 +1622,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         .map(|h| h.to_bytes())
                         .unwrap_or(b"0.0.0.0");
                     let err = jsc::SystemError {
-                        message: bun_str::String::create_format(format_args!(
+                        message: bun_core::String::create_format(format_args!(
                             "permission denied {}:{}",
                             bstr::BStr::new(host),
                             port
                         )),
-                        code: bun_str::String::static_("EACCES"),
-                        syscall: bun_str::String::static_("listen"),
+                        code: bun_core::String::static_("EACCES"),
+                        syscall: bun_core::String::static_("listen"),
                         ..Default::default()
                     };
                     let _ = global.throw_value(err.to_error_instance(global));
                     return;
                 }
                 jsc::SystemError {
-                    message: bun_str::String::create_format(format_args!(
+                    message: bun_core::String::create_format(format_args!(
                         "Failed to start server. Is port {} in use?",
                         port
                     )),
-                    code: bun_str::String::static_("EADDRINUSE"),
-                    syscall: bun_str::String::static_("listen"),
+                    code: bun_core::String::static_("EADDRINUSE"),
+                    syscall: bun_core::String::static_("listen"),
                     ..Default::default()
                 }
                 .to_error_instance(global)
@@ -1649,12 +1649,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let unix = unix.as_bytes();
                 match bun_sys::get_errno(-1i32) {
                     bun_sys::E::SUCCESS => jsc::SystemError {
-                        message: bun_str::String::create_format(format_args!(
+                        message: bun_core::String::create_format(format_args!(
                             "Failed to listen on unix socket {}",
                             bun_core::fmt::QuotedFormatter { text: unix }
                         )),
-                        code: bun_str::String::static_("EADDRINUSE"),
-                        syscall: bun_str::String::static_("listen"),
+                        code: bun_core::String::static_("EADDRINUSE"),
+                        syscall: bun_core::String::static_("listen"),
                         ..Default::default()
                     }
                     .to_error_instance(global),
@@ -1731,7 +1731,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         Self: ServerPools<SSL, DEBUG>,
     {
         let base_url: Box<[u8]> =
-            bun_str::strings::trim(&config.base_uri, b"/").to_vec().into_boxed_slice();
+            bun_core::trim(&config.base_uri, b"/").to_vec().into_boxed_slice();
         // errdefer free(base_url) — Box drops on Err automatically
 
         let server = bun_core::heap::into_raw(Box::new(Self {
@@ -1841,10 +1841,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // Scratch arrays for the C++ factory. `ZigString` borrows the
             // route-path heap bytes; those bytes move (by pointer) into
             // `self.user_routes` below and stay live across the FFI call.
-            let mut paths: Vec<bun_string::ZigString> = Vec::with_capacity(len);
+            let mut paths: Vec<bun_core::ZigString> = Vec::with_capacity(len);
             let mut callbacks: Vec<JSValue> = Vec::with_capacity(len);
             for (i, builder) in to_build.iter_mut().enumerate() {
-                paths.push(bun_string::ZigString::init(builder.route.path.as_bytes()));
+                paths.push(bun_core::ZigString::init(builder.route.path.as_bytes()));
                 callbacks.push(builder.callback.get());
                 self.user_routes.push(UserRoute {
                     id: i as u32,
@@ -3258,7 +3258,7 @@ impl AnyServer {
         any_server_dispatch_mut!(self, |s| s.reload_static_routes())
     }
 
-    pub fn get_url_as_string(&self) -> Result<bun_str::String, bun_alloc::AllocError> {
+    pub fn get_url_as_string(&self) -> Result<bun_core::String, bun_alloc::AllocError> {
         any_server_dispatch!(self, |s| s.get_url_as_string())
     }
 }
@@ -3275,7 +3275,7 @@ pub mod http_server_agent {
     use bun_jsc::http_server_agent::{
         HTTPServerAgent, InspectorHTTPServerAgent, Route, RouteType,
     };
-    use bun_str::String as BunString;
+    use bun_core::String as BunString;
 
     /// `HTTPServerAgent.zig:notifyServerStarted`.
     pub fn notify_server_started(this: &mut HTTPServerAgent, mut instance: AnyServer) {

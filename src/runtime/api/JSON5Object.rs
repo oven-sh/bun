@@ -7,7 +7,7 @@ use bun_jsc::{
 };
 use bun_js_parser::{self as ast, lexer};
 use bun_ast::{expr::Data as ExprData, E, Expr};
-use bun_str::{String as BunString, ZigString};
+use bun_core::{String as BunString, ZigString};
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
 pub fn create(global: &JSGlobalObject) -> JSValue {

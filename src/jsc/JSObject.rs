@@ -3,7 +3,7 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::mem::ManuallyDrop;
 
 use crate::{JSCell, JSGlobalObject, JSValue, JsError, JsResult};
-use bun_string::{String as BunString, ZigString};
+use bun_core::{String as BunString, ZigString};
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {

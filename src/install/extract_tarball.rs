@@ -5,7 +5,7 @@ use bun_core::{self as bun, fmt as bun_fmt, Output};
 use bun_core::fmt::s;
 use bun_paths::{self as path, PathBuffer, WPathBuffer};
 use bun_semver::{self as Semver, Version};
-use bun_str::{strings, strings::StringOrTinyString, ZStr};
+use bun_paths::strings; use bun_core::{ StringOrTinyString, ZStr};
 use bun_sys::{self as sys, Dir, Fd};
 
 use bun_install::install::{self as Install, DependencyID, ExtractData};

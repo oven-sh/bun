@@ -65,7 +65,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_io::KeepAlive;
-use bun_string::{String as BunString, WTFStringImpl};
+use bun_core::{String as BunString, WTFStringImpl};
 use bun_threading::{Futex, Mutex};
 
 use crate::virtual_machine::{self, runtime_hooks, VirtualMachine};

@@ -6,8 +6,8 @@ use core::fmt;
 
 use bun_core::{Environment, feature_flags as FeatureFlags};
 use bun_ast::{Loc, Log, Range, Source};
-use bun_string::strings;
-use bun_string::strings::CodepointIterator;
+use bun_core::strings;
+use bun_core::strings::CodepointIterator;
 use bun_ast as js_ast;
 use identifier as js_identifier;
 use bun_ast::lexer_tables as tables;
@@ -18,10 +18,10 @@ use bun_ast::{Indentation, IndentationCharacter};
 // route owned buffers through `Vec`/`Box`.
 use bun_alloc::Arena;
 
-// Unicode ID-Start/ID-Continue tables moved DOWN to `bun_string` (pure data;
-// no upward deps) so `bun_string::lexer` / `MutableString` get full coverage
+// Unicode ID-Start/ID-Continue tables moved DOWN to `bun_core` (pure data;
+// no upward deps) so `bun_core::lexer` / `MutableString` get full coverage
 // without a `bun_js_parser` dep. Re-export to preserve the public path.
-pub use bun_string::identifier;
+pub use bun_core::identifier;
 
 pub type CodePoint = i32;
 type JavascriptString<'s> = &'s [u16];
@@ -3379,7 +3379,7 @@ lexer_impl_header! {
 
                 // PORT NOTE: std.fmt.parseInt(i32, ..) — bytes-based parser; source bytes are
                 // not guaranteed UTF-8 so we never round-trip through &str (PORTING.md §Strings).
-                cursor.c = match bun_string::strings::parse_int::<i32>(number, base) {
+                cursor.c = match bun_core::parse_int::<i32>(number, base) {
                     Ok(v) => v,
                     Err(err) => {
                         match err {
@@ -3727,8 +3727,8 @@ lexer_impl_header! {
                 if is_big_integer_literal {
                     self.identifier = text;
                 } else if is_invalid_legacy_octal_literal {
-                    // TODO(port): std.fmt.parseFloat — bytes-based; using bun_string::wtf::parse_double
-                    match bun_string::wtf::parse_double(text) {
+                    // TODO(port): std.fmt.parseFloat — bytes-based; using bun_core::wtf::parse_double
+                    match bun_core::wtf::parse_double(text) {
                         Ok(num) => {
                             self.number = num;
                         }
@@ -3879,7 +3879,7 @@ lexer_impl_header! {
                 self.number = number as f64;
             } else {
                 // Parse a double-precision floating-point number
-                match bun_string::wtf::parse_double(text) {
+                match bun_core::wtf::parse_double(text) {
                     Ok(num) => {
                         self.number = num;
                     }
@@ -3934,7 +3934,7 @@ pub fn is_whitespace(codepoint: CodePoint) -> bool {
         || strings::is_unicode_space_separator(codepoint as u32)
 }
 
-pub use bun_string::identifier::{is_identifier, is_identifier_utf16};
+pub use bun_core::identifier::{is_identifier, is_identifier_utf16};
 
 pub fn range_of_identifier(source: &Source, loc: Loc) -> Range {
     let contents = &source.contents;

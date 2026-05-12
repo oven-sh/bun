@@ -5,7 +5,7 @@ use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_core::{self, err, Error, Output};
-use bun_string::strings;
+use bun_core::strings;
 use bun_wyhash::Wyhash;
 
 use crate::parser::options;

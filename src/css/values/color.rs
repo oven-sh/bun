@@ -17,7 +17,7 @@ use crate::values::calc::Calc;
 use crate::values::number::CSSNumberFns;
 use crate::values::percentage::Percentage;
 use bun_alloc::Arena;
-use bun_string::strings;
+use bun_core::strings;
 
 // ───────────────────────── colorspace structs ────────────────────────────
 // Field layout matches `color.zig`; every space is 3 channels + alpha.

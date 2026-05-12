@@ -16,7 +16,7 @@ use bun_ast::scope::Kind as ScopeKind;
 use bun_ast::ts;
 use crate::lexer as js_lexer;
 use bun_ast::flags;
-use bun_string::strings;
+use bun_core::strings;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
 // `ListManaged(Stmt)` in the parser is arena-backed (`p.arena`).

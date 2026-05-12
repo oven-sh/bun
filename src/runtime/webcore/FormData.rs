@@ -8,7 +8,7 @@ use bun_jsc::{
     ZigStringJsc as _,
 };
 use bun_semver::{self, SlicedString};
-use bun_str::{strings, ZigString, ZigStringSlice};
+use bun_core::{strings, ZigString, ZigStringSlice};
 use core::ffi::c_void;
 
 use crate::webcore::Blob;

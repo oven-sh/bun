@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use bun_string::strings;
+use bun_core::strings;
 
 // PORT NOTE (cyclebreak): `by_loader` needs `bun_ast::Loader`, but
 // adding that dep creates a cargo cycle

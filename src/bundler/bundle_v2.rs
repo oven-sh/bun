@@ -356,7 +356,7 @@ use std::io::Write as _;
 
 use bun_core::{self as bun, Environment, FeatureFlags, Output, Error};
 use crate::transpiler::Transpiler;
-use crate::ungate_support::bun_str::strings;
+use bun_core::strings;
 use bun_alloc::{Arena as ThreadLocalArena, AllocError};
 use bun_collections::{VecExt, MultiArrayList, ArrayHashMap, StringHashMap, StringArrayHashMap, DynamicBitSet, DynamicBitSetUnmanaged};
 use bun_ast::{self as js_ast, Ref, Symbol, Stmt, Expr, E, S, G, B, Binding, Scope, Part, Dependency};
@@ -722,7 +722,7 @@ pub mod api {
     pub mod JSBundler {
         use bun_ast::ImportKind;
         use bun_resolver::fs::PathResolverExt as _;
-        use bun_string::String as BunString;
+        use bun_core::String as BunString;
         use crate::options::{Loader, Target};
         use crate::options_impl::TargetExt;
         use crate::parse_task::ParseTask;
@@ -1423,7 +1423,7 @@ pub mod dispatch {
         safe fn __bun_jsc_generate_cached_bytecode(
             format: crate::options_impl::Format,
             source: &[u8],
-            source_provider_url: &mut bun_string::String,
+            source_provider_url: &mut bun_core::String,
         ) -> Option<Box<[u8]>>;
     }
 
@@ -1454,7 +1454,7 @@ pub mod dispatch {
     pub fn generate_cached_bytecode(
         format: crate::options_impl::Format,
         source: &[u8],
-        source_provider_url: &mut bun_string::String,
+        source_provider_url: &mut bun_core::String,
     ) -> Option<Box<[u8]>> {
         __bun_jsc_generate_cached_bytecode(format, source, source_provider_url)
     }

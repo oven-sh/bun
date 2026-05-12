@@ -22,7 +22,7 @@ use bun_jsc::{
 // `bun_jsc::VirtualMachine` is the *module* (alias of `virtual_machine`); name the
 // struct directly so `VirtualMachine::get()` resolves as an associated fn.
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_str::{self as bstr, String as BunString, ZigString, ZStr};
+use bun_core::{self as bstr, String as BunString, ZigString, ZStr};
 use bun_sys as sys;
 use bun_uws as uws;
 use bun_boringssl_sys as boringssl_sys;

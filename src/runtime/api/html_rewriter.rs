@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use bun_collections::{ByteVecExt, VecExt, LinearFifo};
 use bun_collections::linear_fifo::DynamicBuffer;
-use bun_string::MutableString;
+use bun_core::MutableString;
 use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, ProtectedJSValue,
     StrongOptional, SystemError, StringJsc as _, bun_string_jsc,
@@ -20,7 +20,7 @@ use bun_jsc::{
 // name resolves as a type at `&mut VirtualMachine` annotations and as the
 // owner of the `on_quiet_unhandled_rejection_handler_capture_value` assoc fn.
 use bun_jsc::virtual_machine::VirtualMachine;
-// `ZigString` re-exports `bun_string::ZigString`; JSC-side methods
+// `ZigString` re-exports `bun_core::ZigString`; JSC-side methods
 // (`to_js`, `with_encoding`, …) come from the `ZigStringJsc` extension trait.
 use bun_jsc::zig_string::ZigString;
 use bun_jsc::ZigStringJsc as _;
@@ -35,7 +35,7 @@ use crate::webcore::{self, Blob, Body, Response};
 use crate::webcore::response::HeadersRef;
 use crate::webcore::streams::{self, Signal, StreamResult, Writable};
 use bun_jsc::call_frame::ArgumentsSlice;
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 use bun_sys;
 
 // ───────────────────── local helpers ─────────────────────────────────────
@@ -2154,8 +2154,8 @@ impl AttributeIterator {
 
     #[bun_jsc::host_fn(method)]
     pub fn next(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        let done_label = bun_string::ZigString::init(b"done");
-        let value_label = bun_string::ZigString::init(b"value");
+        let done_label = bun_core::ZigString::init(b"done");
+        let value_label = bun_core::ZigString::init(b"value");
 
         let Some(it) = lolhtml::AttributeIterator::from_ptr(self.iterator.get()) else {
             return JSValue::create_object2(

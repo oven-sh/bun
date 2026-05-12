@@ -3,7 +3,7 @@ use core::mem;
 
 use crate::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, JsError, VirtualMachineSqlExt as _};
 use bun_jsc::JsCell;
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 use bun_wyhash::hash;
 
 use super::postgres_request as PostgresRequest;

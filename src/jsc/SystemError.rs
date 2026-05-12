@@ -1,7 +1,7 @@
 use core::ffi::c_int;
 use core::fmt;
 
-use bun_string::String;
+use bun_core::String;
 
 use crate::{JSGlobalObject, JSPromise, JSValue};
 
@@ -94,13 +94,13 @@ impl SystemError {
         self.dest.ref_();
     }
 
-    /// Bitwise-copy + bump every `bun_str::String` ref. Mirrors Zig
+    /// Bitwise-copy + bump every `bun_core::String` ref. Mirrors Zig
     /// `var v = this.*; v.ref();` (used by `Body.ValueError.dupe`).
-    /// `bun_str::String` has no `Clone` impl (intrusive WTF refcount), so
+    /// `bun_core::String` has no `Clone` impl (intrusive WTF refcount), so
     /// `#[derive(Clone)]` is unavailable; this is the manual equivalent.
     pub fn dupe(&self) -> SystemError {
         // SAFETY: `SystemError` is `#[repr(C)]` and every field is either `c_int`
-        // (trivially copyable) or `bun_str::String` — a `#[repr(C)]` smart-ptr
+        // (trivially copyable) or `bun_core::String` — a `#[repr(C)]` smart-ptr
         // whose bitwise copy is sound provided we immediately bump each ref
         // (preventing a double-free on drop). This is exactly the Zig spec
         // `var v = this.*; v.ref();`.

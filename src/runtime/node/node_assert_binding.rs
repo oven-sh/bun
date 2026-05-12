@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
-use bun_str as bstring;
+use bun_core as bstring;
 
 use super::assert::myers_diff::DiffList;
 use super::node_assert;
@@ -38,7 +38,7 @@ pub fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
         return Err(global.throw_invalid_argument_type_value("expected", "string", expected_arg));
     }
 
-    // `defer .deref()` — `bun_str::String` is `Copy` (no `Drop`), so wrap in
+    // `defer .deref()` — `bun_core::String` is `Copy` (no `Drop`), so wrap in
     // `OwnedString` for the scope-exit ref-drop.
     let actual_str = bstring::OwnedString::new(actual_arg.to_bun_string(global)?);
     let expected_str = bstring::OwnedString::new(expected_arg.to_bun_string(global)?);

@@ -212,7 +212,7 @@ const _: () = assert!(NAMEBUF_SIZE.is_power_of_two());
 fn extract_name<'a>(t: &TestFn, namebuf: &'a mut [u8]) -> &'a [u8] {
     const TEST_SEPS: [&[u8]; 2] = [b".test.", b".decltest."];
     for test_sep in TEST_SEPS {
-        if let Some(marker) = bun_str::strings::last_index_of(t.name, test_sep) {
+        if let Some(marker) = bun_core::strings::last_index_of(t.name, test_sep) {
             let prefix = &t.name[..marker];
             let test_name = &t.name[marker + test_sep.len()..];
             // std.fmt.bufPrint(namebuf, "{s}\t{s}", .{ prefix, test_name })

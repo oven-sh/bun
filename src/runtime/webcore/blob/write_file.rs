@@ -8,7 +8,7 @@ use bun_jsc::{
 };
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::ZigStringJsc as _;
-use bun_str::ZigString;
+use bun_core::ZigString;
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
@@ -86,7 +86,7 @@ impl FileOpener for WriteFile {
     fn try_mkdirp(
         &mut self,
         err: bun_sys::Error,
-        path: &bun_str::ZStr,
+        path: &bun_core::ZStr,
         display_path: &[u8],
     ) -> Retry {
         // Zig: `if (@hasField(This, "mkdirp_if_not_exists")) switch (mkdirIfNotExists(...)) { ... }`

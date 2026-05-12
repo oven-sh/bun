@@ -28,7 +28,7 @@ impl IniTestingAPIs {
         use bun_ini::{config_iterator, load_npmrc};
         use bun_install::npm::Registry;
         use bun_ast::{Log, Source};
-        use bun_string::String as BunString;
+        use bun_core::String as BunString;
 
         let arg = frame.argument(0);
         let npmrc_contents = arg.to_bun_string(global)?;
@@ -142,7 +142,7 @@ impl IniTestingAPIs {
                 BunString::from_bytes(&default_registry.email),
             )
         };
-        // `defer { *.deref() }` deleted — bun_string::String impls Drop.
+        // `defer { *.deref() }` deleted — bun_core::String impls Drop.
 
         // PORT NOTE: `jsc.JSObject.create(.{ .field = val, ... }, global)` reflects over
         // an anon struct's fields at comptime. Rust has no field reflection; mirror with

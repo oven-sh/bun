@@ -6,7 +6,7 @@ use core::fmt::Write as _;
 use bun_core::{self, OOM};
 use bun_collections::{HashMap, StringHashMap, ArrayHashMap};
 use bun_paths::PathBuffer;
-use bun_str::strings;
+use bun_core::strings;
 use bun_semver::{self as Semver, String, ExternalString};
 use bun_semver::semver_string::{Buf as StringBuf, Builder as StringBuilder, JsonFormatterOptions as JsonOpts};
 use bun_ast::{Expr, expr::Data as ExprData};

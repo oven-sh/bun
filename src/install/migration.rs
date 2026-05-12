@@ -4,7 +4,7 @@ use bun_core::{err, zstr, Error, Global, Output};
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_semver::{self as Semver, String as SemverString, SlicedString};
 use bun_semver::query::token::Wildcard;
-use bun_str::strings;
+use bun_core::strings;
 use bun_sys::{self, Fd, File, O};
 use bun_ast::{E, Expr, ExprData};
 

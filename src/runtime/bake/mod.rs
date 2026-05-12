@@ -620,7 +620,7 @@ pub struct BuildConfigSubset {
 pub struct HmrRuntime {
     /// Spec bake.zig:841 is `[:0]const u8` — NUL-terminated; the sentinel is
     /// load-bearing where this buffer is handed to JSC/C++ as a C string.
-    pub code: &'static bun_str::ZStr,
+    pub code: &'static bun_core::ZStr,
     pub line_count: u32,
 }
 pub use bake_body::get_hmr_runtime;

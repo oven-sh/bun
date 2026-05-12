@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 
 use crate::{JSGlobalObject, JSValue, JsError, JsResult, VM};
 // `jsc.Strong.Optional` and `jsc.Weak(T)` collide with this module's own `Strong`/`Weak`,

@@ -5,8 +5,8 @@ use core::cmp::Ordering;
 use core::ffi::c_int;
 
 use bun_alloc::AllocError;
-use bun_collections::BoundedArray;
-use bun_core::Error;
+use crate::BoundedArray;
+use crate::Error;
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
 
@@ -26,13 +26,12 @@ pub use self::unicode::{
 #[path = "immutable/escapeHTML.rs"]         pub mod escape_html;
 #[path = "immutable/grapheme.rs"] pub mod grapheme;
 #[path = "immutable/grapheme_tables.rs"] pub mod grapheme_tables;
-#[path = "immutable/paths.rs"]              pub mod paths;
 #[path = "immutable/unicode.rs"]            mod unicode_draft;
 #[path = "immutable/visible.rs"]            mod visible_impl;
 
-// Transcoding helpers from `unicode_draft` that have no T0 `bun_core::strings`
+// Transcoding helpers from `unicode_draft` that have no T0 `crate::strings`
 // equivalent yet — re-export so downstream `bun_str::strings::*` callers (e.g.
-// runtime/webcore/encoding.rs) resolve. These return `bun_core::strings::EncodeIntoResult`.
+// runtime/webcore/encoding.rs) resolve. These return `crate::strings::EncodeIntoResult`.
 pub use unicode_draft::{
     allocate_latin1_into_utf8, copy_cp1252_into_utf16, copy_latin1_into_ascii,
     copy_latin1_into_utf16, copy_latin1_into_utf8_stop_on_non_ascii, copy_u16_into_u8, copy_u8_into_u16,
@@ -41,12 +40,12 @@ pub use unicode_draft::{
     u16_is_lead, u16_is_trail, utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
     UTF16Replacement, BOM,
 };
-pub use bun_core::strings::{
+pub use crate::strings::{
     decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw, u16_get_supplementary,
     u16_is_surrogate, U16_SURROGATE_OFFSET,
 };
 
-mod escape_reg_exp { pub(super) use crate::escape_reg_exp::*; }
+mod escape_reg_exp { pub(super) use crate::string::escape_reg_exp::*; }
 
 /// `bun.strings.visible` — terminal-visible-width helpers (East-Asian-width +
 /// grapheme-aware; SIMD paths demoted to scalar `ScalarVec` for B-2).
@@ -63,7 +62,7 @@ pub use visible_impl::{
 pub mod visible_fallback {
     pub mod width {
         pub mod exclude_ansi_colors {
-            use crate::immutable::{index_of_char_usize, wtf8_byte_sequence_length};
+            use crate::string::immutable::{index_of_char_usize, wtf8_byte_sequence_length};
 
             /// Skip a CSI/OSC escape starting at `input[0] == ESC`; returns
             /// the byte length consumed (at least 1). Mirrors the parser in
@@ -184,8 +183,8 @@ pub mod visible_fallback {
                     if c < 0x80 {
                         if c >= 0x20 && c != 0x7f { w += 1; }
                         i += 1;
-                    } else if bun_core::strings::u16_is_lead(c)
-                        && input.get(i + 1).copied().is_some_and(bun_core::strings::u16_is_trail)
+                    } else if crate::strings::u16_is_lead(c)
+                        && input.get(i + 1).copied().is_some_and(crate::strings::u16_is_trail)
                     {
                         // Surrogate pair → one codepoint.
                         w += 1;
@@ -207,7 +206,7 @@ pub mod visible_fallback {
 pub mod unicode {
     use super::{CodePoint, U3Fast};
 
-    pub use bun_core::strings::wtf8_byte_sequence_length;
+    pub use crate::strings::wtf8_byte_sequence_length;
     /// Same table; the Zig version distinguished only by 0-on-invalid intent
     /// (which the body doesn't actually do — both return 1 for invalid).
     #[inline]
@@ -351,7 +350,7 @@ pub mod unicode {
     /// `std.unicode.utf8ToUtf16LeStringLiteral`. Zig evaluated this at
     /// `comptime` into a `Holder.value` const yielding `[:0]const u16`; the
     /// Rust runtime port returns an owned `Box<[u16]>` (no `Box::leak` per
-    /// PORTING.md §Forbidden). Prefer the const `crate::w!("…")` macro at call
+    /// PORTING.md §Forbidden). Prefer the const `crate::string::w!("…")` macro at call
     /// sites with literal inputs — this fn exists for the residual runtime
     /// callers that thread `&[u8]` through.
     pub fn to_utf16_literal(s: &[u8]) -> Box<[u16]> {
@@ -387,8 +386,8 @@ pub use self::unicode::to_utf16_literal;
 /// `bun.strings.w` — comptime UTF-8→UTF-16 literal. In Rust this **must** be a
 /// macro (callers write `bun_string::strings::w!("…")`); a `fn` returning
 /// `&'static [u16]` would require leaking. Re-export of the crate-root `w!`.
-pub use crate::w;
-pub use bun_core::strings::{
+pub use crate::string::w;
+pub use crate::strings::{
     EncodeIntoResult, copy_latin1_into_utf8, copy_utf16_into_utf8,
     element_length_latin1_into_utf8, element_length_utf16_into_utf8,
     encode_surrogate_pair, push_codepoint_utf16, to_utf8_alloc_z,
@@ -415,11 +414,11 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// `bun.reinterpretSlice` — `&[T]` → `&[u8]` view (T must be u8/u16 in practice).
-/// Safe via [`bun_core::cast_slice`]: the `NoUninit` bound proves every byte of
+/// Safe via [`crate::cast_slice`]: the `NoUninit` bound proves every byte of
 /// `T` is initialized, and `u8` is `AnyBitPattern` with align 1.
 #[inline]
-fn reinterpret_to_u8<T: bun_core::NoUninit>(s: &[T]) -> &[u8] {
-    bun_core::cast_slice::<T, u8>(s)
+fn reinterpret_to_u8<T: crate::NoUninit>(s: &[T]) -> &[u8] {
+    crate::cast_slice::<T, u8>(s)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -461,7 +460,7 @@ pub fn contains_char(self_: &[u8], char: u8) -> bool {
 }
 
 #[inline]
-pub fn contains_char_t<T: bun_core::NoUninit + Eq + Into<u32>>(self_: &[T], char: u8) -> bool {
+pub fn contains_char_t<T: crate::NoUninit + Eq + Into<u32>>(self_: &[T], char: u8) -> bool {
     // TODO(port): Zig dispatched on T at comptime; in Rust we branch on size_of.
     if core::mem::size_of::<T>() == 1 {
         contains_char(reinterpret_to_u8(self_), char)
@@ -484,9 +483,9 @@ pub fn contains_t<T: Eq>(self_: &[T], str: &[T]) -> bool {
     index_of_t(self_, str).is_some()
 }
 
-// Canonical impl lives in tier-0 `bun_core::strings` (which `bun_paths` etc.
+// Canonical impl lives in tier-0 `crate::strings` (which `bun_paths` etc.
 // reach without depending on this crate); re-export to avoid a second copy.
-pub use bun_core::strings::contains_case_insensitive_ascii;
+pub use crate::strings::contains_case_insensitive_ascii;
 
 /// Zig: `std.meta.Int(.unsigned, @bitSizeOf(usize) - 1)` — fits in 63/31 bits so
 /// `?OptionalUsize` is word-sized via niche. Rust `Option<u32>` already niches; keep
@@ -551,7 +550,7 @@ pub use contains as includes;
 /// are pure lowercase ASCII, so such probes miss regardless.
 #[inline]
 pub fn with_ascii_lowercase<R>(probe: &[u8], f: impl FnOnce(&[u8]) -> R) -> Option<R> {
-    let (buf, len) = bun_core::strings::ascii_lowercase_buf::<256>(probe)?;
+    let (buf, len) = crate::strings::ascii_lowercase_buf::<256>(probe)?;
     Some(f(&buf[..len]))
 }
 
@@ -631,11 +630,11 @@ pub fn is_npm_package_name_ignore_length(target: &[u8]) -> bool {
     !scoped || (slash_index > 0 && slash_index + 1 < target.len())
 }
 
-// Secret-redaction scanners are canonical in bun_core::strings (only callers
+// Secret-redaction scanners are canonical in crate::strings (only callers
 // live in bun_core/fmt.rs). Re-exported here to preserve the bun.strings.* path.
 // NOTE: starts_with_npm_secret now returns usize (was u8 in the Zig-literal port);
 // no external callers depended on the narrow type.
-pub use bun_core::strings::{
+pub use crate::strings::{
     find_url_password, is_uuid, starts_with_npm_secret, starts_with_secret, starts_with_uuid,
 };
 
@@ -1015,7 +1014,7 @@ pub trait Appender {
     fn append_lower_case(&mut self, s: &[u8]) -> Result<&[u8], AllocError>;
 }
 
-pub use bun_core::strings::copy_lowercase;
+pub use crate::strings::copy_lowercase;
 
 pub fn copy_lowercase_if_needed<'a>(in_: &'a [u8], out: &'a mut [u8]) -> &'a [u8] {
     let mut in_slice = in_;
@@ -1102,7 +1101,7 @@ pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
     self_.len() >= prefix.len() && eql_case_insensitive_ascii(&self_[0..prefix.len()], prefix, false)
 }
 
-pub use bun_core::strings::{has_prefix_t as starts_with_generic, has_suffix_t as ends_with_generic};
+pub use crate::strings::{has_prefix_t as starts_with_generic, has_suffix_t as ends_with_generic};
 
 #[inline]
 pub fn ends_with(self_: &[u8], str: &[u8]) -> bool {
@@ -1207,12 +1206,12 @@ pub fn eql(self_: &[u8], other: &[u8]) -> bool {
     eql_long(self_, other, false)
 }
 
-pub fn eql_comptime_t<T: bun_core::NoUninit + Eq>(self_: &[T], alt: &'static [u8]) -> bool {
+pub fn eql_comptime_t<T: crate::NoUninit + Eq>(self_: &[T], alt: &'static [u8]) -> bool {
     // TODO(port): Zig dispatched on T at comptime (u16 → eql_comptime_utf16).
     if core::mem::size_of::<T>() == 2 {
         // `NoUninit` + size_of::<T>()==2 lets bytemuck prove the &[T]→&[u16]
         // reinterpret is sound (align checked at runtime; T is u16 in practice).
-        let s16: &[u16] = bun_core::cast_slice(self_);
+        let s16: &[u16] = crate::cast_slice(self_);
         return eql_comptime_utf16(s16, alt);
     }
     // T is u8-sized in remaining branch.
@@ -1246,9 +1245,9 @@ pub fn has_prefix_comptime_utf16(self_: &[u16], alt: &'static [u8]) -> bool {
         && self_[..alt.len()].iter().zip(alt.iter()).all(|(&u, &b)| u == u16::from(b))
 }
 
-pub fn has_prefix_comptime_type<T: bun_core::NoUninit + Eq>(self_: &[T], alt: &'static [T]) -> bool {
+pub fn has_prefix_comptime_type<T: crate::NoUninit + Eq>(self_: &[T], alt: &'static [T]) -> bool {
     // TODO(port): Zig accepted heterogeneous `alt: anytype` and widened u8→u16 via `w(alt)`.
-    // Rust callers must pass the correctly-typed literal (use `crate::w!` for u16).
+    // Rust callers must pass the correctly-typed literal (use `crate::string::w!` for u16).
     self_.len() >= alt.len() && eql_comptime_check_len_with_type::<T, false>(&self_[0..alt.len()], alt)
 }
 
@@ -1289,7 +1288,7 @@ fn eql_comptime_check_len_u8_impl(a: &[u8], b: &[u8], check_len: bool) -> bool {
     unsafe { a.get_unchecked(..b.len()) == b }
 }
 
-fn eql_comptime_check_len_with_known_type<T: bun_core::NoUninit + Eq, const CHECK_LEN: bool>(
+fn eql_comptime_check_len_with_known_type<T: crate::NoUninit + Eq, const CHECK_LEN: bool>(
     a: &[T],
     b: &[T],
 ) -> bool {
@@ -1308,7 +1307,7 @@ fn eql_comptime_check_len_with_known_type<T: bun_core::NoUninit + Eq, const CHEC
 ///
 ///   strings.eql_comptime(input, b"hello world");
 ///   strings.eql_comptime(input, b"hai");
-pub fn eql_comptime_check_len_with_type<T: bun_core::NoUninit + Eq, const CHECK_LEN: bool>(
+pub fn eql_comptime_check_len_with_type<T: crate::NoUninit + Eq, const CHECK_LEN: bool>(
     a: &[T],
     b: &[T],
 ) -> bool {
@@ -1322,7 +1321,7 @@ pub fn eql_case_insensitive_ascii_ignore_length(a: &[u8], b: &[u8]) -> bool {
     eql_case_insensitive_ascii(a, b, false)
 }
 
-pub use bun_core::strings::eql_case_insensitive_ascii_check_length;
+pub use crate::strings::eql_case_insensitive_ascii_check_length;
 
 /// Preserves Zig's triple-`i` typo (`eqlCaseInsensitiveASCIIICheckLength`); both
 /// spellings are reachable from ported call sites until the next typo sweep.
@@ -1339,10 +1338,10 @@ pub fn eql_case_insensitive_asciii_check_length(a: &[u8], b: &[u8]) -> bool {
 // wrappers above.
 #[inline]
 pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
-    bun_core::strings::eql_case_insensitive_ascii(a, b, check_len)
+    crate::strings::eql_case_insensitive_ascii(a, b, check_len)
 }
 
-pub fn eql_case_insensitive_t<T: bun_core::NoUninit + Into<u32>>(a: &[T], b: &[u8]) -> bool {
+pub fn eql_case_insensitive_t<T: crate::NoUninit + Into<u32>>(a: &[T], b: &[u8]) -> bool {
     if a.len() != b.len() || a.is_empty() {
         return false;
     }
@@ -1366,7 +1365,7 @@ pub fn eql_case_insensitive_t<T: bun_core::NoUninit + Into<u32>>(a: &[T], b: &[u
     true
 }
 
-pub fn has_prefix_case_insensitive_t<T: bun_core::NoUninit + Into<u32>>(str: &[T], prefix: &[u8]) -> bool {
+pub fn has_prefix_case_insensitive_t<T: crate::NoUninit + Into<u32>>(str: &[T], prefix: &[u8]) -> bool {
     if str.len() < prefix.len() {
         return false;
     }
@@ -1377,7 +1376,7 @@ pub fn has_prefix_case_insensitive(str: &[u8], prefix: &[u8]) -> bool {
     has_prefix_case_insensitive_t(str, prefix)
 }
 
-pub fn eql_long_t<T: bun_core::NoUninit, const CHECK_LEN: bool>(a_str: &[T], b_str: &[T]) -> bool {
+pub fn eql_long_t<T: crate::NoUninit, const CHECK_LEN: bool>(a_str: &[T], b_str: &[T]) -> bool {
     if CHECK_LEN {
         let len = b_str.len();
         if len == 0 {
@@ -1494,7 +1493,7 @@ pub fn concat_buf_t<'a, T: Copy>(out: &'a mut [T], strs: &[&[T]]) -> Result<&'a 
     let mut off: usize = 0;
     for s in strs {
         if s.len() > out.len() - off {
-            return Err(bun_core::err!("NoSpaceLeft"));
+            return Err(crate::err!("NoSpaceLeft"));
         }
         out[off..off + s.len()].copy_from_slice(s);
         off += s.len();
@@ -1658,10 +1657,10 @@ macro_rules! w {
 }
 
 /// Index of first non-ASCII byte. Thin `u32` view over the canonical
-/// `bun_core::strings::first_non_ascii` (Zig spec `firstNonASCII -> ?u32`).
+/// `crate::strings::first_non_ascii` (Zig spec `firstNonASCII -> ?u32`).
 #[inline]
 pub fn first_non_ascii(slice: &[u8]) -> Option<u32> {
-    bun_core::strings::first_non_ascii(slice).map(|i| i as u32)
+    crate::strings::first_non_ascii(slice).map(|i| i as u32)
 }
 
 /// `bun.strings.isValidUTF8` — SIMD-validated UTF-8 check (immutable.zig).
@@ -1677,7 +1676,7 @@ pub fn is_valid_utf8(slice: &[u8]) -> bool {
 /// This is the codebase-wide replacement for `core::str::from_utf8` — every
 /// runtime UTF-8 validation goes through simdutf (~3-10× faster than std's
 /// scalar DFA on AVX2/NEON). NOT `const`: the one allowed exception is
-/// `bun_core::env::const_str_slice` (compile-time git-SHA slicing), which is
+/// `crate::env::const_str_slice` (compile-time git-SHA slicing), which is
 /// the only place `core::str::from_utf8` may appear.
 #[inline]
 pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
@@ -1795,7 +1794,7 @@ pub fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
     None
 }
 
-pub fn index_of_char_z(slice_z: &crate::ZStr, char: u8) -> Option<u64> {
+pub fn index_of_char_z(slice_z: &crate::string::ZStr, char: u8) -> Option<u64> {
     // Zig returned ?u63; use u64 in Rust (no u63).
     highway::index_of_char(slice_z.as_bytes(), char).map(|i| i as u64)
 }
@@ -1857,7 +1856,7 @@ pub fn index_of_not_char(slice: &[u8], char: u8) -> Option<u32> {
     None
 }
 
-use bun_core::fmt::{HEX_DECODE_TABLE as HEX_TABLE, HEX_INVALID as INVALID_CHAR};
+use crate::fmt::{HEX_DECODE_TABLE as HEX_TABLE, HEX_INVALID as INVALID_CHAR};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum DecodeHexError {
@@ -1937,7 +1936,7 @@ pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
 
     // PERF(port): Zig had a @Vector(16,u8) interlace fast path. Scalar loop here;
     // Phase B: portable_simd shuffle or LUT.
-    bun_core::fmt::bytes_to_hex_lower(&source[..to_read], &mut destination[..to_read * 2])
+    crate::fmt::bytes_to_hex_lower(&source[..to_read], &mut destination[..to_read * 2])
 }
 
 /// Leave a single leading char
@@ -1981,7 +1980,7 @@ pub fn trim_leading_pattern2(slice_: &[u8], byte1: u8, byte2: u8) -> &[u8] {
 }
 
 /// prefix is of type &[u8] or &[u16]
-pub fn trim_prefix_comptime<'a, T: bun_core::NoUninit + Eq>(buffer: &'a [T], prefix: &'static [T]) -> &'a [T] {
+pub fn trim_prefix_comptime<'a, T: crate::NoUninit + Eq>(buffer: &'a [T], prefix: &'static [T]) -> &'a [T] {
     if has_prefix_comptime_type(buffer, prefix) {
         &buffer[prefix.len()..]
     } else {
@@ -2155,7 +2154,7 @@ pub fn first_non_ascii16(slice: &[u16]) -> Option<u32> {
 }
 
 // this is std.mem.trim except it doesn't forcibly change the slice to be const
-pub use bun_core::strings::trim;
+pub use crate::strings::trim;
 
 pub fn trim_spaces(slice: &[u8]) -> &[u8] {
     trim(slice, &WHITESPACE_CHARS)
@@ -2266,7 +2265,7 @@ impl<'a> StringArrayByIndexSorter<'a> {
 pub fn to_ascii_hex_value(character: u8) -> u8 {
     // Zig parity: bun.strings.toASCIIHexValue (precondition-based, no Option).
     debug_assert!(character.is_ascii_hexdigit());
-    bun_core::fmt::hex_digit_value(character).expect("ascii hex digit")
+    crate::fmt::hex_digit_value(character).expect("ascii hex digit")
 }
 
 /// Zig: `fn NewLengthSorter(comptime Type, comptime field) type`.
@@ -2454,7 +2453,7 @@ pub fn has_prefix_with_word_boundary(input: &[u8], prefix: &'static [u8]) -> boo
         ];
 
         let cp = decode_wtf8_rune_t::<i32>(&bytes, wtf8_byte_sequence_length(next[0]), -1);
-        if cp < 0 || !crate::lexer::is_identifier_continue(cp as u32) {
+        if cp < 0 || !crate::string::lexer::is_identifier_continue(cp as u32) {
             return true;
         }
     }
@@ -2596,7 +2595,7 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
         // a Vec so `write_pre_quoted_string`'s `PrinterWriter` bound is met
         // without an adapter for `core::fmt::Formatter`. Profile in Phase B.
         let mut buf: Vec<u8> = Vec::with_capacity(self.data.len() + 8);
-        crate::printer::write_pre_quoted_string(
+        crate::string::printer::write_pre_quoted_string(
             self.data,
             &mut buf,
             self.flags.quote_char,
@@ -2614,7 +2613,7 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
 
 /// Generic. Works on &[u8], &[u16], etc
 #[inline]
-pub fn index_of_scalar<T: bun_core::NoUninit + Eq>(input: &[T], scalar: T) -> Option<usize> {
+pub fn index_of_scalar<T: crate::NoUninit + Eq>(input: &[T], scalar: T) -> Option<usize> {
     // TODO(port): Zig specialized T==u8 → index_of_char_usize (highway).
     if core::mem::size_of::<T>() == 1 {
         let scalar_u8 = reinterpret_to_u8(core::slice::from_ref(&scalar))[0];
@@ -2624,7 +2623,7 @@ pub fn index_of_scalar<T: bun_core::NoUninit + Eq>(input: &[T], scalar: T) -> Op
 }
 
 /// Generic. Works on &[u8], &[u16], etc
-pub fn contains_scalar<T: bun_core::NoUninit + Eq>(input: &[T], item: T) -> bool {
+pub fn contains_scalar<T: crate::NoUninit + Eq>(input: &[T], item: T) -> bool {
     index_of_scalar(input, item).is_some()
 }
 
@@ -2642,12 +2641,12 @@ pub fn without_prefix_comptime<'a>(input: &'a [u8], prefix: &'static [u8]) -> &'
     input
 }
 
-pub fn without_prefix_comptime_z<'a>(input: &'a crate::ZStr, prefix: &'static [u8]) -> &'a crate::ZStr {
+pub fn without_prefix_comptime_z<'a>(input: &'a crate::string::ZStr, prefix: &'static [u8]) -> &'a crate::string::ZStr {
     if has_prefix_comptime(input.as_bytes(), prefix) {
         // `as_bytes_with_nul()[prefix.len()..]` keeps the trailing NUL at
         // index `input.len() - prefix.len()` of the sub-slice; `from_buf`
         // debug-asserts it.
-        return crate::ZStr::from_buf(
+        return crate::string::ZStr::from_buf(
             &input.as_bytes_with_nul()[prefix.len()..],
             input.len() - prefix.len(),
         );
@@ -2703,7 +2702,7 @@ pub fn percent_encode_write(
         remaining = &remaining[j..];
         let code_point_len: usize = wtf8_byte_sequence_length_with_invalid(remaining[0]) as usize;
         if remaining.len() < code_point_len {
-            bun_core::hint::cold();
+            crate::hint::cold();
             return Err(PercentEncodeError::IncompleteUTF8);
         }
 
@@ -2718,7 +2717,7 @@ pub fn percent_encode_write(
 
         // URL encode the code point
         for &byte in to_encode {
-            let h = bun_core::fmt::hex2_lower(byte);
+            let h = crate::fmt::hex2_lower(byte);
             writer.extend_from_slice(&[b'%', h[0], h[1]]);
         }
     }
@@ -2732,15 +2731,15 @@ pub fn percent_encode_write(
 
 // B-2: unicode core re-exported at top of file. Remaining submodule re-exports
 // land when `unicode_draft`/`visible_draft`/`paths_draft`/`escape_html_draft` un-gate.
-pub use crate::escape_reg_exp::{escape_reg_exp, escape_reg_exp_for_package_name_matching};
+pub use crate::string::escape_reg_exp::{escape_reg_exp, escape_reg_exp_for_package_name_matching};
 // TODO(b2-gated): full transcoding suite from unicode_draft —
 //   to_utf8_alloc / to_utf16_alloc / convert_* / copy_*_into_* / EncodeIntoResult / BOM / etc.
 // TODO(b2-gated): visible::{visible, visible_codepoint_width, ...}
 // TODO(b2-gated): paths::{to_w_path, basename, add_nt_path_prefix, ...}
 // TODO(b2-gated): escape_html::{escape_html_for_latin1_input, escape_html_for_utf16_input}
 
-bun_core::declare_scope!(STR, hidden);
-// `log` is `bun.Output.scoped(.STR, .hidden)` — use `bun_core::scoped_log!(STR, ...)`.
+crate::declare_scope!(STR, hidden);
+// `log` is `bun.Output.scoped(.STR, .hidden)` — use `crate::scoped_log!(STR, ...)`.
 
 pub type CodePoint = i32;
 
@@ -2819,10 +2818,10 @@ unsafe extern "C" {
     safe fn Bun__ANSI__next(it: &mut ANSIIterator) -> bool;
 }
 
-// Transcoding allocators live in T0 `bun_core::strings` so collections can
+// Transcoding allocators live in T0 `crate::strings` so collections can
 // reach them without a same-tier cycle. Re-export here for callers that go
 // through `bun_string::strings`.
-pub use bun_core::strings::{
+pub use crate::strings::{
     allocate_latin1_into_utf8_with_list, convert_utf16_to_utf8, convert_utf16_to_utf8_append,
     encode_wtf8_rune, is_all_ascii, latin1_to_codepoint_bytes_assume_not_ascii, to_utf8_alloc,
     to_utf8_alloc_from_le_bytes, to_utf8_append_to_list, to_utf8_from_latin1,
@@ -2830,7 +2829,7 @@ pub use bun_core::strings::{
 
 #[inline]
 pub fn to_utf8_alloc_with_type(utf16: &[u16]) -> Vec<u8> {
-    bun_core::strings::to_utf8_alloc(utf16)
+    crate::strings::to_utf8_alloc(utf16)
 }
 
 // ───────────── B-2 Track A: minimal real impls of gated-submodule fns ─────────────
@@ -2852,15 +2851,15 @@ pub fn utf8_byte_sequence_length(first_byte: u8) -> u8 {
 }
 
 /// `std.mem.trimLeft(u8, str, chars)` — strip leading chars in `values_to_strip`.
-pub use bun_core::strings::trim_left;
+pub use crate::strings::trim_left;
 
 /// `std.mem.trimRight(u8, str, chars)` — strip trailing chars in `values_to_strip`.
-pub use bun_core::strings::trim_right;
+pub use crate::strings::trim_right;
 
-pub use bun_core::strings::{replacement_size, replace, replace_owned};
+pub use crate::strings::{replacement_size, replace, replace_owned};
 
-// `std.fmt.parseInt` — moved down to bun_core::fmt; re-exported for back-compat.
-pub use bun_core::fmt::{parse_int, ParseIntError};
+// `std.fmt.parseInt` — moved down to crate::fmt; re-exported for back-compat.
+pub use crate::fmt::{parse_int, ParseIntError};
 
 /// Compare a UTF-16 string against a UTF-8 string without allocating
 /// (`unicode.zig:utf16EqlString`).
@@ -2876,7 +2875,7 @@ pub fn utf16_eql_string(text: &[u16], str: &[u8]) -> bool {
     while i < n {
         // Fixes the `|`-precedence bug ported from unicode.zig:1839 — supplementary
         // code points >= U+20000 mis-decoded with the old open-coded math.
-        let (cp, adv) = bun_core::strings::decode_wtf16_raw(&text[i..]);
+        let (cp, adv) = crate::strings::decode_wtf16_raw(&text[i..]);
         i += adv as usize;
         let width = encode_wtf8_rune(&mut temp, cp);
         if j + width > str.len() {
@@ -2922,34 +2921,17 @@ pub fn without_prefix<'a>(input: &'a [u8], prefix: &[u8]) -> &'a [u8] {
 }
 
 // Zig: `pub const withoutTrailingSlash = paths_.withoutTrailingSlash;`
-// (immutable.zig:2380) — re-export from the `paths` submodule so callers can
-// use `strings::without_trailing_slash` directly, matching the Zig namespace.
-pub use paths::without_trailing_slash;
-
-// Zig: `pub const withoutLeadingPathSeparator = paths_.withoutLeadingPathSeparator;`
-// (immutable.zig:2377) — re-export from the `paths` submodule so callers can use
-// `strings::without_leading_path_separator` directly, matching the Zig namespace.
-pub use paths::without_leading_path_separator;
-// Zig: `pub const removeLeadingDotSlash = paths_.removeLeadingDotSlash;`
-// (immutable.zig) — re-export from the `paths` submodule so callers can use
-// `strings::remove_leading_dot_slash` directly, matching the Zig namespace.
-pub use paths::remove_leading_dot_slash;
-// Zig: `pub const fromWPath = paths_.fromWPath;` (immutable.zig:2356) — re-export
-// so callers can use `strings::from_wpath` directly, matching the Zig namespace.
-pub use paths::from_w_path as from_wpath;
-// Zig flattens the `paths_` submodule into `bun.strings.*` so callers write
-// `bun.strings.toWPathNormalized(..)` / `bun.strings.toNTPath(..)` directly.
-// Re-export the Windows path-shape helpers used by `#[cfg(windows)]` install
-// paths so the Rust namespace matches.
-pub use paths::{
-    add_nt_path_prefix, add_nt_path_prefix_if_needed, starts_with_windows_drive_letter,
-    to_kernel32_path, to_nt_path, to_w_path, to_w_path_normalize_auto_extend,
-    to_w_path_normalized, to_w_path_normalized as to_wpath_normalized,
-};
+// (immutable.zig:2380). The full `paths` submodule now lives in
+// `bun_paths::string_paths` (it depends upward on `bun_paths` resolve/pool
+// helpers and would cycle here). Callers reach the Windows path-shape
+// helpers (`to_nt_path` / `to_kernel32_path` / `from_w_path` / …) via
+// `bun_paths::strings::*`; this module keeps only the re-export of the
+// scalar `without_trailing_slash` already defined in `crate::strings`.
+pub use crate::strings_impl::{remove_leading_dot_slash, without_trailing_slash};
 // Zig: `pub const convertUTF16ToUTF8InBuffer = unicode.convertUTF16ToUTF8InBuffer;`
 // (immutable.zig). Re-export the bun_core implementation so callers can spell
 // `strings::convert_utf16_to_utf8_in_buffer` without reaching into `unicode`.
-pub use bun_core::strings::convert_utf16_to_utf8_in_buffer;
+pub use crate::strings::convert_utf16_to_utf8_in_buffer;
 // Zig: `pub const convertUTF8toUTF16InBufferZ = unicode.convertUTF8toUTF16InBufferZ;`
 // — re-export the NUL-terminated variant so callers can spell
 // `strings::convert_utf8_to_utf16_in_buffer_z` (used by the Windows profilers
@@ -2994,9 +2976,9 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
     list.try_reserve(length + 16).map_err(|_| AllocError)?;
     // PORT NOTE: Zig's path validates UTF-16 first then falls back to a manual
     // loop on failure (`toUTF8ListWithTypeBun`). For B-2 we route through
-    // `bun_core::strings::convert_utf16_to_utf8_append`, which already replaces
+    // `crate::strings::convert_utf16_to_utf8_append`, which already replaces
     // unpaired surrogates with U+FFFD — semantically equivalent.
-    bun_core::strings::convert_utf16_to_utf8_append(&mut list, utf16);
+    crate::strings::convert_utf16_to_utf8_append(&mut list, utf16);
     Ok(list)
 }
 
@@ -3006,11 +2988,11 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
 /// (defined there) and `to_utf16_alloc` (defined here) share a single error
 /// type — callers like `TextDecoder` match on `strings::ToUTF16Error` for both.
 pub use unicode_draft::ToUTF16Error;
-impl From<ToUTF16Error> for bun_core::Error {
+impl From<ToUTF16Error> for crate::Error {
     fn from(e: ToUTF16Error) -> Self {
         match e {
-            ToUTF16Error::InvalidByteSequence => bun_core::err!("InvalidByteSequence"),
-            ToUTF16Error::OutOfMemory => bun_core::err!("OutOfMemory"),
+            ToUTF16Error::InvalidByteSequence => crate::err!("InvalidByteSequence"),
+            ToUTF16Error::OutOfMemory => crate::err!("OutOfMemory"),
         }
     }
 }

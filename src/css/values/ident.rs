@@ -4,7 +4,7 @@ use crate::css_parser::{CssResult, Parser, PrintErr, Printer, Token};
 use crate::SmallList;
 
 use bun_ast::Ref;
-use bun_string::strings;
+use bun_core::strings;
 use bun_wyhash::Wyhash;
 
 // ──────────────────────── arena-slice newtype boilerplate ────────────────
@@ -464,7 +464,7 @@ impl CustomIdent {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
         // css.todo_stuff.match_ignore_ascii_case
-        // PORT NOTE: Zig fn name has typo `ASCIII` (3 I's); bun_string exports both spellings.
+        // PORT NOTE: Zig fn name has typo `ASCIII` (3 I's); bun_core exports both spellings.
         let valid = !(strings::eql_case_insensitive_ascii_check_length(ident, b"initial")
             || strings::eql_case_insensitive_ascii_check_length(ident, b"inherit")
             || strings::eql_case_insensitive_ascii_check_length(ident, b"unset")

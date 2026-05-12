@@ -4,7 +4,7 @@ use core::cmp::Ordering;
 
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 use bun_semver::{query, SlicedString, Version};
-use bun_string::strings;
+use bun_core::strings;
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global, 2);

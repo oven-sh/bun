@@ -8,9 +8,9 @@ use core::ptr::NonNull;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // Zig's `bun.WTF.StringImpl` is the *pointer* type `*WTFStringImplStruct`;
-// in Rust that's `bun_string::WTFStringImpl` (= `*mut WTFStringImplStruct`).
-use bun_string::WTFStringImpl;
-use bun_jsc::StringJsc as _; // extension trait providing `.to_js()` on `bun_string::String`
+// in Rust that's `bun_core::WTFStringImpl` (= `*mut WTFStringImplStruct`).
+use bun_core::WTFStringImpl;
+use bun_jsc::StringJsc as _; // extension trait providing `.to_js()` on `bun_core::String`
 
 pub type Hash = u32;
 
@@ -40,7 +40,7 @@ impl RefString {
         // Zig: `bun.String.init(this.impl).toJS(global)` — wrap the raw
         // `WTFStringImpl` pointer without bumping the refcount (`String` has
         // no `Drop`, so this is the same adopt-then-forget as Zig's init).
-        bun_string::String::adopt_wtf_impl(self.impl_).to_js(global)
+        bun_core::String::adopt_wtf_impl(self.impl_).to_js(global)
     }
 
     pub fn compute_hash(input: &[u8]) -> u32 {
@@ -59,7 +59,7 @@ impl RefString {
     /// from a live refcounted `WTF::StringImpl*` and remains valid until
     /// `destroy` consumes `self`.
     #[inline]
-    fn wtf_impl(&self) -> &bun_string::WTFStringImplStruct {
+    fn wtf_impl(&self) -> &bun_core::WTFStringImplStruct {
         // SAFETY: `impl_` is a live `WTF::StringImpl*` for the lifetime of
         // `self` (set at construction; freed only after `destroy`).
         unsafe { &*self.impl_ }

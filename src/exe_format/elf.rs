@@ -10,7 +10,7 @@ use core::mem::size_of;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_core::env_var;
-use bun_string::{slice_to_nul, strings};
+use bun_core::{slice_to_nul, strings};
 
 use crate::{align_up, read_struct, write_struct};
 

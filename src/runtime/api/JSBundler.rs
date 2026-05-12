@@ -4,7 +4,7 @@ use bun_options_types::{LoaderExt as _, TargetExt as _};
 use core::ffi::c_void;
 
 use bun_core::Output;
-use bun_str::{self as strings, String as BunString, ZigString};
+use bun_core::{strings, String as BunString, ZigString};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, JsError};
 use bun_paths as resolve_path;
 use bun_resolver::{self as resolver, fs as Fs};
@@ -19,7 +19,7 @@ use bun_options_types::schema::api; // bun.schema.api
 use crate::webcore::Blob;
 use crate::webcore::blob::BlobExt;
 use bun_collections::{StringHashMap, StringSet, StringMap, StringArrayHashMap};
-use bun_string::MutableString;
+use bun_core::MutableString;
 
 // `CompileTarget.fromJS` / `.fromSlice` are JSC-aware option parsers shared
 // with the CLI build path; live in `bun_bundler_jsc::options_jsc`.
@@ -27,7 +27,7 @@ use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_s
 
 pub mod js_bundler {
     use super::*;
-    use bun_string::ZigStringSlice;
+    use bun_core::ZigStringSlice;
     use bun_jsc::JSObject;
     use bun_sys::FdExt;
 
@@ -643,7 +643,7 @@ pub mod js_bundler {
                 {
                     let mut str_lower = [0u8; 128];
                     let len = slice.slice().len().min(str_lower.len());
-                    let _ = bun_str::strings::copy_lowercase(
+                    let _ = bun_core::copy_lowercase(
                         &slice.slice()[0..len],
                         &mut str_lower[0..len],
                     );

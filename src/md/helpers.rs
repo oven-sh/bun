@@ -172,7 +172,7 @@ pub fn is_unicode_whitespace(codepoint: u32) -> bool {
     if codepoint < 128 {
         return is_whitespace(codepoint as u8);
     }
-    bun_string::strings::is_unicode_space_separator(codepoint)
+    bun_core::strings::is_unicode_space_separator(codepoint)
 }
 
 /// Check if a Unicode codepoint is punctuation per CommonMark spec.

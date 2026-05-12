@@ -35,7 +35,7 @@ use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_jsc::JsClass as _;
 use bun_io::pipe_reader::BufferedReaderParent;
 use bun_sys::FdDirExt as _;
-use bun_str::{self as strings, ZStr};
+use bun_core::{strings, ZStr};
 // Owned NUL-terminated string (Zig `[:0]u8` allocation) — `bun_str` exposes the
 // borrowed `ZStr` only; the heap-backed counterpart is `bun_core::ZBox`.
 use bun_core::ZBox as ZString;
@@ -250,7 +250,7 @@ impl CronRegisterJob {
                     // borrows do not overlap (Windows only; POSIX ignores
                     // stderr here).
                     #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = bun_string::immutable::trim(
+                    let stderr_owned: Vec<u8> = bun_core::immutable::trim(
                         s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
                     )
@@ -264,7 +264,7 @@ impl CronRegisterJob {
                     #[cfg(windows)]
                     {
                         if s.state == RegisterState::InstallingCrontab
-                            && bun_str::strings::index_of(
+                            && bun_core::index_of(
                                 stderr_output,
                                 b"No mapping between account names",
                             )
@@ -726,7 +726,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
                 return Err(global.throw(format_args!("Failed to get bun executable path")));
             }
         };
-        if bun_str::strings::index_of_any(bun_exe.as_bytes(), b"'%").is_some() {
+        if bun_core::index_of_any(bun_exe.as_bytes(), b"'%").is_some() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Bun executable path '{}' contains characters (' or %) that cannot be safely embedded in a crontab entry",
                 bstr::BStr::new(bun_exe.as_bytes())
@@ -985,7 +985,7 @@ impl CronRemoveJob {
                     // Owned copy: `final_buffer()` is `&mut self` and would
                     // alias `s.set_err` below. Copy the trimmed bytes out.
                     #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = bun_string::immutable::trim(
+                    let stderr_owned: Vec<u8> = bun_core::immutable::trim(
                         s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
                     )
@@ -2278,7 +2278,7 @@ pub fn filter_crontab(
             skip_next = false;
             continue;
         }
-        if bun_str::strings::trim(line, b" \t") == marker.as_slice() {
+        if bun_core::trim(line, b" \t") == marker.as_slice() {
             skip_next = true;
             continue;
         }

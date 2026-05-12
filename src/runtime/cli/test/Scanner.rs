@@ -7,8 +7,8 @@ use bun_core::err;
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self, PathBuffer, SEP_STR};
 use bun_resolver::fs::{self as fs, DirEntryIterator, EntriesOption, FileSystem};
-use bun_str::strings::{self, StringOrTinyString};
-use bun_str::{PathString, ZStr};
+use bun_core::{strings, StringOrTinyString};
+use bun_core::{PathString, ZStr};
 use bun_sys::{self, Fd};
 
 declare_scope!(jest, hidden);

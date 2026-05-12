@@ -5,7 +5,8 @@ use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_core::{self, Output};
-use bun_string::{self as bstr_mod, strings, String as BunString};
+use bun_core::strings;
+use bun_core::String as BunString;
 use crate::jsc::{
     self as jsc, CallFrame, EventLoopSqlExt as _, HasAutoFlush, JSGlobalObject,
     JSGlobalObjectSqlExt as _, JSValue, JsResult, VirtualMachine, VirtualMachineSqlExt as _,
@@ -1168,7 +1169,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
     let path_str = arguments[8].to_bun_string(global_object)?;
 
     let options_buf: Box<[u8]> = 'brk: {
-        let mut b = bun_string::StringBuilder::default();
+        let mut b = bun_core::StringBuilder::default();
         b.cap += username_str.utf8_byte_length() + 1
             + password_str.utf8_byte_length() + 1
             + database_str.utf8_byte_length() + 1

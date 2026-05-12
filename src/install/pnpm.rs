@@ -14,7 +14,7 @@ use bun_collections::StringArrayHashMap;
 use bun_ast::{self, self as js_ast, Expr, ExprData, E, G};
 use bun_semver as semver;
 use bun_semver::{ExternalString, String};
-use bun_string::strings;
+use bun_core::strings;
 use bun_sys::{self as sys, Fd};
 
 use crate::bin::Bin;

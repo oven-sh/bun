@@ -141,7 +141,7 @@ impl DisplayPair {
         // PORT NOTE: Zig used `bun.ComptimeStringMap(..).getASCIIICaseInsensitive`.
         // 8 keys → if-chain over `eql_case_insensitive_ascii::<true>` (phf values
         // would have to be const-eval, and `VendorPrefix` bitflags are not).
-        use bun_string::strings::eql_case_insensitive_ascii as eq;
+        use bun_core::eql_case_insensitive_ascii as eq;
         let inside = if eq(ident, b"inline-block", true) {
             DisplayInside::FlowRoot
         } else if eq(ident, b"inline-table", true) {
@@ -249,7 +249,7 @@ impl DisplayInside {
 
         // PORT NOTE: Zig used `bun.ComptimeStringMap(..).getASCIIICaseInsensitive`.
         // 10 keys → if-chain over `eql_case_insensitive_ascii::<true>`.
-        use bun_string::strings::eql_case_insensitive_ascii as eq;
+        use bun_core::eql_case_insensitive_ascii as eq;
         Ok(if eq(ident, b"flow", true) {
             DisplayInside::Flow
         } else if eq(ident, b"flow-root", true) {

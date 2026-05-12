@@ -15,7 +15,7 @@ use bun_ast::lexer_tables::{
     self as js_lexer, KEYWORDS as Keywords, STRICT_MODE_RESERVED_WORDS as StrictModeReservedWords,
 };
 use bun_ast::{Ref, Symbol};
-use bun_str::{strings, MutableString};
+use bun_core::{immutable as strings, MutableString};
 use enum_map::EnumMap;
 
 /// Renamed-name strings are either borrowed from `Symbol.original_name` (AST

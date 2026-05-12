@@ -4,7 +4,7 @@ use bun_jsc::{
     ArgumentsSlice, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc,
 };
 use bun_patch::{ParseErr, PatchFile, git_diff_internal, parse_patch_file};
-use bun_string::{OwnedString, String as BunString};
+use bun_core::{OwnedString, String as BunString};
 use bun_sys::{Fd, FdExt};
 
 pub struct TestingAPIs;

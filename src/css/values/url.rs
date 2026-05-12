@@ -3,7 +3,7 @@ use css::{CssResult, PrintErr, Printer};
 
 use bun_collections::VecExt;
 use bun_ast::ImportRecord;
-use bun_string::strings;
+use bun_core::strings;
 
 /// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value and its source location.
 pub struct Url {

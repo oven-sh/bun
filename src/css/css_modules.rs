@@ -311,7 +311,7 @@ impl Pattern {
                 }
                 Segment::Name => {
                     let stem = bun_paths::stem(path);
-                    if bun_string::strings::index_of(stem, b".").is_some() {
+                    if bun_core::index_of(stem, b".").is_some() {
                         writefn(stem, true);
                     } else {
                         writefn(stem, false);

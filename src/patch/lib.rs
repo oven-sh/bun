@@ -11,7 +11,7 @@ use core::mem;
 use bun_collections::bit_set::ArrayBitSet;
 use bun_core::{ZBox, ZStr};
 use bun_paths::{self as paths, platform, PathBuffer};
-use bun_string::{strings, PathString};
+use bun_core::{strings, PathString};
 use bun_sys::{self as sys, Fd, FdExt};
 
 bun_core::declare_scope!(Patch, visible);
@@ -1641,7 +1641,7 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
     }
 
     let a_path = &rest[a_path_start_index..a_path_end_index];
-    let b_path = bun_string::strings::trim_right(&rest[b_path_start_index..], b" \n\r\t");
+    let b_path = bun_core::strings::trim_right(&rest[b_path_start_index..], b" \n\r\t");
     Some((a_path, b_path))
 }
 

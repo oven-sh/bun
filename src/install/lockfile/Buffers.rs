@@ -2,7 +2,7 @@ use core::mem::size_of;
 
 use bun_collections::DynamicBitSet as Bitset;
 use bun_core::Output;
-use bun_str::strings;
+use bun_core::strings;
 
 // PORT NOTE: `use super::{self as lockfile, ...}` and bare `use super as lockfile;`
 // are both rejected by rustc (E0432: "no `super` in the root" — rust-lang/rust#48067),

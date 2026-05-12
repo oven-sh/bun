@@ -16,7 +16,6 @@ use bun_windows_sys::externs as externs;
 
 use crate as bun_sys;
 use crate::{E, Fd, FdExt, MaybeExt, SystemErrno};
-use crate::bun_str;
 
 pub use bun_windows_sys::ntdll;
 pub use bun_windows_sys::kernel32::GetLastError;
@@ -3326,7 +3325,7 @@ pub fn translate_uv_error_to_e(code_in: c_int) -> E {
 
 pub use bun_windows_sys::externs::GetProcAddress;
 
-pub fn GetProcAddressA(ptr: Option<*mut c_void>, utf8: &bun_str::ZStr) -> Option<*mut c_void> {
+pub fn GetProcAddressA(ptr: Option<*mut c_void>, utf8: &bun_core::ZStr) -> Option<*mut c_void> {
     let module = ptr.unwrap_or(core::ptr::null_mut());
     // Win32 `GetProcAddress` takes `LPCSTR` (narrow ANSI, NUL-terminated). The
     // symbol name is already a NUL-terminated byte string — pass it through
@@ -3560,7 +3559,7 @@ pub use bun_windows_sys::externs::OpenProcess;
 // https://learn.microsoft.com/en-us/windows/win32/procthread/process-security-and-access-rights
 pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
 
-pub fn exe_path_w() -> &'static bun_str::WStr {
+pub fn exe_path_w() -> &'static bun_core::WStr {
     // SAFETY: PEB ImagePathName is valid for the lifetime of the process.
     // `peb()` lives in `bun_core::windows_sys` (tier-0; needs inline asm),
     // not `bun_windows_sys`.
@@ -3568,7 +3567,7 @@ pub fn exe_path_w() -> &'static bun_str::WStr {
         let pp = (*bun_core::windows_sys::peb()).ProcessParameters;
         let image_path = core::ptr::addr_of!((*pp).ImagePathName);
         let len = ((*image_path).Length as usize) / 2;
-        bun_str::WStr::from_raw((*image_path).Buffer, len)
+        bun_core::WStr::from_raw((*image_path).Buffer, len)
     }
 }
 
@@ -3770,10 +3769,10 @@ pub fn GetFinalPathNameByHandle(
 
     bun_sys::syslog!("GetFinalPathNameByHandleW({:p}) = {}", hFile, bun_core::fmt::utf16(ret));
 
-    if bun_str::strings::has_prefix_comptime_type::<u16>(ret, &LONG_PATH_PREFIX) {
+    if bun_core::strings::has_prefix_comptime_type::<u16>(ret, &LONG_PATH_PREFIX) {
         // '\\?\C:\absolute\path' -> 'C:\absolute\path'
         ret = &mut ret[4..];
-        if bun_str::strings::has_prefix_comptime_utf16(ret, b"UNC\\") {
+        if bun_core::has_prefix_comptime_utf16(ret, b"UNC\\") {
             // '\\?\UNC\absolute\path' -> '\\absolute\path'
             ret[2] = b'\\' as u16;
             ret = &mut ret[2..];
@@ -4186,24 +4185,24 @@ pub mod rescle {
 
         // Icon is a path, so use toWPathNormalized with proper buffer handling
         let mut icon_buf = bun_paths::WPathBuffer::uninit();
-        let icon_w: Option<&bun_str::WStr> = if let Some(i) = icon {
-            let path_w = bun_str::strings::paths::to_w_path_normalized(&mut icon_buf, i);
+        let icon_w: Option<&bun_core::WStr> = if let Some(i) = icon {
+            let path_w = bun_paths::string_paths::to_w_path_normalized(&mut icon_buf, i);
             // toWPathNormalized returns a slice into icon_buf, need to null-terminate it
             let len = path_w.len();
             let buf_u16 = icon_buf.as_mut_slice();
             buf_u16[len] = 0;
             // SAFETY: buf_u16[len] == 0 written above; pointer + len form a valid NUL-terminated wide slice
-            Some(bun_str::WStr::from_buf(&buf_u16[..], len))
+            Some(bun_core::WStr::from_buf(&buf_u16[..], len))
         } else {
             None
         };
 
         // TODO(port): bun.strings.toUTF16AllocForReal returns owned [:0]u16; using Box<[u16]> here.
-        let title_w = title.map(|t| bun_str::strings::to_utf16_alloc_for_real(t, false, true)).transpose()?;
-        let publisher_w = publisher.map(|p| bun_str::strings::to_utf16_alloc_for_real(p, false, true)).transpose()?;
-        let version_w = version.map(|v| bun_str::strings::to_utf16_alloc_for_real(v, false, true)).transpose()?;
-        let description_w = description.map(|d| bun_str::strings::to_utf16_alloc_for_real(d, false, true)).transpose()?;
-        let copyright_w = copyright.map(|cr| bun_str::strings::to_utf16_alloc_for_real(cr, false, true)).transpose()?;
+        let title_w = title.map(|t| bun_core::strings::to_utf16_alloc_for_real(t, false, true)).transpose()?;
+        let publisher_w = publisher.map(|p| bun_core::strings::to_utf16_alloc_for_real(p, false, true)).transpose()?;
+        let version_w = version.map(|v| bun_core::strings::to_utf16_alloc_for_real(v, false, true)).transpose()?;
+        let description_w = description.map(|d| bun_core::strings::to_utf16_alloc_for_real(d, false, true)).transpose()?;
+        let copyright_w = copyright.map(|cr| bun_core::strings::to_utf16_alloc_for_real(cr, false, true)).transpose()?;
 
         // SAFETY: all pointers are NUL-terminated wide strings or null
         let status = unsafe {
@@ -4333,10 +4332,10 @@ impl Drop for StdinModeGuard {
     }
 }
 
-const WATCHER_CHILD_ENV: &[u16] = bun_str::w!("_BUN_WATCHER_CHILD");
+const WATCHER_CHILD_ENV: &[u16] = bun_core::w!("_BUN_WATCHER_CHILD");
 // NUL-terminated form for Win32 LPCWSTR (`GetEnvironmentVariableW`); `w!` does
 // NOT append a terminator on its own.
-const WATCHER_CHILD_ENV_Z: &[u16] = bun_str::w!("_BUN_WATCHER_CHILD\0");
+const WATCHER_CHILD_ENV_Z: &[u16] = bun_core::w!("_BUN_WATCHER_CHILD\0");
 
 // magic exit code to indicate to the watcher manager that the child process should be re-spawned
 // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
@@ -4477,7 +4476,7 @@ pub fn spawn_watcher_child(
     wbuf.as_mut_slice()[image_path.len()] = 0;
 
     // SAFETY: NUL written at [len]
-    let image_path_z = bun_str::WStr::from_buf(&wbuf[..], image_path.len());
+    let image_path_z = bun_core::WStr::from_buf(&wbuf[..], image_path.len());
 
     let kernelenv = kernel32_2::GetEnvironmentStringsW();
     let _free_env = scopeguard::guard(kernelenv, |envptr| {
@@ -4576,14 +4575,14 @@ pub fn spawn_watcher_child(
 /// Using characters16() does not seem to always have the sentinel. or something else
 /// broke when I just used it. Not sure. ... but this works!
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__LoadLibraryBunString(str_: &bun_str::String) -> *mut c_void {
+pub extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *mut c_void {
     #[cfg(not(windows))]
     { compile_error!("unreachable"); }
 
-    use bun_str::strings::EncodingNonAscii;
+    use bun_core::strings::EncodingNonAscii;
     let mut buf = bun_paths::WPathBuffer::uninit();
     let data: &[u16] = match str_.encoding() {
-        EncodingNonAscii::Utf8 => bun_str::strings::convert_utf8_to_utf16_in_buffer(buf.as_mut_slice(), str_.utf8()),
+        EncodingNonAscii::Utf8 => bun_core::convert_utf8_to_utf16_in_buffer(buf.as_mut_slice(), str_.utf8()),
         EncodingNonAscii::Utf16 => {
             let src = str_.utf16();
             buf.as_mut_slice()[0..src.len()].copy_from_slice(src);

@@ -18,7 +18,7 @@ use bun_jsc::{self as jsc, JSGlobalObject};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_js_parser as js_ast;
 use crate::dns_jsc::Order as DnsOrder;
-use bun_str::ZigString;
+use bun_core::ZigString;
 
 // `repl.rs` is a sibling file with no other consumers; declare it as a child
 // module here so `Repl` resolves without touching `cli/mod.rs`.

@@ -3,7 +3,7 @@
 //! forms are supported; multi-range and non-`bytes` units fall back to `.none`
 //! (serve full body) rather than 416, matching common static-server behavior.
 
-use bun_str::strings;
+use bun_core::strings;
 use bun_uws::AnyRequest;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]

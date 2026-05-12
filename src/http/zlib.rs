@@ -1,4 +1,4 @@
-use bun_string::MutableString;
+use bun_core::MutableString;
 use bun_zlib::{ZlibError, ZlibReaderArrayList};
 
 // PORT NOTE: Zig used `bun.ObjectPool(MutableString, initMutableString, false, 4)` and

@@ -87,7 +87,7 @@ impl DigestContext {
         u32::from_le_bytes([k[0], k[1], k[2], k[3]])
     }
     pub fn eql(&self, a: &Digest, b: &Digest, _: usize) -> bool {
-        bun_str::strings::eql_long(a, b, false)
+        bun_core::strings::eql_long(a, b, false)
     }
 }
 // TODO(port): wire DigestContext as the ArrayHashMap hasher/eq (Zig: 4th generic param)

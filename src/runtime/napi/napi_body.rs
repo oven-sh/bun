@@ -768,7 +768,7 @@ pub extern "C" fn napi_create_string_latin1(
     bun_output::scoped_log!(napi, "napi_create_string_latin1: {}", bstr::BStr::new(slice));
 
     if slice.is_empty() {
-        let js = match bun_str::String::empty().to_js(env.to_js()) {
+        let js = match bun_core::String::empty().to_js(env.to_js()) {
             Ok(v) => v,
             Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
         };
@@ -776,7 +776,7 @@ pub extern "C" fn napi_create_string_latin1(
         return env.ok();
     }
 
-    let (string, bytes) = bun_str::String::create_uninitialized_latin1(slice.len());
+    let (string, bytes) = bun_core::String::create_uninitialized_latin1(slice.len());
     // `string` derefs on Drop.
     bytes.copy_from_slice(slice);
 
@@ -870,7 +870,7 @@ pub extern "C" fn napi_create_string_utf16(
     }
 
     if slice.is_empty() {
-        let js = match bun_str::String::empty().to_js(env.to_js()) {
+        let js = match bun_core::String::empty().to_js(env.to_js()) {
             Ok(v) => v,
             Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
         };
@@ -878,7 +878,7 @@ pub extern "C" fn napi_create_string_utf16(
         return env.ok();
     }
 
-    let (mut string, chars) = bun_str::String::create_uninitialized_utf16(slice.len());
+    let (mut string, chars) = bun_core::String::create_uninitialized_utf16(slice.len());
     chars.copy_from_slice(slice);
 
     let js = match string.transfer_to_js(env.to_js()) {

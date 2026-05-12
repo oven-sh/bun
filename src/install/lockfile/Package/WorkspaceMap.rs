@@ -3,7 +3,7 @@ use bun_collections::StringArrayHashMap;
 use bun_paths as path;
 use bun_paths::resolve_path;
 use bun_paths::{PathBuffer, MAX_PATH_BYTES, SEP_STR};
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_glob as glob;
 use bun_ast as js_ast;
 use bun_alloc::Arena; // bumpalo::Bump re-export

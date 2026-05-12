@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bstr::BStr;
-use bun_string::strings;
+use bun_core::strings;
 
 use bun_ast as js_ast;
 use bun_alloc::ArenaVecExt as _;

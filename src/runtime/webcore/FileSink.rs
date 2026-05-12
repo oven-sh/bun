@@ -619,7 +619,7 @@ impl FileSink {
         let io_path = match &options.input_path {
             PathOrFileDescriptor::Fd(fd) => bun_io::PathOrFileDescriptor::Fd(*fd),
             PathOrFileDescriptor::Path(slice) => {
-                bun_io::PathOrFileDescriptor::Path(bun_string::PathString::init(slice.slice()))
+                bun_io::PathOrFileDescriptor::Path(bun_core::PathString::init(slice.slice()))
             }
         };
         let result = bun_io::open_for_writing(
@@ -787,7 +787,7 @@ impl FileSink {
                             // `setup(&opts)` — `stream_start` (and thus `p`)
                             // outlives `opts` within this match arm.
                             PathOrFileDescriptor::Path(
-                                bun_str::zig_string::Slice::from_utf8_never_free(p.slice()),
+                                bun_core::zig_string::Slice::from_utf8_never_free(p.slice()),
                             )
                         }
                     },

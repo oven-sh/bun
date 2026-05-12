@@ -1,6 +1,6 @@
 use bun_collections::VecExt as _;
 use bun_http_types::Encoding::Encoding;
-use bun_string::MutableString;
+use bun_core::MutableString;
 
 use bun_zlib::ZlibReaderArrayList;
 use bun_brotli::BrotliReaderArrayList;

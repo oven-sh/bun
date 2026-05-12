@@ -4,7 +4,7 @@
 
 // PORTING.md crate-map name is `bun_str`; workspace crate is `bun_string`.
 #![warn(unreachable_pub)]
-extern crate bun_string as bun_str;
+extern crate bun_core as bun_str;
 
 pub mod types;
 pub mod parser;

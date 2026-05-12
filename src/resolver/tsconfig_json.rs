@@ -3,7 +3,7 @@ use bun_collections::ArrayHashMap;
 use bun_parsers::json_parser;
 use bun_js_parser as js_ast;
 use bun_js_parser::lexer as js_lexer;
-use bun_string::strings;
+use bun_core::strings;
 use enumset::{EnumSet, EnumSetType};
 
 // D042: `options::jsx::{Pragma, Runtime, ImportSource, RUNTIME_MAP, ...}` is
@@ -278,7 +278,7 @@ impl TSConfigJSON {
     ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
         const TEMPLATE: &[u8] = b"${configDir}";
         let mut remaining: &[u8] = &input;
-        let mut string_builder = bun_string::StringBuilder { len: 0, cap: 0, ptr: None };
+        let mut string_builder = bun_core::StringBuilder { len: 0, cap: 0, ptr: None };
         let config_dir = source.path.source_dir();
 
         // There's only one template variable we support, so we can keep this simple for now.

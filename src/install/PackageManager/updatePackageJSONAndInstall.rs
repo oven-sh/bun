@@ -12,7 +12,7 @@ use bun_install::PackageNameHash;
 use bun_js_printer as js_printer;
 use crate::bun_json as json;
 use bun_paths::{self, PathBuffer, SEP_STR};
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_sys::{self, Fd, File};
 
 use super::{

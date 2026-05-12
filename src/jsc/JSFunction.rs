@@ -1,6 +1,6 @@
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_string::{String as BunString, ZigString};
+use bun_core::{String as BunString, ZigString};
 
 use crate::{JSGlobalObject, JSHostFn, JSValue};
 

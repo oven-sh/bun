@@ -4,7 +4,7 @@ use crate::values::calc::Calc;
 use crate::values::number::{CSSNumber, CSSNumberFns};
 use crate::values::percentage::DimensionPercentage;
 
-use bun_string::strings;
+use bun_core::strings;
 use core::cmp::Ordering;
 
 const TAG_DEG: u8 = 1;

@@ -40,7 +40,6 @@ bun_options_types.workspace = true
 bun_paths.workspace = true
 bun_perf.workspace = true
 bun_semver.workspace = true
-bun_string.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
 bun_watcher.workspace = true

@@ -278,7 +278,7 @@ impl ShellTouchTask {
         use bun_sys::FdExt as _;
         // We have to give an absolute path.
         let mut buf = bun_paths::PathBuffer::uninit();
-        let filepath: &bun_str::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
+        let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
             // Re-terminate into the path buffer (`filepath` is the bare argv
             // bytes without the trailing NUL).
             resolve_path::join_z_buf::<platform::Auto>(buf.as_mut_slice(), &[&this.filepath])

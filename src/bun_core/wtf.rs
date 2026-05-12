@@ -54,4 +54,12 @@ pub fn parse_es5_date(buf: &[u8]) -> Result<f64, InvalidDate> {
     if ms.is_finite() { Ok(ms) } else { Err(InvalidDate) }
 }
 
+// `WTF::parseDouble` — re-exported from the merged `string::wtf` module so
+// `bun_core::wtf::parse_double` (formerly `bun_string::wtf::parse_double`)
+// resolves unchanged.
+pub use crate::string::wtf::{
+    parse_double, InvalidCharacter, RefPtr, StringImpl, WTFString, WTFStringImpl,
+    WTFStringImplExt, WTFStringImplStruct,
+};
+
 // ported from: src/jsc/WTF.zig

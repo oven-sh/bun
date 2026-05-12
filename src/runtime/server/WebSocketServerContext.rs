@@ -285,7 +285,7 @@ static DECOMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
 // which compares a ZigString (possibly UTF-16) against the literal keys. Here we go through
 // `ZigString::as_bytes_if_latin1()` (or equivalent) and look up in the phf map; Phase B should
 // verify UTF-16-backed ZigStrings still match.
-fn lookup_zig_string(table: &phf::Map<&'static [u8], i32>, key: &bun_str::ZigString) -> Option<i32> {
+fn lookup_zig_string(table: &phf::Map<&'static [u8], i32>, key: &bun_core::ZigString) -> Option<i32> {
     table.get(key.slice()).copied()
 }
 

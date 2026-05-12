@@ -31,5 +31,4 @@ bun_ast.workspace = true
 bun_options_types.workspace = true
 bun_ptr.workspace = true
 bun_resolver.workspace = true
-bun_string.workspace = true
 thiserror.workspace = true

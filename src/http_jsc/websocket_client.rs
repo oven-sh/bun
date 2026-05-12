@@ -21,7 +21,7 @@ use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
 use bun_jsc::event_loop::EventLoop;
 use bun_ptr::{IntrusiveRc, ThisPtr};
-use bun_string::{self as bstr_mod, strings, ZigString};
+use bun_core::{strings, ZigString};
 use bun_uws::{self as uws, NewSocketHandler, SslCtx, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
 
@@ -1329,7 +1329,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // mask_buf at [2..6]
         final_body_bytes[6..8].copy_from_slice(&code.to_be_bytes());
 
-        let mut reason = bun_string::String::empty();
+        let mut reason = bun_core::String::empty();
         if let Some(data) = body {
             if body_len > 0 {
                 let body_slice = &data[..body_len];
@@ -1338,7 +1338,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                     self.terminate(ErrorCode::InvalidUtf8);
                     return;
                 }
-                reason = bun_string::String::clone_utf8(body_slice);
+                reason = bun_core::String::clone_utf8(body_slice);
                 final_body_bytes[8..][..body_len].copy_from_slice(body_slice);
             }
         }
@@ -1559,7 +1559,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         unsafe { Self::deref(self) };
     }
 
-    fn dispatch_close(&mut self, code: u16, reason: &mut bun_string::String) {
+    fn dispatch_close(&mut self, code: u16, reason: &mut bun_core::String) {
         let Some(out) = self.outgoing_websocket.take() else {
             return;
         };

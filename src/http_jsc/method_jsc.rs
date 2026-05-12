@@ -2,7 +2,7 @@
 
 use bun_http_types::Method::Method;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
-use bun_string::{OwnedString, String as BunString};
+use bun_core::{OwnedString, String as BunString};
 
 unsafe extern "C" {
     // SAFETY (safe fn): `Method` is a `#[repr(uN)]` scalar; `JSGlobalObject` is an
@@ -18,10 +18,10 @@ unsafe extern "C" {
 ///
 /// Lives here (not in `bun_http_types`) so the base crate stays JSC-free.
 pub fn from_js(global_this: &JSGlobalObject, input: JSValue) -> JsResult<Option<Method>> {
-    // `defer str.deref()` — `bun_string::String` is `Copy` (no `Drop`), so wrap the
+    // `defer str.deref()` — `bun_core::String` is `Copy` (no `Drop`), so wrap the
     // +1 ref from `BunString::from_js` in `OwnedString` to release it on scope exit.
     let str = OwnedString::new(BunString::from_js(input, global_this)?);
-    debug_assert!(str.tag() != bun_string::Tag::Dead);
+    debug_assert!(str.tag() != bun_core::Tag::Dead);
     // PORT NOTE: Zig used `Map.getWithEql(str, bun.String.eqlComptime)`; the
     // Rust phf table is keyed on `&[u8]`, so materialize UTF-8 and call the
     // existing `Method::which` (which wraps the same map lookup).

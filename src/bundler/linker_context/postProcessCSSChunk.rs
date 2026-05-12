@@ -2,7 +2,7 @@ use crate::mal_prelude::*;
 use bun_collections::VecExt;
 use bun_collections::MultiArrayList;
 use bun_sourcemap::{LineColumnOffset, LineColumnOffsetOptional};
-use bun_string::string_joiner::{StringJoiner, Watcher};
+use bun_core::string_joiner::{StringJoiner, Watcher};
 
 use crate::chunk::IntermediateOutput;
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};

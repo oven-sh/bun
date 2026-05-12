@@ -259,8 +259,8 @@ pub fn decode_binary_value<Context: ReaderContext>(
 // Zig accesses `bun.String.cloneUTF8(slice).value.WTFStringImpl` directly (union field);
 // `leak_wtf_impl()` is the Rust equivalent — transfers the +1 ref to the cell (`free_value = 1`).
 #[inline]
-fn clone_utf8_wtf_impl(slice: &[u8]) -> bun_string::WTFStringImpl {
-    bun_string::String::clone_utf8(slice).leak_wtf_impl()
+fn clone_utf8_wtf_impl(slice: &[u8]) -> bun_core::WTFStringImpl {
+    bun_core::String::clone_utf8(slice).leak_wtf_impl()
 }
 
 // ported from: src/sql_jsc/mysql/protocol/DecodeBinaryValue.zig

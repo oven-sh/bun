@@ -12,18 +12,18 @@ use bun_http::HTTPThread;
 use bun_jsc::{self as jsc};
 use bun_jsc::virtual_machine::VirtualMachine;
 // `set_time_zone` / `delete_module_registry_entry` take the JSC-side
-// `ZigString` (repr(C)-identical to `bun_str::ZigString`, but with the
+// `ZigString` (repr(C)-identical to `bun_core::ZigString`, but with the
 // JSGlobalObject FFI methods); import that one so the call sites type-check.
 use bun_jsc::zig_string::ZigString;
-use bun_str::ZigStringSlice;
+use bun_core::ZigStringSlice;
 use bun_js_parser as js_ast;
 use bun_options_types::code_coverage_options::{CodeCoverageOptions, Reporter, Reporters};
 use bun_paths::{self as bun_path, PathBuffer};
 use bun_paths::resolve_path;
 use bun_resolver::fs::FileSystem;
-use bun_str::{strings, PathString};
-use bun_str::immutable::paths::without_leading_path_separator;
-use bun_str::immutable::Appender as _;
+use bun_core::{strings, PathString};
+use bun_paths::string_paths::without_leading_path_separator;
+use bun_core::immutable::Appender as _;
 use bun_sys::{self, Fd, File};
 use bun_uws as uws;
 
@@ -46,7 +46,7 @@ mod coverage {
     /// `std.sort.pdq(..., isLessThan)` adapter — Rust `sort_by` wants `Ordering`.
     #[inline]
     pub fn is_less_than_cmp(a: &&mut ByteRangeMapping, b: &&mut ByteRangeMapping) -> core::cmp::Ordering {
-        bun_str::strings::order(a.source_url.slice(), b.source_url.slice())
+        bun_core::order(a.source_url.slice(), b.source_url.slice())
     }
 
     #[allow(non_snake_case)]
@@ -308,7 +308,7 @@ impl JunitReporter {
                     self.hostname_value = Some(Box::default());
                     return None;
                 }
-                let hostname = bun_str::slice_to_nul(&name_buffer);
+                let hostname = bun_core::slice_to_nul(&name_buffer);
 
                 let mut arraylist_writer: Vec<u8> = Vec::new();
                 if escape_xml(hostname, &mut arraylist_writer).is_err() {
@@ -722,7 +722,7 @@ impl JunitReporter {
         junit_path_buf[path.len()] = 0;
 
         // SAFETY: junit_path_buf[path.len()] == 0 written above
-        let zpath = bun_str::ZStr::from_buf(&junit_path_buf[..], path.len());
+        let zpath = bun_core::ZStr::from_buf(&junit_path_buf[..], path.len());
         match File::openat(Fd::cwd(), zpath, bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC, 0o664) {
             bun_sys::Result::Err(err) => {
                 Output::err(bun_core::err!("JUnitReportFailed"), "Failed to write JUnit report to {}\n{}", (bstr::BStr::new(path), err));
@@ -1289,7 +1289,7 @@ impl CommandLineReporter {
 
     /// Write an LCOV-only report to a specific path. Used by `--parallel`
     /// workers to emit a fragment the coordinator merges.
-    pub fn write_lcov_only(&mut self, vm: &mut VirtualMachine, opts: &CodeCoverageOptions, out_path: &bun_str::ZStr) -> Result<(), bun_core::Error> {
+    pub fn write_lcov_only(&mut self, vm: &mut VirtualMachine, opts: &CodeCoverageOptions, out_path: &bun_core::ZStr) -> Result<(), bun_core::Error> {
         let Some(map) = ByteRangeMapping::map() else { return Ok(()); };
         // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
         // collection loop below (single-threaded CLI report path).
@@ -1441,7 +1441,7 @@ impl CommandLineReporter {
         // TODO(port): the Zig code uses tuple destructuring with comptime branching to make
         // lcov_file/lcov_name/lcov_buffered_writer be `void` when !REPORTERS_LCOV. We use
         // Option here.
-        let mut lcov_state: Option<(File, &bun_str::ZStr, /*buffered*/ Vec<u8>)> = if REPORTERS_LCOV {
+        let mut lcov_state: Option<(File, &bun_core::ZStr, /*buffered*/ Vec<u8>)> = if REPORTERS_LCOV {
             'brk: {
                 // Ensure the directory exists
                 let mut fs = crate::node::fs::NodeFS::default();
@@ -1468,9 +1468,9 @@ impl CommandLineReporter {
                         let _ = write!(cursor, "{:02x}", b);
                     }
                     let _ = cursor.write_all(b".tmp\0");
-                    let s = bun_str::slice_to_nul(&shortname_buf);
+                    let s = bun_core::slice_to_nul(&shortname_buf);
                     // NUL written above; `slice_to_nul` returns the prefix before it.
-                    bun_str::ZStr::from_buf(&shortname_buf[..], s.len())
+                    bun_core::ZStr::from_buf(&shortname_buf[..], s.len())
                 };
                 let path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(relative_dir, &mut lcov_name_buf, &[&opts.reports_directory, tmpname.as_bytes()]);
                 let file = File::openat(
@@ -1500,7 +1500,7 @@ impl CommandLineReporter {
             None
         };
         // TODO(port): errdefer lcov cleanup — using scopeguard with disarm on success
-        let mut lcov_guard = scopeguard::guard(&mut lcov_state, |s: &mut Option<(File, &bun_str::ZStr, Vec<u8>)>| {
+        let mut lcov_guard = scopeguard::guard(&mut lcov_state, |s: &mut Option<(File, &bun_core::ZStr, Vec<u8>)>| {
             if REPORTERS_LCOV {
                 if let Some((file, name, _)) = s.take() {
                     let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
@@ -1645,7 +1645,7 @@ impl CommandLineReporter {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_str::String) -> bool {
+pub extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_core::String) -> bool {
     let zig_slice = test_name_str.to_utf8();
     // In this particular case, we don't actually care about non-ascii latin1 characters.
     // so we skip the ascii check

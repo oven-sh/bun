@@ -13,7 +13,7 @@ use bun_sourcemap::{
     ParsedSourceMap, SourceProviderMap,
 };
 use bun_sourcemap::internal_source_map::FindCache;
-use bun_string::MutableString;
+use bun_core::MutableString;
 use bun_threading::Mutex;
 use bun_wyhash::hash;
 

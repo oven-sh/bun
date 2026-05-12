@@ -11,7 +11,7 @@ use crate::bun_json as JSON;
 use bun_picohttp as picohttp;
 use crate::bun_schema::api;
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
-use bun_str::{strings, MutableString};
+use bun_core::{strings, MutableString};
 use bun_sys::{self, CloseOnDrop, Fd, File};
 use bun_threading::ThreadPool;
 use bun_url::{OwnedURL, URL};
@@ -984,10 +984,10 @@ pub mod package_manifest {
         fn write_file(
             this: &PackageManifest,
             scope: &registry::Scope,
-            tmp_path: &bun_str::ZStr,
+            tmp_path: &bun_core::ZStr,
             tmpdir: Fd,
             cache_dir: Fd,
-            outpath: &bun_str::ZStr,
+            outpath: &bun_core::ZStr,
         ) -> Result<(), Error> {
             // 64 KB sounds like a lot but when you consider that this is only about 6 levels deep in the stack, it's not that much.
             // PERF(port): was stack-fallback alloc — profile in Phase B
@@ -1245,7 +1245,7 @@ pub mod package_manifest {
             buf: &'b mut [u8],
             file_id: u64,
             scope: &registry::Scope,
-        ) -> Result<&'b bun_str::ZStr, Error> {
+        ) -> Result<&'b bun_core::ZStr, Error> {
             use core::fmt::Write as _;
             let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
             let mut stream = bun_io::FixedBufferStream::new_mut(buf);
@@ -1262,7 +1262,7 @@ pub mod package_manifest {
             stream.write_byte(0)?;
             let len = stream.pos;
             // We wrote `len` bytes ending in a NUL into `buf`.
-            Ok(bun_str::ZStr::from_buf_mut(buf, len - 1))
+            Ok(bun_core::ZStr::from_buf_mut(buf, len - 1))
         }
 
         pub fn save(
@@ -1281,7 +1281,7 @@ pub mod package_manifest {
             write!(dest_path_stream, "{}.npm-{}", file_id_hex_fmt, hex_timestamp_fmt)?;
             dest_path_stream.write_byte(0)?;
             let pos = dest_path_stream.pos;
-            let tmp_path = bun_str::ZStr::from_buf_mut(&mut dest_path_buf, pos - 1);
+            let tmp_path = bun_core::ZStr::from_buf_mut(&mut dest_path_buf, pos - 1);
             let out_path = Self::manifest_file_name(&mut out_path_buf, file_id, scope)?;
             Self::write_file(this, scope, tmp_path, tmpdir, cache_dir, out_path)
         }

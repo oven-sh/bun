@@ -5,7 +5,7 @@ use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, S
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::generated::{SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers};
-use bun_str::zig_string::Slice as ZigStringSlice;
+use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_sys::Fd;
 use bun_uws as uws;
 

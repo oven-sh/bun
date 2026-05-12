@@ -7,10 +7,10 @@ use bun_collections::{ArrayHashMap, HashMap, StringHashMap};
 use bun_core::{self, Error};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_js_parser::{self as js_parser, lexer as js_lexer};
-use bun_str::printer as js_printer;
+use bun_core::printer as js_printer;
 use bun_core::output as bun_output;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES, SEP};
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_sys::{self, Fd};
 use bun_wyhash::hash;
 

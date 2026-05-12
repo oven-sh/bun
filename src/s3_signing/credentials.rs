@@ -7,7 +7,7 @@ use bun_collections::BoundedArray;
 use bun_http_types::Method::Method;
 use bun_picohttp::Header as PicoHeader;
 use bun_ptr::{IntrusiveRc, RawSlice, RefCount, RefCounted};
-use bun_string::strings;
+use bun_core::strings;
 
 use super::acl::ACL;
 use super::storage_class::StorageClass;
@@ -1323,15 +1323,15 @@ pub struct S3CredentialsWithOptions {
     pub changed_credentials: bool,
     /// indicates if the virtual hosted style is used
     pub virtual_hosted_style: bool,
-    pub _access_key_id_slice: Option<bun_string::ZigStringSlice>,
-    pub _secret_access_key_slice: Option<bun_string::ZigStringSlice>,
-    pub _region_slice: Option<bun_string::ZigStringSlice>,
-    pub _endpoint_slice: Option<bun_string::ZigStringSlice>,
-    pub _bucket_slice: Option<bun_string::ZigStringSlice>,
-    pub _session_token_slice: Option<bun_string::ZigStringSlice>,
-    pub _content_disposition_slice: Option<bun_string::ZigStringSlice>,
-    pub _content_type_slice: Option<bun_string::ZigStringSlice>,
-    pub _content_encoding_slice: Option<bun_string::ZigStringSlice>,
+    pub _access_key_id_slice: Option<bun_core::ZigStringSlice>,
+    pub _secret_access_key_slice: Option<bun_core::ZigStringSlice>,
+    pub _region_slice: Option<bun_core::ZigStringSlice>,
+    pub _endpoint_slice: Option<bun_core::ZigStringSlice>,
+    pub _bucket_slice: Option<bun_core::ZigStringSlice>,
+    pub _session_token_slice: Option<bun_core::ZigStringSlice>,
+    pub _content_disposition_slice: Option<bun_core::ZigStringSlice>,
+    pub _content_type_slice: Option<bun_core::ZigStringSlice>,
+    pub _content_encoding_slice: Option<bun_core::ZigStringSlice>,
 }
 
 // `deinit` only called .deinit() on each Option<ZigStringSlice>; ZigStringSlice impls Drop, so

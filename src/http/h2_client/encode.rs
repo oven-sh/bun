@@ -10,7 +10,7 @@ use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
 use crate::HTTPClient;
 use bun_picohttp as picohttp;
-use bun_string::immutable as strings;
+use bun_core::strings;
 
 pub fn write_preface(session: &mut ClientSession) {
     session.queue(wire::CLIENT_PREFACE);

@@ -13,7 +13,7 @@
 //! (RFC 7838 §2.1) that are out of scope here.
 
 use bun_collections::StringHashMap;
-use bun_string::strings;
+use bun_core::strings;
 
 use crate::h3_client::h3_client;
 

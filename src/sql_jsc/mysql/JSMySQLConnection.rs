@@ -17,7 +17,7 @@ use bun_sql::mysql::protocol::new_writer::NewWriter;
 use bun_sql::mysql::ssl_mode::SSLMode;
 use bun_sql::mysql::MySQLQueryResult;
 use crate::shared::CachedStructure;
-use bun_string::strings;
+use bun_core::strings;
 use bun_uws::{self as uws, AnySocket, NewSocketHandler, SocketTCP};
 
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
@@ -490,7 +490,7 @@ impl JSMySQLConnection {
         let vm = global_object.bun_vm().as_mut();
         let arguments = callframe.arguments();
         let hostname_str = arguments[0].to_bun_string(global_object)?;
-        // defer hostname_str.deref() — Drop on bun_str::String
+        // defer hostname_str.deref() — Drop on bun_core::String
         let port = arguments[1].coerce::<i32>(global_object)?;
 
         let username_str = arguments[2].to_bun_string(global_object)?;

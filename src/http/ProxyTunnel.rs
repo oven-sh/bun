@@ -245,7 +245,7 @@ fn on_open(ctx: *mut HTTPClient) {
 
         // PORT NOTE: Zig `configureHTTPClient` is `configureHTTPClientWithALPN(ssl, host, .h1)`;
         // the Rust port already exposes the ALPN form in `crate::configure_http_client_with_alpn`.
-        if bun_string::strings::is_ip_address(_hostname) {
+        if bun_core::is_ip_address(_hostname) {
             crate::configure_http_client_with_alpn(ssl_ptr.as_ptr(), core::ptr::null(), AlpnOffer::H1);
         } else {
             // SAFETY: TEMP_HOSTNAME is only accessed from the single HTTP thread.

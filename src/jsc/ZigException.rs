@@ -2,7 +2,7 @@ use core::ffi::{c_int, c_void};
 use core::mem::MaybeUninit;
 use core::ptr;
 
-use bun_string::String;
+use bun_core::String;
 use bun_url::URL as ZigURL;
 use crate::schema_api as api;
 

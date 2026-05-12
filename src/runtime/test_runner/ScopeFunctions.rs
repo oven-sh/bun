@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
 #[allow(unused_imports)] use bun_jsc::{MarkedArgumentBuffer, VirtualMachine};
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 
 use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
 use crate::test_runner::bun_test::js_fns::{Signature, GetActiveCfg};
@@ -68,7 +68,7 @@ pub struct ScopeFunctions {
 }
 
 pub mod strings {
-    use bun_str::String as BunString;
+    use bun_core::String as BunString;
     // TODO(port): `bun.String.static("...")` — assumes a const-capable `BunString::static_str`.
     #[allow(non_snake_case)] #[inline] pub fn DESCRIBE() -> BunString { BunString::static_str("describe") }
     #[allow(non_snake_case)] #[inline] pub fn XDESCRIBE() -> BunString { BunString::static_str("xdescribe") }
@@ -584,7 +584,7 @@ fn get_description(
         // PORT NOTE: upstream `JSValue::get_class_name` writes into an out-param
         // ZigString instead of returning one (unlike Zig's `className` which
         // returns by value). Adapt locally rather than touching bun_jsc.
-        let mut description_class_name = bun_str::ZigString::EMPTY;
+        let mut description_class_name = bun_core::ZigString::EMPTY;
         description.get_class_name(global, &mut description_class_name)?;
 
         if description_class_name.len > 0 {
@@ -592,7 +592,7 @@ fn get_description(
         }
 
         let description_name = description.get_name(global)?;
-        // `description_name.deref()` handled by Drop on bun_str::String
+        // `description_name.deref()` handled by Drop on bun_core::String
         return Ok(description_name.to_owned_slice());
     }
 

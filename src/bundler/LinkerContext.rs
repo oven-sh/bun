@@ -8,7 +8,7 @@ use bun_core::{self as bun, Output, Environment, FeatureFlags, Error as BunError
 use bun_alloc::{Arena as Bump, AllocError};
 use bun_collections::{VecExt, MultiArrayList, AutoBitSet, ArrayHashMap, HashMap};
 use bun_ast::{Loc, Range, Data, Source, Log};
-use bun_string::{strings, MutableString, string_joiner::StringJoiner};
+use bun_core::{strings, MutableString, string_joiner::StringJoiner};
 use bun_sourcemap::{self as SourceMap, LineOffsetTable, SourceMapState, SourceMapPieces, SourceMapShifts, DebugIDFormatter};
 // PORT NOTE: alias the *module* (not the `ThreadPool` struct) so
 // `ThreadPoolLib::Task` / `ThreadPoolLib::Batch` resolve as nested items.

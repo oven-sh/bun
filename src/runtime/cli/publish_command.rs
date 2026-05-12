@@ -4,7 +4,7 @@ use std::io::Write as _;
 use bun_alloc::AllocError;
 use bun_core::{err, Environment, Error, Global, Output};
 use bun_core::fmt as bun_fmt;
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_paths::{self as path, PathBuffer};
 use bun_sys::{self, Fd, File, FileKind};
 use bun_http as http;
@@ -17,7 +17,7 @@ use bun_dotenv as dotenv;
 use bun_sha_hmac as sha;
 use bun_parsers::json as json_mod;
 use bun_url::URL;
-use bun_string::MutableString;
+use bun_core::MutableString;
 use bun_ast::{Expr, E, G};
 use crate::cli::ci_info as ci;
 use bun_simdutf_sys::simdutf as simdutf;
@@ -225,7 +225,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             total_files += usize::from(next.kind == FileKind::File);
 
             // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
-            if let Some(slash) = bun_core::strings::index_of_any_t(pathname, sep_chars()) {
+            if let Some(slash) = bun_core::index_of_any_t(pathname, sep_chars()) {
                 let stripped = &pathname[slash + 1..];
                 if stripped.is_empty() {
                     continue;
@@ -241,7 +241,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     continue;
                 }
 
-                if bun_core::strings::index_of_any_t(stripped, sep_chars()).is_none() {
+                if bun_core::index_of_any_t(stripped, sep_chars()).is_none() {
                     // check for package.json, readme.md, ...
                     let filename = &pathname[slash + 1..];
 

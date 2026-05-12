@@ -2,7 +2,7 @@ use core::ptr::NonNull;
 
 use crate::host_fn::from_js_host_call_generic;
 use crate::{JSGlobalObject, JSObject, JSValue, JsResult};
-use bun_string as bstr;
+use bun_core as bstr;
 
 /// Comptime config struct in Zig (`JSPropertyIterator.zig:1-7`); ported as a runtime
 /// flag set passed to [`JSPropertyIterator::init`].

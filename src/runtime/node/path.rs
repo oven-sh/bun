@@ -3,7 +3,7 @@ use crate::jsc::{bun_string_jsc as BunString, host_fn, JSGlobalObject, JSValue, 
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
 use bun_paths::{self, Platform, MAX_PATH_BYTES};
-use bun_str::{self, strings, ZigString, ZigStringSlice};
+use bun_core::{strings, ZigString, ZigStringSlice};
 use bun_sys;
 
 /// Local shim for `bun.String.createUTF8ForJS` over `[T]` (T = u8 | u16).
@@ -20,7 +20,7 @@ fn create_js_string_t<T: PathChar>(global: &JSGlobalObject, s: &[T]) -> JsResult
     if T::IS_U16 {
         // T == u16 when IS_U16; bytemuck statically checks the layout.
         let s16: &[u16] = bytemuck::cast_slice::<T, u16>(s);
-        let bs = bun_str::String::clone_utf16(s16);
+        let bs = bun_core::String::clone_utf16(s16);
         let r = bs.to_js(global);
         bs.deref();
         r
@@ -400,7 +400,7 @@ pub fn posix_cwd_t<T: PathChar>(buf: &mut [T]) -> MaybeBuf<'_, T> {
 #[cfg(windows)]
 #[inline]
 fn without_trailing_slash(s: &[u8]) -> &[u8] {
-    bun_string::immutable::paths::without_trailing_slash_windows_path(s)
+    bun_paths::string_paths::without_trailing_slash_windows_path(s)
 }
 #[cfg(not(windows))]
 #[inline]
@@ -718,7 +718,7 @@ pub fn basename(
     // PERF(port): was stack-fallback — profile in Phase B
     let path_zslice = path_zstr.to_slice();
 
-    let mut suffix_zslice: Option<bun_str::ZigStringSlice> = None;
+    let mut suffix_zslice: Option<bun_core::ZigStringSlice> = None;
     if let Some(_suffix_ptr) = suffix_ptr {
         let suffix_zstr = _suffix_ptr.get_zig_string(global_object)?;
         if suffix_zstr.len > 0 && suffix_zstr.len <= path_zstr.len {
@@ -1472,10 +1472,10 @@ pub fn join_posix_t<'a, T: PathChar>(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Node__Path_joinWTF(
-    lhs: *mut bun_string::String,
+    lhs: *mut bun_core::String,
     rhs_ptr: *const u8,
     rhs_len: usize,
-    result: *mut bun_string::String,
+    result: *mut bun_core::String,
 ) {
     // SAFETY: caller passes valid pointers from C++.
     let rhs = unsafe { bun_core::ffi::slice(rhs_ptr, rhs_len) };
@@ -1487,13 +1487,13 @@ pub extern "C" fn Bun__Node__Path_joinWTF(
     {
         let win = join_windows_t::<u8>(&[slice.slice(), rhs], &mut buf, &mut buf2);
         // SAFETY: result is a valid out-pointer.
-        unsafe { *result = bun_string::String::clone_utf8(win) };
+        unsafe { *result = bun_core::String::clone_utf8(win) };
     }
     #[cfg(not(windows))]
     {
         let posix = join_posix_t::<u8>(&[slice.slice(), rhs], &mut buf, &mut buf2);
         // SAFETY: result is a valid out-pointer.
-        unsafe { *result = bun_string::String::clone_utf8(posix) };
+        unsafe { *result = bun_core::String::clone_utf8(posix) };
     }
 }
 

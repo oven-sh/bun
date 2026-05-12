@@ -22,7 +22,7 @@ use bun_dns::{
     ResultAny as GetAddrInfoResultAny, ResultList as GetAddrInfoResultList,
 };
 use bun_paths::{PathBuffer, MAX_PATH_BYTES};
-use bun_str::{self, strings, ZStr, ZigString};
+use bun_core::{strings, ZStr, ZigString};
 use bun_sys::{self as sys};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
@@ -4128,13 +4128,13 @@ impl Resolver {
             ChannelResult::Err(err) => {
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_str::String::static_(err.code()),
-                    message: bun_str::String::static_(err.label()),
-                    path: bun_str::String::default(),
-                    syscall: bun_str::String::default(),
-                    hostname: bun_str::String::default(),
+                    code: bun_core::String::static_(err.code()),
+                    message: bun_core::String::static_(err.label()),
+                    path: bun_core::String::default(),
+                    syscall: bun_core::String::default(),
+                    hostname: bun_core::String::default(),
                     fd: -1,
-                    dest: bun_str::String::default(),
+                    dest: bun_core::String::default(),
                 };
                 Err(global_this.throw_value(system_error.to_error_instance(global_this)))
             }
@@ -4652,18 +4652,18 @@ impl Resolver {
         let channel: *mut c_ares::Channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
-                let syscall = bun_str::String::create_atom(&query.name);
+                let syscall = bun_core::String::create_atom(&query.name);
                 // PORT NOTE: SystemError has no Default impl upstream; spell out
                 // the Zig field defaults (.empty strings, fd = c_int::MIN).
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_str::String::static_(err.code()),
-                    message: bun_str::String::static_(err.label()),
-                    path: bun_str::String::empty(),
+                    code: bun_core::String::static_(err.code()),
+                    message: bun_core::String::static_(err.label()),
+                    path: bun_core::String::empty(),
                     syscall,
-                    hostname: bun_str::String::empty(),
+                    hostname: bun_core::String::empty(),
                     fd: c_int::MIN,
-                    dest: bun_str::String::empty(),
+                    dest: bun_core::String::empty(),
                 };
                 return Err(global_this.throw_value(system_error.to_error_instance(global_this)));
             }
@@ -4746,13 +4746,13 @@ impl Resolver {
 
             // size = strlen(buf+1) + 1
             let size = ip.len() + 1;
-            // PORT NOTE: `bun_str::ZigString` lacks `with_encoding`/`to_js` (those live
+            // PORT NOTE: `bun_core::ZigString` lacks `with_encoding`/`to_js` (those live
             // on `bun_jsc::zig_string::ZigString`). The formatted bytes here are pure
             // ASCII (IP address + optional port), so `with_encoding()` would be a no-op
-            // anyway — borrow as a `bun_str::String` and hand to JS.
+            // anyway — borrow as a `bun_core::String` and hand to JS.
             use jsc::StringJsc as _;
             if port == IANA_DNS_PORT {
-                values.put_index(global_this, i, bun_str::String::borrow_utf8(&buf[1..size]).to_js(global_this)?)?;
+                values.put_index(global_this, i, bun_core::String::borrow_utf8(&buf[1..size]).to_js(global_this)?)?;
             } else if family == netc::AF_INET6 {
                 buf[0] = b'[';
                 buf[size] = b']';
@@ -4763,7 +4763,7 @@ impl Resolver {
                     write!(cursor, ":{}", port).expect("unreachable");
                     avail - cursor.len()
                 };
-                values.put_index(global_this, i, bun_str::String::borrow_utf8(&buf[0..size + 1 + port_len]).to_js(global_this)?)?;
+                values.put_index(global_this, i, bun_core::String::borrow_utf8(&buf[0..size + 1 + port_len]).to_js(global_this)?)?;
             } else {
                 use std::io::Write;
                 let port_len = {
@@ -4772,7 +4772,7 @@ impl Resolver {
                     write!(cursor, ":{}", port).expect("unreachable");
                     avail - cursor.len()
                 };
-                values.put_index(global_this, i, bun_str::String::borrow_utf8(&buf[1..size + port_len]).to_js(global_this)?)?;
+                values.put_index(global_this, i, bun_core::String::borrow_utf8(&buf[1..size + port_len]).to_js(global_this)?)?;
             }
 
             i += 1;

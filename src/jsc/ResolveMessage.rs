@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::io::Write as _;
 
 use bun_ast::ImportKind;
-use bun_string::strings;
+use bun_core::strings;
 
 use crate::zig_string::ZigString;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _};
@@ -95,7 +95,7 @@ impl ResolveMessage {
                     };
                 };
 
-                let atom = bun_string::String::create_atom(code);
+                let atom = bun_core::String::create_atom(code);
                 // `defer atom.deref()` — `String` derefs on Drop.
                 atom.to_js(global)
             }
@@ -264,7 +264,7 @@ impl ResolveMessage {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let object = JSValue::create_empty_object(global, 7);
-        object.put(global, b"name", bun_string::String::static_str(b"ResolveMessage").to_js(global)?);
+        object.put(global, b"name", bun_core::String::static_str(b"ResolveMessage").to_js(global)?);
         object.put(global, b"position", Self::get_position(this, global)?);
         object.put(global, b"message", Self::get_message(this, global)?);
         object.put(global, b"level", Self::get_level(this, global)?);

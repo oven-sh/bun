@@ -6,13 +6,13 @@ use std::io::Write as _;
 use bun_alloc::Arena as Bump;
 use bun_core::{self, Environment, Global, Output, Progress, env_var, fmt as bun_fmt};
 use bun_core::Global::SyncCStr;
-use bun_str::MutableString;
+use bun_core::MutableString;
 use bun_dotenv as DotEnv;
 use bun_resolver::fs;
 use bun_url::URL;
 use bun_which::which;
 use bun_wyhash::hash;
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_paths::{self, PathBuffer, SEP_STR};
 use bun_sys as sys;
 use bun_js_parser as js_ast;
@@ -20,7 +20,7 @@ use bun_parsers::json as JSON;
 use bun_http::{self as HTTP, headers};
 use bun_jsc::{self as jsc, JSGlobalObject, CallFrame, JSValue, JsResult};
 #[allow(unused_imports)]
-use bun_string::ZigString;
+use bun_core::ZigString;
 
 use crate::api::bun::process::sync as spawn_sync;
 use crate::api::bun::process::Status;
@@ -1073,7 +1073,7 @@ impl UpgradeCommand {
                         version_string = &version_string[..i as usize];
                     }
 
-                    let trimmed = bun_str::strings::trim(version_string, b" \n\r\t");
+                    let trimmed = bun_core::trim(version_string, b" \n\r\t");
                     if trimmed != version_name.as_slice() {
                         let _ = save_dir_.delete_tree(&version_name);
 
@@ -1461,7 +1461,7 @@ pub mod upgrade_js_bindings {
             let mut buf = bun_paths::WPathBuffer::uninit();
             let tmpdir_path = fs::RealFS::get_default_temp_dir();
             let mut wtmp = bun_paths::WPathBuffer::uninit();
-            let tmpdir_w = bun_string::strings::convert_utf8_to_utf16_in_buffer(&mut wtmp[..], tmpdir_path);
+            let tmpdir_w = bun_core::convert_utf8_to_utf16_in_buffer(&mut wtmp[..], tmpdir_path);
             let path = match sys::normalize_path_windows(
                 sys::Fd::INVALID,
                 tmpdir_w,

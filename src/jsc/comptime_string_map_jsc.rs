@@ -2,8 +2,8 @@
 //! `collections/`; only the `JSValue → V` lookup helpers live here.
 
 use crate::{JSGlobalObject, JSValue, JsResult};
-use bun_string::{OwnedString, String as BunString, Tag};
-// PORT NOTE: `from_js` on `bun_string::String` is provided by the `StringJsc`
+use bun_core::{OwnedString, String as BunString, Tag};
+// PORT NOTE: `from_js` on `bun_core::String` is provided by the `StringJsc`
 // extension trait, which is allowed here because this file lives in `src/jsc/`.
 use crate::StringJsc as _;
 

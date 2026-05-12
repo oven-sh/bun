@@ -16,7 +16,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigStringSl
 // Alias as `bun_schema` so existing field paths resolve unchanged.
 use bun_options_types::schema as bun_schema;
 use bun_paths::{self as paths, PathBuffer};
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 
 // `jsc.API.JSBundler.Plugin` — opaque FFI handle for the C++ JSBundlerPlugin.
 // Re-exported from `crate::api::js_bundler` so `SplitBundlerOptions.plugin`

@@ -18,7 +18,7 @@ pub fn lookup(name: &[u8]) -> Option<[u32; 2]> {
     let mut high: usize = ENTITY_MAP.len();
     while low < high {
         let mid = low + (high - low) / 2;
-        let cmp = bun_string::strings::order(ENTITY_MAP[mid].name, name);
+        let cmp = bun_core::strings::order(ENTITY_MAP[mid].name, name);
         if cmp == Ordering::Less {
             low = mid + 1;
         } else if cmp == Ordering::Greater {

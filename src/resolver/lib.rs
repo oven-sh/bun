@@ -53,10 +53,10 @@ pub use bun_options_types::global_cache::GlobalCache;
 /// `resolver/fs.zig:Entry.abs_path → STATIC`). Centralizing the lifetime
 /// extension here removes the per-call-site erasure.
 ///
-/// TODO(port): once `bun_string::PathString::slice` is changed to return
+/// TODO(port): once `bun_core::PathString::slice` is changed to return
 /// `&'static [u8]` directly, this helper becomes a no-op forwarder.
 #[inline(always)]
-pub(crate) fn path_string_static(ps: &bun_string::PathString) -> &'static [u8] {
+pub(crate) fn path_string_static(ps: &bun_core::PathString) -> &'static [u8] {
     // SAFETY: see fn doc — `PathString` always points into a process-lifetime
     // BSS append-only store (`FilenameStore`/`DirnameStore`); the bytes outlive
     // the program. `Interned` is the canonical proof type for this widen.
@@ -481,7 +481,7 @@ pub mod fs {
 
     /// Resolver-tier `fs.zig:Path` methods that pull deps `bun_paths` can't
     /// reach (`FilenameStore`/`DirnameStore`, `bun_wyhash`, `bun_options_types`,
-    /// `bun_string`). Import this trait to call `.loader()` / `.dupe_alloc()` /
+    /// `bun_core`). Import this trait to call `.loader()` / `.dupe_alloc()` /
     /// `.hash_key()` on a `Path`.
     pub trait PathResolverExt<'a> {
         fn dupe_alloc(&self) -> Result<Path<'static>, bun_core::Error>;
@@ -582,7 +582,7 @@ pub mod fs {
             let mut name_to_use = self.pretty;
             // SEP_STR ++ "node_modules" ++ SEP_STR
             let needle = const_format::concatcp!(bun_paths::SEP_STR, "node_modules", bun_paths::SEP_STR).as_bytes();
-            if let Some(node_modules) = bun_string::strings::last_index_of(self.text, needle) {
+            if let Some(node_modules) = bun_core::last_index_of(self.text, needle) {
                 name_to_use = &self.text[node_modules + 14..];
             }
 
@@ -640,7 +640,8 @@ pub mod fs {
     // add_entry, kind() stat path) remain in the gated `fs.rs` Phase-A draft.
 
     use bun_core::Generation;
-    use bun_string::{strings, PathString};
+    use bun_core::PathString;
+    use bun_paths::strings;
     use bun_sys::Fd;
     use bun_threading::Mutex;
 
@@ -1297,17 +1298,17 @@ pub mod fs {
                 let mut existing_buf = bun_paths::WPathBuffer::uninit();
                 let mut new_buf = bun_paths::WPathBuffer::uninit();
                 self.close();
-                let existing = bun_string::strings::paths::to_extended_path_normalized(
+                let existing = bun_paths::string_paths::to_extended_path_normalized(
                     &mut new_buf.0[..],
                     &self.existing_path,
                 );
                 let new = if bun_paths::is_absolute_windows(name.as_bytes()) {
-                    bun_string::strings::paths::to_extended_path_normalized(
+                    bun_paths::string_paths::to_extended_path_normalized(
                         &mut existing_buf.0[..],
                         name.as_bytes(),
                     )
                 } else {
-                    bun_string::strings::paths::to_w_path_normalized(
+                    bun_paths::string_paths::to_w_path_normalized(
                         &mut existing_buf.0[..],
                         name.as_bytes(),
                     )
@@ -1829,7 +1830,7 @@ pub mod fs {
                 // was permanently misclassified as `.file` — surfacing as
                 // EISDIR at module load time.
                 let mut wbuf = bun_paths::w_path_buffer_pool::get();
-                let wpath = bun_string::strings::paths::to_kernel32_path(&mut wbuf.0[..], absolute_path_c.as_bytes());
+                let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf.0[..], absolute_path_c.as_bytes());
                 // SAFETY: `wpath` is NUL-terminated UTF-16; null security/template handles.
                 let handle = unsafe {
                     w::CreateFileW(
@@ -2032,7 +2033,7 @@ pub mod fs {
                 static OWNED: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
                 return OWNED.get_or_init(|| {
                     if let Some(windir) = env_var::SYSTEMROOT.get().or_else(|| env_var::WINDIR.get()) {
-                        let mut out = bun_string::strings::without_trailing_slash(windir).to_vec();
+                        let mut out = bun_core::without_trailing_slash(windir).to_vec();
                         out.extend_from_slice(b"\\Temp");
                         return out;
                     }
@@ -2050,7 +2051,7 @@ pub mod fs {
                         Err(_) => panic!("Failed to get cwd for platformTempDir"),
                     };
                     let root = bun_paths::resolve_path::windows_filesystem_root(cwd);
-                    let mut out = bun_string::strings::without_trailing_slash(root).to_vec();
+                    let mut out = bun_core::without_trailing_slash(root).to_vec();
                     out.extend_from_slice(b"\\Windows\\Temp");
                     out
                 }).as_slice();
@@ -2183,7 +2184,7 @@ pub mod dir_entry_accessor {
     use crate::fs::{DirEntry, Entry, EntryKind, EntriesOption, FileSystem as FS, Implementation};
     use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
     use bun_paths::{resolve_path, PathBuffer, Platform};
-    use bun_string::ZStr;
+    use bun_core::ZStr;
     use bun_sys::{self as Syscall, Result as Maybe, Stat, Error as SysError};
 
     pub struct DirEntryAccessor;
@@ -2420,7 +2421,7 @@ pub mod cache {
     use core::ffi::c_void;
 
     use bun_core::{feature_flags, Output};
-    use bun_string::MutableString;
+    use bun_core::MutableString;
     use bun_sys::{self, Fd};
 
     use crate::fs as fs_mod;
@@ -3016,20 +3017,21 @@ mod bun_paths {
         ::bun_paths::resolve_path::windows_filesystem_root(p)
     }
 }
-// bun_string::strings shim — re-export the canonical `immutable/paths` helpers
+// bun_core::strings shim — re-export the canonical `immutable/paths` helpers
 // (`without_trailing_slash_windows_path` / `path_contains_node_modules_folder` /
 // `without_leading_path_separator` / `char_is_any_slash`) instead of locally
 // re-implementing them. The previous local copies diverged from the spec
 // (single-strip vs. while-loop, `is_sep_any` vs. platform `SEP`).
 mod strings {
-    pub(super) use bun_string::strings::*;
-    pub(super) use bun_string::strings::paths::{
+    pub(super) use bun_paths::strings::*;
+    pub(super) use bun_paths::string_paths::{
         char_is_any_slash, path_contains_node_modules_folder,
         without_leading_path_separator, without_trailing_slash_windows_path,
     };
+    pub(super) use bun_core::immutable::{eql_long, index_of_char};
     #[inline]
     pub(super) fn index_of_any(slice: &[u8], chars: &'static [u8]) -> Option<usize> {
-        bun_string::strings::index_of_any(slice, chars).map(|v| v as usize)
+        bun_core::index_of_any(slice, chars).map(|v| v as usize)
     }
 }
 // bun_sys shim — adds the `std.fs`-shaped dir-open surface the resolver names
@@ -3442,7 +3444,7 @@ pub mod options {
 use bun_collections::{BoundedArray, MultiArrayList};
 use ::bun_core::Output;
 use ::bun_core::{Environment, FeatureFlags, Generation};
-use bun_string::{MutableString, PathString};
+use bun_core::{MutableString, PathString};
 use bun_threading::Mutex;
 use bun_dotenv::env_loader as DotEnv;
 use bun_ast::Msg;
@@ -4297,7 +4299,7 @@ pub struct Resolver<'a> {
     /// is overwritten while the resolution happens.
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
-    pub custom_dir_paths: Option<&'a [bun_string::String]>,
+    pub custom_dir_paths: Option<&'a [bun_core::String]>,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous

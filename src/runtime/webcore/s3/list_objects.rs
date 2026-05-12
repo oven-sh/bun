@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use bun_jsc::bun_string_jsc::{create_utf8_for_js, from_js as bstr_from_js};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_ptr::RawSlice;
-use bun_str::{self as bstr, strings, ZigStringSlice as Utf8Slice};
+use bun_core::{self as bstr, strings, ZigStringSlice as Utf8Slice};
 
 pub struct S3ListObjectsOptions {
     // Self-referential views: these borrow from the corresponding
@@ -675,7 +675,7 @@ pub fn get_list_objects_options_from_js(
         if val.is_string() {
             let str = bstr_from_js(val, global_this)?;
 
-            // TODO(port): bun_str::String tag accessors (Empty/Dead)
+            // TODO(port): bun_core::String tag accessors (Empty/Dead)
             if !str.is_empty() && !str.is_dead() {
                 let slice = str.to_utf8();
                 list_objects_options.continuation_token = Some(RawSlice::new(slice.slice()));

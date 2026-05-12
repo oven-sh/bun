@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 
 use crate::{host_fn, JSGlobalObject, JSValue, JsResult, VM};
 use crate::virtual_machine::VirtualMachine;
-use bun_string::{ZigString, StringPointer};
+use bun_core::{ZigString, StringPointer};
 use bun_uws::ResponseKind;
 
 // TODO(port): consider an RAII wrapper that calls `deref` on Drop instead of returning `NonNull<FetchHeaders>` from constructors.

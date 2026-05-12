@@ -24,7 +24,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use bun_http_types::MimeType::MimeType;
-use bun_string::{strings::AsciiStatus, PathString};
+use bun_core::{immutable::AsciiStatus, PathString};
 
 use crate::JsCell;
 
@@ -84,7 +84,7 @@ pub struct Blob {
     pub global_this: Cell<*const JSGlobalObject>,
     pub last_modified: Cell<f64>,
     /// Only used by `<input type="file">` / `File` (issue #10178).
-    pub name: bun_string::OwnedStringCell,
+    pub name: bun_core::OwnedStringCell,
 }
 
 // SAFETY: `Blob` holds raw pointers (`content_type`, `global_this`) which
@@ -110,7 +110,7 @@ impl Default for Blob {
             ref_count: bun_ptr::RawRefCount::init(0),
             global_this: Cell::new(core::ptr::null()),
             last_modified: Cell::new(0.0),
-            name: bun_string::OwnedStringCell::new(bun_string::String::dead()),
+            name: bun_core::OwnedStringCell::new(bun_core::String::dead()),
         }
     }
 }
@@ -349,7 +349,7 @@ impl Blob {
             ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
             global_this: Cell::new(self.global_this.get()),
             last_modified: Cell::new(self.last_modified.get()),
-            name: bun_string::OwnedStringCell::new(self.name.get()), // borrowed; no dupe_ref
+            name: bun_core::OwnedStringCell::new(self.name.get()), // borrowed; no dupe_ref
         }
     }
 
@@ -463,7 +463,7 @@ impl Blob {
     /// and many call sites tear down stack copies explicitly.
     pub fn deinit(&mut self) {
         self.detach();
-        self.name.set(bun_string::String::dead());
+        self.name.set(bun_core::String::dead());
 
         self.free_content_type();
 
@@ -841,14 +841,14 @@ pub mod store {
         pub fn path(&self) -> &[u8] {
             let mut path_name = bun_url::URL::parse(self.pathlike.slice()).s3_path();
             // normalize start and ending
-            if bun_string::strings::ends_with(path_name, b"/") {
+            if bun_core::ends_with(path_name, b"/") {
                 path_name = &path_name[0..path_name.len()];
-            } else if bun_string::strings::ends_with(path_name, b"\\") {
+            } else if bun_core::ends_with(path_name, b"\\") {
                 path_name = &path_name[0..path_name.len() - 1];
             }
-            if bun_string::strings::starts_with(path_name, b"/") {
+            if bun_core::starts_with(path_name, b"/") {
                 path_name = &path_name[1..];
-            } else if bun_string::strings::starts_with(path_name, b"\\") {
+            } else if bun_core::starts_with(path_name, b"\\") {
                 path_name = &path_name[1..];
             }
             path_name

@@ -2,7 +2,7 @@
 #![warn(unused_must_use)]
 use bun_alloc::ArenaVecExt as _;
 use bun_alloc::Arena as Bump;
-use bun_string::strings;
+use bun_core::strings;
 
 use crate::css_properties::{Property, PropertyId, PropertyIdTag};
 use crate::css_values::angle::Angle;

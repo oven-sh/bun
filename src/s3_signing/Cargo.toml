@@ -26,5 +26,4 @@ bun_http_types.workspace = true
 bun_picohttp.workspace = true
 bun_ptr.workspace = true
 bun_sha_hmac.workspace = true
-bun_string.workspace = true
 bun_wyhash.workspace = true

@@ -286,7 +286,7 @@ pub mod random {
     use super::*;
     use crate::node::util::validators;
     use bun_jsc::{UUID, JSType, StringJsc as _};
-    use bun_str::String as BunString;
+    use bun_core::String as BunString;
 
     #[bun_jsc::host_fn]
     pub fn random_int(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {

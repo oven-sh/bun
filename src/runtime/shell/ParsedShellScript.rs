@@ -6,7 +6,7 @@ use bun_jsc::{
     CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell,
     JsRef, JsResult, MarkedArgumentBuffer, StringJsc as _,
 };
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 
 use super::interpreter::ShellArgs;
 use super::shell_body::{shell_cmd_from_js, JsStrings};

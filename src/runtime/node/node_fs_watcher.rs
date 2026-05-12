@@ -17,9 +17,9 @@ use bun_jsc::{
     VirtualMachineRef as VirtualMachine,
     ZigStringJsc as _,
 };
-use bun_string::ZigString;
+use bun_core::ZigString;
 use bun_paths::resolve_path::{self as Path, platform};
-use bun_str::strings;
+use bun_core::strings;
 use bun_sys::{self, SystemErrno};
 use bun_threading::Mutex;
 
@@ -353,12 +353,12 @@ impl Default for FSWatchTaskWindows {
 }
 
 pub enum StringOrBytesToDecode {
-    String(bun_str::String),
+    String(bun_core::String),
     BytesToFree(Box<[u8]>),
 }
 
 // Zig: `StringOrBytesToDecode.deinit()` (node_fs_watcher.zig:199-207). The
-// `String` arm wraps `bun_str::String`, which is `#[derive(Copy)]` and has NO
+// `String` arm wraps `bun_core::String`, which is `#[derive(Copy)]` and has NO
 // `Drop` of its own (src/string/lib.rs), so without this impl dropping the
 // enum would silently leak the WTF::StringImpl ref taken by
 // `BunString::clone_utf8` in `win_watcher.rs::emit()`. The `BytesToFree` arm's
@@ -1034,7 +1034,7 @@ impl FSWatcher {
         // SAFETY: `FileSystem::instance()` returns the process-global singleton
         // initialized at startup; never null once init has run.
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
-        let file_path: &bun_str::ZStr =
+        let file_path: &bun_core::ZStr =
             Path::join_abs_string_buf_z::<platform::Auto>(cwd, &mut joined_buf[..], &[slice]);
 
         let vm = args.global_this.bun_vm_ptr();

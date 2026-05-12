@@ -10,7 +10,7 @@ use crate::values::position::{
 };
 use crate::{PrintErr, Printer, VendorPrefix};
 use crate::generics::DeepClone as _;
-use bun_string::strings;
+use bun_core::strings;
 use bun_alloc::Arena;
 
 // ─── B-2 round 6 notes ────────────────────────────────────────────────────

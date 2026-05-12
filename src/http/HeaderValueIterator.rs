@@ -1,4 +1,4 @@
-use bun_string::strings;
+use bun_core::strings;
 
 // PORT NOTE: Zig stored a `std.mem.TokenIterator(u8, .scalar)` field. The Rust
 // equivalent (`slice::Split<'_, u8, _>` + `.filter(..)`) has an unnameable

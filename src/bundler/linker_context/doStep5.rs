@@ -13,7 +13,7 @@ use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
 use bun_collections::{ArrayHashMap, VecExt, HashMap};
 use bun_ast::Loc;
-use bun_string::strings;
+use bun_core::strings;
 
 use crate::bundled_ast::{BundledAstColumns as _, Flags as AstFlags};
 use bun_ast::symbol::Use as SymbolUse;

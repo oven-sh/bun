@@ -13,7 +13,7 @@ use bun_core::{Mutex, Output};
 use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
 use bun_http::MimeType as mime_type;
 use bun_paths::MAX_PATH_BYTES;
-use bun_string::{self as strings};
+use bun_core::{strings};
 use bun_sys::{self as syscall, Fd, FdExt as _, Mode};
 use bun_uws::{self as uws, SocketGroup, SslCtx};
 
@@ -483,9 +483,9 @@ impl ProxyEnvSlots {
         // lowercase slots stay null. Posix keeps both — its map and its
         // getHttpProxy lookup are case-sensitive.
         let eql: fn(&[u8], &[u8]) -> bool = if cfg!(windows) {
-            strings::strings::eql_case_insensitive_ascii_check_length
+            strings::eql_case_insensitive_ascii_check_length
         } else {
-            strings::strings::eql
+            strings::eql
         };
         for_each_proxy_field!(self, |fname, field| {
             if eql(name, fname) {

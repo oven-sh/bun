@@ -39,5 +39,4 @@ bun_ast.workspace = true
 bun_options_types.workspace = true
 bun_paths.workspace = true
 bun_standalone_graph.workspace = true
-bun_string.workspace = true
 bun_sys.workspace = true

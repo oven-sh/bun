@@ -5,7 +5,7 @@ use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::{Environment, Global, Output};
 use bun_ast::Log;
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath, Path, PathBuffer, RelPath};
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{thread_pool, Mutex, ThreadPool, UnboundedQueue};
 

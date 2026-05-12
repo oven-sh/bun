@@ -17,20 +17,19 @@
 #![feature(adt_const_params)]
 
 use bun_collections::VecExt;
-extern crate bun_string as bun_str;
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_str::strings;
-use bun_str::strings::CodepointIterator;
-use bun_str::MutableString;
+use bun_core::strings;
+use bun_core::strings::CodepointIterator;
+use bun_core::MutableString;
 use bun_ast::{ImportRecord, ImportKind};
 use bun_options_types::bundle_enums as bundle_opts;
 use bun_core::Output;
 use bun_sys::Fd;
 
-/// Local stand-in for `bun_str::strings::Encoding` that derives `ConstParamTy` so it can
+/// Local stand-in for `bun_core::Encoding` that derives `ConstParamTy` so it can
 /// be used as a const-generic parameter (`const ENCODING: Encoding`). The variant set is
 /// identical; convert at the boundary if a `strings::Encoding` is ever needed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, core::marker::ConstParamTy)]
@@ -628,7 +627,7 @@ pub mod analyze_transpiled_module {
 pub type RuntimeTranspilerCacheRef = core::ptr::NonNull<bun_ast::RuntimeTranspilerCache>;
 
 use bun_core::fmt::hex2_upper; // remaining `\xHH` site below
-use bun_str::printer::{
+use bun_core::printer::{
     FIRST_ASCII, LAST_ASCII, FIRST_HIGH_SURROGATE, LAST_LOW_SURROGATE, bmp_escape,
     surrogate_pair_escape,
 };
@@ -1413,8 +1412,8 @@ pub(crate) fn set_flag<T: enumset::EnumSetType>(set: &mut enumset::EnumSet<T>, f
     if on { set.insert(flag); } else { set.remove(flag); }
 }
 
-// ── local string helpers not yet exported by `bun_string::strings` ────────
-// TODO(b2-blocked): bun_string::strings::contains_non_bmp_code_point_or_is_invalid_identifier
+// ── local string helpers not yet exported by `bun_core::strings` ────────
+// TODO(b2-blocked): bun_core::contains_non_bmp_code_point_or_is_invalid_identifier
 #[inline]
 pub(crate) fn contains_non_bmp_code_point_or_is_invalid_identifier(alias: &[u8]) -> bool {
     // Mirrors src/string/immutable/unicode.zig:containsNonBmpCodePointOrIsInvalidIdentifier.
@@ -1436,10 +1435,10 @@ pub(crate) fn contains_non_bmp_code_point_or_is_invalid_identifier(alias: &[u8])
     }
     false
 }
-// TODO(b2-blocked): bun_string::strings::encode_wtf8_rune_t (generic CodeUnit variant)
+// TODO(b2-blocked): bun_core::encode_wtf8_rune_t (generic CodeUnit variant)
 #[inline]
 pub(crate) fn encode_wtf8_rune_t(tmp: &mut [u8; 4], c: u32) -> usize {
-    bun_str::strings::encode_wtf8_rune(tmp, c) as usize
+    bun_core::encode_wtf8_rune(tmp, c) as usize
 }
 /// Zig `JSLexer.isLatin1Identifier(comptime []const u16, name)` — u16 overload
 /// of the identifier predicate. `pub` so `bun_jsc::ConsoleObject` can reuse the
@@ -2714,7 +2713,7 @@ where
     }
 
     pub fn print_string_literal_utf8(&mut self, str: &[u8], allow_backtick: bool) {
-        // TODO(b2-blocked): bun_string::strings::wtf8_validate_slice — debug-only assert dropped.
+        // TODO(b2-blocked): bun_core::wtf8_validate_slice — debug-only assert dropped.
 
         let quote = if !IS_JSON {
             best_quote_char_for_string(str, allow_backtick)

@@ -12,7 +12,7 @@ use bun_options_types::context::Context;
 use bun_paths::resolve_path::{self, platform};
 use bun_paths::PathBuffer;
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
-use bun_string::ZStr;
+use bun_core::ZStr;
 
 use crate::bunfig::Bunfig;
 

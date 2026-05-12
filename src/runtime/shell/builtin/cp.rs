@@ -477,8 +477,8 @@ impl ShellCpTask {
         {
             let mut buf = bun_paths::PathBuffer::uninit();
             let mut buf2 = bun_paths::PathBuffer::uninit();
-            let src8 = bun_string::strings::from_wpath(&mut buf, src);
-            let dest8 = bun_string::strings::from_wpath(&mut buf2, dest);
+            let src8 = bun_paths::strings::from_wpath(&mut buf, src);
+            let dest8 = bun_paths::strings::from_wpath(&mut buf2, dest);
             self.on_copy_impl(src8, dest8);
         }
     }
@@ -712,10 +712,10 @@ impl ShellCpTask {
         self.tgt_absolute = Some(tgt.as_bytes().to_vec());
 
         let args = crate::node::fs::args::Cp {
-            src: bun_jsc::node::PathLike::String(bun_string::PathString::init(
+            src: bun_jsc::node::PathLike::String(bun_core::PathString::init(
                 self.src_absolute.as_deref().unwrap(),
             )),
-            dest: bun_jsc::node::PathLike::String(bun_string::PathString::init(
+            dest: bun_jsc::node::PathLike::String(bun_core::PathString::init(
                 self.tgt_absolute.as_deref().unwrap(),
             )),
             flags: crate::node::fs::args::CpFlags {

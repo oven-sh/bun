@@ -1,15 +1,15 @@
 // PORT NOTE: SIMD code originally targeted `core::simd` (portable_simd,
 // nightly-only). For B-2, `u8x16`/`u16x8` alias the scalar `ScalarVec`
-// stand-ins from `crate::immutable`; the per-lane methods are scalar loops.
+// stand-ins from `crate::string::immutable`; the per-lane methods are scalar loops.
 // PERF(port): swap to `bun_highway` / `std::arch` intrinsics in Phase B.
 use core::ffi::c_uint;
 
-use crate::immutable::{
+use crate::string::immutable::{
     self as strings, decode_wtf8_rune_t_multibyte, first_non_ascii, first_non_ascii16, grapheme,
     index_of_char16_usize, index_of_char_usize, utf16_codepoint_with_fffd,
     wtf8_byte_sequence_length_with_invalid, U3Fast, UNICODE_REPLACEMENT,
 };
-use crate::immutable::{AsciiU16Vector as u16x8, AsciiVector as u8x16};
+use crate::string::immutable::{AsciiU16Vector as u16x8, AsciiVector as u8x16};
 
 pub fn is_zero_width_codepoint_type<T: Copy + Into<u32>>(cp: T) -> bool {
     let cp: u32 = cp.into();

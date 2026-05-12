@@ -2,7 +2,7 @@
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
 use bun_alloc::ArenaVecExt as _;
-use bun_string::strings;
+use bun_core::strings;
 
 use bun_ast::{
     self as js_ast, scope, symbol, B, E, Expr, ExprData, ExprNodeList, G, OpCode,

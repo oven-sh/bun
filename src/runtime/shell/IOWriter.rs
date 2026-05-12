@@ -870,7 +870,7 @@ impl IOWriter {
             }
             seen.push(ptr);
             // Spec: `if (this.err) |*e| e.ref();` — `SystemError` in the Rust
-            // port owns `bun_string::String`s by value (no shared refcount yet),
+            // port owns `bun_core::String`s by value (no shared refcount yet),
             // so re-derive a fresh one per callee instead of cloning the stored
             // error.
             let ee = err.to_shell_system_error();

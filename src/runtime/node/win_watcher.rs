@@ -11,7 +11,7 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
 use bun_jsc as jsc;
 use bun_paths::PathBuffer;
-use bun_str::{self as strings, String as BunString, ZStr};
+use bun_core::{strings, String as BunString, ZStr};
 use bun_sys::{self as sys, windows};
 use bun_sys::windows::libuv as uv;
 use bun_sys::windows::libuv::UvHandle as _;

@@ -179,7 +179,7 @@ impl Format {
         EXT_MAP.get(&buf[..n]).copied()
     }
 
-    pub fn mime(self) -> &'static bun_str::ZStr {
+    pub fn mime(self) -> &'static bun_core::ZStr {
         match self {
             Format::Jpeg => bun_core::zstr!("image/jpeg"),
             Format::Png => bun_core::zstr!("image/png"),

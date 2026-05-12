@@ -15,7 +15,7 @@ use bun_paths::{resolve_path as path, resolve_path::platform as path_platform, P
 use crate::api::bun::process::sync::{spawn as spawn_sync, Options as SpawnSyncOptions, SyncStdio as Stdio};
 use crate::api::bun::process::Status as ProcStatus;
 use bun_semver as Semver;
-use bun_str::strings;
+use bun_core::strings;
 use bun_sys::{self, Fd};
 use bun_which::which;
 

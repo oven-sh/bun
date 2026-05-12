@@ -4,7 +4,7 @@
 
 use crate::JSGlobalObject;
 use bun_paths::resolve_path;
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(

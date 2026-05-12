@@ -1,7 +1,7 @@
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult};
 use crate::webcore::EncodingLabel;
 use bun_core::AllocError;
-use bun_str::{strings, OwnedString};
+use bun_core::{strings, OwnedString};
 use core::cell::Cell;
 
 use jsc::text_codec::TextCodec;
@@ -432,7 +432,7 @@ impl TextDecoder {
 
                 // Decode the data
                 let result = codec.decode(buffer_slice, FLUSH, self.fatal);
-                // `bun_string::String` is `#[derive(Copy)]` with NO `Drop` impl, and
+                // `bun_core::String` is `#[derive(Copy)]` with NO `Drop` impl, and
                 // `DecodeResult` has none either — wrap the +1 ref in `OwnedString`
                 // so it derefs on scope exit (matches Zig `defer result.result.deref()`).
                 let result_str = OwnedString::new(result.result);

@@ -4,8 +4,8 @@
 use core::ptr::{self, NonNull};
 
 use bun_alloc::AllocError;
-use bun_ptr::RawSlice;
-use crate::strings;
+use crate::RawSlice;
+use crate::string::strings;
 
 // PORT NOTE: Zig's `std.mem.Allocator` param field dropped — global mimalloc is used for
 // node and duplicated-string allocations.
@@ -83,12 +83,12 @@ impl Node {
     /// `while !cur.is_null() { read; advance; free }` walk that `done`,
     /// `done_with_end`, and `Drop` previously open-coded.
     fn drain_chain(head: Box<Node>, mut sink: impl FnMut(&[u8])) {
-        let mut current: *mut Node = bun_core::heap::into_raw(head);
+        let mut current: *mut Node = crate::heap::into_raw(head);
         while !current.is_null() {
             // SAFETY: `current` walks a chain of `Box`-allocated nodes
             // uniquely owned by the caller (handed in via `head`); each is
             // reclaimed exactly once here and never touched again.
-            let node = unsafe { bun_core::heap::take(current) };
+            let node = unsafe { crate::heap::take(current) };
             current = node.next;
             sink(node.slice());
             // `drop(node)` runs `Node::drop`, freeing `slice` when owned.
@@ -101,7 +101,7 @@ impl Drop for Node {
         if self.owns_slice {
             // SAFETY: when owns_slice is true, slice was produced by Box::<[u8]>::into_raw
             // in `push_cloned`/`push_owned` and has not been freed.
-            drop(unsafe { bun_core::heap::take(self.slice.as_ptr().cast_mut()) });
+            drop(unsafe { crate::heap::take(self.slice.as_ptr().cast_mut()) });
         }
     }
 }
@@ -125,7 +125,7 @@ impl StringJoiner {
         if data.is_empty() {
             return;
         }
-        let raw: *const [u8] = bun_core::heap::into_raw(data);
+        let raw: *const [u8] = crate::heap::into_raw(data);
         // SAFETY: `raw` is a fresh `Box::into_raw` allocation owned by the node
         // until `Node::drop` reclaims it (`owns_slice = true`).
         self.push_raw(unsafe { RawSlice::from_raw(raw) }, true);
@@ -167,14 +167,14 @@ impl StringJoiner {
             self.watcher.needs_newline = data_slice[data_slice.len() - 1] != b'\n';
         }
 
-        let new_tail_nn = bun_core::heap::into_raw_nn(new_tail);
+        let new_tail_nn = crate::heap::into_raw_nn(new_tail);
         if let Some(current_tail) = self.tail {
             // SAFETY: `tail` always points to the last node in the chain owned via `head`.
             unsafe { (*current_tail.as_ptr()).next = new_tail_nn.as_ptr() };
         } else {
             debug_assert!(self.head.is_none());
             // SAFETY: new_tail_nn just came from heap::into_raw_nn above.
-            self.head = Some(unsafe { bun_core::heap::take(new_tail_nn.as_ptr()) });
+            self.head = Some(unsafe { crate::heap::take(new_tail_nn.as_ptr()) });
         }
         self.tail = Some(new_tail_nn);
     }

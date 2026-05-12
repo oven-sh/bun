@@ -292,7 +292,7 @@ impl ParsedSourceMap {
 
     pub fn write_vlqs<W: bun_io::Write + ?Sized>(&self, writer: &mut W) -> bun_io::Result<()> {
         if let Some(ism) = &self.internal {
-            let mut buf = bun_string::MutableString::init_empty();
+            let mut buf = bun_core::MutableString::init_empty();
             ism.append_vlq_to(&mut buf);
             writer.write_all(buf.list.as_slice())?;
             return Ok(());

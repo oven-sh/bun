@@ -5,7 +5,7 @@ use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSType, JSValue, JsErro
 use bun_sql::shared::Data;
 // `?bun.WTF.StringImpl` in Zig is a nullable thin pointer; the Rust port
 // re-exports it as `WTFStringImpl = *mut WTFStringImplStruct`.
-use bun_string::wtf::{WTFStringImpl, WTFStringImplStruct};
+use bun_core::wtf::{WTFStringImpl, WTFStringImplStruct};
 
 // PORT NOTE: This entire type is `extern struct` in Zig and is passed by pointer
 // across FFI to C++ (`JSC__constructObjectFromDataCell`). Field layout is

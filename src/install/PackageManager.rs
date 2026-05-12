@@ -21,7 +21,7 @@ use bun_paths::resolve_path::{self, platform, PosixToWinNormalizer};
 use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::bun_schema::api as Api;
 use bun_semver::{self as Semver, String as SemverString};
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_core::ZBox;
 use bun_sys::{self, Fd};
 use bun_threading::{thread_pool, ThreadPool, UnboundedQueue};
@@ -2258,7 +2258,7 @@ pub fn init(
             // TODO(port): bun.Environment.allow_assert
             if let Some(cache_control) = env.get(b"BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP") {
                 // env-var bytes are not guaranteed UTF-8; parse on bytes directly (Zig: std.fmt.parseInt)
-                if let Ok(int) = bun_str::strings::parse_int::<u32>(cache_control, 10) {
+                if let Ok(int) = bun_core::parse_int::<u32>(cache_control, 10) {
                     break 'brk int;
                 }
             }

@@ -340,7 +340,7 @@ impl<'a> Printer<'a> {
     pub fn print_import_record(&mut self, import_record_idx: u32) -> PrintResult<()> {
         if let Some(info) = &self.import_info {
             let import_record = info.import_records.at(import_record_idx as usize);
-            let [a, b] = bun_string::cheap_prefix_normalizer(self.public_path, &import_record.path.text);
+            let [a, b] = bun_core::cheap_prefix_normalizer(self.public_path, &import_record.path.text);
             // PORT NOTE: reshaped for borrowck — copied (a, b) out before re-borrowing &mut self
             let a = a.to_vec();
             let b = b.to_vec();

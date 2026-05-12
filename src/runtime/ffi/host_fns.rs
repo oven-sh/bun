@@ -23,7 +23,7 @@ use bstr::BStr;
 use bun_collections::StringArrayHashMap;
 use bun_core::ZBox;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPropertyIterator, JSValue, JsResult};
-use bun_str::{self, ZigString};
+use bun_core::{self, ZigString};
 
 use crate::napi::NapiEnv;
 
@@ -37,7 +37,7 @@ unsafe extern "C" {
     fn JSC__JSValue__getOwn(
         value: JSValue,
         global: *const JSGlobalObject,
-        name: *const bun_str::String,
+        name: *const bun_core::String,
     ) -> JSValue;
 }
 
@@ -45,7 +45,7 @@ unsafe extern "C" {
 /// wrapper while `bun_jsc::JSValue::get_own` stays gated.
 #[inline]
 fn get_own(value: JSValue, global: &JSGlobalObject, key: &[u8]) -> JsResult<Option<JSValue>> {
-    let key_str = bun_str::String::init(ZigString::init(key));
+    let key_str = bun_core::String::init(ZigString::init(key));
     // Zig spec opens a `TopExceptionScope` before the FFI call (the C++ side has a
     // ThrowScope whose dtor sets `m_needExceptionCheck`); a post-hoc `has_exception()`
     // would assert under `BUN_JSC_validateExceptionChecks=1`.

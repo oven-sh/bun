@@ -5,7 +5,7 @@ use bun_core::fmt::QuotedFormatter;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_sys::{self, Fd, File, O};
 
 use crate::bun_json::Expr;

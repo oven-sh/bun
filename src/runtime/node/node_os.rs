@@ -2,7 +2,7 @@ use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ulonglong, c_void};
 
 // TODO(b2-blocked): bun_jsc — using crate-local opaque shim until `bun_jsc` is a dep.
 use crate::jsc::{JSGlobalObject, JSValue, JsResult};
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 use bun_core;
 
 // TODO(port): move to <area>_sys
@@ -42,7 +42,7 @@ use bun_core::{env_var, fmt as bun_fmt};
 use bun_jsc::{CallFrame, JSArray, JSObject, SystemError, SysErrorJsc as _, StringJsc as _};
 use crate::node::ErrorCode;
 use bun_paths::PathBuffer;
-use bun_str::{strings, ZigString, ZStr};
+use bun_core::{strings, ZigString, ZStr};
 use bun_sys::c;
 #[cfg(windows)]
 use bun_sys::windows::{self, libuv};
@@ -98,7 +98,7 @@ impl SystemErrorExt for SystemError {
     }
 }
 
-/// `bun_str::ZigString` (the `bun_string` crate type) is `repr(C)`-identical
+/// `bun_core::ZigString` (the `bun_string` crate type) is `repr(C)`-identical
 /// to the JSC-side `ZigString` but lacks `with_encoding`/`to_js`. Provide them
 /// locally so call sites match the Zig spec verbatim.
 trait ZigStringJs {
@@ -437,7 +437,7 @@ fn cpus_impl_freebsd(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
 
     let mut model_buf = [0u8; 512];
     let model = if bun_sys::posix::sysctl_read_slice(c"hw.model", &mut model_buf[..]).is_ok() {
-        ZigString::init(bun_str::slice_to_nul(&model_buf)).with_encoding().to_js(global_this)
+        ZigString::init(bun_core::slice_to_nul(&model_buf)).with_encoding().to_js(global_this)
     } else {
         ZigString::static_("unknown").with_encoding().to_js(global_this)
     };
@@ -519,7 +519,7 @@ fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     // NOTE: sysctlbyname doesn't update len if it was large enough, so we
     // still have to find the null terminator.  All cpus can share the same
     // model name.
-    let model_name = ZigString::init(bun_str::slice_to_nul(&model_name_buf)).with_encoding().to_js(global_this);
+    let model_name = ZigString::init(bun_core::slice_to_nul(&model_name_buf)).with_encoding().to_js(global_this);
 
     // Get CPU speed
     let mut speed: u64 = 0;
@@ -757,7 +757,7 @@ pub fn hostname(global: &JSGlobalObject) -> JsResult<JSValue> {
     {
         let mut name_buffer = [0u8; HOST_NAME_MAX];
         let s: &[u8] = if bun_sys::posix::gethostname(&mut name_buffer).is_ok() {
-            bun_str::slice_to_nul(&name_buffer)
+            bun_core::slice_to_nul(&name_buffer)
         } else {
             b"unknown"
         };
@@ -1236,7 +1236,7 @@ pub fn release() -> BunString {
         if bun_sys::posix::sysctl_read_slice(c"kern.osrelease", &mut name_buffer[..]).is_err() {
             break 'slice b"unknown";
         }
-        bun_str::slice_to_nul(&name_buffer)
+        bun_core::slice_to_nul(&name_buffer)
     };
     #[cfg(windows)]
     let value: &[u8] = 'slice: {
@@ -1247,7 +1247,7 @@ pub fn release() -> BunString {
         if err != 0 {
             break 'slice b"unknown";
         }
-        let value = bun_str::slice_to_nul(&info.release);
+        let value = bun_core::slice_to_nul(&info.release);
         name_buffer[0..value.len()].copy_from_slice(value);
         &name_buffer[0..value.len()]
     };
@@ -1439,7 +1439,7 @@ pub fn version() -> JsResult<BunString> {
         if bun_sys::posix::sysctl_read_slice(c"kern.version", &mut name_buffer[..]).is_err() {
             break 'slice b"unknown";
         }
-        bun_str::slice_to_nul(&name_buffer)
+        bun_core::slice_to_nul(&name_buffer)
     };
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let slice: &[u8] = {
@@ -1457,7 +1457,7 @@ pub fn version() -> JsResult<BunString> {
         if err != 0 {
             break 'slice b"unknown";
         }
-        let s = bun_str::slice_to_nul(&info.version);
+        let s = bun_core::slice_to_nul(&info.version);
         name_buffer[0..s.len()].copy_from_slice(s);
         &name_buffer[0..s.len()]
     };

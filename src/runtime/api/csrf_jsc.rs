@@ -2,7 +2,7 @@
 //! `generate()`/`verify()` halves stay in `src/csrf/`.
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_str::zig_string::Slice as ZigStringSlice;
+use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_boringssl_sys as boring;
 use bun_csrf as csrf;
 
@@ -184,7 +184,7 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 
     // Encode the token
     // `csrf::TokenFormat::to_node_encoding()` returns the cycle-broken
-    // `bun_string::NodeEncoding`, not `crate::node::Encoding` (which owns
+    // `bun_core::NodeEncoding`, not `crate::node::Encoding` (which owns
     // `encode_with_max_size`). Map locally to the runtime enum instead.
     let node_encoding = match encoding {
         csrf::TokenFormat::Base64 => NodeEncoding::Base64,

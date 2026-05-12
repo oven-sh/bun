@@ -6,11 +6,10 @@
 // `bun_core::Fd` (canonical T0). `fd.rs` is now `pub trait FdExt` over that.
 #![warn(unreachable_pub)]
 
-// `bun_str` is the historical Zig namespace name for `bun_string`; alias the
-// crate so windows-only modules (`sys_uv`, `windows::env`, `windows::mod`) can
-// `use bun_str::…` exactly as the Zig source spells it.
+// `bun_str` is the historical Zig namespace name; keep a public alias to
+// `bun_core` so any external `bun_sys::bun_str::…` paths continue to resolve.
 #[cfg(windows)]
-pub extern crate bun_string as bun_str;
+pub extern crate bun_core as bun_str;
 #[cfg(windows)]
 pub extern crate bun_libuv_sys;
 pub mod fd;
@@ -40,27 +39,27 @@ impl From<Error> for bun_core::Error {
 pub struct SystemError {
     pub errno: core::ffi::c_int,
     /// label for errno
-    pub code: bun_string::String,
+    pub code: bun_core::String,
     /// it is illegal to have an empty message
-    pub message: bun_string::String,
-    pub path: bun_string::String,
-    pub syscall: bun_string::String,
-    pub hostname: bun_string::String,
+    pub message: bun_core::String,
+    pub path: bun_core::String,
+    pub syscall: bun_core::String,
+    pub hostname: bun_core::String,
     /// MinInt = no file descriptor
     pub fd: core::ffi::c_int,
-    pub dest: bun_string::String,
+    pub dest: bun_core::String,
 }
 impl Default for SystemError {
     fn default() -> Self {
         Self {
             errno: 0,
-            code: bun_string::String::empty(),
-            message: bun_string::String::empty(),
-            path: bun_string::String::empty(),
-            syscall: bun_string::String::empty(),
-            hostname: bun_string::String::empty(),
+            code: bun_core::String::empty(),
+            message: bun_core::String::empty(),
+            path: bun_core::String::empty(),
+            syscall: bun_core::String::empty(),
+            hostname: bun_core::String::empty(),
             fd: core::ffi::c_int::MIN,
-            dest: bun_string::String::empty(),
+            dest: bun_core::String::empty(),
         }
     }
 }
@@ -2845,7 +2844,7 @@ mod windows_impl {
         if len as usize > wbuf.len() {
             return Err(Error::new(E::ENAMETOOLONG, Tag::getcwd));
         }
-        let utf8 = bun_str::strings::paths::from_w_path(buf, &wbuf[..len as usize]);
+        let utf8 = bun_paths::string_paths::from_w_path(buf, &wbuf[..len as usize]);
         Ok(utf8.len())
     }
     pub fn mkdirat(dir: Fd, path: &ZStr, _mode: Mode) -> Maybe<()> {
@@ -2853,7 +2852,7 @@ mod windows_impl {
         // .{ .iterable = false, .can_rename_or_delete = true, .op = .only_create })`
         // then close the resulting handle on success.
         let mut wbuf = WPathBuffer::default();
-        let wpath = bun_str::strings::paths::to_nt_path(&mut wbuf, path.as_bytes());
+        let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
         let made = super::open_dir_at_windows_nt_path(
             dir,
             wpath,
@@ -2871,8 +2870,8 @@ mod windows_impl {
         // sys.zig:2572 — windows arm goes through renameAtW.
         let mut wf = WPathBuffer::default();
         let mut wt = WPathBuffer::default();
-        let from_w = bun_str::strings::paths::to_nt_path(&mut wf, from.as_bytes());
-        let to_w = bun_str::strings::paths::to_nt_path(&mut wt, to.as_bytes());
+        let from_w = bun_paths::string_paths::to_nt_path(&mut wf, from.as_bytes());
+        let to_w = bun_paths::string_paths::to_nt_path(&mut wt, to.as_bytes());
         super::windows::rename_at_w(from_dir, from_w, to_dir, to_w, true)
     }
     pub fn renameat2(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr, flags: Renameat2Flags) -> Maybe<()> {
@@ -2888,7 +2887,7 @@ mod windows_impl {
         // `std.posix.AT.REMOVEDIR` on Windows = 0x200 (std/c.zig).
         const AT_REMOVEDIR: i32 = 0x200;
         let mut wbuf = WPathBuffer::default();
-        let wpath = bun_str::strings::paths::to_nt_path(&mut wbuf, path.as_bytes());
+        let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
         super::windows::DeleteFileBun(wpath, super::windows::DeleteFileOptions {
             dir: if dir.is_valid() { Some(dir.native()) } else { None },
             remove_dir: (flags & AT_REMOVEDIR) != 0,
@@ -3140,7 +3139,7 @@ mod windows_impl {
         // directory, return `.err = EPERM`.
         const W_OK: i32 = 2;
         let mut wbuf = WPathBuffer::default();
-        let wpath = bun_str::strings::paths::to_kernel32_path(&mut wbuf, path.as_bytes());
+        let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf, path.as_bytes());
         let attrs = unsafe { w::kernel32::GetFileAttributesW(wpath.as_ptr()) };
         if attrs == w::INVALID_FILE_ATTRIBUTES {
             return Err(Error::new(w::get_last_errno(), Tag::access).with_path(path.as_bytes()));
@@ -3222,7 +3221,7 @@ mod windows_impl {
         // at sys.zig:3744-3761). Do NOT hand-roll an extension whitelist —
         // PORTING.md §Forbidden bars re-implementing linked OS API surface.
         let mut wbuf = WPathBuffer::default();
-        let wpath = bun_str::strings::paths::to_w_path(&mut wbuf, path.as_bytes());
+        let wpath = bun_paths::string_paths::to_w_path(&mut wbuf, path.as_bytes());
         // `bFromShellExecute = FALSE` so `.exe` files are included
         // (https://learn.microsoft.com/en-us/windows/win32/api/winsafer/nf-winsafer-saferiisexecutablefiletype).
         // SAFETY: FFI; wpath is NUL-terminated and valid for the call.
@@ -3292,7 +3291,7 @@ mod windows_impl {
         // `toWDirPath` appends a trailing backslash so e.g. `"C:"` is treated
         // as the drive root, not the drive's saved cwd.
         let mut wbuf = WPathBuffer::default();
-        let wpath = bun_str::strings::paths::to_w_dir_path(&mut wbuf, path.as_bytes());
+        let wpath = bun_paths::string_paths::to_w_dir_path(&mut wbuf, path.as_bytes());
         if unsafe { w::SetCurrentDirectoryW(wpath.as_ptr()) } == 0 {
             return Err(Error::new(w::get_last_errno(), Tag::chdir).with_path(path.as_bytes()));
         }
@@ -4629,7 +4628,7 @@ pub mod macho {
         /// Zig: `segName()` — segment name with trailing NULs trimmed.
         #[inline]
         pub fn seg_name(&self) -> &[u8] {
-            bun_string::slice_to_nul(&self.segname)
+            bun_core::slice_to_nul(&self.segname)
         }
     }
 
@@ -5007,7 +5006,7 @@ impl Default for NormalizePathWindowsOpts {
 /// sys.zig:1129 `normalizePathWindows` — convert a (possibly relative) path
 /// into an NT object path suitable for `NtCreateFile` against `dir_fd`.
 /// PORT NOTE: u16-only here; the u8 entry points pre-convert via
-/// `bun_str::strings::paths::to_nt_path` and call this with the resulting wide slice.
+/// `bun_paths::string_paths::to_nt_path` and call this with the resulting wide slice.
 #[cfg(windows)]
 pub fn normalize_path_windows<'a>(
     dir_fd: Fd,
@@ -5389,11 +5388,11 @@ pub fn open_file_at_windows_nt_path(
 #[inline]
 fn convert_path_u8_to_u16<'a>(buf: &'a mut [u16], path: &[u8]) -> Maybe<&'a mut [u16]> {
     if path.len() > buf.len()
-        && bun_str::strings::element_length_utf8_into_utf16(path) > buf.len()
+        && bun_core::strings::element_length_utf8_into_utf16(path) > buf.len()
     {
         return Err(Error::from_code(E::ENAMETOOLONG, Tag::open));
     }
-    Ok(bun_str::strings::convert_utf8_to_utf16_in_buffer(buf, path))
+    Ok(bun_core::convert_utf8_to_utf16_in_buffer(buf, path))
 }
 
 #[cfg(windows)]
@@ -5540,7 +5539,7 @@ pub struct WindowsFileAttributes {
 pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     use bun_windows_sys::externs as w;
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let wpath = bun_string::strings::paths::to_kernel32_path(&mut wbuf.0[..], path.as_bytes());
+    let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf.0[..], path.as_bytes());
     // Win32 API does file path normalization, so we do not need the valid path assertion here.
     // SAFETY: `wpath` is NUL-terminated UTF-16 produced by `to_kernel32_path`.
     let dword = unsafe { w::GetFileAttributesW(wpath.as_ptr()) };
@@ -5607,7 +5606,7 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
         // sys.zig:3648 — `NtQueryAttributesFile` against an OBJECT_ATTRIBUTES
         // built from the (optionally NT-prefixed) wide path.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let mut path = bun_str::strings::paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
+        let mut path = bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
         // Trim leading `.\` — NtQueryAttributesFile expects relative paths
         // without it.
         if path.len() > 2 && path[0] == b'.' as u16 && path[1] == b'\\' as u16 {
@@ -5934,7 +5933,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
             Err(_) => return Err(Error::from_code(E::EBADF, Tag::GetFinalPathNameByHandle)),
         };
         // Trust that Windows gives us valid UTF-16LE.
-        let len = bun_str::strings::paths::from_w_path(&mut out.0[..], wide_slice).len();
+        let len = bun_paths::string_paths::from_w_path(&mut out.0[..], wide_slice).len();
         return Ok(&mut out.0[..len]);
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))] {
@@ -6097,7 +6096,7 @@ pub fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
     // versions but they didn't all exist and this buffer was needed anyway":
     // transcode UTF-16 → UTF-8, then call `makePath` (`mkdir_recursive_at`).
     let mut buf = bun_paths::PathBuffer::default();
-    let utf8 = bun_string::strings::paths::from_w_path(&mut buf.0[..], sub_path);
+    let utf8 = bun_paths::strings::from_w_path(&mut buf.0[..], sub_path);
     mkdir_recursive_at(dir, utf8.as_bytes())
 }
 
@@ -6940,11 +6939,11 @@ mod win_symlink_impl {
         if !WindowsSymlinkOptions::has_failed_to_create_symlink() {
             let mut sym16 = bun_paths::w_path_buffer_pool::get();
             let mut target16 = bun_paths::w_path_buffer_pool::get();
-            let sym_path = bun_string::strings::paths::to_w_path_normalize_auto_extend(
+            let sym_path = bun_paths::string_paths::to_w_path_normalize_auto_extend(
                 &mut sym16[..],
                 dest.as_bytes(),
             );
-            let target_path = bun_string::strings::paths::to_w_path_normalize_auto_extend(
+            let target_path = bun_paths::string_paths::to_w_path_normalize_auto_extend(
                 &mut target16[..],
                 target.as_bytes(),
             );
@@ -7305,7 +7304,7 @@ pub enum WriteFileData<'a> {
 pub enum WriteFileEncoding { #[default] Buffer }
 /// Target — path (relative to `dirfd`) or an already-open fd.
 pub enum PathOrFileDescriptor {
-    Path(bun_string::PathString),
+    Path(bun_core::PathString),
     Fd(Fd),
 }
 impl Default for PathOrFileDescriptor {

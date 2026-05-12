@@ -181,7 +181,7 @@ pub enum BasePalette {
 impl BasePalette {
     pub fn parse(input: &mut css::Parser) -> css::Result<BasePalette> {
         use crate::css_values::number::CSSIntegerFns;
-        use bun_string::strings;
+        use bun_core::strings;
         if let Ok(i) = input.try_parse(CSSIntegerFns::parse) {
             if i < 0 {
                 return Err(input.new_custom_error(css::ParserError::invalid_value));
@@ -227,7 +227,7 @@ pub struct FontPaletteValuesDeclarationParser {}
 const _: () = {
     use crate::css_properties::custom::{CustomProperty, CustomPropertyName};
     use crate::css_properties::font::FontFamily;
-    use bun_string::strings;
+    use bun_core::strings;
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };

@@ -11,7 +11,7 @@ use bun_core::{env_var, fmt as bun_fmt, Environment, Global};
 use bun_core::env::{Architecture, OperatingSystem};
 use bun_paths::{self as path, PathBuffer};
 use bun_semver::{SlicedString, Version};
-use bun_string::{strings, MutableString, ZStr};
+use bun_core::{strings, MutableString, ZStr};
 use bun_sys::Fd;
 
 /// Used for `bun build --compile`

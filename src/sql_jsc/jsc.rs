@@ -152,7 +152,7 @@ fn boringssl_err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
             message_buf.len(),
         );
     }
-    let error_message: &[u8] = bun_string::slice_to_nul(&outbuf[..]);
+    let error_message: &[u8] = bun_core::slice_to_nul(&outbuf[..]);
     if error_message.len() == PREFIX.len() {
         return global
             .err(
@@ -834,7 +834,7 @@ unsafe extern "C" {
     // preconditions remain → `safe fn`.
     safe fn JSFunction__createFromZig(
         global: &JSGlobalObject,
-        fn_name: bun_string::String,
+        fn_name: bun_core::String,
         implementation: JSHostFn,
         arg_count: u32,
         implementation_visibility: ImplementationVisibility,
@@ -855,7 +855,7 @@ impl JSFunction {
         opts: CreateJSFunctionOptions,
     ) -> JSValue {
         let implementation: JSHostFn = implementation.into_js_host_fn();
-        let fn_name = bun_string::String::init(name);
+        let fn_name = bun_core::String::init(name);
         JSFunction__createFromZig(
             global,
             fn_name,

@@ -253,7 +253,7 @@ pub mod defines_table;
 // `for_identifier` reads its own const — no cross-crate hook.
 pub mod defines {
     use bun_collections::{StringArrayHashMap, StringHashMap};
-    use bun_string::strings;
+    use bun_core::strings;
 
     use bun_ast::expr::Data as ExprData;
     use bun_ast::StoreRef;
@@ -571,7 +571,7 @@ pub use defines::{Define, DefineData};
 pub mod defines_full_draft {
     use bstr::BStr;
     use bun_collections::{ArrayHashMap, StringHashMap};
-    use bun_string::strings;
+    use bun_core::strings;
 
     use bun_ast::base::Ref;
     use bun_ast::e as E;

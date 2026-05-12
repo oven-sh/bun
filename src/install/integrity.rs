@@ -1,7 +1,7 @@
 use core::fmt;
 
 use bun_sha_hmac::sha as Crypto;
-use bun_string::strings;
+use bun_core::strings;
 use bun_base64::zig_base64::STANDARD_NO_PAD as base64;
 
 // Digest lengths (bytes). Mirrors std.crypto.hash.* digest_length.

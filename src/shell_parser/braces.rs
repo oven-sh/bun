@@ -6,7 +6,7 @@ use bun_alloc::ArenaVecExt as _;
 // is `smallvec::SmallVec` (inline-N, heap-spill). PORTING.md §Collections.
 use smallvec::SmallVec;
 use self::StringEncoding as Encoding;
-use bun_string::{strings, SmolStr};
+use bun_core::SmolStr;
 use bun_alloc::ArenaVec as BumpVec;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -16,8 +16,9 @@ use bun_alloc::ArenaVec as BumpVec;
 // without a back-edge. `bun_shell` re-exports these under its old paths.
 // ═══════════════════════════════════════════════════════════════════════════
 
-use bun_string::strings::CodePoint; // i32
-use bun_string::strings::{CodepointIterator, Cursor};
+use bun_core::strings;
+use bun_core::immutable::CodePoint; // i32
+use bun_core::immutable::{CodepointIterator, Cursor};
 
 /// Zig: `pub const StringEncoding = enum { ascii, wtf8, utf16 };`
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
@@ -321,7 +322,7 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
 /// Zig: `pub fn hasEqSign(str: []const u8) ?u32`.
 pub fn has_eq_sign(str_: &[u8]) -> Option<u32> {
     if strings::is_all_ascii(str_) {
-        return strings::index_of_char(str_, b'=');
+        return bun_core::immutable::index_of_char(str_, b'=');
     }
 
     // TODO actually i think that this can also use the simd stuff
@@ -378,7 +379,7 @@ pub enum Token {
     Eof,
 }
 
-// TODO(b2-blocked): bun_string::SmolStr — missing `Clone` impl. Zig copied the
+// TODO(b2-blocked): bun_core::SmolStr — missing `Clone` impl. Zig copied the
 // union by value (bitwise SmolStr copy with shared heap backing). Until the
 // lower-tier crate provides `Clone`, deep-copy via `from_slice` so the parser
 // can own its token. PERF(port): extra alloc on heap-backed SmolStr — profile
@@ -411,7 +412,7 @@ impl Token {
         match self {
             Token::Open(_) => SmolStr::from_char(b'{'),
             Token::Comma => SmolStr::from_char(b','),
-            // TODO(b2-blocked): bun_string::SmolStr — see Clone for Token above.
+            // TODO(b2-blocked): bun_core::SmolStr — see Clone for Token above.
             Token::Text(txt) => SmolStr::from_slice(txt.slice()).expect("OOM cloning SmolStr"),
             Token::Close => SmolStr::from_char(b'}'),
             Token::Eof => SmolStr::empty(),
@@ -1383,7 +1384,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                     return Ok(());
                 }
                 let mut buf = [0u8; 4];
-                let len = strings::encode_wtf8_rune(&mut buf, char);
+                let len = bun_core::encode_wtf8_rune(&mut buf, char);
                 last.append_slice(&buf[..len])?;
                 return Ok(());
             }
@@ -1393,7 +1394,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             self.tokens.push(Token::Text(SmolStr::from_slice(&[char as u8])?));
         } else {
             let mut buf = [0u8; 4];
-            let len = strings::encode_wtf8_rune(&mut buf, char);
+            let len = bun_core::encode_wtf8_rune(&mut buf, char);
             self.tokens.push(Token::Text(SmolStr::from_slice(&buf[..len])?));
         }
         Ok(())

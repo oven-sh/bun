@@ -10,7 +10,7 @@ use core::ffi::{c_int, c_void};
 use core::mem;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, JsError, JsClass, StringJsc, URL};
-use bun_str::{self as strings, String as BunString, OwnedString, ZStr};
+use bun_core::{strings, String as BunString, OwnedString, ZStr};
 // TODO(port): move to <area>_sys — c-ares FFI lives in bun_cares_sys
 use bun_cares_sys::c_ares as ares;
 
@@ -183,7 +183,7 @@ impl SocketAddress {
             let from_chars = input.utf16();
             let (str, to_chars) = BunString::create_uninitialized_utf16(from_chars.len() + PREFIX.len());
             // bun.strings.literal(u16, "http://")
-            to_chars[..PREFIX.len()].copy_from_slice(bun_str::w!("http://"));
+            to_chars[..PREFIX.len()].copy_from_slice(bun_core::w!("http://"));
             to_chars[PREFIX.len()..].copy_from_slice(from_chars);
             OwnedString::new(str)
         };
@@ -203,7 +203,7 @@ impl SocketAddress {
             let port32 = url.port();
             if port32 > u32::from(u16::MAX) { 0 } else { u16::try_from(port32).expect("int cast") }
         };
-        debug_assert!(host.tag() != bun_str::Tag::Dead);
+        debug_assert!(host.tag() != bun_core::Tag::Dead);
         debug_assert!(host.length() >= 2);
 
         // NOTE: parsed host cannot be used as presentation string. e.g.
@@ -439,7 +439,7 @@ impl SocketAddress {
 impl Drop for SocketAddress {
     fn drop(&mut self) {
         // Zig `deinit`: `this._presentation.deref()` then `destroy(this)`.
-        // `bun_str::String` is `Copy` (no Drop), so the +1 on the cached
+        // `bun_core::String` is `Copy` (no Drop), so the +1 on the cached
         // presentation must be released explicitly here. `deref()` on a `.Dead`
         // string is a no-op, matching the Zig spec.
         self._presentation.get().deref();
@@ -506,8 +506,8 @@ impl SocketAddress {
         // toJS increments ref count
         let addr_ = this.address();
         Ok(match addr_.tag() {
-            bun_str::Tag::Dead => unreachable!(),
-            bun_str::Tag::Empty => match this.family() {
+            bun_core::Tag::Dead => unreachable!(),
+            bun_core::Tag::Empty => match this.family() {
                 AF::INET => global.common_strings().in4_loopback(),
                 AF::INET6 => global.common_strings().in6_any(),
             },
@@ -525,13 +525,13 @@ impl SocketAddress {
     /// - use this impl in server.zig
     pub fn address(&self) -> BunString {
         let cached = self._presentation.get();
-        if cached.tag() != bun_str::Tag::Dead {
+        if cached.tag() != bun_core::Tag::Dead {
             return cached;
         }
         let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
         let formatted = self._addr.fmt(&mut buf);
         let presentation = crate::webcore::encoding::to_bun_string(formatted.as_bytes(), crate::node::types::Encoding::Latin1);
-        debug_assert!(presentation.tag() != bun_str::Tag::Dead);
+        debug_assert!(presentation.tag() != bun_core::Tag::Dead);
         self._presentation.set(presentation);
         presentation
     }
@@ -698,8 +698,8 @@ unsafe extern "C" {
     // C++-side `WTF::StaticStringImpl` constants — initialized at load time,
     // immutable, immortal refcount. Reading the pointer value has no
     // precondition, so declare them `safe static`.
-    safe static IPv4: bun_str::WTFStringImpl;
-    safe static IPv6: bun_str::WTFStringImpl;
+    safe static IPv4: bun_core::WTFStringImpl;
+    safe static IPv6: bun_core::WTFStringImpl;
 }
 // TODO(port): const bun.String construction from extern static — needs runtime init or const-fn wrapper
 // const ipv4: BunString = BunString { tag: .WTFStringImpl, value: .{ .WTFStringImpl = IPv4 } };
@@ -885,7 +885,7 @@ impl sockaddr {
         // SAFETY: buf[len] == 0 written by ares_inet_ntop above
         let formatted = ZStr::from_buf(&buf[..], len);
         if cfg!(debug_assertions) {
-            debug_assert!(bun_str::strings::is_all_ascii(formatted.as_bytes()));
+            debug_assert!(bun_core::is_all_ascii(formatted.as_bytes()));
         }
         formatted
     }
@@ -927,8 +927,8 @@ mod WellKnownAddress {
         // C++-side `WTF::StaticStringImpl` constants — initialized at load time,
         // immutable, immortal refcount. Reading the pointer value has no
         // precondition, so declare them `safe static`.
-        safe static INET_LOOPBACK: bun_str::WTFStringImpl;
-        safe static INET6_ANY: bun_str::WTFStringImpl;
+        safe static INET_LOOPBACK: bun_core::WTFStringImpl;
+        safe static INET6_ANY: bun_core::WTFStringImpl;
     }
     #[inline]
     pub fn loopback_v4() -> BunString {

@@ -948,7 +948,7 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
     ///
     /// Zig: `MediaFeatureName.parse`.
     pub fn parse(input: &mut Parser) -> Result<(Self, Option<MediaFeatureComparison>)> {
-        use bun_string::strings;
+        use bun_core::strings;
         let ident = input.expect_ident_cloned()?;
 
         if strings::starts_with(ident, b"--") {
@@ -1378,7 +1378,7 @@ impl MediaType {
     }
 
     pub fn from_str(name: &[u8]) -> MediaType {
-        use bun_string::strings::eql_case_insensitive_ascii_check_length as eq;
+        use bun_core::eql_case_insensitive_ascii_check_length as eq;
         if eq(name, b"all") { return MediaType::All; }
         if eq(name, b"print") { return MediaType::Print; }
         if eq(name, b"screen") { return MediaType::Screen; }
@@ -1492,7 +1492,7 @@ pub fn parse_query_condition_with_options<C: QueryCondition>(
     flags: QueryConditionFlags,
     options: &css::ParserOptions,
 ) -> Result<C> {
-    use bun_string::strings;
+    use bun_core::strings;
     let location = input.current_source_location();
     let (is_negation, is_style) = 'brk: {
         let tok = input.next()?.clone();
@@ -1562,7 +1562,7 @@ pub fn parse_parens_or_function<C: QueryCondition>(
     flags: QueryConditionFlags,
     options: &css::ParserOptions,
 ) -> Result<C> {
-    use bun_string::strings;
+    use bun_core::strings;
     let location = input.current_source_location();
     let t = input.next()?.clone();
     match &t {

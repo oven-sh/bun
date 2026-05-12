@@ -8,7 +8,7 @@ use css::PrintErr;
 use css::VendorPrefix;
 use css::css_properties::{Property, PropertyId, PropertyIdTag};
 
-use bun_string::strings;
+use bun_core::strings;
 
 impl Property {
     /// Returns the *raw* enum discriminant of this `Property` as a

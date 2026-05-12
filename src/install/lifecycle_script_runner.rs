@@ -16,7 +16,7 @@ use bun_io::{BufferedReader, BufferedReaderParent, EventLoopHandle};
 use bun_io::{FilePollFlag, PosixFlags};
 
 use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status};
-use bun_str::ZStr;
+use bun_core::ZStr;
 use bun_sys::{Fd, FdExt as _};
 // PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
 // `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
@@ -81,7 +81,7 @@ pub fn replace_package_manager_run(
     copy_script: &mut Vec<u8>,
     script: &[u8],
 ) -> Result<(), bun_core::Error> {
-    use bun_str::strings;
+    use bun_core::strings;
 
     #[inline]
     fn append_bun_run(out: &mut Vec<u8>) {

@@ -4,7 +4,7 @@
 use bun_core::{err, Error};
 use bun_jsc::{ErrorCode, JSGlobalObject, JSPromise, JSValue, JsError};
 use bun_s3_signing::error::{self as s3_error, get_sign_error_message};
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 
 pub use s3_error::S3Error;
 
@@ -89,7 +89,7 @@ impl JSS3Error {
         }
     }
 
-    // Zig `deinit` only deref'd the three `bun.String` fields; `bun_str::String: Drop`
+    // Zig `deinit` only deref'd the three `bun.String` fields; `bun_core::String: Drop`
     // handles that automatically, so no explicit `Drop` impl is needed here.
 
     pub fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {

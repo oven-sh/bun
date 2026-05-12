@@ -2364,7 +2364,7 @@ fn report(url: &[u8]) {
     #[cfg(windows)]
     {
         // TODO(b2-blocked): bun_sys::windows::PROCESS_INFORMATION / STARTUPINFOW / CreateProcessW
-        // TODO(b2-blocked): bun_str::w! / strings::convert_utf8_to_utf16_in_buffer
+        // TODO(b2-blocked): bun_core::w! / strings::convert_utf8_to_utf16_in_buffer
         use bun_sys::windows;
         let mut process: windows::PROCESS_INFORMATION = bun_core::ffi::zeroed();
         let mut startup_info = windows::STARTUPINFOW {
@@ -2391,7 +2391,7 @@ fn report(url: &[u8]) {
             // .hStdError = bun.FD.stderr().native(),
         };
         let mut cmd_line = BoundedArray::<u16, 4096>::default();
-        cmd_line.append_slice_assume_capacity(bun_string::w!("powershell -ExecutionPolicy Bypass -Command \"try{Invoke-RestMethod -Uri '"));
+        cmd_line.append_slice_assume_capacity(bun_core::w!("powershell -ExecutionPolicy Bypass -Command \"try{Invoke-RestMethod -Uri '"));
         // PERF(port): was assume_capacity
         {
             // `unused_capacity_slice` is `&mut [MaybeUninit<u16>]`;
@@ -2415,7 +2415,7 @@ fn report(url: &[u8]) {
             let encoded_len = strings::convert_utf8_to_utf16_in_buffer(init, url).len();
             let _ = cmd_line.resize(cmd_line.len() + encoded_len);
         }
-        if cmd_line.append_slice(bun_string::w!("/ack'|out-null}catch{}\"")).is_err() { return; }
+        if cmd_line.append_slice(bun_core::w!("/ack'|out-null}catch{}\"")).is_err() { return; }
         if cmd_line.append(0).is_err() { return; }
         // SAFETY: we just wrote a NUL terminator at len-1
         let end = cmd_line.len() - 1;
@@ -3088,7 +3088,7 @@ fn print_line_from_file_any_os(
             let mut next_line: usize = 1;
             while next_line != source_location.line as usize {
                 let slice = &buf[current_line_start..amt_read];
-                if let Some(pos) = strings::index_of_char(slice, b'\n') {
+                if let Some(pos) = bun_core::index_of_char(slice, b'\n') {
                     next_line += 1;
                     if pos == slice.len() - 1 {
                         amt_read = f.read(&mut buf[..])?;
@@ -3106,7 +3106,7 @@ fn print_line_from_file_any_os(
             break 'seek current_line_start;
         };
         let slice = &mut buf[line_start..amt_read];
-        if let Some(pos) = strings::index_of_char(slice, b'\n') {
+        if let Some(pos) = bun_core::index_of_char(slice, b'\n') {
             let line = &mut slice[0..pos];
             for b in line.iter_mut() { if *b == b'\t' { *b = b' '; } }
             let n = line.len().min(line_buf.len() - fbs_len);
@@ -3122,7 +3122,7 @@ fn print_line_from_file_any_os(
             if n < slice.len() { break 'read_line; }
             while amt_read == buf.len() {
                 amt_read = f.read(&mut buf[..])?;
-                if let Some(pos) = strings::index_of_char(&buf[0..amt_read], b'\n') {
+                if let Some(pos) = bun_core::index_of_char(&buf[0..amt_read], b'\n') {
                     let line = &mut buf[0..pos];
                     for b in line.iter_mut() { if *b == b'\t' { *b = b' '; } }
                     let n2 = line.len().min(line_buf.len() - fbs_len);
@@ -3173,7 +3173,7 @@ fn print_line_from_file_any_os(
     let highlight = &line_without_newline[left..right];
     let mut after_before_comment = &line_without_newline[right..];
     let mut comment: &[u8] = b"";
-    if let Some(pos) = bun_string::strings::index_of(after_before_comment, b"//") {
+    if let Some(pos) = bun_core::index_of(after_before_comment, b"//") {
         comment = &after_before_comment[pos..];
         after_before_comment = &after_before_comment[0..pos];
     }

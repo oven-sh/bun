@@ -27,7 +27,6 @@ bun_paths.workspace = true
 # router); router consumes the real `bun_resolver::fs::{FileSystem,DirEntry}`
 # now that the `bun_sys::fs::DirEntry` opaque-seam workaround is gone.
 bun_resolver.workspace = true
-bun_string.workspace = true
 bun_sys.workspace = true
 bun_url.workspace = true
 bun_wyhash.workspace = true

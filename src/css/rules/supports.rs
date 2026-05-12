@@ -267,7 +267,7 @@ impl css::generic::ToCss for SupportsCondition {
 impl SupportsCondition {
     pub fn parse(input: &mut css::Parser) -> css::Result<SupportsCondition> {
         use bun_collections::ArrayHashMap;
-        use bun_string::strings;
+        use bun_core::strings;
 
         if input
             .try_parse(|i| i.expect_ident_matching(b"not"))
@@ -387,7 +387,7 @@ impl SupportsCondition {
     }
 
     fn parse_in_parens(input: &mut css::Parser) -> css::Result<SupportsCondition> {
-        use bun_string::strings;
+        use bun_core::strings;
         input.skip_whitespace();
         let location = input.current_source_location();
         let pos = input.position();

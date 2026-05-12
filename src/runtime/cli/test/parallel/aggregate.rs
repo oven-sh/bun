@@ -11,7 +11,7 @@ use bun_core::{self, err, Output, ZBox};
 use bun_paths::{self, PathBuffer};
 use bun_sourcemap_jsc::code_coverage::text as CoverageReportText;
 use bun_options_types::code_coverage_options::{CodeCoverageOptions, Fraction as CoverageFraction};
-use bun_str::strings;
+use bun_core::strings;
 use bun_sys::{self, Fd, File, O};
 
 use crate::cli::test::parallel::coordinator::Coordinator;
@@ -200,7 +200,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     if opts.reporters.lcov {
         let mut fs = NodeFS::default();
         let _ = fs.mkdir_recursive(&fs_args::Mkdir {
-            path: PathLike::EncodedSlice(bun_str::zig_string::Slice::from_utf8_never_free(&opts.reports_directory)),
+            path: PathLike::EncodedSlice(bun_core::zig_string::Slice::from_utf8_never_free(&opts.reports_directory)),
             always_return_none: true,
             ..Default::default()
         });

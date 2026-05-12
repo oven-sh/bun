@@ -12,7 +12,7 @@
 
 use bun_clap as clap;
 use bun_core::{Global, Output};
-use bun_str::strings;
+use bun_core::strings;
 use bun_paths::{self as Path, PathBuffer};
 use bun_install::npm as Npm;
 use crate::package_install;
@@ -948,7 +948,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 
         if let Some(min_age_secs) = args.option(b"--minimum-release-age") {
             // TODO(port): parse f64 from &[u8]
-            let secs: f64 = match bun_str::parse_double(min_age_secs) {
+            let secs: f64 = match bun_core::parse_double(min_age_secs) {
                 Ok(s) => s,
                 Err(_) => {
                     Output::err_generic(
@@ -1175,7 +1175,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         if let Some(cwd_) = args.option(b"--cwd") {
             let mut buf = PathBuffer::uninit();
             let mut buf2 = PathBuffer::uninit();
-            let final_path: &mut bun_str::ZStr;
+            let final_path: &mut bun_core::ZStr;
             if !cwd_.is_empty() && cwd_[0] == b'.' {
                 let cwd_len = bun_sys::getcwd(&mut buf[..])?;
                 let cwd = &buf[..cwd_len];
@@ -1187,11 +1187,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                 )
                 .len();
                 buf2[len] = 0;
-                final_path = bun_str::ZStr::from_buf_mut(&mut buf2[..], len);
+                final_path = bun_core::ZStr::from_buf_mut(&mut buf2[..], len);
             } else {
                 buf[..cwd_.len()].copy_from_slice(cwd_);
                 buf[cwd_.len()] = 0;
-                final_path = bun_str::ZStr::from_buf_mut(&mut buf[..], cwd_.len());
+                final_path = bun_core::ZStr::from_buf_mut(&mut buf[..], cwd_.len());
             }
             if let Err(err) = bun_sys::chdir(final_path) {
                 Output::err_generic(

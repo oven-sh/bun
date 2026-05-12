@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use bun_jsc::js_string::Iterator as JSStringIterator;
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSString, JSType, JSValue, JsResult};
-use bun_str::strings;
+use bun_core::strings;
 
 // `const TextEncoder = @This();` — file is a namespace of exported fns; no wrapper struct needed.
 

@@ -15,7 +15,7 @@ use core::ptr;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{Output, ZStr};
 use bun_paths::{self as path, OSPathBuffer, OSPathChar, PathBuffer, SEP, SEP_STR};
-use bun_string::{self as bun_str, slice_to_nul, strings, MutableString};
+use bun_core::{self as bun_str, slice_to_nul, strings, MutableString};
 use bun_sys::{self, Fd, FdExt};
 use bun_wyhash::hash;
 

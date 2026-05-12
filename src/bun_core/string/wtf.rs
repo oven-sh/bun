@@ -1,6 +1,6 @@
-use crate::strings;
+use crate::string::strings;
 // TODO(port): ZigString.Slice is a nested type in Zig; in Rust it lives alongside ZigString.
-use crate::ZigStringSlice;
+use crate::string::ZigStringSlice;
 
 // Canonical layout lives in `bun_alloc` (lowest-tier crate) so the
 // `is_wtf_allocator` vtable-identity check is a local pointer compare with no
@@ -9,23 +9,23 @@ use crate::ZigStringSlice;
 pub use bun_alloc::{WTFStringImpl, WTFStringImplPtr, WTFStringImplStruct};
 
 /// Behaves like `WTF::Ref<WTF::StringImpl>`. The
-/// [`bun_ptr::ExternalSharedDescriptor`] impl lives in `bun_ptr` (orphan rule:
-/// trait owner gets the impl since the type is foreign to both `bun_ptr` and
-/// `bun_string`).
-pub use bun_ptr::WTFString;
+/// [`crate::external_shared::ExternalSharedDescriptor`] impl lives alongside
+/// the trait in `bun_core::external_shared` (orphan rule: trait owner gets
+/// the impl since the type is foreign — defined in `bun_alloc`).
+pub use crate::external_shared::WTFString;
 
 /// `WTF::RefPtr<T>` — a nullable owning reference into an externally-refcounted
 /// object. Generic re-export so callers can write `wtf::RefPtr<StringImpl>`
 /// (matching the C++ spelling) without reaching into `bun_ptr` directly.
-pub type RefPtr<T> = bun_ptr::ExternalShared<T>;
+pub type RefPtr<T> = crate::external_shared::ExternalShared<T>;
 
 /// `WTF::StringImpl` — alias to the layout-mirroring struct so call sites can
 /// spell `wtf::StringImpl` (used by `wtf::RefPtr<StringImpl>`).
 pub type StringImpl = WTFStringImplStruct;
 
 /// Extension methods on [`WTFStringImplStruct`] that depend on
-/// `bun_string` types ([`ZigStringSlice`], `bun_core::ZBox`) or
-/// `crate::strings::*` transcoding. Kept as a trait because the struct is
+/// `bun_string` types ([`ZigStringSlice`], `crate::ZBox`) or
+/// `crate::string::strings::*` transcoding. Kept as a trait because the struct is
 /// defined in `bun_alloc` and an inherent `impl` here would violate the orphan
 /// rule. Glob-imported via `bun_string::WTFStringImplExt` so method-call syntax
 /// keeps working at every existing callsite.
@@ -33,7 +33,7 @@ pub trait WTFStringImplExt {
     fn to_latin1_slice(&self) -> ZigStringSlice;
     fn to_utf8(&self) -> ZigStringSlice;
     fn to_utf8_without_ref(&self) -> ZigStringSlice;
-    fn to_owned_slice_z(&self) -> bun_core::ZBox;
+    fn to_owned_slice_z(&self) -> crate::ZBox;
     fn to_utf8_if_needed(&self) -> Option<ZigStringSlice>;
     fn can_use_as_utf8(&self) -> bool;
     fn utf8_byte_length(&self) -> usize;
@@ -83,13 +83,13 @@ impl WTFStringImplExt for WTFStringImplStruct {
 
     /// Allocates a NUL-terminated UTF-8 copy. Port of `toOwnedSliceZ`.
     /// `.len()` excludes the sentinel (Zig `[:0]u8` semantics).
-    fn to_owned_slice_z(&self) -> bun_core::ZBox {
+    fn to_owned_slice_z(&self) -> crate::ZBox {
         if self.is_8bit() {
             if let Some(utf8) = strings::to_utf8_from_latin1_z(self.latin1_slice()) {
                 return utf8;
             }
             // ASCII: copy bytes; ZBox appends the NUL.
-            return bun_core::ZBox::from_vec_with_nul(self.latin1_slice().to_vec());
+            return crate::ZBox::from_vec_with_nul(self.latin1_slice().to_vec());
         }
         strings::to_utf8_alloc_z(self.utf16_slice())
     }

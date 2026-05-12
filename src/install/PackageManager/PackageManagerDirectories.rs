@@ -13,7 +13,7 @@ use bun_install::{PackageID, Resolution};
 use crate::repository::Repository;
 use bun_paths::{self as path, AbsPath, PathBuffer, MAX_PATH_BYTES, SEP};
 use bun_semver::{self as Semver, String as SemverString};
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt, File};
 
 use crate::bun_progress::Node as ProgressNode;

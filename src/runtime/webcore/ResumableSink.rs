@@ -9,7 +9,7 @@ use core::cell::Cell;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
 use bun_output::{declare_scope, scoped_log};
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 
 use crate::node::{ErrorCode, StringOrBuffer};
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;

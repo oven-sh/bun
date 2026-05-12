@@ -36,8 +36,8 @@ use bstr::BStr;
 use bun_collections::VecExt;
 use bun_collections::{DynamicBitSet, StringHashMap};
 use bun_core::fmt as bfmt;
-use bun_string::string_joiner::StringJoiner;
-use bun_string::strings;
+use bun_core::string_joiner::StringJoiner;
+use bun_core::strings;
 
 use bun_ast::ExportsKind;
 use bun_ast::ImportRecordFlags as ImportRecordFlags;

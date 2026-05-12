@@ -2,7 +2,7 @@
 //! Normalization is necessary because most fields in the API schema are optional
 
 use std::borrow::Cow;
-use bun_string::strings;
+use bun_core::strings;
 use bun_core::{Output, Global};
 use bun_collections::VecExt;
 use bun_collections::{StringHashMap, StringArrayHashMap, ArrayHashMap, MultiArrayList};

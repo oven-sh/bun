@@ -89,7 +89,7 @@ pub mod postgres_request;
 
 // TODO(b2-blocked): bun_jsc::js_object::ExternColumnIdentifier
 // TODO(b2-blocked): bun_jsc::JSType (real enum)
-// TODO(b2-blocked): bun_string::wtf::{RefPtr,StringImpl}
+// TODO(b2-blocked): bun_core::wtf::{RefPtr,StringImpl}
 
 #[path = "postgres/DataCell.rs"]
 pub mod data_cell;

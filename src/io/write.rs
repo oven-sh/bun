@@ -25,11 +25,11 @@ pub type Result<T = ()> = core::result::Result<T, bun_core::Error>;
 
 // ════════════════════════════════════════════════════════════════════════════
 // trait Write — canonical definition lives in `bun_core::io` so leaf crates
-// (`bun_string`, `bun_collections`, `bun_url`) can implement it without an
+// (`bun_core`, `bun_collections`, `bun_url`) can implement it without an
 // upward dep on this crate. Re-exported here so downstream keeps spelling it
 // `bun_io::Write` / `bun_io::IntLe`.
 // ════════════════════════════════════════════════════════════════════════════
-pub use bun_string::write::{IntBe, IntLe, Write};
+pub use bun_core::write::{IntBe, IntLe, Write};
 
 // ════════════════════════════════════════════════════════════════════════════
 // DiscardingWriter — counting null sink
@@ -346,7 +346,7 @@ impl<W: fmt::Write + ?Sized> fmt::Write for FmtAdapter<'_, W> {
 impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
     fn write_all(&mut self, buf: &[u8]) -> Result<()> {
         // Fast path: valid UTF-8 (overwhelmingly the case for our printers).
-        let r = match bun_string::strings::str_utf8(buf) {
+        let r = match bun_core::str_utf8(buf) {
             Some(s) => self.inner.write_str(s),
             // PERF(port): lossy alloc only on invalid UTF-8; Zig had no
             // text/bytes split so this branch is the price of bridging.

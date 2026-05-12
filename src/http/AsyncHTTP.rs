@@ -4,7 +4,7 @@ use std::io::Write as _;
 
 use bun_core::FeatureFlags;
 use bun_ast::{Loc, Log};
-use bun_string::{MutableString, ZigStringSlice};
+use bun_core::{MutableString, ZigStringSlice};
 use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{self, Batch, Task};
 use bun_url::{PercentEncoding, URL};
@@ -248,8 +248,8 @@ fn blank_client<'a>() -> HTTPClient<'a> {
 pub fn load_env(logger: &mut Log, env: &DotEnvLoader) {
     if let Some(max_http_requests) = env.get(b"BUN_CONFIG_MAX_HTTP_REQUESTS") {
         // PORT NOTE: env vars are bytes — never round-trip through &str. Zig used std.fmt.parseInt
-        // on []const u8 directly; map to the byte-slice parser in bun_string::strings.
-        let max: u16 = match bun_string::strings::parse_int::<u16>(max_http_requests, 10) {
+        // on []const u8 directly; map to the byte-slice parser in bun_core::strings.
+        let max: u16 = match bun_core::parse_int::<u16>(max_http_requests, 10) {
             Ok(v) => v,
             Err(_) => {
                 logger

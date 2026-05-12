@@ -14,7 +14,7 @@
 // ── crate aliases ─────────────────────────────────────────────────────────
 // TODO(b1): Phase-A draft used `bun_str`; the workspace crate is `bun_string`.
 #![warn(unreachable_pub)]
-extern crate bun_string as bun_str;
+extern crate bun_core as bun_str;
 use bun_collections::VecExt;
 
 // ── B-2 un-gated sibling modules ──────────────────────────────────────────

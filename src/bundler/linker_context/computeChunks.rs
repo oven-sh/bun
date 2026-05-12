@@ -7,7 +7,7 @@ use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
 use bun_paths::{resolve_path, PathBuffer};
 use bun_sourcemap::SourceMapPieces;
-use bun_string::strings;
+use bun_core::strings;
 use bun_wyhash::{self, Wyhash};
 
 use crate::bun_css;
@@ -534,7 +534,7 @@ pub fn compute_chunks(
 
     let unique_key_item_len = chunk::UNIQUE_KEY_LEN;
     let mut unique_key_builder =
-        bun_string::StringBuilder::init_capacity(unique_key_item_len * chunks.len());
+        bun_core::StringBuilder::init_capacity(unique_key_item_len * chunks.len());
     // PORT NOTE: in Zig `unique_key_buf` aliases the builder's backing buffer and
     // every `chunk.unique_key` is a slice into it. Mirror that: the builder never
     // reallocates after `init_capacity`, so each `fmt()` returns a stable subslice

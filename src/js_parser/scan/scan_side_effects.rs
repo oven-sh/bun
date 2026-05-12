@@ -833,7 +833,7 @@ impl SideEffects {
             ExprData::EBigInt(e) => {
                 let v = e.value.slice();
                 Result {
-                    value: !bun_string::strings::eql_comptime(v, b"0"),
+                    value: !bun_core::eql_comptime(v, b"0"),
                     side_effects: SideEffects::NoSideEffects,
                     ok: true,
                 }

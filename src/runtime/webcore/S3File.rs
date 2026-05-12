@@ -12,7 +12,7 @@ use crate::webcore::s3_client::S3CredentialsExt as _;
 use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 #[allow(unused_imports)]
 use crate::webcore::s3::client::error_jsc::S3ErrorJsc as _;
-use bun_str::strings;
+use bun_core::strings;
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
 // generic bool. The proc-macro only matches `true`/`false` literals, so

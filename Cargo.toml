@@ -27,7 +27,6 @@ members = [
   "src/semver",
   "src/sourcemap",
   "src/sql",
-  "src/string",
   "src/sys",
   "src/threading",
   "src/unicode",
@@ -254,7 +253,6 @@ bun_safety = { path = "src/safety" }
 bun_semver = { path = "src/semver" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }
-bun_string = { path = "src/string" }
 bun_sys = { path = "src/sys" }
 bun_threading = { path = "src/threading" }
 bun_unicode = { path = "src/unicode" }

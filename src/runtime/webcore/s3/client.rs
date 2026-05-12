@@ -4,12 +4,12 @@ use std::io::Write as _;
 
 use bun_collections::{ByteVecExt, VecExt};
 use bun_http::HeadersExt as _;
-use bun_string::MutableString;
+use bun_core::MutableString;
 #[allow(unused_imports)]
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc};
 use bun_jsc::virtual_machine::VirtualMachine;
 
-use bun_str as strings;
+use bun_core::strings;
 
 // Re-exports (thin aliases matching the Zig file's top-level `pub const X = @import(...)`)
 pub use bun_s3_signing::acl::ACL;

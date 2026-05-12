@@ -126,7 +126,7 @@ pub struct UnicodeRange {
 // blocked_on: Printer::write_fmt, Parser::{expect_ident_matching,position,
 // slice_from,next_including_whitespace,state,reset,
 // new_basic_unexpected_token_error}, Token shape (Dimension/Number/Delim
-// payloads), bun_str::strings::{split_first,split_first_with_expected}.
+// payloads), bun_core::{split_first,split_first_with_expected}.
 
 impl UnicodeRange {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -272,7 +272,7 @@ impl UnicodeRange {
 
     // PORT NOTE: Zig `css.Maybe(UnicodeRange, void)` carries no error payload → `Option<UnicodeRange>`.
     fn parse_concatenated(text_: &[u8]) -> Option<UnicodeRange> {
-        use bun_string::strings;
+        use bun_core::strings;
         let mut text = if !text_.is_empty() && text_[0] == b'+' {
             &text_[1..]
         } else {
@@ -308,7 +308,7 @@ impl UnicodeRange {
     }
 
     fn consume_question_marks(text: &mut &[u8]) -> usize {
-        use bun_string::strings;
+        use bun_core::strings;
         let mut question_marks: usize = 0;
         while let Some(rest) = strings::split_first_with_expected(*text, b'?') {
             question_marks += 1;
@@ -318,7 +318,7 @@ impl UnicodeRange {
     }
 
     fn consume_hex(text: &mut &[u8]) -> (u32, usize) {
-        use bun_string::strings;
+        use bun_core::strings;
         let mut value: u32 = 0;
         let mut digits: usize = 0;
         while let Some(result) = strings::split_first(*text) {
@@ -427,12 +427,12 @@ pub enum FontFormat {
     String(&'static [u8]),
 }
 
-// blocked_on: Parser::expect_ident_or_string, bun_str ASCII-eq fn name,
+// blocked_on: Parser::expect_ident_or_string, bun_core ASCII-eq fn name,
 // DeepClone.
 
 impl FontFormat {
     pub fn parse(input: &mut css::Parser) -> css::Result<FontFormat> {
-        use bun_string::strings;
+        use bun_core::strings;
         let s = input.expect_ident_or_string_cloned()?;
 
         if strings::eql_case_insensitive_ascii_check_length(b"woff", s) {
@@ -727,7 +727,7 @@ pub struct FontFaceDeclarationParser;
 const _: () = {
     use crate::css_properties::custom::{CustomProperty, CustomPropertyName};
     use crate::css_properties::font::{FontFamily, FontStretch, FontWeight};
-    use bun_string::strings;
+    use bun_core::strings;
     use css::css_parser::{AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser};
     use css::{BasicParseErrorKind, Maybe, Parser, ParserOptions, ParserState, Result};
 

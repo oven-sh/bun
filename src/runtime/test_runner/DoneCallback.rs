@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsClass as _, JsResult};
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 
 use crate::test_runner::bun_test::{group_begin, BunTest, RefDataPtr};
 use crate::test_runner::expect::JSValueTestExt as _;

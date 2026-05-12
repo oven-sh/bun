@@ -15,7 +15,7 @@
 
 
 use bun_jsc::{JSGlobalObject, JsResult};
-use bun_str::strings;
+use bun_core::strings;
 use phf::phf_map;
 
 #[derive(Clone, Copy)]
@@ -188,7 +188,7 @@ pub const ALL_MONTHS: u16 = ((1u32 << 13) - 1) as u16 & !1u16;
 pub const ALL_WEEKDAYS: u8 = (1 << 7) - 1;
 
 fn parse_nickname(expr: &[u8]) -> Option<CronExpression> {
-    use bun_str::strings::eql_case_insensitive_asciii_check_length as eql;
+    use bun_core::strings::eql_case_insensitive_asciii_check_length as eql;
     if eql(expr, b"@yearly") || eql(expr, b"@annually") {
         return Some(CronExpression { minutes: 1, hours: 1, days: 1 << 1, months: 1 << 1, weekdays: ALL_WEEKDAYS, days_is_wildcard: false, weekdays_is_wildcard: true });
     }

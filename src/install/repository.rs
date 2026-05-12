@@ -10,7 +10,7 @@ use bun_paths::{self as Path, PathBuffer};
 use bun_semver::String;
 use bun_semver::StringBuilder as StringBuilderLike;
 use bun_semver::string::Buf as StringBuf;
-use bun_str::strings;
+use bun_core::strings;
 #[allow(unused_imports)]
 use bun_sys::{File, FdDirExt};
 
@@ -638,7 +638,7 @@ impl RepositoryExt for Repository {
             .map_err(|_| err!("NoSpaceLeft"))?;
             // TODO(port): narrow error set
             let written = total - cursor.len() - 1;
-            bun_str::ZStr::from_buf(&folder_name_buf[..], written)
+            bun_core::ZStr::from_buf(&folder_name_buf[..], written)
         };
 
         match cache_dir.open_dir_z(folder_name) {

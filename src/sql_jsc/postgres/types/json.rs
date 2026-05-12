@@ -18,8 +18,8 @@ pub trait JsonToJs {
 // Drop at scope exit replaces the explicit deinit.
 impl JsonToJs for Data {
     fn json_to_js(self, global: &JSGlobalObject) -> Result<JSValue, AnyPostgresError> {
-        let str = bun_string::String::borrow_utf8(self.slice());
-        // `defer str.deref()` — handled by Drop on bun_string::String.
+        let str = bun_core::String::borrow_utf8(self.slice());
+        // `defer str.deref()` — handled by Drop on bun_core::String.
         let js_str = str.to_js(global).map_err(js_error_to_postgres)?;
         let parse_result = js_str.parse_json(global).map_err(js_error_to_postgres)?;
         // PORT NOTE: Zig `parse_result.AnyPostgresError()` is a typo for

@@ -20,7 +20,7 @@ use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::MiniEventLoop::MiniEventLoop;
 use bun_simdutf_sys::simdutf;
-use bun_str::{OwnedString, String as BunString, ZStr};
+use bun_core::{OwnedString, String as BunString, ZStr};
 use bun_core::strings;
 use bun_sys::{self as sys, Fd, SystemError};
 

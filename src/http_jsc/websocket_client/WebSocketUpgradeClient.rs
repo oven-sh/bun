@@ -33,8 +33,8 @@ use bun_http::{HeaderValueIterator, Headers};
 use bun_jsc::{JSGlobalObject, VirtualMachineRef};
 use bun_picohttp as picohttp;
 use bun_ptr::ThisPtr;
-use bun_string::strings;
-use bun_string::{String as BunString, ZigStringSlice as Utf8Slice};
+use bun_core::strings;
+use bun_core::{String as BunString, ZigStringSlice as Utf8Slice};
 use bun_uws::{self as uws, SocketHandler, SocketKind, SslCtx};
 
 use super::cpp_websocket::CppWebSocket;
@@ -1736,7 +1736,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 /// from a non-ASCII WTFStringImpl returns raw Latin1 or UTF-16 code units,
 /// which then corrupts the HTTP upgrade request and can cause heap corruption.
 ///
-/// Using `bun_str::String::to_utf8()` either borrows the 8-bit ASCII backing
+/// Using `bun_core::String::to_utf8()` either borrows the 8-bit ASCII backing
 /// (no allocation) or allocates a UTF-8 copy. The resulting slices are stored
 /// here so build_request_body / build_connect_request can index them by &[u8].
 ///

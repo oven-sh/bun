@@ -12,7 +12,7 @@ use bun_install::{CommandLineArguments, PackageManager, Subcommand};
 use bun_parsers::json as bun_json;
 use bun_libdeflate_sys::libdeflate;
 use bun_ast::{Expr, ExprData};
-use bun_str::{strings, MutableString};
+use bun_core::{strings, MutableString};
 use bun_url::URL;
 
 use crate::cli::package_manager_command::PackageManagerCommand;

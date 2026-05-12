@@ -35,7 +35,7 @@ use css_values::number::{CSSNumber, CSSNumberFns};
 use css_values::percentage::{DimensionPercentage, Percentage};
 
 use bun_collections::VecExt;
-use bun_string::strings;
+use bun_core::strings;
 
 use crate::generics::{CssEql, DeepClone};
 use css::CssResult;

@@ -17,7 +17,7 @@ use bun_paths::{self, SEP};
 use bun_resolver::fs as Fs;
 use bun_paths::fs as PFs;
 use bun_resolver::{self as resolver, Resolver};
-use bun_string::strings;
+use bun_core::strings;
 use bun_sys::Fd;
 use bun_url::URL;
 
@@ -143,7 +143,7 @@ mod hardcoded_module {
 #[inline]
 fn without_leading_slash(s: &[u8]) -> &[u8] {
     // PORT NOTE: `strings.withoutLeadingSlash` is not yet ported into
-    // `bun_string::immutable`; trivial enough to inline.
+    // `bun_core::immutable`; trivial enough to inline.
     if !s.is_empty() && (s[0] == b'/' || (cfg!(windows) && s[0] == b'\\')) {
         &s[1..]
     } else {

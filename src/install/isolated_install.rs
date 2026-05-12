@@ -1709,7 +1709,7 @@ pub fn install_isolated_packages(
                         }) else {
                             break;
                         };
-                        if bun_str::strings::starts_with_char(entry.name.slice_u8(), b'.') {
+                        if bun_core::starts_with_char(entry.name.slice_u8(), b'.') {
                             continue;
                         }
 
@@ -1976,9 +1976,9 @@ pub fn install_isolated_packages(
             trusted_dependencies_from_update_requests,
             supported_backend: std::sync::atomic::AtomicU8::new(PackageInstall::supported_method() as u8),
             is_new_bun_modules,
-            global_store_path: global_store_path.as_deref().map(|b: &[u8]| -> &bun_str::ZStr {
+            global_store_path: global_store_path.as_deref().map(|b: &[u8]| -> &bun_core::ZStr {
                 // SAFETY: `global_store_path` was built with a trailing NUL above.
-                bun_str::ZStr::from_slice_with_nul(&b[..])
+                bun_core::ZStr::from_slice_with_nul(&b[..])
             }),
             global_store_tmp_suffix: fast_random(),
             summary: Default::default(),
@@ -2189,7 +2189,7 @@ pub fn install_isolated_packages(
 
                     // SAFETY: each arm reads the union field that `pkg_res_tag`
                     // (== `pkg_res.tag`) names as active.
-                    let cache_subpath_z: &bun_str::ZStr = match pkg_res_tag {
+                    let cache_subpath_z: &bun_core::ZStr = match pkg_res_tag {
                         ResolutionTag::Npm => package_manager::cached_npm_package_folder_name(
                             manager,
                             pkg_name.slice(string_buf),

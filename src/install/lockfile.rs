@@ -20,7 +20,7 @@ use bun_paths::{self as Path, resolve_path, platform, PathBuffer, MAX_PATH_BYTES
 use bun_resolver::fs::{self as Fs, FileSystem};
 use bun_semver::{self as Semver, ExternalString, String as SemverString};
 use bun_sha_hmac as Crypto;
-use bun_str::{strings, ZStr};
+use bun_core::{strings, ZStr};
 use bun_sys::{self as sys, Fd, File};
 use bun_dotenv as DotEnv;
 use bun_perf::system_timer::Timer;
@@ -3031,7 +3031,7 @@ impl Lockfile {
             return Ok(ZERO_HASH);
         }
 
-        let mut string_builder = bun_string::StringBuilder::default();
+        let mut string_builder = bun_core::StringBuilder::default();
         let names: &[SemverString] = &self.packages.items_name()[..packages_len];
         let resolutions: &[Resolution] = &self.packages.items_resolution()[..packages_len];
         let bytes = self.buffers.string_bytes.as_slice();

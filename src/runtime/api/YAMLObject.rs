@@ -10,7 +10,7 @@ use bun_jsc::{
     JSPropertyIteratorOptions, JSValue, JsError, JsResult, MarkedArgumentBuffer,
 };
 use bun_ast::{expr::Data as ExprData, Expr};
-use bun_str::{OwnedString, String as BunString};
+use bun_core::{OwnedString, String as BunString};
 
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 

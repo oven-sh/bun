@@ -17,7 +17,7 @@ use core::mem;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
 use bun_core::{err, Error};
-use bun_string::strings;
+use bun_core::strings;
 
 use bun_ast as js_ast;
 use bun_ast::{

@@ -19,4 +19,3 @@ enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
 bun_core.workspace = true
-bun_string.workspace = true

@@ -623,4 +623,21 @@ macro_rules! __paste_storage {
     };
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// `ObjectPoolType` impls for `bun_core` types live here (trait owner) to
+// avoid a `bun_core → bun_collections` dep cycle now that `MutableString`
+// is in `bun_core` (post `bun_string` merge).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Zig: `Npm.Registry.BodyPool = ObjectPool(MutableString, MutableString.init2048, true, 8)`
+/// (src/install/npm.zig). Init = `init2048`; reuse = `.reset()`.
+impl ObjectPoolType for bun_core::MutableString {
+    const INIT: Option<fn() -> Result<Self, Error>> =
+        Some(|| bun_core::MutableString::init2048().map_err(Into::into));
+    #[inline]
+    fn reset(&mut self) {
+        bun_core::MutableString::reset(self);
+    }
+}
+
 // ported from: src/collections/pool.zig

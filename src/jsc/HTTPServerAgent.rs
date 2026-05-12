@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 use crate::VirtualMachineRef as VirtualMachine;
 
 pub struct HTTPServerAgent {
@@ -113,7 +113,7 @@ impl Drop for Route {
             self.param_names_len = 0;
         }
         // path, file_path, script_id, script_url are dropped (deref'd) automatically via
-        // bun_string::String's Drop impl.
+        // bun_core::String's Drop impl.
     }
 }
 

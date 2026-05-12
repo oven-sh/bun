@@ -1,7 +1,7 @@
 use crate::css_parser as css;
 use crate::css_parser::{CssResult as Result, PrintErr, Printer, Token};
 use crate::values::number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns};
-use bun_string::strings;
+use bun_core::strings;
 
 /// A CSS [easing function](https://www.w3.org/TR/css-easing-1/#easing-functions).
 #[derive(Clone, PartialEq)]

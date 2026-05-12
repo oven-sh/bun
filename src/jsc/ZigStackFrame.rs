@@ -4,7 +4,8 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_core::Output;
-use bun_string::{strings, String as BunString};
+use bun_core::String as BunString;
+use bun_paths::strings;
 use bun_url::URL as ZigURL;
 
 use crate::schema_api as api;

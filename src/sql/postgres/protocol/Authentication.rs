@@ -141,7 +141,7 @@ impl Authentication {
                     // `RawSlice::new` erases the borrowck lifetime so the captured
                     // sub-slices don't keep `bytes` borrowed past this block (they
                     // remain valid because `bytes` is moved into the result below).
-                    let mut iter = bun_string::strings::split(bytes.slice(), b",");
+                    let mut iter = bun_core::split(bytes.slice(), b",");
                     while let Some(item) = iter.next() {
                         if item.len() > 2 {
                             let key = item[0];

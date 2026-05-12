@@ -4,7 +4,7 @@ use std::io::Write as _;
 use bun_ast as js_ast;
 use bun_ast::{E, Expr, G};
 use bun_semver as semver;
-use bun_str::strings;
+use bun_core::strings;
 
 use bun_install::dependency::{self, TagExt as _};
 use bun_install::lockfile::package::{PackageColumns as _, PackageColumns as _};

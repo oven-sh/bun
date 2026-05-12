@@ -1,5 +1,5 @@
 use crate::jsc::{JSGlobalObject, JSValue};
-use bun_string::StringBuilder;
+use bun_core::StringBuilder;
 use bun_jsc::zig_string::ZigString;
 use bun_jsc::ZigStringJsc as _;
 use bun_sql::postgres::protocol::field_message::FieldMessage;
@@ -10,7 +10,7 @@ use bun_sql::postgres::protocol::notice_response::NoticeResponse;
 /// expose a `payload()` accessor, so match locally.
 // TODO(b2-blocked): bun_sql::postgres::protocol::field_message::FieldMessage::payload
 // — once landed, replace this whole match with `msg.payload()`.
-pub(crate) fn field_message_payload(msg: &FieldMessage) -> &bun_string::String {
+pub(crate) fn field_message_payload(msg: &FieldMessage) -> &bun_core::String {
     match msg {
         FieldMessage::Severity(s)
         | FieldMessage::LocalizedSeverity(s)

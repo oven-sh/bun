@@ -11,7 +11,7 @@ use std::io::Write as _;
 
 use bun_bundler::transpiler::{BunPluginTarget, PluginResolver};
 use bun_paths::fs::Path as FsPath;
-use bun_string::{OwnedString, String as BunString};
+use bun_core::{OwnedString, String as BunString};
 
 use crate::JSGlobalObject;
 use bun_ptr::BackRef;
@@ -88,7 +88,7 @@ impl PluginResolver for PluginRunner {
             return Ok(None);
         }
 
-        // Spec PluginRunner.zig:62 `defer file_path.deref()` — `bun_string::String`
+        // Spec PluginRunner.zig:62 `defer file_path.deref()` — `bun_core::String`
         // is `Copy` (no `Drop`), so RAII-wrap the +1 WTF ref across every
         // remaining `?` / early-return.
         let file_path = OwnedString::new(path_value.to_bun_string(global)?);

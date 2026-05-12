@@ -20,4 +20,3 @@ bitflags.workspace = true
 thiserror.workspace = true
 bun_clap_macros.workspace = true
 bun_core.workspace = true
-bun_string.workspace = true

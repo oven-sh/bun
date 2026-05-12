@@ -2,7 +2,7 @@ use core::cmp::Ordering;
 use core::marker::{PhantomData, PhantomPinned};
 
 use crate::{JSGlobalObject, JSValue, JsResult};
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 
 bun_opaque::opaque_ffi! {
     /// Opaque JSC BigInt cell. Always used behind a reference (`&JSBigInt`).

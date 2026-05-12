@@ -12,7 +12,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
 use bun_resolver::fs::{FileSystem, RealFS};
 use bun_core::ZBox;
-use bun_str::PathString;
+use bun_core::PathString;
 use bun_sys::{Fd, FdDirExt, FdExt};
 
 use super::aggregate;
@@ -165,7 +165,7 @@ pub fn run_as_coordinator(
     // explicitly opts out of locality (the caller already shuffled).
     let mut sorted: Vec<PathString> = files.to_vec();
     if !ctx.test_options.randomize {
-        sorted.sort_by(|a, b| bun_str::strings::order(a.slice(), b.slice()));
+        sorted.sort_by(|a, b| bun_core::order(a.slice(), b.slice()));
     }
 
     let mut workers: Vec<Worker> = Vec::with_capacity(k as usize);

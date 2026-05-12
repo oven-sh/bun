@@ -28,7 +28,6 @@ bun_options_types.workspace = true
 bun_ast.workspace = true
 bun_paths.workspace = true
 bun_ptr.workspace = true
-bun_string.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
 bun_which.workspace = true

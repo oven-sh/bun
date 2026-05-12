@@ -7,7 +7,7 @@
 //! `pub use`s these and layers the JS-argument-parsing helpers (`from_js`,
 //! `from_js_with_allocator`) on top via inherent impls in that crate.
 
-use bun_string::{PathString, SliceWithUnderlyingString, ZigStringSlice};
+use bun_core::{PathString, SliceWithUnderlyingString, ZigStringSlice};
 use bun_sys::Fd;
 
 use crate::array_buffer::MarkedArrayBuffer;

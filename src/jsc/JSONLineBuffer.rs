@@ -1,5 +1,5 @@
 use bun_collections::{ByteVecExt, VecExt};
-use bun_string::strings;
+use bun_core::strings;
 
 /// Buffer for newline-delimited data that tracks scan positions to avoid O(n²) scanning.
 /// Each byte is scanned exactly once. We track:

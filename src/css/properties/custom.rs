@@ -44,7 +44,7 @@ use css_values::url::Url;
 use crate::properties::animation::AnimationName;
 use crate::rules::supports::SupportsCondition;
 
-use bun_string::strings;
+use bun_core::strings;
 use bun_wyhash::Wyhash;
 
 use crate::generics::{CssEql, CssHash, DeepClone};

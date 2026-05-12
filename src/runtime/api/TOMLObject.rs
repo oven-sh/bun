@@ -3,7 +3,7 @@ use bun_parsers::toml::TOML;
 use bun_ast::ASTMemoryAllocator;
 use bun_js_printer as js_printer;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, LogJsc, StringJsc};
-use bun_str::String as BunString;
+use bun_core::String as BunString;
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global, 1);

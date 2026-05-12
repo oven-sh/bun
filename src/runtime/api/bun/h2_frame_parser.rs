@@ -14,10 +14,10 @@ use bun_jsc::ErrorCode as JscErrorCode;
 use bun_jsc::StringJsc as _;
 use crate::webcore::AutoFlusher;
 use crate::node::{Encoding, StringOrBuffer};
-use bun_str::{strings, String as BunString, ZigString};
+use bun_core::{strings, String as BunString, ZigString};
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
 use bun_ptr::IntrusiveRc;
-use bun_string::MutableString;
+use bun_core::MutableString;
 use bun_http::lshpack;
 use crate::api::socket::{TCPSocket, TLSSocket};
 use crate::socket::NativeCallbacks;
@@ -3837,7 +3837,7 @@ impl H2FrameParser {
                     let setting_id_str = prop_name.to_utf8();
                     // Parse bytes directly (ASCII decimal) — Zig: std.fmt.parseInt(u32, slice, 10).
                     // Do not insert UTF-8 validation on external data per PORTING.md §Strings.
-                    let Some(setting_id) = bun_str::strings::parse_int::<u32>(setting_id_str.slice(), 10).ok()
+                    let Some(setting_id) = bun_core::parse_int::<u32>(setting_id_str.slice(), 10).ok()
                     else {
                         return global_object.err_http2_invalid_setting_value_range_error("Invalid custom setting identifier").throw();
                     };
@@ -4080,8 +4080,8 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn altsvc(this: &Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let mut origin_slice: Option<bun_str::zig_string::Slice> = None;
-        let mut value_slice: Option<bun_str::zig_string::Slice> = None;
+        let mut origin_slice: Option<bun_core::zig_string::Slice> = None;
+        let mut value_slice: Option<bun_core::zig_string::Slice> = None;
 
         let mut origin_str: &[u8] = b"";
         let mut value_str: &[u8] = b"";

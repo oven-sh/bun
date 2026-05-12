@@ -10,7 +10,7 @@ use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsRef, JsResult, MarkedArgumentBuffer,
     Ref as JscRef, StringJsc, SysErrorJsc, SystemError,
 };
-use bun_str::{String as BunString, ZigStringSlice};
+use bun_core::{String as BunString, ZigStringSlice};
 
 use crate::node::validators;
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -89,7 +89,7 @@ impl JSValueAsyncCtxExt for JSValue {
     }
 }
 
-use bun_string::immutable::ares_inet_pton as inet_pton;
+use bun_core::immutable::ares_inet_pton as inet_pton;
 
 #[allow(dead_code)]
 unsafe extern "C" {
@@ -408,7 +408,7 @@ impl UDPSocketConfig {
 }
 
 // `UDPSocketConfig::deinit` becomes Drop: `hostname.deref()` and `connect.address.deref()` are
-// handled by `bun_str::String`'s own Drop. No explicit body needed.
+// handled by `bun_core::String`'s own Drop. No explicit body needed.
 
 #[derive(Clone, Copy)]
 struct ConnectInfo {

@@ -16,7 +16,7 @@ use bun_core::pretty_fmt;
 // raw ptr/len pairs — the Zig original returns aliasing `[]const u8` with no
 // lifetime tracking. The buffer is heap-owned; callers keep the builder (or
 // its moved-out buffer) alive while the returned slices are in use.
-pub use bun_string::StringBuilder;
+pub use bun_core::StringBuilder;
 
 // TODO(b1): bun_picohttp_sys crate missing — local FFI stub surface.
 // Real bindings land in B-2 (bindgen over vendor/picohttpparser).
@@ -72,7 +72,7 @@ mod c {
     }
 }
 
-use bun_string::strings;
+use bun_core::strings;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Header

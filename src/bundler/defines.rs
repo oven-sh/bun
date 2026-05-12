@@ -4,7 +4,7 @@ use bun_js_parser as js_ast;
 use bun_js_parser::lexer as js_lexer;
 use bun_ast::ExprData;
 use bun_ast::Ref;
-use bun_string::strings;
+use bun_core::strings;
 
 use crate::defines_table::{
     GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING as global_no_side_effect_function_calls_safe_for_to_string,
@@ -140,7 +140,7 @@ pub fn copy_env_for_define(
                 .map
                 .keys()
                 .iter()
-                .any(|k| bun_string::strings::starts_with(k, prefix))
+                .any(|k| bun_core::starts_with(k, prefix))
         } else {
             true
         };
@@ -158,7 +158,7 @@ pub fn copy_env_for_define(
                 let value: &[u8] = &v.value;
 
                 if behavior == DotEnvBehavior::Prefix {
-                    if bun_string::strings::starts_with(k, prefix) {
+                    if bun_core::starts_with(k, prefix) {
                         key_buf.clear();
                         key_buf.extend_from_slice(PROCESS_ENV);
                         key_buf.extend_from_slice(k);

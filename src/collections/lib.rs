@@ -19,7 +19,11 @@ extern crate self as bun_collections;
 pub mod multi_array_list;
 pub mod vec_ext;
 pub mod hive_array;
-pub mod bounded_array;
+// `bounded_array` moved down to `bun_core` (cycle-break for the
+// `bun_string → bun_core` merge — `bun_core::string::immutable` needs it).
+// Re-exported here unchanged so existing `bun_collections::BoundedArray` /
+// `bun_collections::bounded_array::*` paths keep resolving.
+pub use bun_core::bounded_array;
 pub mod identity_context;
 pub mod linear_fifo;
 

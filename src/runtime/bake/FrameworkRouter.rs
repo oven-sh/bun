@@ -2,6 +2,7 @@
 //! configuration. Agnostic to all different paradigms. Supports incrementally
 //! updating for DevServer, or serializing to a binary for use in production.
 
+use bun_paths::strings;
 use bun_alloc::ArenaVecExt as _;
 use core::fmt;
 use core::mem::size_of;
@@ -13,7 +14,7 @@ use bun_core::Output;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, Strong, StrongOptional, StringJsc};
 use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES};
 use bun_resolver::{DirInfo, Resolver};
-use bun_str::strings;
+
 use bun_wyhash;
 
 use crate::bake::dev_server::route_bundle::IndexOptional as RouteBundleIndexOptional;
@@ -1289,8 +1290,8 @@ impl MatchedParams {
         // Create a JavaScript object with params
         let obj = JSValue::create_empty_object(global, params_array.len());
         for param in params_array {
-            let key_str = bun_str::String::clone_utf8(param.key.slice());
-            let value_str = bun_str::String::clone_utf8(param.value.slice());
+            let key_str = bun_core::String::clone_utf8(param.key.slice());
+            let value_str = bun_core::String::clone_utf8(param.value.slice());
 
             obj.put_bun_string_one_or_array(
                 global,
@@ -1807,7 +1808,7 @@ impl FrameworkRouter {
 /// creation. A production-grade JS api would be able to re-use objects.
 #[bun_jsc::JsClass(name = "FrameworkFileSystemRouter")]
 pub struct JSFrameworkRouter {
-    pub files: Vec<bun_str::String>,
+    pub files: Vec<bun_core::String>,
     pub router: FrameworkRouter,
     pub stored_parse_errors: Vec<StoredParseError>,
 }
@@ -1852,7 +1853,7 @@ impl JSFrameworkRouter {
             )));
         }
 
-        let root: bun_str::zig_string::Slice = match opts.get(global, "root")? {
+        let root: bun_core::zig_string::Slice = match opts.get(global, "root")? {
             Some(v) if !v.is_undefined_or_null() => v.to_slice(global)?,
             _ => return Err(global.throw_invalid_arguments(format_args!("Missing options.root"))),
         };
@@ -1929,7 +1930,7 @@ impl JSFrameworkRouter {
             }
             return Err(global.throw_value(
                 global.create_aggregate_error_with_array(
-                    bun_str::String::static_str("Errors scanning routes"),
+                    bun_core::String::static_str("Errors scanning routes"),
                     arr,
                 )?,
             ));
@@ -1961,7 +1962,7 @@ impl JSFrameworkRouter {
                         JSValue::create_empty_object(global, params_out.params.len() as usize);
                     for param in params_out.params.slice() {
                         // key/value borrow from `path`/pattern, both live here (RawSlice invariant)
-                        let value_str = bun_str::String::clone_utf8(param.value.slice());
+                        let value_str = bun_core::String::clone_utf8(param.value.slice());
                         params_obj.put(global, param.key.slice(), value_str.to_js(global)?);
                     }
                     params_obj
@@ -2080,12 +2081,12 @@ impl JSFrameworkRouter {
                 .expect("ByteFmtWriter is infallible");
         }
 
-        let mut out = bun_str::String::clone_utf8(&rendered);
+        let mut out = bun_core::String::clone_utf8(&rendered);
         let obj = JSValue::create_empty_object(global, 2);
         obj.put(
             global,
             b"kind",
-            bun_str::String::static_str(<&'static str>::from(parsed.kind)).to_js(global)?,
+            bun_core::String::static_str(<&'static str>::from(parsed.kind)).to_js(global)?,
         );
         obj.put(global, b"pattern", out.transfer_to_js(global)?);
         Ok(obj)
@@ -2101,7 +2102,7 @@ impl JSFrameworkRouter {
             part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))
                 .expect("ByteFmtWriter is infallible");
         }
-        let mut str = bun_str::String::clone_utf8(&rendered);
+        let mut str = bun_core::String::clone_utf8(&rendered);
         str.transfer_to_js(global)
     }
 
@@ -2109,7 +2110,7 @@ impl JSFrameworkRouter {
         let mut rendered: Vec<u8> = Vec::new();
         part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))
             .expect("ByteFmtWriter is infallible");
-        let mut str = bun_str::String::clone_utf8(&rendered);
+        let mut str = bun_core::String::clone_utf8(&rendered);
         str.transfer_to_js(global)
     }
 
@@ -2140,7 +2141,7 @@ use bun_core::fmt::VecWriter as ByteFmtWriter;
 // fields into a dedicated context struct instead of implementing the trait on
 // `JSFrameworkRouter` itself.
 struct JSFrameworkRouterScanCtx<'a> {
-    files: &'a mut Vec<bun_str::String>,
+    files: &'a mut Vec<bun_core::String>,
     stored_parse_errors: &'a mut Vec<StoredParseError>,
 }
 
@@ -2151,7 +2152,7 @@ impl InsertionHandler for JSFrameworkRouterScanCtx<'_> {
         _: RouteIndex,
         _: FileKind,
     ) -> Result<OpaqueFileId, AllocError> {
-        self.files.push(bun_str::String::clone_utf8(abs_path));
+        self.files.push(bun_core::String::clone_utf8(abs_path));
         Ok(OpaqueFileId::init(
             u32::try_from(self.files.len() - 1).expect("int cast"),
         ))

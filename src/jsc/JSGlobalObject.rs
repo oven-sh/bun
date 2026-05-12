@@ -8,14 +8,14 @@ use crate::zig_string::ZigString;
 use crate::ZigStringJsc as _;
 use crate::Error as JscError; // jsc.Error (ErrorCode enum)
 use crate::ErrorCode as NodeErrorCode;
-use crate::StringJsc as _; // .to_js() / .to_error_instance() on bun_string::String
+use crate::StringJsc as _; // .to_js() / .to_error_instance() on bun_core::String
 use crate::{
     CommonStrings, DOMExceptionCode, ErrorableString, Exception, JSValue, JsError, JsResult, VM,
     MAX_SAFE_INTEGER, MIN_SAFE_INTEGER,
 };
 
 use bun_core::{fmt as bun_fmt, perf, Output, StackCheck};
-use bun_string::{strings, OwnedString, String as BunString};
+use bun_core::{strings, OwnedString, String as BunString};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Opaque FFI handle (Nomicon pattern; !Send + !Sync + !Unpin).
@@ -365,7 +365,7 @@ impl JSGlobalObject {
 
     /// Returns a +1-ref'd `BunString` describing `value`'s type for error messages.
     /// The result is wrapped in [`OwnedString`] so the ref is released on drop —
-    /// `bun_string::String` is `Copy` and has no `Drop`, so a bare `BunString`
+    /// `bun_core::String` is `Copy` and has no `Drop`, so a bare `BunString`
     /// here would leak (Zig spec does `defer actual_string_value.deref()`).
     pub fn determine_specific_type(global: &Self, value: JSValue) -> JsResult<OwnedString> {
         // The C++ side opens a `DECLARE_THROW_SCOPE`; under
@@ -402,7 +402,7 @@ impl JSGlobalObject {
                 bun_boringssl::c::ERR_error_string_n(err, buf.as_mut_ptr().cast::<c_char>(), buf.len())
             };
             // Slice up to the NUL terminator (matches Zig's `[:0]u8` slice semantics).
-            let msg = bun_string::slice_to_nul(&buf);
+            let msg = bun_core::slice_to_nul(&buf);
             return self
                 .err(
                     JscError::CRYPTO_INVALID_SCRYPT_PARAMS,
@@ -473,7 +473,7 @@ impl JSGlobalObject {
         value: JSValue,
     ) -> JsError {
         let actual_type = if value.js_type().is_array() {
-            bun_string::ZigString::static_(b"array")
+            bun_core::ZigString::static_(b"array")
         } else {
             value.js_type_string(self).get_zig_string(self)
         };
@@ -884,7 +884,7 @@ impl JSGlobalObject {
     pub fn create_aggregate_error(
         &self,
         errors: &[JSValue],
-        message: &bun_string::ZigString,
+        message: &bun_core::ZigString,
     ) -> JsResult<JSValue> {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `errors.as_ptr()`/`len()` describe
         // a valid stack-rooted slice; `message` borrow outlives the call.
@@ -1599,7 +1599,7 @@ unsafe extern "C" {
         global: *const JSGlobalObject,
         errors: *const JSValue,
         len: usize,
-        message: *const bun_string::ZigString,
+        message: *const bun_core::ZigString,
     ) -> JSValue;
     safe fn JSC__JSGlobalObject__createAggregateErrorWithArray(
         global: &JSGlobalObject,

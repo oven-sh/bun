@@ -13,7 +13,7 @@ use crate::values::url::Url;
 use crate::properties::custom::TokenList;
 use crate::properties::transform::{Transform, TransformList};
 
-use bun_string::strings;
+use bun_core::strings;
 
 // https://drafts.csswg.org/css-syntax-3/#whitespace
 const SPACE_CHARACTERS: &[u8] = &[0x20, 0x09];

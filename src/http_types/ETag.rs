@@ -1,4 +1,4 @@
-use bun_string::strings;
+use bun_core::strings;
 
 // PORT NOTE: Zig anonymous return struct `{ tag: []const u8, is_weak: bool }`.
 // Borrows from the input slice; not a persistent heap struct.

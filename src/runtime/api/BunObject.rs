@@ -12,7 +12,7 @@ pub fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
     platform: bun_paths::Platform,
 ) {
     use bun_paths::{resolve_path, Platform};
-    use bun_str::strings;
+    use bun_core::strings;
 
     // PERF(port): bun_url::URL::join_write wants a `bun_io::Write`; route all
     // byte output through a Vec<u8> then forward to the caller's fmt::Write.
@@ -95,7 +95,7 @@ use bun_jsc::{
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_paths::{self as path, PathBuffer, WPathBuffer, MAX_PATH_BYTES};
-use bun_str::{self, strings, String as BunString, ZigString};
+use bun_core::{strings, String as BunString, ZigString};
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_shell_parser::braces as Braces;
 use bun_zlib as zlib;
@@ -116,7 +116,7 @@ use crate::api::JSBundler;
 use bun_jsc::ZigStringJsc as _; // to_error_instance / to_type_error_instance
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
-use bun_str::zig_string::Slice as ZigStringSlice;
+use bun_core::zig_string::Slice as ZigStringSlice;
 use crate::test_runner::expect::{JSGlobalObjectTestExt as _, JSValueTestExt as _};
 
 /// Bindgen-generated option-structs for this module (`BunObject.bind.ts`).
@@ -760,7 +760,7 @@ pub fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> B
 
 pub fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
     let fun = JSFunction::create(global_object, "inspect", __jsc_host_inspect, 2, Default::default());
-    let mut str = bun_str::ZigString::init(b"nodejs.util.inspect.custom");
+    let mut str = bun_core::ZigString::init(b"nodejs.util.inspect.custom");
     fun.put(
         global_object,
         b"custom",
@@ -1565,7 +1565,7 @@ pub extern "C" fn Bun__escapeHTML16(
     debug_assert!(len > 0);
     // SAFETY: caller passes a valid [ptr, len) UTF-16 slice.
     let input_slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-    use bun_str::immutable::escape_html::{escape_html_for_utf16_input, Escaped};
+    use bun_core::immutable::escape_html::{escape_html_for_utf16_input, Escaped};
     let escaped = match escape_html_for_utf16_input(input_slice) {
         Ok(v) => v,
         Err(_) => {
@@ -1600,7 +1600,7 @@ pub extern "C" fn Bun__escapeHTML8(
     let input_slice = unsafe { core::slice::from_raw_parts(ptr, len) };
     // PERF(port): was stack-fallback (256 bytes) — profile in Phase B
 
-    use bun_str::immutable::escape_html::{escape_html_for_latin1_input, Escaped};
+    use bun_core::immutable::escape_html::{escape_html_for_latin1_input, Escaped};
     let escaped = match escape_html_for_latin1_input(input_slice) {
         Ok(v) => v,
         Err(_) => {
@@ -1693,7 +1693,7 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         buf[path_len] = 0;
 
         // SAFETY: buf[path_len] == 0 written above
-        let buf_z = bun_str::ZStr::from_buf(&buf[..], path_len);
+        let buf_z = bun_core::ZStr::from_buf(&buf[..], path_len);
 
         // PORT NOTE: Zig used `std.c.MAP{ .TYPE = .SHARED }` (a packed bitfield
         // struct). Rust libc exposes raw `MAP_*` ints; build the flag word

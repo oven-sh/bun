@@ -1,5 +1,5 @@
 use crate::mal_prelude::*;
-use bun_string::string_joiner::{StringJoiner, Watcher};
+use bun_core::string_joiner::{StringJoiner, Watcher};
 
 use crate::linker_context_mod::GenerateChunkCtx;
 use crate::thread_pool;

@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use bun_core::{self as bun, env_var, FeatureFlags};
 use bun_io::Write as _;
-use bun_string::{String as BunString, PathString, ZStr};
+use bun_core::{String as BunString, PathString, ZStr};
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES, SEP};
 use bun_paths::resolve_path::{self as path_handler, platform};
@@ -300,7 +300,7 @@ impl Entry {
                     },
                     output_encoding: match output_code {
                         OutputCode::Utf8(_) => Encoding::UTF8,
-                        // PORT NOTE: `bun_string::String` has no `.encoding()` yet;
+                        // PORT NOTE: `bun_core::String` has no `.encoding()` yet;
                         // derive from the is_* predicates (same discrimination Zig's
                         // `String.encoding()` performs).
                         OutputCode::String(str) => {

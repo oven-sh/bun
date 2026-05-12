@@ -23,7 +23,7 @@ use bun_install::{
 };
 use bun_ast::Log;
 use bun_semver::{self as semver, String as SemverString};
-use bun_str::strings;
+use bun_core::strings;
 
 // TODO(port): z_allocator is a zeroing allocator (bun.z_allocator). In Rust,
 // the equivalent is a wrapper that zeroes allocations. Phase B: provide

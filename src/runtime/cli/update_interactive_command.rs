@@ -35,7 +35,7 @@ use bun_ast::{self, self as js_ast, expr as js_expr, Expr, E};
 use bun_ast::Loc;
 use bun_paths::{self as path, PathBuffer};
 use bun_semver::{self as semver, SlicedString};
-use bun_str::strings;
+use bun_core::strings;
 
 use crate::Command;
 
@@ -422,7 +422,7 @@ impl UpdateInteractiveCommand {
             }
 
             // Parse catalog_key (format: "package_name" or "package_name:catalog_name")
-            let colon_index = bun_str::strings::index_of(catalog_key, b":");
+            let colon_index = bun_core::index_of(catalog_key, b":");
             let package_name = if let Some(idx) = colon_index {
                 &catalog_key[..idx]
             } else {

@@ -76,8 +76,8 @@ use core::ptr::NonNull;
 
 use bun_alloc::{AllocError, Arena};
 use bun_ast as ast;
-use bun_string::{strings, String as BunString};
-use bun_string::escape_reg_exp::escape_reg_exp_for_package_name_matching;
+use bun_core::{strings, String as BunString};
+use bun_core::escape_reg_exp::escape_reg_exp_for_package_name_matching;
 
 // LAYERING: `bun_jsc::RegularExpression` (Yarr FFI) lives in a higher tier.
 // Zig called it inline. The bodies are defined `#[no_mangle]` in

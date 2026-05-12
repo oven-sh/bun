@@ -3,7 +3,7 @@ use core::ffi::c_void;
 use bun_collections::{ByteVecExt, VecExt, TaggedPtrUnion};
 use bun_core::Output;
 use bun_jsc::{JSGlobalObject, JSValue};
-use bun_string::strings;
+use bun_core::strings;
 use crate::api::bun_subprocess::Subprocess;
 use crate::webcore::streams::{self, Signal};
 use bun_sys::{self as sys, Error as SysError};
@@ -192,7 +192,7 @@ pub struct UTF8Fallback;
 // should reference `crate::webcore::sink::UTF8Fallback` directly.
 // TODO(port): inherent associated type — `impl Sink { pub type UTF8Fallback = UTF8Fallback; }`.
 
-// TODO(b2-blocked): `bun_str::strings::{is_all_ascii, replace_latin1_with_utf8,
+// TODO(b2-blocked): `bun_core::{is_all_ascii, replace_latin1_with_utf8,
 // copy_utf16_into_utf8_impl, to_utf8_alloc}` + `Vec::<u8>::from_*` constructors
 // are not yet exported with these exact names. Body gated; signatures kept.
 
@@ -278,7 +278,7 @@ impl UTF8Fallback {
         }
 
         {
-            // TODO(port): allocation-failure handling — `bun_string::strings::to_utf8_alloc`
+            // TODO(port): allocation-failure handling — `bun_core::to_utf8_alloc`
             // re-exports the bun_core variant which aborts on OOM (returns Vec<u8>, not
             // Result). Phase B should route through a fallible allocator to preserve
             // `.err = oom`.
@@ -864,11 +864,11 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
         if !T::HAS_CONSTRUCT {
             let err = bun_jsc::SystemError {
-                message: bun_string::String::create_format(format_args!(
+                message: bun_core::String::create_format(format_args!(
                     "{} is not constructable",
                     T::NAME
                 )),
-                code: bun_string::String::static_("ERR_ILLEGAL_CONSTRUCTOR"),
+                code: bun_core::String::static_("ERR_ILLEGAL_CONSTRUCTOR"),
                 ..Default::default()
             };
             return Err(global.throw_value(err.to_error_instance(global)));
@@ -1303,8 +1303,8 @@ macro_rules! js_sink {
                     const MESSAGE: &str =
                         ::const_format::formatcp!("{} is not constructable", <$SinkType as JsSinkType>::NAME);
                     let err = ::bun_jsc::SystemError {
-                        message: ::bun_str::String::static_(MESSAGE),
-                        code: ::bun_str::String::static_("ERR_ILLEGAL_CONSTRUCTOR"),
+                        message: ::bun_core::String::static_(MESSAGE),
+                        code: ::bun_core::String::static_("ERR_ILLEGAL_CONSTRUCTOR"),
                         ..Default::default()
                     };
                     return global.throw_value(err.to_error_instance(global));

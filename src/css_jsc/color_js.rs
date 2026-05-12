@@ -5,7 +5,7 @@ use bun_alloc::Arena;
 use bun_core::output::{ColorDepth, Source as OutputSource};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 use bun_ast::Log;
-use bun_string::String as BunString;
+use bun_core::String as BunString;
 
 use crate::JsResult;
 
@@ -191,7 +191,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     use bun_css::CssColor;
     use bun_jsc::StringJsc as _;
     use bun_ast::symbol::Map as SymbolMap;
-    use bun_string::ZigStringSlice;
+    use bun_core::ZigStringSlice;
 
     let args = frame.arguments_as_array::<2>();
     if args[0].is_undefined() {

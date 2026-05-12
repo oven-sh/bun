@@ -156,7 +156,7 @@ pub use bun_http_types::{ETag, FetchCacheMode, FetchRequestMode, MimeType, URLPa
 // ═══════════════════════════════════════════════════════════════════════
 
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
-use bun_string::MutableString;
+use bun_core::MutableString;
 use bun_http_types::FetchRedirect::CommonAbortReason;
 
 #[repr(u8)]
@@ -542,7 +542,7 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
 
     while !remain.is_empty() {
         let end = WYHASH_BUF_LEN.min(remain.len());
-        hasher.update(bun_string::immutable::copy_lowercase_if_needed(&remain[0..end], &mut buf));
+        hasher.update(bun_core::strings::copy_lowercase_if_needed(&remain[0..end], &mut buf));
         remain = &remain[end..];
     }
 
@@ -557,7 +557,7 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
 
 use core::ptr::NonNull;
 use bun_url::URL;
-use bun_string::ZigStringSlice;
+use bun_core::ZigStringSlice;
 
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
@@ -748,8 +748,8 @@ use bstr::BStr;
 use bun_boringssl as boringssl;
 use bun_collections::ArrayHashMap;
 use bun_core::{FeatureFlags, Global, Output, err};
-use bun_string::{immutable as strings, OwnedString, String as BunString, Tag as BunStringTag};
-use bun_string::string_builder::StringBuilder;
+use bun_core::{strings, OwnedString, String as BunString, Tag as BunStringTag};
+use bun_core::StringBuilder;
 use bun_uws as uws;
 // TODO(port): spec http.zig:829 uses `std.hash.Wyhash` (NOT Wyhash11 — see
 // PORTING.md §Crate-map). bun_wyhash currently only exports Wyhash11; swap

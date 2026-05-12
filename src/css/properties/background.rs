@@ -12,7 +12,7 @@ use crate::css_values::color::CssColor;
 use crate::css_values::ratio::Ratio;
 use crate::css_values::position::{HorizontalPosition, VerticalPosition, Position};
 use bun_alloc::Arena as Bump;
-use bun_string::strings;
+use bun_core::strings;
 
 /// A value for the [background](https://www.w3.org/TR/css-backgrounds-3/#background) shorthand property.
 // PORT NOTE: Clone derive gated on `Image` gaining `Clone` upstream.

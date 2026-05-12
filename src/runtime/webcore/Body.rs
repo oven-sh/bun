@@ -21,8 +21,8 @@ use crate::webcore::form_data::AsyncFormDataExt as _;
 use crate::webcore::sink::{self, ArrayBufferSink};
 use crate::jsc::HTTPHeaderName;
 use bun_jsc::{JsCell, StringJsc as _};
-use bun_str::{self as strings, MutableString, String as BunString, ZigString};
-use bun_str::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
+use bun_core::{strings, MutableString, String as BunString, ZigString};
+use bun_core::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::ZigStringJsc as _;
 
 /// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
@@ -529,7 +529,7 @@ pub enum Value {
     ///     })
     ///
     /// This works for .json(), too.
-    // PORT NOTE: `bun_str::WTFStringImpl` = `*mut WTFStringImplStruct` — a Copy raw
+    // PORT NOTE: `bun_core::WTFStringImpl` = `*mut WTFStringImplStruct` — a Copy raw
     // pointer to an *intrusively* refcounted WTF::StringImpl. We hold the +1 directly
     // (no Arc) and ref/deref explicitly at the same points Zig does (from_js / clone /
     // use_ / to_blob_if_possible / reset / use_as_any_blob*).
@@ -981,10 +981,10 @@ impl Value {
                 return Ok(Value::Empty);
             }
 
-            debug_assert!(str.tag() == bun_str::Tag::WTFStringImpl);
+            debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
 
             // Zig accessed `str.value.WTFStringImpl` directly; `leak_wtf_impl()` transfers
-            // the +1 ref out of the bun_str::String wrapper.
+            // the +1 ref out of the bun_core::String wrapper.
             return Ok(Value::WTFStringImpl(str.leak_wtf_impl()));
         }
 

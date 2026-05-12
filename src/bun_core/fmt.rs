@@ -335,7 +335,7 @@ pub struct DependencyUrlFormatter<'a> {
 impl Display for DependencyUrlFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut remain = self.url;
-        while let Some(slash) = strings::index_of_char(remain, b'/') {
+        while let Some(slash) = crate::strings_impl::index_of_char(remain, b'/') {
             write_bytes(f, &remain[..slash])?;
             f.write_str("%2f")?;
             remain = &remain[slash + 1..];
@@ -536,7 +536,7 @@ pub fn format_utf16_type_with_path_options(
             write_bytes(writer, to_write)?;
         } else {
             let mut ptr = to_write;
-            while let Some(i) = strings::index_of_any(ptr, b"\\/") {
+            while let Some(i) = crate::strings_impl::index_of_any(ptr, b"\\/") {
                 let sep = match opts.path_sep {
                     PathSep::Windows => b'\\',
                     PathSep::Posix => b'/',
@@ -619,7 +619,7 @@ impl Display for FormatUTF8<'_> {
             }
 
             let mut ptr = self.buf;
-            while let Some(i) = strings::index_of_any(ptr, b"\\/") {
+            while let Some(i) = crate::strings_impl::index_of_any(ptr, b"\\/") {
                 let sep = match opts.path_sep {
                     PathSep::Windows => b'\\',
                     PathSep::Posix => b'/',
@@ -954,7 +954,7 @@ pub fn format_latin1(slice_: &[u8], writer: &mut impl fmt::Write) -> fmt::Result
     let chunk = borrow.chunk();
     let mut slice = slice_;
 
-    while let Some(i) = strings::first_non_ascii(slice) {
+    while let Some(i) = crate::strings_impl::first_non_ascii(slice) {
         if i > 0 {
             write_bytes(writer, &slice[..i])?;
             slice = &slice[i..];
@@ -1045,7 +1045,7 @@ pub struct HostFormatter<'a> {
 
 impl Display for HostFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if strings::index_of_char(self.host, b':').is_some() {
+        if crate::strings_impl::index_of_char(self.host, b':').is_some() {
             return write_bytes(f, self.host);
         }
 
@@ -1082,8 +1082,8 @@ impl Display for FormatValidIdentifier<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         use crate::js_lexer;
 
-        let mut iterator = strings::CodepointIterator::init(self.name);
-        let mut cursor = strings::CodepointIteratorCursor::default();
+        let mut iterator = crate::CodepointIterator::init(self.name);
+        let mut cursor = crate::CodepointIteratorCursor::default();
 
         let mut has_needed_gap = false;
         let mut needs_gap;
@@ -1112,8 +1112,8 @@ impl Display for FormatValidIdentifier<'_> {
                 write_bytes(f, &self.name[..start_i])?;
             }
             let slice = &self.name[start_i..];
-            iterator = strings::CodepointIterator::init(slice);
-            cursor = strings::CodepointIteratorCursor::default();
+            iterator = crate::CodepointIterator::init(slice);
+            cursor = crate::CodepointIteratorCursor::default();
 
             while iterator.next(&mut cursor) {
                 if js_lexer::is_identifier_continue(cursor.c) && cursor.width == 1 {
@@ -1160,7 +1160,7 @@ pub fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::
     let mut offset: usize = 0;
     let end = self_.len() as u32;
     while (offset as u32) < end {
-        if let Some(rel) = strings::index_of_newline_or_non_ascii_or_ansi(&self_[offset..]) {
+        if let Some(rel) = crate::strings_impl::index_of_newline_or_non_ascii_or_ansi(&self_[offset..]) {
             let i = offset + rel;
             let byte = self_[i];
             if byte > 0x7F {
@@ -1183,7 +1183,7 @@ pub fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::
                     if (i + 2) < end as usize {
                         let upper = (i + 5).min(end as usize);
                         let remain = &self_[(i + 2)..upper];
-                        if let Some(j) = strings::index_of_char(remain, b'm') {
+                        if let Some(j) = crate::strings_impl::index_of_char(remain, b'm') {
                             n += j + 1;
                         }
                     }
@@ -1664,7 +1664,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         if self.opts.redact_sensitive_information {
                             if should_redact_value {
                                 should_redact_value = false;
-                                let end = strings::index_of_char(text, b'\n').unwrap_or(text.len());
+                                let end = crate::strings_impl::index_of_char(text, b'\n').unwrap_or(text.len());
                                 text = &text[end..];
                                 // TODO(port): Output.prettyFmt("<r><yellow>***<r>", true)
                                 write!(writer, "{}\x1b[33m***{}", Output::RESET, Output::RESET)?;
@@ -1868,7 +1868,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = strings::index_of_char(text, b'\n').unwrap_or(text.len());
+                            let len = crate::strings_impl::index_of_char(text, b'\n').unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
                             continue;
@@ -1961,7 +1961,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = strings::index_of_char(text, b'\n').unwrap_or(text.len());
+                            let len = crate::strings_impl::index_of_char(text, b'\n').unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
                             continue;
@@ -1974,7 +1974,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         prev_keyword = None;
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = strings::index_of_char(text, b'\n').unwrap_or(text.len());
+                            let len = crate::strings_impl::index_of_char(text, b'\n').unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
                             continue;
@@ -1986,7 +1986,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         prev_keyword = None;
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = strings::index_of_char(text, b'\n').unwrap_or(text.len());
+                            let len = crate::strings_impl::index_of_char(text, b'\n').unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
                             continue;
@@ -2000,7 +2000,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = strings::index_of_char(text, b'\n').unwrap_or(text.len());
+                            let len = crate::strings_impl::index_of_char(text, b'\n').unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
                             continue;
@@ -2039,7 +2039,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                     b'<' => {
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = strings::index_of_char(text, b'\n').unwrap_or(text.len());
+                            let len = crate::strings_impl::index_of_char(text, b'\n').unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
                             continue;
@@ -2103,7 +2103,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                     c => {
                         if should_redact_value {
                             should_redact_value = false;
-                            let len = strings::index_of_char(text, b'\n').unwrap_or(text.len());
+                            let len = crate::strings_impl::index_of_char(text, b'\n').unwrap_or(text.len());
                             splat_byte_all(writer, b'*', len)?;
                             text = &text[len..];
                             continue;
@@ -2912,7 +2912,7 @@ impl Display for EscapePowershell<'_> {
 
 fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Result {
     let mut remain = str;
-    while let Some(i) = strings::index_of_any(remain, b"\"`") {
+    while let Some(i) = crate::strings_impl::index_of_any(remain, b"\"`") {
         write_bytes(writer, &remain[..i])?;
         writer.write_str("`")?;
         writer.write_char(remain[i] as char)?;

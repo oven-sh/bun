@@ -17,7 +17,7 @@ use bun_install::{
     Resolution, DEFAULT_TRUSTED_DEPENDENCIES_LIST,
 };
 use bun_paths::AutoAbsPath;
-use bun_str::strings;
+use bun_core::strings;
 
 use crate::cli::Command;
 use crate::package_manager_command::PackageManagerCommand;

@@ -43,7 +43,7 @@ pub fn to_be_type_of(
     }
 
     let expected_type = expected.to_bun_string(global)?;
-    // `defer expected_type.deref()` — handled by Drop on bun_str::String.
+    // `defer expected_type.deref()` — handled by Drop on bun_core::String.
     this.increment_expect_call_counter();
 
     let expected_utf8 = expected_type.to_utf8();

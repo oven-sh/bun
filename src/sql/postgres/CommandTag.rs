@@ -1,4 +1,4 @@
-use bun_string::strings;
+use bun_core::strings;
 
 bun_core::declare_scope!(Postgres, visible);
 

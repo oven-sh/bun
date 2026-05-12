@@ -2542,6 +2542,31 @@ describe("bundler", () => {
       api.expectFile("/out/c.js").toContain("export {\n  C\n}");
     },
   });
+  // Same bug for CSS entry points: two CSS files that @import each other had
+  // identical entry_bits and collapsed to a single output when css_chunking
+  // was off.
+  itBundled("edgecase/CircularCSSEntryPoints#14450", {
+    files: {
+      "/a.css": /* css */ `
+        @import "./b.css";
+        .a { color: red; }
+      `,
+      "/b.css": /* css */ `
+        @import "./a.css";
+        .b { color: blue; }
+      `,
+    },
+    entryPoints: ["./a.css", "./b.css"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.assertFileExists("/out/a.css");
+      api.assertFileExists("/out/b.css");
+      api.expectFile("/out/a.css").toContain(".a");
+      api.expectFile("/out/a.css").toContain(".b");
+      api.expectFile("/out/b.css").toContain(".a");
+      api.expectFile("/out/b.css").toContain(".b");
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

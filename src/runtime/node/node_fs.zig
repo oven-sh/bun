@@ -4988,20 +4988,48 @@ pub const NodeFS = struct {
     }
 
     fn shouldThrowOutOfMemoryEarlyForJavaScript(encoding: Encoding, size: usize, syscall: Syscall.Tag) ?Syscall.Error {
-        // Strings & typed arrays max out at 4.7 GB.
-        // But, it's **string length**
-        // So you can load an 8 GB hex string, for example, it should be fine.
-        const adjusted_size = switch (encoding) {
-            .utf16le, .ucs2, .utf8 => size / 4 -| 1,
-            .hex => size / 2 -| 1,
-            .base64, .base64url => size / 3 -| 1,
-            .ascii, .latin1, .buffer => size,
+        // Once we've read `size` bytes, the resulting JavaScript value (string
+        // or Uint8Array) must still fit within engine limits. If it cannot,
+        // stop reading now instead of continuing to allocate unbounded memory.
+        //
+        // This is what makes `fs.readFile("/dev/urandom", "utf8")` and other
+        // non-terminating sources (which report st_size == 0) reject instead
+        // of reading until the OOM killer fires.
+        // https://github.com/oven-sh/bun/issues/29184
+        const allocation_limit = jsc.VirtualMachine.synthetic_allocation_limit;
+        // WTF::String::MaxLength is std::numeric_limits<int32_t>::max(). The
+        // configurable string_allocation_limit defaults higher than that, so
+        // clamp to the real engine limit — mirrors the C++ side which takes
+        // `min(Bun__stringSyntheticAllocationLimit, String::MaxLength)`.
+        const string_limit = @min(jsc.VirtualMachine.string_allocation_limit, std.math.maxInt(i32));
+
+        // For each output encoding, compute whether `size` input bytes would
+        // produce a JavaScript value that exceeds the relevant limit. For
+        // string encodings this is an upper bound on the number of UTF-16
+        // code units produced.
+        const too_large = switch (encoding) {
+            // Uint8Array of `size` bytes.
+            .buffer => size > allocation_limit,
+            // Each input byte becomes exactly one UTF-16 code unit.
+            .ascii, .latin1 => size > string_limit,
+            // Each input byte becomes at most one UTF-16 code unit: ASCII is
+            // 1:1, invalid bytes become a single U+FFFD, and valid multi-byte
+            // sequences never produce more code units than input bytes. Using
+            // the upper bound here matches Node.js, which decodes
+            // incrementally and throws "Invalid string length" once the
+            // accumulated string would exceed the engine limit.
+            .utf8 => size > string_limit,
+            // Every two input bytes become one UTF-16 code unit.
+            .utf16le, .ucs2 => (size / 2) > string_limit,
+            // Each input byte becomes two hex characters.
+            .hex => size > (string_limit / 2),
+            // Every three input bytes become four base64 characters.
+            .base64, .base64url => size > (string_limit / 4) * 3,
         };
 
-        if (
-        // Typed arrays in JavaScript are limited to 4.7 GB.
-        adjusted_size > jsc.VirtualMachine.synthetic_allocation_limit or
-            // If they do not have enough memory to open the file and they're on Linux, let's throw an error instead of dealing with the OOM killer.
+        if (too_large or
+            // On Linux, if the file is larger than total system memory,
+            // throw instead of letting the OOM killer take the process down.
             (Environment.isLinux and size >= bun.getTotalMemorySize()))
         {
             return Syscall.Error.fromCode(.NOMEM, syscall);

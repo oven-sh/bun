@@ -519,11 +519,10 @@ impl Response {
         if let BodyValue::Locked(locked) = self.body.get().value_mut() {
             locked.size_hint = size_hint;
             if let Some(readable) = locked.readable.get(locked.global()) {
-                if let super::readable_stream::Source::Bytes(bytes) = &readable.ptr {
-                    // TODO(port): lifetime — readable.ptr.Bytes is a back-pointer; verify mutability
-                    // SAFETY: `bytes` is a live `*mut ByteStream` back-pointer owned by the
-                    // ReadableStream; mutating its `size_hint` is the Zig contract.
-                    unsafe { (**bytes).size_hint.set(size_hint); }
+                // BACKREF: see `Source::bytes()` — back-pointer owned by the
+                // ReadableStream; `size_hint` is `Cell<_>` so shared deref + `.set()`.
+                if let Some(bytes) = readable.ptr.bytes() {
+                    bytes.size_hint.set(size_hint);
                 }
             }
         }

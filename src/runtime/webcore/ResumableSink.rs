@@ -15,7 +15,7 @@ use crate::node::{ErrorCode, StringOrBuffer};
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::s3::client::S3UploadStreamWrapper;
 use crate::webcore::streams::Result as StreamResult;
-use crate::webcore::{ByteStream, Pipe, PipeHandler, ReadableStream, Wrap};
+use crate::webcore::{Pipe, PipeHandler, ReadableStream, Wrap};
 
 declare_scope!(ResumableSink, visible);
 
@@ -200,11 +200,9 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             unsafe { Self::deref_(this) };
             return this;
         }
-        if let crate::webcore::readable_stream::Source::Bytes(byte_stream_ptr) = stream.ptr {
-            // SAFETY: ReadableStream.ptr.Bytes is a live *ByteStream owned by the stream.
-            // R-2: `&` (not `&mut`) — all touched ByteStream methods/fields are
-            // `&self`/interior-mutable.
-            let byte_stream: &ByteStream = unsafe { &*byte_stream_ptr };
+        if let Some(byte_stream) = stream.ptr.bytes() {
+            // BACKREF: see `Source::bytes()` — payload owned by `stream`.
+            // R-2: all touched ByteStream methods/fields are `&self`/interior-mutable.
             // if pipe is empty, we can pipe
             if byte_stream.pipe.get().is_empty() {
                 // equivalent to onStart to get the highWaterMark
@@ -522,10 +520,10 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         let global_object = self.global_this;
         let global_object = global_object.get();
         if let Some(stream_) = self.stream.get(global_object) {
-            if let crate::webcore::readable_stream::Source::Bytes(bytes_ptr) = stream_.ptr {
-                // SAFETY: ByteStream is live while the ReadableStream.Strong holds it.
-                // R-2: `pipe` is `JsCell<Pipe>`; deref shared and `.set()`.
-                unsafe { (*bytes_ptr).pipe.set(Pipe::default()) };
+            // BACKREF: see `Source::bytes()` — live while `self.stream` Strong
+            // holds it. R-2: `pipe` is `JsCell<Pipe>`; shared deref + `.set()`.
+            if let Some(bytes) = stream_.ptr.bytes() {
+                bytes.pipe.set(Pipe::default());
             }
             if err.is_some() {
                 stream_.cancel(global_object);

@@ -309,10 +309,10 @@ impl PendingValue {
     /// If the size is unknown will be 0
     fn size_hint(&self) -> blob::SizeType {
         if let Some(readable) = self.readable.get(self.global()) {
-            if let webcore::readable_stream::Source::Bytes(bytes) = readable.ptr {
-                // SAFETY: `Source::Bytes` holds a live `*mut ByteStream` for the
-                // lifetime of the ReadableStream JS wrapper (rooted via `self.readable`).
-                return unsafe { (*bytes).size_hint.get() };
+            // BACKREF: see `Source::bytes()` — payload live while the
+            // ReadableStream JS wrapper (rooted via `self.readable`) is alive.
+            if let Some(bytes) = readable.ptr.bytes() {
+                return bytes.size_hint.get();
             }
         }
         self.size_hint
@@ -1435,10 +1435,10 @@ impl Value {
             // The Promise version goes before the ReadableStream version incase the Promise version is used too.
             // Avoid creating unnecessary duplicate JSValue.
             if let Some(readable) = strong_readable.get(global) {
-                if let webcore::readable_stream::Source::Bytes(bytes) = readable.ptr {
-                    // SAFETY: `Source::Bytes` holds a live *mut ByteStream for the lifetime
-                    // of the ReadableStream JS wrapper.
-                    unsafe { (*bytes).on_data(streams::Result::Err(err_ref.to_stream_error(global)))? };
+                // BACKREF: see `Source::bytes()` — payload live for the
+                // lifetime of the ReadableStream JS wrapper.
+                if let Some(bytes) = readable.ptr.bytes() {
+                    bytes.on_data(streams::Result::Err(err_ref.to_stream_error(global)))?;
                 } else {
                     readable.abort(global);
                 }
@@ -2599,10 +2599,10 @@ impl<'a> ValueBufferer<'a> {
                     return Err(bun_core::err!("UnsupportedStreamType"));
                 }
                 webcore::readable_stream::Source::Bytes(byte_stream_ptr) => {
-                    // SAFETY: `Source::Bytes` holds a live `*mut ByteStream` owned by the
-                    // readable stream; kept alive via `self.readable_stream_ref` above.
-                    // R-2: `&` — all touched fields are interior-mutable.
-                    let byte_stream = unsafe { &*byte_stream_ptr };
+                    // BACKREF: see `Source::bytes()` — payload owned by the
+                    // readable stream, kept alive via `self.readable_stream_ref`
+                    // above. R-2: all touched fields are interior-mutable.
+                    let byte_stream = stream.ptr.bytes().expect("matched Bytes");
                     debug_assert!(byte_stream.pipe.get().ctx.is_none());
                     debug_assert!(self.byte_stream.is_none());
 

@@ -120,7 +120,7 @@ pub const ShellSubprocess = struct {
         pub fn onStart(_: *Writable) void {}
 
         pub fn init(
-            stdio: Stdio,
+            stdio: *Stdio,
             event_loop: jsc.EventLoopHandle,
             subprocess: *Subprocess,
             result: StdioResult,
@@ -128,7 +128,7 @@ pub const ShellSubprocess = struct {
             assertStdioResult(result);
 
             if (Environment.isWindows) {
-                switch (stdio) {
+                switch (stdio.*) {
                     .pipe, .readable_stream => {
                         if (result == .buffer) {
                             const pipe = jsc.WebCore.FileSink.createWithPipe(event_loop, result.buffer);
@@ -138,13 +138,22 @@ pub const ShellSubprocess = struct {
                                 .err => |err| {
                                     _ = err; // autofix
                                     pipe.deref();
+                                    if (stdio.* == .readable_stream) {
+                                        stdio.readable_stream.cancel(event_loop.js.global);
+                                    }
                                     return error.UnexpectedCreatingStdin;
                                 },
                             }
+                            pipe.writer.setParent(pipe);
 
-                            // TODO: uncoment this when is ready, commented because was not compiling
-                            // subprocess.weak_file_sink_stdin_ptr = pipe;
-                            // subprocess.flags.has_stdin_destructor_called = false;
+                            if (stdio.* == .readable_stream) {
+                                const global = event_loop.js.global;
+                                const assign_result = pipe.assignToStream(&stdio.readable_stream, global);
+                                if (assign_result.toError()) |_| {
+                                    pipe.deref();
+                                    return error.UnexpectedCreatingStdin;
+                                }
+                            }
 
                             return Writable{
                                 .pipe = pipe,
@@ -180,7 +189,7 @@ pub const ShellSubprocess = struct {
                     },
                 }
             }
-            switch (stdio) {
+            switch (stdio.*) {
                 .dup2 => {
                     // The shell never uses this
                     @panic("Unimplemented stdin dup2");
@@ -217,8 +226,30 @@ pub const ShellSubprocess = struct {
                     return Writable{ .ignore = {} };
                 },
                 .readable_stream => {
-                    // The shell never uses this
-                    @panic("Unimplemented stdin readable_stream");
+                    // `.readable_stream` only reaches here via Bun.$`cmd < ${stream}` with a JS
+                    // event loop (the `.jsbuf` branch in Cmd.initRedirections guards on that).
+                    const global = event_loop.js.global;
+                    const pipe = jsc.WebCore.FileSink.create(event_loop, result.?);
+
+                    switch (pipe.writer.start(pipe.fd, true)) {
+                        .result => {},
+                        .err => |err| {
+                            _ = err; // autofix
+                            pipe.deref();
+                            stdio.readable_stream.cancel(global);
+                            return error.UnexpectedCreatingStdin;
+                        },
+                    }
+
+                    pipe.writer.handle.poll.flags.insert(.socket);
+
+                    const assign_result = pipe.assignToStream(&stdio.readable_stream, global);
+                    if (assign_result.toError()) |_| {
+                        pipe.deref();
+                        return error.UnexpectedCreatingStdin;
+                    }
+
+                    return Writable{ .pipe = pipe };
                 },
             }
         }
@@ -888,7 +919,7 @@ pub const ShellSubprocess = struct {
                 is_sync,
             ),
             .stdin = Subprocess.Writable.init(
-                spawn_args.stdio[0],
+                &spawn_args.stdio[0],
                 event_loop,
                 subprocess,
                 spawn_result.stdin,
@@ -910,7 +941,9 @@ pub const ShellSubprocess = struct {
         subprocess.process.setExitHandler(subprocess);
         stdio_consumed = true;
 
-        if (subprocess.stdin == .pipe) {
+        if (subprocess.stdin == .pipe and spawn_args.stdio[0] != .readable_stream) {
+            // When stdin came from a ReadableStream, FileSink.assignToStream already
+            // set up the signal; overwriting it here would break the stream→sink link.
             subprocess.stdin.pipe.signal = bun.webcore.streams.Signal.init(&subprocess.stdin);
         }
 
@@ -967,6 +1000,16 @@ pub const ShellSubprocess = struct {
 
     pub fn onProcessExit(this: *@This(), _: *Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
         log("onProcessExit({x}, {f})", .{ @intFromPtr(this), status });
+
+        if (this.stdin == .pipe) {
+            // Let the FileSink (ReadableStream → stdin) know the child is gone so it
+            // cancels/closes the upstream ReadableStream and stops writing to a dead pipe.
+            this.stdin.pipe.onAttachedProcessExit(&status);
+            // Unlike StaticPipeWriter, a FileSink has no callback into the Cmd when it's
+            // done; explicitly mark buffered stdin as closed so Cmd.hasFinished can proceed.
+            this.cmd_parent.bufferedInputClose();
+        }
+
         const exit_code: ?u8 = brk: {
             if (status == .exited) {
                 break :brk status.exited.code;

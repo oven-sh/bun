@@ -275,12 +275,13 @@ pub fn install_with_manager(
                 // borrowck doesn't see overlapping `&mut PackageManager` /
                 // `&mut Lockfile` (Zig `*T` semantics).
                 {
+                    // `log_mut()` reads the BACKREF `self.log: *mut Log` and
+                    // returns the disjoint CLI `Log` allocation (lifetime
+                    // decoupled from `&self`), so call it safely through
+                    // `manager` *before* establishing the raw-ptr split — no
+                    // borrow on `*manager` survives into the `&mut *mgr` below.
+                    let log = manager.log_mut();
                     let mgr: *mut PackageManager = manager;
-                    // SAFETY: `parse` only reads `*log` / `*mgr` between writes
-                    // to `lockfile`/`maybe_root`; no field of `*mgr` aliases
-                    // the local `lockfile`. `log_mut()` returns the disjoint
-                    // CLI `Log` allocation (lifetime decoupled from `&self`).
-                    let log = unsafe { (*mgr).log_mut() };
                     maybe_root.parse(
                         &mut lockfile,
                         unsafe { &mut *mgr },
@@ -297,15 +298,20 @@ pub fn install_with_manager(
                 // fresh `lockfile` simultaneously. Route through raw ptrs to satisfy
                 // borrowck; `Diff::generate` is ported in lockfile_real::package.
                 manager.summary = {
+                    // `log_mut()` returns the disjoint CLI `Log` allocation
+                    // (BACKREF field, lifetime decoupled from `&self`); read it
+                    // and the `to_update` scalar safely through `manager`
+                    // *before* establishing the raw-ptr split so no borrow on
+                    // `*manager` survives into `mgr`'s `&mut` reborrows below.
+                    let log = manager.log_mut();
+                    let to_update = manager.to_update;
                     let mgr: *mut PackageManager = manager;
                     // SAFETY: `mgr` is the sole provenance root for the manager
                     // from here on; `Diff::generate` reborrows disjoint fields
-                    // (`log`, `lockfile`, `update_requests`) through it. No
-                    // other live `&mut` to `*mgr` exists across the call.
-                    // `log_mut()` returns the disjoint CLI `Log` allocation.
-                    let log = unsafe { (*mgr).log_mut() };
+                    // (`lockfile`, `update_requests`) through it. No other live
+                    // `&mut` to `*mgr` exists across the call.
                     let from_lockfile: *mut Lockfile = unsafe { &raw mut *(*mgr).lockfile };
-                    let update_requests = if unsafe { (*mgr).to_update } {
+                    let update_requests = if to_update {
                         Some(unsafe { &(&(*mgr).update_requests)[..] })
                     } else {
                         None
@@ -661,12 +667,14 @@ pub fn install_with_manager(
 
         let mut resolver: () = ();
         {
+            // `log_mut()` reads the BACKREF `self.log` and returns the disjoint
+            // CLI `Log` allocation (lifetime decoupled from `&self`); call it
+            // safely *before* the raw-ptr split.
+            let log = manager.log_mut();
             let mgr: *mut PackageManager = manager;
-            // SAFETY: `mgr` is the sole provenance root; `parse` reborrows
-            // disjoint fields (`lockfile`, `log`) through it. No other live
-            // `&mut` to `*mgr` exists across the call. `log_mut()` returns
-            // the disjoint CLI `Log` allocation (lifetime decoupled).
-            let log = unsafe { (*mgr).log_mut() };
+            // SAFETY: `mgr` is the sole provenance root; `parse` reborrows the
+            // disjoint `lockfile` field through it. No other live `&mut` to
+            // `*mgr` exists across the call.
             root.parse(
                 unsafe { &mut (*mgr).lockfile },
                 unsafe { &mut *mgr },

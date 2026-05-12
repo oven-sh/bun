@@ -449,9 +449,11 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
             // Zig: defer last_error.deinit()
             let _last_error_guard = scopeguard::guard(last_error, |e| e.deinit());
             if last_error.len > 0 {
-                // SAFETY: `this_ptr` was derived from `this: &mut T` above and
-                // no other live borrow exists at this point.
-                unsafe { (*this_ptr).on_html_parse_error(last_error.slice()) };
+                // The rewriter (sole user of `this_ptr`-derived aliases) was
+                // destroyed when the inner closure returned; reasserting the
+                // original `&mut T` borrow here is sound and avoids the raw
+                // deref entirely.
+                this.on_html_parse_error(last_error.slice());
             }
         }
         res

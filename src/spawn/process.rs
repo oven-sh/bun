@@ -660,8 +660,15 @@ impl Process {
             // fires, so this arm is unreachable on that path).
             match &self.poller {
                 Poller::WaiterThread(_) | Poller::Fd(_) => {
-                    // SAFETY: libc kill
-                    let err = unsafe { libc::kill(self.pid, signal as c_int) };
+                    // All by-value `pid_t`/`c_int`; the kernel validates pid/
+                    // signal and returns -1/errno (ESRCH/EINVAL/EPERM) — no
+                    // memory-safety preconditions, so `safe fn` discharges the
+                    // link-time proof here.
+                    unsafe extern "C" {
+                        #[link_name = "kill"]
+                        safe fn libc_kill(pid: libc::pid_t, sig: c_int) -> c_int;
+                    }
+                    let err = libc_kill(self.pid, signal as c_int);
                     if err != 0 {
                         let errno_ = bun_sys::get_errno(err as isize);
                         // if the process was already killed don't throw
@@ -1347,8 +1354,13 @@ pub mod waiter_thread_posix {
 
         #[cfg(target_os = "linux")]
         {
-            // SAFETY: eventfd(2) syscall.
-            let fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC | 0) };
+            // All by-value `c_uint`/`c_int` args; the kernel validates flags
+            // and returns -1/errno on failure — no memory-safety preconditions,
+            // so `safe fn` (Rust 2024) discharges the link-time proof.
+            unsafe extern "C" {
+                safe fn eventfd(initval: core::ffi::c_uint, flags: core::ffi::c_int) -> core::ffi::c_int;
+            }
+            let fd = eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC | 0);
             if fd < 0 {
                 return Err(std::io::Error::last_os_error());
             }

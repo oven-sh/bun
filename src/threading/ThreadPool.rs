@@ -1060,9 +1060,15 @@ fn now_ns() -> u64 {
     // CLOCK_MONOTONIC nanoseconds; only used when `stats_enabled()`.
     #[cfg(unix)]
     {
+        // `&mut libc::timespec` is ABI-identical to libc's `struct timespec *`
+        // (thin non-null pointer to a `#[repr(C)]` struct); the type encodes
+        // the only pointer-validity precondition, so `safe fn` discharges the
+        // link-time proof and the call needs no `unsafe` block.
+        unsafe extern "C" {
+            safe fn clock_gettime(clk_id: libc::clockid_t, tp: &mut libc::timespec) -> core::ffi::c_int;
+        }
         let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        // SAFETY: ts is valid for write.
-        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut ts) };
+        clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
         (ts.tv_sec as u64).wrapping_mul(1_000_000_000).wrapping_add(ts.tv_nsec as u64)
     }
     #[cfg(not(unix))]

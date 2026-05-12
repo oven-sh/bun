@@ -2159,10 +2159,16 @@ pub mod ffi {
     #[cfg(unix)]
     #[inline]
     pub fn uname() -> libc::utsname {
+        // `&mut libc::utsname` is ABI-identical to libc's `struct utsname *`
+        // (thin non-null pointer to a `#[repr(C)]` struct); the type encodes
+        // the only pointer-validity precondition, so `safe fn` discharges the
+        // link-time proof and the call needs no `unsafe` block.
+        unsafe extern "C" {
+            #[link_name = "uname"]
+            safe fn libc_uname(buf: &mut libc::utsname) -> core::ffi::c_int;
+        }
         let mut u: libc::utsname = zeroed();
-        // SAFETY: `u` is a valid, exclusive pointer to a fully-initialised
-        // `utsname`; uname(2) only writes within `sizeof(utsname)`.
-        let _ = unsafe { libc::uname(&mut u) };
+        let _ = libc_uname(&mut u);
         u
     }
 

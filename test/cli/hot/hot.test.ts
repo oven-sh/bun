@@ -21,7 +21,7 @@ async function driveErrorReloadCycle(
   opts: {
     targetCount: number;
     onReload: (counter: number) => void;
-    verifyLine?: (errorLine: string, nextLine: string | undefined, counter: number) => void;
+    verifyLine?: (errorLine: string, nextLine: string | undefined, counter: number) => void | "retry";
   },
 ): Promise<number> {
   const { targetCount, onReload, verifyLine } = opts;
@@ -64,7 +64,19 @@ async function driveErrorReloadCycle(
 
       const nextLine = lines[i + 1];
       if (verifyLine) {
-        verifyLine(line, nextLine, reloadCounter);
+        const result = verifyLine(line, nextLine, reloadCounter);
+        if (result === "retry") {
+          // Partial bundle read (e.g. --hot picked up the outfile before the
+          // inline sourcemap trailer was flushed). Re-trigger the write and
+          // re-buffer remaining lines, same as the stale-counter branch above.
+          const remaining = lines.slice(i + 1).join("\n");
+          if (remaining) {
+            str = `${remaining}\n${str}`;
+          }
+          onReload(reloadCounter);
+          triggered = false;
+          break;
+        }
         i++; // Skip the next line (stack trace)
       }
 
@@ -620,6 +632,9 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
         },
         verifyLine: (_errorLine, nextLine, counter) => {
           if (!nextLine) throw new Error(_errorLine);
+          // Partial bundle read: --hot picked up the outfile before --watch finished
+          // writing the inline sourcemap trailer. Retry the write.
+          if (nextLine.includes("hot-runner-root.js")) return "retry";
           expect(nextLine).toInclude("bundle_in.ts");
           const match = nextLine.match(/\s*at.*?:4:(\d+)$/);
           if (!match) throw new Error("invalid stack trace: " + nextLine);
@@ -702,6 +717,9 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
         },
         verifyLine: (_errorLine, nextLine, counter) => {
           if (!nextLine) throw new Error(_errorLine);
+          // Partial bundle read: --hot picked up the outfile before --watch finished
+          // writing the inline sourcemap trailer. Retry the write.
+          if (nextLine.includes("hot-runner-root.js")) return "retry";
           expect(nextLine).toInclude("bundle_in.ts");
           const match = nextLine.match(/\s*at.*?:4:(\d+)$/);
           if (!match) throw new Error("invalid stack trace: " + nextLine);

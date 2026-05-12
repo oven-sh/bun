@@ -51,11 +51,13 @@ macro_rules! log {
 
 /// Process-global manager. Created on first `fs.watch()`, never destroyed (matches
 /// the FSEvents loop and Windows libuv loop lifetimes).
-// PORTING.md §Global mutable state: written under `DEFAULT_MANAGER_MUTEX`,
-// read after publish with the manager never freed. RacyCell over the
-// `Option<&'static>` — the mutex provides write-side synchronization.
-static DEFAULT_MANAGER: bun_core::RacyCell<Option<&'static PathWatcherManager>> =
-    bun_core::RacyCell::new(None);
+// PORTING.md §Global mutable state: init-once-then-read-only → `OnceLock`.
+// `DEFAULT_MANAGER_MUTEX` still serializes the *fallible* init path so a failed
+// `Platform::init` can be retried on a later `get()` without two threads
+// racing to allocate; `OnceLock` provides the Acquire/Release publish so the
+// FSEvents-thread reads in `on_fs_event` need no `unsafe`.
+static DEFAULT_MANAGER: std::sync::OnceLock<&'static PathWatcherManager> =
+    std::sync::OnceLock::new();
 static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 
 // ────────────────────────────────────────────────────────────────────────────────
@@ -109,11 +111,8 @@ impl PathWatcherManager {
         // lock a garbage `m.mutex`). `get()` runs once per `fs.watch()` call; the mutex is
         // uncontended after initialization.
         let _g = DEFAULT_MANAGER_MUTEX.lock_guard();
-        // SAFETY: DEFAULT_MANAGER is only read/written while holding DEFAULT_MANAGER_MUTEX.
-        unsafe {
-            if let Some(m) = DEFAULT_MANAGER.read() {
-                return Ok(m);
-            }
+        if let Some(&m) = DEFAULT_MANAGER.get() {
+            return Ok(m);
         }
 
         // Process-lifetime singleton (Zig: `var default_manager`). Hand the
@@ -128,8 +127,9 @@ impl PathWatcherManager {
             unsafe { drop(bun_core::heap::take(std::ptr::from_mut::<PathWatcherManager>(m))) };
             return Err(e);
         }
-        // SAFETY: holding DEFAULT_MANAGER_MUTEX.
-        unsafe { DEFAULT_MANAGER.write(Some(&*m)) };
+        // Holding DEFAULT_MANAGER_MUTEX with `.get()` having returned `None`
+        // above, so this is the first publish; `set` cannot fail.
+        let _ = DEFAULT_MANAGER.set(&*m);
         Ok(&*m)
     }
 
@@ -1107,8 +1107,7 @@ impl Darwin {
         // watcher already unlinked. Forming `&mut *ctx` here before that check would
         // alias detach's access; raw-ptr reads have no exclusivity assertion.
         let watcher_ptr = ctx.cast::<PathWatcher>();
-        // SAFETY: read of DEFAULT_MANAGER after init is published; manager never freed.
-        let Some(manager) = (unsafe { DEFAULT_MANAGER.read() }) else { return };
+        let Some(&manager) = DEFAULT_MANAGER.get() else { return };
         let _g = manager.mutex.lock_guard();
         // SAFETY: raw read under manager.mutex; see above.
         if unsafe { (*watcher_ptr).manager.is_none() } {
@@ -1128,8 +1127,7 @@ impl Darwin {
     fn on_fs_event_flush(ctx: *mut c_void) {
         // SAFETY: see on_fs_event — keep raw until locked + manager-is-none checked.
         let watcher_ptr = ctx.cast::<PathWatcher>();
-        // SAFETY: read of DEFAULT_MANAGER after init is published; manager never freed.
-        let Some(manager) = (unsafe { DEFAULT_MANAGER.read() }) else { return };
+        let Some(&manager) = DEFAULT_MANAGER.get() else { return };
         let _g = manager.mutex.lock_guard();
         // SAFETY: raw read under manager.mutex.
         if unsafe { (*watcher_ptr).manager.is_none() } {

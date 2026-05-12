@@ -2192,15 +2192,16 @@ fn find_crontab() -> Option<*const c_char> {
         // `posix_spawn`) before any later call can overwrite it. Non-Windows
         // only, so `MAX_PATH_BYTES` is ≤4 KiB and inline TLS is fine.
         thread_local! {
-            static BUF: core::cell::UnsafeCell<bun_core::PathBuffer> =
-                const { core::cell::UnsafeCell::new(bun_core::PathBuffer::ZEROED) };
+            static BUF: core::cell::RefCell<bun_core::PathBuffer> =
+                const { core::cell::RefCell::new(bun_core::PathBuffer::ZEROED) };
         }
         let path_env = env_var::PATH.get().unwrap_or(b"/usr/bin:/bin");
-        BUF.with(|cell| {
-            // SAFETY: per-thread storage; `bun_which::which` is a pure PATH
-            // walk that cannot reenter `find_crontab`, so this `&mut` is the
-            // only live reference for its lifetime.
-            let buf = unsafe { &mut *cell.get() };
+        // `bun_which::which` is a pure PATH walk that cannot reenter
+        // `find_crontab`, so the `RefCell` borrow is never contested. The
+        // returned raw pointer escapes the `RefMut` guard but stays valid:
+        // it points into per-thread storage and is consumed by `posix_spawn`
+        // on this thread before any later call could overwrite the buffer.
+        BUF.with_borrow_mut(|buf| {
             let found = bun_which::which(buf, path_env, b"", b"crontab")?;
             Some(found.as_ptr().cast())
         })

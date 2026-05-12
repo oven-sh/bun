@@ -174,8 +174,11 @@ type SpawnOptionsStdio = spawn::PosixStdio;
 type SpawnOptionsStdio = spawn::WindowsStdio;
 
 // TODO(port): move to runtime_sys
+// Reading the symbol address has no precondition (the value itself is a
+// rodata `const char*`); kept `safe` to match the identical declaration in
+// `runtime/shell/subproc.rs` so the two extern blocks don't diverge.
 unsafe extern "C" {
-    static BUN_DEFAULT_PATH_FOR_SPAWN: *const c_char;
+    safe static BUN_DEFAULT_PATH_FOR_SPAWN: *const c_char;
 }
 
 struct Argv0Result {

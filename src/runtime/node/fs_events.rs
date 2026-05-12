@@ -422,8 +422,10 @@ impl FSEventsLoop {
         self.loop_ = ptr::null_mut();
     }
 
-    // Runs in CF thread, executed after `enqueueTaskConcurrent()`
-    unsafe extern "C" fn cf_loop_callback(arg: *mut c_void) {
+    // Runs in CF thread, executed after `enqueueTaskConcurrent()`. Body
+    // discharges its own preconditions; safe `extern "C" fn` coerces to the
+    // `CFRunLoopSourceContext.perform` fn-pointer slot.
+    extern "C" fn cf_loop_callback(arg: *mut c_void) {
         if arg.is_null() {
             return;
         }
@@ -524,8 +526,10 @@ impl FSEventsLoop {
         }
     }
 
-    // Runs in CF thread, when there're events in FSEventStream
-    unsafe extern "C" fn _events_cb(
+    // Runs in CF thread, when there're events in FSEventStream. Body discharges
+    // its own preconditions; safe `extern "C" fn` coerces to the
+    // `FSEventStreamCallback` pointer type.
+    extern "C" fn _events_cb(
         _: FSEventStreamRef,
         info: *mut c_void,
         num_events: usize,

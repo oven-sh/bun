@@ -408,7 +408,9 @@ impl PathWatcher {
         sys::Result::Ok(this)
     }
 
-    unsafe extern "C" fn uv_closed_callback(handler: *mut uv::uv_handle_t) {
+    extern "C" fn uv_closed_callback(handler: *mut uv::uv_handle_t) {
+        // Body discharges its own preconditions; safe `extern "C" fn` coerces
+        // to libuv's `uv_close_cb` pointer type.
         bun_output::scoped_log!(fs_watch, "onClose");
         // SAFETY: `uv_fs_event_t` is `#[repr(C)]` and prefixed with `uv_handle_t` (UvHandle impl);
         // libuv passes back the same pointer registered in `uv_close`.

@@ -2831,9 +2831,11 @@ impl NativeSocketWrite for &TCPSocket {
 // R-2: `HasAutoFlusher` (which requires `fn auto_flusher(&mut self)`) is no
 // longer implemented here — the deferred-task registration is inlined in
 // `register_auto_flush` / `unregister_auto_flush` so the whole path is `&self`.
-// The `DeferredRepeatingTask` trampoline that the trait would have generated:
+// The `DeferredRepeatingTask` trampoline that the trait would have generated.
+// Body discharges its own preconditions; a safe `extern "C" fn` coerces to the
+// `DeferredRepeatingTask` pointer at `post_task` (matches NodeHTTPResponse.rs).
 // ──────────────────────────────────────────────────────────────────────────
-unsafe extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
+extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
     // SAFETY: `ctx` is the `*const H2FrameParser` registered by
     // `register_auto_flush`; `DeferredTaskQueue::run` feeds it back unchanged
     // on the JS thread. `on_auto_flush` takes `&self`.

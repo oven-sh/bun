@@ -46,7 +46,9 @@ pub extern "C" fn Bun__UVSignalHandle__init(
 }
 
 #[cfg(windows)]
-unsafe extern "C" fn free_with_default_allocator(handle: *mut libuv::uv_handle_t) {
+extern "C" fn free_with_default_allocator(handle: *mut libuv::uv_handle_t) {
+    // Body discharges its own precondition; safe `extern "C" fn` coerces to
+    // libuv's `uv_close_cb` pointer type.
     // SAFETY: `handle` was allocated via heap::into_raw(Box<uv_signal_t>) in
     // Bun__UVSignalHandle__init; uv_close guarantees the handle is no longer in use.
     drop(unsafe { bun_core::heap::take(handle.cast::<libuv::uv_signal_t>()) });

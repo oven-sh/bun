@@ -24,7 +24,7 @@
 //! new handler appended. `detach()` removes a handler; the last one out tears down
 //! the OS watch.
 
-use core::cell::UnsafeCell;
+use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -80,15 +80,33 @@ pub struct PathWatcherManager {
     /// `UnsafeCell` so deriving `&mut` from a shared manager reference is defined.
     watchers: UnsafeCell<StringArrayHashMap<*mut PathWatcher>>,
 
-    /// Platform-specific state (inotify fd / kqueue fd + dispatch maps + thread).
+    /// Platform-specific dispatch maps (inotify wd_map / kqueue entries).
     /// On macOS this is empty — FSEvents owns its own thread via `fs_events.zig`.
     /// Interior-mutable for the same reason as `watchers`.
     platform: UnsafeCell<Platform>,
+
+    /// inotify/kqueue fd. Set once in `Platform::init` *before* the reader thread
+    /// spawns, never reassigned (process-lifetime singleton, no teardown). Hoisted
+    /// out of `UnsafeCell<Platform>` so reads are safe `Cell::get()` instead of
+    /// raw deref; thread-spawn happens-before makes the cross-thread read sound.
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    platform_fd: Cell<Fd>,
+
+    /// Reader-thread loop flag. Initialized `true`, never cleared (no teardown).
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    running: AtomicBool,
+
+    /// Monotonic kevent generation counter (FreeBSD). Bumped under `mutex`.
+    /// `Cell` so the bump is a safe `.get()/.set()` instead of a raw deref.
+    #[cfg(target_os = "freebsd")]
+    next_gen: Cell<usize>,
 }
 
-// SAFETY: all interior-mutable state (`watchers`, `platform` dispatch maps) is only
-// accessed while holding `mutex`. The `running` atomic and the platform fd are
-// effectively read-only after `init()` for the reader thread. The manager is a
+// SAFETY: all interior-mutable state (`watchers`, `platform` dispatch maps,
+// `next_gen`) is only accessed while holding `mutex`. `running` is atomic.
+// `platform_fd` is set once in `init()` before the reader thread spawns and is
+// never written afterwards, so cross-thread `Cell::get()` reads observe only the
+// publish ordered by the spawn happens-before — no data race. The manager is a
 // process-global singleton shared between the JS thread(s) and the reader thread.
 unsafe impl Sync for PathWatcherManager {}
 unsafe impl Send for PathWatcherManager {}
@@ -99,6 +117,12 @@ impl Default for PathWatcherManager {
             mutex: Mutex::new(),
             watchers: UnsafeCell::new(StringArrayHashMap::default()),
             platform: UnsafeCell::new(Platform::default()),
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+            platform_fd: Cell::new(Fd::INVALID),
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+            running: AtomicBool::new(true),
+            #[cfg(target_os = "freebsd")]
+            next_gen: Cell::new(1),
         }
     }
 }
@@ -584,26 +608,14 @@ compile_error!("path_watcher: unsupported target");
 /// Recursive watches are implemented by walking the tree at subscribe time and adding
 /// a wd per directory, then adding new subdirectories as they appear (IN_CREATE|IN_ISDIR).
 #[cfg(any(target_os = "linux", target_os = "android"))]
+#[derive(Default)]
 pub struct Linux {
-    fd: Fd,
-    running: AtomicBool,
     /// wd → list of owners. `inotify_add_watch` returns the same wd for the same
     /// inode on a given inotify fd, so two PathWatchers whose roots overlap (e.g.
     /// a recursive watch on `/a` plus a watch on `/a/sub`) end up sharing a wd. Each
     /// owner gets its own subpath so the event can be reported relative to the right
     /// root, and `inotify_rm_watch` is only issued when the last owner detaches.
     wd_map: HashMap<i32, Vec<WdOwner>>,
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-impl Default for Linux {
-    fn default() -> Self {
-        Self {
-            fd: Fd::INVALID,
-            running: AtomicBool::new(true),
-            wd_map: HashMap::default(),
-        }
-    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -629,21 +641,13 @@ pub struct LinuxWatch {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl PathWatcherManager {
-    /// Set-once inotify fd. Single unsafe deref site for the
-    /// `platform: UnsafeCell<Linux>` `fd` field so callers stay safe.
-    ///
-    /// `fd` is assigned exactly once in [`Linux::init`] *before* the reader
-    /// thread is spawned and is never reassigned afterwards (the manager is a
-    /// process-lifetime singleton with no teardown), so reading it from either
-    /// thread races with nothing. Projects only the `Copy` field — never
-    /// `&Linux` — so it can coexist with the reader thread's long-lived
-    /// `&AtomicBool` borrow of the disjoint `running` field and with the
-    /// `&mut wd_map` projections taken under `self.mutex`.
+    /// Set-once inotify fd. Assigned exactly once in [`Linux::init`] *before*
+    /// the reader thread is spawned and never reassigned afterwards (the
+    /// manager is a process-lifetime singleton with no teardown), so reading it
+    /// from either thread races with nothing.
     #[inline]
     fn inotify_fd(&self) -> Fd {
-        // SAFETY: see fn doc — set-once-then-read-only `Copy` field, disjoint
-        // from every `&mut` projection.
-        unsafe { (*self.platform.get()).fd }
+        self.platform_fd.get()
     }
 }
 
@@ -671,7 +675,7 @@ impl Linux {
         if rc < 0 {
             return Err(sys::Error::from_code_int(sys::last_errno(), Tag::watch));
         }
-        manager.platform.get_mut().fd = Fd::from_native(rc);
+        manager.platform_fd.set(Fd::from_native(rc));
         // The manager is process-global and never torn down, so the reader thread is
         // a daemon — detach it instead of stashing a handle we'd never join.
         let mgr_ptr = std::ptr::from_mut::<PathWatcherManager>(manager) as usize;
@@ -681,7 +685,7 @@ impl Linux {
         }) {
             Ok(handle) => drop(handle), // detach
             Err(_) => {
-                manager.platform.get_mut().fd.close();
+                manager.platform_fd.get().close();
                 return Err(sys::Error::from_code(E::ENOMEM, Tag::watch));
             }
         }
@@ -727,9 +731,7 @@ impl Linux {
                 .with_path(abs_path.as_bytes()));
         }
         let wd: i32 = rc;
-        // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`. Project
-        // only the field (not `&mut Linux`) so this can coexist with the reader
-        // thread's long-lived `&AtomicBool` borrow of the disjoint `running` field.
+        // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`.
         let owners = unsafe { (*plat).wd_map.entry(wd).or_default() };
         // This wd may already have this watcher as an owner:
         //   - IN_CREATE raced the initial walk (same subpath → the reassign is a no-op)
@@ -805,13 +807,7 @@ impl Linux {
         Output::Source::configure_named_thread(zstr!("fs.watch"));
         let plat: *mut Linux = manager.platform.get();
         let fd = manager.inotify_fd();
-        // SAFETY: `running` is set in `init()` before this thread spawns and the
-        // field itself is never reassigned afterwards. We borrow only this
-        // disjoint field (never `&Linux` / `&mut Linux` whole-struct) so the
-        // `&mut` projections of `wd_map` taken under `manager.mutex` below — and
-        // inside `add_one` when called reentrantly from the dispatch loop —
-        // never alias it.
-        let running: &AtomicBool = unsafe { &(*plat).running };
+        let running: &AtomicBool = &manager.running;
         // Large enough for a burst of events; inotify guarantees whole events per read.
         // `align(InotifyEvent)`: stack array `[u8; N]` is 1-aligned; box for 4-byte
         // alignment so the `&InotifyEvent` cast is valid.
@@ -1165,27 +1161,12 @@ impl Darwin {
 /// no filenames, so directory events surface as a bare `rename` with an empty path —
 /// same behaviour as libuv on FreeBSD; callers are expected to re-scan.
 #[cfg(target_os = "freebsd")]
+#[derive(Default)]
 pub struct Kqueue {
-    kq: Fd,
-    running: AtomicBool,
     /// ident (fd number) → entry (by value — avoids a per-entry heap alloc for
     /// recursive trees). `udata` on the kevent carries a monotonic generation number
     /// so the reader can reject stale events after the fd is recycled.
     entries: ArrayHashMap<i32, KqEntry>,
-    /// Bumped on every `addOne` and stored in both `KqEntry.gen` and `kev.udata`.
-    next_gen: usize,
-}
-
-#[cfg(target_os = "freebsd")]
-impl Default for Kqueue {
-    fn default() -> Self {
-        Self {
-            kq: Fd::INVALID,
-            running: AtomicBool::new(true),
-            entries: ArrayHashMap::default(),
-            next_gen: 1,
-        }
-    }
 }
 
 #[cfg(target_os = "freebsd")]
@@ -1210,21 +1191,13 @@ pub struct KqueueWatch {
 
 #[cfg(target_os = "freebsd")]
 impl PathWatcherManager {
-    /// Set-once kqueue fd. Single unsafe deref site for the
-    /// `platform: UnsafeCell<Kqueue>` `kq` field so callers stay safe.
-    ///
-    /// `kq` is assigned exactly once in [`Kqueue::init`] *before* the reader
-    /// thread is spawned and is never reassigned afterwards (the manager is a
-    /// process-lifetime singleton with no teardown), so reading it from either
-    /// thread races with nothing. Projects only the `Copy` field — never
-    /// `&Kqueue` — so it can coexist with the reader thread's long-lived
-    /// `&AtomicBool` borrow of the disjoint `running` field and with the
-    /// `&mut entries` projections taken under `self.mutex`.
+    /// Set-once kqueue fd. Assigned exactly once in [`Kqueue::init`] *before*
+    /// the reader thread is spawned and never reassigned afterwards (the
+    /// manager is a process-lifetime singleton with no teardown), so reading it
+    /// from either thread races with nothing.
     #[inline]
     fn kq_fd(&self) -> Fd {
-        // SAFETY: see fn doc — set-once-then-read-only `Copy` field, disjoint
-        // from every `&mut` projection.
-        unsafe { (*self.platform.get()).kq }
+        self.platform_fd.get()
     }
 }
 
@@ -1235,7 +1208,7 @@ impl Kqueue {
             Ok(f) => f,
             Err(e) => return Err(e),
         };
-        manager.platform.get_mut().kq = kq;
+        manager.platform_fd.set(kq);
         // Daemon reader — the manager is process-global and never torn down.
         let mgr_ptr = manager as *mut PathWatcherManager as usize;
         match std::thread::Builder::new().spawn(move || {
@@ -1244,7 +1217,7 @@ impl Kqueue {
         }) {
             Ok(handle) => drop(handle), // detach
             Err(_) => {
-                manager.platform.get_mut().kq.close();
+                manager.platform_fd.get().close();
                 return Err(sys::Error::from_code(E::ENOMEM, Tag::watch));
             }
         }
@@ -1294,12 +1267,10 @@ impl Kqueue {
             Ok(f) => f,
         };
 
-        // SAFETY: caller holds manager.mutex; exclusive access to `next_gen`/`entries`.
-        // Project fields via raw ptr (never `&mut Kqueue`) so this can coexist
-        // with the reader thread's `&AtomicBool` borrow of `running`.
-        let generation = unsafe {
-            let g = (*plat).next_gen;
-            (*plat).next_gen = g.wrapping_add(1);
+        // Caller holds manager.mutex; exclusive access to `next_gen`.
+        let generation = {
+            let g = manager.next_gen.get();
+            manager.next_gen.set(g.wrapping_add(1));
             g
         };
         let kq = manager.kq_fd();
@@ -1380,12 +1351,7 @@ impl Kqueue {
         Output::Source::configure_named_thread(zstr!("fs.watch"));
         let plat: *mut Kqueue = manager.platform.get();
         let kq = manager.kq_fd();
-        // SAFETY: `running` is set in `init()` before this thread spawns and
-        // never reassigned. Borrow only this disjoint field so the
-        // `&mut entries` projections taken under `manager.mutex` (here and in
-        // `add_one`/`remove_watch`) never alias it — we never form `&Kqueue` /
-        // `&mut Kqueue` over the whole struct.
-        let running: &AtomicBool = unsafe { &(*plat).running };
+        let running: &AtomicBool = &manager.running;
         // SAFETY: Kevent is POD; uninitialized array filled by kernel before read.
         let mut events: [Kevent; 128] = bun_core::ffi::zeroed();
         while running.load(Ordering::Acquire) {

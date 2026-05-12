@@ -59,12 +59,12 @@ const STACK_FALLBACK_SIZE_LARGE: usize =
 /// JS is single-threaded, so re-using the lazily-allocated tier across calls is
 /// sound. When the request exceeds the largest tier (32 × `MAX_PATH_BYTES`) —
 /// or when `T = u16`, since the pool is byte-typed — we spill to a one-shot
-/// uninitialised heap slab instead. Either way the storage is **not zeroed**:
-/// every consumer (`normalize_string_t`, `resolve_*_t`, `_format_t`, …) writes
-/// each index before reading it, so observing uninit bytes is impossible.
+/// zeroed heap slab instead (`T: Pod`, so the zero-fill is the cost of handing
+/// out a safe `&mut [T]`; consumers are write-before-read so the zeros are
+/// never observed).
 enum PathScratch<'a, T: PathChar> {
     Pooled(&'a mut [T]),
-    Spill(Box<[core::mem::MaybeUninit<T>]>),
+    Spill(Box<[T]>),
 }
 
 impl<'a, T: PathChar> PathScratch<'a, T> {
@@ -79,7 +79,10 @@ impl<'a, T: PathChar> PathScratch<'a, T> {
             let bytes = &mut pool.get(len)[..len];
             Self::Pooled(bytemuck::cast_slice_mut::<u8, T>(bytes))
         } else {
-            Self::Spill(Box::<[T]>::new_uninit_slice(len))
+            // `T: Pod` ⇒ `T: Zeroable + Copy`. Spill is rare (u8 only when
+            // >128 KB) or path-sized (u16), so the zero-fill is negligible and
+            // buys a safe `&mut [T]` in `slice()`.
+            Self::Spill(vec![<T as bytemuck::Zeroable>::zeroed(); len].into_boxed_slice())
         }
     }
 
@@ -87,11 +90,7 @@ impl<'a, T: PathChar> PathScratch<'a, T> {
     fn slice(&mut self) -> &mut [T] {
         match self {
             Self::Pooled(s) => s,
-            // SAFETY: `T: Pod`; downstream path algorithms are write-before-read
-            // (same invariant `pread_box` relies on in `RuntimeTranspilerCache`).
-            Self::Spill(b) => unsafe {
-                core::slice::from_raw_parts_mut(b.as_mut_ptr().cast::<T>(), b.len())
-            },
+            Self::Spill(b) => &mut b[..],
         }
     }
 }
@@ -3654,7 +3653,7 @@ macro_rules! export_path_host_fn {
         const _: () = {
             #[cfg(all(windows, target_arch = "x86_64"))]
             #[unsafe(export_name = $export)]
-            unsafe extern "sysv64" fn __wrapped(
+            extern "sysv64" fn __wrapped(
                 global: &JSGlobalObject,
                 is_windows: bool,
                 args_ptr: *const JSValue,
@@ -3673,7 +3672,7 @@ macro_rules! export_path_host_fn {
             }
             #[cfg(not(all(windows, target_arch = "x86_64")))]
             #[unsafe(export_name = $export)]
-            unsafe extern "C" fn __wrapped(
+            extern "C" fn __wrapped(
                 global: &JSGlobalObject,
                 is_windows: bool,
                 args_ptr: *const JSValue,

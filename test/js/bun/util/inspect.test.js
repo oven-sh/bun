@@ -316,6 +316,20 @@ it("jsx with fragment", () => {
   expect(input).toBe(output);
 });
 
+it("jsx with circular props does not crash", () => {
+  const el = Bun.markdown.react("hello");
+  el.props = el;
+  const out = Bun.inspect(el);
+  expect(out).toContain("[Circular]");
+});
+
+it("jsx with circular children does not crash", () => {
+  const el = Bun.markdown.react("hello");
+  el.props.children = el;
+  const out = Bun.inspect(el);
+  expect(out).toContain("[Circular]");
+});
+
 it("inspect", () => {
   expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(true);
   expect(Bun.inspect("hi")).toBe('"hi"');

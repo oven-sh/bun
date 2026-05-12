@@ -1475,6 +1475,36 @@ pub fn normalize_string_buf<'a,
     normalize_string_buf_t::<u8, ALLOW_ABOVE_ROOT, P, PRESERVE_TRAILING_SLASH>(str, buf)
 }
 
+// ─── CGU-anchored concrete instantiations (startup/p-1+1) ────────────────────
+// `normalize_string_buf_t` is generic over <T, bool, P, bool>, so every
+// downstream crate that touches a path stamps out its own private copy of the
+// (large) `normalize_string_generic_t` body, scattering the hottest startup
+// path-normalization code across dozens of CGUs and out of the front-cluster
+// fault-around window. The four `T==u8, P==Posix` variants below are the ones
+// the `bun <file>` / `bun .` / `bun install` startup probe actually hits; by
+// giving them non-generic `#[inline(never)]` bodies they are compiled exactly
+// once into bun_paths's own CGU (already in the 240p front cluster at 0x561e)
+// and listed in src/startup.order so lld packs them contiguously.
+//
+// Naming: `_{aa}{ts}` encodes (ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH).
+#[inline(never)]
+pub fn normalize_string_buf_posix_u8_ff<'a>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
+    normalize_string_loose_buf_t::<u8, false, false>(str, buf)
+}
+#[inline(never)]
+pub fn normalize_string_buf_posix_u8_ft<'a>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
+    normalize_string_loose_buf_t::<u8, false, true>(str, buf)
+}
+#[inline(never)]
+pub fn normalize_string_buf_posix_u8_tf<'a>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
+    normalize_string_loose_buf_t::<u8, true, false>(str, buf)
+}
+#[inline(never)]
+pub fn normalize_string_buf_posix_u8_tt<'a>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
+    normalize_string_loose_buf_t::<u8, true, true>(str, buf)
+}
+
+#[inline(always)]
 pub fn normalize_string_buf_t<'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
@@ -1484,6 +1514,24 @@ pub fn normalize_string_buf_t<'a,
     str: &[T],
     buf: &'a mut [T],
 ) -> &'a mut [T] {
+    // Fast path: route the hot `u8 + Posix` quad to the CGU-anchored wrappers
+    // above. Every predicate is a `const`, so this folds to a single direct
+    // call (or is dead-stripped) per monomorphization — no runtime branch.
+    if matches!(P::P, Platform::Posix) && !T::IS_U16 {
+        // SAFETY: `PathChar` is implemented only for `u8` and `u16` in this
+        // crate; `!T::IS_U16` ⇒ `T == u8`, so `[T]` and `[u8]` are the same
+        // type and the slice transmutes are layout no-ops.
+        let str8: &[u8] = unsafe { core::mem::transmute::<&[T], &[u8]>(str) };
+        let buf8: &'a mut [u8] = unsafe { core::mem::transmute::<&'a mut [T], &'a mut [u8]>(buf) };
+        let out: &'a mut [u8] = match (ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH) {
+            (false, false) => normalize_string_buf_posix_u8_ff(str8, buf8),
+            (false, true)  => normalize_string_buf_posix_u8_ft(str8, buf8),
+            (true,  false) => normalize_string_buf_posix_u8_tf(str8, buf8),
+            (true,  true)  => normalize_string_buf_posix_u8_tt(str8, buf8),
+        };
+        // SAFETY: inverse of the `buf` transmute above (`T == u8`).
+        return unsafe { core::mem::transmute::<&'a mut [u8], &'a mut [T]>(out) };
+    }
     match P::P {
         Platform::Nt => unreachable!("not implemented"),
         Platform::Windows => normalize_string_windows_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf),

@@ -192,6 +192,89 @@ impl ResolverContext for () {
     }
 }
 
+// ─── ResolverContextDyn ──────────────────────────────────────────────────────
+//
+// Object-safe projection of `ResolverContext` so the ~960-line body of
+// `parse_with_json` is compiled exactly once instead of being re-stamped per
+// `R` (six instantiations × ~49kB ≈ 292kB of identical machine code, plus a
+// duplicate `<()>` copy across CGUs). The associated consts become `&self`
+// predicates; everything else forwards 1:1. The generic `parse_with_json<R>`
+// stays as a thin shim that erases `&mut R` → `&mut dyn ResolverContextDyn`
+// and delegates to the non-generic `parse_with_json_impl`.
+//
+// `count`/`resolve` keep their `StringBuilder<'_>` borrow — lifetimes are
+// permitted on object-safe trait methods, only type generics are not.
+pub trait ResolverContextDyn {
+    fn is_void(&self) -> bool;
+    fn is_git(&self) -> bool;
+    fn check_bundled_dependencies(&self) -> bool;
+
+    fn count(&mut self, builder: &mut StringBuilder<'_>, json: &Expr);
+    fn resolve(
+        &mut self,
+        builder: &mut StringBuilder<'_>,
+        json: &Expr,
+    ) -> Result<ResolutionType<u64>, bun_core::Error>;
+
+    fn resolution(&self) -> &ResolutionType<u64>;
+    fn dep_id(&self) -> install::DependencyID;
+    fn new_name(&self) -> &[u8];
+    fn set_new_name(&mut self, name: Vec<u8>);
+    fn take_new_name(&mut self) -> Vec<u8>;
+}
+
+impl<R: ResolverContext> ResolverContextDyn for R {
+    #[inline]
+    fn is_void(&self) -> bool { R::IS_VOID }
+    #[inline]
+    fn is_git(&self) -> bool { R::IS_GIT_RESOLVER }
+    #[inline]
+    fn check_bundled_dependencies(&self) -> bool { R::check_bundled_dependencies() }
+
+    #[inline]
+    fn count(&mut self, builder: &mut StringBuilder<'_>, json: &Expr) {
+        ResolverContext::count(self, builder, json)
+    }
+    #[inline]
+    fn resolve(
+        &mut self,
+        builder: &mut StringBuilder<'_>,
+        json: &Expr,
+    ) -> Result<ResolutionType<u64>, bun_core::Error> {
+        ResolverContext::resolve(self, builder, json)
+    }
+
+    #[inline]
+    fn resolution(&self) -> &ResolutionType<u64> { ResolverContext::resolution(self) }
+    #[inline]
+    fn dep_id(&self) -> install::DependencyID { ResolverContext::dep_id(self) }
+    #[inline]
+    fn new_name(&self) -> &[u8] { ResolverContext::new_name(self) }
+    #[inline]
+    fn set_new_name(&mut self, name: Vec<u8>) { ResolverContext::set_new_name(self, name) }
+    #[inline]
+    fn take_new_name(&mut self) -> Vec<u8> { ResolverContext::take_new_name(self) }
+}
+
+/// Comparator for the post-build dependency sort. Hoisted out of
+/// `parse_with_json_impl` so `<[Dependency]>::sort_by` is instantiated once
+/// (the closure it wraps is zero-capture modulo `buf`, and the impl fn is
+/// itself non-generic, so the 6.5kB pdqsort + 2.2kB drift is emitted exactly
+/// once instead of per-`R`).
+#[inline]
+fn dep_sort_cmp(buf: &[u8], a: &Dependency, b: &Dependency) -> core::cmp::Ordering {
+    // Zig used `std.sort.pdq` with a `<` predicate. `slice::sort_by` requires
+    // a total order (and panics since 1.81 when violated), so derive
+    // `Ordering::Equal` from the predicate symmetrically.
+    if Dependency::is_less_than(buf, a, b) {
+        core::cmp::Ordering::Less
+    } else if Dependency::is_less_than(buf, b, a) {
+        core::cmp::Ordering::Greater
+    } else {
+        core::cmp::Ordering::Equal
+    }
+}
+
 /// Field tags for the binary lockfile serializer (`bun.lockb`). The
 /// reflection-backed `MultiArrayList` no longer needs an enum, but the
 /// serializer iterates fields by tag to write column blobs in a fixed order.
@@ -1964,6 +2047,23 @@ impl Package<u64> {
         resolver: &mut R,
         features: Features,
     ) -> Result<(), bun_core::Error> {
+        // Thin monomorphic shim: erase `R` to `dyn ResolverContextDyn` so the
+        // ~960-line body below is codegen'd once. The half-dozen vtable calls
+        // are noise next to the JSON walking / string-building this does.
+        self.parse_with_json_impl(lockfile, pm, log, source, json, resolver, features)
+    }
+
+    #[inline(never)]
+    fn parse_with_json_impl(
+        &mut self,
+        lockfile: &mut Lockfile,
+        pm: &mut PackageManager,
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
+        json: Expr,
+        resolver: &mut dyn ResolverContextDyn,
+        features: Features,
+    ) -> Result<(), bun_core::Error> {
         #[allow(non_snake_case)]
         let FEATURES = features;
         // TODO(port): narrow error set
@@ -1994,7 +2094,7 @@ impl Package<u64> {
             }
 
             // name is not validated by npm, so fallback to creating a new from the version literal
-            if R::IS_GIT_RESOLVER {
+            if resolver.is_git() {
                 let resolution: &Resolution<u64> = resolver.resolution();
                 let repo = match resolution.tag {
                     ResolutionTag::Git => *resolution.git(),
@@ -2071,8 +2171,8 @@ impl Package<u64> {
 
         Scripts::parse_count(&mut string_builder, json);
 
-        if !R::IS_VOID {
-            ResolverContext::count(resolver, &mut string_builder, &json);
+        if !resolver.is_void() {
+            resolver.count(&mut string_builder, &json);
         }
 
         // PERF(port): was comptime-computed array — profile in Phase B
@@ -2372,7 +2472,7 @@ impl Package<u64> {
             Vec::with_capacity(total_len - off);
 
         'name: {
-            if R::IS_GIT_RESOLVER {
+            if resolver.is_git() {
                 if !resolver.new_name().is_empty() {
                     let new_name = resolver.take_new_name();
                     let external_string =
@@ -2397,7 +2497,7 @@ impl Package<u64> {
         }
 
         if !FEATURES.is_main {
-            if !R::IS_VOID {
+            if !resolver.is_void() {
                 self.resolution = resolver.resolve(&mut string_builder, &json)?;
             }
         } else {
@@ -2562,7 +2662,7 @@ impl Package<u64> {
         let mut bundled_deps = StringSet::init();
         // defer bundled_deps.deinit(); — Drop handles it
         let mut bundle_all_deps = false;
-        if !R::IS_VOID && R::check_bundled_dependencies() {
+        if !resolver.is_void() && resolver.check_bundled_dependencies() {
             if let Some(bundled_deps_expr) = json
                 .get(b"bundleDependencies")
                 .or_else(|| json.get(b"bundledDependencies"))
@@ -2861,18 +2961,7 @@ impl Package<u64> {
         debug_assert_eq!(package_dependencies.len(), total_dependencies_count as usize);
         {
             let buf = string_builder.string_bytes.as_slice();
-            // Zig used `std.sort.pdq` with a `<` predicate. `slice::sort_by`
-            // requires a total order (and panics since 1.81 when violated), so
-            // derive `Ordering::Equal` from the predicate symmetrically.
-            package_dependencies.sort_by(|a, b| {
-                    if Dependency::is_less_than(buf, a, b) {
-                        core::cmp::Ordering::Less
-                    } else if Dependency::is_less_than(buf, b, a) {
-                        core::cmp::Ordering::Greater
-                    } else {
-                        core::cmp::Ordering::Equal
-                    }
-                });
+            package_dependencies.sort_by(|a, b| dep_sort_cmp(buf, a, b));
         }
 
         self.dependencies.off = off as u32;

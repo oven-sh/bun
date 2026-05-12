@@ -26,7 +26,7 @@
 
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { Config } from "./config.ts";
+import { bunExeName, type Config } from "./config.ts";
 import { assert } from "./error.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
@@ -758,12 +758,22 @@ export function emitStartupOrder(n: Ninja, cfg: Config, rustLibs: string[]): voi
   // so one dirname (not two — that was the bug at #53609).
   const rustNm = cfg.rustLld ? join(dirname(cfg.rustLld), "llvm-nm") : undefined;
   const nm = rustNm && existsSync(rustNm) ? rustNm : join(dirname(cfg.ar), "llvm-nm");
+  // The `.llvm.<N>` ThinLTO local-promotion suffix and the post-ICF C++
+  // ctor/dtor representative are only observable *after* the link, so the
+  // resolver also reads the *previous* link's `-Wl,-Map=` output. Both are
+  // content-hash-derived and stable across rebuilds while CGU partitioning
+  // and class layout are unchanged, so last build's map is a valid oracle
+  // for this build's order file. NOT a ninja input: it's a self-edge
+  // (link → map → order → link) and is legitimately absent on the first
+  // build in a clean dir — the script tolerates that and degrades to
+  // staticlib-only resolution.
+  const map = join(cfg.buildDir, `${bunExeName(cfg)}.linker-map`);
 
   // Host is linux here (linux release never cross-builds from non-linux),
   // so no cmd.exe wrapping. Already-quoted jsRuntime is spliced directly.
   const q = (p: string) => quote(p, false);
   n.rule("startup_order", {
-    command: `${cfg.jsRuntime} ${q(script)} --nm=${q(nm)} --in=${q(src)} --out=$out $in`,
+    command: `${cfg.jsRuntime} ${q(script)} --nm=${q(nm)} --in=${q(src)} --map=${q(map)} --out=$out $in`,
     description: "gen startup.order.resolved",
     // rewrite-startup-order.ts uses writeIfChanged → output mtime stays put
     // when no hash moved → ninja prunes the (30s+) relink.

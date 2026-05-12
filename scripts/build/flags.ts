@@ -1015,12 +1015,21 @@ export const linkerFlags: Flag[] = [
   },
   {
     // Not src/startup.order directly: that file's Rust v0-mangled entries
-    // bake in per-crate disambiguator hashes that churn on every dep/rustc
-    // bump. emitStartupOrder() (rust.ts) rewrites them against the
-    // just-built libbun_rust.a into this resolved copy so lld actually
-    // matches them. --no-warn-symbol-ordering stays so genuinely-removed
-    // functions degrade silently instead of failing the link.
-    flag: c => [`-Wl,--symbol-ordering-file=${c.buildDir}/startup.order.resolved`, "-Wl,--no-warn-symbol-ordering"],
+    // bake in per-crate `Cs<hash>_` disambiguators, `Ms<n>_` impl indices,
+    // `B<n>_` byte-offset back-refs, and post-ThinLTO `.llvm.<N>` suffixes —
+    // all of which churn independently of call order. emitStartupOrder()
+    // (rust.ts) canonicalises each entry against the just-built staticlib
+    // *and* the previous link's `-Map=` output and writes the live names to
+    // this resolved copy so lld actually matches them.
+    //
+    // --no-warn-symbol-ordering stays for shipping release so genuinely-
+    // removed functions degrade silently instead of failing the link, but
+    // assertions builds keep the warning so future drift the resolver can't
+    // handle is loud in CI rather than a silent +1.3 MB RSS.
+    flag: c => [
+      `-Wl,--symbol-ordering-file=${c.buildDir}/startup.order.resolved`,
+      ...(c.assertions ? [] : ["-Wl,--no-warn-symbol-ordering"]),
+    ],
     when: c => c.linux && c.release,
     desc: "Cluster hot startup .text (RSS/iTLB); resolved from src/startup.order at link time",
   },

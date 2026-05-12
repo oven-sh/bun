@@ -999,6 +999,13 @@ impl Lockfile {
         }
     }
 
+    // `#[inline(never)]` keeps the panic/format machinery from
+    // `bun_core::output` (pulled in by the cold helpers below) out of callers;
+    // the hot copy/remap loop stays in this body while the three cold sections
+    // — update-request preprocessing, verbose timer reporting, and the
+    // trusted/patched-dependency migration — are outlined so a no-change
+    // `bun install` (install/fastify bench) does not page them in.
+    #[inline(never)]
     pub fn clean_with_logger(
         &mut self,
         manager: &mut PackageManager,
@@ -1012,11 +1019,13 @@ impl Lockfile {
         // identically to the spec (lockfile.zig:637).
         let old: &mut Lockfile = self;
         // Zig: `var timer: std.time.Timer = undefined;` — model the
-        // uninitialized sentinel with `Option`.
-        let mut timer: Option<Timer> = None;
-        if log_level.is_verbose() {
-            timer = Some(Timer::start()?);
-        }
+        // uninitialized sentinel with `Option`. Outlined cold: the verbose arm
+        // is debug-only and drags in `Timer`/clock-syscall error formatting.
+        let timer: Option<Timer> = if log_level.is_verbose() {
+            Some(clean_verbose_timer_start()?)
+        } else {
+            None
+        };
 
         let old_trusted_dependencies = old.trusted_dependencies.take();
         let old_scripts = core::mem::take(&mut old.scripts);
@@ -1033,7 +1042,7 @@ impl Lockfile {
         preinstall_state.fill(Install::PreinstallState::Unknown);
 
         if !updates.is_empty() {
-            Lockfile::preprocess_update_requests(old, manager, updates, exact_versions)?;
+            clean_preprocess_update_requests_cold(old, manager, updates, exact_versions)?;
         }
 
         // Spec lockfile.zig:669: `var new = try old.allocator.create(Lockfile)` — caller owns
@@ -1190,24 +1199,8 @@ impl Lockfile {
         new.scripts = old_scripts;
         new.meta_hash = old.meta_hash;
 
-        {
-            let mut builder = string_builder!(new);
-            for patched_dep in old.patched_dependencies.values() {
-                builder.count(patched_dep.path.slice(old.buffers.string_bytes.as_slice()));
-            }
-            builder.allocate()?;
-            for (k, v) in old
-                .patched_dependencies
-                .keys()
-                .iter()
-                .zip(old.patched_dependencies.values().iter())
-            {
-                debug_assert!(!v.patchfile_hash_is_null);
-                let mut patchdep = *v;
-                patchdep.path = builder
-                    .append::<SemverString>(patchdep.path.slice(old.buffers.string_bytes.as_slice()));
-                new.patched_dependencies.put(*k, patchdep)?;
-            }
+        if old.patched_dependencies.count() > 0 {
+            clean_migrate_patched_dependencies_cold(old, &mut new)?;
         }
 
         // Don't allow invalid memory to happen
@@ -1256,17 +1249,73 @@ impl Lockfile {
         }
 
         if log_level.is_verbose() {
-            Output::pretty_errorln(format_args!(
-                "Clean lockfile: {} packages -> {} packages in {}\n",
-                old.packages.len(),
-                new.packages.len(),
-                // SAFETY: only entered when `log_level.is_verbose()`, which set `timer = Some(..)`.
-                bun_core::fmt::fmt_duration_one_decimal(timer.as_ref().unwrap().read()),
-            ));
+            clean_verbose_report_cold(old, &new, timer);
         }
 
         Ok(new)
     }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// clean_with_logger cold helpers — outlined so the hot copy/remap loop in the
+// main body is contiguous in `.text` and the install/fastify no-change bench
+// does not fault in update-request rewriting, patched-dep migration, or the
+// verbose timer/format machinery.
+// ────────────────────────────────────────────────────────────────────────────
+
+#[cold]
+#[inline(never)]
+fn clean_preprocess_update_requests_cold(
+    old: &mut Lockfile,
+    manager: &mut PackageManager,
+    updates: &mut [UpdateRequest],
+    exact_versions: bool,
+) -> Result<(), BunError> {
+    Lockfile::preprocess_update_requests(old, manager, updates, exact_versions)
+}
+
+#[cold]
+#[inline(never)]
+fn clean_verbose_timer_start() -> Result<Timer, BunError> {
+    Ok(Timer::start()?)
+}
+
+#[cold]
+#[inline(never)]
+fn clean_verbose_report_cold(old: &Lockfile, new: &Lockfile, timer: Option<Timer>) {
+    Output::pretty_errorln(format_args!(
+        "Clean lockfile: {} packages -> {} packages in {}\n",
+        old.packages.len(),
+        new.packages.len(),
+        // SAFETY: only entered when `log_level.is_verbose()`, which set `timer = Some(..)`.
+        bun_core::fmt::fmt_duration_one_decimal(timer.as_ref().unwrap().read()),
+    ));
+}
+
+#[cold]
+#[inline(never)]
+fn clean_migrate_patched_dependencies_cold(
+    old: &Lockfile,
+    new: &mut Lockfile,
+) -> Result<(), BunError> {
+    let mut builder = string_builder!(new);
+    for patched_dep in old.patched_dependencies.values() {
+        builder.count(patched_dep.path.slice(old.buffers.string_bytes.as_slice()));
+    }
+    builder.allocate()?;
+    for (k, v) in old
+        .patched_dependencies
+        .keys()
+        .iter()
+        .zip(old.patched_dependencies.values().iter())
+    {
+        debug_assert!(!v.patchfile_hash_is_null);
+        let mut patchdep = *v;
+        patchdep.path = builder
+            .append::<SemverString>(patchdep.path.slice(old.buffers.string_bytes.as_slice()));
+        new.patched_dependencies.put(*k, patchdep)?;
+    }
+    Ok(())
 }
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -3857,6 +3857,17 @@ const ALWAYS_SYNC_MODULES: &[&[u8]] = &[b"reflect-metadata"];
 /// in-flight `JSInternalPromise*` when `allow_promise && async`, else null
 /// (result is in `*ret`). Spec ModuleLoader.zig:881-1120.
 ///
+/// PERF: this is the per-`require()` / per-`import` hot-loop root. Its call
+/// chain (-> `parse_maybe_return_file_only_allow_shared_buffer` ->
+/// `LexerType::next` -> `Printer::print_expr` -> `add_source_mapping`) is
+/// pinned as a contiguous block in `src/startup.order` ("Runtime-transpiler
+/// per-module hot loop") so lld doesn't interleave it with one-shot JSC
+/// VM-init C++ from the cold-start profile. If you rename / outline anything
+/// reachable from here that shows up in `perf top` on `bun --bun eslint .`,
+/// re-run the regen recipe in that file's header (eslint workload FIRST) —
+/// otherwise smaps r-xp Rss on lint/create-vite regresses ~1.9 MB despite a
+/// smaller .text.
+///
 /// # Safety
 /// `jsc_vm` is the live per-thread VM; `global` is its `JSGlobalObject*`;
 /// `specifier_ptr`/`referrer` are valid `bun.String*` for the call's duration;

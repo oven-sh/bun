@@ -314,14 +314,15 @@ mod shim {
         r.detach_readable_stream(g)
     }
     #[inline] pub fn signal_aborted(s: &NonNull<AbortSignal>) -> bool {
-        // SAFETY: `signal` is kept alive by the intrusive C++ refcount (+1 from
+        // `signal` is kept alive by the intrusive C++ refcount (+1 from
         // `AbortSignal::new()` / `ref_()`) plus `pending_activity_ref()` until
-        // `signal_release` drops both.
-        unsafe { s.as_ref() }.aborted()
+        // `signal_release` drops both — satisfies the `BackRef` outlives-holder
+        // invariant for the duration of this call.
+        bun_ptr::BackRef::from(*s).aborted()
     }
     #[inline] pub fn signal_fire(s: &NonNull<AbortSignal>, g: &JSGlobalObject, r: jsc::CommonAbortReason) {
-        // SAFETY: see `signal_aborted`.
-        unsafe { s.as_ref() }.signal(g, r)
+        // See `signal_aborted` — counted ref keeps pointee live.
+        bun_ptr::BackRef::from(*s).signal(g, r)
     }
     /// Release BOTH refcounts the request holds on its AbortSignal, mirroring
     /// the Zig `defer { signal.pendingActivityUnref(); signal.unref(); }` pair.
@@ -329,9 +330,10 @@ mod shim {
     /// drops the intrusive C++ `RefPtr` count taken at creation. `s` must not
     /// be dereferenced after this call.
     #[inline] pub fn signal_release(s: NonNull<AbortSignal>) {
-        // SAFETY: see `signal_aborted`. Order matches Zig: pending-activity
-        // first, then the owning intrusive ref (which may free).
-        let signal = unsafe { s.as_ref() };
+        // See `signal_aborted`. Order matches Zig: pending-activity first,
+        // then the owning intrusive ref (which may free). `BackRef` is dropped
+        // before `unref()` returns, so no dangling deref.
+        let signal = bun_ptr::BackRef::from(s);
         signal.pending_activity_unref();
         signal.unref();
     }
@@ -353,12 +355,12 @@ mod shim {
         b.store.get().as_ref().is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::File(_)))
     }
     #[inline] pub fn byte_stream_unpipe(s: NonNull<ByteStream>) {
-        // SAFETY: the lone caller has just `take()`n the pointer out of
-        // `self.byte_stream`, so no other borrow of the ByteStream is live;
-        // the allocation is kept alive by `response_body_readable_stream_ref`.
-        // R-2: `unpipe_without_deref` now takes `&self` (interior-mutable
-        // `JsCell<Pipe>`), so deref as shared.
-        unsafe { s.as_ref() }.unpipe_without_deref()
+        // The lone caller has just `take()`n the pointer out of
+        // `self.byte_stream`; the allocation is kept alive by
+        // `response_body_readable_stream_ref` (BackRef invariant: pointee
+        // outlives this temporary). R-2: `unpipe_without_deref` takes `&self`
+        // (interior-mutable `JsCell<Pipe>`), so shared deref is sufficient.
+        bun_ptr::BackRef::from(s).unpipe_without_deref()
     }
     #[inline] pub fn request_ensure_url(r: &Request) -> Result<(), bun_alloc::AllocError> {
         r.ensure_url()
@@ -732,9 +734,11 @@ where
             return false;
         }
         // check if the body is Locked (streaming)
-        if let Some(body) = &self.request_body {
-            // SAFETY: pooled HiveRef slot is live while held (see deinit()).
-            if matches!(unsafe { body.as_ref() }, Body::Value::Locked(_)) {
+        if let Some(body) = self.request_body {
+            // Pooled HiveRef slot is live while held (see deinit()) — satisfies
+            // the `BackRef` outlives-holder invariant for this read.
+            let body = bun_ptr::BackRef::from(body);
+            if matches!(&*body, Body::Value::Locked(_)) {
                 return false;
             }
         }

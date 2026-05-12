@@ -145,9 +145,10 @@ impl SignalRef {
 impl Drop for SignalRef {
     fn drop(&mut self) {
         if let Some(sig) = self.0.take() {
-            // SAFETY: `sig` was obtained from `AbortSignal::ref_()` which bumped
-            // the C++ intrusive refcount; this releases that +1.
-            unsafe { sig.as_ref() }.unref();
+            // `sig` was obtained from `AbortSignal::ref_()` which bumped the
+            // C++ intrusive refcount; the pointee outlives this `BackRef`
+            // until `unref()` releases that +1.
+            bun_ptr::BackRef::from(sig).unref();
         }
     }
 }
@@ -1034,20 +1035,20 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                             if let Some(fetch_hdrs) =
                                                 FetchHeaders::cast(headers_value)
                                             {
-                                                // SAFETY: cast returns a live FetchHeaders*.
-                                                let fetch_hdrs = unsafe { fetch_hdrs.as_ref() };
+                                                // `cast` returns a live JS-owned FetchHeaders*;
+                                                // BackRef invariant holds for this read.
+                                                let fetch_hdrs = bun_ptr::BackRef::from(fetch_hdrs);
                                                 proxy_headers =
-                                                    Some(from_fetch_headers(Some(fetch_hdrs), None));
+                                                    Some(from_fetch_headers(Some(&*fetch_hdrs), None));
                                             } else if let Some(fetch_hdrs) =
                                                 FetchHeaders::create_from_js(ctx, headers_value)?
                                             {
-                                                // SAFETY: create_from_js returns a +1-ref NonNull<FetchHeaders>.
-                                                let fetch_hdrs_ref = unsafe { fetch_hdrs.as_ref() };
+                                                // `create_from_js` returns a +1-ref NonNull<FetchHeaders>;
+                                                // RAII guard releases it on scope exit (≡ Zig `defer fh.deref()`).
+                                                let _guard = FetchHeadersRef(Some(fetch_hdrs));
+                                                let fetch_hdrs = bun_ptr::BackRef::from(fetch_hdrs);
                                                 proxy_headers =
-                                                    Some(from_fetch_headers(Some(fetch_hdrs_ref), None));
-                                                // PORT NOTE: `defer fetch_hdrs.deref()` — release the +1 ref.
-                                                // SAFETY: paired with the create_from_js +1 ref above.
-                                                unsafe { (*fetch_hdrs.as_ptr()).deref() };
+                                                    Some(from_fetch_headers(Some(&*fetch_hdrs), None));
                                             }
                                         }
                                     }

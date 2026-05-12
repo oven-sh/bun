@@ -446,8 +446,7 @@ impl Request {
         }
 
         if let BodyValue::Blob(blob) = self.body_value() {
-            // SAFETY: see ensure_fetch_headers note.
-            let ct = unsafe { &*blob.content_type.get() };
+            let ct = blob.content_type_slice();
             if !ct.is_empty() {
                 return Ok(Some(bun_str::ZigStringSlice::from_utf8_never_free(ct)));
             }
@@ -842,8 +841,7 @@ impl Request {
 
         match self.body_value() {
             BodyValue::Blob(blob) => {
-                // SAFETY: Blob.content_type is a valid (possibly empty) raw slice ptr.
-                let ct = unsafe { &*blob.content_type.get() };
+                let ct = blob.content_type_slice();
                 if !ct.is_empty() {
                     return ct;
                 }
@@ -1599,8 +1597,7 @@ impl Request {
 
         if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
             if let BodyValue::Blob(blob) = req.body_value() {
-                // SAFETY: Blob.content_type is a valid (possibly empty) raw slice ptr.
-                let ct: &[u8] = unsafe { &*blob.content_type.get() };
+                let ct: &[u8] = blob.content_type_slice();
                 if !ct.is_empty()
                     && !req
                         .headers_mut()

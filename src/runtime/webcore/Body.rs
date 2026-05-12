@@ -2146,9 +2146,10 @@ impl<'a> Drop for ValueBufferer<'a> {
     fn drop(&mut self) {
         // stream_buffer dropped automatically
         if let Some(byte_stream) = self.byte_stream {
-            // SAFETY: kept alive by readable_stream_ref while set.
-            // R-2: `unpipe_without_deref` takes `&self` (interior-mutable).
-            unsafe { byte_stream.as_ref() }.unpipe_without_deref();
+            // Kept alive by `readable_stream_ref` while set — satisfies the
+            // `BackRef` outlives-holder invariant. R-2: `unpipe_without_deref`
+            // takes `&self` (interior-mutable).
+            bun_ptr::BackRef::from(byte_stream).unpipe_without_deref();
         }
         self.readable_stream_ref.deinit();
 
@@ -2369,9 +2370,9 @@ impl<'a> ValueBufferer<'a> {
                 ..Default::default()
             },
         }));
-        // SAFETY: just inserted; `Some` guaranteed.
+        // Just inserted above; `Some` guaranteed.
         let buffer_stream: &mut ArrayBufferJSSink =
-            unsafe { self.js_sink.as_mut().unwrap_unchecked() };
+            self.js_sink.as_deref_mut().unwrap();
 
         buffer_stream.sink.signal = sink::SinkSignal::<ArrayBufferSink>::init(JSValue::ZERO);
 

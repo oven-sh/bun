@@ -513,15 +513,15 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     // SAFETY: image_path_ptr is valid for image_path_b_len bytes per UNICODE_STRING / caller contract.
     let image_path_u16: &[u16] =
         unsafe { bun_core::ffi::slice(image_path_ptr, image_path_b_len / 2) };
-    let image_path_u8: &[u8] =
-        unsafe { bun_core::ffi::slice(image_path_ptr.cast::<u8>(), image_path_b_len) };
+    // Byte view of the same buffer — `&[u16]` → `&[u8]` is a total, panic-free
+    // `bytemuck` cast (align 1, size always divides).
+    let image_path_u8: &[u8] = bytemuck::cast_slice(image_path_u16);
 
     let cmd_line_b_len = command_line.Length as usize;
     // SAFETY: CommandLine.Buffer is valid for Length bytes.
     let cmd_line_u16: &[u16] =
         unsafe { bun_core::ffi::slice(command_line.Buffer, cmd_line_b_len / 2) };
-    let cmd_line_u8: &[u8] =
-        unsafe { bun_core::ffi::slice(command_line.Buffer.cast::<u8>(), cmd_line_b_len) };
+    let cmd_line_u8: &[u8] = bytemuck::cast_slice(cmd_line_u16);
 
     debug_assert!((cmd_line_u16.as_ptr() as usize) % 2 == 0); // alignment assumption
 
@@ -660,9 +660,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     // `from_raw_parts` from the byte view.
     let (user_arguments_u16, user_arguments_u8): (&[u16], &[u8]) = if !IS_STANDALONE {
         let a = bun_ctx.arguments();
-        // SAFETY: arguments slice is valid; reinterpreting [u16] as [u8] is safe (alignment 1).
-        let bytes = unsafe { bun_core::ffi::slice(a.as_ptr().cast::<u8>(), a.len() * 2) };
-        (a, bytes)
+        // `&[u16]` → `&[u8]` reinterpretation: total, panic-free `bytemuck` cast.
+        (a, bytemuck::cast_slice(a))
     } else {
         'find_args: {
             // Windows command line quotes are really silly. This post explains it better than I can:

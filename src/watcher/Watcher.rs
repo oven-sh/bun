@@ -70,14 +70,17 @@ pub struct PackageJSON {
 #[derive(Clone, Copy)]
 pub struct AnyResolveWatcher {
     pub context: *mut (),
-    pub callback: unsafe fn(*mut (), dir_path: &[u8], dir_fd: Fd),
+    // Safe fn-pointer: the callback has no caller-side preconditions — it
+    // receives exactly the `context` it was paired with at construction (a
+    // closure-style invariant upheld by this struct), and the body discharges
+    // its own type-recovery `unsafe` internally.
+    pub callback: fn(*mut (), dir_path: &[u8], dir_fd: Fd),
 }
 
 impl AnyResolveWatcher {
     #[inline]
     pub fn watch(self, dir_path: &[u8], dir_fd: Fd) {
-        // SAFETY: context was stored from a typed *mut T whose callback casts it back.
-        unsafe { (self.callback)(self.context, dir_path, dir_fd) }
+        (self.callback)(self.context, dir_path, dir_fd)
     }
 }
 
@@ -963,8 +966,10 @@ impl Watcher {
     }
 
     pub fn get_resolve_watcher(&mut self) -> AnyResolveWatcher {
-        unsafe fn wrap(ctx: *mut (), dir_path: &[u8], dir_fd: Fd) {
+        fn wrap(ctx: *mut (), dir_path: &[u8], dir_fd: Fd) {
             // SAFETY: ctx was stored from *mut Watcher in get_resolve_watcher()
+            // and `AnyResolveWatcher::watch` only ever feeds back the paired
+            // `context`; the resolver holds it for the Watcher's lifetime.
             let this = unsafe { &mut *ctx.cast::<Watcher>() };
             Watcher::on_maybe_watch_directory(this, dir_path, dir_fd);
         }

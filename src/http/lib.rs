@@ -1933,6 +1933,27 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// Upgrade a `*mut GenHttpContext<SSL>` (the value [`get_ssl_ctx`]
+    /// produces and that `progress_update`/`do_redirect`/`on_data` thread
+    /// through as a parameter) to `&mut`.
+    ///
+    /// INVARIANT: every value reaching here is one of two thread-owned,
+    /// set-once non-null pointers — `&raw mut http_thread().http(s)_context`
+    /// or the heap-boxed `custom_ssl_ctx` on which the client holds a strong
+    /// intrusive ref — both live for the call. The context is a separate
+    /// allocation from `HTTPClient`, so the returned `&mut` does not alias any
+    /// `&self` borrow used to compute the call's other arguments.
+    /// HTTP-thread-only — sole live `&mut`. Centralises the raw
+    /// `(*ctx).release_socket(..)` deref open-coded at the three
+    /// `release_socket` sites and the `resolve_pending_h2` upgrade.
+    #[inline]
+    fn ssl_ctx_mut<'c, const IS_SSL: bool>(
+        ctx: *mut GenHttpContext<IS_SSL>,
+    ) -> &'c mut GenHttpContext<IS_SSL> {
+        // SAFETY: see INVARIANT above.
+        unsafe { &mut *ctx }
+    }
+
     pub fn set_custom_ssl_ctx(&mut self, ctx: NonNull<HttpsContext>) {
         // Intrusive-refcounted: this fn takes ownership of one strong ref by
         // bumping it here (matches http.zig:821-825). Callers do NOT pre-bump.
@@ -2208,21 +2229,18 @@ impl<'a> HTTPClient<'a> {
             // server is still parsing as the previous chunked body.
             bun_core::scoped_log!(fetch, "Keep-Alive release in redirect");
             debug_assert!(!self.connected_url.hostname.is_empty());
-            // SAFETY: ctx points at the thread-owned HttpContext for the lifetime of this call
-            unsafe {
-                (*ctx).release_socket(
-                    socket,
-                    self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
-                    self.connected_url.hostname,
-                    self.connected_url.get_port_auto(),
-                    self.tls_props.as_ref(),
-                    None,
-                    b"",
-                    0,
-                    0,
-                    None,
-                );
-            }
+            Self::ssl_ctx_mut(ctx).release_socket(
+                socket,
+                self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
+                self.connected_url.hostname,
+                self.connected_url.get_port_auto(),
+                self.tls_props.as_ref(),
+                None,
+                b"",
+                0,
+                0,
+                None,
+            );
         } else {
             GenHttpContext::<IS_SSL>::close_socket(socket);
         }
@@ -3184,12 +3202,11 @@ impl<'a> HTTPClient<'a> {
     /// failed). Dispatch every waiter accordingly.
     fn resolve_pending_h2(&mut self, mut resolution: PendingH2Resolution<'_>) {
         let Some(pc_ptr) = self.pending_h2.take() else { return };
-        // SAFETY: get_ssl_ctx returns a thread-owned non-null context. `pc_ptr`
-        // is a backref into that context's `pending_h2_connects` Vec, set in
-        // `HTTPContext::connect`; unregister_from swaps the owning Box out so
-        // we can iterate and drop it here.
+        // `pc_ptr` is a backref into the context's `pending_h2_connects` Vec,
+        // set in `HTTPContext::connect`; unregister_from swaps the owning Box
+        // out so we can iterate and drop it here.
         let Some(pc) =
-            h2::PendingConnect::unregister_from(pc_ptr.as_ptr(), unsafe { &mut *self.get_ssl_ctx::<true>() })
+            h2::PendingConnect::unregister_from(pc_ptr.as_ptr(), Self::ssl_ctx_mut(self.get_ssl_ctx::<true>()))
         else {
             return;
         };
@@ -3439,22 +3456,19 @@ impl<'a> HTTPClient<'a> {
                 // writeProxyConnect line 346). The SNI override (hostname) is
                 // hashed into proxyAuthHash separately — both must match, but
                 // they're distinct values when a Host header override is set.
-                // SAFETY: ctx points at the thread-owned HttpContext for the lifetime of this call
-                unsafe {
-                    (*ctx).release_socket(
-                        socket,
-                        self.flags.did_have_handshaking_error
-                            && !self.flags.reject_unauthorized,
-                        self.connected_url.hostname,
-                        self.connected_url.get_port_auto(),
-                        self.tls_props.as_ref(),
-                        tunnel,
-                        if had_tunnel { self.url.hostname } else { b"" },
-                        if had_tunnel { self.url.get_port_auto() } else { 0 },
-                        if had_tunnel { self.proxy_auth_hash() } else { 0 },
-                        None,
-                    );
-                }
+                Self::ssl_ctx_mut(ctx).release_socket(
+                    socket,
+                    self.flags.did_have_handshaking_error
+                        && !self.flags.reject_unauthorized,
+                    self.connected_url.hostname,
+                    self.connected_url.get_port_auto(),
+                    self.tls_props.as_ref(),
+                    tunnel,
+                    if had_tunnel { self.url.hostname } else { b"" },
+                    if had_tunnel { self.url.get_port_auto() } else { 0 },
+                    if had_tunnel { self.proxy_auth_hash() } else { 0 },
+                    None,
+                );
             } else {
                 if self.proxy_tunnel.is_some() {
                     bun_core::scoped_log!(fetch, "close the tunnel");
@@ -3644,21 +3658,18 @@ impl<'a> HTTPClient<'a> {
         bun_core::scoped_log!(fetch, "onPreconnect({})", BStr::new(self.url.href));
         self.unregister_abort_tracker();
         let ctx = self.get_ssl_ctx::<IS_SSL>();
-        // SAFETY: ctx points at the thread-owned HttpContext for the lifetime of this call
-        unsafe {
-            (*ctx).release_socket(
-                socket,
-                self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
-                self.url.hostname,
-                self.url.get_port_auto(),
-                self.tls_props.as_ref(),
-                None,
-                b"",
-                0,
-                0,
-                None,
-            );
-        }
+        Self::ssl_ctx_mut(ctx).release_socket(
+            socket,
+            self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
+            self.url.hostname,
+            self.url.get_port_auto(),
+            self.tls_props.as_ref(),
+            None,
+            b"",
+            0,
+            0,
+            None,
+        );
 
         self.state.reset();
         self.state.response_stage = ResponseStage::Done;

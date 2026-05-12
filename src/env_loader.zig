@@ -1050,6 +1050,7 @@ const Parser = struct {
     }
 
     fn parseValue(this: *Parser, comptime is_process: bool) OOM!string {
+        this.skipWhitespaces();
         const start = this.pos;
         var end = this.pos;
         if (end >= this.src.len) return this.src[this.src.len..];

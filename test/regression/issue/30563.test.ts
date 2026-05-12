@@ -20,11 +20,7 @@ describe("issue #30563 — String.raw and RegExp.source preserve non-ASCII", () 
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
     expect(JSON.parse(stdout.trim())).toEqual({
@@ -46,11 +42,7 @@ describe("issue #30563 — String.raw and RegExp.source preserve non-ASCII", () 
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
     expect(JSON.parse(stdout.trim())).toEqual({
@@ -88,11 +80,7 @@ describe("issue #30563 — String.raw and RegExp.source preserve non-ASCII", () 
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
     expect(JSON.parse(stdout.trim())).toEqual({
@@ -128,11 +116,7 @@ describe("issue #30563 — String.raw and RegExp.source preserve non-ASCII", () 
       stderr: "pipe",
     });
 
-    const [stdout, , exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(JSON.parse(stdout.trim())).toEqual({ raw: "╭─╮", source: "╭─╮" });
     expect(exitCode).toBe(0);
@@ -144,11 +128,7 @@ describe("issue #30563 — String.raw and RegExp.source preserve non-ASCII", () 
     // patched in #30563, beyond the printer-output one.
     using dir = tempDir("issue-30563-already-bundled", {
       "fixture.js":
-        "// @bun\n" +
-        "console.log(JSON.stringify({" +
-        "  raw: String.raw`╭─╮`," +
-        "  source: /╭─╮/.source," +
-        "}));\n",
+        "// @bun\n" + "console.log(JSON.stringify({" + "  raw: String.raw`╭─╮`," + "  source: /╭─╮/.source," + "}));\n",
     });
 
     await using proc = Bun.spawn({
@@ -158,11 +138,7 @@ describe("issue #30563 — String.raw and RegExp.source preserve non-ASCII", () 
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
     expect(JSON.parse(stdout.trim())).toEqual({ raw: "╭─╮", source: "╭─╮" });
@@ -206,11 +182,7 @@ describe("issue #30563 — String.raw and RegExp.source preserve non-ASCII", () 
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect({ label, parsed: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
         label,

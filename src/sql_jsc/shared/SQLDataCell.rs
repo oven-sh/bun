@@ -117,7 +117,12 @@ impl Array {
         if self.ptr.is_null() {
             return &mut [];
         }
-        // SAFETY: ptr is non-null and the allocation has capacity `cap`.
+        // SAFETY: ptr is non-null and the backing allocation spans `cap`
+        // `SQLDataCell`s. Producers (DataCell.zig:461 ArrayList) zero-init the
+        // full capacity before handing it across FFI, so every element — not
+        // just `[..len]` — carries a valid `Tag` discriminant. Genuine FFI:
+        // ptr/len/cap are thin C fields read directly by C++ (SQLClient.cpp),
+        // so this cannot be a `Vec` without breaking ABI.
         unsafe { slice::from_raw_parts_mut(self.ptr, self.cap as usize) }
     }
 
@@ -311,20 +316,17 @@ impl SQLDataCell {
         // C++ scope under debug/ASAN.
         bun_jsc::validation_scope!(scope, global_object);
 
-        // SAFETY: forwarding to C++ with caller-provided buffers.
-        let value = unsafe {
-            JSC__constructObjectFromDataCell(
-                global_object,
-                encoded_array_value,
-                encoded_structure_value,
-                cells,
-                count,
-                flags,
-                result_mode,
-                names_ptr,
-                names_count,
-            )
-        };
+        let value = JSC__constructObjectFromDataCell(
+            global_object,
+            encoded_array_value,
+            encoded_structure_value,
+            cells,
+            count,
+            flags,
+            result_mode,
+            names_ptr,
+            names_count,
+        );
         scope.assert_exception_presence_matches(value.is_empty());
         if value.is_empty() {
             return Err(JsError::Thrown);
@@ -377,8 +379,14 @@ bitflags::bitflags! {
 
 // TODO(port): move to sql_jsc_sys
 unsafe extern "C" {
-    pub fn JSC__constructObjectFromDataCell(
-        global: *const JSGlobalObject,
+    // `&JSGlobalObject` is ABI-identical to a non-null `*const JSGlobalObject`;
+    // remaining params are by-value scalars + raw (ptr,len) slice pairs that
+    // the C++ side bounds-checks against `count`/`names_count`. The sole call
+    // site is the safe `construct_object_from_data_cell` wrapper above, which
+    // already accepts the same raw-pointer shape from safe code, so the
+    // memory-validity contract is identical → `safe fn`.
+    pub safe fn JSC__constructObjectFromDataCell(
+        global: &JSGlobalObject,
         encoded_array_value: JSValue,
         encoded_structure_value: JSValue,
         cells: *mut SQLDataCell,

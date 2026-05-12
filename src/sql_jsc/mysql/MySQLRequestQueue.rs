@@ -53,10 +53,9 @@ impl MySQLRequestQueue {
     #[inline]
     pub fn mark_as_prepared(&mut self) {
         self.waiting_to_prepare = false;
-        if let Some(request) = self.current() {
+        if let Some(request) = self.current_ref() {
             debug!("markAsPrepared markAsPrepared");
-            // SAFETY: queue holds a ref on every request; pointer is live.
-            unsafe { (*request).mark_as_prepared() };
+            request.mark_as_prepared();
         }
     }
 
@@ -294,6 +293,22 @@ impl MySQLRequestQueue {
         }
 
         Some(self.requests.peek_item(0))
+    }
+
+    /// [`current`] as a [`bun_ptr::ThisPtr`] — one audited deref site here
+    /// replaces the per-caller `unsafe { &*ptr }` / `ScopedRef::new(ptr)` pair.
+    /// The queue holds a ref on every stored request, so the pointee is live;
+    /// `JSMySQLQuery` is a separate heap allocation (never aliases the queue or
+    /// its embedding connection) and is fully interior-mutable (R-2: every
+    /// method is `&self`), so a shared `&JSMySQLQuery` derived via `Deref` is
+    /// sound across `&mut self` on the connection.
+    ///
+    /// [`current`]: Self::current
+    #[inline]
+    pub fn current_ref(&self) -> Option<bun_ptr::ThisPtr<JSMySQLQuery>> {
+        // SAFETY: `current()` returns a pointer the queue holds a ref on
+        // (taken in `add()`); non-null and live until `discard()`/`read_item()`.
+        self.current().map(|p| unsafe { bun_ptr::ThisPtr::new(p) })
     }
 
     pub fn clean(&mut self, reason: Option<JSValue>, queries_array: JSValue) {

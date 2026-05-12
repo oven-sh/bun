@@ -370,14 +370,15 @@ impl MySQLQuery {
 
             if entry.found_existing {
                 let stmt: *mut MySQLStatement = *entry.value_ptr;
-                // SAFETY: `found_existing` ⇒ the map already holds a live, ref-counted
+                // `found_existing` ⇒ the map already holds a live, ref-counted
                 // `*mut MySQLStatement` (separate heap allocation, never aliases
                 // `*self`); this thread is the only mutator. Every access in this
                 // branch is a shared read (`status`, `error_response.to_js`,
                 // `ref_()` are `&self`), so a single `ParentRef` deref covers all
                 // three former per-site raw `(*stmt).…` derefs.
-                let stmt_ref =
-                    bun_ptr::ParentRef::from(unsafe { core::ptr::NonNull::new_unchecked(stmt) });
+                let stmt_ref = bun_ptr::ParentRef::from(
+                    core::ptr::NonNull::new(stmt).expect("found_existing ⇒ non-null map entry"),
+                );
                 if stmt_ref.status == my_sql_statement::Status::Failed {
                     let error_response = stmt_ref.error_response.to_js(global_object);
                     // If the statement failed, we need to throw the error
@@ -405,15 +406,15 @@ impl MySQLQuery {
             }
         }
         let stmt: *mut MySQLStatement = self.statement;
-        debug_assert!(!stmt.is_null(), "set above");
-        // SAFETY: `stmt` is non-null (debug-asserted) and kept alive by the
+        // `stmt` is non-null (set in both branches above) and kept alive by the
         // intrusive ref in `self.statement`; separate heap allocation (never
         // aliases `*self`). `ParentRef` collapses the read-only `(*stmt).status`
         // / `(*stmt).error_response` derefs below into one safe `Deref`; the
         // single write site (`.Pending` arm) keeps its own `unsafe` because
         // `status` is a plain field (no interior mutability).
-        let stmt_ref =
-            bun_ptr::ParentRef::from(unsafe { core::ptr::NonNull::new_unchecked(stmt) });
+        let stmt_ref = bun_ptr::ParentRef::from(
+            core::ptr::NonNull::new(stmt).expect("self.statement set above"),
+        );
         match stmt_ref.status {
             my_sql_statement::Status::Failed => {
                 debug!("failed");

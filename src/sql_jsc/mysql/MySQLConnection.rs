@@ -194,13 +194,10 @@ impl MySQLConnection {
             && self.status == ConnectionState::Connected // and we need to be connected
             // we need data to send
             && (self.write_buffer.len() > 0
-                || if let Some(request) = self.queue.current() {
-                    // SAFETY: queue holds a ref on every request; pointer is live.
-                    let request = unsafe { &*request };
-                    request.is_pending() && !request.is_being_prepared()
-                } else {
-                    false
-                })
+                || self
+                    .queue
+                    .current_ref()
+                    .is_some_and(|r| r.is_pending() && !r.is_being_prepared()))
     }
 
     #[inline]
@@ -873,20 +870,16 @@ impl MySQLConnection {
         header_length: u32, // u24 in Zig
     ) -> Result<(), AnyMySQLError> {
         // Get the current request if any
-        let Some(request) = self.queue.current() else {
+        let Some(request) = self.queue.current_ref() else {
             debug!("Received unexpected command response");
             return Err(AnyMySQLError::UnexpectedPacket);
         };
-        // SAFETY: queue holds a ref on every request; pointer is live. `ScopedRef`
-        // bumps the count and derefs on every exit path (Zig: `defer request.deref()`).
-        let _request_guard = unsafe { bun_ptr::ScopedRef::new(request) };
-        // SAFETY: `JSMySQLQuery` is a separate heap allocation (never aliases
-        // `*self`) and is fully interior-mutable (R-2: every method is `&self`),
-        // so a single shared deref here replaces the per-site raw `(*request).…`
-        // derefs below — including across the `&mut self` calls, since this
-        // `&JSMySQLQuery` does not borrow `*self`. The `_request_guard` ref keeps
-        // the pointee live for the whole scope.
-        let request: &JSMySQLQuery = unsafe { &*request };
+        // Queue holds a ref on every request; bump it for the body's duration so
+        // re-entrant `deref()` cannot free it (Zig: `defer request.deref()`).
+        let _request_guard = request.ref_guard();
+        // `ThisPtr::get` borrows the local `request` (Copy), not `*self`, so the
+        // shared `&JSMySQLQuery` is sound across the `&mut self` calls below.
+        let request: &JSMySQLQuery = request.get();
 
         debug!("handleCommand");
         if request.is_simple() {
@@ -1066,18 +1059,15 @@ impl MySQLConnection {
         let first_byte = reader.int::<u8>()?;
         reader.skip(-1isize);
 
-        let Some(request) = self.queue.current() else {
+        let Some(request) = self.queue.current_ref() else {
             debug!("Unexpected prepared statement packet missing request");
             return Err(AnyMySQLError::UnexpectedPacket);
         };
-        // SAFETY: queue holds a ref on every request; pointer is live. `ScopedRef`
-        // bumps the count and derefs on every exit path (Zig: `defer request.deref()`).
-        let _request_guard = unsafe { bun_ptr::ScopedRef::new(request) };
-        // SAFETY: separate heap allocation kept live by `_request_guard`;
-        // R-2: every `JSMySQLQuery` method is `&self`, so a single shared
-        // deref here replaces the per-site `(*request)` blocks below and is
-        // sound across the `&mut self` calls (does not borrow `*self`).
-        let request: &JSMySQLQuery = unsafe { &*request };
+        // Queue holds a ref on every request; bump it for the body's duration so
+        // re-entrant `deref()` cannot free it (Zig: `defer request.deref()`).
+        let _request_guard = request.ref_guard();
+        // `ThisPtr::get` borrows the local `request` (Copy), not `*self`.
+        let request: &JSMySQLQuery = request.get();
         let Some(statement) = request.get_statement() else {
             debug!("Unexpected prepared statement packet missing statement");
             return Err(AnyMySQLError::UnexpectedPacket);
@@ -1306,18 +1296,15 @@ impl MySQLConnection {
 
         reader.skip(-1isize);
 
-        let Some(request) = self.queue.current() else {
+        let Some(request) = self.queue.current_ref() else {
             debug!("Unexpected result set packet");
             return Err(AnyMySQLError::UnexpectedPacket);
         };
-        // SAFETY: queue holds a ref on every request; pointer is live. `ScopedRef`
-        // bumps the count and derefs on every exit path (Zig: `defer request.deref()`).
-        let _request_guard = unsafe { bun_ptr::ScopedRef::new(request) };
-        // SAFETY: separate heap allocation kept live by `_request_guard`;
-        // R-2: every `JSMySQLQuery` method is `&self`, so a single shared
-        // deref here replaces the per-site `(*request)` blocks below and is
-        // sound across the `&mut self` calls (does not borrow `*self`).
-        let request: &JSMySQLQuery = unsafe { &*request };
+        // Queue holds a ref on every request; bump it for the body's duration so
+        // re-entrant `deref()` cannot free it (Zig: `defer request.deref()`).
+        let _request_guard = request.ref_guard();
+        // `ThisPtr::get` borrows the local `request` (Copy), not `*self`.
+        let request: &JSMySQLQuery = request.get();
         let mut ok = OKPacket {
             header: 0,
             affected_rows: 0,

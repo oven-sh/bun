@@ -1048,17 +1048,15 @@ pub fn marked_argument_buffer_run<Ctx>(
     ctx: *mut c_void,
     f: extern "C" fn(*mut Ctx, *mut MarkedArgumentBuffer),
 ) {
-    // SAFETY: `MarkedArgumentBuffer__run` round-trips `ctx` opaquely back to
-    // `f`; both params are thin pointers so the cast is ABI-identical.
-    unsafe {
-        MarkedArgumentBuffer__run(
-            ctx,
-            bun_ptr::cast_fn_ptr::<
-                extern "C" fn(*mut Ctx, *mut MarkedArgumentBuffer),
-                extern "C" fn(*mut c_void, *mut c_void),
-            >(f),
-        )
-    }
+    // SAFETY: both fn-pointer params are `extern "C" fn(thin_ptr, thin_ptr)`,
+    // so the transmute is ABI-identical (same arity, same per-arg repr).
+    let f = unsafe {
+        bun_ptr::cast_fn_ptr::<
+            extern "C" fn(*mut Ctx, *mut MarkedArgumentBuffer),
+            extern "C" fn(*mut c_void, *mut c_void),
+        >(f)
+    };
+    MarkedArgumentBuffer__run(ctx, f)
 }
 
 /// Opaque handle to `bun_runtime::api::SSLContextCache` (owned by
@@ -1100,7 +1098,9 @@ unsafe extern "C" {
     // under its own SAFETY obligation).
     safe fn JSC__JSGlobalObject__bunVM(this: &JSGlobalObject) -> *mut c_void;
 
-    // MarkedArgumentBuffer — `ctx` is dereferenced by `f`; caller-supplied
-    // pointer/callback contract, caller must discharge.
-    fn MarkedArgumentBuffer__run(ctx: *mut c_void, f: extern "C" fn(*mut c_void, *mut c_void));
+    // MarkedArgumentBuffer — C++ side stack-allocates a `MarkedArgumentBuffer`
+    // and calls `f(ctx, &buffer)`; it never dereferences `ctx` itself (opaque
+    // round-trip), and `f` is a *safe* `extern "C" fn` pointer, so calling it
+    // is safe by type. No caller-side preconditions remain → `safe fn`.
+    safe fn MarkedArgumentBuffer__run(ctx: *mut c_void, f: extern "C" fn(*mut c_void, *mut c_void));
 }

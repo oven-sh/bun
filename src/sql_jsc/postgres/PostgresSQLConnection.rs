@@ -1031,12 +1031,14 @@ impl PostgresSQLConnection {
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
     pub unsafe fn PostgresSQLConnection__createInstance(
-        global: *mut JSGlobalObject,
-        callframe: *mut CallFrame,
+        // `&T` is ABI-identical to `*const T` and JSC guarantees non-null,
+        // live `JSGlobalObject`/`CallFrame` for every host-fn invocation, so
+        // the reference type discharges the deref precondition at the boundary
+        // instead of inside the body.
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
     ) -> JSValue {
-        // SAFETY: JSC always passes valid non-null global/callframe pointers.
-        let (g, f) = unsafe { (&*global, &*callframe) };
-        match call(g, f) {
+        match call(global, callframe) {
             Ok(v) => v,
             Err(_) => JSValue::ZERO,
         }

@@ -3247,8 +3247,8 @@ where
         {
             let is_ssl = SSL;
             let global = self.global();
-            let node_socket = match jsc::from_js_host_call(&global, || unsafe {
-                Bun__createNodeHTTPServerSocketForClientError(is_ssl, std::ptr::from_mut(socket).cast::<c_void>(), global.as_ptr())
+            let node_socket = match jsc::from_js_host_call(&global, || {
+                Bun__createNodeHTTPServerSocketForClientError(is_ssl, std::ptr::from_mut(socket).cast::<c_void>(), &global)
             }) {
                 Ok(v) => v,
                 Err(_) => return,
@@ -3511,10 +3511,12 @@ unsafe extern "C" {
     // is `on_node_http_request_with_upgrade_ctx`); duplicate decls here caused
     // clashing_extern_declarations.
 
-    fn Bun__createNodeHTTPServerSocketForClientError(
+    // `&JSGlobalObject` encodes non-null/aligned; `socket` is the opaque live
+    // `uws::Socket*` handed to `on_client_error_callback` by the uws dispatcher.
+    safe fn Bun__createNodeHTTPServerSocketForClientError(
         is_ssl: bool,
         socket: *mut c_void,
-        global: *const JSGlobalObject,
+        global: &JSGlobalObject,
     ) -> JSValue;
 
     pub(super) fn Bun__ServerRouteList__callRoute(
@@ -3544,6 +3546,6 @@ unsafe extern "C" {
         paths_length: usize,
     ) -> JSValue;
 
-    fn NodeHTTP_assignOnNodeJSCompat(ssl: bool, app: *mut c_void);
-    fn NodeHTTP_setUsingCustomExpectHandler(ssl: bool, app: *mut c_void, value: bool);
+    safe fn NodeHTTP_assignOnNodeJSCompat(ssl: bool, app: *mut c_void);
+    safe fn NodeHTTP_setUsingCustomExpectHandler(ssl: bool, app: *mut c_void, value: bool);
 }

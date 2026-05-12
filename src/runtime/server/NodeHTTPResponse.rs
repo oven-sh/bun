@@ -173,19 +173,25 @@ impl Default for BodyReadState {
 }
 
 unsafe extern "C" {
-    fn Bun__getNodeHTTPResponseThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
-    fn Bun__getNodeHTTPServerSocketThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
+    // `socket` is the opaque uSockets handle from `AnyResponse::socket()`; C++
+    // only reads its ext slot. Module-private — the sole callers below pass a
+    // live handle, so no caller-side precondition remains.
+    safe fn Bun__getNodeHTTPResponseThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
+    safe fn Bun__getNodeHTTPServerSocketThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
 
-    fn NodeHTTPServer__writeHead_http(
-        global_object: *const JSGlobalObject,
+    // `&JSGlobalObject` encodes non-null/aligned; `status_message` is the
+    // ptr/len of a Rust `&[u8]` and `response` is a live `uws::Response<SSL>*`
+    // from the matched `AnyResponse` arm. Module-private with one call site.
+    safe fn NodeHTTPServer__writeHead_http(
+        global_object: &JSGlobalObject,
         status_message: *const u8,
         status_message_length: usize,
         headers_object_value: JSValue,
         response: *mut c_void,
     );
 
-    fn NodeHTTPServer__writeHead_https(
-        global_object: *const JSGlobalObject,
+    safe fn NodeHTTPServer__writeHead_https(
+        global_object: &JSGlobalObject,
         status_message: *const u8,
         status_message_length: usize,
         headers_object_value: JSValue,
@@ -309,8 +315,7 @@ impl NodeHTTPResponse {
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return JSValue::ZERO;
         }
-        // SAFETY: raw_response is Some (checked above) and socket() returns a live uSockets handle.
-        unsafe { Bun__getNodeHTTPResponseThisValue(any_response_is_ssl(&raw), raw.socket().cast()) }
+        Bun__getNodeHTTPResponseThisValue(any_response_is_ssl(&raw), raw.socket().cast())
     }
 
     pub fn get_server_socket_value(&self) -> JSValue {
@@ -319,8 +324,7 @@ impl NodeHTTPResponse {
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return JSValue::ZERO;
         }
-        // SAFETY: see get_this_value.
-        unsafe { Bun__getNodeHTTPServerSocketThisValue(any_response_is_ssl(&raw), raw.socket().cast()) }
+        Bun__getNodeHTTPServerSocketThisValue(any_response_is_ssl(&raw), raw.socket().cast())
     }
 
     pub fn pause_socket(&self) {
@@ -759,26 +763,20 @@ fn write_head_internal(
         BStr::new(status_message)
     );
     match response {
-        uws::AnyResponse::TCP(tcp) => unsafe {
-            // SAFETY: tcp is a live uws Response pointer; status_message is valid for the call.
-            NodeHTTPServer__writeHead_http(
-                global_object,
-                status_message.as_ptr(),
-                status_message.len(),
-                headers,
-                (*tcp).cast::<c_void>(),
-            );
-        },
-        uws::AnyResponse::SSL(ssl) => unsafe {
-            // SAFETY: see above.
-            NodeHTTPServer__writeHead_https(
-                global_object,
-                status_message.as_ptr(),
-                status_message.len(),
-                headers,
-                (*ssl).cast::<c_void>(),
-            );
-        },
+        uws::AnyResponse::TCP(tcp) => NodeHTTPServer__writeHead_http(
+            global_object,
+            status_message.as_ptr(),
+            status_message.len(),
+            headers,
+            (*tcp).cast::<c_void>(),
+        ),
+        uws::AnyResponse::SSL(ssl) => NodeHTTPServer__writeHead_https(
+            global_object,
+            status_message.as_ptr(),
+            status_message.len(),
+            headers,
+            (*ssl).cast::<c_void>(),
+        ),
         uws::AnyResponse::H3(_) => {
             bun_core::Output::panic(format_args!("node:http does not support HTTP/3 responses"));
         }

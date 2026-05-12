@@ -1230,23 +1230,27 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
     fn from_js_extern(value: JSValue) -> usize {
         http_sink_dispatch!(from_js(value))
     }
-    unsafe fn create_object_extern(
-        global: *mut JSGlobalObject,
+    fn create_object_extern(
+        global: &JSGlobalObject,
         object: *mut c_void,
         destructor: usize,
     ) -> JSValue {
-        http_sink_dispatch!(unsafe create_object(global, object, destructor))
+        // SAFETY: FFI into generated C++ sink glue; `global.as_ptr()` is the
+        // sanctioned &self → *mut for opaque JSC handles.
+        http_sink_dispatch!(unsafe create_object(global.as_ptr(), object, destructor))
     }
     fn set_destroy_callback_extern(value: JSValue, callback: usize) {
         http_sink_dispatch!(set_destroy_callback(value, callback))
     }
-    unsafe fn assign_to_stream_extern(
-        global: *mut JSGlobalObject,
+    fn assign_to_stream_extern(
+        global: &JSGlobalObject,
         stream: JSValue,
         ptr: *mut c_void,
         jsvalue_ptr: *mut *mut c_void,
     ) -> JSValue {
-        http_sink_dispatch!(unsafe assign_to_stream(global, stream, ptr, jsvalue_ptr))
+        // SAFETY: FFI into generated C++ sink glue; `global.as_ptr()` is the
+        // sanctioned &self → *mut for opaque JSC handles.
+        http_sink_dispatch!(unsafe assign_to_stream(global.as_ptr(), stream, ptr, jsvalue_ptr))
     }
     fn on_close_extern(ptr: JSValue, reason: JSValue) {
         http_sink_dispatch!(on_close(ptr, reason))
@@ -2452,23 +2456,27 @@ impl crate::webcore::sink::JsSinkAbi for NetworkSink {
     fn from_js_extern(value: JSValue) -> usize {
         NetworkSink__fromJS(value)
     }
-    unsafe fn create_object_extern(
-        global: *mut JSGlobalObject,
+    fn create_object_extern(
+        global: &JSGlobalObject,
         object: *mut c_void,
         destructor: usize,
     ) -> JSValue {
-        unsafe { NetworkSink__createObject(global, object, destructor) }
+        // SAFETY: FFI into generated C++ sink glue; `global.as_ptr()` is the
+        // sanctioned &self → *mut for opaque JSC handles.
+        unsafe { NetworkSink__createObject(global.as_ptr(), object, destructor) }
     }
     fn set_destroy_callback_extern(value: JSValue, callback: usize) {
         NetworkSink__setDestroyCallback(value, callback)
     }
-    unsafe fn assign_to_stream_extern(
-        global: *mut JSGlobalObject,
+    fn assign_to_stream_extern(
+        global: &JSGlobalObject,
         stream: JSValue,
         ptr: *mut c_void,
         jsvalue_ptr: *mut *mut c_void,
     ) -> JSValue {
-        unsafe { NetworkSink__assignToStream(global, stream, ptr, jsvalue_ptr) }
+        // SAFETY: FFI into generated C++ sink glue; `global.as_ptr()` is the
+        // sanctioned &self → *mut for opaque JSC handles.
+        unsafe { NetworkSink__assignToStream(global.as_ptr(), stream, ptr, jsvalue_ptr) }
     }
     fn on_close_extern(ptr: JSValue, reason: JSValue) {
         NetworkSink__onClose(ptr, reason)

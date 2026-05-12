@@ -11,9 +11,12 @@ bun_opaque::opaque_ffi! {
 
 // TODO(port): move to runtime_sys (or webcore_sys) — extern decls belong in the *_sys crate
 unsafe extern "C" {
-    fn CookieMap__write(
-        cookie_map: *mut CookieMap,
-        global_this: *mut JSGlobalObject,
+    // Reference params discharge the non-null/aligned preconditions; `JSGlobalObject`
+    // wraps `UnsafeCell` so `&JSGlobalObject` permits C++ interior mutation.
+    // `uws_http_response` is an opaque pass-through validated by the caller.
+    safe fn CookieMap__write(
+        cookie_map: &mut CookieMap,
+        global_this: &JSGlobalObject,
         kind: ResponseKind,
         uws_http_response: *mut c_void,
     );
@@ -32,17 +35,7 @@ impl CookieMap {
     ) -> JsResult<()> {
         // @src() is supplied via `#[track_caller]` on `from_js_host_call_generic`.
         bun_jsc::from_js_host_call_generic(global_this, || {
-            // SAFETY: `self` is a uniquely-borrowed opaque FFI handle. `JSGlobalObject`
-            // wraps `UnsafeCell`, so `as_ptr()` yields a `*mut` the C++ side may write
-            // through without violating `&JSGlobalObject`'s aliasing guarantees.
-            unsafe {
-                CookieMap__write(
-                    std::ptr::from_mut::<CookieMap>(self),
-                    global_this.as_ptr(),
-                    kind,
-                    uws_http_response,
-                )
-            }
+            CookieMap__write(self, global_this, kind, uws_http_response)
         })
     }
 

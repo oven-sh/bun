@@ -42,24 +42,28 @@ impl JsSinkAbi for ArrayBufferSink {
     fn from_js_extern(value: JSValue) -> usize {
         array_buffer_sink_abi::ArrayBufferSink__fromJS(value)
     }
-    unsafe fn create_object_extern(
-        global: *mut JSGlobalObject,
+    fn create_object_extern(
+        global: &JSGlobalObject,
         object: *mut c_void,
         destructor: usize,
     ) -> JSValue {
-        unsafe { array_buffer_sink_abi::ArrayBufferSink__createObject(global, object, destructor) }
+        // SAFETY: FFI into generated C++ sink glue; `global.as_ptr()` is the
+        // sanctioned &self → *mut for opaque JSC handles.
+        unsafe { array_buffer_sink_abi::ArrayBufferSink__createObject(global.as_ptr(), object, destructor) }
     }
     fn set_destroy_callback_extern(value: JSValue, callback: usize) {
         array_buffer_sink_abi::ArrayBufferSink__setDestroyCallback(value, callback)
     }
-    unsafe fn assign_to_stream_extern(
-        global: *mut JSGlobalObject,
+    fn assign_to_stream_extern(
+        global: &JSGlobalObject,
         stream: JSValue,
         ptr: *mut c_void,
         jsvalue_ptr: *mut *mut c_void,
     ) -> JSValue {
+        // SAFETY: FFI into generated C++ sink glue; `global.as_ptr()` is the
+        // sanctioned &self → *mut for opaque JSC handles.
         unsafe {
-            array_buffer_sink_abi::ArrayBufferSink__assignToStream(global, stream, ptr, jsvalue_ptr)
+            array_buffer_sink_abi::ArrayBufferSink__assignToStream(global.as_ptr(), stream, ptr, jsvalue_ptr)
         }
     }
     fn on_close_extern(ptr: JSValue, reason: JSValue) {
@@ -477,17 +481,21 @@ pub struct JSSink<T> {
 pub trait JsSinkAbi {
     /// `${abi_name}__fromJS` — encodes `*ThisSink` (or 0/1 sentinel) as `usize`.
     fn from_js_extern(value: crate::webcore::jsc::JSValue) -> usize;
-    /// `${abi_name}__createObject`.
-    unsafe fn create_object_extern(
-        global: *mut crate::webcore::jsc::JSGlobalObject,
+    /// `${abi_name}__createObject`. Safe wrapper: takes `&JSGlobalObject` and
+    /// performs the `as_ptr()` projection internally so the FFI call is the
+    /// impl body's sole guarded operation.
+    fn create_object_extern(
+        global: &crate::webcore::jsc::JSGlobalObject,
         object: *mut c_void,
         destructor: usize,
     ) -> crate::webcore::jsc::JSValue;
     /// `${abi_name}__setDestroyCallback`.
     fn set_destroy_callback_extern(value: crate::webcore::jsc::JSValue, callback: usize);
-    /// `${abi_name}__assignToStream`.
-    unsafe fn assign_to_stream_extern(
-        global: *mut crate::webcore::jsc::JSGlobalObject,
+    /// `${abi_name}__assignToStream`. Safe wrapper: takes `&JSGlobalObject` and
+    /// performs the `as_ptr()` projection internally so the FFI call is the
+    /// impl body's sole guarded operation.
+    fn assign_to_stream_extern(
+        global: &crate::webcore::jsc::JSGlobalObject,
         stream: crate::webcore::jsc::JSValue,
         ptr: *mut c_void,
         jsvalue_ptr: *mut *mut c_void,
@@ -521,16 +529,11 @@ impl<T: JsSinkAbi> JSSink<T> {
         object: &mut T,
         destructor: usize,
     ) -> crate::webcore::jsc::JSValue {
-        // SAFETY: FFI call into generated C++ sink glue (`${abi_name}__createObject`).
-        // `JSGlobalObject` is an opaque ZST handle; `.as_ptr()` is the sanctioned
-        // &self → *mut conversion for FFI (no Rust-visible bytes are aliased).
-        unsafe {
-            T::create_object_extern(
-                global.as_ptr(),
-                std::ptr::from_mut::<T>(object).cast::<c_void>(),
-                destructor,
-            )
-        }
+        T::create_object_extern(
+            global,
+            std::ptr::from_mut::<T>(object).cast::<c_void>(),
+            destructor,
+        )
     }
 
     pub fn set_destroy_callback(value: crate::webcore::jsc::JSValue, callback: usize) {
@@ -553,17 +556,12 @@ impl<T: JsSinkAbi> JSSink<T> {
         ptr: &mut T,
         jsvalue_ptr: *mut *mut c_void,
     ) -> crate::webcore::jsc::JSValue {
-        // SAFETY: FFI call into generated C++ sink glue (`${abi_name}__assignToStream`).
-        // `JSGlobalObject` is an opaque ZST handle; `.as_ptr()` is the sanctioned
-        // &self → *mut conversion for FFI (no Rust-visible bytes are aliased).
-        unsafe {
-            T::assign_to_stream_extern(
-                global.as_ptr(),
-                stream,
-                std::ptr::from_mut::<T>(ptr).cast::<c_void>(),
-                jsvalue_ptr,
-            )
-        }
+        T::assign_to_stream_extern(
+            global,
+            stream,
+            std::ptr::from_mut::<T>(ptr).cast::<c_void>(),
+            jsvalue_ptr,
+        )
     }
 
     /// `JSSink.detach(globalThis)` — disconnect the C++ controller cell stashed
@@ -767,11 +765,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         T::construct(&mut *this);
         // SAFETY: JsSinkType::construct fully initializes `*this` (contract).
         let this: Box<T> = unsafe { this.assume_init() };
-        // SAFETY: FFI call into generated C++ sink glue. `JSGlobalObject` is an
-        // opaque handle; `.as_ptr()` is the sanctioned & → *mut for FFI.
-        let value = unsafe {
-            T::create_object_extern(global.as_ptr(), bun_core::heap::into_raw(this).cast(), 0)
-        };
+        let value = T::create_object_extern(global, bun_core::heap::into_raw(this).cast(), 0);
         Ok(value)
     }
 

@@ -1710,8 +1710,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub fn set_using_custom_expect_handler(&mut self, value: bool) {
         if let Some(app) = self.app {
-            // SAFETY: app is a live uws handle while self is alive.
-            unsafe { ffi::NodeHTTP_setUsingCustomExpectHandler(SSL, app.cast::<c_void>(), value) };
+            ffi::NodeHTTP_setUsingCustomExpectHandler(SSL, app.cast::<c_void>(), value);
         }
     }
 
@@ -2184,8 +2183,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // compatibility layer for specific Node API routes, even if it's not
         // the main "/*" handler.
         if has_node_http {
-            // SAFETY: app is a live uws handle.
-            unsafe { ffi::NodeHTTP_assignOnNodeJSCompat(SSL, std::ptr::from_mut(app).cast::<c_void>()) };
+            ffi::NodeHTTP_assignOnNodeJSCompat(SSL, std::ptr::from_mut(app).cast::<c_void>());
         }
 
         route_list_value
@@ -2751,8 +2749,10 @@ mod ffi {
     // has Rust-layout fields (Vec, Cell, …); irrelevant for an opaque handle.
     #[allow(improper_ctypes)]
     unsafe extern "C" {
-        pub fn NodeHTTP_setUsingCustomExpectHandler(ssl: bool, app: *mut c_void, value: bool);
-        pub fn NodeHTTP_assignOnNodeJSCompat(ssl: bool, app: *mut c_void);
+        // `app` is the opaque `uws::App<SSL>*`; C++ only flips a flag / assigns a
+        // handler. Callers pass the live `self.app` handle, so no precondition.
+        pub safe fn NodeHTTP_setUsingCustomExpectHandler(ssl: bool, app: *mut c_void, value: bool);
+        pub safe fn NodeHTTP_assignOnNodeJSCompat(ssl: bool, app: *mut c_void);
 
         /// `src/jsc/bindings/NodeHTTP.cpp` — constructs the JS
         /// `IncomingMessage`/`ServerResponse` pair, allocates a

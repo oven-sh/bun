@@ -169,11 +169,13 @@ impl MySQLQuery {
         columns_value: JSValue,
     ) -> Result<(), AnyMySQLError> {
         {
-            // SAFETY: `statement` is non-null and kept alive by the intrusive ref held in
+            // `statement` is non-null and kept alive by the intrusive ref held in
             // `self.statement` for the duration of this call; no other `&mut` to it
             // exists (caller passes the raw pointer before reborrowing `self`). This
-            // block only reads.
-            let stmt = unsafe { &*statement };
+            // block only reads — `ParentRef` yields `&T`.
+            let stmt = bun_ptr::ParentRef::from(
+                core::ptr::NonNull::new(statement).expect("bind_and_execute: statement non-null"),
+            );
             debug_assert!(
                 stmt.params.len() == stmt.params_received as usize && stmt.statement_id > 0,
                 "statement is not prepared",

@@ -667,18 +667,22 @@ pub mod codegen {
             // `extern "C"` block here is the Win64 ABI on Windows and would
             // mis-pass args → null deref. See commit 2a62b6aa97c1 for the
             // analogous UDPSocket__create fix.
+            //
+            // SAFETY (safe fn): `JSValue` is a by-value NaN-boxed scalar and
+            // `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*`
+            // with write provenance (the type is `UnsafeCell`-backed). The C++
+            // side reads no caller memory beyond these, so no caller-side
+            // preconditions remain → `safe fn`.
             ::bun_jsc::jsc_abi_extern! {
-                fn $get_ext(this_value: JSValue) -> JSValue;
-                fn $set_ext(this_value: JSValue, global: *mut JSGlobalObject, value: JSValue);
+                safe fn $get_ext(this_value: JSValue) -> JSValue;
+                safe fn $set_ext(this_value: JSValue, global: &JSGlobalObject, value: JSValue);
             }
             pub fn $get(this_value: JSValue) -> Option<JSValue> {
-                // SAFETY: codegen guarantees the symbol; returns ZERO when unset.
-                let result = unsafe { $get_ext(this_value) };
+                let result = $get_ext(this_value);
                 if result.is_empty() { None } else { Some(result) }
             }
             pub fn $set(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
-                // SAFETY: codegen guarantees the symbol.
-                unsafe { $set_ext(this_value, global.as_mut_ptr(), value) }
+                $set_ext(this_value, global, value)
             }
         };
     }
@@ -686,13 +690,14 @@ pub mod codegen {
     macro_rules! get_constructor {
         ($extern_name:ident) => {
             // `extern JSC_CALLCONV` on the C++ side — see `cached_slot!` note.
+            // SAFETY (safe fn): `&JSGlobalObject` is ABI-identical to a
+            // non-null `JSGlobalObject*`; the reference type discharges the
+            // validity precondition, so no caller-side obligation remains.
             ::bun_jsc::jsc_abi_extern! {
-                fn $extern_name(global: *mut JSGlobalObject) -> JSValue;
+                safe fn $extern_name(global: &JSGlobalObject) -> JSValue;
             }
             pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
-                // SAFETY: `global` is a live JSGlobalObject; the codegen symbol
-                // is emitted alongside the JS class wrapper and never null.
-                unsafe { $extern_name(global.as_mut_ptr()) }
+                $extern_name(global)
             }
         };
     }
@@ -700,18 +705,23 @@ pub mod codegen {
     macro_rules! js_class_fns {
         ($payload:ty, $create:ident, $from_js:ident, $from_js_direct:ident) => {
             // `extern JSC_CALLCONV` on the C++ side — see `cached_slot!` note.
+            // SAFETY (safe fn): `JSValue` is by-value; `&JSGlobalObject` is
+            // ABI-identical to a non-null `JSGlobalObject*`. `$create`'s `ptr`
+            // is an opaque round-trip the C++ side stores into `m_ctx` without
+            // dereferencing here; the safe `to_js` wrapper already accepts the
+            // same raw-pointer shape from safe code, so the memory-validity
+            // contract is identical → `safe fn` (precedent:
+            // `JSC__constructObjectFromDataCell` in SQLDataCell.rs).
             ::bun_jsc::jsc_abi_extern! {
-                fn $create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
-                fn $from_js(value: JSValue) -> *mut c_void;
-                fn $from_js_direct(value: JSValue) -> *mut c_void;
+                safe fn $create(global: &JSGlobalObject, ptr: *mut c_void) -> JSValue;
+                safe fn $from_js(value: JSValue) -> *mut c_void;
+                safe fn $from_js_direct(value: JSValue) -> *mut c_void;
             }
             pub fn to_js(ptr: *mut $payload, g: &JSGlobalObject) -> JSValue {
-                // SAFETY: `ptr` is a live m_ctx payload; ownership transfers.
-                unsafe { $create(g.as_mut_ptr(), ptr.cast::<c_void>()) }
+                $create(g, ptr.cast::<c_void>())
             }
             pub fn from_js(v: JSValue) -> Option<*mut $payload> {
-                // SAFETY: codegen returns null when `v` is not the wrapper type.
-                let p = unsafe { $from_js(v) };
+                let p = $from_js(v);
                 if p.is_null() { None } else { Some(p.cast::<$payload>()) }
             }
             /// [`from_js`] as a [`ParentRef`] — encapsulates the per-call-site
@@ -728,8 +738,7 @@ pub mod codegen {
                     .map(::bun_ptr::ParentRef::from)
             }
             pub fn from_js_direct(v: JSValue) -> Option<*mut $payload> {
-                // SAFETY: codegen returns null when `v` is not the wrapper type.
-                let p = unsafe { $from_js_direct(v) };
+                let p = $from_js_direct(v);
                 if p.is_null() { None } else { Some(p.cast::<$payload>()) }
             }
         };

@@ -110,10 +110,12 @@ impl MySQLRequestQueue {
     /// queue scalars via `connection.can_execute_query()` etc., which is sound
     /// for the same reason (shared-only reborrows of `Cell`-wrapped state).
     ///
-    /// # Safety
-    /// `connection` must be non-null, live for the duration of the call, and
-    /// carry provenance for the entire `JSMySQLConnection` allocation.
-    pub unsafe fn advance(connection: *mut MySQLConnection) {
+    /// The only guarded ops in the body are the three `JSMySQLQuery::deref`
+    /// refcount drops, each individually wrapped. The `connection` raw pointer
+    /// is consumed via the safe `ParentRef::from(NonNull)` constructor (null
+    /// checked at the boundary), so a function-level guard adds nothing —
+    /// caller liveness/provenance is the `ParentRef` contract.
+    pub fn advance(connection: *mut MySQLConnection) {
         // R-2: every `JSMySQLConnection` method reached below is `&self`
         // (interior mutability), so a `ParentRef` (yields `&T` only) collapses
         // the per-site `unsafe { (*connection).… }` / `&*connection` derefs.

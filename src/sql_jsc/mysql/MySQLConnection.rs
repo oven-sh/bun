@@ -238,10 +238,11 @@ impl MySQLConnection {
     /// materialised concurrently with the connection backref.
     fn advance(&mut self) {
         let js_connection = self.get_js_connection();
-        // SAFETY: `js_connection` is the `@fieldParentPtr` of `self` — non-null,
-        // live, full-allocation provenance. advance() only forms shared borrows
-        // of it (queue mutation goes through `Cell`/`JsCell`).
-        unsafe { MySQLRequestQueue::advance(js_connection) };
+        // `js_connection` is the `@fieldParentPtr` of `self` — non-null, live,
+        // full-allocation provenance. advance() only forms shared borrows of it
+        // (queue mutation goes through `Cell`/`JsCell`); the raw pointer is
+        // wrapped via the safe `ParentRef::from(NonNull)` inside.
+        MySQLRequestQueue::advance(js_connection);
     }
 
     fn flush_data(&mut self) {

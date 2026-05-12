@@ -16,14 +16,15 @@ use crate::webcore::blob::ZigStringBlobExt as _;
 // grows the inherent method.
 // ──────────────────────────────────────────────────────────────────────────
 unsafe extern "C" {
-    fn JSBuffer__bufferFromLength(global: *mut JSGlobalObject, len: i64) -> JSValue;
+    // No precondition beyond a live `&JSGlobalObject` (UnsafeCell-backed; FFI may
+    // mutate VM state) and a by-value `i64`; may throw OOM (handled by
+    // `call_zero_is_throw!`).
+    safe fn JSBuffer__bufferFromLength(global: &JSGlobalObject, len: i64) -> JSValue;
 }
 #[inline]
 fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> JsResult<JSValue> {
-    // SAFETY: FFI; may throw OOM. Zig: `fromJSHostCall` → zero_is_throw.
-    bun_jsc::call_zero_is_throw!(global, || unsafe {
-        JSBuffer__bufferFromLength(global.as_ptr(), len as i64)
-    })
+    // Zig: `fromJSHostCall` → zero_is_throw.
+    bun_jsc::call_zero_is_throw!(global, || JSBuffer__bufferFromLength(global, len as i64))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

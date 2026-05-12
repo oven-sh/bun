@@ -4189,7 +4189,9 @@ pub fn detect_runtime_version() -> &'static str {
         szCSDVersion: [u16; 128],
     }
     unsafe extern "system" {
-        fn RtlGetVersion(info: *mut OSVERSIONINFOW) -> i32;
+        // safe: out-param is `&mut OSVERSIONINFOW` (non-null, valid for write);
+        // ntdll only writes the struct and returns NTSTATUS — no preconditions.
+        safe fn RtlGetVersion(info: &mut OSVERSIONINFOW) -> i32;
     }
     static CACHE: std::sync::OnceLock<std::string::String> = std::sync::OnceLock::new();
     // SAFETY: `#[repr(C)]` POD — five u32 + a `[u16; 128]` array.
@@ -4197,8 +4199,7 @@ pub fn detect_runtime_version() -> &'static str {
     CACHE.get_or_init(|| {
         let mut info: OSVERSIONINFOW = bun_core::ffi::zeroed();
         info.dwOSVersionInfoSize = core::mem::size_of::<OSVERSIONINFOW>() as u32;
-        // SAFETY: `info` is a valid out-pointer.
-        if unsafe { RtlGetVersion(&mut info) } != 0 {
+        if RtlGetVersion(&mut info) != 0 {
             return std::string::String::from("unknown");
         }
         std::format!("{}.{}", info.dwMajorVersion, info.dwBuildNumber)
@@ -4437,15 +4438,17 @@ pub struct PROCESS_MEMORY_COUNTERS {
 /// (kernel32 hosts the K32* shims since Windows 7, no separate psapi.lib).
 pub fn GetProcessMemoryInfo(process: HANDLE) -> Result<PROCESS_MEMORY_COUNTERS, Win32Error> {
     unsafe extern "system" {
-        fn K32GetProcessMemoryInfo(
+        // safe: `HANDLE` is a by-value opaque (bad handle → BOOL 0, no UB);
+        // out-param is `&mut PROCESS_MEMORY_COUNTERS` sized by `cb`.
+        safe fn K32GetProcessMemoryInfo(
             hProcess: HANDLE,
-            ppsmemCounters: *mut PROCESS_MEMORY_COUNTERS,
+            ppsmemCounters: &mut PROCESS_MEMORY_COUNTERS,
             cb: DWORD,
         ) -> BOOL;
     }
-    let mut out = PROCESS_MEMORY_COUNTERS { cb: size_of::<PROCESS_MEMORY_COUNTERS>() as DWORD, ..Default::default() };
-    // SAFETY: out is a valid out-param sized by `cb`.
-    if unsafe { K32GetProcessMemoryInfo(process, &mut out, out.cb) } == 0 {
+    let cb = size_of::<PROCESS_MEMORY_COUNTERS>() as DWORD;
+    let mut out = PROCESS_MEMORY_COUNTERS { cb, ..Default::default() };
+    if K32GetProcessMemoryInfo(process, &mut out, cb) == 0 {
         return Err(Win32Error::get());
     }
     Ok(out)

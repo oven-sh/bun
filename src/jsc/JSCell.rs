@@ -172,16 +172,17 @@ impl<T> JsCell<T> {
     /// Overwrite the contained value.
     #[inline]
     pub fn set(&self, value: T) {
-        // SAFETY: single-JS-thread invariant — see type docs.
-        unsafe { *self.0.get() = value; }
+        // Route through the single audited `with_mut` site rather than
+        // open-coding a second raw `*self.0.get() = …` write here.
+        self.with_mut(|slot| *slot = value);
     }
 
     /// Replace the contained value, returning the old one.
     #[inline]
     pub fn replace(&self, value: T) -> T {
-        // SAFETY: no other borrow of `self.0` is live — we form one here and
-        // drop it before returning.
-        core::mem::replace(unsafe { self.get_mut() }, value)
+        // Route through the single audited `with_mut` site; the `&mut T` is
+        // closure-scoped so no aliasing obligation leaks to this fn.
+        self.with_mut(|slot| core::mem::replace(slot, value))
     }
 
     /// Raw pointer to the inner `T` — for FFI / `addr_of!` paths that must

@@ -1348,8 +1348,15 @@ impl EString {
     #[inline]
     pub fn slice16(&self) -> &[u16] {
         debug_assert!(self.is_utf16);
-        // SAFETY: when is_utf16, `data.ptr` was originally a `*const u16` and `data.len`
-        // is the u16 element count (see `init_utf16`).
+        // SAFETY: when `is_utf16`, `data` was constructed by `init_utf16` from a
+        // `&[u16]`: `data.ptr` is the original u16-aligned pointer (reinterpreted
+        // as `*const u8` for storage only) and `data.len` deliberately stores the
+        // **u16 element count**, not a byte count — so the backing allocation is
+        // `2 * data.len` bytes and reading `data.len` u16s is in-bounds. Can't be
+        // `bytemuck::cast_slice(self.data.slice())` because that would yield
+        // `len/2` u16s; the lying-length encoding is load-bearing for `len()`/
+        // `javascript_length()`/`has_prefix_comptime()` and changing it is a
+        // cross-crate refactor (see TODO above).
         unsafe { core::slice::from_raw_parts(self.data.as_ptr().cast::<u16>(), self.data.len()) }
     }
     /// Const constructor for `'static` literals (Prefill globals).

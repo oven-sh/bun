@@ -140,11 +140,16 @@ pub trait ResolverContext {
     /// without `resolve` failed to compile). Each concrete resolver supplies
     /// its own body; `()` returns the zero-value `Resolution` to mirror Zig's
     /// "void leaves `package.resolution` uninitialized" path.
-    fn resolve<SemverIntType: VersionInt>(
+    ///
+    /// Zig threaded `comptime IntType` through `parseWithJSON`, but the only
+    /// instantiation is `u64` (`Package.resolution: ResolutionType<u64>`), so
+    /// the trait method is monomorphic — keeps `CacheFolderResolver::resolve`
+    /// free of an identity `transmute`.
+    fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
         json: &Expr,
-    ) -> Result<ResolutionType<SemverIntType>, bun_core::Error>;
+    ) -> Result<ResolutionType<u64>, bun_core::Error>;
 
     // ── GitResolver-only surface ────────────────────────────────────────────
     // Zig accessed `resolver.resolved`, `resolver.new_name`, `resolver.dep_id`
@@ -174,11 +179,11 @@ pub trait ResolverContext {
 impl ResolverContext for () {
     const IS_VOID: bool = true;
 
-    fn resolve<SemverIntType: VersionInt>(
+    fn resolve(
         &mut self,
         _builder: &mut StringBuilder<'_>,
         _json: &Expr,
-    ) -> Result<ResolutionType<SemverIntType>, bun_core::Error> {
+    ) -> Result<ResolutionType<u64>, bun_core::Error> {
         // Zig: `if (comptime ResolverContext != void) { … }` — the void
         // resolver never assigned `package.resolution`, so it kept its
         // zero-initialized value. The call site still gates on `!IS_VOID`,
@@ -2391,7 +2396,7 @@ impl Package<u64> {
 
         if !FEATURES.is_main {
             if !R::IS_VOID {
-                self.resolution = resolver.resolve::<u64>(&mut string_builder, &json)?;
+                self.resolution = resolver.resolve(&mut string_builder, &json)?;
             }
         } else {
             self.resolution = Resolution::<u64>::init(TaggedValue::Root);

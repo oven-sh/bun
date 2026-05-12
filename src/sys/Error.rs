@@ -298,13 +298,12 @@ impl Error {
                 let translated =
                     crate::windows::translate_uv_error_to_e(-c_int::from(self.errno));
                 // `translated` is already a valid `E`; E and SystemErrno share identical
-                // #[repr(u16)] discriminant tables, so this is the identity transmute
-                // (Zig: `@enumFromInt(@intFromEnum(translateUVErrorToE(...)))`).
-                Some(unsafe { core::mem::transmute::<E, SystemErrno>(translated) })
+                // #[repr(u16)] discriminant tables, so route through the discriminant
+                // accessor (Zig: `@enumFromInt(@intFromEnum(translateUVErrorToE(...)))`).
+                Some(SystemErrno::from_raw(translated as u16))
             } else {
                 // `self.errno` may be out-of-range (TODO_ERRNO etc.); validate first.
-                E::try_from_raw(self.errno)
-                    .map(|e| unsafe { core::mem::transmute::<E, SystemErrno>(e) })
+                E::try_from_raw(self.errno).map(|e| SystemErrno::from_raw(e as u16))
             };
             if let Some(errname) = system_errno.and_then(tag_name) {
                 return errname.as_bytes();
@@ -348,11 +347,11 @@ impl Error {
                 if self.from_libuv {
                     let translated =
                         crate::windows::translate_uv_error_to_e(c_int::from(self.errno) * -1);
-                    // Identity transmute: E and SystemErrno share #[repr(u16)] discriminants.
-                    break 'brk unsafe { core::mem::transmute::<E, SystemErrno>(translated) };
+                    // E and SystemErrno share identical #[repr(u16)] discriminant tables;
+                    // route through the discriminant accessor instead of transmute.
+                    break 'brk SystemErrno::from_raw(translated as u16);
                 }
-                E::try_from_raw(self.errno)
-                    .map(|e| unsafe { core::mem::transmute::<E, SystemErrno>(e) })?
+                E::try_from_raw(self.errno).map(|e| SystemErrno::from_raw(e as u16))?
             };
             if let Some(errname) = tag_name(system_errno) {
                 return Some((errname, system_errno));

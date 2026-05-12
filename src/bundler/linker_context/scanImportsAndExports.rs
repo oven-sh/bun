@@ -1647,7 +1647,12 @@ mod __css_validation {
                 let mut iter = property_usage.bitset.iter_set();
                 while let Some(property_tag) = iter.next() {
                     let property_id_tag: PropertyIdTag =
-                        // SAFETY: bitset indices are valid PropertyIdTag discriminants by construction.
+                        // SAFETY: `PropertyBitset` is only ever populated via
+                        // `bitset.set(tag as u16 as usize)` where `tag: PropertyIdTag`
+                        // (see `bun_css::fill_property_bit_set`), so every set index is a
+                        // valid `#[repr(u16)]` discriminant. `PropertyIdTag` lives in
+                        // `bun_css` (generated) and exposes no `from_repr`; once it does,
+                        // replace this transmute with that accessor.
                         unsafe {
                             core::mem::transmute::<u16, PropertyIdTag>(
                                 u16::try_from(property_tag).expect("int cast"),

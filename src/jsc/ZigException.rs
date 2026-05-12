@@ -75,8 +75,9 @@ impl ZigException {
         }
 
         if let Some(source) = self.stack.referenced_source_provider {
-            // SAFETY: pointer was set by JSC (C++) and is valid until this deref releases it.
-            unsafe { (*source.as_ptr()).deref() };
+            // Pointer was set by JSC (C++) and is valid until this deref releases it.
+            // `SourceProvider` is an opaque ZST handle.
+            crate::SourceProvider::opaque_mut(source.as_ptr()).deref();
         }
     }
 

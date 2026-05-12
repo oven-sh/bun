@@ -139,8 +139,7 @@ impl HPACK {
     /// Dynamic Table Size Update opcode at the start of the next header block
     /// so the peer's decoder evicts in lockstep.
     pub fn set_encoder_max_capacity(&mut self, max_capacity: u32) {
-        // SAFETY: self is a valid *HPACK from lshpack_wrapper_init.
-        unsafe { lshpack_wrapper_enc_set_max_capacity(std::ptr::from_mut::<HPACK>(self), max_capacity as c_uint) };
+        lshpack_wrapper_enc_set_max_capacity(self, max_capacity as c_uint);
     }
 
     /// # Safety
@@ -211,7 +210,11 @@ unsafe extern "C" {
         free: lshpack_wrapper_free,
         capacity: usize,
     ) -> *mut HPACK;
-    fn lshpack_wrapper_enc_set_max_capacity(self_: *mut HPACK, max_capacity: c_uint);
+    // Only precondition is a valid non-null `*HPACK`; `&mut HPACK` (ABI-identical
+    // thin pointer) discharges it at the type level, so this is `safe fn`.
+    safe fn lshpack_wrapper_enc_set_max_capacity(self_: &mut HPACK, max_capacity: c_uint);
+    // Frees `self_` (lshpack_{enc,dec}_cleanup + mi_free) — ownership transfer,
+    // so this keeps its raw-pointer signature and caller-side safety obligation.
     fn lshpack_wrapper_deinit(self_: *mut HPACK);
     fn lshpack_wrapper_decode(
         self_: *mut HPACK,

@@ -1012,8 +1012,9 @@ impl JSGlobalObject {
     }
 
     pub fn vm(&self) -> &VM {
-        // SAFETY: JSC guarantees the VM outlives the global object.
-        unsafe { &*JSC__JSGlobalObject__vm(self) }
+        // JSC guarantees the VM outlives the global object; `VM` is an opaque
+        // ZST handle so the deref is the centralised `opaque_ref` proof.
+        VM::opaque_ref(JSC__JSGlobalObject__vm(self))
     }
 
     /// Raw `*mut JSC::VM` for FFI predicates that take a VM pointer
@@ -1674,9 +1675,10 @@ impl ScriptExecutionContextIdentifier {
     pub fn global_object(self) -> Option<GlobalRef> {
         // FFI call returns a valid pointer or null; the JSGlobalObject is owned
         // by the VM and outlives any ScriptExecutionContext id pointing at it.
-        // SAFETY: `as_ref` on a pointer that is either null or a live opaque
-        // ZST handle (zero-byte deref).
-        unsafe { ScriptExecutionContextIdentifier__getGlobalObject(self.0).as_ref() }.map(GlobalRef::from)
+        // `JSGlobalObject` is an opaque ZST handle so the deref is the
+        // centralised `opaque_ref` proof.
+        let p = ScriptExecutionContextIdentifier__getGlobalObject(self.0);
+        (!p.is_null()).then(|| GlobalRef::from(JSGlobalObject::opaque_ref(p)))
     }
 
     /// Returns `None` if the context referred to by `self` no longer exists.

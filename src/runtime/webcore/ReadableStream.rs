@@ -84,16 +84,21 @@ impl Strong {
 // TODO(port): move to runtime_sys / bun_jsc_sys
 
 unsafe extern "C" {
-    fn ReadableStream__tee(
+    /// C++ writes the two teed-stream JSValues into the out-params; reference
+    /// params encode the non-null/aligned precondition so callers need no
+    /// `unsafe` block.
+    safe fn ReadableStream__tee(
         stream: JSValue,
-        global_this: *const JSGlobalObject,
-        out1: *mut JSValue,
-        out2: *mut JSValue,
+        global_this: &JSGlobalObject,
+        out1: &mut JSValue,
+        out2: &mut JSValue,
     ) -> bool;
-    fn ReadableStreamTag__tagged(
-        global_object: *const JSGlobalObject,
-        possible_readable_stream: *mut JSValue,
-        ptr: *mut *mut c_void,
+    /// `possible_readable_stream` is read+overwritten in place; `ptr` is a
+    /// stack out-param. Reference params discharge the only preconditions.
+    safe fn ReadableStreamTag__tagged(
+        global_object: &JSGlobalObject,
+        possible_readable_stream: &mut JSValue,
+        ptr: &mut *mut c_void,
     ) -> Tag;
     safe fn ReadableStream__isDisturbed(
         possible_readable_stream: JSValue,
@@ -130,9 +135,8 @@ impl ReadableStream {
     pub fn tee(&self, global_this: &JSGlobalObject) -> JsResult<Option<(ReadableStream, ReadableStream)>> {
         let mut out1 = JSValue::ZERO;
         let mut out2 = JSValue::ZERO;
-        // SAFETY: FFI call into JSC bindings; out params are valid stack ptrs.
-        let ok = bun_jsc::from_js_host_call_generic(global_this, || unsafe {
-            ReadableStream__tee(self.value, global_this, &raw mut out1, &raw mut out2)
+        let ok = bun_jsc::from_js_host_call_generic(global_this, || {
+            ReadableStream__tee(self.value, global_this, &mut out1, &mut out2)
         })?;
         if !ok {
             return Ok(None);
@@ -269,9 +273,8 @@ impl ReadableStream {
         let mut out = value;
         let mut ptr: *mut c_void = core::ptr::null_mut();
 
-        // SAFETY: out/ptr are valid stack out-params.
-        let tag = bun_jsc::from_js_host_call_generic(global_this, || unsafe {
-            ReadableStreamTag__tagged(global_this, &raw mut out, &raw mut ptr)
+        let tag = bun_jsc::from_js_host_call_generic(global_this, || {
+            ReadableStreamTag__tagged(global_this, &mut out, &mut ptr)
         })?;
 
         Ok(match tag {

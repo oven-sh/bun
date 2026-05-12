@@ -23,7 +23,7 @@ bun_opaque::opaque_ffi! {
 // covers zero bytes and C++ mutating the underlying GC cell does not violate
 // Rust's aliasing rules.
 unsafe extern "C" {
-    fn JSC__JSString__toObject(this: &JSString, global: &JSGlobalObject) -> *mut JSObject;
+    safe fn JSC__JSString__toObject(this: &JSString, global: &JSGlobalObject) -> *mut JSObject;
     safe fn JSC__JSString__toZigString(
         this: &JSString,
         global: &JSGlobalObject,
@@ -49,10 +49,10 @@ impl JSString {
     }
 
     pub fn to_object<'a>(&self, global: &'a JSGlobalObject) -> Option<&'a JSObject> {
-        // SAFETY: `self`/`global` are valid opaque GC-cell handles (zero-sized in
-        // Rust; C++ may mutate the underlying cell without violating Rust aliasing).
-        // Returns either null or a valid GC-owned JSObject*.
-        unsafe { JSC__JSString__toObject(self, global).as_ref() }
+        // Returns either null or a valid GC-owned JSObject*; `JSObject` is an
+        // opaque ZST handle so the deref is the centralised `opaque_ref` proof.
+        let p = JSC__JSString__toObject(self, global);
+        (!p.is_null()).then(|| JSObject::opaque_ref(p))
     }
 
     pub fn to_zig_string(&self, global: &JSGlobalObject, zig_str: &mut ZigString) {

@@ -11,48 +11,48 @@ bun_opaque::opaque_ffi! {
     pub struct Stream;
 }
 
+// `Stream` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so `&mut Stream` is
+// ABI-identical to a non-null `*mut Stream` with no `noalias`/`readonly`
+// attribute. Shims taking only the handle + value types are `safe fn`; the
+// (ptr,len) writers keep raw signatures.
 unsafe extern "C" {
-    fn us_quic_stream_socket(s: *mut Stream) -> *mut Socket;
-    fn us_quic_stream_shutdown(s: *mut Stream);
-    fn us_quic_stream_close(s: *mut Stream);
-    fn us_quic_stream_reset(s: *mut Stream);
-    fn us_quic_stream_header_count(s: *mut Stream) -> c_uint;
-    fn us_quic_stream_header(s: *mut Stream, i: c_uint) -> *const Header;
-    fn us_quic_stream_ext(s: *mut Stream) -> *mut c_void;
+    safe fn us_quic_stream_socket(s: &mut Stream) -> *mut Socket;
+    safe fn us_quic_stream_shutdown(s: &mut Stream);
+    safe fn us_quic_stream_close(s: &mut Stream);
+    safe fn us_quic_stream_reset(s: &mut Stream);
+    safe fn us_quic_stream_header_count(s: &mut Stream) -> c_uint;
+    safe fn us_quic_stream_header(s: &mut Stream, i: c_uint) -> *const Header;
+    safe fn us_quic_stream_ext(s: &mut Stream) -> *mut c_void;
     fn us_quic_stream_write(s: *mut Stream, data: *const u8, len: c_uint) -> c_int;
-    fn us_quic_stream_want_write(s: *mut Stream, want: c_int);
+    safe fn us_quic_stream_want_write(s: &mut Stream, want: c_int);
     fn us_quic_stream_send_headers(s: *mut Stream, h: *const Header, n: c_uint, end_stream: c_int) -> c_int;
 }
 
 impl Stream {
     pub fn socket(&mut self) -> Option<NonNull<Socket>> {
-        // SAFETY: self is a valid us_quic_stream_t. Returned as a raw pointer (not
-        // &mut) because the Socket is the *parent connection shared by every stream
-        // on it* — two live &mut Stream on the same conn calling .socket() (or a
-        // conn-level callback already holding &mut Socket) would otherwise yield
-        // aliasing &mut Socket, which is UB. Mirrors Zig's `?*Socket`; callers
-        // reborrow locally under their own SAFETY proof.
-        unsafe { NonNull::new(us_quic_stream_socket(self)) }
+        // Returned as a raw pointer (not &mut) because the Socket is the *parent
+        // connection shared by every stream on it* — two live &mut Stream on the
+        // same conn calling .socket() (or a conn-level callback already holding
+        // &mut Socket) would otherwise yield aliasing &mut Socket, which is UB.
+        // Mirrors Zig's `?*Socket`; callers reborrow locally under their own
+        // SAFETY proof.
+        NonNull::new(us_quic_stream_socket(self))
     }
 
     pub fn shutdown(&mut self) {
-        // SAFETY: self is a valid us_quic_stream_t.
-        unsafe { us_quic_stream_shutdown(self) }
+        us_quic_stream_shutdown(self)
     }
 
     pub fn close(&mut self) {
-        // SAFETY: self is a valid us_quic_stream_t.
-        unsafe { us_quic_stream_close(self) }
+        us_quic_stream_close(self)
     }
 
     pub fn reset(&mut self) {
-        // SAFETY: self is a valid us_quic_stream_t.
-        unsafe { us_quic_stream_reset(self) }
+        us_quic_stream_reset(self)
     }
 
     pub fn header_count(&mut self) -> c_uint {
-        // SAFETY: self is a valid us_quic_stream_t.
-        unsafe { us_quic_stream_header_count(self) }
+        us_quic_stream_header_count(self)
     }
 
     pub fn header(&mut self, i: c_uint) -> Option<&Header> {
@@ -75,8 +75,7 @@ impl Stream {
     }
 
     pub fn want_write(&mut self, want: bool) {
-        // SAFETY: self is a valid us_quic_stream_t.
-        unsafe { us_quic_stream_want_write(self, want as c_int) }
+        us_quic_stream_want_write(self, want as c_int)
     }
 
     pub fn send_headers(&mut self, headers: &[Header], end_stream: bool) -> c_int {

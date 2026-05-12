@@ -230,12 +230,11 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
     fn sql_vm(&self) -> &VirtualMachine {
         // SAFETY: bunVM returns a valid *VirtualMachine for this global,
         // live for the VM lifetime.
-        unsafe { &*JSC__JSGlobalObject__bunVM(self.as_mut_ptr()).cast::<VirtualMachine>() }
+        unsafe { &*JSC__JSGlobalObject__bunVM(self).cast::<VirtualMachine>() }
     }
     #[inline]
     fn sql_vm_ptr(&self) -> *mut VirtualMachine {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*.
-        unsafe { JSC__JSGlobalObject__bunVM(self.as_mut_ptr()).cast::<VirtualMachine>() }
+        JSC__JSGlobalObject__bunVM(self).cast::<VirtualMachine>()
     }
 }
 
@@ -931,8 +930,11 @@ pub struct CreateJSFunctionOptions {
 }
 
 unsafe extern "C" {
-    fn JSFunction__createFromZig(
-        global: *mut JSGlobalObject,
+    // `&JSGlobalObject` is ABI-identical to a non-null `*const JSGlobalObject`;
+    // remaining args are by-value scalars/fn-ptrs. No caller-side memory
+    // preconditions remain → `safe fn`.
+    safe fn JSFunction__createFromZig(
+        global: &JSGlobalObject,
         fn_name: bun_string::String,
         implementation: JSHostFn,
         arg_count: u32,
@@ -955,18 +957,15 @@ impl JSFunction {
     ) -> JSValue {
         let implementation: JSHostFn = implementation.into_js_host_fn();
         let fn_name = bun_string::String::init(name);
-        // SAFETY: `global` is live; `implementation` is a valid C-ABI fn ptr.
-        unsafe {
-            JSFunction__createFromZig(
-                global.as_mut_ptr(),
-                fn_name,
-                implementation,
-                arg_count,
-                opts.implementation_visibility,
-                opts.intrinsic,
-                opts.constructor,
-            )
-        }
+        JSFunction__createFromZig(
+            global,
+            fn_name,
+            implementation,
+            arg_count,
+            opts.implementation_visibility,
+            opts.intrinsic,
+            opts.constructor,
+        )
     }
 }
 
@@ -1078,9 +1077,11 @@ unsafe extern "C" {
     safe fn JSC__isBigIntInInt64Range(this: JSValue, min: i64, max: i64) -> bool;
     safe fn JSC__isBigIntInUInt64Range(this: JSValue, min: u64, max: u64) -> bool;
 
-    // JSGlobalObject — `this` must be a live `*JSGlobalObject`; genuine
-    // pointer-validity precondition, caller must discharge.
-    fn JSC__JSGlobalObject__bunVM(this: *mut JSGlobalObject) -> *mut c_void;
+    // JSGlobalObject — `&JSGlobalObject` is ABI-identical to a non-null
+    // `*const JSGlobalObject`; the reference type discharges the validity
+    // precondition, so `safe fn`. Returned pointer is opaque (caller derefs
+    // under its own SAFETY obligation).
+    safe fn JSC__JSGlobalObject__bunVM(this: &JSGlobalObject) -> *mut c_void;
 
     // MarkedArgumentBuffer — `ctx` is dereferenced by `f`; caller-supplied
     // pointer/callback contract, caller must discharge.

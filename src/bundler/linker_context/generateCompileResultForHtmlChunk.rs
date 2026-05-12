@@ -316,7 +316,7 @@ impl<'a> HTMLLoader<'a> {
         array
     }
 
-    unsafe extern "C" fn end_head_tag_handler(
+    extern "C" fn end_head_tag_handler(
         end: *mut lol::EndTag,
         opaque_this: *mut c_void,
     ) -> lol::Directive {
@@ -333,7 +333,7 @@ impl<'a> HTMLLoader<'a> {
         lol::Directive::Continue
     }
 
-    unsafe extern "C" fn end_body_tag_handler(
+    extern "C" fn end_body_tag_handler(
         end: *mut lol::EndTag,
         opaque_this: *mut c_void,
     ) -> lol::Directive {
@@ -357,7 +357,7 @@ impl<'a> HTMLLoader<'a> {
         lol::Directive::Continue
     }
 
-    unsafe extern "C" fn end_html_tag_handler(
+    extern "C" fn end_html_tag_handler(
         end: *mut lol::EndTag,
         opaque_this: *mut c_void,
     ) -> lol::Directive {

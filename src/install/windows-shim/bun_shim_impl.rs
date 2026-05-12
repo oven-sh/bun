@@ -1250,7 +1250,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 )
             };
             if did_process_spawn == 0 {
-                let spawn_err = unsafe { k32::GetLastError() };
+                let spawn_err = k32::GetLastError();
                 if DBG {
                     debug!("CreateProcessW failed: {}", spawn_err);
                     debug!("attempt number: {}", attempt_number);

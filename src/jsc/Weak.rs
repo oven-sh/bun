@@ -44,9 +44,7 @@ impl WeakImpl {
     /// `NonNull<WeakImpl>` reachable here is a live C++ `JSC::Weak` handle.
     /// Same contract as [`crate::strong::Impl::get`].
     pub fn get(this: NonNull<WeakImpl>) -> JSValue {
-        // SAFETY: `this` is a live WeakImpl handle (see fn doc); FFI reads
-        // the boxed JSC::Weak's slot without mutating Rust-visible state.
-        unsafe { Bun__WeakRef__get(this.as_ptr()) }
+        Bun__WeakRef__get(WeakImpl::opaque_ref(this.as_ptr()))
     }
 
     /// Clear the weakly-held value without freeing the handle.
@@ -54,8 +52,7 @@ impl WeakImpl {
     /// Safe for the same reason as [`WeakImpl::get`] — the handle is live by
     /// construction; `clear` is idempotent and does not invalidate `this`.
     pub fn clear(this: NonNull<WeakImpl>) {
-        // SAFETY: `this` is a live WeakImpl handle (see fn doc).
-        unsafe { Bun__WeakRef__clear(this.as_ptr()) }
+        Bun__WeakRef__clear(WeakImpl::opaque_ref(this.as_ptr()))
     }
 
     pub unsafe fn destroy(this: NonNull<WeakImpl>) {
@@ -65,6 +62,11 @@ impl WeakImpl {
 }
 
 // TODO(port): move to jsc_sys
+//
+// `WeakImpl` is an opaque `UnsafeCell`-backed ZST handle (`&WeakImpl` is
+// ABI-identical to non-null `*const WeakImpl`; C++ slot mutation is interior).
+// `new` keeps a raw `*mut c_void` ctx and `delete` consumes the allocation, so
+// both stay `unsafe fn`.
 unsafe extern "C" {
     fn Bun__WeakRef__delete(this: *mut WeakImpl);
     fn Bun__WeakRef__new(
@@ -73,8 +75,8 @@ unsafe extern "C" {
         ref_type: WeakRefType,
         ctx: *mut c_void,
     ) -> *mut WeakImpl;
-    fn Bun__WeakRef__get(this: *mut WeakImpl) -> JSValue;
-    fn Bun__WeakRef__clear(this: *mut WeakImpl);
+    safe fn Bun__WeakRef__get(this: &WeakImpl) -> JSValue;
+    safe fn Bun__WeakRef__clear(this: &WeakImpl);
 }
 
 pub struct Weak<T> {

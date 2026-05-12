@@ -312,7 +312,10 @@ pub mod compat {
         // SAFETY: standard Win32 externs; signatures match SDK.
         #[link(name = "kernel32")]
         unsafe extern "system" {
-            pub fn SetHandleInformation(hObject: HANDLE, dwMask: DWORD, dwFlags: DWORD) -> BOOL;
+            /// No pointer preconditions: `hObject` is an opaque kernel handle
+            /// (validated kernel-side; bad handle → `FALSE` + `GetLastError`),
+            /// `dwMask`/`dwFlags` are by-value.
+            pub safe fn SetHandleInformation(hObject: HANDLE, dwMask: DWORD, dwFlags: DWORD) -> BOOL;
             pub fn CreateProcessW(
                 lpApplicationName: LPCWSTR,
                 lpCommandLine: LPWSTR,

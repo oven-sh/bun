@@ -5,7 +5,6 @@ use bun_core::fmt::QuotedFormatter;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
-use bun_semver::version::VersionInt;
 use bun_str::{strings, ZStr};
 use bun_sys::{self, Fd, File, O};
 
@@ -123,14 +122,14 @@ impl<'a, const TAG: ResolutionTag> ResolverContext for NewResolver<'a, TAG> {
         builder.count(self.folder_path);
     }
 
-    fn resolve<SemverIntType: VersionInt>(
+    fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
         _json: &Expr,
-    ) -> Result<ResolutionType<SemverIntType>, bun_core::Error> {
+    ) -> Result<ResolutionType<u64>, bun_core::Error> {
         // Zig: @unionInit(Resolution.Value, @tagName(tag), builder.append(String, this.folder_path))
         let appended = builder.append::<SemverString>(self.folder_path);
-        Ok(ResolutionType::<SemverIntType>::init(match TAG {
+        Ok(ResolutionType::<u64>::init(match TAG {
             ResolutionTag::Folder => TaggedValue::Folder(appended),
             ResolutionTag::Symlink => TaggedValue::Symlink(appended),
             ResolutionTag::Workspace => TaggedValue::Workspace(appended),
@@ -154,23 +153,15 @@ impl ResolverContext for CacheFolderResolver {
 
     fn count(&mut self, _builder: &mut StringBuilder<'_>, _json: &Expr) {}
 
-    fn resolve<SemverIntType: VersionInt>(
+    fn resolve(
         &mut self,
         _builder: &mut StringBuilder<'_>,
         _json: &Expr,
-    ) -> Result<ResolutionType<SemverIntType>, bun_core::Error> {
-        let res = ResolutionType::<u64>::init(TaggedValue::Npm(VersionedURLType {
+    ) -> Result<ResolutionType<u64>, bun_core::Error> {
+        Ok(ResolutionType::<u64>::init(TaggedValue::Npm(VersionedURLType {
             version: self.version,
             url: SemverString::from(b""),
-        }));
-        // SAFETY: `parse_with_json` only instantiates `resolve::<u64>` (see
-        // Package.rs:2439); the transmute is identity. The trait method is
-        // generic only to share a signature with `()`/`GitResolver`.
-        debug_assert_eq!(
-            core::mem::size_of::<ResolutionType<SemverIntType>>(),
-            core::mem::size_of::<ResolutionType<u64>>()
-        );
-        Ok(unsafe { core::mem::transmute_copy(&res) })
+        })))
     }
 }
 

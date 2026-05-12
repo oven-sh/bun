@@ -129,12 +129,12 @@ pub struct SocketAddress {
 
 // TODO(port): move to uws_sys
 unsafe extern "C" {
-    fn bun_clear_loop_at_thread_exit();
+    // safe: no args; clears thread-local loop pointer — no preconditions.
+    safe fn bun_clear_loop_at_thread_exit();
 }
 
 pub fn on_thread_exit() {
-    // SAFETY: FFI call with no preconditions; clears thread-local loop pointer.
-    unsafe { bun_clear_loop_at_thread_exit() }
+    bun_clear_loop_at_thread_exit()
 }
 
 #[unsafe(no_mangle)]

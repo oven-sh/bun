@@ -1444,7 +1444,10 @@ impl Readable {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct SpawnArgs<'a> {
-    pub arena: &'a mut Arena,
+    /// Shared borrow: arena alloc methods take `&self`, and a `&'a Arena`
+    /// (being `Copy`) lets `fill_env` hand back `&'a [u8]` slices without
+    /// the unsafe pointer round-trip the `&'a mut Arena` reborrow forced.
+    pub arena: &'a Arena,
     /// `[*:null]?[*:0]const u8` argv view for `spawn_process`. Built by the
     /// caller from `Cmd.args` (each `Vec<u8>` NUL-terminated) so this struct
     /// never needs to borrow the `Cmd` arena slot — passing the whole `Cmd`
@@ -1539,7 +1542,7 @@ impl<'a> EnvMapIter<'a> {
 
 impl<'a> SpawnArgs<'a> {
     pub fn default<const IS_SYNC: bool>(
-        arena: &'a mut Arena,
+        arena: &'a Arena,
         interp: *mut crate::shell::interpreter::Interpreter,
         event_loop: EventLoopHandle,
     ) -> SpawnArgs<'a> {
@@ -1605,16 +1608,16 @@ impl<'a> SpawnArgs<'a> {
             // Spec: `std.fmt.allocPrintSentinel(arena, "{s}={s}", .{key, value}, 0)`.
             // Bumpalo owns the bytes; freed when the spawn arena is reset.
             let len = key.len() + 1 + value.len();
-            let line: &mut [u8] = self.arena.alloc_slice_fill_default(len + 1);
+            // `self.arena: &'a Arena` is `Copy`, so binding it yields the full
+            // `'a` lifetime independent of the `&mut self` reborrow — the
+            // returned slice is naturally `&'a mut [u8]`.
+            let arena: &'a Arena = self.arena;
+            let line: &'a mut [u8] = arena.alloc_slice_fill_default(len + 1);
             line[..key.len()].copy_from_slice(key);
             line[key.len()] = b'=';
             line[key.len() + 1..len].copy_from_slice(value);
             line[len] = 0;
-            // SAFETY: `self.arena: &'a Arena` outlives `'a`; bumpalo allocations
-            // are address-stable until the arena is reset (after spawn returns).
-            // Reborrow to `'a` so `self.path` (which is `&'a [u8]`) can alias it.
-            let line: &'a [u8] =
-                unsafe { core::slice::from_raw_parts(line.as_ptr(), line.len()) };
+            let line: &'a [u8] = line;
 
             if key == b"PATH" {
                 self.path = &line[b"PATH=".len()..len];

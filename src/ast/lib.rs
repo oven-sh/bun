@@ -3294,22 +3294,27 @@ pub fn set_data_store_override(p: *const bun_alloc::Arena) {
 pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
     let ov = DATA_STORE_OVERRIDE.get();
     if !ov.is_null() {
-        // SAFETY: override is installed by an RAII scope that outlives this
-        // call; the returned slice's unbounded lifetime widens to `'static`
-        // per the `StoreStr` convention (arena ownership, freed on scope drop).
-        let dup: &[u8] = unsafe { &*ov }.alloc_slice_copy(bytes);
-        // SAFETY: erase to arena lifetime (see above).
-        return unsafe { core::mem::transmute::<&[u8], &'static [u8]>(dup) };
+        // SAFETY: override is installed by an RAII `ASTMemoryAllocator::Scope`
+        // that outlives this call, so `*ov` is a live `Arena`. The returned
+        // slice is borrowed from that arena; its lifetime is widened to
+        // `'static` per the `StoreStr` convention (arena ownership, bulk-freed
+        // on scope drop — callers must not hold it past that boundary). This is
+        // lifetime erasure, not a value cast, so no safe `bytemuck`/`as`
+        // equivalent exists.
+        return unsafe {
+            let dup: *const [u8] = (*ov).alloc_slice_copy(bytes);
+            &*dup
+        };
     }
     // No override arena: allocate in the thread-local AST heap (`AstAlloc`),
-    // which is reset alongside the Expr/Stmt stores.
+    // which is reset alongside the Expr/Stmt stores. `AstAlloc` is a `'static`
+    // ZST, so `Vec::leak` already yields `&'static mut [u8]` — no `transmute`
+    // needed. Storage lives until `store_ast_alloc_heap::reset()`; callers must
+    // not hold the slice across that boundary (same contract as every
+    // `StoreRef`/`StoreStr`).
     let mut v: Vec<u8, bun_alloc::AstAlloc> = bun_alloc::AstAlloc::vec();
     v.extend_from_slice(bytes);
-    let leaked = v.leak();
-    // SAFETY: `AstAlloc` storage lives until `store_ast_alloc_heap::reset()`;
-    // callers must not hold the slice across that boundary (same contract as
-    // every `StoreRef`/`StoreStr`).
-    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(leaked) }
+    v.leak()
 }
 
 /// RAII scope for [`store_ast_alloc_heap`]: `enter()` on construction,

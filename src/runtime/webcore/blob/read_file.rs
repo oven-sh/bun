@@ -1203,15 +1203,14 @@ impl<'a> ReadFileUV<'a> {
         this.queue_read();
     }
 
-    fn remaining_buffer(&mut self) -> &mut [u8] {
-        let cur = self.buffer.len();
-        let spare_len = self.buffer.capacity() - cur;
-        let cap = spare_len.min((self.max_length.saturating_sub(self.read_off)) as usize);
-        // SAFETY: `as_mut_ptr()+cur..+cur+cap` addresses spare capacity within
-        // the allocation; bytes are POD and libuv writes into them before any
-        // read. `as_mut_ptr()` (from `&mut self`) yields write-permitted
-        // provenance, unlike the prior `&self → as_ptr() as *mut` UB pattern.
-        unsafe { core::slice::from_raw_parts_mut(self.buffer.as_mut_ptr().add(cur), cap) }
+    fn remaining_buffer(&mut self) -> &mut [MaybeUninit<u8>] {
+        // libuv writes into spare capacity before any read; callers only need
+        // ptr/len, so expose the spare slice directly instead of materialising
+        // a `&mut [u8]` over uninitialized bytes.
+        let limit = (self.max_length.saturating_sub(self.read_off)) as usize;
+        let spare = self.buffer.spare_capacity_mut();
+        let take = spare.len().min(limit);
+        &mut spare[..take]
     }
 
     pub fn queue_read(&mut self) {
@@ -1250,7 +1249,7 @@ impl<'a> ReadFileUV<'a> {
             // (uv_fs_read fills this buffer), which is UB under Stacked Borrows.
             let mut bufs: [libuv::uv_buf_t; 1] = [libuv::uv_buf_t {
                 len: buf.len() as libuv::ULONG,
-                base: buf.as_mut_ptr(),
+                base: buf.as_mut_ptr().cast::<u8>(),
             }];
             self.req.assert_cleaned_up();
             // SAFETY: FFI — `loop_` is the live VM uv loop, `self.req` is a

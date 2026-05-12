@@ -4,7 +4,6 @@ use bun_core::{Global, Output};
 use bun_paths::dirname;
 use bun_paths::resolve_path::join_abs_string_z;
 use bun_paths::platform;
-use bun_semver::version::VersionInt;
 use bun_semver::{ExternalString, String as SemverString};
 use bun_sys as sys;
 
@@ -48,11 +47,11 @@ impl<'a> ResolverContext for GitResolver<'a> {
         builder.count(self.resolved);
     }
 
-    fn resolve<SemverIntType: VersionInt>(
+    fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
         _json: &Expr,
-    ) -> Result<ResolutionType<SemverIntType>, bun_core::Error> {
+    ) -> Result<ResolutionType<u64>, bun_core::Error> {
         // Zig: `var resolution = this.resolution.*;
         //       resolution.value.github.resolved = builder.append(String, this.resolved);`
         // `git` and `github` share the `Repository` payload in the value union,
@@ -105,12 +104,12 @@ impl<'a> ResolverContext for TarballResolver<'a> {
         builder.count(self.url);
     }
 
-    fn resolve<SemverIntType: VersionInt>(
+    fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
         _json: &Expr,
-    ) -> Result<ResolutionType<SemverIntType>, bun_core::Error> {
-        Ok(ResolutionType::<SemverIntType>::init(match self.resolution.tag {
+    ) -> Result<ResolutionType<u64>, bun_core::Error> {
+        Ok(ResolutionType::<u64>::init(match self.resolution.tag {
             ResolutionTag::LocalTarball => {
                 TaggedValue::LocalTarball(builder.append::<SemverString>(self.url))
             }

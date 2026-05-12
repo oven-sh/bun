@@ -757,8 +757,8 @@ impl JSValue {
     /// Never throws; lifetime tied to `global` (cell is GC-rooted by the VM's
     /// SmallStrings table).
     pub fn js_type_string<'a>(self, global: &'a JSGlobalObject) -> &'a JSString {
-        // SAFETY: FFI returns a non-null SmallStrings cell.
-        unsafe { &*JSC__jsTypeStringForValue(global, self) }
+        // FFI returns a non-null SmallStrings cell (opaque ZST handle).
+        JSString::opaque_ref(JSC__jsTypeStringForValue(global, self))
     }
     pub fn as_array_buffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
         let mut out = ArrayBuffer::default();

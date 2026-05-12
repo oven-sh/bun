@@ -1044,9 +1044,10 @@ impl TestReporterAgent {
     #[allow(clippy::mut_from_ref)]
     fn handle_mut(&self) -> &mut TestReporterHandle {
         debug_assert!(!self.handle.is_null());
-        // SAFETY: caller contract — `is_enabled()` checked; handle is a live
-        // C++ heap allocation owned by the inspector backend.
-        unsafe { &mut *self.handle }
+        // Caller contract — `is_enabled()` checked; handle is a live C++ heap
+        // allocation owned by the inspector backend. `TestReporterHandle` is an
+        // opaque ZST handle so the deref is the centralised `opaque_mut` proof.
+        TestReporterHandle::opaque_mut(self.handle)
     }
 
     /// Caller must ensure that it is enabled first.
@@ -1146,9 +1147,10 @@ impl LifecycleAgent {
     /// Safe optional accessor — wraps the null check + raw deref.
     #[inline]
     fn handle_mut(&mut self) -> Option<&mut LifecycleHandle> {
-        // SAFETY: `handle` is null or a live C++ heap allocation owned by the
-        // inspector backend; checked via `NonNull::new`.
-        core::ptr::NonNull::new(self.handle).map(|mut p| unsafe { p.as_mut() })
+        // `handle` is null or a live C++ heap allocation owned by the inspector
+        // backend. `LifecycleHandle` is an opaque ZST handle so the deref is
+        // the centralised `opaque_mut` proof.
+        core::ptr::NonNull::new(self.handle).map(|p| LifecycleHandle::opaque_mut(p.as_ptr()))
     }
 
     pub fn report_reload(&mut self) {

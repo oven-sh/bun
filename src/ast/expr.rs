@@ -3129,9 +3129,13 @@ fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
     }
     // TODO(port): move to *_sys
     unsafe extern "C" {
+        // NOT `safe fn`: callee dereferences `ptr` for `len` bytes — caller must
+        // guarantee the (ptr,len) pair is a valid readable range.
         fn JSC__jsToNumber(ptr: *const u8, len: usize) -> f64;
     }
-    // SAFETY: str is valid for len bytes; JSC__jsToNumber reads only.
+    // SAFETY: `str` is a live `&[u8]`, so `as_ptr()` is non-null and readable for
+    // exactly `str.len()` bytes for the duration of this call; the C++ side reads
+    // only (no mutation, no retention past return).
     unsafe { JSC__jsToNumber(str.as_ptr(), str.len()) }
 }
 

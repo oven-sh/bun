@@ -136,7 +136,10 @@ pub mod Macro {
             caller: bun_ast::Expr,
             function_name: &[u8],
         ) -> Result<bun_ast::Expr, bun_core::Error> {
-            // SAFETY: link-time-resolved Rust-ABI fn.
+            // SAFETY: callee downcasts `self.data` to `&mut Macro::Data`; `data`
+            // is only ever populated by `__bun_macro_context_init` (or left null,
+            // which the callee guards), so the type-erased pointer round-trips to
+            // its original allocation. All other args are Rust-ABI references.
             unsafe {
                 __bun_macro_context_call(
                     self,
@@ -158,8 +161,11 @@ pub mod Macro {
         /// type back inside `__bun_macro_context_init`.
         #[inline]
         pub fn init<T>(transpiler: &mut T) -> Self {
-            // SAFETY: link-time-resolved Rust-ABI fn; pointer is valid for the
-            // duration of the call.
+            // SAFETY: `transpiler` is a live `&mut T` (exclusive, non-null,
+            // aligned) for the duration of the call; the callee casts it back to
+            // `&mut Transpiler<'_>` and only reads/borrows fields — it does not
+            // retain the pointer past return (the boxed state it allocates owns
+            // its own data).
             unsafe { __bun_macro_context_init(transpiler as *mut T as *mut core::ffi::c_void) }
         }
         /// Free the boxed higher-tier state behind `data`. Only call when the
@@ -168,7 +174,10 @@ pub mod Macro {
         /// `vm.transpiler` instance leaks it intentionally (process-lifetime).
         #[inline]
         pub fn deinit(self) {
-            // SAFETY: link-time-resolved Rust-ABI fn; null is a no-op.
+            // SAFETY: `self.data` is either null (callee no-ops) or the exact
+            // `Box::into_raw` produced by `__bun_macro_context_init`; `self` is
+            // taken by value so this is the unique owner and no double-free is
+            // possible.
             unsafe { __bun_macro_context_deinit(self.data) }
         }
         /// Zig: `pub fn getRemap(self: *MacroContext, path: []const u8) ?MacroRemapEntry`.
@@ -180,7 +189,11 @@ pub mod Macro {
             if self.data.is_null() {
                 return None;
             }
-            // SAFETY: link-time-resolved Rust-ABI fn; `data` is non-null.
+            // SAFETY: `self.data` is non-null (checked above) and was produced by
+            // `__bun_macro_context_init`, so it points at a live `Macro::Data`
+            // whose remap table the callee borrows. The table is owned by
+            // `Transpiler.options` (process-lifetime), justifying the `'static`
+            // return.
             unsafe { __bun_macro_context_get_remap(self.data, path) }
         }
     }

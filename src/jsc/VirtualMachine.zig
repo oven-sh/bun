@@ -1598,9 +1598,22 @@ pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifi
             .source_code_needs_deref = false,
         };
     }
-    var source = this.refCountedString(code, hash_, !add_double_ref);
+    var was_new = false;
+    var source = this.refCountedStringWithWasNew(&was_new, code, hash_, !add_double_ref);
     if (add_double_ref) {
         source.ref();
+        source.ref();
+    }
+
+    // `ref_strings` is a weak cache: entries self-remove via the external
+    // string destructor (freeRefString -> clearRefString) when the last
+    // strong ref drops. To make that work, we must hand the caller exactly
+    // +1 that it will balance (source_code_needs_deref = true). A fresh
+    // entry already carries the +1 from createExternal(); a cache hit
+    // doesn't, so take one here. Previously we returned with needs_deref =
+    // false and the createExternal() ref was never released, so every
+    // distinct transpiled source string under --hot leaked forever.
+    if (!was_new) {
         source.ref();
     }
 
@@ -1609,7 +1622,7 @@ pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifi
         .specifier = specifier,
         .source_url = specifier.createIfDifferent(source_url),
         .allocator = source,
-        .source_code_needs_deref = false,
+        .source_code_needs_deref = true,
     };
 }
 

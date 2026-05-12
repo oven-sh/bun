@@ -174,6 +174,7 @@
 #include "EventLoopTask.h"
 #include "NodeModuleModule.h"
 #include <JavaScriptCore/JSCBytecodeCacheVersion.h>
+#include <JavaScriptCore/CodeCache.h>
 #include "JSPerformanceServerTiming.h"
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
@@ -3238,6 +3239,16 @@ void GlobalObject::reload()
     this->moduleLoader()->clearAll();
     this->requireMap()->clear(this);
     RETURN_IF_EXCEPTION(scope, );
+
+    // The VM's CodeCache is keyed by source text, so every reload of an
+    // edited file inserts a new UnlinkedModuleProgramCodeBlock entry that
+    // holds a Strong<> to the old SourceProvider (and thus the old source
+    // string). Its prune policy only kicks in after ~10s elapsed or ~16 MB
+    // of accumulated source, which a tight edit-save loop in --hot never
+    // hits, so stale entries pile up unbounded. We already re-transpile
+    // every module after clearAll() above, so re-parsing is marginal;
+    // drop the stale entries here.
+    vm.codeCache()->clear();
 
     // If we run the GC every time, we will never get the SourceProvider cache hit.
     // So we run the GC every other time.

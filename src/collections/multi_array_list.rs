@@ -981,15 +981,13 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
             // SAFETY: within the fresh allocation; always in-bounds.
             dst = unsafe { dst.add(size * new_len) };
         }
-        // SAFETY: free old backing store before overwriting self.
-        unsafe { self.free_allocated_bytes() };
+        self.free_allocated_bytes();
         self.bytes = other_bytes;
         self.capacity = new_len;
     }
 
     pub fn clear_and_free(&mut self) {
-        // SAFETY: frees the current buffer (if any).
-        unsafe { self.free_allocated_bytes() };
+        self.free_allocated_bytes();
         self.bytes = ptr::null_mut();
         self.len = 0;
         self.capacity = 0;
@@ -1025,8 +1023,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         let new_layout = layout_for::<T>(new_capacity);
         let new_bytes = aligned_alloc(&self.alloc, new_layout)?;
         if self.len == 0 {
-            // SAFETY: free old (possibly null/empty) buffer.
-            unsafe { self.free_allocated_bytes() };
+            self.free_allocated_bytes();
             self.bytes = new_bytes;
             self.capacity = new_capacity;
             return Ok(());
@@ -1046,8 +1043,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
             // SAFETY: within the fresh allocation; always in-bounds.
             dst = unsafe { dst.add(size * new_capacity) };
         }
-        // SAFETY: free old backing store before taking new one.
-        unsafe { self.free_allocated_bytes() };
+        self.free_allocated_bytes();
         self.bytes = new_bytes;
         self.capacity = new_capacity;
         Ok(())
@@ -1148,12 +1144,21 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         }
     }
 
-    /// # Safety
-    /// Must not be called twice without an intervening allocation.
-    unsafe fn free_allocated_bytes(&mut self) {
+    /// Free the current backing allocation (if any) and reset `capacity` so a
+    /// repeat call is a no-op. Safe: `bytes`/`capacity` are private and every
+    /// constructor/mutator upholds the invariant that when
+    /// `layout_for::<T>(self.capacity)` is `Some(layout)`, `self.bytes` is a
+    /// live non-null allocation from `self.alloc` with exactly `layout` (see
+    /// [`aligned_alloc`] / [`set_capacity`]).
+    fn free_allocated_bytes(&mut self) {
         if let Some(layout) = layout_for::<T>(self.capacity) {
-            // SAFETY: `bytes` was allocated with exactly `layout` via `self.alloc`.
+            // SAFETY: type invariant above — `self.bytes` is non-null and was
+            // allocated by `self.alloc` with exactly `layout`.
             unsafe { self.alloc.deallocate(ptr::NonNull::new_unchecked(self.bytes), layout) };
+            // Re-establish the invariant immediately so an (accidental) second
+            // call before the caller installs a new buffer is a no-op rather
+            // than a double-free. Callers overwrite both fields right after.
+            self.capacity = 0;
         }
     }
 

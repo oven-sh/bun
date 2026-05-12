@@ -73,7 +73,7 @@ describe.concurrent("bun test: unsettled top-level await", () => {
     const r = await run({ cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"], cwd: String(dir) });
     expect(r.signalCode).toBeNull();
     // b's TLA must complete; only a's unhandled rejection is the error.
-    expect(r.stderr).not.toContain("Top-level await in b.test.ts");
+    expect(r.stderr).not.toContain("Top-level await");
     expect(r.stderr).toContain("(pass) b");
     expect(r.stderr).toContain("error: boom");
     expect(r.exitCode).toBe(1);

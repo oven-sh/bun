@@ -841,16 +841,20 @@ pub const SendQueue = struct {
         return .success;
     }
     /// True when bytes enqueued by `serializeAndSend` have not yet been handed
-    /// off to the kernel — either the write is in progress, partial, or queued
-    /// behind a handle ACK. Used to signal IPC backpressure to callers.
+    /// off to the kernel — either we're blocked on a handle ACK, or items are
+    /// queued in userspace beyond the one a uv_write may be carrying. Used to
+    /// signal IPC backpressure to callers.
+    ///
+    /// On POSIX `_write` drives `_onWriteComplete` inline, so by the time we
+    /// get here `write_in_progress` is always false: a non-empty queue means
+    /// the kernel pushed back on a partial write. On Windows `uv_write` is
+    /// always async, so the first queue item is in flight with libuv — that
+    /// is the Windows equivalent of a synchronously-accepted POSIX write and
+    /// not backpressure on its own. Items *behind* that one are what matters.
     fn hasBufferedData(self: *const SendQueue) bool {
         if (self.waiting_for_ack != null) return true;
-        if (self.write_in_progress) return true;
-        if (self.queue.items.len == 0) return false;
-        // If the only queued item is a fully-drained placeholder (cursor == len
-        // and len == 0) it should have been shifted off by continueSend. Any
-        // remaining bytes here are buffered.
-        return true;
+        const in_flight: usize = if (self.write_in_progress) 1 else 0;
+        return self.queue.items.len > in_flight;
     }
     fn debugLogMessageQueue(this: *SendQueue) void {
         if (!Environment.isDebug) return;

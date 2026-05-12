@@ -54,6 +54,10 @@ child.on("message", () => {
   received++;
 });
 
-child.on("exit", (code, signal) => {
+// 'close' fires after all stdio + the IPC channel have drained, so every
+// queued 'message' has been emitted by then. 'exit' fires as soon as the
+// child process terminates — in-flight kernel-buffered messages may still
+// be unread, making `received` an undercount if we read it there.
+child.on("close", (code, signal) => {
   console.log(`parent received=${received} exit=${code} signal=${signal}`);
 });

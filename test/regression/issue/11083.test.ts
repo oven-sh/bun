@@ -9,10 +9,10 @@
 // was collected. reload() now clears the CodeCache and the ref is balanced.
 
 import { spawn } from "bun";
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 
 test(
   "bun --hot should not accumulate stale code blocks when file content changes on every reload",

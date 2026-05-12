@@ -150,18 +150,17 @@ mod k32 {
     pub use w::kernel32::CreateProcessW;
     /// https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
     pub use w::kernel32::GetLastError;
-    /// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess
-    pub use w::kernel32::GetExitCodeProcess;
-    /// https://learn.microsoft.com/en-us/windows/console/getconsolemode
-    pub use w::kernel32::GetConsoleMode;
     /// https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-sethandleinformation
     pub use w::kernel32::SetHandleInformation;
 
     // SAFETY: kernel32 externs; signatures match SDK. Declared locally as
     // `safe fn` (vs. re-exporting `unsafe fn` from `w::kernel32`) because
-    // neither has memory-safety preconditions: `HANDLE` is opaque and
-    // validated kernel-side (bad handle → `WAIT_FAILED` / `FALSE` +
-    // `GetLastError`, not UB), `dwMilliseconds`/`dwMode` are by-value.
+    // none has a memory-safety precondition the type system can't encode:
+    // `HANDLE` is opaque and validated kernel-side (bad handle → `WAIT_FAILED`
+    // / `FALSE` + `GetLastError`, not UB); by-value scalars are trivially
+    // sound; the two `LPDWORD` out-params are taken as `&mut DWORD` (ABI-
+    // identical to `*mut DWORD`, but Rust guarantees non-null/aligned/valid-
+    // for-write so the kernel write cannot fault).
     #[link(name = "kernel32")]
     unsafe extern "system" {
         /// https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject
@@ -169,6 +168,12 @@ mod k32 {
 
         /// https://learn.microsoft.com/en-us/windows/console/setconsolemode
         pub safe fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
+
+        /// https://learn.microsoft.com/en-us/windows/console/getconsolemode
+        pub safe fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: &mut DWORD) -> BOOL;
+
+        /// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess
+        pub safe fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: &mut DWORD) -> BOOL;
     }
 }
 
@@ -383,8 +388,7 @@ fn fail_and_exit_with_reason(reason: FailReason) -> ! {
         (*(*(*w::teb()).ProcessEnvironmentBlock).ProcessParameters).hStdError
     };
     let mut mode: DWORD = 0;
-    // SAFETY: console_handle is a valid handle (or invalid, in which case GetConsoleMode returns 0).
-    if unsafe { k32::GetConsoleMode(console_handle, &mut mode) } != 0 {
+    if k32::GetConsoleMode(console_handle, &mut mode) != 0 {
         mode |= w::ENABLE_VIRTUAL_TERMINAL_PROCESSING;
         let _ = k32::SetConsoleMode(console_handle, mode);
     }
@@ -1381,8 +1385,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             let _ = k32::WaitForSingleObject(process.hProcess, w::INFINITE);
 
             let mut exit_code: DWORD = 255;
-            // SAFETY: process.hProcess is valid; exit_code is a valid out-pointer.
-            let _ = unsafe { k32::GetExitCodeProcess(process.hProcess, &mut exit_code) };
+            let _ = k32::GetExitCodeProcess(process.hProcess, &mut exit_code);
             if DBG {
                 debug!("exit_code: {}", exit_code);
             }

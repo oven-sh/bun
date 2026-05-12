@@ -951,17 +951,16 @@ impl Tree {
 
         // Tree is Copy — snapshot the fields we need so we don't hold a borrow of builder.list.
         let this: Tree = builder.list.items_tree()[self_id as usize];
-        // Snapshot the dep-id slice as raw ptr+len, detached from `builder`, so the loop body
-        // can freely take `&builder` / `&mut builder`. SAFETY: `builder.list` is not mutated
-        // for the duration of this loop (the recursive call happens *after* the loop), so the
-        // backing storage for `items_dependencies()[self_id]` is neither reallocated nor moved.
-        let dep_ids: &[DependencyID] = {
-            let view = this
+        // `DependencyID` is `Copy`. Iterate by index and re-borrow `builder.list`
+        // per-iteration just long enough to copy out one id, so the loop body can
+        // freely take `&builder` / `&mut builder.log` without a lifetime-laundering
+        // raw-slice detach. `builder.list` is not mutated for the duration of
+        // this loop (the recursive call happens *after* it), so re-indexing is stable.
+        for i in 0..this.dependencies.len {
+            let dep_id: DependencyID = this
                 .dependencies
-                .get(builder.list.items_dependencies()[self_id as usize].as_slice());
-            unsafe { core::slice::from_raw_parts(view.as_ptr(), view.len()) }
-        };
-        for &dep_id in dep_ids {
+                .get(builder.list.items_dependencies()[self_id as usize].as_slice())
+                [i as usize];
             // SAFETY: `dep_id` was produced by the same lockfile that produced `deps`;
             // Zig release builds have no bounds check here.
             let dep = unsafe { deps.get_unchecked(dep_id as usize) };

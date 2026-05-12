@@ -197,8 +197,9 @@ extern "C" fn select_alpn_callback(
     inlen: c_uint,
     _arg: *mut c_void,
 ) -> c_int {
-    // SAFETY: `SSL_get_ex_data(ssl, 0)` was set in `on_open` to `*mut TLSSocket`.
-    let this_ptr = unsafe { boringssl_sys::SSL_get_ex_data(ssl, 0) };
+    // BoringSSL never invokes the ALPN callback with a null `SSL*`; route
+    // through the const-asserted opaque-ZST accessor so the call is safe.
+    let this_ptr = tls_socket_functions::ffi::SSL_get_ex_data(boringssl_sys::SSL::opaque_ref(ssl), 0);
     if this_ptr.is_null() {
         return boringssl_sys::SSL_TLSEXT_ERR_NOACK;
     }
@@ -1122,8 +1123,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Add SNI support for TLS (mongodb and others requires this)
         if SSL {
             if let Some(ssl_ptr) = this.socket.get().ssl() {
-                // SAFETY: BoringSSL FFI; `ssl_ptr` is a live `*mut SSL`.
-                if unsafe { boringssl_sys::SSL_is_init_finished(ssl_ptr) } == 0 {
+                if tls_socket_functions::ffi::SSL_is_init_finished(boringssl_sys::SSL::opaque_ref(ssl_ptr)) == 0 {
                     if let Some(server_name) = this.server_name.get() {
                         let host: &[u8] = server_name.as_ref();
                         if !host.is_empty() {
@@ -2750,8 +2750,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     }
                     return Err(global.throw_value(boringssl_err_to_js(
                         global,
-                        // SAFETY: BoringSSL FFI.
-                        unsafe { boringssl_sys::ERR_get_error() },
+                        boringssl_sys::ERR_get_error(),
                     )));
                 }
             };
@@ -2826,12 +2825,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         } {
             Some(s) => s,
             None => {
-                // SAFETY: BoringSSL FFI.
-                let err = unsafe { boringssl_sys::ERR_get_error() };
+                let err = boringssl_sys::ERR_get_error();
                 scopeguard::defer! {
                     if err != 0 {
-                        // SAFETY: BoringSSL FFI.
-                        unsafe { boringssl_sys::ERR_clear_error() };
+                        boringssl_sys::ERR_clear_error();
                     }
                 }
                 // tls.deinit drops the owned_ctx ref. Null the handlers field

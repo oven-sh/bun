@@ -2559,7 +2559,7 @@ impl DevServer {
                 );
                 // SAFETY: per-access reborrow; no other `&` into `*route_bundle` live.
                 unsafe { (*route_bundle).data.html_mut().cached_response =
-                    ::core::ptr::NonNull::new(route_ptr) };
+                    ::core::ptr::NonNull::new(route_ptr).map(bun_ptr::BackRef::from) };
                 break 'generate route_ptr;
             }
         };
@@ -2747,7 +2747,7 @@ impl DevServer {
                         ..Default::default()
                     },
                 );
-                route_bundle.client_bundle = ::core::ptr::NonNull::new(route_ptr);
+                route_bundle.client_bundle = ::core::ptr::NonNull::new(route_ptr).map(bun_ptr::BackRef::from);
                 break 'generate route_ptr;
             }
         };

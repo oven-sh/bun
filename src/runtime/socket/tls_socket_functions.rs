@@ -35,11 +35,11 @@ fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> JsResult<JS
 #[allow(non_camel_case_types, non_upper_case_globals, dead_code)]
 pub mod ffi {
     use super::boringssl::{SSL, X509, struct_stack_st_X509, X509_STORE_CTX};
-    use core::ffi::{c_char, c_int, c_long, c_void};
+    use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 
-    // Re-export decls that already live in the canonical sys crate so existing
-    // `ffi::X` call sites resolve there instead of a local re-declaration.
-    pub use super::boringssl::{SSL_get0_alpn_selected, SSL_get_servername, SSL_set_tlsext_host_name};
+    // Re-export the one decl whose `*const c_char` NUL-terminated arg keeps a
+    // genuine caller precondition; the rest are re-declared `safe fn` below.
+    pub use super::boringssl::SSL_set_tlsext_host_name;
 
     // Opaque handles missing from boringssl_sys.
     bun_opaque::opaque_ffi! {
@@ -165,6 +165,21 @@ pub mod ffi {
         // pointer into BoringSSL's static OID table (or null). No pointer
         // precondition, so declare `safe fn`.
         pub safe fn OBJ_nid2sn(nid: c_int) -> *const c_char;
+
+        // ── Safe re-declarations of upstream `bun_boringssl_sys` symbols ──
+        // Upstream still takes raw `*const/*mut SSL`; the opaque-ZST `&SSL`
+        // (UnsafeCell body, zero-byte deref, no `noalias`) plus by-value
+        // scalars / `&mut` out-params leave no caller-side precondition, so
+        // declare them `safe fn` here and route callers through
+        // `SSL::opaque_ref` (panics on null, which every site already guards).
+        pub safe fn SSL_get_servername(ssl: &SSL, ty: c_int) -> *const c_char;
+        pub safe fn SSL_is_init_finished(ssl: &SSL) -> c_int;
+        pub safe fn SSL_get_peer_cert_chain(ssl: &SSL) -> *mut struct_stack_st_X509;
+        pub safe fn SSL_get0_alpn_selected(ssl: &SSL, out_data: &mut *const u8, out_len: &mut c_uint);
+        pub safe fn SSL_get_ex_data(ssl: &SSL, idx: c_int) -> *mut c_void;
+        pub safe fn SSL_renegotiate(ssl: &SSL) -> c_int;
+        pub safe fn SSL_set_renegotiate_mode(ssl: &SSL, mode: super::boringssl::ssl_renegotiate_mode_t);
+        pub safe fn SSL_set_verify(ssl: &SSL, mode: c_int, callback: super::boringssl::SSL_verify_cb);
     }
 }
 use crate::node::StringOrBuffer;
@@ -182,8 +197,7 @@ type This = super::TLSSocket;
 pub fn get_servername(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
 
-    // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.get().ssl().
-    let servername = unsafe { boringssl::SSL_get_servername(ssl_ptr, ffi::TLSEXT_NAMETYPE_host_name) };
+    let servername = ffi::SSL_get_servername(boringssl::SSL::opaque_ref(ssl_ptr), ffi::TLSEXT_NAMETYPE_host_name);
     if servername.is_null() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -215,8 +229,7 @@ pub fn set_servername(this: &This, global: &JSGlobalObject, frame: &CallFrame) -
     if !host.is_empty() {
         let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
 
-        // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.get().ssl().
-        if unsafe { boringssl::SSL_is_init_finished(ssl_ptr) } != 0 {
+        if ffi::SSL_is_init_finished(boringssl::SSL::opaque_ref(ssl_ptr)) != 0 {
             // match node.js exceptions
             return Err(global.throw(format_args!("Already started.")));
         }
@@ -318,8 +331,7 @@ pub fn get_peer_certificate(this: &This, global: &JSGlobalObject, frame: &CallFr
             }
         }
 
-        // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.get().ssl().
-        let cert_chain = unsafe { boringssl::SSL_get_peer_cert_chain(ssl_ptr) };
+        let cert_chain = ffi::SSL_get_peer_cert_chain(boringssl::SSL::opaque_ref(ssl_ptr));
         if cert_chain.is_null() {
             return Ok(JSValue::UNDEFINED);
         }
@@ -343,8 +355,7 @@ pub fn get_peer_certificate(this: &This, global: &JSGlobalObject, frame: &CallFr
         }
     });
 
-    // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.get().ssl().
-    let cert_chain = unsafe { boringssl::SSL_get_peer_cert_chain(ssl_ptr) };
+    let cert_chain = ffi::SSL_get_peer_cert_chain(boringssl::SSL::opaque_ref(ssl_ptr));
     let first_cert: *mut boringssl::X509 = if !cert.is_null() {
         cert
     } else if !cert_chain.is_null() {
@@ -702,8 +713,7 @@ pub fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResult<JSVal
 
     let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::FALSE) };
 
-    // SAFETY: ssl_ptr is a live *mut SSL; out-params are valid stack locals.
-    unsafe { ffi::SSL_get0_alpn_selected(ssl_ptr, &raw mut alpn_proto, &raw mut alpn_proto_len) };
+    ffi::SSL_get0_alpn_selected(boringssl::SSL::opaque_ref(ssl_ptr), &mut alpn_proto, &mut alpn_proto_len);
     if alpn_proto.is_null() || alpn_proto_len == 0 {
         return Ok(JSValue::FALSE);
     }
@@ -802,8 +812,7 @@ pub fn get_tls_ticket(this: &This, global: &JSGlobalObject, _frame: &CallFrame) 
 pub fn renegotiate(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
     boringssl::ERR_clear_error();
-    // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.get().ssl().
-    if unsafe { boringssl::SSL_renegotiate(ssl_ptr) } != 1 {
+    if ffi::SSL_renegotiate(boringssl::SSL::opaque_ref(ssl_ptr)) != 1 {
         return Err(global.throw_value(get_ssl_exception(global, b"SSL_renegotiate error")));
     }
     Ok(JSValue::UNDEFINED)
@@ -811,8 +820,7 @@ pub fn renegotiate(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> 
 
 pub fn disable_renegotiation(this: &This, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
-    // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.get().ssl().
-    unsafe { boringssl::SSL_set_renegotiate_mode(ssl_ptr, boringssl::ssl_renegotiate_never) };
+    ffi::SSL_set_renegotiate_mode(boringssl::SSL::opaque_ref(ssl_ptr), boringssl::ssl_renegotiate_never);
     Ok(JSValue::UNDEFINED)
 }
 
@@ -850,8 +858,7 @@ pub fn set_verify_mode(this: &This, global: &JSGlobalObject, frame: &CallFrame) 
     }
     let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
     // we always allow and check the SSL certificate after the handshake or renegotiation
-    // SAFETY: ssl_ptr is a live *mut SSL; the callback is an `extern "C"` fn with the SSL_verify_cb signature.
-    unsafe { boringssl::SSL_set_verify(ssl_ptr, verify_mode, Some(always_allow_ssl_verify_callback)) };
+    ffi::SSL_set_verify(boringssl::SSL::opaque_ref(ssl_ptr), verify_mode, Some(always_allow_ssl_verify_callback));
     Ok(JSValue::UNDEFINED)
 }
 

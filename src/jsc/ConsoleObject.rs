@@ -1135,17 +1135,21 @@ impl<'a> DynWriteAdapter<'a> {
         &mut self.head
     }
 
-    unsafe fn thunk_write_all(
+    fn thunk_write_all(
         w: *mut bun_core::io::Writer,
         bytes: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // SAFETY: `w` always points at `Self.head`, the first repr(C) field.
+        // SAFETY: only reachable via the `io::Writer` vtable installed in
+        // `Self::new`, which always passes `&mut self.head` (first repr(C)
+        // field) as `w`; safe-fn coerces to the unsafe-fn-ptr slot type.
         let this = unsafe { &mut *w.cast::<Self>() };
         this.inner.write_all(bytes)
     }
 
-    unsafe fn thunk_flush(w: *mut bun_core::io::Writer) -> Result<(), bun_core::Error> {
-        // SAFETY: `w` always points at `Self.head`, the first repr(C) field.
+    fn thunk_flush(w: *mut bun_core::io::Writer) -> Result<(), bun_core::Error> {
+        // SAFETY: only reachable via the `io::Writer` vtable installed in
+        // `Self::new`, which always passes `&mut self.head` (first repr(C)
+        // field) as `w`; safe-fn coerces to the unsafe-fn-ptr slot type.
         let this = unsafe { &mut *w.cast::<Self>() };
         this.inner.flush()
     }

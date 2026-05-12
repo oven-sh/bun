@@ -81,18 +81,19 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         this
     }
 
-    /// SAFETY: `task` points to the `task` field of a heap-allocated `Self`
-    /// created in [`create_on_js_thread`].
-    pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: recover the parent via offset_of.
+    pub fn run_from_thread_pool(task: *mut WorkPoolTask) {
+        // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
+        // slot — safe-fn coerces) for the `task` field initialised in
+        // `create_on_js_thread`; the WorkPool calls back with exactly that
+        // field, so `from_field_ptr!` recovers the live heap `Self` parent,
+        // exclusively owned by the work pool for this callback's duration.
         let this: *mut Self = unsafe {
             bun_core::from_field_ptr!(Self, task, task)
         };
         // SAFETY: `this` is alive for the duration of the thread-pool callback;
         // exclusively owned by the work pool at this point.
         unsafe { (*this).ctx.run() };
-        // SAFETY: same allocation as above.
-        unsafe { Self::on_finish(this) };
+        Self::on_finish(this);
     }
 
     pub fn run_from_js(&mut self) -> Result<(), JsTerminated> {
@@ -106,10 +107,9 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         WorkPool::schedule(&raw mut self.task);
     }
 
-    /// SAFETY: `this` is the live heap allocation from [`create_on_js_thread`],
-    /// called from the thread-pool callback after `Context::run` completes.
-    unsafe fn on_finish(this: *mut Self) {
-        // SAFETY: `this` is the live heap allocation from `create_on_js_thread`.
+    fn on_finish(this: *mut Self) {
+        // SAFETY: only called from `run_from_thread_pool` above with the live
+        // heap allocation recovered via `from_field_ptr!`.
         // `concurrent_task` is an intrusive field of `*this`; `from`
         // re-initializes it in place and returns the same address. Passing
         // `this` while holding `&mut *this` is sound because `from` only stores

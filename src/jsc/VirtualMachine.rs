@@ -1846,15 +1846,17 @@ unsafe extern "Rust" {
     /// `bun_runtime::jsc_hooks`. Link-time resolved — no `AtomicPtr`, no
     /// init-order hazard. Zig had no crate split here; `VirtualMachine`
     /// reached `Timer::All` / `ServerEntryPoint` / etc. directly.
-    static __BUN_RUNTIME_HOOKS: RuntimeHooks;
+    /// `RuntimeHooks` is an immutable POD of fn-ptrs with a single definition;
+    /// reading it has no precondition beyond the link succeeding → `safe static`.
+    safe static __BUN_RUNTIME_HOOKS: RuntimeHooks;
 }
 
 #[inline]
 pub fn runtime_hooks() -> Option<&'static RuntimeHooks> {
-    // SAFETY: link-time-resolved `&'static` Rust-ABI static. Always `Some` —
+    // Link-time-resolved `&'static` Rust-ABI static. Always `Some` —
     // kept as `Option` so existing call sites (`if let Some(hooks)`) compile
     // unchanged; the branch folds away.
-    Some(unsafe { &__BUN_RUNTIME_HOOKS })
+    Some(&__BUN_RUNTIME_HOOKS)
 }
 
 // TODO(port): move to jsc_sys
@@ -3605,11 +3607,13 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:1586 `clearRefString`.
     ///
-    /// SAFETY: `ref_string` was allocated by `ref_counted_string_with_was_new`
-    /// on this thread's VM and is currently in `ref_strings`; called from
-    /// `RefString::destroy` (the WTF external-string finalizer).
-    pub unsafe fn clear_ref_string(_: *mut c_void, ref_string: *mut crate::ref_string::RefString) {
-        // SAFETY: per fn contract.
+    /// Stored as [`RefString::on_before_deinit`] (an unsafe-fn-ptr slot) in
+    /// [`ref_counted_string_with_was_new`]; only ever invoked from
+    /// `RefString::destroy` with the live `*mut RefString` being torn down.
+    fn clear_ref_string(_: *mut c_void, ref_string: *mut crate::ref_string::RefString) {
+        // SAFETY: only reachable via `RefString::destroy`, which passes the
+        // live heap `RefString` allocated in `ref_counted_string_with_was_new`;
+        // safe-fn coerces to the unsafe-fn-ptr `Callback` slot type.
         let hash = unsafe { &*ref_string }.hash;
         // SAFETY: `get()` is the live per-thread VM.
         VirtualMachine::get().as_mut().ref_strings.remove(&hash);

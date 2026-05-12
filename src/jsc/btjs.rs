@@ -507,8 +507,10 @@ use tty::Color;
 
 #[cfg(debug_assertions)]
 unsafe extern "C" {
-    static jsc_llint_begin: u8;
-    static jsc_llint_end: u8;
+    // safe: link-time section markers — only their *addresses* are taken
+    // (`&raw const … as usize`), never dereferenced; no Rust-side precondition.
+    safe static jsc_llint_begin: u8;
+    safe static jsc_llint_end: u8;
 }
 
 /// allocated using bun.default_allocator. when called from lldb, it is never freed.

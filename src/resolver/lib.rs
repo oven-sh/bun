@@ -3432,14 +3432,14 @@ impl DebugMeta {
 
 pub struct DirEntryResolveQueueItem {
     pub result: allocators::Result,
-    // PORT NOTE: raw `*const [u8]` (not `&'static [u8]`) — these point into the
+    // PORT NOTE: `RawSlice<u8>` (not `&'static [u8]`) — these point into the
     // threadlocal `dir_info_uncached_path` buffer and are consumed before
-    // `dir_info_cached_maybe_log` returns. A `&'static` lie here is the only
-    // non-zero-safe field in `Bufs`, making `Box::<Bufs>::new_zeroed()` UB even
-    // though the array slot is `MaybeUninit`-wrapped; the raw pointer keeps the
-    // bit-level invariant trivially satisfiable and drops the lifetime forgery.
-    pub unsafe_path: *const [u8],
-    pub safe_path: *const [u8],
+    // `dir_info_cached_maybe_log` returns. `RawSlice` is `repr(transparent)`
+    // over `*const [u8]` so the bit-level zero-init invariant for `Bufs` is
+    // unchanged (the array slot is `MaybeUninit`-wrapped), and read sites use
+    // safe `.slice()` instead of an open-coded raw-ptr deref.
+    pub unsafe_path: bun_ptr::RawSlice<u8>,
+    pub safe_path: bun_ptr::RawSlice<u8>,
     pub fd: FD,
 }
 
@@ -3451,8 +3451,8 @@ impl Default for DirEntryResolveQueueItem {
                 index: allocators::NOT_FOUND,
                 status: allocators::Status::Unknown,
             },
-            unsafe_path: std::ptr::from_ref::<[u8]>(b""),
-            safe_path: std::ptr::from_ref::<[u8]>(b""),
+            unsafe_path: bun_ptr::RawSlice::EMPTY,
+            safe_path: bun_ptr::RawSlice::EMPTY,
             fd: FD::INVALID,
         }
     }
@@ -6801,8 +6801,8 @@ impl<'a> Resolver<'a> {
 
         bufs!(dir_entry_paths_to_resolve)[0].write(DirEntryResolveQueueItem {
             result: top_result,
-            unsafe_path: &raw const path[..input_path_len],
-            safe_path: std::ptr::from_ref::<[u8]>(b""),
+            unsafe_path: bun_ptr::RawSlice::new(&path[..input_path_len]),
+            safe_path: bun_ptr::RawSlice::EMPTY,
             fd: FD::INVALID,
         });
         let mut top = Dirname::dirname(&path[..input_path_len]);
@@ -6848,9 +6848,9 @@ impl<'a> Resolver<'a> {
                 return Ok(None);
             }
             bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).expect("int cast")].write(DirEntryResolveQueueItem {
-                unsafe_path: std::ptr::from_ref::<[u8]>(top),
+                unsafe_path: bun_ptr::RawSlice::new(top),
                 result,
-                safe_path: std::ptr::from_ref::<[u8]>(b""),
+                safe_path: bun_ptr::RawSlice::EMPTY,
                 fd: FD::INVALID,
             });
 
@@ -6859,7 +6859,7 @@ impl<'a> Resolver<'a> {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                         // SAFETY: slot was written immediately above.
                         let slot = unsafe { bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).expect("int cast")].assume_init_mut() };
-                        slot.safe_path = std::ptr::from_ref::<[u8]>(entries.dir);
+                        slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
                         slot.fd = entries.fd;
                     }
                     Fs::file_system::real_fs::EntriesOption::Err(err) => {
@@ -6883,9 +6883,9 @@ impl<'a> Resolver<'a> {
                 top_parent = result;
             } else {
                 bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).expect("int cast")].write(DirEntryResolveQueueItem {
-                    unsafe_path: std::ptr::from_ref::<[u8]>(root_path),
+                    unsafe_path: bun_ptr::RawSlice::new(root_path),
                     result,
-                    safe_path: std::ptr::from_ref::<[u8]>(b""),
+                    safe_path: bun_ptr::RawSlice::EMPTY,
                     fd: FD::INVALID,
                 });
                 if let Some(top_entry) = rfs!().entries.get(top) {
@@ -6893,7 +6893,7 @@ impl<'a> Resolver<'a> {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                             // SAFETY: slot was written immediately above.
                             let slot = unsafe { bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).expect("int cast")].assume_init_mut() };
-                            slot.safe_path = std::ptr::from_ref::<[u8]>(entries.dir);
+                            slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
                             slot.fd = entries.fd;
                         }
                         Fs::file_system::real_fs::EntriesOption::Err(err) => {
@@ -6955,12 +6955,14 @@ impl<'a> Resolver<'a> {
         while queue_slice_len > 0 {
             // SAFETY: every slot in `0..queue_slice_len` was `.write()`-initialised above.
             let mut queue_top = unsafe { bufs!(dir_entry_paths_to_resolve)[queue_slice_len - 1].assume_init_ref() }.clone();
-            // SAFETY: `unsafe_path` was set to a slice of the threadlocal
+            // `unsafe_path` was set to a slice of the threadlocal
             // `dir_info_uncached_path` buffer earlier in this fn; valid for the
-            // remainder of the fn body. `safe_path` is either `b""` or a
-            // dirname_store-backed `&'static [u8]`.
-            let queue_top_unsafe_path: &[u8] = unsafe { &*queue_top.unsafe_path };
-            let queue_top_safe_path: &[u8] = unsafe { &*queue_top.safe_path };
+            // remainder of the fn body. `safe_path` is either empty or a
+            // dirname_store-backed `&'static [u8]`. Copy the `RawSlice` handles
+            // out so the re-borrows below don't hold `queue_top` borrowed.
+            let (qt_unsafe_path, qt_safe_path) = (queue_top.unsafe_path, queue_top.safe_path);
+            let queue_top_unsafe_path: &[u8] = qt_unsafe_path.slice();
+            let queue_top_safe_path: &[u8] = qt_safe_path.slice();
             // defer top_parent = queue_top.result — done at end of loop body
             queue_slice_len -= 1;
 
@@ -7067,8 +7069,10 @@ impl<'a> Resolver<'a> {
             }
 
             let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
-                // SAFETY: non-empty `safe_path` is always a dirname_store-backed `&'static [u8]`.
-                unsafe { &*queue_top.safe_path }
+                // SAFETY: non-empty `safe_path` is always a dirname_store-backed
+                // `&'static [u8]` (set from `entries.dir` above); widen the
+                // `RawSlice`-tied borrow back to its true `'static` lifetime.
+                unsafe { bun_ptr::detach_lifetime(queue_top_safe_path) }
             } else {
                 // ensure trailing slash
                 if _safe_path.is_none() {

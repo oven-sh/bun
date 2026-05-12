@@ -16,7 +16,10 @@ impl Taskable for JSCDeferredWorkTask {
 }
 
 unsafe extern "C" {
-    fn Bun__runDeferredWork(task: *mut JSCDeferredWorkTask);
+    // safe: `JSCDeferredWorkTask` is an `opaque_ffi!` ZST handle (`!Freeze`
+    // via `UnsafeCell`); `&mut` is ABI-identical to a non-null `*mut` and the
+    // C++ side consuming it is interior to the opaque cell.
+    safe fn Bun__runDeferredWork(task: &mut JSCDeferredWorkTask);
 }
 
 impl JSCDeferredWorkTask {
@@ -25,9 +28,7 @@ impl JSCDeferredWorkTask {
         // initialized during VM startup and remains valid for the VM's lifetime.
         let global_this = VirtualMachine::get().global();
         crate::validation_scope!(scope, global_this);
-        // SAFETY: `self` is a live opaque pointer handed to us by C++; Bun__runDeferredWork
-        // consumes it on the C++ side.
-        unsafe { Bun__runDeferredWork(std::ptr::from_mut::<Self>(self)) };
+        Bun__runDeferredWork(self);
         // Zig: `try scope.assertNoExceptionExceptTermination()` — the only error variant
         // that fn returns is termination, so map the wider `JsError` back down.
         scope.assert_no_exception_except_termination()

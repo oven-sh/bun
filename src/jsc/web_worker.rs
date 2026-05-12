@@ -58,7 +58,7 @@
 //! the close task posts, the thread-held `Worker` ref is intentionally
 //! leaked (see `Worker::dispatchExit`).
 
-use core::cell::{Cell, UnsafeCell};
+use core::cell::Cell;
 use crate::JsCell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -157,10 +157,12 @@ pub struct WebWorker {
     /// `.ref()`/`.unref()`), and released by `releaseParentPollRef()` from the
     /// close task — all on the parent thread.
     ///
-    /// `UnsafeCell` because all parent-thread FFI exports take `*mut WebWorker`
+    /// `JsCell` because all parent-thread FFI exports take `*mut WebWorker`
     /// (the worker thread may concurrently hold `&WebWorker`); we mutate this
-    /// field through a shared-provenance pointer.
-    parent_poll_ref: UnsafeCell<KeepAlive>,
+    /// field through a shared-provenance pointer. Parent-thread-only access
+    /// satisfies `JsCell`'s single-owner-thread invariant (same as `arena`
+    /// below for the worker thread).
+    parent_poll_ref: JsCell<KeepAlive>,
 
     // ---- Worker-thread only -------------------------------------------------
     // These are mutated only on the worker thread, but the worker-thread call
@@ -414,15 +416,14 @@ impl WebWorker {
         self.vm.get()
     }
 
-    /// Safe `&mut KeepAlive` accessor for `parent_poll_ref`. The cell is
-    /// touched only on the parent thread (`set_ref`, `release_parent_poll_ref`,
-    /// `create`) so no lock is required; `UnsafeCell` is used only because
-    /// `WebWorker` is shared `&self` across threads.
+    /// Closure-scoped `&mut KeepAlive` accessor for `parent_poll_ref`. The cell
+    /// is touched only on the parent thread (`set_ref`,
+    /// `release_parent_poll_ref`, `create`) so no lock is required; `JsCell`
+    /// provides the interior mutability because `WebWorker` is shared `&self`
+    /// across threads.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    fn parent_poll_ref_mut(&self) -> &mut KeepAlive {
-        // SAFETY: parent-thread-only field; see field doc.
-        unsafe { &mut *self.parent_poll_ref.get() }
+    fn with_parent_poll_ref<R>(&self, f: impl FnOnce(&mut KeepAlive) -> R) -> R {
+        self.parent_poll_ref.with_mut(f)
     }
 
     /// Zig: `worker.eval_mode` field — whether this worker was started in
@@ -557,7 +558,7 @@ impl WebWorker {
             requested_terminate: AtomicBool::new(false),
             vm: Cell::new(core::ptr::null_mut()),
             vm_lock: Mutex::new(),
-            parent_poll_ref: UnsafeCell::new(KeepAlive::init()),
+            parent_poll_ref: JsCell::new(KeepAlive::init()),
             status: Cell::new(Status::Start),
             arena: JsCell::new(None),
             worker_env_map: Cell::new(core::ptr::null_mut()),
@@ -571,7 +572,7 @@ impl WebWorker {
         if !default_unref {
             // SAFETY: `worker` is a fresh heap allocation; not yet shared.
             // `parent_event_loop_ctx()` resolves to this (parent) thread's loop.
-            unsafe { &*worker }.parent_poll_ref_mut().ref_(parent_event_loop_ctx());
+            unsafe { &*worker }.with_parent_poll_ref(|p| p.ref_(parent_event_loop_ctx()));
         }
 
         // Register BEFORE spawning so terminateAllAndWait() can never miss a
@@ -604,7 +605,7 @@ impl WebWorker {
             Err(_) => {
                 live_workers::unregister(worker);
                 // SAFETY: `worker` not yet shared (spawn failed); parent thread.
-                unsafe { &*worker }.parent_poll_ref_mut().unref(parent_event_loop_ctx());
+                unsafe { &*worker }.with_parent_poll_ref(|p| p.unref(parent_event_loop_ctx()));
                 Self::destroy(worker);
                 *error_message = BunString::static_(b"Failed to spawn worker thread");
                 core::ptr::null_mut()
@@ -643,12 +644,13 @@ impl WebWorker {
         // SAFETY: `this` is a valid heap allocation owned by C++; parent-thread
         // only. `parent_event_loop_ctx()` resolves to this (parent) thread's
         // loop, which IS `this.parent`'s loop.
-        let poll = unsafe { &*this }.parent_poll_ref_mut();
-        if value {
-            poll.ref_(parent_event_loop_ctx());
-        } else {
-            poll.unref(parent_event_loop_ctx());
-        }
+        unsafe { &*this }.with_parent_poll_ref(|poll| {
+            if value {
+                poll.ref_(parent_event_loop_ctx());
+            } else {
+                poll.unref(parent_event_loop_ctx());
+            }
+        });
     }
 
     /// worker.terminate() from JS. Sets `requested_terminate`, interrupts
@@ -700,7 +702,7 @@ impl WebWorker {
     pub extern "C" fn release_parent_poll_ref(this: *mut WebWorker) {
         // SAFETY: `this` is a valid heap allocation owned by C++; parent-thread
         // only.
-        unsafe { &*this }.parent_poll_ref_mut().unref(parent_event_loop_ctx());
+        unsafe { &*this }.with_parent_poll_ref(|p| p.unref(parent_event_loop_ctx()));
     }
 
     /// Non-owning back-reference to the parent VM. See field doc for validity

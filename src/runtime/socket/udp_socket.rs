@@ -101,9 +101,11 @@ use bun_string::immutable::ares_inet_pton as inet_pton;
 
 #[allow(dead_code)]
 unsafe extern "C" {
-    fn ntohs(nshort: u16) -> u16;
-    fn htonl(hlong: u32) -> u32;
-    fn htons(hshort: u16) -> u16;
+    // libc byte-order conversions are pure on the integer argument — no
+    // pointer/aliasing/thread preconditions — so declare them `safe fn`.
+    safe fn ntohs(nshort: u16) -> u16;
+    safe fn htonl(hlong: u32) -> u32;
+    safe fn htons(hshort: u16) -> u16;
 }
 
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
@@ -180,16 +182,14 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
                 let peer4 = unsafe { &*std::ptr::from_ref(peer).cast::<sockaddr_in>() };
                 // SAFETY: src points to in_addr, dst is INET6_ADDRSTRLEN+1 bytes.
                 hostname = unsafe { bun_cares_sys::ntop(f, (&raw const peer4.addr).cast(), &mut addr_buf) };
-                // SAFETY: libc byte-order fn; pure on u16.
-                port = unsafe { ntohs(peer4.port) };
+                port = ntohs(peer4.port);
             }
             f if f == inet::AF_INET6 => {
                 // SAFETY: family == AF_INET6 so peer is sockaddr_in6.
                 let peer6 = unsafe { &*std::ptr::from_ref(peer).cast::<sockaddr_in6>() };
                 // SAFETY: src points to in6_addr, dst is INET6_ADDRSTRLEN+1 bytes.
                 hostname = unsafe { bun_cares_sys::ntop(f, (&raw const peer6.addr).cast(), &mut addr_buf) };
-                // SAFETY: libc byte-order fn; pure on u16.
-                port = unsafe { ntohs(peer6.port) };
+                port = ntohs(peer6.port);
                 if peer6.scope_id != 0 {
                     scope_id = Some(peer6.scope_id);
                 }
@@ -1304,8 +1304,7 @@ impl UDPSocket {
             )
         } == 1
         {
-            // SAFETY: libc byte-order fn; pure on u16.
-            addr4.port = unsafe { htons(port) };
+            addr4.port = htons(port);
             addr4.family = inet::AF_INET as inet::sa_family_t;
         } else {
             // SAFETY: storage is large enough to hold sockaddr_in6.
@@ -1382,8 +1381,7 @@ impl UDPSocket {
                 )
             } == 1
             {
-                // SAFETY: libc byte-order fn; pure on u16.
-                addr6.port = unsafe { htons(port) };
+                addr6.port = htons(port);
                 addr6.family = inet::AF_INET6 as inet::sa_family_t;
             } else {
                 return Ok(false);

@@ -667,7 +667,7 @@ impl FileReader {
                         // variant; holder-lifetime, encoded as `RawSlice<u8>`.
                         *riop = ReadDuringJSOnPullResult::Temporary(bun_ptr::RawSlice::new(buf));
                     } else if has_more
-                        && !bun_core::is_slice_in_buffer(buf, self.buffered.get().allocated_slice())
+                        && !is_slice_in_vec_capacity(buf, self.buffered.get())
                     {
                         self.buffered.with_mut(|b| b.extend_from_slice(buf));
                         *riop = ReadDuringJSOnPullResult::UseBuffered(buf.len());
@@ -750,7 +750,7 @@ impl FileReader {
                 }
 
                 // SAFETY: see `reader_buffer` decl — tight deref.
-                if bun_core::is_slice_in_buffer(buf, unsafe { (*reader_buffer).allocated_slice() }) {
+                if is_slice_in_vec_capacity(buf, unsafe { &*reader_buffer }) {
                     if self.reader().is_done() {
                         // SAFETY: see `reader_buffer` decl.
                         debug_assert_eq!(buf.as_ptr(), unsafe { (*reader_buffer).as_ptr() });
@@ -770,7 +770,7 @@ impl FileReader {
                     break 'pending !was_done;
                 }
 
-                if !bun_core::is_slice_in_buffer(buf, self.buffered.get().allocated_slice()) {
+                if !is_slice_in_vec_capacity(buf, self.buffered.get()) {
                     self.pending.with_mut(|p| {
                         p.result = if self.reader().is_done() {
                             streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(buf))
@@ -800,10 +800,10 @@ impl FileReader {
             self.pending.with_mut(|p| p.run());
             close_if_needed!();
             return ret;
-        } else if !bun_core::is_slice_in_buffer(buf, self.buffered.get().allocated_slice()) {
+        } else if !is_slice_in_vec_capacity(buf, self.buffered.get()) {
             self.buffered.with_mut(|b| b.extend_from_slice(buf));
             // SAFETY: see `reader_buffer` decl.
-            if bun_core::is_slice_in_buffer(buf, unsafe { (*reader_buffer).allocated_slice() }) {
+            if is_slice_in_vec_capacity(buf, unsafe { &*reader_buffer }) {
                 unsafe { (*reader_buffer).clear() };
             }
         }
@@ -1121,17 +1121,17 @@ fn read_state_tag(state: ReadState) -> &'static str {
     }
 }
 
-// TODO(port): Vec<u8> has no `allocated_slice()`; helper trait providing
-// `&v.as_ptr()[0..v.capacity()]` semantics needed for `is_slice_in_buffer` checks.
-trait AllocatedSlice {
-    fn allocated_slice(&self) -> &[u8];
-}
-impl AllocatedSlice for Vec<u8> {
-    fn allocated_slice(&self) -> &[u8] {
-        // SAFETY: bytes in [len, capacity) are uninitialized; this slice is only used for
-        // pointer-range containment checks in `is_slice_in_buffer`, never read.
-        unsafe { core::slice::from_raw_parts(self.as_ptr(), self.capacity()) }
-    }
+/// Checks whether `slice` lies within `vec`'s allocation (including spare
+/// capacity). Replaces the previous `AllocatedSlice` trait, which materialised
+/// a `&[u8]` over `[len, capacity)` — uninitialised memory — purely to feed
+/// `bun_core::is_slice_in_buffer`. That was UB-adjacent (a `&[u8]` asserts its
+/// bytes are initialised); this helper does the same containment check with
+/// pure address arithmetic and never forms a reference over uninit bytes.
+#[inline]
+fn is_slice_in_vec_capacity(slice: &[u8], vec: &Vec<u8>) -> bool {
+    let slice_start = slice.as_ptr() as usize;
+    let buf_start = vec.as_ptr() as usize;
+    buf_start <= slice_start && (slice_start + slice.len()) <= (buf_start + vec.capacity())
 }
 
 // ported from: src/runtime/webcore/FileReader.zig

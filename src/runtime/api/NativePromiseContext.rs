@@ -110,9 +110,13 @@ impl NativePromiseContextType for body::ValueBufferer<'_> {
 }
 
 // TODO(port): move to <runtime>_sys
+// `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
+// opaquely (never dereferenced by the C++ side), so the FFI itself has no
+// pointer-validity precondition — the ref-count contract is documented on
+// `create()` below, not on the FFI call.
 unsafe extern "C" {
-    fn Bun__NativePromiseContext__create(
-        global: *const JSGlobalObject,
+    safe fn Bun__NativePromiseContext__create(
+        global: &JSGlobalObject,
         ctx: *mut c_void,
         tag: u8,
     ) -> JSValue;
@@ -122,8 +126,7 @@ unsafe extern "C" {
 /// The caller must have already taken a ref on `ctx`. The returned cell owns
 /// that ref until `take()` transfers it back or GC runs the destructor.
 pub fn create<T: NativePromiseContextType>(global: &JSGlobalObject, ctx: *mut T) -> JSValue {
-    // SAFETY: ctx is a valid intrusive-refcounted pointer the caller just ref'd.
-    unsafe { Bun__NativePromiseContext__create(global, ctx.cast::<c_void>(), T::TAG as u8) }
+    Bun__NativePromiseContext__create(global, ctx.cast::<c_void>(), T::TAG as u8)
 }
 
 /// Transfers the ref back to the caller and nulls the cell so the destructor

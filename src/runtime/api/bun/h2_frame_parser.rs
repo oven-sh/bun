@@ -418,17 +418,19 @@ struct StreamPriority {
     stream_identifier: u32,
     weight: u8,
 }
+// SAFETY: `#[repr(C, packed)]` with `u32 + u8` fields — no padding, no niches,
+// every 5-byte pattern is a valid value.
+unsafe impl bytemuck::Zeroable for StreamPriority {}
+// SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
+unsafe impl bytemuck::Pod for StreamPriority {}
+const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::BYTE_SIZE);
 impl StreamPriority {
     pub const BYTE_SIZE: usize = 5;
     #[inline]
     fn write(&self, writer: &mut impl WireWriter) -> bool {
         let mut swap = *self;
         swap.stream_identifier = swap.stream_identifier.swap_bytes();
-        // SAFETY: #[repr(C, packed)] POD, BYTE_SIZE bytes
-        let bytes = unsafe {
-            core::slice::from_raw_parts((&raw const swap).cast::<u8>(), Self::BYTE_SIZE)
-        };
-        writer.write(bytes).unwrap_or(0) != 0
+        writer.write(bytemuck::bytes_of(&swap)).unwrap_or(0) != 0
     }
     #[inline]
     fn from(dst: &mut StreamPriority, src: &[u8]) {
@@ -541,6 +543,12 @@ pub struct FullSettingsPayload {
     _enable_connect_protocol_type: u16,
     enable_connect_protocol: u32,
 }
+// SAFETY: `#[repr(C, packed)]` with only `u16`/`u32` fields — no padding, no
+// niches, every 42-byte pattern is a valid value.
+unsafe impl bytemuck::Zeroable for FullSettingsPayload {}
+// SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
+unsafe impl bytemuck::Pod for FullSettingsPayload {}
+const _: () = assert!(core::mem::size_of::<FullSettingsPayload>() == FullSettingsPayload::BYTE_SIZE);
 impl Default for FullSettingsPayload {
     fn default() -> Self {
         Self {
@@ -615,11 +623,7 @@ impl FullSettingsPayload {
         swap.max_header_list_size = swap.max_header_list_size.swap_bytes();
         swap._enable_connect_protocol_type = swap._enable_connect_protocol_type.swap_bytes();
         swap.enable_connect_protocol = swap.enable_connect_protocol.swap_bytes();
-        // SAFETY: #[repr(C, packed)] POD
-        let bytes = unsafe {
-            core::slice::from_raw_parts((&raw const swap).cast::<u8>(), Self::BYTE_SIZE)
-        };
-        writer.write(bytes).unwrap_or(0) != 0
+        writer.write(bytemuck::bytes_of(&swap)).unwrap_or(0) != 0
     }
 }
 

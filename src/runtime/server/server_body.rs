@@ -3466,7 +3466,7 @@ pub fn server_set_max_http_header_size_(
 // caller uses Win64 ABI. Using `host_call` here forced sysv64 on the Rust
 // side, scrambling the `server` argument and tripping the `is_object()` guard.
 #[unsafe(export_name = "Server__setAppFlags")]
-unsafe extern "C" fn server_set_app_flags_shim(
+extern "C" fn server_set_app_flags_shim(
     global: &JSGlobalObject,
     server: JSValue,
     require_host_header: bool,
@@ -3479,7 +3479,7 @@ unsafe extern "C" fn server_set_app_flags_shim(
 }
 
 #[unsafe(export_name = "Server__setOnClientError")]
-unsafe extern "C" fn server_set_on_client_error_shim(
+extern "C" fn server_set_on_client_error_shim(
     global: &JSGlobalObject,
     server: JSValue,
     callback: JSValue,
@@ -3488,7 +3488,7 @@ unsafe extern "C" fn server_set_on_client_error_shim(
 }
 
 #[unsafe(export_name = "Server__setMaxHTTPHeaderSize")]
-unsafe extern "C" fn server_set_max_http_header_size_shim(
+extern "C" fn server_set_max_http_header_size_shim(
     global: &JSGlobalObject,
     server: JSValue,
     max_header_size: u64,

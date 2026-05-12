@@ -34,7 +34,9 @@ unsafe extern "C" {
     fn WebCore__FetchHeaders__createFromUWS(arg1: *mut c_void) -> *mut FetchHeaders;
     fn WebCore__FetchHeaders__createValueNotJS(arg0: *const JSGlobalObject, arg1: *mut StringPointer, arg2: *mut StringPointer, arg3: *const ZigString, arg4: u32) -> *mut FetchHeaders;
     fn WebCore__FetchHeaders__createValue(arg0: *const JSGlobalObject, arg1: *mut StringPointer, arg2: *mut StringPointer, arg3: *const ZigString, arg4: u32) -> JSValue;
-    fn WebCore__FetchHeaders__deref(arg0: *mut FetchHeaders);
+    // safe: `FetchHeaders` is an `opaque_ffi!` ZST handle; `&mut` is ABI-identical
+    // to a non-null `*mut` and the C++ refcount decrement is interior to the cell.
+    safe fn WebCore__FetchHeaders__deref(arg0: &mut FetchHeaders);
     safe fn WebCore__FetchHeaders__fastGet_(arg0: &FetchHeaders, arg1: u8, arg2: &mut ZigString);
     safe fn WebCore__FetchHeaders__fastHas_(arg0: &FetchHeaders, arg1: u8) -> bool;
     safe fn WebCore__FetchHeaders__fastRemove_(arg0: &FetchHeaders, arg1: u8);
@@ -294,8 +296,7 @@ impl FetchHeaders {
     }
 
     pub fn deref(&mut self) {
-        // SAFETY: self is a valid FetchHeaders handle; decrements C++ refcount
-        unsafe { WebCore__FetchHeaders__deref(self) }
+        WebCore__FetchHeaders__deref(self)
     }
 
     pub fn copy_to(&mut self, names: *mut StringPointer, values: *mut StringPointer, buf: *mut u8) {

@@ -110,16 +110,13 @@ impl JSValueSqlExt for JSValue {
         )
     }
     fn to_uint64_no_truncate(self) -> u64 {
-        // SAFETY: pure FFI conversion.
-        unsafe { JSC__JSValue__toUInt64NoTruncate(self) }
+        JSC__JSValue__toUInt64NoTruncate(self)
     }
     fn is_big_int_in_int64_range(self, min: i64, max: i64) -> bool {
-        // SAFETY: pure FFI predicate (JSValue.zig:40).
-        unsafe { JSC__isBigIntInInt64Range(self, min, max) }
+        JSC__isBigIntInInt64Range(self, min, max)
     }
     fn is_big_int_in_uint64_range(self, min: u64, max: u64) -> bool {
-        // SAFETY: pure FFI predicate (JSValue.zig:36).
-        unsafe { JSC__isBigIntInUInt64Range(self, min, max) }
+        JSC__isBigIntInUInt64Range(self, min, max)
     }
 }
 
@@ -310,14 +307,14 @@ pub struct SqlRuntimeHooks {
 unsafe extern "Rust" {
     /// The single `&'static` instance, defined `#[no_mangle]` in
     /// `bun_runtime::hw_exports::sql_hooks`. Link-time resolved — no
-    /// `AtomicPtr`, no init-order hazard.
-    static __BUN_SQL_RUNTIME_HOOKS: SqlRuntimeHooks;
+    /// `AtomicPtr`, no init-order hazard. Immutable POD vtable, so reading it
+    /// has no preconditions beyond the link succeeding → `safe static`.
+    safe static __BUN_SQL_RUNTIME_HOOKS: SqlRuntimeHooks;
 }
 
 #[inline]
 fn hooks() -> &'static SqlRuntimeHooks {
-    // SAFETY: link-time-resolved `&'static` Rust-ABI static.
-    unsafe { &__BUN_SQL_RUNTIME_HOOKS }
+    &__BUN_SQL_RUNTIME_HOOKS
 }
 
 /// Per-VM SQL state — the concrete crate::mysql::MySQLContext /
@@ -1074,14 +1071,18 @@ impl SslCtxCache {
 // type-checks both sides at the registration site.
 // ──────────────────────────────────────────────────────────────────────────
 unsafe extern "C" {
-    // JSValue
-    fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) -> u64;
-    fn JSC__isBigIntInInt64Range(this: JSValue, min: i64, max: i64) -> bool;
-    fn JSC__isBigIntInUInt64Range(this: JSValue, min: u64, max: u64) -> bool;
+    // JSValue — by-value `JSValue` (encoded NaN-boxed u64) + scalar args; the
+    // C++ side reads no caller memory and upholds no invariants the caller must
+    // discharge, so these are `safe fn`.
+    safe fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) -> u64;
+    safe fn JSC__isBigIntInInt64Range(this: JSValue, min: i64, max: i64) -> bool;
+    safe fn JSC__isBigIntInUInt64Range(this: JSValue, min: u64, max: u64) -> bool;
 
-    // JSGlobalObject
+    // JSGlobalObject — `this` must be a live `*JSGlobalObject`; genuine
+    // pointer-validity precondition, caller must discharge.
     fn JSC__JSGlobalObject__bunVM(this: *mut JSGlobalObject) -> *mut c_void;
 
-    // MarkedArgumentBuffer
+    // MarkedArgumentBuffer — `ctx` is dereferenced by `f`; caller-supplied
+    // pointer/callback contract, caller must discharge.
     fn MarkedArgumentBuffer__run(ctx: *mut c_void, f: extern "C" fn(*mut c_void, *mut c_void));
 }

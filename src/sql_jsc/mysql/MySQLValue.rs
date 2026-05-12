@@ -172,9 +172,9 @@ impl Default for Bytes {
 impl Drop for Bytes {
     fn drop(&mut self) {
         if !self.pinned.is_empty() {
-            // SAFETY: pinned is a valid JSValue rooted by the caller's
-            // MarkedArgumentBuffer for the lifetime of this Value; see struct doc.
-            unsafe { JSC__JSValue__unpinArrayBuffer(self.pinned) };
+            // `pinned` is rooted by the caller's MarkedArgumentBuffer for the
+            // lifetime of this Value (see struct doc); the FFI itself is `safe fn`.
+            JSC__JSValue__unpinArrayBuffer(self.pinned);
         }
         // self.slice dropped automatically
     }
@@ -387,11 +387,7 @@ impl Value {
                     // then safe without a copy. See `Bytes`.
                     let mut ptr: *const u8 = core::ptr::null();
                     let mut len: usize = 0;
-                    // SAFETY: value is a live cell (is_array_buffer_like checked); out
-                    // params point to valid stack locals.
-                    return match unsafe {
-                        JSC__JSValue__borrowBytesForOffThread(value, &raw mut ptr, &raw mut len)
-                    } {
+                    return match JSC__JSValue__borrowBytesForOffThread(value, &mut ptr, &mut len) {
                         // detached / null
                         0 => Ok(Value::Bytes(Bytes::default())),
                         // FastTypedArray — tiny, GC-movable vector; dupe.
@@ -856,13 +852,17 @@ fn gregorian_date(days: i32) -> Date {
 
 // TODO(port): move to sql_jsc_sys (or bun_jsc_sys)
 unsafe extern "C" {
-    fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
+    /// By-value `JSValue`; C++ side null-checks and reads its own heap state.
+    /// No caller-side preconditions → `safe fn`.
+    safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     /// 0 = detached/null, 1 = FastTypedArray (GC-movable — caller should dupe;
     /// no unpin needed), 2 = pinned ArrayBuffer (caller must `unpinArrayBuffer`).
-    fn JSC__JSValue__borrowBytesForOffThread(
+    /// Out-params are `&mut` (same ABI as `*mut`), so the only obligation left
+    /// is on the *returned* slice, not the call itself → `safe fn`.
+    safe fn JSC__JSValue__borrowBytesForOffThread(
         v: JSValue,
-        out_ptr: *mut *const u8,
-        out_len: *mut usize,
+        out_ptr: &mut *const u8,
+        out_len: &mut usize,
     ) -> i32;
 }
 

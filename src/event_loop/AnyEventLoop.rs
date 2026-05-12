@@ -27,8 +27,9 @@ use crate::{JsEventLoop, JsEventLoopKind};
 /// calls.
 unsafe extern "Rust" {
     /// `jsc::VirtualMachine::get().event_loop()` — erased `*mut jsc::EventLoop`
-    /// for the current thread. Kept as a bare extern (no owner).
-    pub(crate) fn __bun_js_event_loop_current() -> *mut ();
+    /// for the current thread. Kept as a bare extern (no owner). No caller-side
+    /// preconditions: panics (not UB) if no VM is bound on this thread.
+    pub(crate) safe fn __bun_js_event_loop_current() -> *mut ();
 }
 
 /// Useful for code that may need an event loop and could be used from either JavaScript or directly without JavaScript.

@@ -416,6 +416,19 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl Subprocess<'_> {
+    /// Shared borrow of the attached `AbortSignal`, if any.
+    ///
+    /// Centralises the `Option<NonNull> → Option<&T>` deref so callers stay
+    /// safe. `abort_signal` holds a +1 C++-intrusive ref taken in
+    /// `spawn_maybe_sync`; the pointee is therefore live for as long as the
+    /// cell is `Some` (it is `take`n *before* `unref()` in
+    /// [`clear_abort_signal`](Self::clear_abort_signal)).
+    #[inline]
+    pub fn abort_signal_ref(&self) -> Option<&AbortSignal> {
+        // SAFETY: see fn doc — +1-ref'd C++ handle, live while stored.
+        self.abort_signal.get().map(|p| unsafe { p.as_ref() })
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn resource_usage(
         this: &Self,
@@ -1017,9 +1030,10 @@ impl Subprocess<'_> {
             // the pseudoconsole now to deliver EOF and fire the terminal's exit
             // callback. Leaves the Terminal itself open to match POSIX.
             if let Some(terminal) = self.terminal.get() {
-                // SAFETY: terminal pointer is valid while subprocess is alive;
-                // single JS thread. R-2: `close_pseudoconsole` takes `&self`.
-                unsafe { terminal.as_ref() }.close_pseudoconsole();
+                // `BackRef` invariant holds: the terminal is owned by (or
+                // borrowed from a JS wrapper kept live by) this subprocess and
+                // outlives this scope; single JS thread.
+                bun_ptr::BackRef::from(terminal).close_pseudoconsole();
             }
         }
 
@@ -1301,10 +1315,10 @@ impl Subprocess<'_> {
     }
 
     fn clear_abort_signal(&self) {
-        if let Some(signal) = self.abort_signal.replace(None) {
-            // SAFETY: `signal` was stored with a +1 C++ intrusive ref (taken in
-            // `spawn_maybe_sync`); it stays live until `unref()` below.
-            let signal: &AbortSignal = unsafe { signal.as_ref() };
+        if let Some(signal) = self.abort_signal.replace(None).map(bun_ptr::BackRef::from) {
+            // `signal` was stored with a +1 C++ intrusive ref (taken in
+            // `spawn_maybe_sync`); it stays live until `unref()` below, so the
+            // `BackRef` invariant (pointee outlives holder) holds for this scope.
             signal.pending_activity_unref();
             signal.clean_native_bindings(self.as_ctx_ptr().cast::<c_void>());
             signal.unref();

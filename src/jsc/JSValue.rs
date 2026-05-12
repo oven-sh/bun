@@ -118,9 +118,12 @@ impl JSValue {
         reject: host_fn::JSHostFn,
     ) {
         unsafe extern "C" {
-            fn JSC__JSValue___then(
+            // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST
+            // handle (`&` is ABI-identical to non-null `*mut`); remaining args
+            // are by-value (`JSValue`, fn-ptrs).
+            safe fn JSC__JSValue___then(
                 this: JSValue,
-                global: *mut JSGlobalObject,
+                global: &JSGlobalObject,
                 ctx: JSValue,
                 resolve: host_fn::JSHostFn,
                 reject: host_fn::JSHostFn,
@@ -129,19 +132,13 @@ impl JSValue {
         // Zig (JSValue.zig:1495): `TopExceptionScope` + `assertNoExceptionExceptTermination`.
         // Every current call site does `catch {}`, so swallow termination.
         crate::top_scope!(scope, global);
-        // SAFETY: FFI into JSC; `self` is a Promise (caller contract), `global`
-        // is live, and `resolve`/`reject` are valid C-ABI host fns.
-        // `as_ptr()` derives `*mut` through `UnsafeCell` (interior-mut
-        // provenance) rather than laundering `&T as *const T as *mut T`.
-        unsafe {
-            JSC__JSValue___then(
-                self,
-                global.as_ptr(),
-                JSValue::from_ptr_address(ctx as usize),
-                resolve,
-                reject,
-            );
-        }
+        JSC__JSValue___then(
+            self,
+            global,
+            JSValue::from_ptr_address(ctx as usize),
+            resolve,
+            reject,
+        );
         let _ = scope.assert_no_exception_except_termination();
     }
 
@@ -157,9 +154,10 @@ impl JSValue {
         reject: host_fn::JSHostFn,
     ) {
         unsafe extern "C" {
-            fn JSC__JSValue___then(
+            // safe: see decl in `then` above.
+            safe fn JSC__JSValue___then(
                 this: JSValue,
-                global: *mut JSGlobalObject,
+                global: &JSGlobalObject,
                 ctx: JSValue,
                 resolve: host_fn::JSHostFn,
                 reject: host_fn::JSHostFn,
@@ -167,9 +165,7 @@ impl JSValue {
         }
         // Zig (JSValue.zig:1487): `TopExceptionScope` + `assertNoExceptionExceptTermination`.
         crate::top_scope!(scope, global);
-        // SAFETY: FFI into JSC; `self` is a Promise (caller contract), `global`
-        // is live, and `resolve`/`reject` are valid C-ABI host fns.
-        unsafe { JSC__JSValue___then(self, global.as_ptr(), ctx, resolve, reject) };
+        JSC__JSValue___then(self, global, ctx, resolve, reject);
         let _ = scope.assert_no_exception_except_termination();
     }
 

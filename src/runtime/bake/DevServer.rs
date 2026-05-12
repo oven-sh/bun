@@ -5862,15 +5862,19 @@ impl DevServer {
             return &path[self.root.len() + 1..];
         }
 
-        let rel = bun_paths::resolve_path::relative_platform_buf::<
+        // `relative_platform_buf` with ALWAYS_COPY=true writes into
+        // `relative_path_buf[..len]` (same invariant `relative_buf_z` relies
+        // on); capture the length, drop the shared borrow, then re-slice
+        // mutably to convert separators in place.
+        let rel_len = bun_paths::resolve_path::relative_platform_buf::<
             bun_paths::resolve_path::platform::Auto,
             true,
-        >(&mut relative_path_buf[..], &self.root, path);
-        // SAFETY: `rel` is owned by relative_path_buf, which is mutable
-        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(unsafe {
-            ::core::slice::from_raw_parts_mut(rel.as_ptr().cast_mut(), rel.len())
-        });
-        rel
+        >(&mut relative_path_buf[..], &self.root, path)
+        .len();
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
+            &mut relative_path_buf[..rel_len],
+        );
+        &relative_path_buf[..rel_len]
     }
 
     /// Either of two conditions make this true:

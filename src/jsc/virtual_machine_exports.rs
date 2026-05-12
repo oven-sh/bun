@@ -239,9 +239,7 @@ pub fn is_no_proxy(
     } else {
         None
     };
-    // SAFETY: `Transpiler.env` is a raw `*mut Loader` (cycle-break); set once
-    // during VM init and live for the VM's lifetime.
-    unsafe { (*vm.transpiler.env).is_no_proxy(hostname, host) }
+    vm.env_loader().is_no_proxy(hostname, host)
 }
 
 // HOST_EXPORT(Bun__setVerboseFetchValue, c)

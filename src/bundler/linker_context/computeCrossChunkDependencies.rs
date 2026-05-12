@@ -78,7 +78,7 @@ pub fn compute_cross_chunk_dependencies(
 
         // SAFETY: `parse_graph` backref valid for the link pass.
         unsafe {
-            (*(*parse_graph).pool.as_ref().worker_pool).each_ptr(
+            (*(*parse_graph).pool.get().worker_pool).each_ptr(
                 &mut cross_chunk_dependencies,
                 |deps: &&mut CrossChunkDependencies<'_>, chunk: *mut Chunk, idx: usize| {
                     // SAFETY: each_ptr partitions `chunks` by index; `walk` only mutates

@@ -28,9 +28,11 @@ fn vm_ctx() -> bun_io::EventLoopCtx {
     bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
 }
 
+// `&JSGlobalObject` is ABI-identical to a non-null pointer; remaining params
+// are by-value `JSValue`, so no caller-side preconditions remain.
 unsafe extern "C" {
-    fn Bun__Process__queueNextTick2(
-        global: *const JSGlobalObject,
+    safe fn Bun__Process__queueNextTick2(
+        global: &JSGlobalObject,
         func: JSValue,
         arg1: JSValue,
         arg2: JSValue,
@@ -70,8 +72,7 @@ impl JSValueCryptoExt for JSValue {
         a: JSValue,
         b: JSValue,
     ) -> JsResult<()> {
-        // SAFETY: `global` is live; `self`/`a`/`b` are valid encoded JSValues.
-        jsc::from_js_host_call_generic(global, || unsafe {
+        jsc::from_js_host_call_generic(global, || {
             Bun__Process__queueNextTick2(global, self, a, b)
         })
     }

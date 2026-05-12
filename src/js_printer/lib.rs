@@ -287,8 +287,11 @@ pub mod analyze_transpiled_module {
     pub struct ModuleInfoDeserializedOwned {
         #[allow(dead_code)]
         backing: AlignedBytes,
+        // `RecordKind` is a `#[repr(u8)]` enum (not all bit patterns valid), so
+        // the validated discriminants are decoded once in `create()` and owned
+        // here instead of being reinterpreted from `backing` on every `as_ref()`.
+        record_kinds: Box<[RecordKind]>,
         // Offsets/lengths into `backing` — reconstructed as slices in `as_ref()`.
-        record_kinds: (usize, usize),
         buffer: (usize, usize),
         requested_modules_keys: (usize, usize),
         requested_modules_values: (usize, usize),
@@ -313,17 +316,20 @@ pub mod analyze_transpiled_module {
             }}; }
 
             let record_kinds_len = eat_u32!();
-            let record_kinds = eat!(record_kinds_len * core::mem::size_of::<RecordKind>());
-            // Validate every record-kind byte is a known discriminant *before* `as_ref()`
-            // reinterprets this range as `&[RecordKind]`. `RecordKind` is a `#[repr(u8)]`
-            // enum, so any byte outside 0..=8 would be an invalid value and forming a
-            // slice over it is immediate UB. `source` may come from an on-disk cache
-            // (`create_from_cached_record`), so it is untrusted.
-            for &b in &duped[record_kinds.0..record_kinds.0 + record_kinds.1] {
-                if RecordKind::try_from_u8(b).is_none() {
-                    return Err(BadModuleInfo);
+            let (rk_off, rk_len) = eat!(record_kinds_len * core::mem::size_of::<RecordKind>());
+            // Validate + decode every record-kind byte into an owned `Box<[RecordKind]>`.
+            // `RecordKind` is a `#[repr(u8)]` enum, so any byte outside 0..=8 is invalid;
+            // `source` may come from an on-disk cache (`create_from_cached_record`), so it
+            // is untrusted. Decoding once here lets `as_ref()` hand out `&[RecordKind]`
+            // without an `unsafe` reinterpret.
+            let mut record_kinds = Vec::with_capacity(rk_len);
+            for &b in &duped[rk_off..rk_off + rk_len] {
+                match RecordKind::try_from_u8(b) {
+                    Some(k) => record_kinds.push(k),
+                    None => return Err(BadModuleInfo),
                 }
             }
+            let record_kinds = record_kinds.into_boxed_slice();
             let _ = eat!((4 - (record_kinds_len % 4)) % 4); // alignment padding
 
             let buffer_len = eat_u32!();
@@ -366,16 +372,7 @@ pub mod analyze_transpiled_module {
                 bytemuck::cast_slice(&bytes[off..off + len])
             }
             ModuleInfoDeserialized {
-                // SAFETY: every byte in `record_kinds` was validated against
-                // `RecordKind::try_from_u8` in `create`, so the `#[repr(u8)]`
-                // enum slice contains only valid discriminants; size/align are
-                // 1, so the sub-slice pointer is trivially well-aligned. (Not
-                // expressible via `bytemuck::Pod` because invalid bit patterns
-                // exist; the validation in `create` is what makes this sound.)
-                record_kinds: unsafe {
-                    let r = &bytes[self.record_kinds.0..self.record_kinds.0 + self.record_kinds.1];
-                    core::slice::from_raw_parts(r.as_ptr().cast::<RecordKind>(), r.len())
-                },
+                record_kinds: &self.record_kinds,
                 buffer: sub::<StringID>(bytes, self.buffer),
                 requested_modules_keys: sub::<StringID>(bytes, self.requested_modules_keys),
                 requested_modules_values: sub::<FetchParameters>(bytes, self.requested_modules_values),

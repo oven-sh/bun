@@ -29,10 +29,25 @@ pub enum Writable<'a> {
 }
 
 impl<'a> Writable<'a> {
+    /// Shared borrow of the `Pipe` payload's `FileSink`.
+    ///
+    /// Centralises the `NonNull → &T` deref so the per-match-arm `unsafe`
+    /// blocks (`memory_cost`/`ref`/`unref`/`close`) collapse to this one site.
+    /// Sound because `Writable::Pipe` holds a +1 intrusive ref on the
+    /// `FileSink` for the variant's entire lifetime — released only by an
+    /// explicit `FileSink::deref` *after* the variant has been overwritten
+    /// (see `on_close` / `Subprocess::on_close_io`). Callers therefore hold a
+    /// `&NonNull<FileSink>` borrowed from a still-live `Writable::Pipe`.
+    #[inline]
+    fn pipe_sink(pipe: &NonNull<FileSink>) -> &FileSink {
+        // SAFETY: `Writable::Pipe` owns a +1 intrusive ref; pointee is live and
+        // pinned for the duration of any borrow of `pipe`. Single JS thread.
+        unsafe { pipe.as_ref() }
+    }
+
     pub fn memory_cost(&self) -> usize {
         match self {
-            // SAFETY: pipe is live for the duration of the variant.
-            Writable::Pipe(pipe) => unsafe { pipe.as_ref() }.memory_cost(),
+            Writable::Pipe(pipe) => Self::pipe_sink(pipe).memory_cost(),
             Writable::Buffer(buffer) => buffer.memory_cost(),
             // TODO: memfd
             _ => 0,
@@ -52,8 +67,7 @@ impl<'a> Writable<'a> {
     pub fn r#ref(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
-                // SAFETY: pipe is live for the duration of the variant.
-                unsafe { pipe.as_mut() }.update_ref(true);
+                Self::pipe_sink(pipe).update_ref(true);
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: RefPtr holds a live ref; intrusive refcount permits
@@ -67,8 +81,7 @@ impl<'a> Writable<'a> {
     pub fn unref(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
-                // SAFETY: pipe is live for the duration of the variant.
-                unsafe { pipe.as_mut() }.update_ref(false);
+                Self::pipe_sink(pipe).update_ref(false);
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: RefPtr holds a live ref.
@@ -456,8 +469,7 @@ impl<'a> Writable<'a> {
     pub fn close(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
-                // SAFETY: pipe is live for the duration of the variant.
-                let _ = unsafe { pipe.as_mut() }.end(None);
+                let _ = Self::pipe_sink(pipe).end(None);
             }
             Writable::Memfd(fd) => {
                 fd.close();

@@ -118,15 +118,17 @@ pub struct SpawnSyncEventLoop {
 mod handler {
     use super::uws;
 
-    pub(super) unsafe extern "C" fn wakeup(_loop: *mut uws::Loop) {
+    // No-op handlers: the pointer arg is never dereferenced. Safe fn items
+    // coerce to the `unsafe extern "C" fn` slots in `uws::LoopHandler` below.
+    pub(super) extern "C" fn wakeup(_loop: *mut uws::Loop) {
         // No-op: we don't need to wake up from another thread for spawnSync
     }
 
-    pub(super) unsafe extern "C" fn pre(_loop: *mut uws::Loop) {
+    pub(super) extern "C" fn pre(_loop: *mut uws::Loop) {
         // No-op: no pre-tick work needed for spawnSync
     }
 
-    pub(super) unsafe extern "C" fn post(_loop: *mut uws::Loop) {
+    pub(super) extern "C" fn post(_loop: *mut uws::Loop) {
         // No-op: no post-tick work needed for spawnSync
     }
 

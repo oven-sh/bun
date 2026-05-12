@@ -1488,14 +1488,12 @@ impl PostgresSQLConnection {
             match request.status.get() {
                 // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
                 QueryStatus::Pending => {
-                    let Some(stmt) = request.statement.get() else {
+                    let Some(stmt) = request.statement_mut() else {
                         // `continue` in Zig with `orelse continue` — but we still need to deref+discard.
                         // PORT NOTE: Zig `orelse continue` skips the deref/discard at the bottom too;
                         // matching that behavior here.
                         continue;
                     };
-                    // SAFETY: stmt is a valid *mut PostgresSQLStatement.
-                    let stmt = unsafe { &mut *stmt };
                     stmt.error_response = Some(StatementError::PostgresError(AnyPostgresError::ConnectionClosed));
                     stmt.status = StatementStatus::Failed;
                     if !self.vm().is_shutting_down() {
@@ -1850,9 +1848,7 @@ impl PostgresSQLConnection {
                         defer_cleanup!(self);
                         return;
                     } else {
-                        if let Some(statement_ptr) = req.statement.get() {
-                            // SAFETY: statement is a valid *mut PostgresSQLStatement.
-                            let statement = unsafe { &mut *statement_ptr };
+                        if let Some(statement) = req.statement_mut() {
                             match statement.status {
                                 StatementStatus::Failed => {
                                     debug!("stmt failed");
@@ -2217,9 +2213,7 @@ impl PostgresSQLConnection {
             MessageType::DataRow => {
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
 
-                let statement_ptr = request.statement.get().ok_or(AnyPostgresError::ExpectedStatement)?;
-                // SAFETY: statement is valid for the duration of the request.
-                let statement = unsafe { &mut *statement_ptr };
+                let statement = request.statement_mut().ok_or(AnyPostgresError::ExpectedStatement)?;
                 let mut structure: JSValue = JSValue::UNDEFINED;
                 // PORT NOTE: reshaped for borrowck — `statement.structure()` borrows
                 // `&mut *statement` and returns `&CachedStructure`; capture it as a raw
@@ -2374,9 +2368,7 @@ impl PostgresSQLConnection {
             MessageType::ParseComplete => {
                 reader.eat_message(&protocol::PARSE_COMPLETE)?;
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                if let Some(statement_ptr) = request.statement.get() {
-                    // SAFETY: request holds a ref on its statement; valid while request is queued.
-                    let statement = unsafe { &mut *statement_ptr };
+                if let Some(statement) = request.statement_mut() {
                     // if we have params wait for parameter description
                     if statement.status == StatementStatus::Parsing && statement.signature.fields.is_empty() {
                         statement.status = StatementStatus::Prepared;
@@ -2394,15 +2386,13 @@ impl PostgresSQLConnection {
                         return Err(AnyPostgresError::ExpectedRequest);
                     }
                 };
-                let statement_ptr = match request.statement.get() {
+                let statement = match request.statement_mut() {
                     Some(s) => s,
                     None => {
                         drop(description.parameters);
                         return Err(AnyPostgresError::ExpectedStatement);
                     }
                 };
-                // SAFETY: request holds a ref on its statement; valid while request is queued.
-                let statement = unsafe { &mut *statement_ptr };
                 if !statement.parameters.is_empty() {
                     // PORT NOTE: Box<[T]> drop frees old slice.
                 }
@@ -2419,12 +2409,10 @@ impl PostgresSQLConnection {
                     Some(r) => r,
                     None => return Err(AnyPostgresError::ExpectedRequest),
                 };
-                let statement_ptr = match request.statement.get() {
+                let statement = match request.statement_mut() {
                     Some(s) => s,
                     None => return Err(AnyPostgresError::ExpectedStatement),
                 };
-                // SAFETY: request holds a ref on its statement; valid while request is queued.
-                let statement = unsafe { &mut *statement_ptr };
                 // A simple-mode query containing multiple statements (e.g.
                 // "SELECT 1; SELECT a, b FROM t") receives one RowDescription per
                 // result set while the same statement stays current() until
@@ -2688,17 +2676,15 @@ impl PostgresSQLConnection {
                 // calls `err.toJS`, so materialize the JS value once and route through
                 // `on_js_error` to avoid double-ownership of the non-Clone ErrorResponse.
                 let js_err = crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
-                if let Some(stmt_ptr) = request.statement.get() {
-                    // SAFETY: request holds a ref on its statement; valid while request is queued.
-                    let stmt = unsafe { &mut *stmt_ptr };
+                if let Some(stmt) = request.statement_mut() {
                     if stmt.status == StatementStatus::Parsing {
                         stmt.status = StatementStatus::Failed;
                         stmt.error_response =
                             Some(crate::postgres::postgres_sql_statement::Error::Protocol(err));
                         if self.statements.with_mut(|m| m.remove(&bun_wyhash::hash(&stmt.signature.name))).is_some() {
-                            // SAFETY: `stmt_ptr` is a live `Box`-allocated statement; the
+                            // SAFETY: `stmt` is a live `Box`-allocated statement; the
                             // request still holds its own ref so this cannot drop to 0.
-                            unsafe { PostgresSQLStatement::deref(stmt_ptr) };
+                            unsafe { PostgresSQLStatement::deref(core::ptr::from_mut(stmt)) };
                         }
                     }
                 }

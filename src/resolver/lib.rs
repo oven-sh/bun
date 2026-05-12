@@ -5488,8 +5488,9 @@ impl<'a> Resolver<'a> {
                     buf[len] = platform.separator();
                     len += 1;
                 }
-                // SAFETY: buf is threadlocal and outlives this function call
-                import_path = unsafe { core::slice::from_raw_parts(buf.as_ptr(), len) };
+                // `bufs!` hands out an unconstrained-lifetime `&mut PathBuffer`
+                // (threadlocal storage); a safe reborrow satisfies `&'static [u8]`.
+                import_path = &buf[..len];
             }
 
             if let Some(debug) = self.debug_logs.as_mut() {
@@ -7323,8 +7324,7 @@ impl<'a> Resolver<'a> {
             {
                 debug_assert!(input_path.as_ptr() == win32_normalized_dir_info_cache_buf.as_ptr());
                 win32_normalized_dir_info_cache_buf[2] = b'\\';
-                // SAFETY: buf has capacity ≥ 3
-                input_path = unsafe { core::slice::from_raw_parts(win32_normalized_dir_info_cache_buf.as_ptr(), 3) };
+                input_path = &win32_normalized_dir_info_cache_buf[..3];
             }
 
             // Filter out \\hello\, a UNC server path but without a share.

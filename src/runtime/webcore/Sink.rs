@@ -1112,17 +1112,6 @@ macro_rules! js_sink {
                 ::core::mem::size_of::<ThisSink>() + <$SinkType as JsSinkType>::memory_cost(&this.sink)
             }
 
-            type AssignToStreamFn =
-                unsafe extern "C" fn(*mut JSGlobalObject, JSValue, *mut c_void, *mut *mut c_void) -> JSValue;
-            type OnCloseFn = unsafe extern "C" fn(JSValue, JSValue);
-            type OnReadyFn = unsafe extern "C" fn(JSValue, JSValue, JSValue);
-            type OnStartFn = unsafe extern "C" fn(JSValue, *mut JSGlobalObject);
-            type CreateObjectFn =
-                unsafe extern "C" fn(*mut JSGlobalObject, *mut c_void, usize) -> JSValue;
-            type SetDestroyCallbackFn = unsafe extern "C" fn(JSValue, usize);
-            type DetachPtrFn = unsafe extern "C" fn(JSValue);
-            type FromJsFn = unsafe extern "C" fn(JSValue) -> usize;
-
             // TODO(port): move to <area>_sys
             unsafe extern "C" {
                 #[link_name = concat!($abi_name, "__assignToStream")]

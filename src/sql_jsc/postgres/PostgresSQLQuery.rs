@@ -160,6 +160,23 @@ impl PostgresSQLQuery {
         (self as *const Self).cast_mut()
     }
 
+    /// Dereference the intrusive `statement` pointer as `&mut`. Mirrors
+    /// [`MySQLQuery::get_statement`]: one unchecked deref here replaces N inline
+    /// raw-pointer derefs at every protocol dispatch site in
+    /// `PostgresSQLConnection::on`.
+    ///
+    /// SAFETY (encapsulated): when `Some`, the pointer is a live `heap::alloc`
+    /// payload kept alive by the intrusive ref this query holds (`ref_()` taken
+    /// at `statement.set(Some(_))`). All mutation is single-JS-thread so the
+    /// `&mut` is exclusive for the borrow's lifetime; callers must not hold two
+    /// results live simultaneously (the request FIFO never does).
+    #[inline]
+    pub fn statement_mut(&self) -> Option<&mut PostgresSQLStatement> {
+        // SAFETY: see doc comment — intrusive ref held by `self` keeps the
+        // pointee alive; single-JS-thread exclusivity.
+        self.statement.get().map(|p| unsafe { &mut *p })
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
 
     pub fn get_target(&self, global_object: &JSGlobalObject, clean_target: bool) -> Option<JSValue> {
@@ -571,37 +588,38 @@ impl PostgresSQLQuery {
                 connection_entry_value = Some(std::ptr::from_mut::<*mut PostgresSQLStatement>(entry.value_ptr));
                 if entry.found_existing {
                     // SAFETY: entry.value_ptr is valid while connection.statements is not mutated.
-                    let stmt: *mut PostgresSQLStatement = unsafe { *connection_entry_value.unwrap() };
-                    this.statement.set(Some(stmt));
-                    // SAFETY: `stmt` is the live map entry.
-                    unsafe { (*stmt).ref_() };
+                    let stmt_ptr: *mut PostgresSQLStatement = unsafe { *connection_entry_value.unwrap() };
+                    this.statement.set(Some(stmt_ptr));
+                    // SAFETY: `stmt_ptr` is the live map entry; just stored in
+                    // `this.statement` (intrusive ref taken below). Single-JS-thread
+                    // gives exclusive access. One deref here replaces the five
+                    // per-field raw-pointer derefs that used to follow.
+                    let stmt = unsafe { &mut *stmt_ptr };
+                    stmt.ref_();
                     drop(signature);
 
-                    // SAFETY: `stmt` is live (just ref'd).
-                    match unsafe { (*stmt).status } {
+                    match stmt.status {
                         StatementStatus::Failed => {
                             this.statement.set(None);
-                            // SAFETY: `stmt` is live; `error_response` is `Some` when status == Failed.
-                            let error_response = unsafe { (*stmt).error_response.as_ref() }
+                            // `error_response` is `Some` when status == Failed.
+                            let error_response = stmt.error_response.as_ref()
                                 .unwrap()
                                 .to_js(global_object)?;
                             // SAFETY: drop the ref we took above.
-                            unsafe { PostgresSQLStatement::deref(stmt) };
+                            unsafe { PostgresSQLStatement::deref(stmt_ptr) };
                             // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                             unsafe { Self::deref(this_ptr) };
                             return Err(global_object.throw_value(error_response));
                         }
                         StatementStatus::Prepared => {
                             if !connection.has_query_running() || connection.can_pipeline() {
-                                // SAFETY: `stmt` is live.
-                                this.update_flags(|f| f.binary = unsafe { !(*stmt).fields.is_empty() });
+                                this.update_flags(|f| f.binary = !stmt.fields.is_empty());
                                 bun_core::scoped_log!(Postgres, "bindAndExecute");
 
                                 // bindAndExecute will bind + execute, it will change to running after binding is complete
-                                // SAFETY: `stmt` is live; exclusive write access on the JS thread.
                                 if let Err(err) = PostgresRequest::bind_and_execute(
                                     global_object,
-                                    unsafe { &mut *stmt },
+                                    stmt,
                                     binding_value,
                                     columns_value,
                                     writer,
@@ -609,7 +627,7 @@ impl PostgresSQLQuery {
                                     // fail to run do cleanup
                                     this.statement.set(None);
                                     // SAFETY: drop the ref we took above.
-                                    unsafe { PostgresSQLStatement::deref(stmt) };
+                                    unsafe { PostgresSQLStatement::deref(stmt_ptr) };
                                     // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                                     unsafe { Self::deref(this_ptr) };
 

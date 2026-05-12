@@ -55,14 +55,13 @@ impl HPACK {
     pub const LSHPACK_MAX_HEADER_SIZE: usize = 65536;
 
     pub fn init(max_capacity: u32) -> *mut HPACK {
-        // SAFETY: FFI call into c-bindings.cpp; mi_malloc/mi_free are valid C-ABI fn pointers.
-        let ptr = unsafe {
-            lshpack_wrapper_init(
-                Some(bun_alloc::mimalloc::mi_malloc),
-                Some(bun_alloc::mimalloc::mi_free),
-                max_capacity as usize,
-            )
-        };
+        // `lshpack_wrapper_init` is `safe fn`: its only precondition is non-null
+        // alloc/free callbacks, which the bare (non-Option) fn-ptr types enforce.
+        let ptr = lshpack_wrapper_init(
+            bun_alloc::mimalloc::mi_malloc,
+            bun_alloc::mimalloc::mi_free,
+            max_capacity as usize,
+        );
         if ptr.is_null() {
             bun_core::out_of_memory();
         }
@@ -199,12 +198,15 @@ impl Drop for HpackHandle {
 // concurrently (callers serialize on the owning `H2FrameParser`).
 unsafe impl Send for HpackHandle {}
 
-type lshpack_wrapper_alloc = Option<unsafe extern "C" fn(size: usize) -> *mut c_void>;
-type lshpack_wrapper_free = Option<unsafe extern "C" fn(ptr: *mut c_void)>;
+// Non-Option fn pointers: the C ABI repr is identical to `Option<fn>`, but the
+// type guarantees non-null, which is the only precondition `lshpack_wrapper_init`
+// has — letting it be declared `safe fn` below.
+type lshpack_wrapper_alloc = unsafe extern "C" fn(size: usize) -> *mut c_void;
+type lshpack_wrapper_free = unsafe extern "C" fn(ptr: *mut c_void);
 
 // TODO(port): move to bun_http_sys
 unsafe extern "C" {
-    fn lshpack_wrapper_init(
+    safe fn lshpack_wrapper_init(
         alloc: lshpack_wrapper_alloc,
         free: lshpack_wrapper_free,
         capacity: usize,

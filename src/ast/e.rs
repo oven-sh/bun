@@ -1366,11 +1366,13 @@ impl EString {
     /// `@ptrCast(value.ptr)[0..value.len]`. `slice16()` and friends rely on
     /// this. The pointer is reinterpreted to `*const u8` for storage only.
     pub fn init_utf16(data: &[u16]) -> Self {
-        // SAFETY: `data` is &[u16]; we store the element count and reinterpret
-        // the ptr. Consumers must check `is_utf16` and re-slice via `slice16`.
-        let bytes = unsafe {
-            core::slice::from_raw_parts(data.as_ptr().cast::<u8>(), data.len())
-        };
+        // `Str::new` only records `(ptr, len)`; we want the original `*const u16`
+        // (reinterpreted as bytes) and the **u16 element count**. Safe-cast the
+        // full `2*len` byte view, then reslice to the first `len` bytes — same
+        // pointer/length pair as the old raw-slice construction, without an
+        // `unsafe` block. Consumers must check `is_utf16` and re-slice via
+        // `slice16`.
+        let bytes = &bytemuck::cast_slice::<u16, u8>(data)[..data.len()];
         Self { data: Str::new(bytes), is_utf16: true, ..Default::default() }
     }
     /// E.String containing non-ascii characters may not fully work.
@@ -1861,7 +1863,7 @@ impl TemplateContents {
     /// Field-wise copy (Zig: `var part = part.*`). `EString` is structurally
     /// `Copy` but does not derive it; use `shallow_clone` for the cooked arm.
     #[inline]
-    fn shallow_clone(&self) -> TemplateContents {
+    pub(crate) fn shallow_clone(&self) -> TemplateContents {
         match self {
             TemplateContents::Cooked(c) => TemplateContents::Cooked(c.shallow_clone()),
             TemplateContents::Raw(r) => TemplateContents::Raw(*r),

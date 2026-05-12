@@ -919,20 +919,19 @@ mod WellKnownAddress {
     use super::*;
     // TODO(port): move to <area>_sys
     unsafe extern "C" {
-        static INET_LOOPBACK: bun_str::WTFStringImpl;
-        static INET6_ANY: bun_str::WTFStringImpl;
+        // C++-side `WTF::StaticStringImpl` constants — initialized at load time,
+        // immutable, immortal refcount. Reading the pointer value has no
+        // precondition, so declare them `safe static`.
+        safe static INET_LOOPBACK: bun_str::WTFStringImpl;
+        safe static INET6_ANY: bun_str::WTFStringImpl;
     }
     #[inline]
     pub fn loopback_v4() -> BunString {
-        // SAFETY: INET_LOOPBACK is a static WTF::StaticStringImpl pointer initialized at
-        // load time by C++; static string impls have immortal refcount so adopt is fine.
-        BunString::adopt_wtf_impl(unsafe { INET_LOOPBACK })
+        BunString::adopt_wtf_impl(INET_LOOPBACK)
     }
     #[inline]
     pub fn any_v6() -> BunString {
-        // SAFETY: INET6_ANY is a static WTF::StaticStringImpl pointer initialized at
-        // load time by C++; static string impls have immortal refcount so adopt is fine.
-        BunString::adopt_wtf_impl(unsafe { INET6_ANY })
+        BunString::adopt_wtf_impl(INET6_ANY)
     }
 }
 

@@ -719,11 +719,12 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 if let Some(terminal_val) = args.get_truthy(global_this, "terminal")? {
                     // Check if it's an existing Terminal object
                     if let Some(terminal) = terminal_body::js::from_js(terminal_val) {
-                        // SAFETY: `from_js` returns the live `m_ctx` pointer borrowed
+                        // `from_js` returns the live `m_ctx` pointer borrowed
                         // from the JS wrapper; it stays valid for as long as
                         // `terminal_val` is reachable (kept alive below via
-                        // `terminal_js_value`).
-                        let term = unsafe { terminal.as_ref() };
+                        // `terminal_js_value`), so the `BackRef` invariant
+                        // (pointee outlives holder) holds for this scope.
+                        let term = bun_ptr::BackRef::from(terminal);
                         if term.is_closed() {
                             return Err(global_this.throw_invalid_arguments(format_args!("terminal is closed")));
                         }
@@ -1724,8 +1725,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // Support `AbortSignal.timeout`, but it's best-effort.
         // Specifying both `timeout: number` and `AbortSignal.timeout` chooses the soonest one.
         // This does mean if an AbortSignal times out it will throw
-        // SAFETY: `abort_signal` holds a +1-ref'd live AbortSignal*.
-        if let Some(signal) = subprocess.abort_signal.get().map(|p| unsafe { p.as_ref() }) {
+        if let Some(signal) = subprocess.abort_signal_ref() {
             if let Some(abort_signal_timeout) = signal.get_timeout() {
                 // PORT NOTE: `AbortSignal::Timeout.event_loop_timer` uses the
                 // bun_event_loop-local `Timespec` stub; convert fieldwise.

@@ -172,16 +172,15 @@ pub fn dump_current_stack_trace(first_address: Option<usize>, limits: DumpStackT
     #[cfg(not(test))]
     {
         unsafe extern "Rust" {
-            fn __bun_crash_handler_dump_stack_trace(
+            // Defined `#[no_mangle] extern "Rust"` in `bun_crash_handler` and
+            // linked into every binary that depends on this crate; all args
+            // by-value, no unsafe preconditions.
+            safe fn __bun_crash_handler_dump_stack_trace(
                 first_address: Option<usize>,
                 limits: DumpStackTraceOptions,
             );
         }
-        // SAFETY: `__bun_crash_handler_dump_stack_trace` is defined
-        // `#[no_mangle] extern "Rust"` in `bun_crash_handler` and linked into
-        // every binary that depends on this crate; it has no unsafe
-        // preconditions beyond being called.
-        unsafe { __bun_crash_handler_dump_stack_trace(first_address, limits) }
+        __bun_crash_handler_dump_stack_trace(first_address, limits)
     }
     #[cfg(test)]
     {

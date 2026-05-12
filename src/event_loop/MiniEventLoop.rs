@@ -51,11 +51,13 @@ unsafe extern "Rust" {
     /// rare_data.zig:551 inline `Blob.Store` ctor). Return value is an erased
     /// `*mut blob::Store` with intrusive refcount = 2; this crate only
     /// stores/forwards it. Defined in `bun_runtime::webcore::blob`.
-    pub fn __bun_stdio_blob_store_new(fd: Fd, is_atty: bool, mode: Mode) -> *mut ();
+    /// No caller-side preconditions (by-value args, allocates fresh).
+    pub safe fn __bun_stdio_blob_store_new(fd: Fd, is_atty: bool, mode: Mode) -> *mut ();
     /// Returns the thread's `*mut jsc::VirtualMachine` (Zig:
     /// `jsc.VirtualMachine.get()`). Backs `JsKind::get_vm()`. Defined in
-    /// `bun_runtime::jsc_hooks`.
-    fn __bun_js_vm_get() -> *mut ();
+    /// `bun_runtime::jsc_hooks`. No caller-side preconditions (reads a
+    /// thread-local; wrong-thread is a logic error, not UB).
+    safe fn __bun_js_vm_get() -> *mut ();
 }
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -482,8 +484,7 @@ impl<'a> MiniEventLoop<'a> {
             if let Ok(stat) = sys::fstat(fd) {
                 mode = stat.st_mode as Mode;
             }
-            // SAFETY: link-time extern; allocates a fresh Store.
-            let store = unsafe { __bun_stdio_blob_store_new(fd, is_atty, mode) };
+            let store = __bun_stdio_blob_store_new(fd, is_atty, mode);
             *slot = NonNull::new(store);
         }
         slot.unwrap().as_ptr()
@@ -631,9 +632,7 @@ impl EventLoopKindT for JsKind {
     type Loop = *mut ();
     type Ref = *mut ();
     fn get_vm() -> Self::Ref {
-        // SAFETY: link-time extern; returns the per-thread VM (Zig:
-        // `jsc.VirtualMachine.get()`). Caller must be on the JS thread.
-        unsafe { __bun_js_vm_get() }
+        __bun_js_vm_get()
     }
 }
 

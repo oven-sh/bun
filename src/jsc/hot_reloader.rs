@@ -1369,12 +1369,10 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     }
 
     fn compute_clear_screen(&self) -> bool {
-        // SAFETY: `transpiler.env` is set in `Transpiler::init` and live for the
-        // build (process-lifetime under --watch).
-        !unsafe {
-            (*self.transpiler.env)
-                .has_set_no_clear_terminal_on_reload(!Output::enable_ansi_colors_stdout())
-        }
+        !self
+            .transpiler
+            .env()
+            .has_set_no_clear_terminal_on_reload(!Output::enable_ansi_colors_stdout())
     }
 }
 

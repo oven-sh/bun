@@ -397,8 +397,8 @@ pub unsafe fn rename_symbols_in_chunk(
             }
 
             r.add_top_level_declared_symbols(&mut part.declared_symbols);
-            // SAFETY: `Part.scopes` is an arena-owned slice of arena-allocated `*mut Scope`.
-            for scope in unsafe { &*part.scopes } {
+            // `Part.scopes: StoreSlice<*mut Scope>` — safe `Deref` to `&[*mut Scope]`.
+            for scope in part.scopes.iter() {
                 let root: *mut renamer::NumberScope = core::ptr::addr_of_mut!(r.root);
                 // SAFETY: each `*mut Scope` is a valid arena-allocated scope.
                 r.assign_names_recursive_with_number_scope(

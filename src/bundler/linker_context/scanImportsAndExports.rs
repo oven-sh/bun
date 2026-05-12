@@ -1516,9 +1516,8 @@ mod __css_validation {
                     return;
                 }
 
-                // SAFETY: `Map::get` returns a stable `*mut Symbol`; ref is valid.
                 let local_original_name: &[u8] =
-                    unsafe { &*self.all_symbols.get(local).unwrap() }.original_name.slice();
+                    self.all_symbols.get_const(local).unwrap().original_name.slice();
 
                 let _ = self.log.add_msg(bun_ast::Msg {
                     kind: bun_ast::Kind::Err,

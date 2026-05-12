@@ -272,8 +272,8 @@ pub fn post_process_js_chunk(
             let source_import_records = all_import_records[part_range.source_index.get() as usize].slice();
             let mut part_i = part_range.part_index_begin;
             while part_i < part_range.part_index_end {
-                // SAFETY: Part.stmts is a non-null arena `*mut [Stmt]` valid for the bundler arena lifetime.
-                for stmt in unsafe { (*source_parts[part_i as usize].stmts).iter() } {
+                // `Part.stmts: StoreSlice<Stmt>` — arena-backed, safe `Deref`.
+                for stmt in source_parts[part_i as usize].stmts.iter() {
                     match &stmt.data {
                         StmtData::SImport(s) => {
                             let record = &source_import_records[s.import_record_index as usize];
@@ -312,8 +312,8 @@ pub fn post_process_js_chunk(
                                 }
                             }
 
-                            // SAFETY: S::Import.items is arena-owned `*mut [ClauseItem]`; never null.
-                            for item in unsafe { (*s.items).iter() } {
+                            // `S::Import.items: StoreSlice<ClauseItem>` — safe `Deref`.
+                            for item in s.items.iter() {
                                 if let Some(name_ref) = item.name.ref_ {
                                     let local_name_id = {
                                         let local_name = chunk.renamer.name_for_symbol(name_ref);

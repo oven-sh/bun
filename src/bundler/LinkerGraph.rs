@@ -363,15 +363,12 @@ impl LinkerGraph {
     }
 
     /// Shared-ref view of a symbol that is known to exist (the `Ref` was
-    /// produced by the symbol table itself). Centralizes the `unsafe` deref of
-    /// `symbol::Map::get`'s raw pointer; callers previously open-coded
+    /// produced by the symbol table itself). Thin wrapper over
+    /// [`symbol::Map::get_const`]; callers previously open-coded
     /// `unsafe { &*graph.symbols.get(r).expect(..) }`.
     #[inline]
     pub fn symbol(&self, ref_: Ref) -> &Symbol {
-        // SAFETY: `Map::get` returns a pointer into the live, never-reallocated
-        // `symbols_for_source` SoA buffers; valid for the `&self` borrow, and
-        // the `Ref` came from this table so the lookup is infallible.
-        unsafe { &*self.symbols.get(ref_).expect("infallible: ref in symbol table") }
+        self.symbols.get_const(ref_).expect("infallible: ref in symbol table")
     }
 
     /// Mutable view of a symbol that is known to exist. Takes `&self` (not

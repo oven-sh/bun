@@ -58,8 +58,8 @@ pub fn generate_code_for_lazy_export(
     // SAFETY: `parts.ptr[1]` — Vec raw indexing; using index 1 here.
     let part: &mut Part = unsafe { &mut (*parts)[1] };
 
-    // SAFETY: `stmts: *mut [Stmt]` is an arena slice valid for the link pass.
-    if unsafe { (&*part.stmts).is_empty() } {
+    // `Part.stmts: StoreSlice<Stmt>` — safe `Deref` to `&[Stmt]`.
+    if part.stmts.is_empty() {
         panic!("Internal error: expected at least one statement in the lazy export");
     }
 
@@ -72,8 +72,7 @@ pub fn generate_code_for_lazy_export(
     // this JavaScript stub with the local names from that CSS file. This is done
     // now instead of earlier because we need the whole bundle to be present.
     if let Some(css_ast) = maybe_css_ast {
-        // SAFETY: `part.stmts` is a non-empty arena slice (checked above).
-        let stmt: Stmt = unsafe { (*part.stmts)[0] };
+        let stmt: Stmt = part.stmts[0];
         if !matches!(stmt.data, StmtData::SLazyExport(_)) {
             panic!("Internal error: expected top-level lazy export statement");
         }
@@ -381,16 +380,14 @@ pub fn generate_code_for_lazy_export(
                 exports.put(arena, key, value)?;
             }
 
-            // SAFETY: `part.stmts` non-empty (checked above).
-            if let StmtData::SLazyExport(mut slot) = unsafe { (*part.stmts)[0] }.data {
+            if let StmtData::SLazyExport(mut slot) = part.stmts[0].data {
                 // `StoreRef<ExprData>` is a Copy `NonNull` — write through the pointer.
                 *slot = Expr::init(exports, stmt.loc).data;
             }
         }
     }
 
-    // SAFETY: `part.stmts` is a non-empty arena slice (checked above).
-    let stmt: Stmt = unsafe { (*part.stmts)[0] };
+    let stmt: Stmt = part.stmts[0];
     let StmtData::SLazyExport(lazy) = stmt.data else {
         panic!("Internal error: expected top-level lazy export statement");
     };

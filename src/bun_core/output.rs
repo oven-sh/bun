@@ -541,8 +541,11 @@ pub mod windows_stdio {
     /// At program start, we snapshot the console modes of standard in, out, and err
     /// so that we can restore them at program exit if they change. Restoration is
     /// best-effort, and may not be applied if the process is killed abruptly.
-    pub static CONSOLE_MODE: crate::RacyCell<[Option<u32>; 3]> =
-        crate::RacyCell::new([None, None, None]);
+    ///
+    /// Write-once at startup → `Once`, not `RacyCell`: `init()` builds the
+    /// snapshot locally and `.set()`s it; `restore()` reads via `.get()`. Both
+    /// sides are fully safe (cell-get reduction).
+    pub static CONSOLE_MODE: crate::Once<[Option<u32>; 3]> = crate::Once::new();
     pub static CONSOLE_CODEPAGE: core::sync::atomic::AtomicU32 =
         core::sync::atomic::AtomicU32::new(0);
     pub static CONSOLE_OUTPUT_CODEPAGE: core::sync::atomic::AtomicU32 =
@@ -564,8 +567,8 @@ pub mod windows_stdio {
         };
 
         let handles = [stdin, stdout, stderr];
-        // SAFETY: CONSOLE_MODE is only mutated at init/restore on the main thread.
-        for (mode, handle) in unsafe { CONSOLE_MODE.read() }.iter().zip(handles.iter()) {
+        let modes = CONSOLE_MODE.get().copied().unwrap_or([None; 3]);
+        for (mode, handle) in modes.iter().zip(handles.iter()) {
             if let Some(m) = *mode {
                 let _ = SetConsoleMode(*handle, m);
             }
@@ -615,8 +618,9 @@ pub mod windows_stdio {
         let _ = c::SetConsoleCP(CP_UTF8);
 
         let mut mode: w::DWORD = 0;
-        // SAFETY: single-threaded startup; CONSOLE_MODE is a write-once cache.
-        let console_mode = unsafe { &mut *CONSOLE_MODE.get() };
+        // Build the snapshot locally, then publish via `Once::set` — no
+        // long-lived `&mut` into a shared static (cell-get reduction).
+        let mut console_mode: [Option<u32>; 3] = [None; 3];
         if GetConsoleMode(stdin, &mut mode) != 0 {
             console_mode[0] = Some(mode);
             bun_stdio_tty[0].store(1, Ordering::Relaxed);
@@ -650,6 +654,7 @@ pub mod windows_stdio {
                     | mode,
             );
         }
+        let _ = CONSOLE_MODE.set(console_mode);
     }
 }
 

@@ -854,24 +854,15 @@ impl<'a> EntryLookup<'a> {
     /// # Safety (encapsulated)
     /// `self.entry` is a slot in the process-static `EntryStore` BSSList
     /// singleton (BACKREF/ARENA — never freed, never moved). No `&mut Entry`
-    /// is materialized concurrently with a read: the lazy-stat path
-    /// (`entry_mut`) carries a caller-side exclusivity contract, so safe code
-    /// cannot alias. Returned as `&'a` (the lookup's nominal
-    /// lifetime, tied to the `DirEntry` it came from) rather than `&self` so
-    /// callers may move/consume the `EntryLookup` while keeping the borrow.
+    /// is materialized concurrently with a read: the lazy-stat path mutates
+    /// only `Entry.cache` under `Entry.mutex`, so safe code cannot alias.
+    /// Returned as `&'a` (the lookup's nominal lifetime, tied to the
+    /// `DirEntry` it came from) rather than `&self` so callers may
+    /// move/consume the `EntryLookup` while keeping the borrow.
     #[inline]
     pub fn entry(&self) -> &'a Entry {
         // SAFETY: ARENA — EntryStore-owned slot; see fn doc.
         unsafe { &*self.entry }
-    }
-    /// Convenience: dereference `entry` as a mutable borrow for the lazy-stat
-    /// path (`kind`/`symlink`).
-    /// SAFETY: `entry` points into the process-static `EntryStore`; caller must
-    /// hold no other borrow to the same `Entry`.
-    #[inline]
-    pub unsafe fn entry_mut(&self) -> &mut Entry {
-        // SAFETY: see fn doc
-        unsafe { &mut *self.entry }
     }
 }
 
@@ -1062,61 +1053,15 @@ pub(crate) type EntriesOptionMap =
 bun_alloc::bss_map_inner! { pub entries_option_map : EntriesOption, preallocate::counts::DIR_ENTRY, true }
 
 /// ZST handle over the `entries_option_map()` singleton; keeps `RealFS.entries`
-/// field-shaped without inlining the (large) backing array.
+/// field-shaped without inlining the (large) backing array. Carries no
+/// methods of its own — all map access goes through [`EntriesGuard`] (obtained
+/// via [`RealFS::entries_locked`]), which structurally ties the
+/// `entries_mutex` lock to every `&mut BSSMapInner` retag instead of relying
+/// on a per-call-site SAFETY contract.
 pub struct EntriesMap(());
 impl EntriesMap {
     #[inline]
     pub const fn new() -> Self { Self(()) }
-    #[inline]
-    fn inner(&self) -> *mut EntriesOptionMap {
-        // PORT NOTE: returns the raw `*mut` singleton (Zig `*Self`). Do NOT materialize
-        // a `&'static mut` here — that asserts noalias for the whole map BEFORE
-        // `RealFS.entries_mutex` is taken, which is UB if two threads race. Form the
-        // `&mut` only for the duration of a single operation at the call site.
-        entries_option_map()
-    }
-    /// SAFETY: forms a `&mut BSSMapInner` over the process-global singleton for
-    /// the duration of the call. Caller must hold `RealFS.entries_mutex` so no
-    /// other thread is inside any `EntriesMap` method concurrently. Returns a
-    /// raw `*mut EntriesOption` (matching Zig's `*EntriesOption`) — caller
-    /// forms a short-lived `&mut` at the use site under the same lock; do NOT
-    /// hand out a `&'static mut` (two callers would alias the same slot).
-    pub unsafe fn get(&self, key: &[u8]) -> Option<*mut EntriesOption> {
-        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
-        let r = unsafe { (*self.inner()).get(key)? };
-        Some(std::ptr::from_mut::<EntriesOption>(r))
-    }
-    /// SAFETY: see [`get`] — mutates the singleton map.
-    pub unsafe fn get_or_put(&self, key: &[u8]) -> core::result::Result<allocators::Result, AllocError> {
-        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
-        unsafe { (*self.inner()).get_or_put(key) }
-    }
-    /// SAFETY: see [`get`].
-    pub unsafe fn at_index(&self, index: allocators::IndexType) -> Option<*mut EntriesOption> {
-        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
-        let r = unsafe { (*self.inner()).at_index(index)? };
-        Some(std::ptr::from_mut::<EntriesOption>(r))
-    }
-    /// SAFETY: see [`get`].
-    pub unsafe fn put(
-        &self,
-        result: &mut allocators::Result,
-        value: EntriesOption,
-    ) -> core::result::Result<*mut EntriesOption, AllocError> {
-        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
-        let r = unsafe { (*self.inner()).put(result, value)? };
-        Ok(std::ptr::from_mut::<EntriesOption>(r))
-    }
-    /// SAFETY: see [`get`] — mutates the singleton map.
-    pub unsafe fn mark_not_found(&self, result: allocators::Result) {
-        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
-        unsafe { (*self.inner()).mark_not_found(result) }
-    }
-    /// SAFETY: see [`get`] — mutates the singleton map.
-    pub unsafe fn remove(&self, key: &[u8]) -> bool {
-        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
-        unsafe { (*self.inner()).remove(key) }
-    }
 }
 
 /// RAII guard over the `entries_option_map()` singleton: holds
@@ -1322,7 +1267,7 @@ impl RealFS {
         generation: Generation,
     ) -> Option<*mut EntriesOption> {
         // PORT NOTE: Zig fs.zig:613 does not lock here; in Rust we must, because every
-        // `EntriesMap` method auto-refs the global `BSSMapInner` to `&mut self`, and a
+        // `EntriesGuard` method auto-refs the global `BSSMapInner` to `&mut self`, and a
         // concurrent `read_directory_with_iterator` (which *does* lock) would otherwise
         // alias that `&mut` — UB under Stacked Borrows. `EntriesGuard` holds
         // `entries_mutex` for the whole operation so the `&mut BSSMapInner` is
@@ -1438,7 +1383,7 @@ impl RealFS {
     /// Returns `true` if an entry was removed
     pub fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
         // PORT NOTE: Zig fs.zig:778 does not lock here; in Rust we must, because
-        // `EntriesMap::remove` auto-refs the global `BSSMapInner` to `&mut self`, and a
+        // `EntriesGuard::remove` auto-refs the global `BSSMapInner` to `&mut self`, and a
         // concurrent `read_directory_with_iterator` (which *does* lock) would otherwise
         // alias that `&mut` — UB. `&mut self` alone proves nothing cross-thread since
         // `EntriesMap` is a ZST handle over a process-global singleton.

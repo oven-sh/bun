@@ -942,16 +942,6 @@ pub mod fs {
             // SAFETY: ARENA — EntryStore-owned slot; see fn doc.
             unsafe { &*self.entry }
         }
-
-        /// # Safety
-        /// `entry` is an EntryStore-owned slot; caller holds `RealFS.entries_mutex`
-        /// and must not let the returned `&mut Entry` overlap any other live
-        /// reference to this slot.
-        #[inline(always)]
-        pub unsafe fn entry_mut(&self) -> &'a mut Entry {
-            // SAFETY: upheld by caller — see fn doc. `self.entry` is an EntryStore slot.
-            unsafe { &mut *self.entry }
-        }
     }
 
     impl DirEntry {

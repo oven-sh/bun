@@ -1,4 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { isBuiltin } from "node:module";
+import * as undiciModule from "undici";
 import {
   Agent,
   Client,
@@ -92,8 +94,7 @@ afterAll(() => {
 // Module exports
 // ---------------------------------------------------------------------------
 describe("module exports", () => {
-  it("exports all expected top-level APIs", async () => {
-    const undici = await import("undici");
+  it("exports all expected top-level APIs", () => {
     const expectedExports = [
       "Agent",
       "BalancedPool",
@@ -133,21 +134,20 @@ describe("module exports", () => {
       "util",
     ];
     for (const name of expectedExports) {
-      expect((undici as any)[name]).toBeDefined();
+      expect((undiciModule as any)[name]).toBeDefined();
     }
   });
 
   it("undici is not a builtin module", () => {
-    expect(require("module").isBuiltin("undici")).toBe(false);
+    expect(isBuiltin("undici")).toBe(false);
   });
 
-  it("require and import resolve the same module", async () => {
+  it("require and import resolve the same module", () => {
     const cjsUndici = require("undici");
-    const esmUndici = await import("undici");
     expect(typeof cjsUndici.request).toBe("function");
-    expect(typeof esmUndici.request).toBe("function");
     expect(typeof cjsUndici.Client).toBe("function");
-    expect(typeof esmUndici.Client).toBe("function");
+    expect(typeof undiciModule.request).toBe("function");
+    expect(typeof undiciModule.Client).toBe("function");
   });
 });
 
@@ -329,14 +329,14 @@ describe("Agent", () => {
 // Dispatcher.compose() and interceptors
 // ---------------------------------------------------------------------------
 describe("Dispatcher.compose() and interceptors", () => {
-  it("compose() exists on Agent and Client instances", () => {
+  it("compose() exists on Agent and Client instances", async () => {
     const agent = new Agent();
     expect(typeof agent.compose).toBe("function");
-    agent.close();
+    await agent.close();
 
     const client = new Client(baseUrl);
     expect(typeof client.compose).toBe("function");
-    client.close();
+    await client.close();
   });
 
   it("compose() with a custom interceptor that adds a header", async () => {

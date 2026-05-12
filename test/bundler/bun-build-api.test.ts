@@ -649,6 +649,24 @@ describe("Bun.build", () => {
       expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
     },
   );
+
+  test("many conditions does not crash", async () => {
+    const dir = tempDirWithFiles("bun-build-many-conditions", {
+      "entry.js": "export const x = 1;",
+    });
+
+    for (const target of ["node", "bun", "browser"] as const) {
+      for (let count = 1; count <= 20; count++) {
+        const conditions = Array.from({ length: count }, (_, i) => `custom${i}`);
+        const result = await Bun.build({
+          entrypoints: [join(dir, "entry.js")],
+          target,
+          conditions,
+        });
+        expect(result.success).toBe(true);
+      }
+    }
+  });
 });
 
 test.concurrent("macro with nested object", async () => {

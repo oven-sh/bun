@@ -448,13 +448,15 @@ impl PostgresSQLQuery {
         // this shared borrow).
         let this_ptr: *mut Self = core::ptr::from_ref(this).cast_mut();
         let arguments = callframe.arguments();
-        let Some(connection_ptr) = postgres_sql_connection::js::from_js(arguments[0]) else {
+        // `from_js_ref` wraps the m_ctx payload in a `ParentRef` — the JS wrapper
+        // is on-stack (rooted by `arguments[0]`) so GC cannot finalize it for the
+        // duration of this call, satisfying the `ParentRef` outlives-holder
+        // invariant. R-2: shared borrow — every connection field accessed below is
+        // `Cell`/`JsCell`.
+        let Some(connection) = postgres_sql_connection::js::from_js_ref(arguments[0]) else {
             return Err(global_object.throw(format_args!("connection must be a PostgresSQLConnection")));
         };
-        // SAFETY: `connection_ptr` is the live m_ctx payload for arguments[0]; the JS
-        // wrapper is on-stack so GC cannot finalize it for the duration of this call.
-        // R-2: shared borrow — every connection field accessed below is `Cell`/`JsCell`.
-        let connection: &PostgresSQLConnection = unsafe { &*connection_ptr };
+        let connection: &PostgresSQLConnection = &connection;
 
         // Zig: `connection.poll_ref.ref(globalObject.bunVM())`. In the Rust port,
         // `KeepAlive::ref_` takes an `EventLoopCtx` (manual vtable in `bun_io`), not a

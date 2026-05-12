@@ -153,15 +153,15 @@ pub mod caching_sha2_password {
         }
     }
 
-    // TODO(port): lifetime — borrowed param-pack. PORTING.md forbids lifetime
-    // params on structs in Phase A for `[]const u8` fields (Box / &'static / raw
-    // only). LIFETIMES.tsv has no row for these. These slices are caller-owned and
-    // live only across a single write() call, so use raw `*const [u8]` here; Phase B
-    // may promote to `<'a>` once the writer trait shape is settled.
+    // Borrowed param-pack: caller-owned slices that live only across a single
+    // `write()` call. `RawSlice<u8>` (encapsulated fat raw pointer with safe
+    // `Deref` under the outlives-holder invariant) avoids the per-method
+    // `unsafe { &*self.field }` deref triple while keeping the struct
+    // lifetime-free per PORTING.md Phase-A rules.
     pub struct EncryptedPassword {
-        pub password: *const [u8],
-        pub public_key: *const [u8],
-        pub nonce: *const [u8],
+        pub password: bun_ptr::RawSlice<u8>,
+        pub public_key: bun_ptr::RawSlice<u8>,
+        pub nonce: bun_ptr::RawSlice<u8>,
         pub sequence_id: u8,
     }
 
@@ -174,10 +174,11 @@ pub mod caching_sha2_password {
             &self,
             writer: NewWriter<Context>,
         ) -> Result<(), bun_core::Error> {
-            // SAFETY: password/public_key/nonce are caller-owned slices that outlive
-            // this single write() call (borrowed param-pack — see struct TODO above).
+            // `RawSlice` invariant: backing storage outlives the holder (this
+            // struct lives only for the single `write()` call its caller wraps it
+            // in), so safe `Deref` recovers `&[u8]` without an `unsafe` block.
             let (password, public_key, nonce) =
-                unsafe { (&*self.password, &*self.public_key, &*self.nonce) };
+                (self.password.slice(), self.public_key.slice(), self.nonce.slice());
             // The XOR below does `nonce[i % nonce.len]`; an empty nonce from a
             // malicious server's AuthSwitchRequest would be a divide-by-zero.
             if nonce.is_empty() {

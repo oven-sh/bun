@@ -1,35 +1,4 @@
-use crate::jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue};
-
-// ──────────────────────────────────────────────────────────────────────────
-// JSC-ABI thunks (Zig: `jsc.toJSHostFn(fn)`). `JSFunction::create` needs a real
-// `JSHostFn` pointer (sysv64 on win-x64, C elsewhere); the safe Rust-signature
-// impls are wrapped here. `JsResult::Err` → `JSValue::ZERO` (exception already
-// pending).
-// ──────────────────────────────────────────────────────────────────────────
-bun_jsc::jsc_host_abi! {
-    unsafe fn js_init(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-        // SAFETY: JSC guarantees both pointers are live for the host call.
-        PostgresSQLContext::init(unsafe { &*g }, unsafe { &*f })
-    }
-}
-bun_jsc::jsc_host_abi! {
-    unsafe fn js_create_query(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-        // SAFETY: JSC guarantees both pointers are live for the host call.
-        match PostgresSQLQuery::call(unsafe { &*g }, unsafe { &*f }) {
-            Ok(v) => v,
-            Err(_) => JSValue::ZERO,
-        }
-    }
-}
-bun_jsc::jsc_host_abi! {
-    unsafe fn js_create_connection(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-        // SAFETY: JSC guarantees both pointers are live for the host call.
-        match postgres_sql_connection::call(unsafe { &*g }, unsafe { &*f }) {
-            Ok(v) => v,
-            Err(_) => JSValue::ZERO,
-        }
-    }
-}
+use crate::jsc::{JSFunction, JSGlobalObject, JSValue};
 
 pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
     // NB: the win-x64 segfault originally observed here was an ABI mismatch in
@@ -39,20 +8,30 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
     let connection_ctor = postgres_sql_connection::js::get_constructor(global_object);
     let binding = JSValue::create_empty_object_with_null_prototype(global_object);
     binding.put(global_object, b"PostgresSQLConnection", connection_ctor);
+    // `JSFunction::create` accepts safe `fn(&JSGlobalObject, &CallFrame) -> JSValue` /
+    // `-> JsResult<JSValue>` directly via `IntoJSHostFn` (Zig: `jsc.toJSHostFn(fn)`);
+    // the JSC-ABI thunk + raw-ptr deref live in `crate::jsc` — no per-binding
+    // `unsafe { &*g }` boilerplate here.
     binding.put(
         global_object,
         b"init",
-        JSFunction::create(global_object, "init", js_init as JSHostFn, 0, Default::default()),
+        JSFunction::create(global_object, "init", PostgresSQLContext::init, 0, Default::default()),
     );
     binding.put(
         global_object,
         b"createQuery",
-        JSFunction::create(global_object, "createQuery", js_create_query as JSHostFn, 6, Default::default()),
+        JSFunction::create(global_object, "createQuery", PostgresSQLQuery::call, 6, Default::default()),
     );
     binding.put(
         global_object,
         b"createConnection",
-        JSFunction::create(global_object, "createConnection", js_create_connection as JSHostFn, 2, Default::default()),
+        JSFunction::create(
+            global_object,
+            "createConnection",
+            postgres_sql_connection::call,
+            2,
+            Default::default(),
+        ),
     );
     binding
 }

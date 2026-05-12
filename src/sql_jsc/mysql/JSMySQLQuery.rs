@@ -185,14 +185,14 @@ impl JSMySQLQuery {
                 "run must be called with 2 arguments connection and target"
             )));
         }
-        let Some(connection) = js_mysql_connection::from_js(arguments[0]) else {
+        // `from_js_ref` wraps the m_ctx payload in a `ParentRef` — the backing
+        // JSC wrapper is rooted by `arguments[0]` for this frame, satisfying the
+        // `ParentRef` outlives-holder invariant. R-2: shared `&` only — every
+        // `MySQLConnection` method reached below is `&self` post-migration.
+        let Some(connection) = js_mysql_connection::from_js_ref(arguments[0]) else {
             return Err(global_object.throw(format_args!("connection must be a MySQLConnection")));
         };
-        // SAFETY: `from_js` returned a non-null `*mut MySQLConnection` whose
-        // backing JSC wrapper is rooted by `arguments[0]` for this frame.
-        // R-2: shared `&` only — every `MySQLConnection` method reached below
-        // is `&self` post-migration.
-        let connection: &MySQLConnection = unsafe { &*connection };
+        let connection: &MySQLConnection = &connection;
         let target = arguments[1];
         if !target.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));

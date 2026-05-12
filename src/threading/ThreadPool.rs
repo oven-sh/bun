@@ -722,37 +722,18 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
     }
 };
 
-/// Pre-warm mimalloc's process-wide NUMA-node-count cache from the *spawning*
-/// thread before the first worker is created.
-///
-/// Every worker's `mi_thread_set_in_threadpool()` → heap-init path calls
-/// `_mi_os_numa_node_count()`. mimalloc caches the answer in a process-wide
-/// atomic (`mi_numa_node_count`), but on `bun install` we spawn 2+ workers
-/// near-simultaneously and each one races into the uncached slow path —
-/// walking `/sys/devices/system/node/node%u` via `_mi_vsnprintf` (the #1
-/// sampled symbol on the install/fastify cold path) — before any of them has
-/// published the result. Resolving it once here, on the main thread, makes
-/// every subsequent worker take the single-atomic-load fast path.
-#[cold]
-fn prewarm_mimalloc_numa() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        // Internal mimalloc symbol with external (non-`static`) linkage;
-        // mimalloc is linked as a static archive, so this resolves at link
-        // time despite the archive being built with `-fvisibility=hidden`
-        // (hidden visibility only affects dynamic export, not static-archive
-        // symbol resolution). No preconditions; idempotent.
-        unsafe extern "C" { safe fn _mi_os_numa_node_count() -> core::ffi::c_int; }
-        let _ = _mi_os_numa_node_count();
-    });
-}
+// NOTE: a `prewarm_mimalloc_numa()` helper was tried here to call
+// `_mi_os_numa_node_count()` once on the spawning thread so workers don't race
+// the `/sys/devices/system/node/node%u` slow path, but mimalloc is built as
+// `-x c++` (see scripts/build/deps/mimalloc.ts `lang: "cxx"`) so that internal
+// symbol is C++-mangled (`_Z22_mi_os_numa_node_countv`) and not reachable via
+// `extern "C"`. Left for a follow-up that adds an `extern "C"` shim.
 
 impl ThreadPool {
     /// Warm the thread pool up to the given number of threads.
     /// https://www.youtube.com/watch?v=ys3qcbO5KWw
     pub fn warm(&self, count: u16) {
         // PORT NOTE: Zig used u14; Rust has no u14, using u16 and truncating to 14 bits.
-        prewarm_mimalloc_numa();
         self.is_running.store(true, Ordering::Relaxed);
         let target = count.min((self.max_threads & 0x3FFF) as u16);
         let mut sync = self.sync.load(Ordering::Relaxed);
@@ -829,7 +810,6 @@ impl ThreadPool {
 
                     // We signaled to spawn a new thread
                     if can_wake && (sync.spawned() as u32) < self.max_threads {
-                        prewarm_mimalloc_numa();
                         let stack_size = self.stack_size as usize;
                         // `BackRef<ThreadPool>: Send`; see `warm()`.
                         let pool = bun_ptr::BackRef::new(self);
@@ -1139,8 +1119,6 @@ impl Thread {
         // No args, no preconditions; marks this OS thread as a mimalloc
         // threadpool worker so deferred frees are processed eagerly. `safe fn`
         // (Rust 2024) discharges the link-time proof so no `unsafe` block.
-        // The NUMA-count slow path this would otherwise trigger has already
-        // been resolved on the spawning thread by `prewarm_mimalloc_numa()`.
         unsafe extern "C" { safe fn mi_thread_set_in_threadpool(); }
         mi_thread_set_in_threadpool();
 

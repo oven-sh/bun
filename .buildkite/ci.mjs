@@ -1436,9 +1436,8 @@ async function getPipeline(options = {}) {
   // signature, so canary builds are never signed.
   //
   // options.signWindows ([sign windows] in the commit message) is already
-  // gated to main-branch-non-PR at parse time. The OR is kept so a manual
-  // BuildKite trigger on main with RELEASE unset can still force signing,
-  // but a PR can never reach this branch via the commit message alone.
+  // gated to main-branch-non-PR at parse time, so the OR only fires for a
+  // push to main whose commit message has the tag while canary is on.
   const shouldSignWindows = (isMainBranch() && !options.canary) || options.signWindows;
   if (shouldSignWindows) {
     const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");

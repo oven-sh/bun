@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
-use bun_ptr::BackRef;
+use bun_ptr::{BackRef, ParentRef};
 use crate::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue, JsRef, JsResult,
     VirtualMachine, VirtualMachineSqlExt as _,
@@ -161,10 +161,10 @@ impl JSMySQLQuery {
             global_object: BackRef::new(global_this),
             query: JsCell::new(MySQLQuery::init(query.to_bun_string(global_this)?, bigint, simple)),
         }));
-        // SAFETY: just allocated; uniquely owned here until handed to the JS
-        // wrapper. R-2: every field is interior-mutable, so a shared deref is
-        // sufficient even for the writes below.
-        let this = unsafe { &*this_ptr };
+        // `heap::into_raw` is `Box::into_raw` — never null. Uniquely owned here
+        // until handed to the JS wrapper. R-2: every field is interior-mutable,
+        // so a shared `ParentRef` deref is sufficient even for the writes below.
+        let this = ParentRef::from(NonNull::new(this_ptr).expect("heap::into_raw non-null"));
 
         let this_value = js::to_js(this_ptr, global_this);
         this_value.ensure_still_alive();

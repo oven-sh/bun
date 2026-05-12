@@ -224,20 +224,27 @@ pub fn install_hoisted_packages(
         // through `mgr_ptr` (the same provenance root as `installer.lockfile`),
         // not through a `&this.lockfile.buffers.X` that the installer's `&mut
         // Lockfile` would invalidate.
-        let lockfile_ptr: *mut crate::lockfile::Lockfile =
-            // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
-            // via `Box` (Zig: `*Lockfile`), so deref the Box for the heap addr.
-            unsafe { &raw mut *(*mgr_ptr).lockfile };
-        // SAFETY: `lockfile_ptr` is the heap-stable Box address derived above;
-        // each buffer lives at a fixed offset within it for the install pass.
-        let buf_trees: bun_ptr::BackRef<Vec<tree::Tree>> =
-            unsafe { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*lockfile_ptr).buffers.trees)) };
-        let buf_hoisted: bun_ptr::BackRef<Vec<DependencyID>> =
-            unsafe { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*lockfile_ptr).buffers.hoisted_dependencies)) };
-        let buf_deps: bun_ptr::BackRef<Vec<crate::Dependency>> =
-            unsafe { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*lockfile_ptr).buffers.dependencies)) };
-        let buf_strings: bun_ptr::BackRef<Vec<u8>> =
-            unsafe { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*lockfile_ptr).buffers.string_bytes)) };
+        // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
+        // via `Box` (Zig: `*Lockfile`), so deref the Box for the heap addr.
+        // Each buffer lives at a fixed offset within it for the install pass —
+        // wrap them as `BackRef` once under a single SAFETY obligation.
+        let (lockfile_ptr, buf_trees, buf_hoisted, buf_deps, buf_strings): (
+            *mut crate::lockfile::Lockfile,
+            bun_ptr::BackRef<Vec<tree::Tree>>,
+            bun_ptr::BackRef<Vec<DependencyID>>,
+            bun_ptr::BackRef<Vec<crate::Dependency>>,
+            bun_ptr::BackRef<Vec<u8>>,
+        ) = unsafe {
+            let lockfile_ptr: *mut crate::lockfile::Lockfile = &raw mut *(*mgr_ptr).lockfile;
+            let buffers = core::ptr::addr_of_mut!((*lockfile_ptr).buffers);
+            (
+                lockfile_ptr,
+                bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).trees)),
+                bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).hoisted_dependencies)),
+                bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).dependencies)),
+                bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!((*buffers).string_bytes)),
+            )
+        };
 
         // BACKREF — slices live for the duration of this block; `filter()` (the
         // only buffer mutator) has already run.

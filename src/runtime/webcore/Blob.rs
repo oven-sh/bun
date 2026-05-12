@@ -43,10 +43,14 @@ fn vm_ctx() -> bun_io::EventLoopCtx {
 /// S3 request setup.
 #[inline]
 fn http_proxy_href(global: &JSGlobalObject) -> Option<Vec<u8>> {
-    // SAFETY: `bun_vm()` never returns null for a Bun-owned global;
-    // `transpiler.env` is the process-singleton dotenv loader, initialised
-    // before any JS runs.
-    unsafe { (*global.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None) }
+    // `Transpiler::env_mut` is the safe accessor for the process-singleton
+    // dotenv loader (initialised before any JS runs).
+    global
+        .bun_vm()
+        .as_mut()
+        .transpiler
+        .env_mut()
+        .get_http_proxy(true, None, None)
         .map(|p| p.href.to_vec())
 }
 

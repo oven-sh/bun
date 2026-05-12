@@ -516,8 +516,8 @@ impl UDPSocket {
             // repeats it), so ordering is unobservable.
             this.this_value.with_mut(|r| r.downgrade());
             if let Some(socket) = this.socket.take() {
-                // SAFETY: socket created by uws::udp::Socket::create; valid until close().
-                unsafe { (*socket).close() };
+                // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+                uws::udp::Socket::opaque_mut(socket).close();
             }
         });
 
@@ -586,8 +586,9 @@ impl UDPSocket {
 
         if let Some(connect) = &this.config.get().connect {
             let address_z = connect.address.to_owned_slice_z();
-            // SAFETY: socket is Some (checked above).
-            let ret = unsafe { (*this.socket.get().unwrap()).connect(address_z.as_ptr(), connect.port as u32) };
+            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+            let ret = uws::udp::Socket::opaque_mut(this.socket.get().unwrap())
+                .connect(address_z.as_ptr(), connect.port as u32);
             if ret != 0 {
                 if let Some(sys_err) = errno_sys(ret, bun_sys::Tag::connect) {
                     return Err(global_this.throw_value(sys_err.to_js(global_this)));
@@ -678,8 +679,8 @@ impl UDPSocket {
                     .to_js(global_this),
             ));
         };
-        // SAFETY: !closed and socket is Some imply the uws handle is live.
-        let res = unsafe { (*socket).set_broadcast(enabled) };
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let res = uws::udp::Socket::opaque_mut(socket).set_broadcast(enabled);
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -719,8 +720,8 @@ impl UDPSocket {
                     .to_js(global_this),
             ));
         };
-        // SAFETY: !closed and socket is Some imply the uws handle is live.
-        let res = unsafe { (*socket).set_multicast_loopback(enabled) };
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let res = uws::udp::Socket::opaque_mut(socket).set_multicast_loopback(enabled);
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -769,11 +770,10 @@ impl UDPSocket {
                     "Family mismatch between address and interface"
                 )));
             }
-            // SAFETY: socket valid (checked above).
-            unsafe { (*socket).set_membership(&addr, Some(&interface), drop) }
+            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+            uws::udp::Socket::opaque_mut(socket).set_membership(&addr, Some(&interface), drop)
         } else {
-            // SAFETY: socket valid (checked above).
-            unsafe { (*socket).set_membership(&addr, None, drop) }
+            uws::udp::Socket::opaque_mut(socket).set_membership(&addr, None, drop)
         };
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
@@ -858,11 +858,12 @@ impl UDPSocket {
                     "Family mismatch among source, group and interface addresses"
                 )));
             }
-            // SAFETY: socket valid (checked above).
-            unsafe { (*socket).set_source_specific_membership(&source_addr, &group_addr, Some(&interface), drop) }
+            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+            uws::udp::Socket::opaque_mut(socket)
+                .set_source_specific_membership(&source_addr, &group_addr, Some(&interface), drop)
         } else {
-            // SAFETY: socket valid (checked above).
-            unsafe { (*socket).set_source_specific_membership(&source_addr, &group_addr, None, drop) }
+            uws::udp::Socket::opaque_mut(socket)
+                .set_source_specific_membership(&source_addr, &group_addr, None, drop)
         };
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
@@ -926,8 +927,8 @@ impl UDPSocket {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
 
-        // SAFETY: socket valid (checked above).
-        let res = unsafe { (*socket).set_multicast_interface(&addr) };
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let res = uws::udp::Socket::opaque_mut(socket).set_multicast_interface(&addr);
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -977,8 +978,8 @@ impl UDPSocket {
         let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
-        // SAFETY: socket valid (checked above).
-        let res = function(unsafe { &mut *socket }, ttl);
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let res = function(uws::udp::Socket::opaque_mut(socket), ttl);
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -1178,8 +1179,8 @@ impl UDPSocket {
         let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
-        // SAFETY: socket valid (checked above).
-        let res = unsafe { (*socket).send(&payloads, &lens, &addr_ptrs) };
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let res = uws::udp::Socket::opaque_mut(socket).send(&payloads, &lens, &addr_ptrs);
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::send) {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
@@ -1263,8 +1264,9 @@ impl UDPSocket {
         let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
-        // SAFETY: socket valid (checked above).
-        let res = unsafe { (*socket).send(&[payload.as_ptr()], &[payload.len()], &[addr_ptr]) };
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let res = uws::udp::Socket::opaque_mut(socket)
+            .send(&[payload.as_ptr()], &[payload.len()], &[addr_ptr]);
         drop(payload_str);
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::send) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -1427,8 +1429,8 @@ impl UDPSocket {
             // shared borrow is sound; the (idempotent) downgrade is hoisted
             // because `on_close` repeats it. Spec: udp_socket.zig:915-920.
             this.this_value.with_mut(|r| r.downgrade());
-            // SAFETY: socket created by uws::udp::Socket::create; valid until close().
-            unsafe { (*socket).close() };
+            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+            uws::udp::Socket::opaque_mut(socket).close();
         }
 
         Ok(JSValue::UNDEFINED)
@@ -1469,8 +1471,10 @@ impl UDPSocket {
         if this.closed.get() {
             return JSValue::UNDEFINED;
         }
-        // SAFETY: !closed implies socket is Some and valid.
-        JSValue::js_number(unsafe { (*this.socket.get().unwrap()).bound_port() } as f64)
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        JSValue::js_number(
+            uws::udp::Socket::opaque_mut(this.socket.get().unwrap()).bound_port() as f64,
+        )
     }
 
     fn create_sock_addr(global_this: &JSGlobalObject, address_bytes: &[u8], port: u16) -> JSValue {
@@ -1488,12 +1492,12 @@ impl UDPSocket {
         }
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
-        // SAFETY: !closed implies socket is Some and valid.
-        unsafe { (*this.socket.get().unwrap()).bound_ip(buf.as_mut_ptr(), &mut length) };
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let socket = uws::udp::Socket::opaque_mut(this.socket.get().unwrap());
+        socket.bound_ip(buf.as_mut_ptr(), &mut length);
 
         let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
-        // SAFETY: !closed implies socket is Some and valid.
-        let port = unsafe { (*this.socket.get().unwrap()).bound_port() };
+        let port = socket.bound_port();
         Self::create_sock_addr(global_this, address_bytes, u16::try_from(port).expect("int cast"))
     }
 
@@ -1507,8 +1511,9 @@ impl UDPSocket {
         };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
-        // SAFETY: !closed implies socket is Some and valid.
-        unsafe { (*this.socket.get().unwrap()).remote_ip(buf.as_mut_ptr(), &mut length) };
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        uws::udp::Socket::opaque_mut(this.socket.get().unwrap())
+            .remote_ip(buf.as_mut_ptr(), &mut length);
 
         let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
         Self::create_sock_addr(global_this, address_bytes, connect_info.port)
@@ -1587,8 +1592,8 @@ impl UDPSocket {
         let Some(socket) = this.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
-        // SAFETY: socket valid (checked above).
-        if unsafe { (*socket).connect(connect_host.as_ptr(), port as u32) } == -1 {
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        if uws::udp::Socket::opaque_mut(socket).connect(connect_host.as_ptr(), port as u32) == -1 {
             return Err(global_this.throw(format_args!("Failed to connect socket")));
         }
         this.connect_info.set(Some(ConnectInfo { port }));
@@ -1616,8 +1621,8 @@ impl UDPSocket {
             return Err(global_object.throw(format_args!("Socket is closed")));
         }
 
-        // SAFETY: !closed implies socket is Some and valid.
-        if unsafe { (*this.socket.get().unwrap()).disconnect() } == -1 {
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        if uws::udp::Socket::opaque_mut(this.socket.get().unwrap()).disconnect() == -1 {
             return Err(global_object.throw(format_args!("Failed to disconnect socket")));
         }
         this.connect_info.set(None);

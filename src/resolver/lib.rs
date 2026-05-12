@@ -1058,11 +1058,12 @@ pub mod fs {
                     if let Some(&existing_ptr) = map.get_adapted(&prehashed.input, &prehashed) {
                         // SAFETY: EntryStore-owned pointer, valid for lifetime of store
                         let existing = unsafe { &mut *existing_ptr };
-                        existing.mutex.lock();
-                        let _guard = scopeguard::guard(core::ptr::addr_of!(existing.mutex), |m| {
-                            // SAFETY: `m` points into `*existing`, which outlives this guard.
-                            unsafe { (*m).unlock() }
-                        });
+                        // `MutexGuard` stores a `BackRef<Mutex>` (lifetime-erased),
+                        // so holding it does not borrow `existing` — the field
+                        // writes below remain unconstrained. Replaces the manual
+                        // `lock()` + `scopeguard(addr_of!(mutex), |m| (*m).unlock())`
+                        // backref-deref pair.
+                        let _guard = existing.mutex.lock_guard();
                         existing.dir = self.dir;
 
                         existing.need_stat.set(existing.need_stat.get()
@@ -2530,9 +2531,15 @@ pub mod cache {
             match self {
                 Contents::Empty => b"",
                 Contents::Owned(v) => v.as_slice(),
-                // SAFETY: ARENA — caller-established invariant (see variant
-                // docs): `ptr[..len]` is valid for reads for the lifetime of
-                // this `Entry`.
+                // SAFETY: FFI/ARENA — single encapsulation point for foreign-
+                // owned bytes. `SharedBuffer` points into the caller-owned
+                // per-thread `MutableString` (reset only after this `Entry` is
+                // dropped); `External` is native-plugin memory kept live until
+                // `external_free_function` runs in `deinit`. In both cases
+                // `ptr` is non-null, aligned, and `ptr[..len]` is initialized
+                // and valid for shared reads for at least `'_`. Cannot be a
+                // `bun_ptr::RawSlice` field without breaking `src/bundler/`
+                // struct-literal constructors (out-of-shard).
                 Contents::SharedBuffer { ptr, len } | Contents::External { ptr, len } => unsafe {
                     core::slice::from_raw_parts(*ptr, *len)
                 },
@@ -3902,6 +3909,29 @@ pub enum ResultUnion {
 }
 
 impl Result {
+    /// Read-only view of `package_json`. The field stores `Option<*const _>`
+    /// (rather than `Option<&'static _>`) so [`Default`] / zeroed-init stays
+    /// bit-valid; callers that only read go through here. Single deref site
+    /// for the ARENA-backed pointer — same invariant as
+    /// [`dir_info::DirInfo::package_json`].
+    #[inline]
+    pub fn package_json_ref(&self) -> Option<&'static PackageJSON> {
+        Self::deref_package_json(self.package_json)
+    }
+
+    /// Field-value form of [`package_json_ref`] for sites where `self` is
+    /// already mutably borrowed (e.g. while iterating `path_pair`). Takes the
+    /// `Copy` field directly so the borrow checker only sees a field read.
+    #[inline]
+    pub fn deref_package_json(ptr: Option<*const PackageJSON>) -> Option<&'static PackageJSON> {
+        // SAFETY: ARENA — every `*const PackageJSON` stored in
+        // `Result::package_json` is interned in the resolver's process-lifetime
+        // PackageJSON cache (or a `'static` fallback-module literal); never
+        // freed while a `Result` is live (see LIFETIMES.tsv). No
+        // `&mut PackageJSON` is ever materialized concurrently with a read.
+        ptr.map(|p| unsafe { &*p })
+    }
+
     pub fn path(&mut self) -> Option<&mut Path> {
         if !self.path_pair.primary.is_disabled {
             return Some(&mut self.path_pair.primary);
@@ -4715,6 +4745,24 @@ impl<'a> Resolver<'a> {
         self.package_manager.map(|mut pm| unsafe { pm.as_mut() })
     }
 
+    /// Safe read-only accessor for the optional `DotEnv::Loader` back-reference.
+    ///
+    /// Single `unsafe` deref site for the `env_loader: Option<NonNull<_>>`
+    /// field. The pointee is the Transpiler-owned loader (set from
+    /// `transpiler.env`) and strictly outlives the resolver. Only called once
+    /// resolution has begun (after `run_env_loader()`), so no `&mut Loader` is
+    /// live concurrently — see the field comment for why this is *not* stored
+    /// as `Option<&'a Loader>`.
+    #[inline]
+    pub fn env_loader(&self) -> Option<&'a DotEnv::Loader<'a>> {
+        // SAFETY: BACKREF — `env_loader` names the Transpiler-owned
+        // `DotEnv::Loader`, live for the resolver's lifetime `'a`; resolution
+        // never mutates the env, so no `&mut Loader` overlaps this shared
+        // borrow. Returned as `&'a` (not tied to `&self`) so callers may keep
+        // the env borrow across `&mut self` resolver calls.
+        self.env_loader.map(|p| unsafe { p.as_ref() })
+    }
+
     #[inline]
     pub fn use_package_manager(&self) -> bool {
         // TODO(@paperclover): make this configurable. the rationale for disabling
@@ -5291,9 +5339,7 @@ impl<'a> Resolver<'a> {
         while let Some(path) = iter.next() {
             let Ok(Some(dir)) = self.read_dir_info(path.name.dir) else { continue };
             let mut needs_side_effects = true;
-            if let Some(existing_ptr) = result.package_json {
-                // SAFETY: ARENA — PackageJSON ptrs are interned in the global allocator-backed cache and outlive the resolver (see LIFETIMES.tsv).
-                let existing = unsafe { &*existing_ptr };
+            if let Some(existing) = Result::deref_package_json(result.package_json) {
                 // if we don't have it here, they might put it in a sideEfffects
                 // map of the parent package.json
                 // TODO: check if webpack also does this parent lookup
@@ -5337,9 +5383,7 @@ impl<'a> Resolver<'a> {
             result.package_json = result.package_json.or(dir.enclosing_package_json.map(|p| std::ptr::from_ref(p)));
 
             if needs_side_effects {
-                if let Some(pkg_ptr) = result.package_json {
-                    // SAFETY: ARENA — PackageJSON ptr outlives the resolver (see LIFETIMES.tsv).
-                    let package_json = unsafe { &*pkg_ptr };
+                if let Some(package_json) = Result::deref_package_json(result.package_json) {
                     use crate::package_json::SideEffects as PJSideEffects;
                     result.primary_side_effects_data = match &package_json.side_effects {
                         PJSideEffects::Unspecified => SideEffects::HasSideEffects,
@@ -5464,9 +5508,8 @@ impl<'a> Resolver<'a> {
         }
 
         if !kind.is_from_css() && module_type == options::ModuleType::Unknown {
-            if let Some(pkg) = result.package_json {
-                // SAFETY: ARENA — PackageJSON ptr outlives the resolver (see LIFETIMES.tsv).
-                module_type = unsafe { &*pkg }.module_type;
+            if let Some(pkg) = result.package_json_ref() {
+                module_type = pkg.module_type;
             }
         }
 
@@ -6042,12 +6085,10 @@ impl<'a> Resolver<'a> {
 
         // Try to avoid the hash table lookup whenever possible
         // That can cause filesystem lookups in parent directories and it requires a lock
-        if let Some(pkg_ptr) = result.package_json {
-            // SAFETY: ARENA — PackageJSON ptr outlives the resolver (see LIFETIMES.tsv).
-            let pkg = unsafe { &*pkg_ptr };
+        if let Some(pkg) = result.package_json_ref() {
             if slice == pkg.source.path.name.dir_with_trailing_slash() {
                 return Some(RootPathPair {
-                    package_json: pkg_ptr,
+                    package_json: std::ptr::from_ref(pkg),
                     base_path: slice,
                 });
             }
@@ -6397,15 +6438,10 @@ impl<'a> Resolver<'a> {
 
         // try resolve from `NODE_PATH`
         // https://nodejs.org/api/modules.html#loading-from-the-global-folders
-        let node_path: &[u8] = if let Some(env_loader) = self.env_loader {
-            // SAFETY: `env_loader` points at the Transpiler-owned `DotEnv::Loader`
-            // (set from `transpiler.env`). It outlives the resolver, and no
-            // `&mut Loader` is live here — `run_env_loader()` runs before
-            // resolution begins, and resolution itself never mutates the env.
-            unsafe { env_loader.as_ref() }.get(b"NODE_PATH").unwrap_or(b"")
-        } else {
-            b""
-        };
+        let node_path: &[u8] = self
+            .env_loader()
+            .and_then(|env| env.get(b"NODE_PATH"))
+            .unwrap_or(b"");
         if !node_path.is_empty() {
             let delim = if cfg!(windows) { b';' } else { b':' };
             for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {

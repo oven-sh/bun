@@ -59,6 +59,24 @@ impl<'a> Writable<'a> {
         unsafe { &mut *pipe.as_ptr() }
     }
 
+    /// Mutable borrow of the `Buffer` payload's `StaticPipeWriter`.
+    ///
+    /// Centralises the `RefPtr → &mut T` deref so the per-match-arm `unsafe`
+    /// blocks (`ref`/`unref`/`close`/`finalize` and `Subprocess::on_close_io`/
+    /// `on_process_exit`) collapse to this one site. `RefPtr` deliberately has
+    /// no `DerefMut` (shared ownership); the invariant that makes `&mut` sound
+    /// here is that `Writable::Buffer` holds the *only* strong ref for the
+    /// variant's lifetime (created by `StaticPipeWriter::create`, released by
+    /// `buffer.deref()` only after the variant is overwritten), the writer
+    /// lives in its own heap allocation disjoint from `Writable`/`Subprocess`,
+    /// and access is single-JS-mutator-thread.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub(super) fn buffer_writer_mut<'b>(buffer: &'b RefPtr<StaticPipeWriter<'a>>) -> &'b mut StaticPipeWriter<'a> {
+        // SAFETY: see fn doc — sole-owning RefPtr, heap-disjoint, single-thread.
+        unsafe { &mut *buffer.as_ptr() }
+    }
+
     pub fn memory_cost(&self) -> usize {
         match self {
             Writable::Pipe(pipe) => Self::pipe_sink(pipe).memory_cost(),
@@ -84,9 +102,7 @@ impl<'a> Writable<'a> {
                 Self::pipe_sink(pipe).update_ref(true);
             }
             Writable::Buffer(buffer) => {
-                // SAFETY: RefPtr holds a live ref; intrusive refcount permits
-                // shared mutation (mirrors Zig `*StaticPipeWriter`).
-                unsafe { (*buffer.as_ptr()).update_ref(true) };
+                Self::buffer_writer_mut(buffer).update_ref(true);
             }
             _ => {}
         }
@@ -98,8 +114,7 @@ impl<'a> Writable<'a> {
                 Self::pipe_sink(pipe).update_ref(false);
             }
             Writable::Buffer(buffer) => {
-                // SAFETY: RefPtr holds a live ref.
-                unsafe { (*buffer.as_ptr()).update_ref(false) };
+                Self::buffer_writer_mut(buffer).update_ref(false);
             }
             _ => {}
         }
@@ -460,8 +475,7 @@ impl<'a> Writable<'a> {
                 unsafe { FileSink::deref(pipe_nn.as_ptr()) };
             }
             Writable::Buffer(buffer) => {
-                // SAFETY: RefPtr holds a live ref.
-                unsafe { (*buffer.as_ptr()).update_ref(false) };
+                Self::buffer_writer_mut(&buffer).update_ref(false);
                 // PORT NOTE: Zig calls `buffer.deref()` without reassigning to `.ignore`;
                 // RefPtr::deref drops the held ref.
                 buffer.deref();
@@ -492,8 +506,7 @@ impl<'a> Writable<'a> {
                 *self = Writable::Ignore;
             }
             Writable::Buffer(buffer) => {
-                // SAFETY: RefPtr holds a live ref.
-                unsafe { (*buffer.as_ptr()).close() };
+                Self::buffer_writer_mut(buffer).close();
             }
             Writable::Ignore => {}
             Writable::Inherit => {}

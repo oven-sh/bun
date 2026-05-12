@@ -3,7 +3,7 @@ use core::ffi::c_void;
 
 use bun_boringssl_sys as boringssl;
 use bun_core::{err, fmt as bun_fmt, timespec, TimespecMockMode};
-use bun_ptr::BackRef;
+use bun_ptr::{BackRef, ParentRef};
 use crate::jsc::{
     api::server_config::SSLConfig, codegen::js_mysql_connection as js, webcore::AutoFlusher,
     CallFrame, EventLoopSqlExt as _, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
@@ -203,10 +203,12 @@ impl JSMySQLConnection {
 
 impl HasAutoFlush for JSMySQLConnection {
     fn on_auto_flush(this: *mut Self) -> bool {
-        // SAFETY: `this` is the live `*mut JSMySQLConnection` registered with
-        // the deferred-task queue; the queue runs on the JS thread. R-2: deref
-        // as shared (`&*const`) — `on_auto_flush` body takes `&self`.
-        unsafe { (*this.cast_const()).on_auto_flush() }
+        // `this` is the live `*mut JSMySQLConnection` registered with the
+        // deferred-task queue; the queue runs on the JS thread. R-2: deref as
+        // shared — `on_auto_flush` body takes `&self`. `ParentRef` (lifetime-
+        // erased `&T`) centralises the backref deref under its own invariant.
+        ParentRef::from(core::ptr::NonNull::new(this).expect("auto-flush ctx non-null"))
+            .on_auto_flush()
     }
 }
 
@@ -425,14 +427,14 @@ impl JSMySQLConnection {
 
     pub fn close(&self) {
         // Zig `this.ref(); defer { updateReferenceType(); deref(); }`. Re-enter
-        // through a raw pointer so no reference is live across the potential
-        // free in `deref()`. Guard drop order is LIFO: `_ref` (deref) drops
-        // last, after `update_reference_type()` has run.
-        let p: *mut Self = self.as_ctx_ptr();
+        // through a `ParentRef` (lifetime-erased `&Self`) so no Rust borrow is
+        // held across the potential free in `deref()`. Guard drop order is
+        // LIFO: `_ref` (deref) drops last, after `update_reference_type()` has
+        // run, so `*p` is still live when the defer body executes.
+        let p = ParentRef::new(self);
         let _ref = self.ref_guard();
         scopeguard::defer! {
-            // SAFETY: `_ref` has not yet dropped, so `*p` is still live.
-            unsafe { (*p).update_reference_type() };
+            p.update_reference_type();
         }
         self.stop_timers();
         self.unregister_auto_flusher();
@@ -672,20 +674,18 @@ impl JSMySQLConnection {
                 EventLoopTimerTag::MySQLConnectionMaxLifetime,
             )),
         }));
-        // SAFETY: ptr was just allocated and is non-null; we hold the only reference.
-        let this = unsafe { &*ptr };
+        // `heap::into_raw` is `Box::into_raw` — never null. `ParentRef` wraps
+        // the freshly-boxed allocation as a lifetime-erased `&Self` (R-2: every
+        // field is interior-mutable, so shared access suffices for the writes
+        // below); we hold the only reference.
+        let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
 
         {
             let hostname = hostname_str.to_utf8();
 
             // MySQL always opens plain TCP first; STARTTLS adopts into the TLS
             // group after the SSLRequest exchange.
-            // SAFETY: `mysql_group` returns the embedded `&mut SocketGroup`
-            // owned by RareData (lives for the VM's lifetime). `vm` reborrowed
-            // via raw ptr to avoid the `rare_data(&mut vm)` /
-            // `mysql_group(.., &vm)` aliasing conflict.
-            let vm_p = std::ptr::from_mut::<VirtualMachine>(vm);
-            let group = unsafe { (*vm_p).rare_data().mysql_group::<false>(&*vm_p) };
+            let group = vm.mysql_socket_group::<false>();
             let result = if !path.is_empty() {
                 SocketTCP::connect_unix_group(group, uws::DispatchKind::Mysql, None, &path[..], ptr, false)
             } else {
@@ -703,8 +703,8 @@ impl JSMySQLConnection {
                 Ok(s) => s,
                 Err(e) => {
                     // SAFETY: `ptr` is the freshly-boxed allocation; sole owner.
-                    // Drop the `&` borrow (`this`) before freeing so no
-                    // reference outlives the `heap::take` inside `deinit`.
+                    // `this` (a `ParentRef`) is not used past this point, so no
+                    // borrow outlives the `heap::take` inside `deinit`.
                     let _ = this;
                     unsafe { Self::deref(ptr) };
                     return Err(global_object.throw_error(e.into(), "failed to connect to mysql"));
@@ -897,19 +897,18 @@ impl JSMySQLConnection {
         // reference is live across the potential free in `deref()`. LIFO drop
         // order: the `defer!` body runs first, then `_ref` releases the count
         // — matches Zig.
-        let p: *mut Self = self.as_ctx_ptr();
+        let p = ParentRef::new(self);
         let _ref = self.ref_guard();
         scopeguard::defer! {
-            // SAFETY: `_ref` has not yet dropped, so `*p` is still live.
-            unsafe {
-                if (*p).vm().is_shutting_down() {
-                    (*p).connection_mut().close();
-                } else {
-                    let queries = (*p).get_queries_array();
-                    (*p).connection_mut().clean_queue_and_close(Some(value), queries);
-                }
-                (*p).update_reference_type();
+            // `_ref` has not yet dropped, so `*p` is still live; `ParentRef`
+            // yields a fresh `&Self` per access (R-2: every callee is `&self`).
+            if p.vm().is_shutting_down() {
+                p.connection_mut().close();
+            } else {
+                let queries = p.get_queries_array();
+                p.connection_mut().clean_queue_and_close(Some(value), queries);
             }
+            p.update_reference_type();
         }
         self.stop_timers();
 
@@ -1192,17 +1191,17 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // Both guards re-enter via raw pointer so no reference is live across
         // the potential free. Guard drop order is LIFO, so `_ref` (deref) runs
         // last — matches Zig.
-        let p: *mut JSMySQLConnection = this.as_ctx_ptr();
+        let p = ParentRef::new(this);
         let _ref = this.ref_guard();
 
         scopeguard::defer! {
-            // SAFETY: `_ref` has not yet dropped, so `*p` is still live.
-            unsafe {
-                // reset the connection timeout after we're done processing the data
-                (*p).reset_connection_timeout();
-                (*p).update_reference_type();
-                (*p).register_auto_flusher();
-            }
+            // `_ref` has not yet dropped, so `*p` is still live; `ParentRef`
+            // yields a fresh `&JSMySQLConnection` per access (R-2: every
+            // callee is `&self`).
+            // reset the connection timeout after we're done processing the data
+            p.reset_connection_timeout();
+            p.update_reference_type();
+            p.register_auto_flusher();
         }
         if this.vm().is_shutting_down() {
             // we are shutting down lets not process the data

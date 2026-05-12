@@ -654,6 +654,21 @@ pub struct BufferOutputSink {
 impl BufferOutputSink {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
+    /// Single unsafe deref site for the set-once
+    /// `tmp_sync_error: Option<NonNull<JSValue>>` field, so the two callers in
+    /// `on_finished_buffering` stay safe. `tmp_sync_error` points at the
+    /// `sink_error: Cell<JSValue>` stack local in [`init`]; it is only written
+    /// through on the synchronous (`is_async == false`) path while `init` is
+    /// still on the stack, so the pointee is live and the `Cell`-derived
+    /// pointer carries `SharedReadWrite` provenance.
+    #[inline]
+    fn write_tmp_sync_error(sink: *mut Self, err: JSValue) {
+        // SAFETY: `sink` is a live heap allocation (refcount > 0, caller
+        // invariant); `tmp_sync_error` was set in `init()` and the synchronous
+        // caller is reached only while `init()` is still on the stack.
+        unsafe { *(*sink).tmp_sync_error.unwrap().as_ptr() = err };
+    }
+
     pub fn init(
         context: Rc<RefCell<LOLHTMLContext>>,
         global: &JSGlobalObject,
@@ -909,9 +924,7 @@ impl BufferOutputSink {
                 let ret_err = create_lolhtml_error(&global);
                 ret_err.ensure_still_alive();
                 ret_err.protect();
-                // SAFETY: tmp_sync_error points at sink_error stack local in
-                // init(); is_async == false ⇒ init() is still on the stack.
-                unsafe { *(*sink).tmp_sync_error.unwrap().as_ptr() = ret_err };
+                Self::write_tmp_sync_error(sink, ret_err);
             }
             // SAFETY: rewriter set by init(). Read into a local before the
             // call — `end()` re-enters `OutputSink::done(&mut *sink)`.
@@ -923,8 +936,7 @@ impl BufferOutputSink {
         if let Some(ret_err) = Self::run_output_sink(sink, bytes, is_async) {
             ret_err.ensure_still_alive();
             ret_err.protect();
-            // SAFETY: see above.
-            unsafe { *(*sink).tmp_sync_error.unwrap().as_ptr() = ret_err };
+            Self::write_tmp_sync_error(sink, ret_err);
         }
     }
 

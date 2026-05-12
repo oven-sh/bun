@@ -234,9 +234,15 @@ impl DirInfo {
 
     pub fn get_file_descriptor(&self) -> Fd {
         if FeatureFlags::STORE_FILE_DESCRIPTORS {
-            if let Some(entries) = self.get_entries(0) {
-                // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton.
-                return unsafe { (*entries).fd };
+            // Route through `entries_at` directly (returns `Option<&mut EntriesOption>`)
+            // instead of round-tripping the safe `&mut DirEntry` through `get_entries`'s
+            // `*mut` return just to deref it back here. With `generation = 0` the
+            // generation-check re-read in `entries_at` is a no-op, so this is the
+            // same lookup `get_entries(0)` performs.
+            if let Some(fs::EntriesOption::Entries(entries)) =
+                fs::FileSystem::instance().fs.entries_at(self.entries, 0)
+            {
+                return entries.fd;
             }
         }
         Fd::INVALID

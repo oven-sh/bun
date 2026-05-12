@@ -194,6 +194,21 @@ fn h2_session_as_mut<'a>(s: Option<NonNull<h2::ClientSession>>) -> Option<&'a mu
     s.map(|mut s| unsafe { s.as_mut() })
 }
 
+/// Upgrade a `*mut PooledSocket<SSL>` returned by `HiveArray::at` to `&mut`.
+///
+/// INVARIANT: every caller obtains `p` from `pending_sockets.at(idx)` while
+/// iterating `pending_sockets.used` (the slot's `used` bit is set), so the
+/// slot is an initialised `PooledSocket` written by `release_socket`. The
+/// HiveArray data array is disjoint from the `used` bitset the iterator
+/// borrows, so the returned `&mut` does not alias it. HTTP-thread-only.
+/// Centralises the raw `&mut *socket_ptr` upgrade repeated at each HiveArray
+/// scan.
+#[inline]
+fn pooled_socket_mut<'a, const SSL: bool>(p: *mut PooledSocket<SSL>) -> &'a mut PooledSocket<SSL> {
+    // SAFETY: see INVARIANT above.
+    unsafe { &mut *p }
+}
+
 impl<const SSL: bool> PooledSocket<SSL> {
     /// Mutable access to the parked HTTP/2 session.
     ///
@@ -694,9 +709,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             let socket_ptr = self
                 .pending_sockets
                 .at(u16::try_from(pending_socket_index).expect("int cast"));
-            // SAFETY: HiveArray slot reserved (`used` bit set); contents are
-            // initialized PooledSocket written by release_socket().
-            let socket = unsafe { &mut *socket_ptr };
+            let socket = pooled_socket_mut(socket_ptr);
             if socket.port != port {
                 continue;
             }
@@ -988,8 +1001,7 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
             let mut iter = self.pending_sockets.used.iterator::<true, true>();
             while let Some(idx) = iter.next() {
                 let pooled_ptr = self.pending_sockets.at(u16::try_from(idx).expect("int cast"));
-                // SAFETY: `used` bit is set; slot is an initialized PooledSocket.
-                let pooled = unsafe { &mut *pooled_ptr };
+                let pooled = pooled_socket_mut(pooled_ptr);
                 // Do NOT call rp.data.shutdown() here — it drives
                 // SSLWrapper.shutdown → triggerCloseCallback →
                 // onClose(handlers.ctx), and handlers.ctx is the

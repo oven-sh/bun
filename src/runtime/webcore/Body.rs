@@ -1183,10 +1183,10 @@ impl Value {
                         let blob_ptr = Blob::new(new.use_());
                         // SAFETY: `Blob::new` returns a freshly heap-allocated *mut Blob.
                         let blob = unsafe { &mut *blob_ptr };
-                        if let Some(mut fetch_headers) = headers {
-                            // SAFETY: `headers` is a live C++ FetchHeaders handle (Zig: `?*FetchHeaders`);
-                            // `fast_get` only writes a stack out-param via FFI.
-                            let fetch_headers = unsafe { fetch_headers.as_mut() };
+                        if let Some(fetch_headers) = headers {
+                            // `headers` is a live C++ FetchHeaders handle (Zig: `?*FetchHeaders`);
+                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+                            let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
                             if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                                 let content_slice = content_type.to_slice();
                                 let mut allocated = false;
@@ -2060,10 +2060,10 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
         let blob = unsafe { &mut *blob_ptr };
         if blob.content_type().is_empty() {
-            if let Some(mut fetch_headers) = BodyMixin::get_fetch_headers(self) {
-                // SAFETY: `fetch_headers` is a live C++ FetchHeaders handle (Zig: `?*FetchHeaders`);
-                // `fast_get` only writes a stack out-param via FFI.
-                let fetch_headers = unsafe { fetch_headers.as_mut() };
+            if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
+                // `fetch_headers` is a live C++ FetchHeaders handle (Zig: `?*FetchHeaders`);
+                // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+                let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                     let content_slice = content_type.to_slice();
                     let mut allocated = false;

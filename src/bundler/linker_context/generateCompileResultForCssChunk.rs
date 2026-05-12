@@ -63,11 +63,11 @@ fn generate_compile_result_for_css_chunk_impl(
     let _trace = bun_core::perf::trace("Bundler.generateCodeForFileInChunkCss");
     // `defer trace.end()` — RAII; Drop ends the trace.
 
-    // SAFETY: `worker.arena` (= `&worker.heap`) is detached from the `worker`
-    // borrow so the `temporary_arena` scopeguard below can hold `&mut worker.*`
-    // for the rest of the function. The heap is pinned for the worker's
+    // `worker.arena` (= `BackRef` to `worker.heap`) is a disjoint field from
+    // `worker.temporary_arena` borrowed `&mut` below, so a direct shared
+    // borrow via `BackRef::get` is fine. The heap is pinned for the worker's
     // lifetime; see `Worker::arena`.
-    let arena = unsafe { bun_ptr::detach_lifetime_ref(worker.arena()) };
+    let arena = worker.arena.get();
     // PERF(port): was arena bulk-free (worker.temporary_arena.reset(.retain_capacity)) — profile in Phase B
     let _arena_reset = scopeguard::guard(&mut worker.temporary_arena, |arena| {
         // temporary_arena is initialized in Worker::create before any task runs.

@@ -38,14 +38,29 @@ impl Drop for PendingConnect {
 }
 
 impl PendingConnect {
+    /// Mutable access to the owned `quic::PendingConnect` C handle.
+    ///
+    /// INVARIANT: `pc` is set once in [`register`] to a live
+    /// `us_quic_pending_connect_t` and is consumed by exactly one of
+    /// `resolved()` / `cancel()` in [`on_dns_resolved`]. The handle is a
+    /// separate FFI heap allocation disjoint from `self`. HTTP-thread-only at
+    /// every caller. Centralises the raw `(*this.pc)` upgrade repeated at
+    /// each consume site.
+    #[inline]
+    fn pc_mut<'a>(&self) -> &'a mut quic::PendingConnect {
+        // SAFETY: see INVARIANT above.
+        unsafe { &mut *self.pc }
+    }
+
     pub fn register(
         session: *mut ClientSession,
         pc: *mut quic::PendingConnect,
         l: *mut uws::Loop,
     ) {
-        // SAFETY: caller passes a live intrusive-refcounted ClientSession; PendingConnect
-        // holds one ref from construction until Drop.
-        unsafe { (*session).ref_() };
+        // Caller passes a live intrusive-refcounted ClientSession; PendingConnect
+        // holds one ref from construction until Drop. `session_mut` centralises
+        // the backref upgrade (same invariant as the other call sites below).
+        session_mut(session).ref_();
         let self_ = bun_core::heap::into_raw(Box::new(PendingConnect {
             session,
             pc,
@@ -75,17 +90,17 @@ impl PendingConnect {
         let s = session_mut(session);
         if s.closed || s.pending.is_empty() {
             // Every waiter was aborted while DNS was in flight; don't open a
-            // connection nobody will use.
-            // SAFETY: pc is a live C handle; cancel() consumes it.
-            unsafe { (*this.pc).cancel() };
+            // connection nobody will use. `pc_mut` upgrades the owned C
+            // handle; `cancel()` consumes it.
+            this.pc_mut().cancel();
             if !s.closed {
                 Self::fail_session(session, bun_core::err!("Aborted"));
             }
             return;
         }
-        // SAFETY: pc is a live C handle; resolved() consumes it and returns the
-        // connected quic socket or None on DNS failure.
-        let Some(qs) = (unsafe { (*this.pc).resolved() }) else {
+        // `pc_mut` upgrades the owned C handle; `resolved()` consumes it and
+        // returns the connected quic socket or None on DNS failure.
+        let Some(qs) = this.pc_mut().resolved() else {
             Self::fail_session(session, bun_core::err!("DNSResolutionFailed"));
             return;
         };

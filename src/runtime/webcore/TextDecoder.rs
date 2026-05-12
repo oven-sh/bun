@@ -71,14 +71,16 @@ impl Drop for CodecGuard {
 impl core::ops::Deref for CodecGuard {
     type Target = TextCodec;
     fn deref(&self) -> &TextCodec {
-        // SAFETY: pointer is live for the guard's lifetime.
-        unsafe { self.0.as_ref() }
+        // `TextCodec` is an opaque ZST FFI handle (S008); pointer is live for
+        // the guard's lifetime — safe `*const → &` via `opaque_deref`.
+        bun_opaque::opaque_deref(self.0.as_ptr())
     }
 }
 impl core::ops::DerefMut for CodecGuard {
     fn deref_mut(&mut self) -> &mut TextCodec {
-        // SAFETY: pointer is live for the guard's lifetime; `&mut self` is exclusive.
-        unsafe { self.0.as_mut() }
+        // `TextCodec` is an opaque ZST FFI handle (S008); pointer is live for
+        // the guard's lifetime, `&mut self` is exclusive — safe via `opaque_deref_mut`.
+        bun_opaque::opaque_deref_mut(self.0.as_ptr())
     }
 }
 

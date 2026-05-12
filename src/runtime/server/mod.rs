@@ -678,8 +678,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let ctx: *mut ServerRequestContext<SSL, DEBUG> = ctx_slot;
         let ctx_mut = unsafe { &mut *ctx };
 
-        // SAFETY: `jsc_vm` set in VM init; valid for the JS thread's lifetime.
-        unsafe { (*(*vm_ptr).jsc_vm).deprecated_report_extra_memory(core::mem::size_of::<ServerRequestContext<SSL, DEBUG>>()) };
+        // `VirtualMachine::jsc_vm()` is the safe accessor for the JSC VM
+        // (set in VM init; valid for the JS thread's lifetime).
+        server.vm().jsc_vm().deprecated_report_extra_memory(core::mem::size_of::<ServerRequestContext<SSL, DEBUG>>());
 
         // Allocate the pooled body slot. `hive_alloc` is the typed front-end
         // for the type-erased `init_request_body_value` hook (the hook lives

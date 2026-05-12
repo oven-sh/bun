@@ -92,8 +92,8 @@ impl HeadersRef {
     /// `FetchHeaders.cloneThis(global)` — deep copy on the C++ side.
     #[inline]
     pub fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<Self>> {
-        // SAFETY: self.0 is live; C++ returns a +1 ref or null.
-        Ok(unsafe { self.0.as_ptr().as_mut().unwrap_unchecked() }
+        // SAFETY: C++ returns a +1 ref or null.
+        Ok(bun_opaque::opaque_deref_mut(self.0.as_ptr())
             .clone_this(global)?
             .map(|p| unsafe { Self::adopt(p) }))
     }
@@ -103,25 +103,28 @@ impl core::ops::Deref for HeadersRef {
     type Target = FetchHeaders;
     #[inline]
     fn deref(&self) -> &FetchHeaders {
-        // SAFETY: self.0 is live for the lifetime of self.
-        unsafe { self.0.as_ref() }
+        // `FetchHeaders` is an opaque ZST FFI handle (S008); `self.0` is live
+        // for the lifetime of `self` — safe `*const → &` via `opaque_deref`.
+        bun_opaque::opaque_deref(self.0.as_ptr())
     }
 }
 
 impl core::ops::DerefMut for HeadersRef {
     #[inline]
     fn deref_mut(&mut self) -> &mut FetchHeaders {
-        // SAFETY: self.0 is live for the lifetime of self.
-        unsafe { self.0.as_mut() }
+        // `FetchHeaders` is an opaque ZST FFI handle (S008); `self.0` is live
+        // for the lifetime of `self` — safe `*mut → &mut` via `opaque_deref_mut`.
+        bun_opaque::opaque_deref_mut(self.0.as_ptr())
     }
 }
 
 impl Drop for HeadersRef {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: self.0 is live; releasing our +1 ref via WebCore__FetchHeaders__deref.
+        // `self.0` is live; releasing our +1 ref via WebCore__FetchHeaders__deref.
         // Explicit UFCS to avoid `core::ops::Deref::deref` resolution ambiguity.
-        unsafe { FetchHeaders::deref(self.0.as_mut()) };
+        // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+        FetchHeaders::deref(bun_opaque::opaque_deref_mut(self.0.as_ptr()));
     }
 }
 
@@ -1418,8 +1421,9 @@ impl Init {
             // FetchHeaders is a hand-bound opaque, so use its dedicated
             // `cast()` (wraps `WebCore__FetchHeaders__cast_`).
             if let Some(orig) = FetchHeaders::cast(headers) {
-                // SAFETY: `orig` is a live `WebCore::FetchHeaders*` borrowed from JS.
-                let orig = unsafe { orig.as_ptr().as_mut().unwrap_unchecked() };
+                // `orig` is a live `WebCore::FetchHeaders*` borrowed from JS;
+                // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+                let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
                 if !orig.is_empty() {
                     result.headers = orig
                         .clone_this(global_this)?

@@ -28,6 +28,17 @@ impl HTTPServerAgent {
         self.agent.is_some()
     }
 
+    /// Safe accessor for the set-once C++ agent handle. `agent` is populated
+    /// exactly once via [`Bun__HTTPServerAgent__setEnabled`] and lives for the
+    /// debugger's lifetime; `InspectorHTTPServerAgent` is an `opaque_ffi!` ZST
+    /// so the `&mut` covers zero bytes (see [`bun_opaque::opaque_deref_mut`]).
+    /// Consolidates the per-call-site raw deref into the single audited
+    /// `opaque_mut` proof so callers stay safe.
+    #[inline]
+    pub fn agent_mut(&mut self) -> Option<&mut InspectorHTTPServerAgent> {
+        self.agent.map(|p| InspectorHTTPServerAgent::opaque_mut(p.as_ptr()))
+    }
+
     // #region Events
     //
     // PORT NOTE (phase-d): `notify_server_started` / `notify_server_stopped` /
@@ -176,7 +187,7 @@ unsafe extern "C" {
 }
 
 impl InspectorHTTPServerAgent {
-    pub unsafe fn notify_server_started(
+    pub fn notify_server_started(
         agent: *mut InspectorHTTPServerAgent,
         server_id: ServerId,
         hot_reload_id: HotReloadId,
@@ -184,10 +195,15 @@ impl InspectorHTTPServerAgent {
         start_time: f64,
         server_instance: *mut c_void,
     ) {
-        // SAFETY: caller guarantees `agent` is a valid C++ InspectorHTTPServerAgent
+        // `opaque_mut` is the centralised ZST-handle deref proof (panics on
+        // null). The C++ side never reads `server_instance` as anything but an
+        // opaque token, so passing the raw pointer through is sound.
+        let agent = Self::opaque_mut(agent);
+        // SAFETY: `[[ZIG_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
+        // above; remaining args are by-value scalars / `&BunString`.
         unsafe {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerStarted(
-                agent.cast(),
+                core::ptr::from_mut(agent).cast(),
                 server_id.0 as _,
                 hot_reload_id as _,
                 address,
@@ -197,31 +213,35 @@ impl InspectorHTTPServerAgent {
         }
     }
 
-    pub unsafe fn notify_server_stopped(
+    pub fn notify_server_stopped(
         agent: *mut InspectorHTTPServerAgent,
         server_id: ServerId,
         timestamp: f64,
     ) {
-        // SAFETY: caller guarantees `agent` is a valid C++ InspectorHTTPServerAgent
+        let agent = Self::opaque_mut(agent);
+        // SAFETY: `[[ZIG_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
+        // via `opaque_mut`; remaining args are by-value scalars.
         unsafe {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerStopped(
-                agent.cast(),
+                core::ptr::from_mut(agent).cast(),
                 server_id.0 as _,
                 timestamp,
             );
         }
     }
 
-    pub unsafe fn notify_server_routes_updated(
+    pub fn notify_server_routes_updated(
         agent: *mut InspectorHTTPServerAgent,
         server_id: ServerId,
         hot_reload_id: HotReloadId,
         routes: &mut [Route],
     ) {
-        // SAFETY: caller guarantees `agent` is a valid C++ InspectorHTTPServerAgent
+        let agent = Self::opaque_mut(agent);
+        // SAFETY: `[[ZIG_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
+        // via `opaque_mut`; `routes` is a valid `&mut [Route]` slice.
         unsafe {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerRoutesUpdated(
-                agent.cast(),
+                core::ptr::from_mut(agent).cast(),
                 server_id.0 as _,
                 hot_reload_id as _,
                 routes.as_mut_ptr().cast(),

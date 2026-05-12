@@ -550,9 +550,7 @@ impl Subprocess<'_> {
                     unsafe { FileSink::deref(pipe.as_ptr()) };
                 }
                 Writable::Buffer(buffer) => {
-                    // SAFETY: RefPtr has no DerefMut; StaticPipeWriter is single-thread
-                    // ref-counted and we hold the owning ref via `self.stdin`.
-                    unsafe { (*buffer.as_ptr()).source.detach() };
+                    Writable::buffer_writer_mut(buffer).source.detach();
                     // PORT NOTE: Zig's `buffer.deref()` is the owner drop from the
                     // assignment below; do not deref explicitly.
                     *stdin = Writable::Ignore;
@@ -572,9 +570,7 @@ impl Subprocess<'_> {
                     let Readable::Pipe(pipe) = out.replace(Readable::Ignore) else {
                         unreachable!()
                     };
-                    // SAFETY: `pipe` is the sole RefPtr we just moved out of `*out`;
-                    // mutator-thread-only access to PipeReader state.
-                    let pipe_state = unsafe { &mut (*pipe.as_ptr()).state };
+                    let pipe_state = &mut Readable::pipe_reader_mut(&pipe).state;
                     if let PipeReader::State::Done(done) = pipe_state {
                         let taken = core::mem::take(done);
                         out.set(Readable::Buffer(readable::CowString::init_owned(
@@ -1072,9 +1068,7 @@ impl Subprocess<'_> {
 
         // We won't be sending any more data.
         if let Writable::Buffer(buffer) = self.stdin.get() {
-            // SAFETY: RefPtr has no DerefMut; StaticPipeWriter is single-thread
-            // ref-counted and we hold the owning ref via `self.stdin`.
-            unsafe { (*buffer.as_ptr()).close() };
+            Writable::buffer_writer_mut(buffer).close();
         }
 
         if !existing_stdin_value.is_empty() {
@@ -1095,15 +1089,13 @@ impl Subprocess<'_> {
             // This matches Node.js behavior. Node calls resume() on the streams.
             if let Readable::Pipe(pipe) = self.stdout.get() {
                 if !pipe.reader.is_done() {
-                    // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-                    unsafe { (*pipe.as_ptr()).reader.read() };
+                    Readable::pipe_reader_mut(pipe).reader.read();
                 }
             }
 
             if let Readable::Pipe(pipe) = self.stderr.get() {
                 if !pipe.reader.is_done() {
-                    // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-                    unsafe { (*pipe.as_ptr()).reader.read() };
+                    Readable::pipe_reader_mut(pipe).reader.read();
                 }
             }
         }
@@ -1606,11 +1598,9 @@ pub mod testing_apis {
         let fake_err = bun_sys::Error::from_code(bun_sys::Errno::EBADF, bun_sys::Tag::read);
         #[cfg(windows)]
         {
-            // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-            let _ = unsafe { (*pipe.as_ptr()).reader.stop_reading() };
+            let _ = Readable::pipe_reader_mut(pipe).reader.stop_reading();
         }
-        // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
-        unsafe { (*pipe.as_ptr()).reader.on_error(fake_err) };
+        Readable::pipe_reader_mut(pipe).reader.on_error(fake_err);
         Ok(JSValue::TRUE)
     }
 }

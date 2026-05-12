@@ -246,9 +246,8 @@ impl Archive {
         let compress = parse_compression_options(global, options_arg)?;
 
         // For Blob/Archive, ref the existing store (zero-copy)
-        if let Some(blob_ptr) = blob_from_js(data_arg) {
-            // SAFETY: blob_ptr came from a live JSValue; valid for this scope.
-            if let Some(store) = unsafe { (*blob_ptr).store.get().as_ref() } {
+        if let Some(blob) = blob_from_js(data_arg) {
+            if let Some(store) = blob.store.get().as_ref() {
                 // StoreRef::clone == store.ref()
                 return Ok(Box::new(Archive { store: store.clone(), compress }));
             }
@@ -322,10 +321,12 @@ fn create_archive(data: Vec<u8>, compress: Compression) -> Box<Archive> {
 }
 
 /// `JSValue::as_::<Blob>()` shim — kept as a free fn so the call sites read
-/// the same as the Zig (`jsc.WebCore.Blob.fromJS(value)`).
+/// the same as the Zig (`jsc.WebCore.Blob.fromJS(value)`). Returns a shared
+/// borrow (BACKREF: m_ctx payload kept live by the JSC cell rooted by `value`
+/// on the caller's stack) so callers don't open-code `unsafe { &*ptr }`.
 #[inline]
-fn blob_from_js(value: JSValue) -> Option<*mut Blob> {
-    <Blob as bun_jsc::JsClass>::from_js(value)
+fn blob_from_js(value: JSValue) -> Option<&'static Blob> {
+    value.as_class_ref::<Blob>()
 }
 
 /// Shared helper that builds tarball bytes from a JS object
@@ -419,12 +420,10 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
 
 /// Returns data as a ZigString.Slice (handles ownership automatically via deinit)
 fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigStringSlice> {
-    // For Blob, use sharedView (no copy needed)
-    if let Some(blob_ptr) = blob_from_js(value) {
-        // SAFETY: blob_ptr came from a live JSValue; the backing store outlives
-        // the returned slice for the duration of the caller's tarball build.
-        let view = unsafe { (*blob_ptr).shared_view() };
-        return Ok(ZigStringSlice::from_utf8_never_free(view));
+    // For Blob, use sharedView (no copy needed). The backing store outlives
+    // the returned slice for the duration of the caller's tarball build.
+    if let Some(blob) = blob_from_js(value) {
+        return Ok(ZigStringSlice::from_utf8_never_free(blob.shared_view()));
     }
 
     // For ArrayBuffer/TypedArray, use view (no copy needed)
@@ -469,9 +468,8 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
     }
 
     // For Blobs, use store reference with options compression
-    if let Some(blob_ptr) = blob_from_js(data_arg) {
-        // SAFETY: blob_ptr came from a live JSValue; valid for this scope.
-        if let Some(store) = unsafe { (*blob_ptr).store.get().as_ref() } {
+    if let Some(blob) = blob_from_js(data_arg) {
+        if let Some(store) = blob.store.get().as_ref() {
             return start_write_task(global, WriteData::Store(store.clone()), path_slice.slice(), options_compress);
         }
     }

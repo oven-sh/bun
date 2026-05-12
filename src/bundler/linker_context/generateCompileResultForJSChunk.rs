@@ -124,13 +124,12 @@ fn generate_compile_result_for_js_chunk_impl(
     // PORT NOTE: Zig threaded `arena` (dev_server or default) into
     // DeclCollector; the Rust DeclCollector wants `*const Arena`. Use the
     // worker heap for now (see TODO above re: dev_server arena).
-    let mut dc = DeclCollector { arena: worker.arena, ..Default::default() };
+    let mut dc = DeclCollector { arena: worker.arena.as_ptr(), ..Default::default() };
 
-    // SAFETY: `worker.arena` (= `&worker.heap`) is read via the raw field and
-    // detached so it does not conflict with the `&mut worker.temporary_arena` /
-    // `&mut worker.stmt_list` borrows held above. Heap is pinned; see
-    // `Worker::arena`.
-    let worker_alloc = unsafe { bun_ptr::detach_lifetime_ref(&*worker.arena) };
+    // `worker.arena` (= `BackRef` to `worker.heap`) is a disjoint field from
+    // `worker.temporary_arena` / `worker.stmt_list` borrowed `&mut` above, so
+    // a direct shared borrow is fine. Heap is pinned; see `Worker::arena`.
+    let worker_alloc = worker.arena.get();
     // SAFETY: split borrow of `chunk` — `generate_code_for_file_in_chunk_js` never
     // touches `chunk.renamer` through its `chunk` parameter (Zig passes the renamer
     // union by value alongside `*Chunk`); take a raw-ptr view so borrowck doesn't

@@ -2089,10 +2089,8 @@ where
         // we have to clone the request headers here since they will soon belong to a different request
         if !request_object.has_fetch_headers() {
             if !HTTP3 {
-                // SAFETY: create_from_uws returns a freshly-allocated +1 ref.
-                request_object.set_fetch_headers(Some(unsafe {
-                    response::HeadersRef::adopt(FetchHeaders::create_from_uws(req))
-                }));
+                // `HeadersRef::create_from_uws` adopts the freshly-allocated +1 ref.
+                request_object.set_fetch_headers(Some(response::HeadersRef::create_from_uws(req)));
             }
         }
 
@@ -2320,10 +2318,14 @@ where
                     };
                     let credentials = s3.get_credentials();
                     let path = s3.path();
-                    // SAFETY: bun_vm() returns the live VM raw ptr.
-                    let env = global_this.bun_vm().as_mut().transpiler.env;
-                    // SAFETY: env is a live *mut dotenv::Loader for the VM lifetime.
-                    let proxy_url = unsafe { (*env).get_http_proxy(true, None, None) }
+                    // `Transpiler::env_mut` is the safe accessor for the
+                    // process-singleton dotenv loader (set during init).
+                    let proxy_url = global_this
+                        .bun_vm()
+                        .as_mut()
+                        .transpiler
+                        .env_mut()
+                        .get_http_proxy(true, None, None)
                         .map(|proxy| proxy.href);
 
                     let _ = S3::client::stat(

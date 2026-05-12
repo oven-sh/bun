@@ -336,13 +336,15 @@ impl<'a> Task<'a> {
                     let is_extended_manifest = *is_extended_manifest;
 
                     // SAFETY: shared read of `manager.options` (never mutated by
-                    // worker threads). Decay to a raw pointer so the `&PackageManager`
+                    // worker threads). Wrap as `BackRef` so the `&PackageManager`
                     // autoref does not stay live across the `&mut *manager` below.
-                    let scope = std::ptr::from_ref(unsafe { (*manager).scope_for_package_name(manifest.name.slice()) });
+                    let scope = bun_ptr::BackRef::new(
+                        unsafe { (*manager).scope_for_package_name(manifest.name.slice()) },
+                    );
                     let package_manifest = match npm::Registry::get_package_metadata(
-                        // SAFETY: scope is borrowed from manager.options which is not
+                        // scope is borrowed from manager.options which is not
                         // touched by get_package_metadata (only the cache-dir fields are).
-                        unsafe { &*scope },
+                        scope.get(),
                         metadata.response,
                         body.slice(),
                         &mut this.log,

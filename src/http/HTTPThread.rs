@@ -87,7 +87,7 @@ pub struct HttpThread {
     /// `active_requests_count >= max_simultaneous_requests`. Kept in FIFO order
     /// and processed before `queued_tasks` on the next `drainEvents`. Owned by
     /// the HTTP thread; never accessed concurrently.
-    pub deferred_tasks: Vec<*mut AsyncHttp<'static>>,
+    pub deferred_tasks: Vec<NonNull<AsyncHttp<'static>>>,
     /// Set by `drainQueuedShutdowns` when a shutdown's `async_http_id` wasn't in
     /// `socket_async_http_abort_tracker` — the request is either not yet started
     /// (still in `queued_tasks`/`deferred_tasks`) or already done. `drainEvents`
@@ -246,6 +246,23 @@ pub struct LibdeflateState {
     pub shared_buffer: [u8; 512 * 1024],
 }
 
+impl LibdeflateState {
+    /// Mutable access to the libdeflate decompressor handle.
+    ///
+    /// INVARIANT: `decompressor` is set once in [`HttpThread::deflater`] from
+    /// `libdeflate_alloc_decompressor` (panics on null) and is never freed
+    /// until thread teardown. The handle is a separate C heap allocation
+    /// disjoint from `self`, so the returned `&mut` does not alias
+    /// `shared_buffer`. HTTP-thread-only — sole live borrow. Centralises the
+    /// raw `&mut *deflater.decompressor` upgrade repeated at every
+    /// `decompress` call site.
+    #[inline]
+    pub fn decompressor_mut<'a>(&self) -> &'a mut bun_libdeflate_sys::libdeflate::Decompressor {
+        // SAFETY: see INVARIANT above.
+        unsafe { &mut *self.decompressor }
+    }
+}
+
 pub const REQUEST_BODY_SEND_STACK_BUFFER_SIZE: usize = 32 * 1024;
 
 // TODO(port): UnboundedQueue is intrusive over `AsyncHttp.next`; encode field offset in Phase B.
@@ -329,6 +346,20 @@ impl HttpThread {
     #[inline]
     pub fn uws_loop(&self) -> *mut uws::Loop {
         self.uws_loop
+    }
+
+    /// Mutable access to the live uSockets event loop.
+    ///
+    /// INVARIANT: `uws_loop` is set once in [`on_start`] (published via the
+    /// `has_awoken` Release store) and outlives the HTTP thread. The loop is a
+    /// separate C heap allocation disjoint from `self`. HTTP-thread-only at
+    /// every caller — `wakeup()` is the sole cross-thread entry and uses the
+    /// raw FFI call instead. Centralises the raw `&mut *self.uws_loop`
+    /// upgrade repeated in `process_events`.
+    #[inline]
+    fn uws_loop_mut<'a>(&self) -> &'a mut uws::Loop {
+        // SAFETY: see INVARIANT above.
+        unsafe { &mut *self.uws_loop }
     }
 
     /// Zig `timer.read()` returns u64 ns directly; Rust `Instant::elapsed().as_nanos()` is u128.
@@ -768,11 +799,15 @@ impl HttpThread {
         {
             let pending = core::mem::take(&mut self.deferred_tasks);
             for http in pending {
-                // SAFETY: AsyncHttp pointer is owned by caller, alive until completion callback.
-                let aborted =
-                    unsafe { (*http).client.signals.get(crate::signals::Field::Aborted) };
+                // AsyncHttp is heap-owned by the caller and alive until its
+                // completion callback; while parked in `deferred_tasks` no other
+                // borrow exists, so a transient `ParentRef` shared deref is sound.
+                let aborted = bun_ptr::ParentRef::from(http)
+                    .client
+                    .signals
+                    .get(crate::signals::Field::Aborted);
                 if aborted || active < max {
-                    start_queued_task(http);
+                    start_queued_task(http.as_ptr());
                     if cfg!(debug_assertions) {
                         count += 1;
                     }
@@ -784,12 +819,16 @@ impl HttpThread {
         }
 
         loop {
-            let http = self.queued_tasks.pop();
-            if http.is_null() {
+            let Some(http) = NonNull::new(self.queued_tasks.pop()) else {
                 break;
-            }
-            // SAFETY: AsyncHttp pointer is owned by caller, alive until completion callback.
-            let aborted = unsafe { (*http).client.signals.get(crate::signals::Field::Aborted) };
+            };
+            // AsyncHttp is heap-owned by the caller and alive until its
+            // completion callback; the MPSC pop hands sole access to this
+            // thread, so a transient `ParentRef` shared deref is sound.
+            let aborted = bun_ptr::ParentRef::from(http)
+                .client
+                .signals
+                .get(crate::signals::Field::Aborted);
             if !aborted && active >= max {
                 // Can't start this one yet. Defer it (preserves FIFO relative to
                 // later pops) and keep draining — there may be aborted tasks
@@ -797,7 +836,7 @@ impl HttpThread {
                 self.deferred_tasks.push(http);
                 continue;
             }
-            start_queued_task(http);
+            start_queued_task(http.as_ptr());
             if cfg!(debug_assertions) {
                 count += 1;
             }
@@ -1033,10 +1072,13 @@ mod _event_loop_draft {
         // panics with `Parent loop not set - pointer is null`, which aborts
         // the process — `bun install` SIGABRT on the first uncached lookup.
         let loop_ = mini_event_loop::init_global(None, None);
-        // SAFETY: `init_global` published the per-thread singleton; this thread
-        // owns it for the thread lifetime and `loop_ptr()` is always non-null
-        // (`MiniEventLoop::init` calls `UwsLoop::get()`).
-        let uws_loop = unsafe { (*loop_).loop_ptr() };
+        // `init_global` returns the heap-allocated thread-local singleton (never
+        // null); this thread owns it for the thread lifetime. `loop_ptr()` reads
+        // a stable field via `&self`, so a `ParentRef` shared deref suffices.
+        let uws_loop = bun_ptr::ParentRef::from(
+            NonNull::new(loop_).expect("init_global returns the thread-local singleton"),
+        )
+        .loop_ptr();
 
         #[cfg(windows)]
         {
@@ -1070,9 +1112,7 @@ mod _event_loop_draft {
 
     impl HttpThread {
         fn process_events(&mut self) -> ! {
-            // SAFETY: uws_loop is set in on_start before this is called and
-            // outlives the thread.
-            let uws_loop = unsafe { &mut *self.uws_loop };
+            let uws_loop = self.uws_loop_mut();
             #[cfg(unix)]
             {
                 uws_loop.num_polls = uws_loop.num_polls.max(2);
@@ -1086,8 +1126,7 @@ mod _event_loop_draft {
                 self.drain_events();
                 Output::flush();
 
-                // SAFETY: uws_loop is the live HTTP-thread loop set in on_start.
-                let uws_loop = unsafe { &mut *self.uws_loop };
+                let uws_loop = self.uws_loop_mut();
                 uws_loop.inc();
                 uws_loop.tick();
                 uws_loop.dec();

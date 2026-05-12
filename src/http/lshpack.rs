@@ -146,12 +146,9 @@ impl HPACK {
         lshpack_wrapper_enc_set_max_capacity(self, max_capacity as c_uint);
     }
 
-    /// # Safety
-    /// `this` must have been returned by [`HPACK::init`] and not yet destroyed.
-    pub unsafe fn destroy(this: *mut HPACK) {
-        // SAFETY: caller contract — this was allocated by lshpack_wrapper_init.
-        unsafe { lshpack_wrapper_deinit(this) };
-    }
+    // PORT NOTE: Zig `destroy` (raw `*mut HPACK` teardown) is subsumed by the
+    // safe [`HpackHandle`] RAII wrapper below — every Rust owner holds an
+    // `HpackHandle`, so the raw destructor is private to `HpackHandle::drop`.
 }
 
 /// Owning handle for an `HPACK` instance returned by [`HPACK::init`].
@@ -192,8 +189,10 @@ impl core::ops::DerefMut for HpackHandle {
 impl Drop for HpackHandle {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: `self.0` came from `HPACK::init` and has not been destroyed.
-        unsafe { HPACK::destroy(self.0.as_ptr()) };
+        // SAFETY: `self.0` came from `lshpack_wrapper_init` (via `HPACK::init`)
+        // and `HpackHandle` is its unique owner, so this is the first and only
+        // teardown — runs `lshpack_{enc,dec}_cleanup` then frees.
+        unsafe { lshpack_wrapper_deinit(self.0.as_ptr()) };
     }
 }
 
@@ -204,7 +203,11 @@ unsafe impl Send for HpackHandle {}
 // Non-Option fn pointers: the C ABI repr is identical to `Option<fn>`, but the
 // type guarantees non-null, which is the only precondition `lshpack_wrapper_init`
 // has — letting it be declared `safe fn` below.
-type lshpack_wrapper_alloc = unsafe extern "C" fn(size: usize) -> *mut c_void;
+// `alloc` has no caller precondition (mi_malloc is total over usize), so its
+// pointer type is safe; `free` retains a caller contract because `mi_free`
+// requires "ptr is mimalloc-owned or null" — discharged by the C wrapper,
+// not by Rust's type system.
+type lshpack_wrapper_alloc = extern "C" fn(size: usize) -> *mut c_void;
 type lshpack_wrapper_free = unsafe extern "C" fn(ptr: *mut c_void);
 
 // TODO(port): move to bun_http_sys

@@ -1512,7 +1512,7 @@ impl PostgresSQLConnection {
             // Queue invariant: every stored pointer is non-null and live
             // (refcount ≥ 1 held by the queue). R-2: `ParentRef` yields `&T`
             // only — `PostgresSQLQuery` is Cell/JsCell-backed. Raw `*mut`
-            // retained for `PostgresSQLQuery::deref(request_ptr)` below.
+            // retained for `discard_request` below.
             let request = ParentRef::from(NonNull::new(request_ptr).expect("queue item non-null"));
             match request.status.get() {
                 // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
@@ -1557,8 +1557,7 @@ impl PostgresSQLConnection {
                 // just ignore success and fail cases
                 QueryStatus::Success | QueryStatus::Fail => {}
             }
-            unsafe { PostgresSQLQuery::deref(request_ptr) };
-            self.requests.with_mut(|q| q.discard(1));
+            self.discard_request(request_ptr);
         }
     }
 
@@ -1601,6 +1600,20 @@ impl PostgresSQLConnection {
         // `PostgresSQLQuery` with refcount ≥ 1 held by the queue itself; it cannot
         // be freed while still enqueued. R-2: deref as shared (`&*`) only.
         Some(unsafe { &*ptr })
+    }
+
+    /// Drop the queue-held intrusive ref on `request` and pop one entry from
+    /// the FIFO head. One audited `unsafe` here replaces the per-site
+    /// `unsafe { PostgresSQLQuery::deref(ptr) }; self.requests.with_mut(|q| q.discard(1));`
+    /// pair (16 callers in `clean_up_requests` / `advance`).
+    #[inline]
+    fn discard_request(&self, request: *mut PostgresSQLQuery) {
+        // SAFETY: `request` was obtained via `self.requests.get().peek_item(_)`
+        // (queue invariant: every stored pointer is a live, heap-allocated
+        // `PostgresSQLQuery` with refcount ≥ 1 held by the queue itself); this
+        // releases exactly that ref. May free if no other refs remain.
+        unsafe { PostgresSQLQuery::deref(request) };
+        self.requests.with_mut(|q| q.discard(1));
     }
 
     pub fn has_query_running(&self) -> bool {
@@ -1816,13 +1829,11 @@ impl PostgresSQLConnection {
                     // so we do the cleanup here
                     match result.status.get() {
                         QueryStatus::Success => {
-                            unsafe { PostgresSQLQuery::deref(result_ptr) };
-                            $self.requests.with_mut(|q| q.discard(1));
+                            $self.discard_request(result_ptr);
                             continue;
                         }
                         QueryStatus::Fail => {
-                            unsafe { PostgresSQLQuery::deref(result_ptr) };
-                            $self.requests.with_mut(|q| q.discard(1));
+                            $self.discard_request(result_ptr);
                             continue;
                         }
                         _ => break, // truly current item
@@ -1864,8 +1875,7 @@ impl PostgresSQLConnection {
                                 req.on_write_fail(err, self.global(), self.get_queries_array());
                             }
                             if offset == 0 {
-                                unsafe { PostgresSQLQuery::deref(req_ptr) };
-                                self.requests.with_mut(|q| q.discard(1));
+                                self.discard_request(req_ptr);
                             } else {
                                 // deinit later
                                 req.status.set(QueryStatus::Fail);
@@ -1895,8 +1905,7 @@ impl PostgresSQLConnection {
                                         req.on_js_error(ev, self.global());
                                     }
                                     if offset == 0 {
-                                        unsafe { PostgresSQLQuery::deref(req_ptr) };
-                                        self.requests.with_mut(|q| q.discard(1));
+                                        self.discard_request(req_ptr);
                                     } else {
                                         // deinit later
                                         req.status.set(QueryStatus::Fail);
@@ -1908,8 +1917,7 @@ impl PostgresSQLConnection {
                                     let Some(this_value) = req.this_value.get().try_get() else {
                                         debug_assert!(false, "query value was freed earlier than expected");
                                         if offset == 0 {
-                                            unsafe { PostgresSQLQuery::deref(req_ptr) };
-                                            self.requests.with_mut(|q| q.discard(1));
+                                            self.discard_request(req_ptr);
                                         } else {
                                             // deinit later
                                             req.status.set(QueryStatus::Fail);
@@ -1944,8 +1952,7 @@ impl PostgresSQLConnection {
                                                 req.on_write_fail(err, self.global(), self.get_queries_array());
                                             }
                                             if offset == 0 {
-                                                unsafe { PostgresSQLQuery::deref(req_ptr) };
-                                                self.requests.with_mut(|q| q.discard(1));
+                                                self.discard_request(req_ptr);
                                             } else {
                                                 // deinit later
                                                 req.status.set(QueryStatus::Fail);
@@ -1970,8 +1977,7 @@ impl PostgresSQLConnection {
                                                 req.on_write_fail(err, self.global(), self.get_queries_array());
                                             }
                                             if offset == 0 {
-                                                unsafe { PostgresSQLQuery::deref(req_ptr) };
-                                                self.requests.with_mut(|q| q.discard(1));
+                                                self.discard_request(req_ptr);
                                             } else {
                                                 // deinit later
                                                 req.status.set(QueryStatus::Fail);
@@ -2011,8 +2017,7 @@ impl PostgresSQLConnection {
                                         let Some(this_value) = req.this_value.get().try_get() else {
                                             debug_assert!(false, "query value was freed earlier than expected");
                                             if offset == 0 {
-                                                unsafe { PostgresSQLQuery::deref(req_ptr) };
-                                                self.requests.with_mut(|q| q.discard(1));
+                                                self.discard_request(req_ptr);
                                             } else {
                                                 // deinit later
                                                 req.status.set(QueryStatus::Fail);
@@ -2039,8 +2044,7 @@ impl PostgresSQLConnection {
                                                 req.on_write_fail(err, self.global(), self.get_queries_array());
                                             }
                                             if offset == 0 {
-                                                unsafe { PostgresSQLQuery::deref(req_ptr) };
-                                                self.requests.with_mut(|q| q.discard(1));
+                                                self.discard_request(req_ptr);
                                             } else {
                                                 // deinit later
                                                 req.status.set(QueryStatus::Fail);
@@ -2068,8 +2072,7 @@ impl PostgresSQLConnection {
                                         let Some(this_value) = req.this_value.get().try_get() else {
                                             debug_assert!(false, "query value was freed earlier than expected");
                                             debug_assert!(offset == 0);
-                                            unsafe { PostgresSQLQuery::deref(req_ptr) };
-                                            self.requests.with_mut(|q| q.discard(1));
+                                            self.discard_request(req_ptr);
                                             continue;
                                         };
                                         let binding_value = postgres_sql_query::js::binding_get_cached(this_value).unwrap_or(JSValue::ZERO);
@@ -2093,8 +2096,7 @@ impl PostgresSQLConnection {
                                                 req.on_write_fail(err, self.global(), self.get_queries_array());
                                             }
                                             debug_assert!(offset == 0);
-                                            unsafe { PostgresSQLQuery::deref(req_ptr) };
-                                            self.requests.with_mut(|q| q.discard(1));
+                                            self.discard_request(req_ptr);
                                             debug!("parseAndBindAndExecute failed: {}", <&'static str>::from(err));
                                             continue;
                                         }
@@ -2131,8 +2133,7 @@ impl PostgresSQLConnection {
                                             req.on_write_fail(err, self.global(), self.get_queries_array());
                                         }
                                         debug_assert!(offset == 0);
-                                        unsafe { PostgresSQLQuery::deref(req_ptr) };
-                                        self.requests.with_mut(|q| q.discard(1));
+                                        self.discard_request(req_ptr);
                                         debug!("write query failed: {}", <&'static str>::from(err));
                                         continue;
                                     }
@@ -2145,8 +2146,7 @@ impl PostgresSQLConnection {
                                             req.on_write_fail(err, self.global(), self.get_queries_array());
                                         }
                                         debug_assert!(offset == 0);
-                                        unsafe { PostgresSQLQuery::deref(req_ptr) };
-                                        self.requests.with_mut(|q| q.discard(1));
+                                        self.discard_request(req_ptr);
                                         debug!("write query (sync) failed: {}", <&'static str>::from(err));
                                         continue;
                                     }
@@ -2194,8 +2194,7 @@ impl PostgresSQLConnection {
                         offset += 1;
                         continue;
                     }
-                    unsafe { PostgresSQLQuery::deref(req_ptr) };
-                    self.requests.with_mut(|q| q.discard(1));
+                    self.discard_request(req_ptr);
                     continue;
                 }
                 QueryStatus::Fail => {
@@ -2204,8 +2203,7 @@ impl PostgresSQLConnection {
                         offset += 1;
                         continue;
                     }
-                    unsafe { PostgresSQLQuery::deref(req_ptr) };
-                    self.requests.with_mut(|q| q.discard(1));
+                    self.discard_request(req_ptr);
                     continue;
                 }
             }

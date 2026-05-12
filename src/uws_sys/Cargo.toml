@@ -8,7 +8,6 @@ path = "lib.rs"
 
 [dependencies]
 bun_opaque.workspace = true
-parking_lot.workspace = true
 thiserror.workspace = true
 strum.workspace = true
 phf.workspace = true

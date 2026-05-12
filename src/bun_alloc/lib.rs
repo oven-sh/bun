@@ -532,37 +532,42 @@ pub fn buf_print_len(
 // ── RAII Mutex ────────────────────────────────────────────────────────────
 // Zig's `bun.Mutex` exposes bare `lock()`/`unlock()` (no guard). The BSS
 // containers below need to hold the lock across `&mut self` method calls, so
-// the returned `MutexGuard` deliberately captures a *raw* pointer to the
-// `RawMutex` instead of a borrow — the guard therefore has no lifetime tie to
-// `self` and won't conflict with subsequent `&mut self` borrows. This is sound
-// because every `Mutex` here lives inside a `'static` BSS singleton (see
-// `instance()` below), so the pointee always outlives the guard.
-pub struct Mutex(parking_lot::RawMutex);
+// the returned [`MutexGuard`] deliberately erases its borrow of `self` — it
+// stores the `std::sync::MutexGuard` lifetime-extended to `'static` (lifetimes
+// are erased at codegen, so this is a layout no-op). This is sound because
+// every `Mutex` here lives inside a `'static` BSS singleton (see `instance()`
+// below), so the pointee always outlives the guard.
+//
+// LAYERING: `bun_alloc` is below `bun_threading` in the crate graph, so the
+// futex-backed `bun_threading::Mutex` is unavailable here; `std::sync` (itself
+// futex-backed since Rust 1.62) is the dependency-free stand-in.
+pub struct Mutex(std::sync::Mutex<()>);
 impl Mutex {
     pub const fn new() -> Self {
-        Self(<parking_lot::RawMutex as parking_lot::lock_api::RawMutex>::INIT)
+        Self(std::sync::Mutex::new(()))
     }
     #[inline]
     pub fn lock(&self) -> MutexGuard {
-        parking_lot::lock_api::RawMutex::lock(&self.0);
-        MutexGuard(core::ptr::addr_of!(self.0))
+        let g = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // SAFETY: lifetime extension only — `std::sync::MutexGuard<'a, ()>` and
+        // `<'static, ()>` have identical layout. Every `bun_alloc::Mutex` lives
+        // in a `'static` BSS singleton, so the inner `&Mutex` the guard holds
+        // is in fact valid for `'static`.
+        MutexGuard(unsafe {
+            core::mem::transmute::<std::sync::MutexGuard<'_, ()>, std::sync::MutexGuard<'static, ()>>(
+                g,
+            )
+        })
     }
 }
 
 /// Unlocks the paired [`Mutex`] on drop. See the type-level comment on
-/// [`Mutex`] for why this holds a raw pointer rather than a reference.
+/// [`Mutex`] for why this erases the guard lifetime rather than borrowing.
 #[must_use = "if unused the Mutex will immediately unlock"]
-pub struct MutexGuard(*const parking_lot::RawMutex);
-impl Drop for MutexGuard {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: `self.0` was obtained from a live `Mutex` in `lock()`; the
-        // BSS singletons that own these mutexes are `'static`, so the pointee
-        // outlives this guard. `lock()` acquired the raw mutex exactly once
-        // and this is the paired release.
-        unsafe { parking_lot::lock_api::RawMutex::unlock(&*self.0) };
-    }
-}
+pub struct MutexGuard(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
 impl Default for Mutex {
     fn default() -> Self {
         Self::new()
@@ -2185,19 +2190,20 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     ///
     /// SAFETY: `slot` must point to writable, properly-aligned, **all-zeros**
     /// storage of `size_of::<Self>()` bytes that lives for `'static` — i.e. it
-    /// came from [`bss_heap_init`] / [`bss_lazy_bytes`]. `mutex`
-    /// (`parking_lot::RawMutex::INIT` is all-zeros), `used`, `tail.used`, and
-    /// `tail.prev` (`None` is the null niche) are already bit-zero in that
-    /// storage, so the *only* required write is the non-zero self-referential
-    /// `head = &tail`. Skipping the redundant zero-writes keeps every startup
-    /// write within page 0 of the singleton mapping (see the `#[repr(C)]`
-    /// layout note on [`BSSList`]). `backing_buf` and `tail.data` are
-    /// intentionally left uninitialized (Zig leaves them `undefined`); only
-    /// `[0..used]` is read.
+    /// came from [`bss_heap_init`] / [`bss_lazy_bytes`]. `used`, `tail.used`,
+    /// and `tail.prev` (`None` is the null niche) are already bit-zero in that
+    /// storage, so the only required writes are `mutex` (`std::sync::Mutex` is
+    /// not guaranteed all-zeros-init, unlike the previous `parking_lot::RawMutex`)
+    /// and the non-zero self-referential `head = &tail`. Both fields lead the
+    /// `#[repr(C)]` layout, so every startup write stays within page 0 of the
+    /// singleton mapping (see the layout note on [`BSSList`]). `backing_buf`
+    /// and `tail.data` are intentionally left uninitialized (Zig leaves them
+    /// `undefined`); only `[0..used]` is read.
     pub unsafe fn init_at(slot: *mut Self) {
         // SAFETY: caller contract — `slot` is a valid, exclusive, aligned,
         // all-zeros `*mut Self`.
         unsafe {
+            addr_of_mut!((*slot).mutex).write(Mutex::new());
             // Zig: `instance.head = &instance.tail` — self-referential; raw NonNull.
             let tail_ptr = addr_of_mut!((*slot).tail);
             addr_of_mut!((*slot).head).write(Some(NonNull::new_unchecked(tail_ptr)));

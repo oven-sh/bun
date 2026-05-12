@@ -15,7 +15,6 @@ getrandom.workspace = true
 # docs/PORTING.md, prefer a vetted crates.io impl over hand-porting Keccak/Blake2.
 sha3 = { version = "0.10", default-features = false }
 blake2 = { version = "0.10", default-features = false }
-parking_lot.workspace = true
 bytemuck = "1"
 thiserror.workspace = true
 strum.workspace = true

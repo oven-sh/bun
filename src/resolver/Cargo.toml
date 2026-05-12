@@ -10,7 +10,6 @@ path = "lib.rs"
 debug_logs = []
 
 [dependencies]
-parking_lot.workspace = true
 strum.workspace = true
 phf.workspace = true
 bstr.workspace = true

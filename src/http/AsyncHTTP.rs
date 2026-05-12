@@ -651,17 +651,17 @@ impl<'a> AsyncHTTP<'a> {
 // 32 pointers much cheaper than 1000 pointers
 // PORT NOTE: `bun_threading::Channel` requires `T: Copy`, which
 // `HTTPClientResult` is not. `send_sync` is a one-shot blocking handoff, so a
-// Mutex+Condvar over `Option<T>` is the exact semantics needed.
+// Guarded<Option<T>>+Condvar is the exact semantics needed.
 pub struct SingleHTTPChannel {
-    slot: parking_lot::Mutex<Option<HTTPClientResult<'static>>>,
-    cv: parking_lot::Condvar,
+    slot: bun_threading::Guarded<Option<HTTPClientResult<'static>>>,
+    cv: bun_threading::Condvar,
 }
 
 impl SingleHTTPChannel {
     pub fn init() -> SingleHTTPChannel {
         SingleHTTPChannel {
-            slot: parking_lot::Mutex::new(None),
-            cv: parking_lot::Condvar::new(),
+            slot: bun_threading::Guarded::new(None),
+            cv: bun_threading::Condvar::new(),
         }
     }
     pub fn reset(&mut self) {
@@ -678,7 +678,7 @@ impl SingleHTTPChannel {
             if let Some(item) = g.take() {
                 return item;
             }
-            self.cv.wait(&mut g);
+            self.cv.wait_guarded(&mut g);
         }
     }
 }

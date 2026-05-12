@@ -1094,7 +1094,7 @@ pub struct DebugData<Count> {
     // 4. Rust cannot under-align a field; consider `[u32; 4]` if layout matters.
     magic: u128,
     // TODO(port): Zig used `if (thread_safe) std.debug.SafetyLock else bun.Mutex`.
-    // Debug-only — always parking_lot Mutex<()> here for simplicity.
+    // Debug-only — always `bun_core::Mutex<()>` (poison-free `std::sync`) here for simplicity.
     lock: bun_core::Mutex<()>,
     next_id: AtomicU32,
     map: HashMap<TrackedRefId, TrackedRef>,

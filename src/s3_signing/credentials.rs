@@ -121,7 +121,7 @@ impl Default for MultiPartUploadOptions {
 // ──────────────────────────────────────────────────────────────────────────
 
 use bun_collections::StringArrayHashMap;
-use parking_lot::Mutex;
+use bun_core::Mutex;
 
 /// Memoised SigV4 derived signing key, keyed by `(numeric_day,
 /// region+service+secret)`. PORTING.md §Concurrency: lock owns the data — Zig

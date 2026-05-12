@@ -2484,10 +2484,10 @@ pub mod internal {
         }
     }
 
-    static GLOBAL_CACHE: parking_lot::Mutex<GlobalCache> =
-        parking_lot::Mutex::new(GlobalCache::new());
+    static GLOBAL_CACHE: bun_threading::Guarded<GlobalCache> =
+        bun_threading::Guarded::new(GlobalCache::new());
     #[inline]
-    fn global_cache() -> &'static parking_lot::Mutex<GlobalCache> {
+    fn global_cache() -> &'static bun_threading::Guarded<GlobalCache> {
         &GLOBAL_CACHE
     }
 

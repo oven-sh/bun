@@ -380,17 +380,17 @@ impl<const Z: bool> core::fmt::Display for CowSliceZ<u8, Z> {
 #[cfg(debug_assertions)]
 struct DebugData {
     /// Guards `borrows` (number of active borrows).
-    // TODO(port): Zig used `bun.Mutex` with `borrows` as a separate field;
-    // folded into the mutex payload here. Map to `bun_threading::Mutex` if
-    // `parking_lot` is not the chosen primitive.
-    mutex: parking_lot::Mutex<usize>,
+    // PORT NOTE: Zig used `bun.Mutex` with `borrows` as a separate field;
+    // folded into the mutex payload here. `bun_core::Mutex` (poison-free
+    // `std::sync` wrapper) is used because `bun_ptr` sits below `bun_threading`.
+    mutex: bun_core::Mutex<usize>,
 }
 
 #[cfg(debug_assertions)]
 impl DebugData {
     fn new_boxed() -> NonNull<Self> {
         bun_core::heap::into_raw_nn(Box::new(Self {
-            mutex: parking_lot::Mutex::new(0),
+            mutex: bun_core::Mutex::new(0),
         }))
     }
 }

@@ -452,10 +452,10 @@ impl ConvertedTable {
 }
 
 type RegKey = (usize, usize);
-type Registry = parking_lot::Mutex<Vec<(RegKey, &'static ConvertedTable)>>;
+type Registry = bun_core::Mutex<Vec<(RegKey, &'static ConvertedTable)>>;
 
 fn registry() -> &'static Registry {
-    static REG: Registry = parking_lot::Mutex::new(Vec::new());
+    static REG: Registry = bun_core::Mutex::new(Vec::new());
     &REG
 }
 

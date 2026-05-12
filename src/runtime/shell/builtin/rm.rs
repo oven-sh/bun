@@ -682,7 +682,7 @@ pub struct ShellRmTask {
     pub pending_main_callbacks: AtomicU32,
     /// First error hit by any worker thread. Mutex-wrapped so [`handle_err`]
     /// can take `&self` without an interior `&mut` cast.
-    pub err: parking_lot::Mutex<Option<bun_sys::Error>>,
+    pub err: bun_threading::Guarded<Option<bun_sys::Error>>,
     pub join_style: JoinStyle,
     pub event_loop: EventLoopHandle,
     pub task: ShellTask,
@@ -756,7 +756,7 @@ impl ShellRmTask {
             error_signal,
             output_count,
             pending_main_callbacks: AtomicU32::new(1),
-            err: parking_lot::Mutex::new(None),
+            err: bun_threading::Guarded::new(None),
             join_style,
             event_loop: evtloop,
             task: ShellTask::new(evtloop),

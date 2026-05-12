@@ -35,7 +35,7 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU16, AtomicU32, AtomicU64, O
 /// handles, and `Option<NonNull<_>>` that more than one thread touches.
 ///
 /// `T` must implement [`Atom`] (no padding, `size_of::<T>() ∈ {1,2,4,8}`).
-/// Larger or padded `T` is a compile error — use `parking_lot::RwLock<T>` or
+/// Larger or padded `T` is a compile error — use `bun_threading::RwLock<T>` or
 /// restructure. There is **no** seqlock fallback (unlike crossbeam's
 /// `AtomicCell`): if it doesn't fit in a native atomic word, it doesn't
 /// compile.

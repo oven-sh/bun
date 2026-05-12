@@ -10,7 +10,6 @@ path = "lib.rs"
 bun_opaque.workspace = true
 bstr.workspace = true
 libc.workspace = true
-parking_lot.workspace = true
 scopeguard.workspace = true
 bun_analytics.workspace = true
 bun_dispatch.workspace = true

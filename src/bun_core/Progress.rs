@@ -182,7 +182,7 @@ impl Default for Progress {
             refresh_rate_ns: 50 * NS_PER_MS,
             initial_delay_ns: 500 * NS_PER_MS,
             done: true,
-            update_mutex: Mutex::default(),
+            update_mutex: Mutex::new(()),
             // Zig: `= undefined`
             columns_written: 0,
         }
@@ -708,31 +708,35 @@ impl Progress {
     /// called. During the lock, the progress information is cleared from the
     /// terminal.
     ///
-    /// PORT NOTE: Zig's lock/unlock are split across fn boundaries; with
-    /// parking_lot we hold the lock via the `RawMutex` API (the `Mutex<()>`
-    /// guard would otherwise have to be stored on `self`, which self-borrows).
-    /// The `lock()`/`unlock()` pair is exact and explicit — not a §Forbidden
-    /// leak: there is no payload, and `unlock_stderr` is the documented release.
+    /// PORT NOTE: Zig splits the lock/unlock across fn boundaries.
+    /// `crate::Mutex` (std::sync wrapper) has no raw `unlock()`, and storing a
+    /// guard on `self` is self-referential. There are currently **no callers**
+    /// of `lock_stderr`/`unlock_stderr` in either the Zig or Rust trees, so
+    /// this clears the terminal under a scoped lock and `unlock_stderr` is a
+    /// no-op. If a caller materializes, refactor to return the guard (or move
+    /// `update_mutex` to a raw `bun_threading::Mutex` once layering allows).
     pub fn lock_stderr(&mut self) {
-        use parking_lot::lock_api::RawMutex as _;
-        // SAFETY: paired with `unlock_stderr` (caller contract, matches Zig).
-        unsafe { self.update_mutex.raw() }.lock();
-        if let Some(file) = self.terminal {
+        let ctx_ptr = std::ptr::from_mut::<Self>(self);
+        let _g = self.update_mutex.lock();
+        // SAFETY: ctx_ptr from &mut self; guard only references the mutex field
+        // (same disjoint-field pattern as `refresh`/`maybe_refresh` above).
+        let this = unsafe { &mut *ctx_ptr };
+        if let Some(file) = this.terminal {
             let mut end: usize = 0;
-            self.clear_with_held_lock(&mut end);
-            if file.write(&self.output_buffer[0..end]).is_err() {
+            this.clear_with_held_lock(&mut end);
+            if file.write(&this.output_buffer[0..end]).is_err() {
                 // stop trying to write to this file
-                self.terminal = None;
+                this.terminal = None;
             }
         }
+        // `_g` drops here; lock is NOT held past return — see PORT NOTE above.
         // TODO(port): std.debug.getStderrMutex().lock() — need a global stderr mutex in bun_core.
     }
 
     pub fn unlock_stderr(&mut self) {
-        use parking_lot::lock_api::RawMutex as _;
         // TODO(port): std.debug.getStderrMutex().unlock() — see lock_stderr.
-        // SAFETY: caller contract — paired with `lock_stderr` above.
-        unsafe { self.update_mutex.raw().unlock() };
+        // No-op; see PORT NOTE on `lock_stderr`.
+        let _ = self;
     }
 
     fn buf_write(&mut self, end: &mut usize, args: fmt::Arguments<'_>) {

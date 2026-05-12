@@ -418,7 +418,7 @@ pub struct ShellCpTask {
     /// directory walk is still fanning out, so the buffer must live inside the
     /// mutex — Zig's split lock-then-mutate pattern would alias `&mut self` in
     /// Rust.
-    pub verbose_output: parking_lot::Mutex<Vec<u8>>,
+    pub verbose_output: bun_threading::Guarded<Vec<u8>>,
     pub err: Option<ShellErr>,
     pub task: ShellTask,
 }
@@ -443,7 +443,7 @@ impl ShellCpTask {
             src_absolute: None,
             tgt_absolute: None,
             cwd_path,
-            verbose_output: parking_lot::Mutex::new(Vec::new()),
+            verbose_output: bun_threading::Guarded::new(Vec::new()),
             err: None,
             task: ShellTask::new(evtloop),
         });

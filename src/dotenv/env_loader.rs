@@ -142,8 +142,7 @@ static DID_LOAD_CCACHE_PATH: AtomicBool = AtomicBool::new(false);
 // Zig: `var node_path_to_use_set_once: []const u8 = ""` — overwritten on every
 // `loadNodeJSConfig` call (env_loader.zig:344). NOT set-once despite the name,
 // so RwLock<Option> (not OnceLock) — a 2nd call with an override must update the cache.
-static NODE_PATH_TO_USE_SET_ONCE: parking_lot::RwLock<Option<Box<[u8]>>> =
-    parking_lot::const_rwlock(None);
+static NODE_PATH_TO_USE_SET_ONCE: bun_core::RwLock<Option<Box<[u8]>>> = bun_core::RwLock::new(None);
 
 // Zig: `pub var has_no_clear_screen_cli_flag: ?bool = null;`
 // PORTING.md §Concurrency: OnceLock — set once from CLI flag, read many.

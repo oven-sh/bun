@@ -262,7 +262,7 @@ impl Expect {
         use std::collections::HashMap;
         use std::sync::OnceLock;
         type Key = (&'static str, &'static str, bool);
-        static CACHE: OnceLock<parking_lot::Mutex<HashMap<Key, Box<str>>>> = OnceLock::new();
+        static CACHE: OnceLock<bun_threading::Guarded<HashMap<Key, Box<str>>>> = OnceLock::new();
         let cache = CACHE.get_or_init(Default::default);
 
         let mut map = cache.lock();

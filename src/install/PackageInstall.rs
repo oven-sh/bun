@@ -481,7 +481,7 @@ pub struct NewTaskQueue<TaskType> {
     /// thread to the consumer that called `wait()`. A `Mutex<Option<Box<_>>>`
     /// makes ownership explicit (vs. the original `AtomicPtr`, which forced
     /// every reader to remember `Box::from_raw` and risked leaks/double-free).
-    pub errored_task: parking_lot::Mutex<Option<Box<TaskType>>>,
+    pub errored_task: bun_threading::Guarded<Option<Box<TaskType>>>,
     pub wait_group: WaitGroup,
 }
 
@@ -582,7 +582,7 @@ impl HardLinkWindowsInstallTask {
             } else {
                 (*HARDLINK_QUEUE.get()).write(HardLinkQueue {
                     thread_pool: &PackageManager::get().thread_pool,
-                    errored_task: parking_lot::Mutex::new(None),
+                    errored_task: bun_threading::Guarded::new(None),
                     wait_group: WaitGroup::init(),
                 });
             }

@@ -449,7 +449,7 @@ pub struct ProxyEnvStorage(Mutex<ProxyEnvSlots>);
 
 impl ProxyEnvStorage {
     #[inline]
-    pub fn lock(&self) -> parking_lot::MutexGuard<'_, ProxyEnvSlots> {
+    pub fn lock(&self) -> bun_core::MutexGuard<'_, ProxyEnvSlots> {
         self.0.lock()
     }
 }

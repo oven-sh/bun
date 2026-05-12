@@ -201,7 +201,6 @@ borrow_as_ptr = "warn"
 rust-argon2 = "3.0"
 bcrypt = "0.19"
 getrandom = "0.4"
-parking_lot = "0.12"
 strum = { version = "0.26", features = ["derive"] }
 phf = { version = "0.11", features = ["macros"] }
 # `allocator-api2` feature gives `hashbrown::HashMap<K, V, S, A>` an externally-

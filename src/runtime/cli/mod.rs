@@ -433,8 +433,8 @@ pub fn start_time() -> i128 {
 // `process.title = "..."` (set_title) drops the previous value instead of
 // leaking. The mutex provides exclusion between `get_title`/`set_title`
 // (Zig: `var title_mutex = bun.Mutex{}`).
-pub static Bun__Node__ProcessTitle: parking_lot::Mutex<Option<Box<[u8]>>> =
-    parking_lot::Mutex::new(None);
+pub static Bun__Node__ProcessTitle: bun_threading::Guarded<Option<Box<[u8]>>> =
+    bun_threading::Guarded::new(None);
 
 /// Process-lifetime arena for one-shot CLI commands. Zig passed
 /// `bun.default_allocator` (or a per-command `ArenaAllocator` never `deinit`'d)

@@ -28,7 +28,7 @@ use crate::ZStr;
 // build an out-of-bounds `from_raw_parts`. The read path is cold (display /
 // path-relative formatting) so one uncontended read-lock is cheaper than a UB
 // window; writes are rare and serial.
-static TOP_LEVEL_DIR: parking_lot::RwLock<&'static [u8]> = parking_lot::RwLock::new(b".");
+static TOP_LEVEL_DIR: crate::RwLock<&'static [u8]> = crate::RwLock::new(b".");
 
 /// Record the top-level directory (interned `'static` slice). Idempotent;
 /// later calls overwrite. Called from `FileSystem::init` / `set_top_level_dir`.
@@ -224,7 +224,7 @@ pub fn is_panicking() -> bool {
 pub fn sleep_forever_if_another_thread_is_crashing() {
     if PANICKING.load(Ordering::Acquire) > 0 {
         // Sleep forever without hammering the CPU. Zig used `bun.Futex.waitForever`;
-        // parking_lot's `park()` is the moral equivalent (never unparked).
+        // `std::thread::park()` is the moral equivalent (never unparked).
         loop {
             std::thread::park();
         }
@@ -592,7 +592,7 @@ pub type ExitFn = extern "C" fn();
 
 // PORT NOTE: Zig used an unsynchronized global `ArrayListUnmanaged`. Registration
 // can happen from any thread (FFI `Bun__atexit`), so guard with a Mutex.
-static ON_EXIT_CALLBACKS: parking_lot::Mutex<Vec<ExitFn>> = parking_lot::Mutex::new(Vec::new());
+static ON_EXIT_CALLBACKS: crate::Mutex<Vec<ExitFn>> = crate::Mutex::new(Vec::new());
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__atexit(function: ExitFn) {
@@ -611,7 +611,7 @@ pub fn add_exit_callback(function: ExitFn) {
 /// `runExitCallbacks()`; that crate sits above us, so it pushes its callback
 /// here at first-loop creation (data moved down — same `Vec<ExitFn>` shape as
 /// `ON_EXIT_CALLBACKS`, no fn-ptr type-erase).
-static PRE_EXIT_CALLBACKS: parking_lot::Mutex<Vec<ExitFn>> = parking_lot::Mutex::new(Vec::new());
+static PRE_EXIT_CALLBACKS: crate::Mutex<Vec<ExitFn>> = crate::Mutex::new(Vec::new());
 
 pub fn add_pre_exit_callback(function: ExitFn) {
     let mut cbs = PRE_EXIT_CALLBACKS.lock();

@@ -430,7 +430,10 @@ pub trait RequestContextHostFns {
     const ON_REJECT_STREAM: bun_jsc::JSHostFn;
 }
 
-#[bun_jsc::host_call]
+// Plain safe Rust helpers — only ever called Rust→Rust by the `#[no_mangle]`
+// ABI wrappers in `request_ctx_exports!`, so they need no `extern` ABI and
+// have no caller preconditions (bodies use safe `opaque_deref`). The wrappers
+// carry `#[bun_jsc::host_call]` for the C++-visible symbol.
 fn host_on_resolve<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>(
     g: *mut JSGlobalObject,
     f: *mut CallFrame,
@@ -443,7 +446,6 @@ where
     let (g, f) = (bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(f));
     bun_jsc::to_js_host_fn_result(g, RequestContext::<ThisServer, SSL, DBG, H3>::on_resolve(g, f))
 }
-#[bun_jsc::host_call]
 fn host_on_reject<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>(
     g: *mut JSGlobalObject,
     f: *mut CallFrame,
@@ -456,7 +458,6 @@ where
     let (g, f) = (bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(f));
     bun_jsc::to_js_host_fn_result(g, RequestContext::<ThisServer, SSL, DBG, H3>::on_reject(g, f))
 }
-#[bun_jsc::host_call]
 fn host_on_resolve_stream<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>(
     g: *mut JSGlobalObject,
     f: *mut CallFrame,
@@ -469,7 +470,6 @@ where
     let (g, f) = (bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(f));
     bun_jsc::to_js_host_fn_result(g, RequestContext::<ThisServer, SSL, DBG, H3>::on_resolve_stream(g, f))
 }
-#[bun_jsc::host_call]
 fn host_on_reject_stream<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>(
     g: *mut JSGlobalObject,
     f: *mut CallFrame,
@@ -3727,26 +3727,22 @@ macro_rules! request_ctx_exports {
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
         pub fn $on_resolve(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-            // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-            unsafe { host_on_resolve::<$srv, $ssl, $dbg, $h3>(g, f) }
+            host_on_resolve::<$srv, $ssl, $dbg, $h3>(g, f)
         }
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
         pub fn $on_reject(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-            // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-            unsafe { host_on_reject::<$srv, $ssl, $dbg, $h3>(g, f) }
+            host_on_reject::<$srv, $ssl, $dbg, $h3>(g, f)
         }
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
         pub fn $on_resolve_stream(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-            // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-            unsafe { host_on_resolve_stream::<$srv, $ssl, $dbg, $h3>(g, f) }
+            host_on_resolve_stream::<$srv, $ssl, $dbg, $h3>(g, f)
         }
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
         pub fn $on_reject_stream(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-            // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-            unsafe { host_on_reject_stream::<$srv, $ssl, $dbg, $h3>(g, f) }
+            host_on_reject_stream::<$srv, $ssl, $dbg, $h3>(g, f)
         }
     )*
 

@@ -269,13 +269,17 @@ impl Default for ConcurrentTask {
 
 /// Packed next pointer that encodes both the next ConcurrentTask pointer and the auto_delete flag.
 /// Uses the low bit for auto_delete since ConcurrentTask pointers are at least 2-byte aligned.
+///
+/// Backed directly by `AtomicUsize` so the atomic accessors need no `&usize → &AtomicUsize`
+/// pointer-cast (the previous repr stored a plain `usize` and reinterpreted it per-call).
+/// Non-atomic call sites use `Relaxed` — same codegen as a plain word read/write on every
+/// target we ship, and matches Zig's `@atomicLoad(.Monotonic)` lower bound.
 #[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub struct PackedNextPtr(usize);
+pub struct PackedNextPtr(AtomicUsize);
 
 impl PackedNextPtr {
-    pub const NONE: Self = Self(0);
-    pub const AUTO_DELETE: Self = Self(1);
+    pub const NONE: Self = Self(AtomicUsize::new(0));
+    pub const AUTO_DELETE: Self = Self(AtomicUsize::new(1));
 
     #[inline]
     pub fn init(ptr: Option<*mut ConcurrentTask>, auto_del: bool) -> PackedNextPtr {
@@ -283,12 +287,12 @@ impl PackedNextPtr {
             Some(p) => p as usize,
             None => 0,
         };
-        Self(ptr_bits | (auto_del as usize))
+        Self(AtomicUsize::new(ptr_bits | (auto_del as usize)))
     }
 
     #[inline]
-    pub fn get_ptr(self) -> Option<*mut ConcurrentTask> {
-        let addr = self.0 & !1usize;
+    pub fn get_ptr(&self) -> Option<*mut ConcurrentTask> {
+        let addr = self.0.load(Ordering::Relaxed) & !1usize;
         if addr == 0 {
             None
         } else {
@@ -297,26 +301,23 @@ impl PackedNextPtr {
     }
 
     #[inline]
-    pub fn set_ptr(&mut self, ptr: Option<*mut ConcurrentTask>) {
-        let auto_del = self.0 & 1;
+    pub fn set_ptr(&self, ptr: Option<*mut ConcurrentTask>) {
+        let auto_del = self.0.load(Ordering::Relaxed) & 1;
         let ptr_bits = match ptr {
             Some(p) => p as usize,
             None => 0,
         };
-        *self = Self(ptr_bits | auto_del);
+        self.0.store(ptr_bits | auto_del, Ordering::Relaxed);
     }
 
     #[inline]
-    pub fn is_auto_delete(self) -> bool {
-        (self.0 & 1) != 0
+    pub fn is_auto_delete(&self) -> bool {
+        (self.0.load(Ordering::Relaxed) & 1) != 0
     }
 
     #[inline]
     pub fn atomic_load_ptr(&self, ordering: Ordering) -> Option<*mut ConcurrentTask> {
-        // SAFETY: PackedNextPtr is #[repr(transparent)] over usize; casting &self to
-        // *const AtomicUsize is layout-valid and matches Zig's @atomicLoad on @ptrCast(self).
-        let value = unsafe { (*std::ptr::from_ref::<Self>(self).cast::<AtomicUsize>()).load(ordering) };
-        let addr = value & !1usize;
+        let addr = self.0.load(ordering) & !1usize;
         if addr == 0 {
             None
         } else {
@@ -325,17 +326,15 @@ impl PackedNextPtr {
     }
 
     #[inline]
-    pub fn atomic_store_ptr(&mut self, ptr: Option<*mut ConcurrentTask>, ordering: Ordering) {
+    pub fn atomic_store_ptr(&self, ptr: Option<*mut ConcurrentTask>, ordering: Ordering) {
         let ptr_bits = match ptr {
             Some(p) => p as usize,
             None => 0,
         };
         // auto_delete is immutable after construction, so we can safely read it
         // with a relaxed load and preserve it in the new value.
-        // SAFETY: PackedNextPtr is #[repr(transparent)] over usize; cast is layout-valid.
-        let self_ptr = unsafe { &*std::ptr::from_mut::<Self>(self).cast_const().cast::<AtomicUsize>() };
-        let auto_del_bit = self_ptr.load(Ordering::Relaxed) & 1;
-        self_ptr.store(ptr_bits | auto_del_bit, ordering);
+        let auto_del_bit = self.0.load(Ordering::Relaxed) & 1;
+        self.0.store(ptr_bits | auto_del_bit, ordering);
     }
 }
 

@@ -544,45 +544,27 @@ impl Map {
         if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
             return None;
         }
-        // SAFETY: the validity guards above are exhaustive — every Ref with a
-        // non-null source index and a non-SourceContentsSlice tag was emitted
-        // by the parser as an index into this table (or, for runtime/linker
-        // refs, allocated via `LinkerGraph::generate_symbol` which appended to
-        // the same per-source Vec). Both indices are therefore in-bounds; see
-        // `get_unchecked` for the full invariant.
-        Some(unsafe { self.get_unchecked(ref_) })
-    }
-
-    /// Bounds-check-free lookup for callers that already hold a Ref known to
-    /// address a real `Symbol` in this map.
-    ///
-    /// # Safety
-    /// `ref_` must satisfy **all** of:
-    /// - `ref_.source_index() < self.symbols_for_source.len()`
-    /// - `ref_.inner_index() < self.symbols_for_source[src].len()`
-    /// - `ref_.tag()` is not `RefTag::SourceContentsSlice` (those refs encode
-    ///   a byte span, not a symbol slot)
-    ///
-    /// This invariant holds for every Ref produced by the parser
-    /// (`declare_symbol`/`new_symbol` write `inner_index = symbols.len()`
-    /// then push) and for every Ref minted by the linker
-    /// (`LinkerGraph::generate_symbol`). The bundler never fabricates Refs
-    /// from untrusted input, so callers in `bun_bundler`/`bun_js_printer`
-    /// that obtained `ref_` from an AST node, `NamedImport`, `ExportData`,
-    /// `Part.declared_symbols`, etc. may call this without re-checking.
-    #[inline]
-    pub unsafe fn get_unchecked(&self, ref_: Ref) -> &Symbol {
         let src = ref_.source_index() as usize;
         let idx = ref_.inner_index() as usize;
-        debug_assert!(!ref_.is_source_contents_slice());
         debug_assert!(src < self.symbols_for_source.len());
-        // SAFETY: caller contract — `src` indexes a live element of the outer
-        // Vec, `idx` indexes a live element of that inner Vec.
-        unsafe {
+        // SAFETY: the validity guards above are exhaustive — every Ref with a
+        // non-null source index and a non-SourceContentsSlice tag was emitted
+        // by the parser as an index into this table (`declare_symbol` /
+        // `new_symbol` write `inner_index = symbols.len()` then push) or
+        // minted by the linker (`LinkerGraph::generate_symbol`, which appends
+        // to the same per-source Vec). Both indices are therefore in-bounds.
+        // The bundler never fabricates Refs from untrusted input.
+        //
+        // (Formerly a separate `get_unchecked` method — inlined: it had no
+        // external callers, so the unchecked fast path need not be public
+        // API surface. `follow()` below uses checked indexing for the same
+        // lookup; this site keeps the unchecked path for the printer's hot
+        // inner loop, narrowed to where the guard is visible.)
+        Some(unsafe {
             let inner = self.symbols_for_source.as_ptr().add(src);
             debug_assert!(idx < (*inner).len());
             &*(*inner).as_ptr().add(idx)
-        }
+        })
     }
 
     pub fn init(source_count: usize) -> Map {
@@ -683,7 +665,7 @@ impl Map {
         // which stores a Ref that came from `declare_symbol` / `new_symbol` /
         // `LinkerGraph::generate_symbol`, and (c) prior `follow()` path
         // compression, which stores a `root` that itself satisfied (b). All
-        // such refs satisfy the `get_unchecked` contract: in-bounds
+        // such refs satisfy the in-bounds contract (see `get_const`):
         // `(source_index, inner_index)` with tag ∈ {Symbol, AllocatedName},
         // never `SourceContentsSlice` and never the null source sentinel.
         let outer = self.symbols_for_source.slice();

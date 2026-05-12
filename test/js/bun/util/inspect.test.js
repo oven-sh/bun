@@ -335,7 +335,9 @@ it("jsx with circular reference as props object", () => {
     props: {},
   };
   el.props = el;
-  expect(Bun.inspect(el)).toContain("[Circular]");
+  expect(Bun.inspect(el)).toBe(
+    `<div $$typeof=Symbol(react.transitional.element) type="div" key=null ref=null props=[Circular] />`,
+  );
 });
 
 it("jsx with circular reference in key", () => {

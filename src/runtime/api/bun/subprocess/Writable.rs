@@ -438,7 +438,14 @@ impl<'a> Writable<'a> {
                     // in spawn_maybe_sync and this path asserted no ref change;
                     // see https://github.com/oven-sh/bun/pull/14092).
                     pipe.on_attached_process_exit(&subprocess.process().status);
-                    pipe.to_js(global_this)
+                    // #53265: Rust `FileSink::to_js` takes its own per-wrapper +1
+                    // (Zig's `toJS` *transfers* init's +1). Release the +1 that
+                    // was held by the now-replaced `Writable::Pipe` variant so
+                    // rc==1 (owned by the wrapper) on return — `pipe_nn` is a
+                    // bare NonNull with no Drop, so without this it leaks.
+                    let js = pipe.to_js(global_this);
+                    Self::pipe_release(pipe_nn);
+                    js
                 } else {
                     subprocess.update_flags(|f| f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false));
                     subprocess.weak_file_sink_stdin_ptr.set(Some(pipe_nn));
@@ -458,12 +465,18 @@ impl<'a> Writable<'a> {
                     {
                         pipe.signal.with_mut(|s| s.clear());
                     }
-                    pipe.to_js_with_destructor(
+                    // #53265: `to_js_with_destructor` adds the wrapper's own +1;
+                    // release the +1 the `Writable::Pipe` variant held (now
+                    // replaced with `Ignore` above). `weak_file_sink_stdin_ptr`
+                    // is intentionally weak (no +1), so nothing else balances it.
+                    let js = pipe.to_js_with_destructor(
                         global_this,
                         Some(sink::destructor_ptr_subprocess(
                             subprocess.as_ctx_ptr().cast::<c_void>(),
                         )),
-                    )
+                    );
+                    Self::pipe_release(pipe_nn);
+                    js
                 }
             }
         }

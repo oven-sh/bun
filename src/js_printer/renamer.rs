@@ -783,10 +783,25 @@ impl NumberRenamer {
             self.assign_names_recursive_with_number_scope(s, child, source_index, sorted);
         }
 
-        if s != initial_scope {
-            // SAFETY: s is a pool slot we allocated and initialized in the loop
-            // above; `put` drops `name_counts` in place before recycling.
+        // PORT NOTE: Zig (renamer.zig:594-598) only put the final `s` because
+        // both the pool fallback (`.init(renamer.arena.allocator())`) and
+        // `name_counts` data lived in arenas bulk-freed by `NumberRenamer.deinit
+        // -> arena.deinit()`. The Rust port moved both to the global heap
+        // (HiveArrayFallback::init() uses Box, StringHashMap uses global alloc),
+        // so we must walk the parent chain and `put` every intermediate scope
+        // we allocated in the loop above — not just the deepest one.
+        while s != initial_scope {
+            // SAFETY: `s` is a pool slot we allocated and initialized in the
+            // loop above; every such slot has `parent: Some(...)`. Read parent
+            // before `put` (which drops/frees the slot).
+            let parent = unsafe { (*s).parent }
+                .map(|p| p.as_mut_ptr())
+                .unwrap_or(initial_scope);
+            // SAFETY: `s` came from `number_scope_pool.get()` in the loop above
+            // and was fully initialized; `put` drops `name_counts` in place
+            // before recycling/freeing the slot.
             unsafe { self.number_scope_pool.put(s) };
+            s = parent;
         }
     }
 

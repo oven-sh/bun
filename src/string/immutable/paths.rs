@@ -5,8 +5,8 @@ use bun_paths::PathChar;
 
 // Generic code-unit bound for fns that operate over both u8 and u16 paths.
 // Zig used `comptime T: type`; bound on `bun_paths::PathChar` (provides
-// `from_u8`/`IS_U16`) plus `Into<u32>` for `strings::contains_char_t`.
-pub trait Ch: PathChar + Into<u32> {}
+// `from_u8`/`IS_U16`) plus `Into<u32>` + `NoUninit` for `strings::contains_char_t`.
+pub trait Ch: PathChar + Into<u32> + bun_core::NoUninit {}
 impl Ch for u8 {}
 impl Ch for u16 {}
 

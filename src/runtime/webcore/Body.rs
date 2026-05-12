@@ -297,10 +297,11 @@ impl PendingValue {
     /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global` back-pointer.
     #[inline]
     pub fn global(&self) -> &JSGlobalObject {
-        // SAFETY: `self.global` is stored from a live `&JSGlobalObject` at
-        // construction time; the JSC global object outlives every Body that
-        // holds it (process-lifetime singleton on the JS thread).
-        unsafe { &*self.global }
+        // S008: `JSGlobalObject` is an `opaque_ffi!` ZST handle, so the
+        // `*const → &` deref is safe via `bun_opaque::opaque_deref`
+        // (const-asserted ZST/align-1; panics on the impossible null —
+        // `self.global` is set from a live `&JSGlobalObject` at construction).
+        bun_opaque::opaque_deref(self.global)
     }
 
     /// For Http Client requests
@@ -901,7 +902,10 @@ impl Value {
                     return ReadableStream::empty(global_this);
                 }
 
-                let reader = webcore::readable_stream::NewSource::<ByteStream>::new(
+                // `new_mut` centralises the post-allocation deref; ownership of the
+                // heap `NewSource` transfers to the JS wrapper's `m_ctx` in
+                // `to_readable_stream()` below (freed by the GC finalizer).
+                let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
                     webcore::readable_stream::NewSource {
                         // Zig: `.context = undefined` then `reader.context.setup()`; Rust
                         // default-constructs (ByteStream::default == post-setup state).
@@ -910,10 +914,6 @@ impl Value {
                         ..Default::default()
                     },
                 );
-                // SAFETY: `NewSource::new()` heap-allocates via `heap::alloc`; ownership
-                // transfers to the JS wrapper's `m_ctx` in `to_readable_stream()` below
-                // (freed by the GC finalizer). Not a leak — FFI ownership hand-off.
-                let reader = unsafe { &mut *reader };
 
                 if let Some(on_cancelled) = locked.on_stream_cancelled {
                     if let Some(task) = locked.task {
@@ -1552,17 +1552,16 @@ impl Value {
             return Ok(Value::Null);
         }
 
-        let reader = webcore::readable_stream::NewSource::<ByteStream>::new(
+        // `new_mut` centralises the post-allocation deref; ownership of the
+        // heap `NewSource` transfers to the JS wrapper's `m_ctx` in
+        // `to_readable_stream()` below (freed by the GC finalizer).
+        let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {
                 context: ByteStream::default(),
                 global_this: Some(bun_ptr::BackRef::new(global_this)),
                 ..Default::default()
             },
         );
-        // SAFETY: `NewSource::new()` heap-allocates via `heap::alloc`; ownership
-        // transfers to the JS wrapper's `m_ctx` in `to_readable_stream()` below
-        // (freed by the GC finalizer). Not a leak — FFI ownership hand-off.
-        let reader = unsafe { &mut *reader };
 
         reader.context.setup();
 
@@ -2694,8 +2693,10 @@ bun_jsc::jsc_host_abi! {
         global: *mut JSGlobalObject,
         callframe: *mut CallFrame,
     ) -> JSValue {
-        // SAFETY: JSC guarantees both pointers are live for the duration of the host-fn call.
-        let (global, callframe) = unsafe { (&*global, &*callframe) };
+        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
+        // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
+        let (global, callframe) =
+            (bun_opaque::opaque_deref(global), bun_opaque::opaque_deref(callframe));
         jsc::to_js_host_fn_result(global, ValueBufferer::on_resolve_stream(global, callframe))
     }
 }
@@ -2705,8 +2706,10 @@ bun_jsc::jsc_host_abi! {
         global: *mut JSGlobalObject,
         callframe: *mut CallFrame,
     ) -> JSValue {
-        // SAFETY: JSC guarantees both pointers are live for the duration of the host-fn call.
-        let (global, callframe) = unsafe { (&*global, &*callframe) };
+        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
+        // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
+        let (global, callframe) =
+            (bun_opaque::opaque_deref(global), bun_opaque::opaque_deref(callframe));
         jsc::to_js_host_fn_result(global, ValueBufferer::on_reject_stream(global, callframe))
     }
 }

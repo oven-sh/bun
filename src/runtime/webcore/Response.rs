@@ -508,8 +508,10 @@ pub fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
     global_object: *mut JSGlobalObject,
     callframe: *mut CallFrame,
 ) -> JSValue {
-    // SAFETY: JSC passes live global/callframe.
-    let (global_object, callframe) = unsafe { (&*global_object, &*callframe) };
+    // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
+    // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
+    let (global_object, callframe) =
+        (bun_opaque::opaque_deref(global_object), bun_opaque::opaque_deref(callframe));
     let arguments = callframe.arguments_old::<1>();
     let this_value = arguments.ptr[0];
     if this_value.is_empty_or_undefined_or_null() {

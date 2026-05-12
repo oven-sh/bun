@@ -672,9 +672,10 @@ impl FileSink {
     fn js_global(&self) -> Option<&JSGlobalObject> {
         let p = self.event_loop_handle.global_object();
         if p.is_null() { return None; }
-        // SAFETY: `global_object()` returns an erased `*mut JSGlobalObject` for
-        // the Js arm; non-null implies a live global owned by the VM.
-        Some(unsafe { &*p.cast::<JSGlobalObject>() })
+        // S008: `JSGlobalObject` is an `opaque_ffi!` ZST handle — safe
+        // `*mut → &` via `opaque_deref` (non-null checked above; the global
+        // is owned by the VM and outlives this sink).
+        Some(bun_opaque::opaque_deref(p.cast::<JSGlobalObject>()))
     }
 
     /// `EventLoopHandle::bun_vm()` returns an erased `*mut ()`; recover the
@@ -1400,10 +1401,11 @@ bun_jsc::jsc_host_abi! {
         g: *mut JSGlobalObject,
         cf: *mut CallFrame,
     ) -> JSValue {
-        // SAFETY: JSC guarantees both pointers are valid for the call. Kept as
-        // raw `JsHostFn` shape so the fn-item coerces to `.then()`'s `JsHostFn`
-        // pointer slot without a transmute.
-        match on_resolve_stream(unsafe { &*g }, unsafe { &*cf }) {
+        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
+        // safe `*mut → &` via `opaque_deref`. Kept as raw `JsHostFn` shape so
+        // the fn-item coerces to `.then()`'s `JsHostFn` pointer slot without a
+        // transmute.
+        match on_resolve_stream(bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(cf)) {
             Ok(v) => v,
             Err(_) => JSValue::ZERO,
         }
@@ -1415,8 +1417,9 @@ bun_jsc::jsc_host_abi! {
         g: *mut JSGlobalObject,
         cf: *mut CallFrame,
     ) -> JSValue {
-        // SAFETY: JSC guarantees both pointers are valid for the call.
-        match on_reject_stream(unsafe { &*g }, unsafe { &*cf }) {
+        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
+        // safe `*mut → &` via `opaque_deref`.
+        match on_reject_stream(bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(cf)) {
             Ok(v) => v,
             Err(_) => JSValue::ZERO,
         }

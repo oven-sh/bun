@@ -438,8 +438,9 @@ fn host_on_resolve<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>
 where
     ThisServer: ServerLike + 'static,
 {
-    // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-    let (g, f) = unsafe { (&*g, &*f) };
+    // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
+    // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
+    let (g, f) = (bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(f));
     bun_jsc::to_js_host_fn_result(g, RequestContext::<ThisServer, SSL, DBG, H3>::on_resolve(g, f))
 }
 #[bun_jsc::host_call]
@@ -450,8 +451,9 @@ fn host_on_reject<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>(
 where
     ThisServer: ServerLike + 'static,
 {
-    // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-    let (g, f) = unsafe { (&*g, &*f) };
+    // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
+    // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
+    let (g, f) = (bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(f));
     bun_jsc::to_js_host_fn_result(g, RequestContext::<ThisServer, SSL, DBG, H3>::on_reject(g, f))
 }
 #[bun_jsc::host_call]
@@ -462,8 +464,9 @@ fn host_on_resolve_stream<ThisServer, const SSL: bool, const DBG: bool, const H3
 where
     ThisServer: ServerLike + 'static,
 {
-    // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-    let (g, f) = unsafe { (&*g, &*f) };
+    // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
+    // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
+    let (g, f) = (bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(f));
     bun_jsc::to_js_host_fn_result(g, RequestContext::<ThisServer, SSL, DBG, H3>::on_resolve_stream(g, f))
 }
 #[bun_jsc::host_call]
@@ -474,8 +477,9 @@ fn host_on_reject_stream<ThisServer, const SSL: bool, const DBG: bool, const H3:
 where
     ThisServer: ServerLike + 'static,
 {
-    // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-    let (g, f) = unsafe { (&*g, &*f) };
+    // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
+    // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
+    let (g, f) = (bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(f));
     bun_jsc::to_js_host_fn_result(g, RequestContext::<ThisServer, SSL, DBG, H3>::on_reject_stream(g, f))
 }
 

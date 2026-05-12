@@ -3411,9 +3411,10 @@ impl ServerAllConnectionsClosedTask {
         // ownership and move out of the Box (Zig: `bun.destroy(this)` after
         // copying the fields it still needs onto the stack).
         let this = *unsafe { bun_core::heap::take(this) };
-        // SAFETY: `global_object` is the per-VM JSGlobalObject, kept alive for
-        // the VM's lifetime; the task is only dispatched on that VM's JS thread.
-        let global_object: &jsc::JSGlobalObject = unsafe { &*this.global_object };
+        // S008: `JSGlobalObject` is an `opaque_ffi!` ZST handle — safe
+        // `*const → &` via `opaque_deref` (set from the live per-VM global in
+        // `schedule()`; the task is only dispatched on that VM's JS thread).
+        let global_object: &jsc::JSGlobalObject = bun_opaque::opaque_deref(this.global_object);
         let _dispatch = this.tracker.dispatch(global_object);
 
         // Zig: `var promise = this.promise; defer promise.deinit();` —

@@ -333,19 +333,16 @@ impl ReadableStream {
                 // PORT NOTE: Zig left `context: undefined` then called `setup()` to initialize
                 // in place. Rust constructs with `Default` (no UB) and `setup()` overwrites
                 // the entire struct via `*self = ByteBlobLoader { ... }`.
-                let reader = NewSource::<ByteBlobLoader>::new(NewSource {
+                let reader = NewSource::<ByteBlobLoader>::new_mut(NewSource {
                     global_this: Some(bun_ptr::BackRef::new(global_this)),
                     context: ByteBlobLoader::default(),
                     ..Default::default()
                 });
-                // SAFETY: `new()` heap-allocated; ownership transfers to the JS wrapper's
-                // `m_ctx` in `to_readable_stream()` below (freed via GC finalizer).
-                let reader = unsafe { &mut *reader };
                 reader.context.setup(blob, recommended_chunk_size);
                 reader.to_readable_stream(global_this)
             }
             webcore::blob::store::Data::File(_) => {
-                let reader = NewSource::<FileReader>::new(NewSource {
+                let reader = NewSource::<FileReader>::new_mut(NewSource {
                     global_this: Some(bun_ptr::BackRef::new(global_this)),
                     context: FileReader {
                         // SAFETY: bun_vm() returns a non-null *mut VirtualMachine; event_loop()
@@ -366,9 +363,7 @@ impl ReadableStream {
                     },
                     ..Default::default()
                 });
-                // SAFETY: `new()` heap-allocated; ownership transfers to the JS wrapper's
-                // `m_ctx` in `to_readable_stream()` below (freed via GC finalizer).
-                unsafe { &mut *reader }.to_readable_stream(global_this)
+                reader.to_readable_stream(global_this)
             }
             webcore::blob::store::Data::S3(s3) => {
                 let credentials = s3.get_credentials();
@@ -410,7 +405,7 @@ impl ReadableStream {
         };
         match &store.data {
             webcore::blob::store::Data::File(_) => {
-                let reader = NewSource::<FileReader>::new(NewSource {
+                let reader = NewSource::<FileReader>::new_mut(NewSource {
                     global_this: Some(bun_ptr::BackRef::new(global_this)),
                     context: FileReader {
                         // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
@@ -424,9 +419,7 @@ impl ReadableStream {
                     },
                     ..Default::default()
                 });
-                // SAFETY: `new()` heap-allocated; ownership transfers to the JS wrapper's
-                // `m_ctx` in `to_readable_stream()` below (freed via GC finalizer).
-                unsafe { &mut *reader }.to_readable_stream(global_this)
+                reader.to_readable_stream(global_this)
             }
             _ => Err(global_this.throw(format_args!("Expected FileBlob"))),
         }
@@ -439,7 +432,7 @@ impl ReadableStream {
     ) -> JsResult<JSValue> {
         // TODO(port): Zig's `buffered_reader: anytype` — only ever instantiated with the
         // platform `PipeReader`/`PosixBufferedReader`.
-        let source = NewSource::<FileReader>::new(NewSource {
+        let source = NewSource::<FileReader>::new_mut(NewSource {
             global_this: Some(bun_ptr::BackRef::new(global_this)),
             context: FileReader {
                 // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
@@ -450,9 +443,6 @@ impl ReadableStream {
             },
             ..Default::default()
         });
-        // SAFETY: `new()` heap-allocated; ownership transfers to the JS wrapper's
-        // `m_ctx` in `to_readable_stream()` below (freed via GC finalizer).
-        let source = unsafe { &mut *source };
         // PORT NOTE: reshaped for borrowck — Zig passed `&source.context` as both reader-parent and self.
         let ctx_ptr: *mut FileReader = &raw mut source.context;
         source.context.reader().from(buffered_reader, ctx_ptr.cast::<c_void>());
@@ -792,6 +782,23 @@ impl<C: SourceContext> NewSource<C> {
     /// exactly and returns `*mut Self`.
     pub fn new(init: Self) -> *mut Self {
         bun_core::heap::into_raw(Box::new(init))
+    }
+
+    /// [`Self::new`] returning the leaked allocation as an unbounded `&mut`.
+    ///
+    /// Every call site of `new()` immediately did `unsafe { &mut *p }` to set
+    /// up the context and then handed ownership to the JS wrapper via
+    /// [`Self::to_readable_stream`]. Centralising that deref here (one
+    /// audited `unsafe`, N safe callers) — the allocation is fresh, non-null,
+    /// uniquely owned, and outlives the returned borrow because the JS GC
+    /// finalizer (not Rust `Drop`) reclaims it via [`Self::decrement_count`].
+    #[inline]
+    pub fn new_mut<'a>(init: Self) -> &'a mut Self {
+        // SAFETY: `heap::into_raw(Box::new(..))` is non-null, aligned, and the
+        // sole pointer to a fresh allocation; forming `&mut` is unique.
+        // Ownership transfers to the JS wrapper's `m_ctx`, so the unbounded
+        // lifetime is correct (no Rust owner will drop underneath the borrow).
+        unsafe { &mut *Self::new(init) }
     }
     // `bun.TrivialDeinit(@This())` → see `deinit()` below.
 

@@ -2,7 +2,7 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-setDefaultTimeout(1000 * 60 * 5);
+setDefaultTimeout(1000 * 60);
 
 type Registry = {
   server: ReturnType<typeof Bun.serve>;

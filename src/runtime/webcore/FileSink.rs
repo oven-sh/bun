@@ -859,10 +859,30 @@ impl FileSink {
             fn probe(name: &'static str, p: *const (), this: &FileSink) {
                 let addr = p as usize;
                 if addr != 0 && addr < 0x10000 {
+                    // #53753 probe pass 1 showed (heap_ptr, 0x1) at
+                    // [fd@480, readable_stream@488] with all other fields ==
+                    // default_fields(). Layout offsets verified unchanged vs
+                    // f0dc9e332 (writer@16/sz336 fd@480 rs@488 jsr@496 sink520;
+                    // writer.source@0 parent@128 write_req@136) — NOT a
+                    // dedup-r2 a2d742b2 stale-offset regression. Dump
+                    // writer.{parent,source-tag,is_done} + js_sink_ref to
+                    // distinguish: (a) wrong-self set_parent (parent != self),
+                    // (b) source written to wrong addr (source still None →
+                    // start never ran on THIS writer), (c) 24B overrun
+                    // (js_sink_ref also non-null).
+                    let w = this.writer.get();
+                    let src_tag: i8 = match &w.source {
+                        None => -1,
+                        Some(bun_io::source::Source::Pipe(_)) => 0,
+                        Some(bun_io::source::Source::Tty(_)) => 1,
+                        Some(bun_io::source::Source::File(_)) => 2,
+                        Some(bun_io::source::Source::SyncFile(_)) => 3,
+                    };
                     panic!(
                         "FileSink::finalize: Strong field `{}` corrupted ({:p}); \
                          self={:p} fd={:?} written={} ref_count={} done={} pending.state={:?} \
-                         signal.ptr={:?}",
+                         signal.ptr={:?} | writer.parent={:p} (==self? {}) writer.source_tag={} \
+                         writer.is_done={} writer.owns_fd={} js_sink_ref={:p} started={}",
                         name,
                         p,
                         this as *const _,
@@ -872,6 +892,13 @@ impl FileSink {
                         this.done.get(),
                         this.pending.get().state as u8,
                         this.signal.get().ptr,
+                        w.parent,
+                        core::ptr::eq(w.parent.cast_const(), this as *const _),
+                        src_tag,
+                        w.is_done,
+                        w.owns_fd,
+                        this.js_sink_ref.get().handle_ptr(),
+                        this.started.get(),
                     );
                 }
             }

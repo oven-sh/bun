@@ -247,6 +247,19 @@ impl ArenaPtr {
     pub fn set_arena(&mut self, arena: *const MimallocArena) {
         self.arena = arena;
     }
+    /// Shared borrow of the wrapped arena, or `None` for the global path.
+    ///
+    /// Single backref-deref site for the `arena: *const MimallocArena` field;
+    /// the [`Allocator`] impl below branches on the result instead of
+    /// open-coding the null-check + raw-pointer deref at every method.
+    #[inline]
+    fn arena_ref(&self) -> Option<&MimallocArena> {
+        // SAFETY: `arena` is either null (→ `None`) or, per [`ArenaPtr::new`]'s
+        // contract, a live `MimallocArena` that is not moved/reset/dropped
+        // while any allocation made through this ref is live — i.e. it
+        // outlives `&self`. Backref invariant: pointee outlives holder.
+        unsafe { self.arena.as_ref() }
+    }
 }
 
 // SAFETY: when `arena` is non-null this forwards to `&MimallocArena: Allocator`
@@ -257,25 +270,28 @@ impl ArenaPtr {
 unsafe impl Allocator for ArenaPtr {
     #[inline]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        if self.arena.is_null() {
-            let p = mimalloc::mi_malloc_auto_align(layout.size(), layout.align());
-            return alloc_result(p, layout.size());
+        match self.arena_ref() {
+            Some(a) => a.allocate(layout),
+            None => {
+                let p = mimalloc::mi_malloc_auto_align(layout.size(), layout.align());
+                alloc_result(p, layout.size())
+            }
         }
-        // SAFETY: non-null + caller contract → live `MimallocArena`.
-        unsafe { &*self.arena }.allocate(layout)
     }
 
     #[inline]
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        if self.arena.is_null() {
-            // SAFETY: `ptr` came from `mi_malloc*` per the null `allocate` arm.
-            unsafe { mimalloc::mi_free(ptr.as_ptr().cast()) };
-            return;
+        // SAFETY: `ptr` was returned by this allocator's `allocate`/`grow`
+        // (caller contract). Both arms forward it to the matching mimalloc
+        // free path; `&MimallocArena::deallocate` is `mi_free` (heap-agnostic),
+        // so the `Some` arm is correct even if `ptr` was allocated under a
+        // different arena and later grown here.
+        unsafe {
+            match self.arena_ref() {
+                Some(a) => a.deallocate(ptr, layout),
+                None => mimalloc::mi_free(ptr.as_ptr().cast()),
+            }
         }
-        // SAFETY: non-null + caller contract; `&MimallocArena::deallocate` is
-        // `mi_free` (heap-agnostic), so this is correct even if `ptr` was
-        // allocated under a different arena and later grown here.
-        unsafe { (&*self.arena).deallocate(ptr, layout) }
     }
 
     #[inline]
@@ -285,15 +301,17 @@ unsafe impl Allocator for ArenaPtr {
         old: Layout,
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        if self.arena.is_null() {
-            // SAFETY: `ptr` is a live mimalloc block per caller contract.
-            let p = unsafe {
-                mimalloc::mi_realloc_aligned(ptr.as_ptr().cast(), new.size(), new.align())
-            };
-            return alloc_result(p, new.size());
+        // SAFETY: `ptr` is a live mimalloc block returned by this allocator
+        // (caller contract); both arms forward it to the matching realloc.
+        unsafe {
+            match self.arena_ref() {
+                Some(a) => a.grow(ptr, old, new),
+                None => alloc_result(
+                    mimalloc::mi_realloc_aligned(ptr.as_ptr().cast(), new.size(), new.align()),
+                    new.size(),
+                ),
+            }
         }
-        // SAFETY: non-null + caller contract.
-        unsafe { (&*self.arena).grow(ptr, old, new) }
     }
 
     #[inline]

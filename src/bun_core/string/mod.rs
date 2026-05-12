@@ -1196,11 +1196,12 @@ impl OwnedString {
     /// `defer { for (items) |s| s.deref(); }` around `toJSArray`.
     #[inline]
     pub fn as_raw_slice(owned: &[OwnedString]) -> &[String] {
-        // SAFETY: `#[repr(transparent)]` guarantees identical size/align/ABI
-        // with the inner `String`; we only reborrow, never transfer ownership.
-        unsafe { core::slice::from_raw_parts(owned.as_ptr().cast::<String>(), owned.len()) }
+        // `#[repr(transparent)]` over `String` ⇒ bytemuck's safe slice peel.
+        <Self as bytemuck::TransparentWrapper<String>>::peel_slice(owned)
     }
 }
+// SAFETY: `OwnedString` is `#[repr(transparent)]` with a single `String` field.
+unsafe impl bytemuck::TransparentWrapper<String> for OwnedString {}
 impl core::ops::Deref for OwnedString {
     type Target = String;
     #[inline]

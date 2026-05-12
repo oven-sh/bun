@@ -105,6 +105,39 @@ describe("issue #30563 — String.raw and RegExp.source preserve non-ASCII", () 
     expect(exitCode).toBe(0);
   });
 
+  test("--hot (watcher enabled) keeps non-ASCII bytes in String.raw and RegExp.source", async () => {
+    // The module loader takes a different branch when the watcher is on:
+    // it calls `refCountedResolvedSource`, which creates an external
+    // Latin-1 WTFString. Pre-fix, that mis-tagged UTF-8 bytes as Latin-1
+    // and mangled the visible string. The fix falls through to the
+    // encoding-inferring clone when the output contains non-ASCII.
+    using dir = tempDir("issue-30563-watch", {
+      "entry.js":
+        "console.log(JSON.stringify({" +
+        "  raw: String.raw`╭─╮`," +
+        "  source: /╭─╮/.source," +
+        "}));" +
+        // Exit promptly so the test doesn't hang on the watcher.
+        "process.exit(0);\n",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+
+    expect(JSON.parse(stdout.trim())).toEqual({ raw: "╭─╮", source: "╭─╮" });
+    expect(exitCode).toBe(0);
+  });
+
   test("pre-bundled `// @bun` modules keep non-ASCII bytes in String.raw and RegExp.source", async () => {
     // Files prefixed with `// @bun` skip transpilation and clone
     // `source.contents` straight into the JSC source — the other branch

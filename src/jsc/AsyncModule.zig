@@ -703,8 +703,6 @@ pub const AsyncModule = struct {
         }
 
         if (jsc_vm.isWatcherEnabled()) {
-            var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, bun.String.init(specifier), path.text, null, false);
-
             if (parse_result.input_fd) |fd_| {
                 if (std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                     _ = jsc_vm.bun_watcher.addFile(
@@ -719,9 +717,16 @@ pub const AsyncModule = struct {
                 }
             }
 
-            resolved_source.is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
-
-            return resolved_source;
+            // The ref-counted watcher source path creates an external
+            // Latin-1 WTFString, which can't represent multi-byte UTF-8
+            // sequences. If the printer output contains non-ASCII (e.g.
+            // from `String.raw`/regex source), fall through to the
+            // normal clone path that picks the right encoding.
+            if (bun.strings.firstNonASCII(printer.ctx.written) == null) {
+                var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, bun.String.init(specifier), path.text, null, false);
+                resolved_source.is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
+                return resolved_source;
+            }
         }
 
         return ResolvedSource{

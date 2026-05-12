@@ -166,8 +166,14 @@ pub fn populateManifestCache(manager: *PackageManager, packages: Packages) !void
 /// exact pinned version's publish timestamp, and aggregates every
 /// violation into `manager.log` as an error. Excludes from
 /// `minimumReleaseAgeExcludes` are honored.
-pub fn enforceLockfileAgeFilter(manager: *PackageManager) !void {
-    const min_age_ms = manager.options.minimum_release_age_ms orelse return;
+///
+/// Returns the number of cooldown / fail-closed errors *this function*
+/// added to `manager.log`. Errors that `populateManifestCache` funnels
+/// in (registry 5xx, parse failures) are not counted — the caller uses
+/// this to gate the cooldown-specific remediation note so unrelated
+/// errors don't get misattributed to a lockfile age violation.
+pub fn enforceLockfileAgeFilter(manager: *PackageManager) !u32 {
+    const min_age_ms = manager.options.minimum_release_age_ms orelse return 0;
 
     // Make sure manifests are loaded from disk / network before we
     // inspect publish timestamps. `populateManifestCache` already
@@ -181,6 +187,8 @@ pub fn enforceLockfileAgeFilter(manager: *PackageManager) !void {
     const pkg_name_hashes = pkgs.items(.name_hash);
     const string_buf = lockfile.buffers.string_bytes.items;
     const min_age_seconds = min_age_ms / std.time.ms_per_s;
+
+    var violations: u32 = 0;
 
     for (pkg_resolutions, pkg_names, pkg_name_hashes) |resolution, name, name_hash| {
         if (resolution.tag != .npm) continue;
@@ -207,6 +215,7 @@ pub fn enforceLockfileAgeFilter(manager: *PackageManager) !void {
                 "Package \"{s}@{f}\" in lockfile could not be checked against minimum release age (manifest unavailable)",
                 .{ name_str, resolution.value.npm.version.fmt(string_buf) },
             ));
+            violations += 1;
             continue;
         };
 
@@ -220,6 +229,7 @@ pub fn enforceLockfileAgeFilter(manager: *PackageManager) !void {
                 "Package \"{s}@{f}\" in lockfile could not be checked against minimum release age (version not in manifest)",
                 .{ name_str, resolution.value.npm.version.fmt(string_buf) },
             ));
+            violations += 1;
             continue;
         };
         if (!Npm.PackageManifest.isPackageVersionTooRecent(find_result.package, min_age_ms)) continue;
@@ -235,7 +245,10 @@ pub fn enforceLockfileAgeFilter(manager: *PackageManager) !void {
                 min_age_seconds,
             },
         ));
+        violations += 1;
     }
+
+    return violations;
 }
 
 /// Mirrors `PackageManifest.shouldExcludeFromAgeFilter` for the code path

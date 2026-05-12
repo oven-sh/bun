@@ -653,13 +653,13 @@ pub fn installWithManager(
         // the security scanner so a poisoned lockfile can't trigger scanner
         // install / network work before we reject it.
         if (manager.options.minimum_release_age_ms != null) {
-            const errors_before = manager.log.errors;
-            try manager.enforceLockfileAgeFilter();
-            // Distinguish cooldown violations (added by enforceLockfileAgeFilter)
-            // from unrelated errors that populateManifestCache may have funneled
-            // into `manager.log` (e.g. a transient registry 5xx). The remediation
-            // note is only meaningful for the former.
-            const violations = manager.log.errors -| errors_before;
+            // enforceLockfileAgeFilter returns only the errors its own loop
+            // added — errors that `populateManifestCache` surfaces (registry
+            // 5xx, parse failures) are not counted. That lets us gate the
+            // cooldown-specific remediation note on actual lockfile-age
+            // errors while still crashing on any error so we never silently
+            // install with missing manifest data.
+            const violations = try manager.enforceLockfileAgeFilter();
             if (manager.log.hasErrors()) {
                 if (log_level != .silent) {
                     try manager.log.print(Output.errorWriter());

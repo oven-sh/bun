@@ -1732,12 +1732,19 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     // SAFETY: `MAP_ANONYMOUS` ignores fd/offset; `len` is non-zero; on success
     // the region is owned exclusively by this process and zero-filled on first
     // touch.
+    // `MAP_NORESERVE` is Linux-specific (skip swap reservation for overcommit).
+    // macOS has no equivalent (always overcommits); FreeBSD removed the flag
+    // in 11 (it was always a no-op there). Only set it where it exists.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    const MAP_FLAGS: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE;
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    const MAP_FLAGS: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS;
     let p = unsafe {
         libc::mmap(
             core::ptr::null_mut(),
             len,
             libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+            MAP_FLAGS,
             -1,
             0,
         )

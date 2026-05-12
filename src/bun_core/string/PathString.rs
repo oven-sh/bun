@@ -19,14 +19,25 @@ const USE_SMALL_PATH_STRING_: bool = (usize::BITS - PATH_INT_LEN_BITS) >= 53;
 
 // const PathStringBackingIntType = if (use_small_path_string_) u64 else u128;
 // Zig picks the backing integer at comptime: u64 if 53 ptr bits + len bits fit
-// (macOS, where MAX_PATH_BYTES=1024 → 11 len bits); u128 otherwise (Linux,
-// MAX_PATH_BYTES=4096 → 12 len bits, 64-12=52 < 53). Stable Rust cannot select
-// a type from a const bool, so cfg by OS.
-// PERF(port): Windows MAX_PATH_BYTES is large (UTF-16); use u128 there too.
-#[cfg(target_os = "macos")]
-type PathStringBackingInt = u64;
-#[cfg(not(target_os = "macos"))]
+// (MAX_PATH_BYTES ≤ 2048 → ≤ 11 len bits); u128 otherwise (Linux/Android
+// MAX_PATH_BYTES=4096 → 13 len bits → 64-13=51 < 53; Windows → way more).
+// Stable Rust cannot select a type from a const bool, so cfg by OS — this list
+// MUST track `MAX_PATH_BYTES` in `bun_core/util.rs`. The const-assert below
+// verifies they agree.
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    windows,
+    target_arch = "wasm32"
+))]
 type PathStringBackingInt = u128;
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    windows,
+    target_arch = "wasm32"
+)))]
+type PathStringBackingInt = u64; // macOS / FreeBSD / OpenBSD / NetBSD / DragonFly / Solaris / iOS
 
 // Bit widths of the packed fields (Zig packed-struct order: ptr in low bits, len in high bits).
 const POINTER_BITS: u32 = if USE_SMALL_PATH_STRING_ {

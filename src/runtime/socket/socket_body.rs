@@ -946,10 +946,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             if !matches!(this.this_value.get(), JsRef::Finalized) {
                 this.this_value.with_mut(|r| r.downgrade());
             }
-            // SAFETY: re-derived; no `&mut Handlers` held across the
-            // reentrant `reject` below.
-            if let Some(promise) = unsafe { (*handlers.as_ptr()).promise.try_swap() } {
-                unsafe { (*handlers.as_ptr()).promise.deinit() };
+            // BackRef Deref → `&Handlers`; `promise: JsCell<Strong>` so the
+            // swap/deinit go through interior mutability — no `&mut Handlers`
+            // held across the reentrant `reject` below.
+            if let Some(promise) = handlers.promise.with_mut(|p| p.try_swap()) {
+                handlers.promise.with_mut(|p| p.deinit());
 
                 // reject the promise on connect() error
                 let js_promise: *mut jsc::JSPromise = promise.as_promise().unwrap();
@@ -977,12 +978,11 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         if let Some(err_val) = result.to_error() {
             // TODO: properly propagate exception upwards
-            // SAFETY: re-derived after the reentrant `callback.call` above.
-            if unsafe { (*handlers.as_ptr()).reject_promise(err_val) }.unwrap_or(true) {
+            if handlers.reject_promise(err_val).unwrap_or(true) {
                 return Ok(());
             }
             let _ = handlers.call_error_handler(this_value, &[this_value, err_val]);
-        } else if let Some(val) = unsafe { (*handlers.as_ptr()).promise.try_swap() } {
+        } else if let Some(val) = handlers.promise.with_mut(|p| p.try_swap()) {
             // They've defined a `connectError` callback
             // The error is effectively handled, but we should still reject the promise.
             // UFCS so rustc can back-infer `val: JSValue` even if the
@@ -1010,9 +1010,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub fn mark_active(&self) {
         if !self.flags.get().contains(Flags::IS_ACTIVE) {
             let handlers = self.get_handlers();
-            // SAFETY: short-lived reborrow; no reentrant JS dispatch in
-            // `mark_active`/field reads. See `get_handlers` contract.
-            unsafe { (*handlers.as_ptr()).mark_active() };
+            handlers.mark_active();
             self.update_flags(|f| f.insert(Flags::IS_ACTIVE));
             // Keep the JS wrapper alive while the socket is active.
             // `getThisValue` may not have been called yet (e.g. server-side
@@ -1189,8 +1187,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         this.mark_active();
         // TODO: properly propagate exception upwards
-        // SAFETY: re-derived; reborrow ends at `;`.
-        let _ = unsafe { (*handlers.as_ptr()).resolve_promise(this_value) };
+        let _ = handlers.resolve_promise(this_value);
 
         if SSL {
             // only calls open callback if handshake callback is provided
@@ -1223,8 +1220,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
 
             // TODO: properly propagate exception upwards
-            // SAFETY: re-derived after the reentrant `callback.call` above.
-            let rejected = unsafe { (*handlers.as_ptr()).reject_promise(err) }.unwrap_or(true);
+            let rejected = handlers.reject_promise(err).unwrap_or(true);
             if !rejected {
                 let _ = handlers.call_error_handler(this_value, &[this_value, err]);
             }
@@ -2567,11 +2563,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // underflow on the server path.
         // SAFETY: raw-pointer-only access; see `get_handlers` contract.
         unsafe {
-            let active_connections = (*p).active_connections;
+            let active_connections = (*p).active_connections.get();
             core::ptr::drop_in_place(p); // Zig: this_handlers.deinit()
             core::ptr::write(p, handlers);
             (*p).mode = prev_mode;
-            (*p).active_connections = active_connections;
+            (*p).active_connections.set(active_connections);
         }
 
         Ok(JSValue::UNDEFINED)

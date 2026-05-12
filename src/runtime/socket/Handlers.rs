@@ -1,6 +1,7 @@
+use core::cell::Cell;
 use core::mem::offset_of;
 
-use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, StrongOptional as Strong};
+use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional as Strong};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::generated::{SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers};
@@ -73,9 +74,17 @@ pub struct Handlers {
 
     pub vm: &'static VirtualMachine,
     pub global_object: GlobalRef,
-    pub active_connections: u32,
+    /// `Cell` so [`mark_active`](Self::mark_active) /
+    /// [`mark_inactive`](Self::mark_inactive) can mutate through the
+    /// `BackRef<Handlers>` every socket holds (see `NewSocket::get_handlers`)
+    /// without an `unsafe { &mut * }` reborrow per call site.
+    pub active_connections: Cell<u32>,
     pub mode: SocketMode,
-    pub promise: Strong, // Strong.Optional → bun_jsc::Strong (Drop deallocates the slot)
+    /// `JsCell` so [`resolve_promise`](Self::resolve_promise) /
+    /// [`reject_promise`](Self::reject_promise) can `try_swap()` through a
+    /// shared `&Handlers` (BackRef Deref). Single-JS-thread; the inner
+    /// `Strong` is never borrowed across a reentrant call.
+    pub promise: JsCell<Strong>, // Strong.Optional → bun_jsc::Strong (Drop deallocates the slot)
 
     #[cfg(debug_assertions)]
     // TODO(port): Environment.ci_assert → using debug_assertions as the closest analogue
@@ -102,9 +111,9 @@ macro_rules! for_each_callback_field {
 }
 
 impl Handlers {
-    pub fn mark_active(&mut self) {
+    pub fn mark_active(&self) {
         bun_output::scoped_log!(Listener, "markActive");
-        self.active_connections += 1;
+        self.active_connections.set(self.active_connections.get() + 1);
     }
 
     /// Bumps `active_connections`, enters the JS event-loop scope, and returns
@@ -119,12 +128,13 @@ impl Handlers {
     /// # Safety
     /// `this` must point to a live `Handlers`. JS-thread only.
     pub unsafe fn enter(this: *mut Self) -> Scope {
-        // SAFETY: caller contract — `this` is live; reborrow scoped to this
-        // statement (no protector spans the later free in `exit`).
-        unsafe { (*this).mark_active() };
-        // SAFETY: `event_loop()` returns a non-null self-pointer into the VM;
-        // single JS thread, no aliasing `&mut EventLoop` outlives this call.
-        unsafe { (*this).vm }.event_loop_ref().enter();
+        {
+            // SAFETY: caller contract — `this` is live; shared reborrow scoped
+            // to this block (no protector spans the later free in `exit`).
+            let h = unsafe { &*this };
+            h.mark_active();
+            h.vm.event_loop_ref().enter();
+        }
         Scope { handlers: this }
     }
 
@@ -144,26 +154,26 @@ impl Handlers {
     // corker: Corker = .{},
 
     // TODO(port): bun.JSTerminated!void — mapping to JsResult<()> (JsError::Terminated covers it)
-    pub fn resolve_promise(&mut self, value: JSValue) -> JsResult<()> {
+    pub fn resolve_promise(&self, value: JSValue) -> JsResult<()> {
         let vm = self.vm;
         if vm.is_shutting_down() {
             return Ok(());
         }
 
-        let Some(promise) = self.promise.try_swap() else { return Ok(()) };
+        let Some(promise) = self.promise.with_mut(|p| p.try_swap()) else { return Ok(()) };
         let Some(any_promise) = promise.as_any_promise() else { return Ok(()) };
         any_promise.resolve(&self.global_object, value)?;
         Ok(())
     }
 
     // TODO(port): bun.JSTerminated!bool — mapping to JsResult<bool>
-    pub fn reject_promise(&mut self, value: JSValue) -> JsResult<bool> {
+    pub fn reject_promise(&self, value: JSValue) -> JsResult<bool> {
         let vm = self.vm;
         if vm.is_shutting_down() {
             return Ok(true);
         }
 
-        let Some(promise) = self.promise.try_swap() else { return Ok(false) };
+        let Some(promise) = self.promise.with_mut(|p| p.try_swap()) else { return Ok(false) };
         let Some(any_promise) = promise.as_any_promise() else { return Ok(false) };
         any_promise.reject(&self.global_object, value)?;
         Ok(true)
@@ -189,11 +199,17 @@ impl Handlers {
     ///   dereference it and must null any stored copy.
     pub unsafe fn mark_inactive(this: *mut Self) -> bool {
         bun_output::scoped_log!(Listener, "markInactive");
-        // SAFETY: caller contract — `this` is live on entry. Each `(*this)`
-        // is a single-statement reborrow; none span the free below.
-        unsafe { (*this).active_connections -= 1 };
-        if unsafe { (*this).active_connections } == 0 {
-            if unsafe { (*this).mode } == SocketMode::Server {
+        // SAFETY: caller contract — `this` is live on entry. Shared reborrow
+        // scoped to this block so no `&Handlers` protector spans the
+        // `heap::take` in the client branch below.
+        let (remaining, mode) = {
+            let h = unsafe { &*this };
+            let remaining = h.active_connections.get() - 1;
+            h.active_connections.set(remaining);
+            (remaining, h.mode)
+        };
+        if remaining == 0 {
+            if mode == SocketMode::Server {
                 // SAFETY: server-mode caller contract — `this` addresses the
                 // `handlers` field of a `Listener` with whole-`Listener`
                 // provenance. R-2: `Listener.handlers` is `JsCell<Handlers>`
@@ -285,9 +301,9 @@ impl Handlers {
             // VM outlives every `Handlers` (process-lifetime singleton).
             vm: global_object.bun_vm(),
             global_object: GlobalRef::from(global_object),
-            active_connections: 0,
+            active_connections: Cell::new(0),
             mode: if is_server { SocketMode::Server } else { SocketMode::Client },
-            promise: Strong::empty(),
+            promise: JsCell::new(Strong::empty()),
             #[cfg(debug_assertions)]
             protection_count: 0,
         };

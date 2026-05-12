@@ -164,10 +164,11 @@ impl Drop for UserOptions {
         // arena: dropped by Bump's Drop
         // allocations: dropped by StringRefList's Drop
         if let Some(p) = self.bundler_options.plugin {
-            // SAFETY: `p` is the FFI handle returned by `Plugin::create` in
-            // `parse_plugin_array`; `destroy` is its paired destructor
-            // (unprotect()s the JSCell and tombstones the C++ object).
-            unsafe { Plugin::destroy(p.as_ptr()) };
+            // `p` is the FFI handle returned by `Plugin::create` in
+            // `parse_plugin_array`; `PluginJscExt::destroy` is its paired
+            // (safe) destructor — it null-checks via `opaque_ref` and
+            // unprotect()s the JSCell / tombstones the C++ object.
+            Plugin::destroy(p.as_ptr());
         }
     }
 }

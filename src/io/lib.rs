@@ -335,6 +335,22 @@ mod windows_ffi {
     }
 }
 
+// ── libc shims with no preconditions ────────────────────────────────────────
+// By-value scalar args only; the kernel validates and reports failure via the
+// return value / errno — never UB. Local `safe fn` decls (vs. routing through
+// the `libc` crate's raw items) move the proof into the type signature.
+// Unused externs do not generate linker references, so per-target `#[cfg]` is
+// unnecessary; every caller is gated.
+#[cfg(unix)]
+mod safe_c {
+    use core::ffi::c_int;
+    unsafe extern "C" {
+        pub(super) safe fn kqueue() -> c_int;
+        pub(super) safe fn epoll_create1(flags: c_int) -> c_int;
+        pub(super) safe fn eventfd(initval: libc::c_uint, flags: c_int) -> c_int;
+    }
+}
+
 // ─── platform type aliases ────────────────────────────────────────────────────
 
 /// `bun_sys::linux` doesn't exist yet; use `libc` constants directly.
@@ -463,8 +479,7 @@ impl IoRequestLoop {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            // SAFETY: direct syscall wrapper.
-            let raw = unsafe { libc::epoll_create1(libc::EPOLL_CLOEXEC | 0) };
+            let raw = safe_c::epoll_create1(libc::EPOLL_CLOEXEC | 0);
             if raw < 0 {
                 panic!("Failed to create epoll file descriptor");
             }
@@ -499,8 +514,7 @@ impl IoRequestLoop {
 
         #[cfg(target_os = "freebsd")]
         {
-            // SAFETY: direct syscall wrapper.
-            let kq = unsafe { libc::kqueue() };
+            let kq = safe_c::kqueue();
             if kq < 0 {
                 panic!("Failed to create kqueue");
             }
@@ -1647,8 +1661,7 @@ pub mod waker {
         pub fn init() -> Result<Self, bun_core::Error> {
             // TODO(port): std.posix.eventfd(0, 0) → bun_sys::eventfd. Phase B
             // should confirm bun_sys exposes the wrapper; falls back to libc.
-            // SAFETY: direct syscall wrapper.
-            let raw = unsafe { libc::eventfd(0, 0) };
+            let raw = crate::safe_c::eventfd(0, 0);
             if raw < 0 {
                 return Err(bun_core::Error::from_errno(bun_sys::last_errno()));
             }
@@ -1756,8 +1769,7 @@ pub mod waker {
         }
 
         pub fn init() -> Result<Self, bun_core::Error> {
-            // SAFETY: direct syscall wrapper.
-            let kq = unsafe { libc::kqueue() };
+            let kq = crate::safe_c::kqueue();
             if kq < 0 {
                 return Err(bun_core::Error::from_errno(bun_errno::posix::errno()));
             }

@@ -1281,6 +1281,18 @@ pub(crate) mod safe_libc {
         pub(crate) safe fn ftruncate(fd: c_int, len: libc::off_t) -> c_int;
         pub(crate) safe fn lseek(fd: c_int, offset: libc::off_t, whence: c_int) -> libc::off_t;
         pub(crate) safe fn fallocate(fd: c_int, mode: c_int, off: libc::off_t, len: libc::off_t) -> c_int;
+        // BSD/Linux event-queue / notification syscalls — all by-value scalars;
+        // bad args → errno (`EINVAL`/`EMFILE`/…), never UB. Declared without
+        // per-target `#[cfg]` (matching `fallocate` above): unused externs do
+        // not generate linker references, and every caller is cfg-gated.
+        pub(crate) safe fn kqueue() -> c_int;
+        pub(crate) safe fn epoll_create1(flags: c_int) -> c_int;
+        pub(crate) safe fn eventfd(initval: libc::c_uint, flags: c_int) -> c_int;
+        pub(crate) safe fn inotify_init1(flags: c_int) -> c_int;
+        // bionic declares `wd` as `uint32_t`, glibc/musl as `int`; the kernel
+        // ABI is the same `__s32` either way, so a `c_int` decl is ABI-correct
+        // on every Linux libc.
+        pub(crate) safe fn inotify_rm_watch(fd: c_int, wd: c_int) -> c_int;
     }
 }
 
@@ -4292,8 +4304,7 @@ pub mod c {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     #[inline]
     pub fn kqueue() -> c_int {
-        // SAFETY: `kqueue(2)` takes no arguments; no caller precondition.
-        unsafe { libc::kqueue() }
+        crate::safe_libc::kqueue()
     }
 
     /// `bun.c.kevent` — raw BSD kqueue event syscall (Darwin/FreeBSD only).
@@ -4549,8 +4560,7 @@ pub mod linux {
 
     #[inline]
     pub fn inotify_init1(flags: c_int) -> c_int {
-        // SAFETY: scalar-only syscall — bad `flags` yields `EINVAL`, never UB.
-        unsafe { libc::inotify_init1(flags) }
+        crate::safe_libc::inotify_init1(flags)
     }
     #[inline]
     pub unsafe fn inotify_add_watch(fd: c_int, path: *const c_char, mask: u32) -> c_int {
@@ -4558,14 +4568,10 @@ pub mod linux {
     }
     #[inline]
     pub fn inotify_rm_watch(fd: c_int, wd: c_int) -> c_int {
-        // bionic declares the watch-descriptor param `uint32_t` (libc binds it
-        // `u32`) while glibc/musl use `int`. The kernel ABI is the same `__s32`
-        // either way; cast for the bionic signature.
-        // SAFETY: scalar-only syscall — bad `fd`/`wd` yields `EBADF`/`EINVAL`.
-        #[cfg(target_os = "android")]
-        return unsafe { libc::inotify_rm_watch(fd, wd as u32) };
-        #[cfg(not(target_os = "android"))]
-        return unsafe { libc::inotify_rm_watch(fd, wd) };
+        // bionic declares `wd` as `uint32_t`, glibc/musl as `int`; the kernel
+        // ABI is the same `__s32` either way — `safe_libc::inotify_rm_watch`
+        // declares it `c_int`, which is ABI-correct on every Linux libc.
+        crate::safe_libc::inotify_rm_watch(fd, wd)
     }
     /// Raw `read(2)` returning kernel `usize` (Zig: `std.os.linux.read`).
     #[inline]
@@ -6099,9 +6105,9 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
 /// sys.zig:4536 — `fallocate(fd, 0, offset, len)` on Linux, result discarded; no-op elsewhere.
 pub fn preallocate_file(fd: FdNative, offset: i64, len: i64) -> core::result::Result<(), bun_core::Error> {
     #[cfg(target_os = "linux")] {
-        // SAFETY: fd is a valid open descriptor owned by caller. Result intentionally
-        // discarded (Zig: `_ = std.os.linux.fallocate(...)`) — preallocation is best-effort.
-        let _ = unsafe { libc::fallocate(fd, 0, offset, len) };
+        // Result intentionally discarded (Zig: `_ = std.os.linux.fallocate(...)`)
+        // — preallocation is best-effort.
+        let _ = safe_libc::fallocate(fd, 0, offset, len);
     }
     let _ = (fd, offset, len);
     Ok(())
@@ -6110,8 +6116,7 @@ pub fn preallocate_file(fd: FdNative, offset: i64, len: i64) -> core::result::Re
 /// `kqueue()` — BSD kernel event queue (Darwin/FreeBSD only).
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 pub fn kqueue() -> Maybe<Fd> {
-    // SAFETY: kqueue(2) takes no args.
-    let rc = unsafe { libc::kqueue() };
+    let rc = safe_libc::kqueue();
     if rc < 0 { return Err(err_with(Tag::kqueue)); }
     Ok(Fd::from_native(rc))
 }
@@ -7934,8 +7939,7 @@ pub fn renameat_concurrently_without_fallback(
 /// via the `libc` shim.
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 pub fn eventfd(initval: u32, flags: i32) -> Maybe<Fd> {
-    // SAFETY: eventfd(2) is safe to call with any args.
-    let rc = unsafe { libc::eventfd(initval, flags) };
+    let rc = safe_libc::eventfd(initval, flags);
     if rc < 0 { return Err(err_with(Tag::open)); }
     Ok(Fd::from_native(rc))
 }

@@ -1022,8 +1022,8 @@ pub const FetchTasklet = struct {
             //
             // 1. We are streaming, in which case we should not ignore the body.
             // 2. We were buffering, in which case
-            //    2a. if we have no promise, we should ignore the body.
-            //    2b. if we have a promise, we should keep loading the body.
+            //    2a. if we have no consumer, we should ignore the body.
+            //    2b. if we have a consumer, we should keep loading the body.
             // 3. We never started buffering, in which case we should ignore the body.
             //
             // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
@@ -1032,9 +1032,24 @@ pub const FetchTasklet = struct {
                 return;
             }
 
+            // A "consumer" is either a body promise (`.text()`/`.arrayBuffer()`/etc
+            // set `Locked.promise` via `setPromise`) or an `onReceiveValue` callback
+            // (installed by `Bun.write(path, response)` and other native body
+            // consumers). Both mean someone is awaiting the body and we must keep
+            // buffering even though the JS `Response` wrapper is being collected.
+            //
+            // Without the `onReceiveValue` check, GC'ing the Response while
+            // `Bun.write(file, response)` is in-flight discards the remaining body,
+            // `onReceiveValue` never fires, and the `Bun.write` promise never
+            // resolves — see https://github.com/oven-sh/bun/issues/10686.
+            if (body.Locked.onReceiveValue != null) {
+                // Scenario 2b.
+                return;
+            }
+
             if (body.Locked.promise) |promise| {
                 if (promise.isEmptyOrUndefinedOrNull()) {
-                    // Scenario 2b.
+                    // Scenario 2a.
                     this.ignoreRemainingResponseBody();
                 }
             } else {

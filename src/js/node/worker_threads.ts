@@ -150,9 +150,15 @@ function fakeParentPort() {
     messageerror: [],
   };
   // onmessage/onmessageerror are stored in the same arrays so dispatch preserves registration
-  // order relative to addEventListener, matching Node. These point at the current entries (or
-  // null) so the setters can replace/remove them.
-  const onmessageEntry: { message: Function | null; messageerror: Function | null } = {
+  // order relative to addEventListener, matching Node. Each slot holds the user's handler (for
+  // the getter) and the wrapper we pushed into the list (for removal). The wrapper gives the
+  // entry distinct identity so addEventListener's dedup and removeEventListener's lookup never
+  // collide with a bare addEventListener(fn) of the same function — the DOM registers IDL on*
+  // handlers via an internal wrapper, not the user's callback.
+  const onmessageEntry: {
+    message: { handler: Function; entry: Function } | null;
+    messageerror: { handler: Function; entry: Function } | null;
+  } = {
     message: null,
     messageerror: null,
   };
@@ -281,20 +287,19 @@ function fakeParentPort() {
       self.removeEventListener(type, listener);
       return;
     }
+    // DOM §2.8: a null/undefined callback is a no-op. Pre-PR this went through the native
+    // EventTarget which enforced that; don't treat it as "clear all".
+    if (listener == null) return;
     const list = listeners[type];
-    if (listener) {
-      const wrapper = listener[kOnceWrapper];
-      let idx = wrapper !== undefined ? list.lastIndexOf(wrapper) : -1;
-      if (idx === -1) idx = list.lastIndexOf(listener);
-      if (idx !== -1) {
-        list.splice(idx, 1);
-        // Drop the stale wrapper reference so re-adding the same function without {once} and
-        // then removing it resolves to the right entry. Only clear on a successful removal so
-        // a no-op remove (e.g. wrong event type) doesn't orphan a still-live wrapper.
-        if (wrapper !== undefined) listener[kOnceWrapper] = undefined;
-      }
-    } else {
-      list.length = 0;
+    const wrapper = listener[kOnceWrapper];
+    let idx = wrapper !== undefined ? list.lastIndexOf(wrapper) : -1;
+    if (idx === -1) idx = list.lastIndexOf(listener);
+    if (idx !== -1) {
+      list.splice(idx, 1);
+      // Drop the stale wrapper reference so re-adding the same function without {once} and
+      // then removing it resolves to the right entry. Only clear on a successful removal so
+      // a no-op remove (e.g. wrong event type) doesn't orphan a still-live wrapper.
+      if (wrapper !== undefined) listener[kOnceWrapper] = undefined;
     }
     if (list.length === 0) dropForwarder(type);
     afterListenerRemoved();
@@ -312,13 +317,18 @@ function fakeParentPort() {
   function setOnHandler(type: "message" | "messageerror", value) {
     const old = onmessageEntry[type];
     if (old !== null) {
-      const idx = listeners[type].lastIndexOf(old);
+      const idx = listeners[type].lastIndexOf(old.entry);
       if (idx !== -1) listeners[type].splice(idx, 1);
     }
     if (typeof value === "function") {
-      onmessageEntry[type] = value;
+      // Wrap so this entry never identity-matches a direct addEventListener(value) — per DOM
+      // the IDL attribute registers an internal algorithm, not the user's callback.
+      const entry = function (event) {
+        value.$call(fake, event);
+      };
+      onmessageEntry[type] = { handler: value, entry };
       if (!closed) {
-        listeners[type].push(value);
+        listeners[type].push(entry);
         hasRefFlag = true;
         ensureForwarder(type);
       }
@@ -332,7 +342,8 @@ function fakeParentPort() {
 
   Object.defineProperty(fake, "onmessage", {
     get() {
-      return onmessageEntry.message;
+      const e = onmessageEntry.message;
+      return e !== null ? e.handler : null;
     },
     set(value) {
       setOnHandler("message", value);
@@ -341,7 +352,8 @@ function fakeParentPort() {
 
   Object.defineProperty(fake, "onmessageerror", {
     get() {
-      return onmessageEntry.messageerror;
+      const e = onmessageEntry.messageerror;
+      return e !== null ? e.handler : null;
     },
     set(value) {
       setOnHandler("messageerror", value);

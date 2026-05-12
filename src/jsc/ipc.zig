@@ -823,7 +823,6 @@ pub const SendQueue = struct {
     }
     pub fn serializeAndSend(self: *SendQueue, global: *JSGlobalObject, value: JSValue, is_internal: IsInternal, callback: jsc.JSValue, handle: ?Handle) SerializeAndSendResult {
         log("SendQueue#serializeAndSend", .{});
-        const indicate_backoff = self.waiting_for_ack != null and self.queue.items.len > 0;
         const msg = self.startMessage(global, callback, handle) catch return .failure;
         const start_offset = msg.data.list.items.len;
 
@@ -834,8 +833,24 @@ pub const SendQueue = struct {
         log("IPC call continueSend() from serializeAndSend", .{});
         self.continueSend(global, .new_message_appended);
 
-        if (indicate_backoff) return .backoff;
+        // Backpressure: anything still buffered in userspace after the send attempt
+        // means the kernel could not absorb the full write. Match Node's semantics
+        // (return value driven by libuv's write_queue_size) so producers observe
+        // `process.send()` returning false and can wait for the drain callback.
+        if (self.hasBufferedData()) return .backoff;
         return .success;
+    }
+    /// True when bytes enqueued by `serializeAndSend` have not yet been handed
+    /// off to the kernel — either the write is in progress, partial, or queued
+    /// behind a handle ACK. Used to signal IPC backpressure to callers.
+    fn hasBufferedData(self: *const SendQueue) bool {
+        if (self.waiting_for_ack != null) return true;
+        if (self.write_in_progress) return true;
+        if (self.queue.items.len == 0) return false;
+        // If the only queued item is a fully-drained placeholder (cursor == len
+        // and len == 0) it should have been shifted off by continueSend. Any
+        // remaining bytes here are buffered.
+        return true;
     }
     fn debugLogMessageQueue(this: *SendQueue) void {
         if (!Environment.isDebug) return;

@@ -94,6 +94,9 @@ mod nt {
     pub use w::ntdll::NtCreateFile;
 
     // TODO(port): move to <install>_sys (or bun_sys::windows::ntdll)
+    // SAFETY: ntdll syscalls; signatures match WDK headers. Kept `unsafe fn`
+    // (not `safe fn`) because both write through caller-supplied out-pointers
+    // (`IoStatusBlock`, `Buffer`) — validity is a genuine caller precondition.
     unsafe extern "system" {
         /// https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntreadfile
         #[link_name = "NtReadFile"]

@@ -266,8 +266,10 @@ pub fn migrate_npm_lockfile<'a>(
 
     // Count pass
 
-    let root_package: &E::Object;
-    let packages_properties = 'brk: {
+    // `StoreRef<T>` is `Copy` + safe-`Deref` (arena-backed), so copy the
+    // handles out of the block instead of forging `&'static` via `as_ptr()`.
+    let root_package: bun_ast::StoreRef<E::Object>;
+    let packages_obj: bun_ast::StoreRef<E::Object> = 'brk: {
         let Some(obj) = json.get(b"packages") else { return Err(err!("InvalidNPMLockfile")); };
         let ExprData::EObject(eobj) = &obj.data else { return Err(err!("InvalidNPMLockfile")); };
         if eobj.properties.len_u32() == 0 {
@@ -283,19 +285,19 @@ pub fn migrate_npm_lockfile<'a>(
             let ExprData::EObject(rp) = &prop1.value.as_ref().expect("infallible: prop has value").data else {
                 return Err(err!("InvalidNPMLockfile"));
             };
-            // SAFETY: arena-backed StoreRef lives for duration of this fn
-            root_package = unsafe { &*rp.as_ptr() };
+            root_package = *rp;
         } else {
             return Err(err!("InvalidNPMLockfile"));
         }
-        // SAFETY: arena-backed StoreRef lives for duration of this fn
-        break 'brk unsafe { &*eobj.as_ptr() }.properties.slice();
+        break 'brk *eobj;
     };
+    let packages_properties = packages_obj.properties.slice();
 
     let mut num_deps: u32 = 0;
 
     let workspace_map: Option<WorkspaceMap> = 'workspace_map: {
-        if let Some(wksp) = root_package.get(b"workspaces") {
+        // `StoreRef::get` shadows `E::Object::get`; chain through it.
+        if let Some(wksp) = root_package.get().get(b"workspaces") {
             let mut workspaces = WorkspaceMap::init();
 
             let json_array = match &wksp.data {
@@ -321,8 +323,8 @@ pub fn migrate_npm_lockfile<'a>(
             let workspace_packages_count = workspaces.process_names_array(
                 &mut manager.workspace_package_json_cache,
                 log,
-                // SAFETY: arena-backed StoreRef lives for duration of this fn
-                unsafe { &*json_array.as_ptr() },
+                // `StoreRef<E::Array>` is Copy + safe-Deref (arena-backed).
+                &*json_array,
                 &json_src,
                 wksp.loc,
                 None,

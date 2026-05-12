@@ -473,6 +473,8 @@ fn open_dir_a(dir: Dir, subpath: &[u8]) -> Result<Dir, bun_core::Error> {
 // macOS clonefileat(2) — declared raw because the Zig source matches on the
 // numeric return + thread-local errno (the bun_sys wrapper collapses both into
 // Maybe<()>). Linked from libSystem.
+// SAFETY: kept `unsafe fn` (not `safe fn`) — `src`/`dst` must be valid
+// NUL-terminated C strings for the duration of the call.
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn clonefileat(

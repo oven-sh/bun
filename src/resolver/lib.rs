@@ -6975,16 +6975,10 @@ impl<'a> Resolver<'a> {
                     // `queue_top_unsafe_path.len()` is ≤ `input_path_len` < `path.len()` for
                     // every queue item, so this indexes in-bounds (the +1 sentinel slot for
                     // queue index 0 — see the `path` construction above).
-                    let prev_char = path[queue_top_unsafe_path.len()];
-                    // SAFETY: `path` is a `&mut` into the threadlocal buffer spanning
-                    // `input_path_len + 1` bytes; offset is in-bounds (see above). Snapshot
-                    // the raw byte pointer so the restore below captures only a Copy
-                    // `*mut u8` and `path` stays reborrowable for `ZStr::from_raw`.
-                    let restore_at: *mut u8 = unsafe { path.as_mut_ptr().add(queue_top_unsafe_path.len()) };
-                    // SAFETY: `restore_at` is in-bounds of `path` (see above).
-                    unsafe { *restore_at = 0 };
-                    // SAFETY: NUL written above
-                    let sentinel = unsafe { bun_core::ZStr::from_raw(path.as_ptr(), queue_top_unsafe_path.len()) };
+                    let nul_at = queue_top_unsafe_path.len();
+                    let prev_char = path[nul_at];
+                    path[nul_at] = 0;
+                    let sentinel = bun_core::ZStr::from_buf(path, nul_at);
 
                     #[cfg(unix)]
                     let open_req: core::result::Result<FD, bun_core::Error> = {
@@ -7013,8 +7007,7 @@ impl<'a> Resolver<'a> {
                     // bun.fs.debug("open({s})", .{sentinel}) — TODO(port): scoped log
                     // Restore the byte we NUL-terminated above (Zig: `defer path[len] = prev_char`).
                     // No early-return path exists between the write and here, so a guard is unnecessary.
-                    // SAFETY: `restore_at` is in-bounds of the threadlocal path buffer.
-                    unsafe { *restore_at = prev_char };
+                    path[nul_at] = prev_char;
 
                     match open_req {
                         Ok(fd) => break 'open_dir fd,

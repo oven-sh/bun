@@ -381,8 +381,7 @@ impl FileSystem {
             return Err(bun_core::err!("NoSpaceLeft"));
         }
         buf[written] = 0;
-        // SAFETY: buf[written] == 0 written above
-        Ok(unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), written) })
+        Ok(ZStr::from_buf_mut(buf, written))
     }
 
     #[inline]

@@ -1051,9 +1051,10 @@ impl Subprocess<'_> {
             let must_deref = self.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED);
             self.update_flags(|f| f.remove(Flags::DEREF_ON_STDIN_DESTROYED));
 
-            // SAFETY: `pipe_ptr` is live (see `pipe` borrow above); Zig mutates
-            // through `*FileSink` here on the single mutator thread.
-            unsafe { (*pipe_ptr.as_ptr()).on_attached_process_exit(&status) };
+            // `pipe_ptr` is live (see `pipe` borrow above); Zig mutates through
+            // `*FileSink` here on the single mutator thread — same invariant as
+            // the centralised `Writable::pipe_sink_mut` accessor.
+            Writable::pipe_sink_mut(&pipe_ptr).on_attached_process_exit(&status);
 
             if must_deref {
                 self.deref();

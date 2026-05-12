@@ -1246,8 +1246,10 @@ pub struct NewAsyncCpTask<const IS_SHELL: bool> {
     /// enqueued once the count reaches zero, so subtasks still running on the
     /// thread pool never dereference a freed parent.
     pub subtask_count: AtomicUsize,
-    // BACKREF: only valid when IS_SHELL
-    pub shelltask: *mut ShellCpTask,
+    /// BACKREF — `Some` iff `IS_SHELL`. The shell `ShellCpTask` owns and
+    /// outlives this task; `ParentRef` gives a safe `&ShellCpTask` projection
+    /// for `cp_on_copy` and round-trips the `*mut` for `cp_on_finish`.
+    pub shelltask: Option<bun_ptr::ParentRef<ShellCpTask>>,
 }
 
 bun_threading::intrusive_work_task!([const IS_SHELL: bool] NewAsyncCpTask<IS_SHELL>, task);
@@ -1255,7 +1257,12 @@ bun_threading::intrusive_work_task!([const IS_SHELL: bool] NewAsyncCpTask<IS_SHE
 /// This task is used by `AsyncCpTask/fs.promises.cp` to copy a single file.
 /// When clonefile cannot be used, this task is started once per file.
 pub struct CpSingleTask<const IS_SHELL: bool> {
-    pub cp_task: *mut NewAsyncCpTask<IS_SHELL>,
+    /// BACKREF — the parent `NewAsyncCpTask` is `Box::leak`'d and outlives every
+    /// subtask via the `subtask_count` refcount (see `on_subtask_done`). Stored
+    /// as `ParentRef` (constructed from the `*mut` with `Box::leak` provenance)
+    /// so shared reads are safe-projected and `as_mut_ptr()` round-trips the
+    /// original write provenance for `on_subtask_done`'s `&mut` promotion.
+    pub cp_task: bun_ptr::ParentRef<NewAsyncCpTask<IS_SHELL>>,
     /// Single owned allocation laid out as `<src>\0<dest>\0`. Zig stores two
     /// `bun.OSPathSliceZ` (sentinel slices) into a single `default_allocator`
     /// buffer; here ownership is encoded directly as `Box<[OSPathChar]>` and
@@ -1280,7 +1287,9 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
         debug_assert_eq!(path_buf[src_len], 0);
         debug_assert_eq!(path_buf[src_len + 1 + dest_len], 0);
         WorkPool::schedule_new(CpSingleTask {
-            cp_task: parent,
+            // `parent` is the `Box::leak`'d task — never null; `NonNull → ParentRef`
+            // preserves the mutable provenance for `on_subtask_done`.
+            cp_task: bun_ptr::ParentRef::from(core::ptr::NonNull::new(parent).expect("cp parent")),
             path_buf,
             src_len,
             dest_len,
@@ -1300,13 +1309,14 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
     }
 
     fn run_owned(self: Box<Self>) {
-        // Preserve the raw `*mut` (Box::leak provenance) so `on_subtask_done`
-        // may later promote it to `&mut` once the refcount reaches zero.
+        // `ParentRef` preserves the `Box::leak` mutable provenance so
+        // `on_subtask_done` may later promote it to `&mut` via `as_mut_ptr()`
+        // once the refcount reaches zero.
         let cp_task = self.cp_task;
-        // SAFETY: cp_task is set in create() and the parent outlives all subtasks (subtask_count refcount).
-        // Shared borrow only — other workpool threads (and the directory-scan thread) may hold
-        // `&Self` to the same parent concurrently; never form `&mut` here.
-        let parent = unsafe { &*cp_task };
+        // Shared borrow only — other workpool threads (and the directory-scan
+        // thread) may hold `&Self` to the same parent concurrently; `ParentRef`
+        // invariant: the parent outlives all subtasks (subtask_count refcount).
+        let parent = cp_task.get();
 
         // TODO: error strings on node_fs will die
         let mut node_fs = NodeFS::default();
@@ -1340,24 +1350,27 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
         drop(self);
         // Must be the very last use of the parent: when the count reaches
         // zero, runFromJSThread is enqueued and may destroy the parent.
-        NewAsyncCpTask::on_subtask_done(cp_task);
+        NewAsyncCpTask::on_subtask_done(cp_task.as_mut_ptr());
     }
 }
 
 impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
     pub fn on_copy(&self, src: impl AsRef<[OSPathChar]>, dest: impl AsRef<[OSPathChar]>) {
         if !IS_SHELL { return; }
-        // SAFETY: when IS_SHELL, shelltask is non-null and outlives this task.
-        // Shared borrow only — concurrent subtasks may call this in parallel;
-        // `cp_on_copy` serialises via the task's internal mutex.
-        unsafe { &*self.shelltask }.cp_on_copy(src.as_ref(), dest.as_ref());
+        // When IS_SHELL, `shelltask` is `Some` (ParentRef invariant: owner
+        // outlives this task). Shared borrow only — concurrent subtasks may
+        // call this in parallel; `cp_on_copy` serialises via its internal mutex.
+        self.shelltask
+            .expect("IS_SHELL ⇒ shelltask")
+            .cp_on_copy(src.as_ref(), dest.as_ref());
     }
 
     pub fn on_finish(&mut self, result: Maybe<ret::Cp>) {
         if !IS_SHELL { return; }
+        let shelltask = self.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
         // SAFETY: when IS_SHELL, shelltask is non-null and outlives this task;
         // `cp_on_finish` enqueues it onto the main-thread concurrent queue.
-        unsafe { ShellCpTask::cp_on_finish(self.shelltask, result) };
+        unsafe { ShellCpTask::cp_on_finish(shelltask, result) };
     }
 
     pub fn create(
@@ -1390,7 +1403,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker::init(vm),
             subtask_count: AtomicUsize::new(1),
-            shelltask,
+            shelltask: core::ptr::NonNull::new(shelltask).map(bun_ptr::ParentRef::from),
         });
         if !IS_SHELL { task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop)); }
         task.tracker.did_schedule(global_object);
@@ -1421,7 +1434,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker { id: 0 },
             subtask_count: AtomicUsize::new(1),
-            shelltask,
+            shelltask: core::ptr::NonNull::new(shelltask).map(bun_ptr::ParentRef::from),
         });
         if !IS_SHELL { task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop)); }
 
@@ -1508,9 +1521,10 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
             // `Ok(())` placeholder, mirroring Zig which read the union value once.
             let result = core::mem::replace(self.result.get_mut(), Ok(()));
+            let shelltask = self.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
             // SAFETY: shelltask is non-null in the IS_SHELL specialization and
             // outlives this task; `cp_on_finish` enqueues it concurrently.
-            unsafe { ShellCpTask::cp_on_finish(self.shelltask, result) };
+            unsafe { ShellCpTask::cp_on_finish(shelltask, result) };
             // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
             return Ok(());

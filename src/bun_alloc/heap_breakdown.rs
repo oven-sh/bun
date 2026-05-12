@@ -183,17 +183,13 @@ impl Zone {
 
     #[inline]
     pub fn malloc_zone_malloc(&self, size: usize) -> Option<*mut c_void> {
-        // SAFETY: `self` is a live `malloc_zone_t`; `as_ptr` derives a
-        // write-capable pointer through `UnsafeCell`.
-        let p = unsafe { malloc_zone_malloc(self.as_ptr(), size) };
+        let p = malloc_zone_malloc(self, size);
         if p.is_null() { None } else { Some(p) }
     }
 
     #[inline]
     pub fn malloc_zone_calloc(&self, num_items: usize, size: usize) -> Option<*mut c_void> {
-        // SAFETY: `self` is a live `malloc_zone_t`; `as_ptr` derives a
-        // write-capable pointer through `UnsafeCell`.
-        let p = unsafe { malloc_zone_calloc(self.as_ptr(), num_items, size) };
+        let p = malloc_zone_calloc(self, num_items, size);
         if p.is_null() { None } else { Some(p) }
     }
 
@@ -210,10 +206,7 @@ impl Zone {
         // The posix_memalign only accepts alignment values that are a
         // multiple of the pointer size
         let eff_alignment = alignment.max(core::mem::size_of::<usize>());
-        // SAFETY: `zone.as_ptr()` is the live `*mut malloc_zone_t` returned by
-        // `malloc_create_zone`; interior mutation through it is permitted (see
-        // `Zone::as_ptr`). `eff_alignment` is a nonzero power of two ≥ word size.
-        let ptr = unsafe { malloc_zone_memalign(zone.as_ptr(), eff_alignment, len) };
+        let ptr = malloc_zone_memalign(zone, eff_alignment, len);
         if ptr.is_null() {
             None
         } else {
@@ -302,13 +295,18 @@ unsafe extern "C" {
     /// No preconditions; allocates a new zone (process-lifetime).
     pub safe fn malloc_create_zone(start_size: vm_size_t, flags: c_uint) -> *mut Zone;
     pub fn malloc_destroy_zone(zone: *mut Zone);
-    pub fn malloc_zone_malloc(zone: *mut Zone, size: usize) -> *mut c_void;
-    pub fn malloc_zone_calloc(zone: *mut Zone, num_items: usize, size: usize) -> *mut c_void;
-    pub fn malloc_zone_valloc(zone: *mut Zone, size: usize) -> *mut c_void;
+    // `&Zone` is ABI-identical to libmalloc's `malloc_zone_t *` (thin non-null
+    // pointer to an `opaque_ffi!` `!Freeze` struct — interior mutation by C is
+    // sound). The reference type encodes the only pointer-validity precondition,
+    // so `safe fn` discharges the link-time proof for the pure-allocation entry
+    // points (alloc/calloc/valloc/memalign return null on failure).
+    pub safe fn malloc_zone_malloc(zone: &Zone, size: usize) -> *mut c_void;
+    pub safe fn malloc_zone_calloc(zone: &Zone, num_items: usize, size: usize) -> *mut c_void;
+    pub safe fn malloc_zone_valloc(zone: &Zone, size: usize) -> *mut c_void;
     pub fn malloc_zone_free(zone: *mut Zone, ptr: *mut c_void);
     pub fn malloc_zone_realloc(zone: *mut Zone, ptr: *mut c_void, size: usize) -> *mut c_void;
     pub fn malloc_zone_from_ptr(ptr: *const c_void) -> *mut Zone;
-    pub fn malloc_zone_memalign(zone: *mut Zone, alignment: usize, size: usize) -> *mut c_void;
+    pub safe fn malloc_zone_memalign(zone: &Zone, alignment: usize, size: usize) -> *mut c_void;
     pub fn malloc_zone_batch_malloc(zone: *mut Zone, size: usize, results: *mut *mut c_void, num_requested: c_uint) -> c_uint;
     pub fn malloc_zone_batch_free(zone: *mut Zone, to_be_freed: *mut *mut c_void, num: c_uint);
     /// No preconditions.
@@ -328,10 +326,10 @@ unsafe extern "C" {
 #[allow(clippy::missing_safety_doc)]
 mod stubs {
     use super::*;
-    pub unsafe fn malloc_zone_malloc(_: *mut Zone, _: usize) -> *mut c_void { unreachable!() }
-    pub unsafe fn malloc_zone_calloc(_: *mut Zone, _: usize, _: usize) -> *mut c_void { unreachable!() }
+    pub fn malloc_zone_malloc(_: &Zone, _: usize) -> *mut c_void { unreachable!() }
+    pub fn malloc_zone_calloc(_: &Zone, _: usize, _: usize) -> *mut c_void { unreachable!() }
     pub unsafe fn malloc_zone_free(_: *mut Zone, _: *mut c_void) { unreachable!() }
-    pub unsafe fn malloc_zone_memalign(_: *mut Zone, _: usize, _: usize) -> *mut c_void { unreachable!() }
+    pub fn malloc_zone_memalign(_: &Zone, _: usize, _: usize) -> *mut c_void { unreachable!() }
 }
 #[cfg(not(target_os = "macos"))]
 pub use stubs::{malloc_zone_calloc, malloc_zone_free, malloc_zone_malloc};

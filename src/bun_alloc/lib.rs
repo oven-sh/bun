@@ -1395,10 +1395,8 @@ pub fn bss_lazy_bytes(size: usize, align: usize) -> NonNull<u8> {
 #[inline]
 pub fn bss_lazy_slice<T>(count: usize) -> NonNull<[MaybeUninit<T>]> {
     let p = bss_lazy_bytes(count * size_of::<T>(), core::mem::align_of::<T>())
-        .as_ptr()
         .cast::<MaybeUninit<T>>();
-    // SAFETY: `p` is non-null (bss_lazy_bytes never returns null).
-    unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(p, count)) }
+    NonNull::slice_from_raw_parts(p, count)
 }
 
 /// Declare a `BSSList<T, COUNT>` singleton accessor.

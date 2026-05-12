@@ -551,7 +551,10 @@ pub fn set_thread_name(name: &ZStr) {
 // Exit callbacks
 // ──────────────────────────────────────────────────────────────────────────
 
-pub type ExitFn = unsafe extern "C" fn();
+// Safe `extern "C" fn()` — every registrant (C++ `Bun__atexit` lambdas, Rust
+// `extern "C"` thunks in fs_events / ParentDeathWatchdog) takes no args and has
+// no memory-safety preconditions, so the call site needs no `unsafe` block.
+pub type ExitFn = extern "C" fn();
 
 // PORT NOTE: Zig used an unsynchronized global `ArrayListUnmanaged`. Registration
 // can happen from any thread (FFI `Bun__atexit`), so guard with a Mutex.
@@ -587,8 +590,7 @@ pub fn run_exit_callbacks() {
     // Drain under lock, run outside it (callbacks may call `Bun__atexit`).
     let cbs: Vec<ExitFn> = core::mem::take(&mut *ON_EXIT_CALLBACKS.lock());
     for callback in &cbs {
-        // SAFETY: callbacks are `unsafe extern "C" fn()`; called once at exit.
-        unsafe { callback() };
+        callback();
     }
 }
 
@@ -788,8 +790,7 @@ pub extern "C" fn Bun__onExit() {
     // pushes into `PRE_EXIT_CALLBACKS` on first loop create.
     let pre: Vec<ExitFn> = core::mem::take(&mut *PRE_EXIT_CALLBACKS.lock());
     for callback in &pre {
-        // SAFETY: callbacks are `unsafe extern "C" fn()`; called once at exit.
-        unsafe { callback() };
+        callback();
     }
     run_exit_callbacks();
     Output::flush();

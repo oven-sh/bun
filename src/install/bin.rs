@@ -830,8 +830,8 @@ impl<'a> Linker<'a> {
         }
         #[cfg(windows)]
         {
-            let target = match sys::openat(Fd::cwd(), abs_target, sys::O::RDONLY, 0) {
-                Ok(fd) => fd,
+            let target = match sys::File::openat(Fd::cwd(), abs_target, sys::O::RDONLY, 0) {
+                Ok(f) => f,
                 Err(err) => {
                     let err: bun_core::Error = err.into();
                     if err != bun_core::err!("EISDIR") {
@@ -841,8 +841,8 @@ impl<'a> Linker<'a> {
                     return;
                 }
             };
-            let _close = sys::CloseOnDrop::new(target);
-            self.create_windows_shim(target, abs_target, abs_dest, global);
+            let _close = sys::CloseOnDrop::file(&target);
+            self.create_windows_shim(&target, abs_target, abs_dest, global);
         }
 
         if self.err.is_some() {
@@ -1012,7 +1012,7 @@ impl<'a> Linker<'a> {
     #[cfg(windows)]
     fn create_windows_shim(
         &mut self,
-        target: Fd,
+        target: &sys::File,
         abs_target: &ZStr,
         abs_dest: &ZStr,
         global: bool,
@@ -1100,7 +1100,7 @@ impl<'a> Linker<'a> {
         let shebang = 'shebang: {
             let first_content_chunk: Option<&[u8]> = 'contents: {
                 // TODO(port): target.stdFile().readerStreaming(&.{}) + readVec
-                let read = match sys::read(target, &mut read_in_buf) {
+                let read = match target.read(&mut read_in_buf) {
                     sys::Result::Ok(n) => n,
                     sys::Result::Err(_) => break 'contents None,
                 };

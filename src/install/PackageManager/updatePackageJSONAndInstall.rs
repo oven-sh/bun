@@ -703,20 +703,13 @@ fn update_package_json_and_install_with_manager_with_updates(
                                 node_modules_buf[name.len()] = 0;
                                 let buf: &ZStr = ZStr::from_buf(&node_modules_buf, name.len());
 
-                                let file = match bun_sys::openat(
-                                    node_modules_bin,
-                                    buf,
-                                    bun_sys::O::RDONLY,
-                                    0,
-                                ) {
-                                    Ok(f) => f,
+                                match bun_sys::File::openat(node_modules_bin, buf, bun_sys::O::RDONLY, 0) {
+                                    Ok(file) => { let _ = file.close(); }
                                     Err(_) => {
                                         let _ = bun_sys::unlinkat(node_modules_bin, buf);
                                         continue 'iterator;
                                     }
-                                };
-
-                                let _ = bun_sys::close(file);
+                                }
                             }
                             _ => {}
                         }

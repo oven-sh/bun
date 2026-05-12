@@ -323,9 +323,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskFolder);
 
         let source = {
-            let file = File::from_fd(
-                bun_sys::openat_a(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0)?,
-            );
+            let file = File::openat(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0)?;
             // defer file.close()
             body.reset();
             // PORT NOTE: toManaged/moveToUnmanaged dance is a no-op in Rust

@@ -835,7 +835,7 @@ impl TarballStream {
     /// `close_output_file` can perform the same trailing `ftruncate` the
     /// buffered path does after its block loop.
     fn write_data_block(&mut self, fd: Fd, block: lib::Block) -> Result<(), bun_core::Error> {
-        let file = bun_sys::File { handle: fd };
+        let file = bun_sys::File::from_fd(fd);
         let data = block.bytes;
         if data.is_empty() {
             return Ok(());
@@ -865,7 +865,7 @@ impl TarballStream {
                 break 'seek;
             }
             if self.use_lseek {
-                match bun_sys::set_file_offset(fd, u64::try_from(block.offset).expect("int cast")) {
+                match file.seek_to(u64::try_from(block.offset).expect("int cast")) {
                     Ok(_) => {
                         self.entry_actual_offset = block.offset;
                         break 'seek;
@@ -1037,17 +1037,11 @@ impl TarballStream {
                 if self.resolved_github_dirname.is_empty() {
                     break 'insert_tag;
                 }
-                let Ok(gh_tag) = bun_sys::openat(
+                if bun_sys::File::write_file(
                     self.dest.unwrap(),
                     bun_core::zstr!(".bun-tag"),
-                    O::WRONLY | O::CREAT | O::TRUNC,
-                    0o644,
-                ) else {
-                    break 'insert_tag;
-                };
-                let r = (bun_sys::File { handle: gh_tag }).write_all(self.resolved_github_dirname);
-                gh_tag.close();
-                if r.is_err() {
+                    self.resolved_github_dirname,
+                ).is_err() {
                     let _ = bun_sys::unlinkat(self.dest.unwrap(), bun_core::zstr!(".bun-tag"));
                 }
             }

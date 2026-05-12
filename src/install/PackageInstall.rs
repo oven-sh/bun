@@ -2110,11 +2110,11 @@ impl<'a> PackageInstall<'a> {
     pub fn is_dangling_windows_bin_link(node_mod_fd: Fd, path: &[u16], temp_buffer: &mut [u8]) -> bool {
         use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
         let bin_path = 'bin_path: {
-            let Ok(fd) = sys::openat_windows(node_mod_fd, path, sys::O::RDONLY, 0) else {
+            let Ok(file) = sys::openat_windows(node_mod_fd, path, sys::O::RDONLY, 0).map(sys::File::from_fd) else {
                 return true;
             };
-            let _close = sys::CloseOnDrop::new(fd);
-            let Ok(size) = sys::File::from_fd(fd).read_all(temp_buffer) else {
+            let _close = sys::CloseOnDrop::file(&file);
+            let Ok(size) = file.read_all(temp_buffer) else {
                 return true;
             };
             let Some(decoded) = crate::windows_shim::loose_decode(&temp_buffer[..size]) else {

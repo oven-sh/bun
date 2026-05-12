@@ -580,25 +580,13 @@ impl PatchTask {
             };
             buntagbuf[bun_tag_prefix.len() + hashlen] = 0;
             let buntag_zstr = ZStr::from_buf(&buntagbuf, bun_tag_prefix.len() + hashlen);
-            let buntagfd = match sys::openat(
-                patch_pkg_dir,
-                buntag_zstr,
-                sys::O::RDWR | sys::O::CREAT,
-                0o666,
-            ) {
-                sys::Result::Ok(fd) => fd,
-                sys::Result::Err(e) => {
-                    log.add_error_fmt_opts(
-                        format_args!(
-                            "failed adding bun tag: {}",
-                            e.with_path(buntag_zstr.as_bytes())
-                        ),
-                        Default::default(),
-                    );
-                    return Ok(());
-                }
-            };
-            buntagfd.close();
+            if let Err(e) = sys::File::write_file(patch_pkg_dir, buntag_zstr, b"") {
+                log.add_error_fmt_opts(
+                    format_args!("failed adding bun tag: {}", e.with_path(buntag_zstr.as_bytes())),
+                    Default::default(),
+                );
+                return Ok(());
+            }
         }
 
         // 6. rename to cache dir
@@ -702,7 +690,7 @@ impl PatchTask {
             return None;
         }
 
-        let fd = match sys::open(absolute_patchfile_path, sys::O::RDONLY, 0) {
+        let file = match sys::File::open(absolute_patchfile_path, sys::O::RDONLY, 0) {
             sys::Result::Err(e) => {
                 log.add_error_fmt(
                     None,
@@ -711,16 +699,14 @@ impl PatchTask {
                 );
                 return None;
             }
-            sys::Result::Ok(fd) => fd,
+            sys::Result::Ok(f) => f,
         };
-        let _close_guard = scopeguard::guard(fd, |fd| fd.close());
+        let _close_guard = sys::CloseOnDrop::file(&file);
 
         let mut hasher = Wyhash11::init(0);
 
         // what's a good number for this? page size i guess
         const STACK_SIZE: usize = 16384;
-
-        let file = sys::File { handle: fd };
         let mut stack = [0u8; STACK_SIZE];
         let mut read: usize = 0;
         while (read as u64) < size {

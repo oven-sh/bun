@@ -407,23 +407,13 @@ impl ExtractTarball {
                     // installed from GitHub. package.json version becomes sort of
                     // meaningless in cases like this.
                     if !resolved.is_empty() {
-                        'insert_tag: {
-                            // `std.fs.Dir.createFileZ(".bun-tag", .{ .truncate = true })`
-                            let Ok(gh_tag) = sys::File::create(
-                                extract_destination.fd(),
-                                b".bun-tag",
-                                true,
-                            ) else {
-                                break 'insert_tag;
-                            };
-                            // `defer gh_tag.close()` — bun_sys::File is Copy with NO Drop;
-                            // close explicitly on both success and failure paths.
-                            let write_result = gh_tag.write_all(resolved);
-                            let _ = gh_tag.close(); // close error is non-actionable (Zig parity: discarded)
-                            if write_result.is_err() {
-                                let bun_tag_z = ZStr::from_static(b".bun-tag\0");
-                                let _ = sys::unlinkat(extract_destination.fd(), bun_tag_z);
-                            }
+                        // `std.fs.Dir.createFileZ(".bun-tag", .{ .truncate = true })` + write
+                        if sys::File::write_file(
+                            extract_destination.fd(),
+                            ZStr::from_static(b".bun-tag\0"),
+                            resolved,
+                        ).is_err() {
+                            let _ = sys::unlinkat(extract_destination.fd(), ZStr::from_static(b".bun-tag\0"));
                         }
                     }
                 }

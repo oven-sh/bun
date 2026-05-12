@@ -49,8 +49,13 @@ pub fn is_main_thread_vm() -> bool {
 /// scope would trip `assert_exception_presence_matches(false)` if one left an
 /// exception pending while we return `UNDEFINED`.
 // HOST_EXPORT(Bun__drainMicrotasksFromJS)
-pub fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame) -> JSValue {
-    global.bun_vm().as_mut().drain_microtasks();
+pub fn drain_microtasks_from_js(_global: &JSGlobalObject, _cf: &CallFrame) -> JSValue {
+    // Hot path (~2×/request via cork callback chain): go straight to the
+    // thread-local instead of `global.bun_vm().as_mut()` — `as_mut()` ignores
+    // its receiver and re-reads the TLS slot anyway, so the `bun_vm()` hop is
+    // pure overhead (and in pre-rewrite builds an FFI call whose result is
+    // discarded — see disasm note in PORTING.md root-cause #1).
+    VirtualMachine::get_mut().drain_microtasks();
     JSValue::UNDEFINED
 }
 

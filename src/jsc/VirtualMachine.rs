@@ -1187,6 +1187,7 @@ impl VirtualMachine {
         self.event_loop_mut().tick();
     }
 
+    #[inline(always)]
     pub fn drain_microtasks(&mut self) {
         let _ = self.event_loop_mut().drain_microtasks();
     }

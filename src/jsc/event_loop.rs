@@ -421,6 +421,7 @@ impl EventLoop {
         Ok(())
     }
 
+    #[inline(always)]
     pub fn drain_microtasks(&mut self) -> Result<(), JsTerminated> {
         // PORT NOTE: reshaped for borrowck — `vm_ref()` is `&'static`, so the
         // global borrow detaches from `&self` and survives the `&mut self` call.

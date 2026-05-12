@@ -14,7 +14,6 @@
 
 #![allow(unused, nonstandard_style, clippy::all)]
 #![warn(unused_must_use)]
-#![allow(unsafe_op_in_unsafe_fn)]
 #![feature(adt_const_params)]
 
 use bun_collections::VecExt;

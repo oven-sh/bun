@@ -1100,16 +1100,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `this` is the live server backref registered as the uws
         // userdata; only one borrow derived from it is alive at a time.
         unsafe { (*this).on_pending_request() };
-        let vm = unsafe { (*this).vm_mut() };
+        // Read-only access goes through `BackRef` (safe `Deref`); each use
+        // materialises a fresh short-lived `&Self`, so the JS-reentrant calls
+        // below never see an outstanding shared borrow.
+        let this_ref = bun_ptr::BackRef::from(
+            core::ptr::NonNull::new(this).expect("on_node_http_request: this non-null"),
+        );
+        let vm = this_ref.vm_mut();
         // SAFETY: `vm.event_loop()` returns the live VM-owned `*mut EventLoop`.
         let _dbg = unsafe {
             jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!((*(*vm).event_loop()).debug))
         };
         req.set_yield(false);
-        resp.timeout(unsafe { (*this).config.idle_timeout });
+        resp.timeout(this_ref.config.idle_timeout);
 
-        let global = unsafe { (*this).global_this() };
-        let this_object = unsafe { &*this }.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
+        let global = this_ref.global_this();
+        let this_object = this_ref.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
 
         // Compute the JS method-name string up front so the FFI closure
         // doesn't need to reborrow `req` (it's already `&mut`-borrowed below).
@@ -1118,7 +1124,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             None => JSValue::UNDEFINED,
         };
         // Zig: `this.config.onNodeHTTPRequest` (raw JSValue, may be `.zero`).
-        let callback = unsafe { &*this }
+        let callback = this_ref
             .config
             .on_node_http_request
             .as_ref()
@@ -2205,13 +2211,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // next derive. The serverName / SNI loop extracts raw `(ptr, len)` so
         // no `&self.config` outlives the per-domain `set_routes()` call.
         //
-        // SAFETY (applies to every `&*this` / `&mut *this` below): `this` was
-        // produced by `init()` and is live for this call; only one reference
-        // derived from it is alive at a time.
+        // SAFETY (applies to every `&mut *this` below): `this` was produced by
+        // `init()` and is live for this call; only one reference derived from
+        // it is alive at a time. Read-only access goes through `this_ref`
+        // (`BackRef<Self>`) — each `Deref` materialises a fresh short-lived
+        // `&Self` from the same raw provenance, so the listen-trampoline /
+        // `set_routes()` `&mut *this` re-derives never overlap an outstanding
+        // shared borrow.
+        let this_ref = bun_ptr::BackRef::from(
+            core::ptr::NonNull::new(this).expect("listen: this non-null (from init())"),
+        );
 
         // `global_this()` returns a borrow of the separate STATIC allocation,
         // not `*this`.
-        let global = unsafe { (*this).global_this() };
+        let global = this_ref.global_this();
 
         let app: *mut uws_sys::NewApp<SSL>;
         let mut route_list_value = JSValue::ZERO;
@@ -2219,7 +2232,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if SSL {
             bun_boringssl::load();
             let Some(ssl_options) =
-                unsafe { &*this }.config.ssl_config.as_ref().map(|c| c.as_usockets())
+                this_ref.config.ssl_config.as_ref().map(|c| c.as_usockets())
             else {
                 // unreachable in practice — fromJS guarantees ssl_config when SSL.
                 let _ = global.throw(format_args!("Failed to create HTTPS server: missing tls config"));
@@ -2240,8 +2253,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             };
             unsafe { (*this).app = Some(app) };
 
-            if Self::HAS_H3 && unsafe { &*this }.config.h3 {
-                let idle_timeout = unsafe { &*this }.config.idle_timeout as u32;
+            if Self::HAS_H3 && this_ref.config.h3 {
+                let idle_timeout = this_ref.config.idle_timeout as u32;
                 let h3 = match uws_sys::h3::App::create(ssl_options, idle_timeout) {
                     Some(a) => Some(a),
                     None => {
@@ -2261,7 +2274,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // PORT NOTE: extract raw (ptr, len) so no `&self.config` borrow
             // outlives the `set_routes()` call below. set_routes() does not
             // touch `config.ssl_config`, so the bytes remain valid.
-            let server_name_raw = unsafe { &*this }
+            let server_name_raw = this_ref
                 .config
                 .ssl_config
                 .as_ref()
@@ -2305,14 +2318,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // PORT NOTE: iterate by index and reborrow `&*this` per iteration so
             // the `set_routes()` `&mut` at the bottom of the loop body never
             // overlaps an outstanding `&self.config.sni` borrow.
-            let sni_len = unsafe { &*this }
+            let sni_len = this_ref
                 .config
                 .sni
                 .as_ref()
                 .map_or(0, |s| s.slice().len());
             for i in 0..sni_len {
                 let (name_ptr, name_len, sni_opts) = {
-                    let cfg = unsafe { &*this };
+                    let cfg = this_ref.get();
                     let sni_ssl_config = &cfg.config.sni.as_ref().unwrap().slice()[i];
                     let Some(sni_name) = sni_ssl_config.server_name_cstr() else { continue };
                     if sni_name.to_bytes().is_empty() {
@@ -2331,7 +2344,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
 
                 if Self::HAS_H3 {
-                    if let Some(h3_app) = unsafe { (*this).h3_app } {
+                    if let Some(h3_app) = this_ref.h3_app {
                         // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                         if bun_opaque::opaque_deref_mut(h3_app)
                             .add_server_name_with_options(z, sni_opts)
@@ -2382,7 +2395,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             route_list_value = unsafe { &mut *this }.set_routes();
         }
 
-        if unsafe { &*this }.config.on_node_http_request.is_some() {
+        if this_ref.config.on_node_http_request.is_some() {
             unsafe { &mut *this }.set_using_custom_expect_handler(true);
         }
 
@@ -2400,7 +2413,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // `h3_listener`), so the bytes remain valid through the listen calls.
         enum Addr { Tcp { port: u16, host: *const c_char }, Unix { ptr: *const u8, len: usize } }
         let (addr, h1, options) = {
-            let cfg = unsafe { &(*this).config };
+            let cfg = &this_ref.get().config;
             let addr = match &cfg.address {
                 server_config::Address::Tcp { port, hostname } => {
                     let mut host: *const c_char = core::ptr::null();
@@ -2458,9 +2471,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                     if Self::HAS_H3 {
                         // Re-derive: `listener` was just written by `on_listen`.
-                        if let Some(h3_app) = unsafe { (*this).h3_app } {
+                        if let Some(h3_app) = this_ref.h3_app {
                             // Same UDP port as the TCP listener so Alt-Svc works.
-                            let h3_port: u16 = match unsafe { (*this).listener } {
+                            let h3_port: u16 = match this_ref.listener {
                                 // SAFETY: ls is a live uws ListenSocket FFI handle
                                 // (just set by on_listen).
                                 Some(ls) => bun_opaque::opaque_deref_mut(ls).get_local_port() as u16,
@@ -2478,7 +2491,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 uws_sys::h3::ListenConfig { port: h3_port, host, options },
                             );
                             // Re-derive: `h3_listener` was just written by `on_h3_listen`.
-                            if unsafe { (*this).h3_listener }.is_none() {
+                            if this_ref.h3_listener.is_none() {
                                 if attempt < max_attempts {
                                     // UDP:N is taken — release TCP:N so the next
                                     // attempt gets a fresh kernel-chosen port.
@@ -2496,7 +2509,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                     // deinit + return ZERO.
                                 }
                             }
-                            if !unsafe { &*this }.config.h1 {
+                            if !this_ref.config.h1 {
                                 // SAFETY: per-thread VM singleton; no aliasing `&mut`.
                                 jsc::VirtualMachine::get().as_mut().event_loop_handle =
                                     Some(bun_io::Loop::get());
@@ -2543,8 +2556,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         unsafe { &mut *this }.ref_();
 
         // Starting up an HTTP server is a good time to GC.
-        // SAFETY: `this` was produced by `init()` and is live; see fn-level note.
-        let vm = unsafe { (*this).vm() };
+        let vm = this_ref.vm();
         if vm.aggressive_garbage_collection == jsc::virtual_machine::GCLevel::Aggressive {
             vm.auto_garbage_collect();
         } else {

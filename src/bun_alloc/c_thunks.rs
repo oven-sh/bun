@@ -24,8 +24,11 @@ use crate::mimalloc;
 
 /// zlib `alloc_func` → `mi_malloc(items * size)` (non-zeroing).
 ///
-/// Panics-via-`unreachable!` on OOM (mirrors the original Zig thunk).
-pub unsafe extern "C" fn mi_malloc_items(
+/// Panics-via-`unreachable!` on OOM (mirrors the original Zig thunk). The
+/// opaque cookie is ignored (never dereferenced) and `mi_malloc` is `safe fn`,
+/// so this thunk has no memory-safety preconditions; a safe fn item still
+/// coerces to the `Option<unsafe extern "C" fn>` field at the assignment site.
+pub extern "C" fn mi_malloc_items(
     _: *mut c_void,
     items: c_uint,
     size: c_uint,
@@ -66,11 +69,13 @@ pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
 /// heap-breakdown zone. When `heap_breakdown::ENABLED` is false (release /
 /// non-macOS) the thunks fall straight through to mimalloc.
 ///
-/// Generated items (all `pub unsafe extern "C"`):
+/// Generated items:
 /// - `malloc_size(_, len: usize) -> *mut c_void` — brotli-shape, non-zeroing.
+///   Safe `extern "C" fn` (opaque cookie ignored; body is all-safe).
 /// - `calloc_items(_, items: c_uint, len: c_uint) -> *mut c_void` — zlib-shape,
-///   zeroing.
-/// - `free(_, ptr: *mut c_void)` — paired with either alloc.
+///   zeroing. Safe `extern "C" fn` (same rationale).
+/// - `free(_, ptr: *mut c_void)` — paired with either alloc. `unsafe`
+///   (precondition: `ptr` was allocated by this zone / mimalloc).
 ///
 /// Intended to be invoked inside a `mod XxxAllocator { … }` so call sites can
 /// keep referring to `XxxAllocator::alloc` / `::free` via a local `pub use`.
@@ -78,7 +83,7 @@ pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
 macro_rules! c_thunks_for_zone {
     ($name:literal) => {
         #[allow(dead_code)]
-        pub unsafe extern "C" fn malloc_size(
+        pub extern "C" fn malloc_size(
             _: *mut ::core::ffi::c_void,
             len: usize,
         ) -> *mut ::core::ffi::c_void {
@@ -96,7 +101,7 @@ macro_rules! c_thunks_for_zone {
         }
 
         #[allow(dead_code)]
-        pub unsafe extern "C" fn calloc_items(
+        pub extern "C" fn calloc_items(
             _: *mut ::core::ffi::c_void,
             items: ::core::ffi::c_uint,
             len: ::core::ffi::c_uint,

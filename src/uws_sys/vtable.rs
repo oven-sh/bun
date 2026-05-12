@@ -144,11 +144,12 @@ impl<H: Handler> Trampolines<H> {
     // `us_socket_t::ext::<T>()` returns `&mut T`.
     #[inline(always)]
     fn ext(s: *mut us_socket_t) -> &'static mut H::Ext {
-        // SAFETY: `s` is a live socket passed from usockets; ext storage was
-        // sized for `H::Ext` at context creation. Lifetime is bounded by the
-        // trampoline call (we lie with 'static because the borrow never
-        // escapes the handler call).
-        unsafe { (*s).ext::<H::Ext>() }
+        // S008: `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the
+        // safe const-asserted ZST deref accessor. ext storage was sized for
+        // `H::Ext` at context creation; lifetime is bounded by the trampoline
+        // call (we lie with 'static because the borrow never escapes the
+        // handler call).
+        us_socket_t::opaque_mut(s).ext::<H::Ext>()
     }
 
     pub extern "C" fn on_open(s: *mut us_socket_t, is_client: c_int, ip: *mut u8, ip_len: c_int) -> *mut us_socket_t {

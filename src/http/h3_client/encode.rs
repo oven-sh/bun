@@ -61,8 +61,10 @@ pub fn write_request(
         name_bytes += h.name().len();
     }
     let mut lower = vec![0u8; name_bytes];
-    let lower_base = lower.as_mut_ptr();
-    let mut lower_len: usize = 0;
+    // Carve disjoint sub-slices out of `lower` via `split_at_mut`; `quic::Header`
+    // stores raw pointers (no lifetime), so each `dst` borrow ends at `init` and
+    // the running `remaining` tail never overlaps a stored header.
+    let mut remaining: &mut [u8] = &mut lower;
 
     let mut authority: &[u8] = host;
     // SAFETY: capacity for `request.headers.len() + 4` was reserved above; slots
@@ -79,16 +81,9 @@ pub fn write_request(
                 }
             }
         } else {
-            // PORT NOTE: reshaped for borrowck — `lower` is sliced disjointly
-            // and the slices' pointers are stored in `headers`; raw-ptr index
-            // avoids holding overlapping &mut borrows of `lower`.
-            // SAFETY: `lower_base` points to a buffer of `name_bytes` bytes;
-            // `lower_len + h.name().len() <= name_bytes` by construction above.
-            let dst = unsafe {
-                bun_core::ffi::slice_mut(lower_base.add(lower_len), h.name().len())
-            };
+            let (dst, rest) = remaining.split_at_mut(h.name().len());
+            remaining = rest;
             let _ = strings::copy_lowercase(h.name(), dst);
-            lower_len += h.name().len();
             headers.push(quic::Header::init(dst, h.value(), None));
         }
     }

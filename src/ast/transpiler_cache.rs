@@ -57,6 +57,23 @@ bun_dispatch::link_interface! {
 }
 
 impl RuntimeTranspilerCache {
+    /// Build the dispatch handle for the set-once `r#impl` slot.
+    ///
+    /// Centralises the raw-pointer obligation so the three public entry
+    /// points below stay safe.
+    /// `this` is always derived from a live `&self` / `&mut self` in those
+    /// callers and the returned `Copy` handle is consumed immediately, so
+    /// the `link_interface!` liveness contract (owner valid for every
+    /// dispatch through the handle) is upheld.
+    #[inline]
+    fn handle(kind: TranspilerCacheImplKind, this: *mut Self) -> TranspilerCacheImpl {
+        // SAFETY: `this` is non-null, aligned, and live for the immediate
+        // dispatch at every call site (`get`/`put`: `&mut self`-derived with
+        // write provenance; `is_disabled`: `&self`-derived, impl ignores
+        // `this`). See `link_interface!` `new()` contract.
+        unsafe { TranspilerCacheImpl::new(kind, this) }
+    }
+
     #[inline]
     pub fn get(
         &mut self,
@@ -65,8 +82,7 @@ impl RuntimeTranspilerCache {
         used_jsx: bool,
     ) -> bool {
         match self.r#impl {
-            // SAFETY: `self` is a valid &mut for the dispatch.
-            Some(k) => unsafe { TranspilerCacheImpl::new(k, self) }
+            Some(k) => Self::handle(k, self)
                 .get(core::ptr::from_ref(source), parser_options, used_jsx),
             None => false,
         }
@@ -75,9 +91,7 @@ impl RuntimeTranspilerCache {
     #[inline]
     pub fn put(&mut self, output_code: &[u8], sourcemap: &[u8], esm_record: &[u8]) {
         match self.r#impl {
-            // SAFETY: `self` is a valid &mut for the dispatch.
-            Some(k) => unsafe { TranspilerCacheImpl::new(k, self) }
-                .put(output_code, sourcemap, esm_record),
+            Some(k) => Self::handle(k, self).put(output_code, sourcemap, esm_record),
             None => {
                 if self.input_hash.is_none() {
                     return;
@@ -91,11 +105,7 @@ impl RuntimeTranspilerCache {
     #[inline]
     pub fn is_disabled(&self) -> bool {
         match self.r#impl {
-            // SAFETY: `self` is a valid & for the dispatch (body ignores `this`).
-            Some(k) => unsafe {
-                TranspilerCacheImpl::new(k, core::ptr::from_ref(self).cast_mut())
-            }
-            .is_disabled(),
+            Some(k) => Self::handle(k, core::ptr::from_ref(self).cast_mut()).is_disabled(),
             None => true,
         }
     }

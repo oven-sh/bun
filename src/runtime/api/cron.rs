@@ -1351,6 +1351,26 @@ impl CronJob {
         (self as *const Self).cast_mut()
     }
 
+    /// Recover `&CronJob` from a raw-ptr receiver. Centralises the set-once
+    /// `*mut Self → &Self` deref so the raw-ptr-receiver helpers
+    /// (`release_pending_ref`, `self_stop`, `schedule_next`, `on_timer_fire`,
+    /// `on_promise_*`) stay safe at the call site — one `unsafe` here, N safe
+    /// callers.
+    ///
+    /// Only valid while the caller holds at least one intrusive ref (timer
+    /// heap, list entry, `pending_ref`, or a `ref_guard`). R-2: shared borrow
+    /// only — every field is `Cell`/`JsCell`/read-only-after-construction, so
+    /// re-entrant JS forming a fresh `&Self` aliases soundly.
+    #[inline]
+    fn from_ctx_ptr<'a>(this: *mut Self) -> &'a Self {
+        // SAFETY: every call site (private to this module) passes the
+        // intrusively-refcounted heap allocation produced by [`as_ctx_ptr`] /
+        // `as_promise_ptr` / `from_timer_ptr`, with refcount > 0 for the
+        // returned borrow's duration. All mutation is interior, so a shared
+        // `&Self` is sound even across JS re-entry.
+        unsafe { &*this }
+    }
+
     /// RAII pair for `ref_()` / `deref()`: bumps the intrusive refcount now and
     /// releases it on drop. Replaces the Zig `this.ref(); defer this.deref();`
     /// idiom. The guard holds a raw pointer (not `&mut Self`) so no Rust
@@ -1377,9 +1397,7 @@ impl CronJob {
     }
 
     fn release_pending_ref(this: *mut Self) {
-        // SAFETY: caller holds at least one ref. R-2: shared deref — all
-        // mutation is interior.
-        let this_ref = unsafe { &*this };
+        let this_ref = Self::from_ctx_ptr(this);
         if this_ref.pending_ref.get() {
             this_ref.pending_ref.set(false);
             this_ref.maybe_downgrade();
@@ -1400,15 +1418,12 @@ impl CronJob {
 
     /// Runs the cleanup that selfStop deferred while in_fire was true.
     fn finish_deferred_stop(this: *mut Self, vm: &VirtualMachine) {
-        // SAFETY: caller holds a ref.
-        unsafe { (*this).stop_internal(vm) };
+        Self::from_ctx_ptr(this).stop_internal(vm);
         Self::remove_from_list(this, vm);
     }
 
     fn self_stop(this: *mut Self, vm: &VirtualMachine) {
-        // SAFETY: caller holds a ref. R-2: shared deref — all mutation is
-        // interior.
-        let this_ref = unsafe { &*this };
+        let this_ref = Self::from_ctx_ptr(this);
         // While the callback is on the stack or its promise is pending, defer
         // list removal + downgrade to finishDeferredStop (called from
         // scheduleNext after settle) so onPromiseReject can read pendingPromise
@@ -1459,8 +1474,8 @@ impl CronJob {
             // PORT NOTE: stored as opaque `rare_data::high_tier::CronJob`; the
             // concrete type is this `CronJob` (see `register` push site).
             let job = job.cast::<CronJob>();
-            // SAFETY: list holds a ref for each entry.
-            unsafe { (*job).stop_internal(vm) };
+            // List holds a ref for each entry.
+            Self::from_ctx_ptr(job).stop_internal(vm);
             if MODE == ClearMode::Teardown {
                 Self::release_pending_ref(job);
             }
@@ -1494,9 +1509,7 @@ impl CronJob {
     }
 
     fn schedule_next(this: *mut Self, vm: &VirtualMachine) {
-        // SAFETY: caller holds a ref. R-2: shared deref — all mutation is
-        // interior.
-        let this_ref = unsafe { &*this };
+        let this_ref = Self::from_ctx_ptr(this);
         // Every path into here has just returned from user JS (the callback,
         // an uncaughtException handler, or an unhandledRejection handler). If
         // that JS called process.exit() / worker.terminate(), don't re-arm
@@ -1516,12 +1529,12 @@ impl CronJob {
         // list entry; bracket-ref so that path can't drop the last ref mid-function.
         // SAFETY: timer heap holds the entry; `this` is live until the guard drops.
         let _guard = unsafe { Self::ref_guard(this) };
-        // SAFETY: bracket-ref above keeps `this` alive across scheduleNext →
+        // Bracket-ref above keeps `this` alive across scheduleNext →
         // finishDeferredStop. R-2: shared (`&*`) — `cb.call()` re-enters JS,
         // which may call `stop()`/`ref()`/`unref()` on this same wrapper; a
         // `noalias` `&mut Self` here would be Stacked-Borrows UB. All mutation
         // is interior (`Cell`/`JsCell`).
-        let this_ref = unsafe { &*this };
+        let this_ref = Self::from_ctx_ptr(this);
         this_ref.event_loop_timer.with_mut(|t| t.state = EventLoopTimerState::FIRED);
 
         if this_ref.stopped.get() {
@@ -1765,8 +1778,8 @@ fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
     let args = frame.arguments();
     let this: *mut CronJob = args[args.len() - 1].as_promise_ptr::<CronJob>();
     let _guard = scopeguard::guard(this, |p| CronJob::release_pending_ref(p));
-    // SAFETY: pending_ref holds a ref on `this`. R-2: shared deref.
-    let this_ref = unsafe { &*this };
+    // `pending_ref` holds a ref on `this`.
+    let this_ref = CronJob::from_ctx_ptr(this);
     // SAFETY: `bun_vm()` returns the per-thread singleton.
     let vm = this_ref.global.bun_vm();
     if let Some(js_this) = this_ref.this_value.get().try_get() {
@@ -1780,8 +1793,8 @@ fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     let args = frame.arguments();
     let this: *mut CronJob = args[args.len() - 1].as_promise_ptr::<CronJob>();
     let _guard = scopeguard::guard(this, |p| CronJob::release_pending_ref(p));
-    // SAFETY: pending_ref holds a ref on `this`. R-2: shared deref.
-    let this_ref = unsafe { &*this };
+    // `pending_ref` holds a ref on `this`.
+    let this_ref = CronJob::from_ctx_ptr(this);
     // SAFETY: `bun_vm()` returns the per-thread singleton.
     let vm = this_ref.global.bun_vm().as_mut();
     let err = args[0];

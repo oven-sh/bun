@@ -1542,8 +1542,10 @@ impl<'a> PackageInstall<'a> {
                     #[cfg(unix)]
                     {
                         let Ok(stat) = sys::fstat(in_file) else { continue };
-                        // SAFETY: fchmod with valid fd and mode.
-                        unsafe { bun_sys::c::fchmod(outfile.native(), stat.st_mode as libc::mode_t) };
+                        // `sys::fchmod` is the safe by-value-fd wrapper (kernel
+                        // validates the fd; no memory-safety preconditions).
+                        // Result intentionally ignored to match Zig's `_ = c.fchmod(...)`.
+                        let _ = sys::fchmod(outfile, stat.st_mode as bun_sys::Mode);
                     }
 
                     if let Err(err) =

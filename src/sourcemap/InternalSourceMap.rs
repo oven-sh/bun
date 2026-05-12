@@ -84,7 +84,7 @@
 //! Delta indices are 0..count-2 (first mapping is the seed; only count-1
 //! deltas are encoded).
 
-use core::mem::size_of;
+use core::mem::{size_of, MaybeUninit};
 use core::ptr;
 
 use crate::Ordinal; // TODO(b2-blocked): bun_core::Ordinal — local shim
@@ -914,7 +914,8 @@ struct Delta {
 pub struct Builder {
     sync_entries: Vec<SyncEntry>,
     win_stream: Vec<u8>,
-    pending: [State; SYNC_INTERVAL],
+    /// Only `[0..pending_n]` are initialized; matches Zig's `undefined` init.
+    pending: [MaybeUninit<State>; SYNC_INTERVAL],
     pending_n: u8,
     pending_generated_line_delta: i32,
     state: State,
@@ -927,8 +928,8 @@ impl Default for Builder {
         Builder {
             sync_entries: Vec::new(),
             win_stream: Vec::new(),
-            // PERF(port): was `undefined` init — profile in Phase B
-            pending: [State::default(); SYNC_INTERVAL],
+            // Zig: `undefined` — slots are written before read (gated by pending_n).
+            pending: [MaybeUninit::uninit(); SYNC_INTERVAL],
             pending_n: 0,
             pending_generated_line_delta: 0,
             state: State::default(),
@@ -945,11 +946,13 @@ impl Builder {
 
     // `deinit` deleted: Vec/Option<MutableString> fields drop automatically.
 
+    #[inline(always)]
     pub fn append_line_separator(&mut self) {
         self.pending_generated_line_delta += 1;
     }
 
-    pub fn append_mapping(&mut self, current: SourceMapState) {
+    #[inline(always)]
+    pub fn append_mapping(&mut self, current: &SourceMapState) {
         self.state = State {
             generated_line: self.state.generated_line + self.pending_generated_line_delta,
             generated_column: current.generated_column,
@@ -959,7 +962,7 @@ impl Builder {
         };
         self.pending_generated_line_delta = 0;
 
-        self.pending[self.pending_n as usize] = self.state;
+        self.pending[self.pending_n as usize].write(self.state);
         self.pending_n += 1;
         self.count += 1;
 
@@ -973,7 +976,12 @@ impl Builder {
         if n == 0 {
             return;
         }
-        let seed = self.pending[0];
+        // SAFETY: `pending[0..n]` were each written by `append_mapping` before
+        // `pending_n` advanced past them; `n != 0` checked above.
+        let pending: &[State] = unsafe {
+            core::slice::from_raw_parts(self.pending.as_ptr().cast::<State>(), n as usize)
+        };
+        let seed = pending[0];
         let start_off: u32 = u32::try_from(self.win_stream.len()).expect("int cast");
         self.sync_entries.push(SyncEntry {
             generated_line: seed.generated_line,
@@ -985,11 +993,13 @@ impl Builder {
         });
 
         let n_deltas: usize = n as usize - 1;
-        // PERF(port): was `undefined` init — profile in Phase B
-        let mut deltas: [Delta; SYNC_INTERVAL - 1] = [Delta::default(); SYNC_INTERVAL - 1];
+        // Zig: `undefined` — every slot in [0..n_deltas] is filled by the loop
+        // below before any read; Delta is Copy/POD so assume_init is sound.
+        let mut deltas_buf: [MaybeUninit<Delta>; SYNC_INTERVAL - 1] =
+            [MaybeUninit::uninit(); SYNC_INTERVAL - 1];
         let mut flags: u8 = 0;
         let mut prev = seed;
-        for (k, cur) in self.pending[1..n as usize].iter().enumerate() {
+        for (k, cur) in pending[1..].iter().enumerate() {
             let d_gen_line = cur.generated_line - prev.generated_line;
             let d_gen_col = if d_gen_line != 0 {
                 cur.generated_column
@@ -999,7 +1009,7 @@ impl Builder {
             let d_orig_line = cur.original_line - prev.original_line;
             let d_orig_col = cur.original_column - prev.original_column;
             let d_src_idx = cur.source_index - prev.source_index;
-            deltas[k] = Delta { d_gen_line, d_gen_col, d_orig_line, d_orig_col, d_src_idx };
+            deltas_buf[k].write(Delta { d_gen_line, d_gen_col, d_orig_line, d_orig_col, d_src_idx });
             if d_gen_line > 1 || d_gen_line < 0 {
                 flags |= FLAG_HAS_GEN_LINE_EXCEPTIONS;
             }
@@ -1008,6 +1018,10 @@ impl Builder {
             }
             prev = *cur;
         }
+        // SAFETY: deltas_buf[0..n_deltas] fully initialized above; Delta is repr(Rust) POD.
+        let deltas: &[Delta] = unsafe {
+            core::slice::from_raw_parts(deltas_buf.as_ptr().cast::<Delta>(), n_deltas)
+        };
 
         let mut cap: usize = win_hdr::GEN_COL_LANE_OFF + 3 * n_deltas * MAX_VARINT_LEN;
         if flags & FLAG_HAS_GEN_LINE_EXCEPTIONS != 0 {
@@ -1019,82 +1033,98 @@ impl Builder {
 
         self.win_stream.reserve(cap);
         let base = self.win_stream.len();
-        // SAFETY: `cap` bytes were just reserved; every byte in [base..base+cap)
-        // is either zeroed below or written before the trailing `set_len(base+w)`
-        // truncates back to the actually-written prefix.
-        unsafe { self.win_stream.set_len(base + cap) };
-        let buf = &mut self.win_stream[base..base + cap];
-        buf[0..win_hdr::GEN_COL_LANE_OFF].fill(0);
+        // SAFETY: `cap` bytes were just reserved past `base`. All writes below go
+        // through `buf_ptr` into [base..base+cap). The cursor `w` is bounded by
+        // construction: `cap` is the worst-case sum of every section's max length
+        // (each varint <= MAX_VARINT_LEN, each optional section gated on `flags`),
+        // so `w <= cap` and `w + MAX_VARINT_LEN <= cap` at every `write_varint`
+        // call. The trailing `set_len(base + w)` exposes only the written prefix.
+        let buf_ptr: *mut u8 = unsafe { self.win_stream.as_mut_ptr().add(base) };
+        unsafe { buf_ptr.write_bytes(0, win_hdr::GEN_COL_LANE_OFF) };
 
-        buf[win_hdr::COUNT_OFF] = n;
-        buf[win_hdr::FLAGS_OFF] = flags;
+        unsafe {
+            *buf_ptr.add(win_hdr::COUNT_OFF) = n;
+            *buf_ptr.add(win_hdr::FLAGS_OFF) = flags;
+        }
 
         let mut w: usize = win_hdr::GEN_COL_LANE_OFF;
-        for k in 0..n_deltas {
-            let d = deltas[k];
+        for (k, d) in deltas.iter().enumerate() {
             let bit = 1u8 << (k & 7);
-            if d.d_gen_line >= 1 {
-                buf[win_hdr::GEN_LINE_MASK_OFF + (k >> 3)] |= bit;
+            unsafe {
+                if d.d_gen_line >= 1 {
+                    *buf_ptr.add(win_hdr::GEN_LINE_MASK_OFF + (k >> 3)) |= bit;
+                }
+                if d.d_orig_line == d.d_gen_line {
+                    *buf_ptr.add(win_hdr::ORIG_LINE_EQ_MASK_OFF + (k >> 3)) |= bit;
+                }
+                if d.d_orig_col == d.d_gen_col {
+                    *buf_ptr.add(win_hdr::ORIG_COL_EQ_MASK_OFF + (k >> 3)) |= bit;
+                }
             }
-            if d.d_orig_line == d.d_gen_line {
-                buf[win_hdr::ORIG_LINE_EQ_MASK_OFF + (k >> 3)] |= bit;
-            }
-            if d.d_orig_col == d.d_gen_col {
-                buf[win_hdr::ORIG_COL_EQ_MASK_OFF + (k >> 3)] |= bit;
-            }
-            w += write_varint(buf[w..].as_mut_ptr(), d.d_gen_col);
+            w += write_varint(unsafe { buf_ptr.add(w) }, d.d_gen_col);
         }
         let gen_col_len: u16 = u16::try_from(w - win_hdr::GEN_COL_LANE_OFF).expect("int cast");
-        buf[win_hdr::GEN_COL_LEN_OFF..win_hdr::GEN_COL_LEN_OFF + 2]
-            .copy_from_slice(&gen_col_len.to_ne_bytes());
+        unsafe {
+            buf_ptr
+                .add(win_hdr::GEN_COL_LEN_OFF)
+                .cast::<[u8; 2]>()
+                .write_unaligned(gen_col_len.to_ne_bytes());
+        }
 
         let orig_line_start = w;
-        for d in &deltas[0..n_deltas] {
+        for d in deltas {
             if d.d_orig_line != d.d_gen_line {
-                w += write_varint(buf[w..].as_mut_ptr(), d.d_orig_line);
+                w += write_varint(unsafe { buf_ptr.add(w) }, d.d_orig_line);
             }
         }
         let orig_line_len: u16 = u16::try_from(w - orig_line_start).expect("int cast");
         let orig_col_start = w;
-        for d in &deltas[0..n_deltas] {
+        for d in deltas {
             if d.d_orig_col != d.d_gen_col {
-                w += write_varint(buf[w..].as_mut_ptr(), d.d_orig_col);
+                w += write_varint(unsafe { buf_ptr.add(w) }, d.d_orig_col);
             }
         }
         let orig_col_len: u16 = u16::try_from(w - orig_col_start).expect("int cast");
-        buf[win_hdr::ORIG_LINE_LEN_OFF..win_hdr::ORIG_LINE_LEN_OFF + 2]
-            .copy_from_slice(&orig_line_len.to_ne_bytes());
-        buf[win_hdr::ORIG_COL_LEN_OFF..win_hdr::ORIG_COL_LEN_OFF + 2]
-            .copy_from_slice(&orig_col_len.to_ne_bytes());
+        unsafe {
+            buf_ptr
+                .add(win_hdr::ORIG_LINE_LEN_OFF)
+                .cast::<[u8; 2]>()
+                .write_unaligned(orig_line_len.to_ne_bytes());
+            buf_ptr
+                .add(win_hdr::ORIG_COL_LEN_OFF)
+                .cast::<[u8; 2]>()
+                .write_unaligned(orig_col_len.to_ne_bytes());
+        }
 
         if flags & FLAG_HAS_GEN_LINE_EXCEPTIONS != 0 {
-            for k in 0..n_deltas {
-                if deltas[k].d_gen_line > 1 || deltas[k].d_gen_line < 0 {
-                    buf[w] = u8::try_from(k).expect("int cast");
+            for (k, d) in deltas.iter().enumerate() {
+                if d.d_gen_line > 1 || d.d_gen_line < 0 {
+                    unsafe { *buf_ptr.add(w) = k as u8 };
                     w += 1;
-                    w += write_varint(buf[w..].as_mut_ptr(), deltas[k].d_gen_line);
+                    w += write_varint(unsafe { buf_ptr.add(w) }, d.d_gen_line);
                 }
             }
-            buf[w] = 0xFF;
+            unsafe { *buf_ptr.add(w) = 0xFF };
             w += 1;
         }
         if flags & FLAG_HAS_SRC_IDX != 0 {
             let mask_off = w;
-            buf[w..w + 8].fill(0);
+            unsafe { buf_ptr.add(w).write_bytes(0, 8) };
             w += 8;
-            for k in 0..n_deltas {
-                if deltas[k].d_src_idx == 0 {
-                    buf[mask_off + (k >> 3)] |= 1u8 << (k & 7);
+            for (k, d) in deltas.iter().enumerate() {
+                if d.d_src_idx == 0 {
+                    unsafe { *buf_ptr.add(mask_off + (k >> 3)) |= 1u8 << (k & 7) };
                 }
             }
-            for d in &deltas[0..n_deltas] {
+            for d in deltas {
                 if d.d_src_idx != 0 {
-                    w += write_varint(buf[w..].as_mut_ptr(), d.d_src_idx);
+                    w += write_varint(unsafe { buf_ptr.add(w) }, d.d_src_idx);
                 }
             }
         }
 
-        // SAFETY: w <= cap; all bytes in [base..base+w) were written above.
+        debug_assert!(w <= cap);
+        // SAFETY: w <= cap (reserved); all bytes in [base..base+w) were written above.
         unsafe { self.win_stream.set_len(base + w) };
         self.pending_n = 0;
     }
@@ -1114,8 +1144,15 @@ impl Builder {
             let total: usize = stream_offset as usize + self.win_stream.len() + STREAM_TAIL_PAD;
 
             let mut out = MutableString::init_empty();
-            // Zig: out.list.resize(allocator, total)
-            out.list.resize(total, 0);
+            // Zig: `out.list.resize(allocator, total)` leaves new bytes undefined.
+            // Every byte in [0..total) is written below: [0..24] zero-filled,
+            // [24..32] header u32s, [32..32+sync_bytes] sync table memcpy,
+            // [stream_offset..stream_offset+win_stream.len()] stream memcpy,
+            // [total-STREAM_TAIL_PAD..total] zero-filled. These ranges are
+            // contiguous (HEADER_SIZE==32, stream_offset==32+sync_bytes), so
+            // no uninit bytes are exposed by set_len.
+            out.list.reserve_exact(total);
+            unsafe { out.list.set_len(total) };
             let blob = out.list.as_mut_slice();
 
             blob[0..24].fill(0);
@@ -1239,7 +1276,7 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
         }
 
         max_original_line = max_original_line.max(original_line);
-        builder.append_mapping(SourceMapState {
+        builder.append_mapping(&SourceMapState {
             generated_column,
             source_index,
             original_line,

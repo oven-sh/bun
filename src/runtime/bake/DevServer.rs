@@ -3706,8 +3706,9 @@ pub fn finalize_bundle(
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
 
         // PORT NOTE: `IntermediateOutput::code` takes `&mut self` (a field of
-        // `*chunk`) plus `chunk: &mut Chunk` and `chunks: &mut [Chunk]`;
-        // borrowck rejects the overlap. Zig aliased freely. Split via raw
+        // `*chunk`) plus `chunk: &Chunk` and `chunks: &[Chunk]`; borrowck still
+        // rejects the overlap (`&mut chunk.intermediate_output` aliases the
+        // shared `&chunk` / `&chunks[..]`). Zig aliased freely. Split via raw
         // pointers — the callee never reborrows `chunk.intermediate_output`
         // through the `chunk`/`chunks` params (it reads metadata only).
         let code = {
@@ -3720,12 +3721,13 @@ pub fn finalize_bundle(
                 &bv2.graph,
                 &bv2.linker.graph,
                 b"THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",
-                // SAFETY: see above; same allocation, disjoint field access.
-                unsafe { &mut *chunk_ptr },
+                // SAFETY: see above; shared reborrow of the same allocation,
+                // disjoint from the `&mut intermediate_output` receiver.
+                unsafe { &*chunk_ptr },
                 // SAFETY: `result.chunks` outlives this loop body; Zig passed
                 // the same slice while iterating it. `chunks_ptr/len` were
-                // snapshotted before `split_at_mut`.
-                unsafe { ::core::slice::from_raw_parts_mut(chunks_ptr, chunks_len) },
+                // snapshotted before `split_at_mut`; `code()` only reads.
+                unsafe { ::core::slice::from_raw_parts(chunks_ptr, chunks_len) },
                 None,
                 false,
                 false,

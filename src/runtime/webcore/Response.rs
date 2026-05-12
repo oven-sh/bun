@@ -578,14 +578,10 @@ pub fn js_function_request_or_response_has_body_value(_global: *mut JSGlobalObje
         return JSValue::FALSE;
     }
 
-    if let Some(response) = this_value.as_::<Response>() {
-        // SAFETY: `as_` returned a live `*mut Response` owned by the JS wrapper.
-        // R-2: deref as shared — `Body.value` is `JsCell`.
-        return JSValue::from(!unsafe { &*response }.body.get().value.get().is_definitely_empty());
-    } else if let Some(request) = this_value.as_::<Request>() {
-        // SAFETY: `as_` returned a live `*mut Request` owned by the JS wrapper.
-        // R-2: deref as shared — `get_body_value` takes `&self`.
-        return JSValue::from(!unsafe { &*request }.get_body_value().is_definitely_empty());
+    if let Some(response) = this_value.as_class_ref::<Response>() {
+        return JSValue::from(!response.body.get().value.get().is_definitely_empty());
+    } else if let Some(request) = this_value.as_class_ref::<Request>() {
+        return JSValue::from(!request.get_body_value().is_definitely_empty());
     }
 
     JSValue::FALSE
@@ -606,14 +602,11 @@ pub fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
     }
 
     let body: &mut BodyValue = 'brk: {
-        if let Some(response) = this_value.as_::<Response>() {
-            // SAFETY: `as_` returned a live `*mut Response` owned by the JS wrapper.
-            // R-2: deref as shared; `get_body_value` projects `&mut` via `JsCell`.
-            break 'brk unsafe { &*response }.get_body_value();
-        } else if let Some(request) = this_value.as_::<Request>() {
-            // SAFETY: `as_` returned a live `*mut Request` owned by the JS wrapper.
-            // R-2: deref as shared — `get_body_value` takes `&self`.
-            break 'brk unsafe { &*request }.get_body_value();
+        if let Some(response) = this_value.as_class_ref::<Response>() {
+            // R-2: `get_body_value` projects `&mut` via `JsCell`.
+            break 'brk response.get_body_value();
+        } else if let Some(request) = this_value.as_class_ref::<Request>() {
+            break 'brk request.get_body_value();
         }
 
         return JSValue::UNDEFINED;

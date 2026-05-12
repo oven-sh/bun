@@ -683,15 +683,11 @@ impl Value {
         if value.is_empty_or_undefined_or_null() {
             return None;
         }
-        if let Some(req) = value.as_::<crate::webcore::Request>() {
-            // SAFETY: `as_` returns a live JSC-owned `*mut Request`.
-            // R-2: deref as shared (`&*const`) — `get_body_value` takes `&self`.
-            return Some(std::ptr::from_mut::<Value>(unsafe { &*req }.get_body_value()));
+        if let Some(req) = value.as_class_ref::<crate::webcore::Request>() {
+            return Some(std::ptr::from_mut::<Value>(req.get_body_value()));
         }
-        if let Some(res) = value.as_::<crate::webcore::Response>() {
-            // SAFETY: `as_` returns a live JSC-owned `*mut Response`.
-            // R-2: deref as shared (`&*const`) — `get_body_value` takes `&self`.
-            return Some(std::ptr::from_mut::<Value>(unsafe { &*res }.get_body_value()));
+        if let Some(res) = value.as_class_ref::<crate::webcore::Response>() {
+            return Some(std::ptr::from_mut::<Value>(res.get_body_value()));
         }
         None
     }

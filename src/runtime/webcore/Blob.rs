@@ -5133,13 +5133,12 @@ pub fn to_stream_with_offset(
 ) -> JsResult<JSValue> {
     let this = callframe
         .this()
-        .as_::<Blob>()
+        .as_class_ref::<Blob>()
         .unwrap_or_else(|| panic!("this is not a Blob"));
     let args = callframe.arguments_old::<1>();
     ReadableStream::from_file_blob_with_offset(
         global_this,
-        // SAFETY: as_::<Blob>() returned a non-null *mut Blob.
-        unsafe { &*this },
+        this,
         usize::try_from(args.slice()[0].to_int64()).expect("int cast"),
     )
 }

@@ -744,8 +744,11 @@ pub fn get_presign_url_from(this: &mut Blob, global: &JSGlobalObject, extra_opti
         Ok(r) => r,
         Err(sign_err) => return Err(s3::throw_sign_error(sign_err.into(), global)),
     };
-    // SAFETY: `Blob.global_this` is the JSGlobalObject the blob was created with; live for VM lifetime.
-    bun_jsc::bun_string_jsc::create_utf8_for_js(unsafe { &*this.global_this.get() }, &result.url)
+    // `Blob.global_this` is the JSGlobalObject the blob was created with; live for VM lifetime.
+    bun_jsc::bun_string_jsc::create_utf8_for_js(
+        this.global_this().expect("Blob.global_this set"),
+        &result.url,
+    )
 }
 
 pub fn get_bucket_name(this: &Blob) -> Option<&[u8]> {
@@ -866,11 +869,10 @@ pub fn construct(global: &JSGlobalObject, callframe: &CallFrame) -> *mut Blob {
 
 pub fn has_instance(_: JSValue, _global: &JSGlobalObject, value: JSValue) -> bool {
     bun_jsc::mark_binding();
-    let Some(blob) = value.as_::<Blob>() else {
+    let Some(blob) = value.as_class_ref::<Blob>() else {
         return false;
     };
-    // SAFETY: `as_::<Blob>()` returns a non-null `*mut Blob` for a live Blob cell.
-    unsafe { (*blob).is_s3() }
+    blob.is_s3()
 }
 
 // @export block — symbols exported with C linkage and JSC calling convention.

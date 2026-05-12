@@ -334,6 +334,21 @@ impl FetchTasklet {
         self.sink.map(|p| unsafe { &mut *p })
     }
 
+    /// Mutable access to the request-body streaming buffer while `Some` (this
+    /// side holds one of the two initial intrusive refs from
+    /// `ThreadSafeStreamBuffer::new`; released in `clear_sink`). Detached
+    /// lifetime so the borrow does not conflict with disjoint `&mut self`
+    /// access at call sites — the buffer lives in a separate heap allocation
+    /// shared with the HTTP thread (mutex-guarded internally).
+    #[inline]
+    fn stream_buffer_mut<'r>(&self) -> Option<&'r mut ThreadSafeStreamBuffer> {
+        // SAFETY: see doc comment — counted ref keeps pointee live; mutex
+        // inside `ThreadSafeStreamBuffer` serialises cross-thread `buffer`
+        // access, and `callback` is main-thread-only.
+        self.request_body_streaming_buffer
+            .map(|p| unsafe { &mut *p.as_ptr() })
+    }
+
     /// Upgrade a `Source::Bytes` raw pointer (from `ReadableStreamTag__tagged`)
     /// to `&mut ByteStream`. The pointee is owned by the JSC ReadableStream and
     /// is valid while the stream's Strong ref is held; every call site here is
@@ -1721,13 +1736,12 @@ impl FetchTasklet {
             Some(sink) => sink.high_water_mark() as usize,
             None => 16384,
         };
-        let Some(thread_safe_stream_buffer) = self.request_body_streaming_buffer else {
+        let Some(thread_safe_stream_buffer) = self.stream_buffer_mut() else {
             return ResumableSinkBackpressure::Done;
         };
-        let thread_safe_stream_buffer = thread_safe_stream_buffer.as_ptr();
-        // SAFETY: intrusive-refcounted heap allocation; this side holds a ref. Mutex
-        // guards `buffer` against the HTTP thread; released when `stream_buffer` drops.
-        let mut stream_buffer = unsafe { (*thread_safe_stream_buffer).lock() };
+        // Mutex guards `buffer` against the HTTP thread; released when
+        // `stream_buffer` drops. Borrow is detached from `self` (see accessor).
+        let mut stream_buffer = thread_safe_stream_buffer.lock();
 
         let mut needs_schedule = false;
 
@@ -1783,17 +1797,15 @@ impl FetchTasklet {
         } else {
             if !self.skip_chunked_framing() {
                 // Using chunked transfer encoding, send the terminating chunk
-                let Some(thread_safe_stream_buffer) = self.request_body_streaming_buffer else {
+                let Some(thread_safe_stream_buffer) = self.stream_buffer_mut() else {
                     FetchTasklet::deref(this_ptr);
                     return;
                 };
-                // SAFETY: intrusive-refcounted heap allocation; this side holds a ref.
-                // Mutex guards `buffer` against the HTTP thread between acquire/release.
-                unsafe {
-                    let stream_buffer = (*thread_safe_stream_buffer.as_ptr()).acquire();
-                    let _ = stream_buffer.write(http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY); // OOM/capacity: Zig aborts; port keeps fire-and-forget
-                    (*thread_safe_stream_buffer.as_ptr()).release();
-                }
+                // Mutex guards `buffer` against the HTTP thread; released when
+                // the lock guard drops.
+                let _ = thread_safe_stream_buffer
+                    .lock()
+                    .write(http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY); // OOM/capacity: Zig aborts; port keeps fire-and-forget
             }
             if let Some(http_) = self.http.as_mut() {
                 http::http_thread().schedule_request_write(http_, http::http_thread::WriteMessageType::End);

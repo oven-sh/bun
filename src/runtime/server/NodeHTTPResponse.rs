@@ -992,10 +992,10 @@ pub fn node_http_request_on_resolve(
 ) -> JSValue {
     scoped_log!(NodeHTTPResponse, "onResolve");
     let arguments = callframe.arguments_old::<2>();
-    // SAFETY: arguments[1] is the JSNodeHTTPResponse cell from the resolve callback.
+    // arguments[1] is the JSNodeHTTPResponse cell from the resolve callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
     let this: &NodeHTTPResponse =
-        unsafe { &*arguments.ptr[1].as_::<NodeHTTPResponse>().unwrap() };
+        arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
     this.promise.with_mut(|p| p.deinit());
     // defer this.deref(); — moved to tail.
     this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
@@ -1029,10 +1029,10 @@ pub fn node_http_request_on_reject(
 ) -> JSValue {
     let arguments = callframe.arguments_old::<2>();
     let err = arguments.ptr[0];
-    // SAFETY: arguments[1] is the JSNodeHTTPResponse cell from the reject callback.
+    // arguments[1] is the JSNodeHTTPResponse cell from the reject callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
     let this: &NodeHTTPResponse =
-        unsafe { &*arguments.ptr[1].as_::<NodeHTTPResponse>().unwrap() };
+        arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
     this.promise.with_mut(|p| p.deinit());
     this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
 

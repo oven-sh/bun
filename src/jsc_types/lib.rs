@@ -442,6 +442,9 @@ mod tests {
         let ptr = NonNull::<event_loop::JsEventLoop>::dangling().as_ptr().cast::<()>();
         let handle = unsafe { event_loop::JsEventLoopHandle::from_raw(ptr) };
         assert_eq!(handle.as_void_ptr(), ptr.cast::<core::ffi::c_void>());
+
+        let empty = unsafe { event_loop::JsEventLoopHandle::from_raw(core::ptr::null_mut()) };
+        assert_eq!(empty.as_void_ptr(), core::ptr::null_mut());
     }
 
     #[test]

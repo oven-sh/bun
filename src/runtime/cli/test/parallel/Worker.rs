@@ -299,8 +299,13 @@ impl Worker {
                 index: this.idx as usize,
             },
         ));
+        let context = coord_ptr.cast_mut().cast::<c_void>();
         match process.watch_or_reap() {
-            Ok(_) => {}
+            Ok(result) => {
+                if let Some(delivery) = result.into_delivery() {
+                    crate::dispatch::__bun_dispatch_process_exit_delivery(delivery, context);
+                }
+            }
             Err(e) => {
                 // Surface to the caller (spawnWorker / onWorkerExit) instead of
                 // synchronously firing onExit() — that would re-enter

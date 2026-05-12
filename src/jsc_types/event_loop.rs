@@ -7,24 +7,24 @@ bun_opaque::opaque_ffi! {
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct JsEventLoopHandle(NonNull<JsEventLoop>);
+pub struct JsEventLoopHandle(*mut JsEventLoop);
 
 impl JsEventLoopHandle {
     /// Wrap a live `bun_jsc::event_loop::EventLoop` pointer.
     ///
     /// # Safety
-    /// `ptr` must point to a live JSC event loop that outlives every use of
-    /// the handle. Effectful operations on the loop remain in `bun_jsc`.
+    /// Non-null pointers must point to a live JSC event loop that outlives
+    /// every use of the handle. A null pointer is permitted only as the legacy
+    /// struct-default sentinel used by constructors that overwrite the field
+    /// before any effectful dispatch.
     #[inline(always)]
     pub unsafe fn from_raw(ptr: *mut ()) -> Self {
-        let ptr = NonNull::new(ptr.cast::<JsEventLoop>())
-            .expect("JsEventLoopHandle cannot wrap a null pointer");
-        Self(ptr)
+        Self(ptr.cast::<JsEventLoop>())
     }
 
     #[inline(always)]
     pub fn as_ptr(self) -> *mut JsEventLoop {
-        self.0.as_ptr()
+        self.0
     }
 
     #[inline(always)]

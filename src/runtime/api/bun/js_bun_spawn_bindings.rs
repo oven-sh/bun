@@ -164,6 +164,13 @@ unsafe fn process_mut<'a>(p: *mut Process) -> &'a mut Process {
     unsafe { &mut *p }
 }
 
+#[inline]
+fn dispatch_process_exit_delivery(delivery: Option<bun_spawn::ProcessExitDelivery>) {
+    if let Some(delivery) = delivery {
+        crate::dispatch::__bun_dispatch_process_exit_delivery(delivery, core::ptr::null_mut());
+    }
+}
+
 bun_output::declare_scope!(Subprocess, hidden);
 
 // `SpawnOptions.Stdio` in Zig is a platform-dependent nested decl. Rust enums
@@ -1594,11 +1601,14 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 // process has already exited, we called wait4(), but we did not call onProcessExit()
                 // SAFETY: all-zero is a valid Rusage (POD).
                 let status = proc.status.clone();
-                let _ = proc.on_exit(status, &bun_core::ffi::zeroed::<Rusage>());
+                dispatch_process_exit_delivery(proc.on_exit(
+                    status,
+                    &bun_core::ffi::zeroed::<Rusage>(),
+                ));
             } else {
                 // process has already exited, but we haven't called wait4() yet
                 // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-                let _ = proc.wait(IS_SYNC);
+                dispatch_process_exit_delivery(proc.wait(IS_SYNC));
             }
         }
     }
@@ -1683,7 +1693,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         unsafe { &mut *jsc_vm_ptr }.counters.mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
         // SAFETY: see `process_mut` doc.
-        let _ = unsafe { process_mut(subprocess.process.as_ptr()) }.wait(true);
+        dispatch_process_exit_delivery(
+            unsafe { process_mut(subprocess.process.as_ptr()) }.wait(true),
+        );
         bun_output::scoped_log!(Subprocess, "spawnSync fast path took {}", debug_timer);
 
         // watchOrReap will handle the already exited case for us.
@@ -1691,7 +1703,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     // SAFETY: see `process_mut` doc.
     match unsafe { process_mut(subprocess.process.as_ptr()) }.watch_or_reap() {
-        sys::Result::Ok(_) => {
+        sys::Result::Ok(result) => {
+            dispatch_process_exit_delivery(result.into_delivery());
             // Once everything is set up, we can add the abort listener
             // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
             // Therefore, we must do this at the very end.
@@ -1707,7 +1720,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
         sys::Result::Err(_) => {
             // SAFETY: see `process_mut` doc.
-            let _ = unsafe { process_mut(subprocess.process.as_ptr()) }.wait(true);
+            dispatch_process_exit_delivery(
+                unsafe { process_mut(subprocess.process.as_ptr()) }.wait(true),
+            );
         }
     }
 

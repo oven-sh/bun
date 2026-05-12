@@ -1367,10 +1367,10 @@ pub mod fd {
     use core::ffi::{c_int, c_void};
 
     // Written once in windows_stdio::init() during single-threaded startup
-    // (S015: write-once → `OnceLock`; readers fall back to `Fd::INVALID`).
-    pub static WINDOWS_CACHED_STDIN: std::sync::OnceLock<Fd> = std::sync::OnceLock::new();
-    pub static WINDOWS_CACHED_STDOUT: std::sync::OnceLock<Fd> = std::sync::OnceLock::new();
-    pub static WINDOWS_CACHED_STDERR: std::sync::OnceLock<Fd> = std::sync::OnceLock::new();
+    // (S015: write-once → `Once`; readers fall back to `Fd::INVALID`).
+    pub static WINDOWS_CACHED_STDIN: crate::Once<Fd> = crate::Once::new();
+    pub static WINDOWS_CACHED_STDOUT: crate::Once<Fd> = crate::Once::new();
+    pub static WINDOWS_CACHED_STDERR: crate::Once<Fd> = crate::Once::new();
     #[cfg(debug_assertions)]
     pub static WINDOWS_CACHED_FD_SET: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
@@ -1935,37 +1935,181 @@ impl Default for Ordinal {
 // ── Once ──────────────────────────────────────────────────────────────────
 // Port of `bun.Once(f)` (bun.zig:3637). Zig parameterizes over a comptime fn
 // and stores the payload; Rust callers use two shapes:
-//   * `Once<T>` — fn supplied at `.call(f)` time (resolver/fs.rs)
+//   * `Once<T>` — fn supplied at `.call(f)` / `.get_or_init(f)` time
 //   * `Once<T, fn(A) -> T>` — fn supplied at construction (PackageManagerDirectories.rs)
-// Backed by `std::sync::OnceLock` per PORTING.md §Concurrency.
+//
+// Open-coded double-checked-init (AtomicU8 + UnsafeCell<MaybeUninit<T>>) rather
+// than `std::sync::OnceLock`. The previous `OnceLock` backing produced 157
+// `OnceLock::initialize` + 30 `LazyLock` monomorphizations (~36.7 KB) whose
+// shared callee `std::sys::sync::once::futex::Once::call` lives in libstd's
+// own CGU — every hot-path `get_or_init` paid a cross-CGU call + futex-aware
+// state machine even when the value was already initialised. The Zig original
+// is a plain `bool` flag + payload; this matches it: post-init reads are one
+// Acquire load + cmp inlined into the caller. Pattern proven at
+// `bun_alloc/lib.rs::bss_heap_init`'s accessor macro.
+//
+// Contention: startup is single-threaded for every current call site; the
+// rare cross-thread race spins on `yield_now()` (no futex). No poisoning —
+// a panic mid-init resets to UNINIT so the next call retries (Zig has no
+// poisoning either).
+const ONCE_UNINIT: u8 = 0;
+const ONCE_BUSY: u8 = 1;
+const ONCE_DONE: u8 = 2;
+
 pub struct Once<T, F = ()> {
-    cell: std::sync::OnceLock<T>,
+    state: core::sync::atomic::AtomicU8,
+    cell: core::cell::UnsafeCell<core::mem::MaybeUninit<T>>,
     f: F,
 }
-// `Once<T, F>` is auto-`Sync` when `T: Send + Sync, F: Sync` via
-// `OnceLock<T>: Sync` — no `unsafe impl` needed.
+
+// SAFETY: `T` is published behind a Release store / Acquire load pair; once
+// DONE the cell is immutable and only `&T` is handed out, so the bounds match
+// `std::sync::OnceLock` (`T: Send` because init may happen on a different
+// thread than the reader; `T: Sync` because `&T` crosses threads).
+unsafe impl<T: Send + Sync, F: Sync> Sync for Once<T, F> {}
+unsafe impl<T: Send, F: Send> Send for Once<T, F> {}
+impl<T: core::panic::RefUnwindSafe, F: core::panic::RefUnwindSafe> core::panic::RefUnwindSafe
+    for Once<T, F> {}
+
+/// Cold contended path shared by every `Once<T, F>` instantiation. Taking
+/// `&AtomicU8` (not `&self`) keeps this **non-generic** so exactly one copy
+/// lands in `bun_core`'s CGU regardless of how many `T`s the crate uses.
+/// Returns `true` if the caller won the claim and must initialise + publish;
+/// `false` if another thread finished first (cell is now DONE).
+#[cold]
+#[inline(never)]
+fn once_claim_slow(state: &core::sync::atomic::AtomicU8) -> bool {
+    use core::sync::atomic::Ordering::Acquire;
+    loop {
+        match state.compare_exchange_weak(ONCE_UNINIT, ONCE_BUSY, Acquire, Acquire) {
+            Ok(_) => return true,
+            Err(ONCE_DONE) => return false,
+            // BUSY (or spurious weak failure) — another thread is mid-init.
+            // Startup is single-threaded in practice; spin-yield instead of
+            // pulling in libstd's futex machinery.
+            Err(_) => std::thread::yield_now(),
+        }
+    }
+}
+
+impl<T, F> Once<T, F> {
+    /// Fast path: already initialised?
+    #[inline(always)]
+    pub fn get(&self) -> Option<&T> {
+        if self.state.load(core::sync::atomic::Ordering::Acquire) == ONCE_DONE {
+            // SAFETY: DONE is only stored after `cell` has been fully written;
+            // the Acquire load synchronises with that Release store. The cell
+            // is never mutated again for the process lifetime.
+            Some(unsafe { (*self.cell.get()).assume_init_ref() })
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
+    pub fn done(&self) -> bool {
+        self.state.load(core::sync::atomic::Ordering::Acquire) == ONCE_DONE
+    }
+
+    /// `OnceLock::get_or_init` equivalent. Hot path is the inlined DONE check;
+    /// the init closure runs at most once.
+    #[inline(always)]
+    pub fn get_or_init(&self, f: impl FnOnce() -> T) -> &T {
+        if let Some(v) = self.get() {
+            return v;
+        }
+        self.init_slow(f)
+    }
+
+    #[cold]
+    fn init_slow(&self, f: impl FnOnce() -> T) -> &T {
+        if once_claim_slow(&self.state) {
+            // Reset to UNINIT if `f` unwinds so a later retry isn't deadlocked
+            // on a permanently-BUSY slot (Zig has no poisoning; neither do we).
+            struct Reset<'a>(&'a core::sync::atomic::AtomicU8);
+            impl Drop for Reset<'_> {
+                #[inline]
+                fn drop(&mut self) {
+                    self.0.store(ONCE_UNINIT, core::sync::atomic::Ordering::Release);
+                }
+            }
+            let guard = Reset(&self.state);
+            let v = f();
+            // SAFETY: we hold BUSY exclusively (CAS won); no other thread can
+            // be reading or writing `cell` until we publish DONE below.
+            unsafe { (*self.cell.get()).write(v) };
+            core::mem::forget(guard);
+            self.state.store(ONCE_DONE, core::sync::atomic::Ordering::Release);
+        }
+        // SAFETY: either we just stored DONE, or `once_claim_slow` observed
+        // DONE from another thread (Acquire in the CAS failure path).
+        unsafe { (*self.cell.get()).assume_init_ref() }
+    }
+
+    /// `OnceLock::set` equivalent: store `value` if uninitialised, else hand it
+    /// back. Never blocks — if another thread is mid-init (BUSY) this returns
+    /// `Err(value)` rather than waiting, which is fine for the write-once
+    /// startup statics that use it (`START_TIME`, `STD*_DESCRIPTOR_TYPE`, …).
+    #[inline]
+    pub fn set(&self, value: T) -> Result<(), T> {
+        use core::sync::atomic::Ordering::{Acquire, Release};
+        if self
+            .state
+            .compare_exchange(ONCE_UNINIT, ONCE_BUSY, Acquire, Acquire)
+            .is_ok()
+        {
+            // SAFETY: we hold BUSY exclusively; see `init_slow`.
+            unsafe { (*self.cell.get()).write(value) };
+            self.state.store(ONCE_DONE, Release);
+            Ok(())
+        } else {
+            Err(value)
+        }
+    }
+}
+
+impl<T, F> Drop for Once<T, F> {
+    #[inline]
+    fn drop(&mut self) {
+        if *self.state.get_mut() == ONCE_DONE {
+            // SAFETY: DONE ⇒ cell holds a valid `T`; we have `&mut self`.
+            unsafe { self.cell.get_mut().assume_init_drop() };
+        }
+    }
+}
 
 impl<T> Once<T, ()> {
-    pub const fn new() -> Self { Self { cell: std::sync::OnceLock::new(), f: () } }
-    /// Run `f` exactly once; subsequent calls return the cached payload.
-    #[inline]
-    pub fn call(&self, f: impl FnOnce() -> T) -> T where T: Copy {
-        *self.cell.get_or_init(f)
+    pub const fn new() -> Self {
+        Self {
+            state: core::sync::atomic::AtomicU8::new(ONCE_UNINIT),
+            cell: core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()),
+            f: (),
+        }
     }
-    #[inline] pub fn get(&self) -> Option<&T> { self.cell.get() }
-    #[inline] pub fn done(&self) -> bool { self.cell.get().is_some() }
+    /// Run `f` exactly once; subsequent calls return the cached payload.
+    #[inline(always)]
+    pub fn call(&self, f: impl FnOnce() -> T) -> T where T: Copy {
+        *self.get_or_init(f)
+    }
 }
 impl<T, A> Once<T, fn(A) -> T> {
-    pub const fn with_fn(f: fn(A) -> T) -> Self { Self { cell: std::sync::OnceLock::new(), f } }
+    pub const fn with_fn(f: fn(A) -> T) -> Self {
+        Self {
+            state: core::sync::atomic::AtomicU8::new(ONCE_UNINIT),
+            cell: core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()),
+            f,
+        }
+    }
     /// Run the stored fn exactly once with `arg`; returns a borrow of the cached
     /// payload. Bound to `&'static self` because every call site is a `static`.
-    #[inline]
+    #[inline(always)]
     pub fn call(&'static self, arg: A) -> &'static T {
         let f = self.f;
-        self.cell.get_or_init(|| f(arg))
+        self.get_or_init(|| f(arg))
     }
-    #[inline] pub fn get(&self) -> Option<&T> { self.cell.get() }
-    #[inline] pub fn done(&self) -> bool { self.cell.get().is_some() }
+}
+impl<T> Default for Once<T, ()> {
+    #[inline] fn default() -> Self { Self::new() }
 }
 
 /// Void-result sibling of [`Once`]: declares a hidden `static std::sync::Once`
@@ -2151,9 +2295,9 @@ pub fn csprng(bytes: &mut [u8]) {
 
 // ── self_exe_path ─────────────────────────────────────────────────────────
 // Port of `bun.selfExePath` (bun.zig:3011). Memoized into a process-lifetime
-// static buffer; thread-safe via OnceLock. Returns a `&'static ZStr`.
+// static buffer; thread-safe via `Once`. Returns a `&'static ZStr`.
 pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
-    static CELL: std::sync::OnceLock<Result<ZBox, crate::Error>> = std::sync::OnceLock::new();
+    static CELL: Once<Result<ZBox, crate::Error>> = Once::new();
     let r = CELL.get_or_init(|| {
         #[allow(unused_mut)]
         let mut path = std::env::current_exe().map_err(crate::Error::from)?;
@@ -2206,7 +2350,7 @@ pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
 // Port of `bun.getThreadCount` (bun.zig:3597). Clamped to [2, 1024]; honours
 // UV_THREADPOOL_SIZE / GOMAXPROCS overrides.
 pub fn get_thread_count() -> u16 {
-    static CELL: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+    static CELL: Once<u16> = Once::new();
     *CELL.get_or_init(|| {
         const MAX: u16 = 1024;
         const MIN: u16 = 2;
@@ -2236,9 +2380,20 @@ pub fn get_thread_count() -> u16 {
             None
         };
         let raw = from_env().unwrap_or_else(|| {
-            // Zig calls `jsc.wtf.numberOfProcessorCores()`; that crate is above
-            // bun_core, so use std (same value: sysconf/_SC_NPROCESSORS_ONLN).
-            std::thread::available_parallelism().map(|n| n.get() as u16).unwrap_or(MIN)
+            // Zig (bun.zig:3621) calls `jsc.wtf.numberOfProcessorCores()` —
+            // `WTF::numberOfProcessorCores()` → sysconf(_SC_NPROCESSORS_ONLN)
+            // on POSIX / GetSystemInfo on Windows. **Not** the same as
+            // `std::thread::available_parallelism()`, which on Linux also
+            // consults sched_getaffinity + cgroup cpu.max quota; on
+            // cgroup-limited CI runners or P/E-core machines the two diverge,
+            // changing bundler `max_threads` (and per-thread mimalloc arena
+            // RSS) vs the Zig binary. Declare the C symbol locally — `jsc`
+            // is above `bun_core` in the crate DAG so we can't `use` it, but
+            // the symbol is always linked (wtf-bindings.cpp).
+            unsafe extern "C" {
+                safe fn WTF__numberOfProcessorCores() -> core::ffi::c_int;
+            }
+            WTF__numberOfProcessorCores().max(1) as u16
         });
         raw.clamp(MIN, MAX)
     })
@@ -2388,7 +2543,7 @@ macro_rules! __runtime_embed_impl {
         __s
     }};
     (@load $kind:expr, $sub:literal) => {{
-        static __CELL: ::std::sync::OnceLock<String> = ::std::sync::OnceLock::new();
+        static __CELL: $crate::Once<String> = $crate::Once::new();
         __CELL.get_or_init(|| {
             let mut p = match $kind {
                 $crate::EmbedKind::Codegen | $crate::EmbedKind::CodegenEager => {
@@ -2891,7 +3046,7 @@ pub use bun_alloc::secure_zero;
 // `Argv` wrapper so call sites can use it both as a slice (`.get(0)`,
 // `.iter()`, `.len()`, `.as_slice()`) and as an `IntoIterator<Item = &[u8]>`
 // for `for arg in argv()`.
-static ARGV_STORAGE: std::sync::OnceLock<Vec<ZBox>> = std::sync::OnceLock::new();
+static ARGV_STORAGE: Once<Vec<ZBox>> = Once::new();
 static ARGV: RacyCell<&'static [&'static ZStr]> = RacyCell::new(&[]);
 static ARGV_INIT: std::sync::Once = std::sync::Once::new();
 
@@ -2919,7 +3074,7 @@ static OS_ARGV: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
 /// # Safety
 /// `argv` must point to `argc` valid NUL-terminated C strings that live for
 /// the entire process (the kernel/crt argv block does). Calling this after
-/// [`argv()`] has been observed is a logic error — the `OnceLock` will
+/// [`argv()`] has been observed is a logic error — the `Once` slot will
 /// already have been populated from the fallback path.
 pub unsafe fn init_argv(argc: core::ffi::c_int, argv: *const *const core::ffi::c_char) {
     OS_ARGC.store(argc.max(0) as usize, core::sync::atomic::Ordering::Relaxed);
@@ -3005,7 +3160,7 @@ fn argv_storage() -> &'static [ZBox] {
 fn argv_view() -> &'static [&'static ZStr] {
     ARGV_INIT.call_once(|| {
         let storage: &'static [ZBox] = argv_storage();
-        // ARGV_STORAGE is process-static via OnceLock; `as_zstr` borrows for `'static`.
+        // ARGV_STORAGE is process-static via `Once`; `as_zstr` borrows for `'static`.
         let mut view: Vec<&'static ZStr> = storage.iter().map(ZBox::as_zstr).collect();
         // Zig `initArgv`: splice BUN_OPTIONS tokens after argv[0].
         if let Some(opts) = crate::env_var::BUN_OPTIONS.get() {
@@ -3263,10 +3418,10 @@ pub unsafe fn set_argv(v: &'static [&'static ZStr]) {
 /// now-`'static` slice. Used by the `--compile` exec-argv splice path
 /// (`cli_body.rs`) which needs to extend argv beyond the original
 /// OS-provided storage and then hand sub-slices to [`set_argv`]. Single-shot:
-/// the slot is a `OnceLock`, so a second call drops `v` and returns the
+/// the slot is a `Once`, so a second call drops `v` and returns the
 /// first-stored slice.
 pub fn intern_argv(v: Vec<&'static ZStr>) -> &'static [&'static ZStr] {
-    static SLOT: std::sync::OnceLock<Box<[&'static ZStr]>> = std::sync::OnceLock::new();
+    static SLOT: Once<Box<[&'static ZStr]>> = Once::new();
     SLOT.get_or_init(move || v.into_boxed_slice())
 }
 

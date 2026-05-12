@@ -223,9 +223,9 @@ impl MacroContext {
         }
         // SAFETY: `Some` for every non-disabled Macro; see `Macro` PORT NOTE.
         let vm = macro_vm.expect("Macro.vm accessed on disabled sentinel").as_ptr();
-        // SAFETY: `vm` is the per-thread VM (lives for the thread, outlives this
-        // guard). Enables macro mode now; disables on scope exit.
-        let _mode_guard = unsafe { MacroModeGuard::new(vm) };
+        // `vm` is the per-thread VM (BackRef invariant: outlives this guard).
+        // Enables macro mode now; disables on scope exit.
+        let _mode_guard = MacroModeGuard::new(vm);
         // SAFETY: `event_loop()` returns a self-pointer into `*vm`.
         unsafe { (*(*vm).event_loop()).ensure_waker() };
 

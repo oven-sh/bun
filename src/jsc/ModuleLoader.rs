@@ -71,28 +71,34 @@ impl ModuleLoader {
 }
 
 /// RAII shape of Zig's `defer jsc_vm.module_loader.resetArena(jsc_vm)` — calls
-/// [`ModuleLoader::reset_arena`] on the held VM when dropped. Holds a raw
-/// pointer (not `&mut`) so the body of the guarded scope may also reach into
-/// the VM via raw pointers without aliasing the guard.
+/// [`ModuleLoader::reset_arena`] on the held VM when dropped. Holds a
+/// [`BackRef`] (not `&mut`) so the body of the guarded scope may also reach
+/// into the VM via raw pointers without aliasing the guard; the VM-outlives-
+/// guard contract is the BackRef type invariant.
+///
+/// [`BackRef`]: bun_ptr::BackRef
 #[must_use = "dropping immediately resets the arena before transpilation"]
-pub struct ArenaResetGuard(*mut VirtualMachine);
+pub struct ArenaResetGuard(bun_ptr::BackRef<VirtualMachine>);
 
 impl ArenaResetGuard {
-    /// # Safety
-    /// `vm` must be the live per-thread VM for the guard's entire lifetime,
-    /// and the guard must drop on that same thread.
+    /// `vm` must be the live per-thread VM (the [`bun_ptr::BackRef`]
+    /// invariant). Drop routes through [`VirtualMachine::as_mut`], which
+    /// derives provenance from the thread-local slot, so neither construction
+    /// nor teardown performs a raw deref here.
     #[inline]
-    pub unsafe fn new(vm: *mut VirtualMachine) -> Self {
-        Self(vm)
+    pub fn new(vm: *mut VirtualMachine) -> Self {
+        Self(bun_ptr::BackRef::from(
+            core::ptr::NonNull::new(vm).expect("vm non-null"),
+        ))
     }
 }
 
 impl Drop for ArenaResetGuard {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: per `new`'s contract — `self.0` is the live per-thread VM
-        // and this drop runs on the same thread before the VM is destroyed.
-        unsafe { ModuleLoader::reset_arena(&mut *self.0) };
+        // BackRef invariant: VM outlives guard. `as_mut()` re-derives the
+        // `&mut` from the thread-local slot (debug-asserts `self.0` is that VM).
+        ModuleLoader::reset_arena(self.0.get().as_mut());
     }
 }
 

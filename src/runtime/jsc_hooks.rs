@@ -4095,8 +4095,8 @@ unsafe fn transpile_file(
     };
 
     // Spec :1083 — `defer jsc_vm.module_loader.resetArena(jsc_vm)`.
-    // SAFETY: `jsc_vm` is the live per-thread VM and outlives this guard.
-    let _reset_arena = unsafe { ArenaResetGuard::new(jsc_vm) };
+    // `jsc_vm` is the live per-thread VM (BackRef invariant).
+    let _reset_arena = ArenaResetGuard::new(jsc_vm);
 
     // Spec :1085 + VirtualMachine.zig:489-494 — lazy-init the per-thread
     // shared printer. PORT NOTE: in Zig `loadExtraEnvAndSourceCodePrinter`
@@ -4280,8 +4280,8 @@ unsafe fn transpile_virtual_module(
     };
 
     // Spec :1272-1273 — `defer log.deinit(); defer module_loader.resetArena()`.
-    // SAFETY: `jsc_vm` is the live per-thread VM and outlives this guard.
-    let _reset_arena = unsafe { ArenaResetGuard::new(jsc_vm) };
+    // `jsc_vm` is the live per-thread VM (BackRef invariant).
+    let _reset_arena = ArenaResetGuard::new(jsc_vm);
 
     // Lazy-init the per-thread shared printer (same path as `transpile_file`).
     let printer_ptr: *mut bun_js_printer::BufferPrinter = TRANSPILE_PRINTER.with(|cell| {

@@ -570,12 +570,16 @@ pub struct MacroModeGuard {
     vm: bun_ptr::BackRef<VirtualMachine>,
 }
 impl MacroModeGuard {
-    /// # Safety
-    /// `vm` must point to the live per-thread `VirtualMachine` and remain
-    /// valid until the returned guard is dropped.
+    /// `vm` must be the live per-thread `VirtualMachine` (the [`BackRef`]
+    /// invariant: the VM outlives any guard it hands out). Mutation routes
+    /// through [`VirtualMachine::as_mut`], which derives provenance from the
+    /// thread-local slot — so this body contains no raw deref and the fn is
+    /// safe; the lifetime contract is the BackRef type invariant rather than
+    /// a per-call precondition.
+    ///
+    /// [`BackRef`]: bun_ptr::BackRef
     #[inline]
-    pub unsafe fn new(vm: *mut VirtualMachine) -> Self {
-        // Caller contract: `vm` is the non-null per-thread singleton.
+    pub fn new(vm: *mut VirtualMachine) -> Self {
         let vm = bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null"));
         vm.get().as_mut().enable_macro_mode();
         Self { vm }

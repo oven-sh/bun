@@ -529,6 +529,28 @@ pub const Run = struct {
                 }
 
                 vm.onBeforeExit();
+
+                // The entry module's top-level await never settled and nothing
+                // is keeping the event loop alive. Match Node.js: warn + exit 13.
+                // `onBeforeExit` handlers may have resolved the promise, so drain
+                // microtasks and re-run the event loop once more before deciding.
+                if (vm.pending_internal_promise) |p| {
+                    if (p.status() == .pending) {
+                        vm.tick();
+                        while (vm.isEventLoopAlive()) {
+                            vm.tick();
+                            vm.eventLoop().autoTickActive();
+                        }
+                    }
+                    if (p.status() == .pending and vm.exit_handler.exit_code == 0) {
+                        vm.exit_handler.exit_code = 13;
+                        Output.prettyErrorln(
+                            "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await",
+                            .{},
+                        );
+                        Output.flush();
+                    }
+                }
             }
 
             if (vm.log.msgs.items.len > 0) {

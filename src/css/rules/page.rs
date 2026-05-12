@@ -244,7 +244,7 @@ impl PageRule {
 /// A page pseudo class within an `@page` selector.
 ///
 /// See [PageSelector](PageSelector).
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
 pub enum PagePseudoClass {
     /// The `:left` pseudo class.
     Left,
@@ -258,49 +258,6 @@ pub enum PagePseudoClass {
     Blank,
 }
 
-// PORT NOTE: Zig `css.enum_property_util.{asStr,toCss}` used `@tagName` to get
-// the lowercase variant name. Phase B should provide `#[derive(EnumProperty)]`;
-// until then the `Into<&'static str>` table is hand-rolled.
-impl From<PagePseudoClass> for &'static str {
-    fn from(v: PagePseudoClass) -> &'static str {
-        match v {
-            PagePseudoClass::Left => "left",
-            PagePseudoClass::Right => "right",
-            PagePseudoClass::First => "first",
-            PagePseudoClass::Last => "last",
-            PagePseudoClass::Blank => "blank",
-        }
-    }
-}
-
-// PORT NOTE: Zig `css.DefineEnumProperty(@This())` — hand-rolled until
-// `#[derive(DefineEnumProperty)]` covers `&[u8]` lookup.
-impl css::EnumProperty for PagePseudoClass {
-    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
-        use bun_string::strings::eql_case_insensitive_ascii_check_length as eq;
-        if eq(ident, b"left") { return Some(Self::Left); }
-        if eq(ident, b"right") { return Some(Self::Right); }
-        if eq(ident, b"first") { return Some(Self::First); }
-        if eq(ident, b"last") { return Some(Self::Last); }
-        if eq(ident, b"blank") { return Some(Self::Blank); }
-        None
-    }
-}
-
-impl PagePseudoClass {
-    pub fn as_str(&self) -> &'static str {
-        css::enum_property_util::as_str(self)
-    }
-
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::enum_property_util::parse(input)
-    }
-
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        css::enum_property_util::to_css(self, dest)
-    }
-}
-
 impl PagePseudoClass {
     #[inline]
     pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
@@ -310,7 +267,7 @@ impl PagePseudoClass {
 }
 
 /// A [page margin box](https://www.w3.org/TR/css-page-3/#margin-boxes).
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
 pub enum PageMarginBox {
     /// A fixed-size box defined by the intersection of the top and left margins of the page box.
     TopLeftCorner,
@@ -348,70 +305,6 @@ pub enum PageMarginBox {
     BottomRight,
     /// A fixed-size box defined by the intersection of the bottom and right margins of the page box.
     BottomRightCorner,
-}
-
-// PORT NOTE: Zig `css.enum_property_util.{asStr,toCss}` used `@tagName`; Phase B
-// should provide `#[derive(EnumProperty)]`. Hand-rolled kebab-case table.
-impl From<PageMarginBox> for &'static str {
-    fn from(v: PageMarginBox) -> &'static str {
-        match v {
-            PageMarginBox::TopLeftCorner => "top-left-corner",
-            PageMarginBox::TopLeft => "top-left",
-            PageMarginBox::TopCenter => "top-center",
-            PageMarginBox::TopRight => "top-right",
-            PageMarginBox::TopRightCorner => "top-right-corner",
-            PageMarginBox::LeftTop => "left-top",
-            PageMarginBox::LeftMiddle => "left-middle",
-            PageMarginBox::LeftBottom => "left-bottom",
-            PageMarginBox::RightTop => "right-top",
-            PageMarginBox::RightMiddle => "right-middle",
-            PageMarginBox::RightBottom => "right-bottom",
-            PageMarginBox::BottomLeftCorner => "bottom-left-corner",
-            PageMarginBox::BottomLeft => "bottom-left",
-            PageMarginBox::BottomCenter => "bottom-center",
-            PageMarginBox::BottomRight => "bottom-right",
-            PageMarginBox::BottomRightCorner => "bottom-right-corner",
-        }
-    }
-}
-
-// PORT NOTE: Zig `css.DefineEnumProperty(@This())` — hand-rolled until
-// `#[derive(DefineEnumProperty)]` covers `&[u8]` lookup.
-impl css::EnumProperty for PageMarginBox {
-    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
-        use bun_string::strings::eql_case_insensitive_ascii_check_length as eq;
-        if eq(ident, b"top-left-corner") { return Some(Self::TopLeftCorner); }
-        if eq(ident, b"top-left") { return Some(Self::TopLeft); }
-        if eq(ident, b"top-center") { return Some(Self::TopCenter); }
-        if eq(ident, b"top-right") { return Some(Self::TopRight); }
-        if eq(ident, b"top-right-corner") { return Some(Self::TopRightCorner); }
-        if eq(ident, b"left-top") { return Some(Self::LeftTop); }
-        if eq(ident, b"left-middle") { return Some(Self::LeftMiddle); }
-        if eq(ident, b"left-bottom") { return Some(Self::LeftBottom); }
-        if eq(ident, b"right-top") { return Some(Self::RightTop); }
-        if eq(ident, b"right-middle") { return Some(Self::RightMiddle); }
-        if eq(ident, b"right-bottom") { return Some(Self::RightBottom); }
-        if eq(ident, b"bottom-left-corner") { return Some(Self::BottomLeftCorner); }
-        if eq(ident, b"bottom-left") { return Some(Self::BottomLeft); }
-        if eq(ident, b"bottom-center") { return Some(Self::BottomCenter); }
-        if eq(ident, b"bottom-right") { return Some(Self::BottomRight); }
-        if eq(ident, b"bottom-right-corner") { return Some(Self::BottomRightCorner); }
-        None
-    }
-}
-
-impl PageMarginBox {
-    pub fn as_str(&self) -> &'static str {
-        css::enum_property_util::as_str(self)
-    }
-
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::enum_property_util::parse(input)
-    }
-
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        css::enum_property_util::to_css(self, dest)
-    }
 }
 
 pub struct PageRuleParser<'a> {

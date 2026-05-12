@@ -75,14 +75,8 @@ impl CalcUnit {
         // PERF(port): Zig used a comptime perfect hash; this is a linear match on a
         // stack-lowercased byte slice. Phase B: phf_map! over &[u8].
         // §Strings: source bytes are &[u8], never &str/String — no from_utf8/to_ascii_lowercase().
-        if f.len() > 5 {
-            return None;
-        }
-        let mut buf = [0u8; 5];
-        for (i, b) in f.iter().enumerate() {
-            buf[i] = b.to_ascii_lowercase();
-        }
-        match &buf[..f.len()] {
+        let (buf, len) = bun_core::strings::ascii_lowercase_buf::<5>(f)?;
+        match &buf[..len] {
             b"abs" => Some(Self::Abs),
             b"acos" => Some(Self::Acos),
             b"asin" => Some(Self::Asin),
@@ -1428,57 +1422,17 @@ impl<V> MathFunction<V> {
 
 /// A [rounding strategy](https://www.w3.org/TR/css-values-4/#typedef-rounding-strategy),
 /// as used in the `round()` function.
-#[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
+#[derive(Copy, Clone, PartialEq, Eq, Default, css::DefineEnumProperty)]
 pub enum RoundingStrategy {
     /// Round to the nearest integer.
-    #[strum(serialize = "nearest")]
+    #[default]
     Nearest,
     /// Round up (ceil).
-    #[strum(serialize = "up")]
     Up,
     /// Round down (floor).
-    #[strum(serialize = "down")]
     Down,
     /// Round toward zero (truncate).
-    #[strum(serialize = "to-zero")]
     ToZero,
-}
-
-impl css::EnumProperty for RoundingStrategy {
-    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
-        // PERF(port): Zig used a comptime enum map; manual match for now.
-        if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"nearest") {
-            Some(Self::Nearest)
-        } else if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"up") {
-            Some(Self::Up)
-        } else if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"down") {
-            Some(Self::Down)
-        } else if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"to-zero") {
-            Some(Self::ToZero)
-        } else {
-            None
-        }
-    }
-}
-
-impl RoundingStrategy {
-    pub fn as_str(&self) -> &'static str {
-        css::enum_property_util::as_str(self)
-    }
-
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        css::enum_property_util::parse(input)
-    }
-
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::enum_property_util::to_css(self, dest)
-    }
-}
-
-impl Default for RoundingStrategy {
-    fn default() -> Self {
-        RoundingStrategy::Nearest
-    }
 }
 
 fn arr2<T>(a: T, b: T) -> Vec<T> {
@@ -1521,57 +1475,22 @@ fn std_math_sign(v: f32) -> f32 {
 }
 
 /// A mathematical constant.
-#[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
+#[derive(Copy, Clone, PartialEq, Eq, css::DefineEnumProperty)]
 pub enum Constant {
     /// The base of the natural logarithm
-    #[strum(serialize = "e")]
     E,
     /// The ratio of a circle's circumference to its diameter
-    #[strum(serialize = "pi")]
     Pi,
     /// infinity
-    #[strum(serialize = "infinity")]
     Infinity,
     /// -infinity
-    #[strum(serialize = "-infinity")]
+    #[css(keyword = "-infinity")]
     NegInfinity,
     /// Not a number.
-    #[strum(serialize = "nan")]
     Nan,
 }
 
-impl css::EnumProperty for Constant {
-    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
-        // PERF(port): Zig used a comptime enum map; manual match for now.
-        if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"e") {
-            Some(Self::E)
-        } else if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"pi") {
-            Some(Self::Pi)
-        } else if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"infinity") {
-            Some(Self::Infinity)
-        } else if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"-infinity") {
-            Some(Self::NegInfinity)
-        } else if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"nan") {
-            Some(Self::Nan)
-        } else {
-            None
-        }
-    }
-}
-
 impl Constant {
-    pub fn as_str(&self) -> &'static str {
-        css::enum_property_util::as_str(self)
-    }
-
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        css::enum_property_util::parse(input)
-    }
-
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::enum_property_util::to_css(self, dest)
-    }
-
     pub fn into_f32(&self) -> f32 {
         match self {
             Constant::E => core::f32::consts::E,

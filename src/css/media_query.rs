@@ -37,10 +37,23 @@ type CSSNumber = f32;
 type CSSInteger = i32;
 
 // ───────────────────────── QueryCondition trait ─────────────────────────
+// Implementors: MediaCondition, StyleQuery, ContainerCondition.
+// NOT SupportsCondition — its variant set {Not, And(Vec), Or(Vec), Declaration,
+// Selector, Unknown} and its `needs_parens(&Self)` / `b" not "` contract are
+// structurally different and must stay hand-rolled.
+//
+// `deep_clone` is intentionally NOT on this trait. The Zig precedent is ONE
+// reflective `css.implementDeepClone` (generics.zig); the Rust equivalent is
+// `#[derive(DeepClone)]` (generics.rs). The hand-expansions in callers exist
+// only because of derive blockers — fix the derive, not the trait.
 
 /// Trait modeling Zig's `ValidQueryCondition` comptime interface check.
 /// Any type that can appear as a node in a query-condition tree.
-pub trait QueryCondition: Sized {
+pub trait QueryCondition: Sized + ToCss {
+    /// Leaf payload: `QueryFeature<_>` for media/container, `Property` for
+    /// `StyleQuery`.
+    type Feature;
+
     fn parse_feature(input: &mut Parser) -> Result<Self>;
     /// `parse_feature` with `ParserOptions` threaded — needed for the
     /// `env()` arm of `MediaFeatureValue::parse_unknown`. Default impl
@@ -68,6 +81,44 @@ pub trait QueryCondition: Sized {
         parent_operator: Option<Operator>,
         targets: &css::targets::Targets,
     ) -> bool;
+
+    // ─── variant-walk accessors (drive `condition_to_css`) ───
+    fn as_feature(&self) -> Option<&Self::Feature>;
+    fn as_not(&self) -> Option<&Self>;
+    fn as_operation(&self) -> Option<(Operator, &[Self])>;
+
+    /// Serialize the leaf feature. Not defaulted: `Property::to_css` takes an
+    /// extra `is_custom_property` flag, and `QueryFeature::to_css` is inherent
+    /// (not the `ToCss` trait), so callers must spell the dispatch.
+    fn feature_to_css(
+        f: &Self::Feature,
+        dest: &mut Printer,
+    ) -> core::result::Result<(), PrintErr>;
+
+    /// Serialize a variant that isn't `Feature`/`Not`/`Operation`
+    /// (e.g. `ContainerCondition::Style`). Implementors with no extra
+    /// variants leave the default.
+    fn extra_to_css(&self, _dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        unreachable!("QueryCondition: no extra variants")
+    }
+
+    /// Provided: shared `ToCss` body for the `Feature`/`Not`/`Operation`
+    /// lattice (+ `extra_to_css` fallback). Mirrors the three hand-rolled
+    /// `match`es this replaced.
+    fn condition_to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        if let Some(f) = self.as_feature() {
+            return Self::feature_to_css(f, dest);
+        }
+        if let Some(c) = self.as_not() {
+            dest.write_str("not ")?;
+            let needs = c.needs_parens(None, &dest.targets);
+            return to_css_with_parens_if_needed(c, dest, needs);
+        }
+        if let Some((op, conds)) = self.as_operation() {
+            return operation_to_css(op, conds, dest);
+        }
+        self.extra_to_css(dest)
+    }
 }
 
 /// `to_css` protocol used by the generic query-condition serializers.
@@ -96,20 +147,16 @@ pub struct MediaQuery {
 }
 
 /// `not` / `and` / `or` boolean combiner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum Operator {
-    #[strum(serialize = "and")]
     And,
-    #[strum(serialize = "or")]
     Or,
 }
 
 /// `only` / `not` media-query qualifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum Qualifier {
-    #[strum(serialize = "only")]
     Only,
-    #[strum(serialize = "not")]
     Not,
 }
 
@@ -694,20 +741,6 @@ impl MediaQuery {
     }
 }
 
-impl Qualifier {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        // Zig: css.enum_property_util.toCss → lowercase tag name.
-        dest.write_str(<&'static str>::from(*self))
-    }
-}
-
-impl Operator {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        // Zig: css.enum_property_util.toCss → lowercase tag name.
-        dest.write_str(<&'static str>::from(*self))
-    }
-}
-
 /// Zig: `toCssWithParensIfNeeded` — wraps `v.to_css()` in parentheses when the
 /// caller's grammar position requires it.
 pub fn to_css_with_parens_if_needed<T: ToCss + ?Sized>(
@@ -726,7 +759,7 @@ pub fn to_css_with_parens_if_needed<T: ToCss + ?Sized>(
 }
 
 /// Zig: `operationToCss` — serialize `a OP b OP c ...` with per-child parens.
-pub fn operation_to_css<C: QueryCondition + ToCss>(
+pub fn operation_to_css<C: QueryCondition>(
     operator: Operator,
     conditions: &[C],
     dest: &mut Printer,
@@ -755,24 +788,26 @@ pub fn operation_to_css<C: QueryCondition + ToCss>(
 
 impl ToCss for MediaCondition {
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        match self {
-            MediaCondition::Feature(f) => f.to_css(dest),
-            MediaCondition::Not(c) => {
-                dest.write_str("not ")?;
-                to_css_with_parens_if_needed(
-                    &**c,
-                    dest,
-                    c.needs_parens(None, &dest.targets),
-                )
-            }
-            MediaCondition::Operation { operator, conditions } => {
-                operation_to_css(*operator, conditions.as_slice(), dest)
-            }
-        }
+        self.condition_to_css(dest)
     }
 }
 
 impl QueryCondition for MediaCondition {
+    type Feature = MediaFeature;
+
+    fn as_feature(&self) -> Option<&MediaFeature> {
+        if let Self::Feature(f) = self { Some(f) } else { None }
+    }
+    fn as_not(&self) -> Option<&Self> {
+        if let Self::Not(c) = self { Some(c) } else { None }
+    }
+    fn as_operation(&self) -> Option<(Operator, &[Self])> {
+        if let Self::Operation { operator, conditions } = self { Some((*operator, conditions)) } else { None }
+    }
+    fn feature_to_css(f: &MediaFeature, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        f.to_css(dest)
+    }
+
     fn parse_feature(input: &mut Parser) -> Result<Self> {
         let feature = MediaFeature::parse(input)?;
         Ok(MediaCondition::Feature(feature))
@@ -1335,35 +1370,6 @@ impl MediaFeatureValue {
 }
 
 // ───────────────────────── parse impl bodies ─────────────────────────
-
-// PORT NOTE: Zig `css.DefineEnumProperty(@This())` for Operator/Qualifier.
-impl css::EnumProperty for Operator {
-    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
-        use bun_string::strings::eql_case_insensitive_ascii_check_length as eq;
-        if eq(ident, b"and") { return Some(Self::And); }
-        if eq(ident, b"or") { return Some(Self::Or); }
-        None
-    }
-}
-impl Operator {
-    pub fn parse(input: &mut Parser) -> Result<Self> {
-        css::enum_property_util::parse(input)
-    }
-}
-
-impl css::EnumProperty for Qualifier {
-    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
-        use bun_string::strings::eql_case_insensitive_ascii_check_length as eq;
-        if eq(ident, b"only") { return Some(Self::Only); }
-        if eq(ident, b"not") { return Some(Self::Not); }
-        None
-    }
-}
-impl Qualifier {
-    pub fn parse(input: &mut Parser) -> Result<Self> {
-        css::enum_property_util::parse(input)
-    }
-}
 
 impl MediaType {
     pub fn parse(input: &mut Parser) -> Result<MediaType> {

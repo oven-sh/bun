@@ -76,10 +76,7 @@ fn easing_map_get_any_case(ident: &[u8]) -> Option<EasingKeyword> {
     if len < 4 || len > 11 {
         return None;
     }
-    let mut buf = [0u8; 11];
-    for (i, b) in ident.iter().enumerate() {
-        buf[i] = b.to_ascii_lowercase();
-    }
+    let (buf, _) = bun_core::strings::ascii_lowercase_buf::<11>(ident)?;
     let lower = &buf[..len];
     match len {
         4 if lower == b"ease" => Some(EasingKeyword::Ease),
@@ -278,15 +275,9 @@ enum StepPositionKeyword {
 /// (two at len 9). See `clap::find_param` for the same shape.
 fn step_position_map_get_any_case(ident: &[u8]) -> Option<StepPositionKeyword> {
     // Longest key is "jump-start" (10 bytes).
-    if ident.len() > 10 {
-        return None;
-    }
-    let mut buf = [0u8; 10];
-    for (i, b) in ident.iter().enumerate() {
-        buf[i] = b.to_ascii_lowercase();
-    }
-    let key = &buf[..ident.len()];
-    match key.len() {
+    let (buf, len) = bun_core::strings::ascii_lowercase_buf::<10>(ident)?;
+    let key = &buf[..len];
+    match len {
         3 if key == b"end" => Some(StepPositionKeyword::End),
         5 if key == b"start" => Some(StepPositionKeyword::Start),
         8 if key == b"jump-end" => Some(StepPositionKeyword::JumpEnd),

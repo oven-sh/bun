@@ -45,11 +45,11 @@ impl Percentage {
         if self.v != 0.0 && self.v.abs() < 0.01 {
             // TODO(port): fixed-size stack writer — Zig used std.Io.Writer.fixed over [32]u8.
             let mut backing = [0u8; 32];
-            let mut fbs = css::serializer::FixedBufWriter::new(&mut backing);
+            let mut fbs = css::serializer::FixedBufWriter::new_mut(&mut backing);
             if percent.to_css_generic(&mut fbs).is_err() {
                 return Err(dest.add_fmt_error());
             }
-            let buf = fbs.buffered();
+            let buf = fbs.get_written();
             if self.v < 0.0 {
                 dest.write_char(b'-')?;
                 dest.write_str(bun_string::strings::trim_leading_pattern2(&buf, b'-', b'0'))?;

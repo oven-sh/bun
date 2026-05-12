@@ -396,17 +396,16 @@ impl<'a> Printer<'a> {
     }
 }
 
-/// `Printer` participates in `serializer::serialize_*<W: WriteAll>` so
+/// `Printer` participates in `serializer::serialize_*<W: bun_io::Write>` so
 /// `Token::to_css` and friends can write through it generically.
-impl<'a> css::WriteAll for Printer<'a> {
-    type Error = PrintErr;
+impl<'a> bun_io::Write for Printer<'a> {
     #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> Result<(), PrintErr> {
-        self.write_str(buf)
+    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+        Printer::write_str(self, buf).map_err(|_| bun_core::err!("CSSPrintError"))
     }
     #[inline]
-    fn write_byte(&mut self, b: u8) -> Result<(), PrintErr> {
-        self.write_char(b)
+    fn write_byte(&mut self, b: u8) -> bun_io::Result<()> {
+        Printer::write_char(self, b).map_err(|_| bun_core::err!("CSSPrintError"))
     }
 }
 
@@ -414,26 +413,27 @@ impl<'a> Printer<'a> {
 
     /// Serialize a CSS identifier through this printer.
     ///
-    /// Thin wrapper over `css::serializer::serialize_identifier` — since
-    /// `Printer: WriteAll<Error = PrintErr>` and `write_str`/`write_char`
-    /// already record `add_fmt_error()` on failure, no `.map_err` is needed.
+    /// Thin wrapper over `css::serializer::serialize_identifier`. The
+    /// serializer returns `bun_io::Result<()>`; `write_str`/`write_char` have
+    /// already recorded `add_fmt_error()` on failure, so the error payload is
+    /// just remapped to `PrintErr::CSSPrintError`.
     #[inline]
     pub fn serialize_identifier(&mut self, v: &[u8]) -> PrintResult<()> {
-        css::serializer::serialize_identifier(v, self)
+        css::serializer::serialize_identifier(v, self).map_err(|_| PrintErr::CSSPrintError)
     }
 
     /// Serialize a quoted CSS string through this printer. See
     /// [`Printer::serialize_identifier`] for the error-mapping rationale.
     #[inline]
     pub fn serialize_string(&mut self, v: &[u8]) -> PrintResult<()> {
-        css::serializer::serialize_string(v, self)
+        css::serializer::serialize_string(v, self).map_err(|_| PrintErr::CSSPrintError)
     }
 
     /// Serialize a CSS name (identifier-tail escaping) through this printer.
     /// See [`Printer::serialize_identifier`] for the error-mapping rationale.
     #[inline]
     pub fn serialize_name(&mut self, v: &[u8]) -> PrintResult<()> {
-        css::serializer::serialize_name(v, self)
+        css::serializer::serialize_name(v, self).map_err(|_| PrintErr::CSSPrintError)
     }
 
     pub fn write_comment(&mut self, comment: &[u8]) -> PrintResult<()> {
@@ -570,8 +570,8 @@ impl<'a> Printer<'a> {
                     } else {
                         css::serializer::serialize_name(s, self)
                     };
-                    if let Err(e) = r {
-                        err = Some(e);
+                    if r.is_err() {
+                        err = Some(PrintErr::CSSPrintError);
                     }
                 });
                 if let Some(e) = err {
@@ -627,8 +627,8 @@ impl<'a> Printer<'a> {
                     Printer::replace_dots(arena, s1)
                 };
                 self.col += u32::try_from(s.len()).expect("int cast");
-                if let Err(e) = css::serializer::serialize_name(s, self) {
-                    err = Some(e);
+                if css::serializer::serialize_name(s, self).is_err() {
+                    err = Some(PrintErr::CSSPrintError);
                 }
             });
             if let Some(e) = err {

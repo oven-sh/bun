@@ -333,14 +333,9 @@ impl UnicodeRange {
         (value, digits)
     }
 
+    #[inline]
     fn to_hex_digit(b: u8) -> Option<u32> {
-        let mut digit = (b as u32).wrapping_sub('0' as u32);
-        if digit < 10 {
-            return Some(digit);
-        }
-        // Force the 6th bit to be set to ensure ascii is lower case.
-        digit = ((b as u32) | 0b10_0000).wrapping_sub('a' as u32).saturating_add(10);
-        if digit < 16 { Some(digit) } else { None }
+        bun_core::fmt::hex_digit_value(b).map(u32::from)
     }
 }
 
@@ -553,7 +548,7 @@ impl Source {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
 pub enum FontTechnology {
     /// A font format keyword in the `format()` function of the
     /// [src](https://drafts.csswg.org/css-fonts/#src-desc)
@@ -592,65 +587,6 @@ pub enum FontTechnology {
     /// Supports Incremental
     /// The incremental tech refers to client support for incremental font loading, using either the range-request or the patch-subset method
     Incremental,
-}
-
-impl From<FontTechnology> for &'static str {
-    fn from(v: FontTechnology) -> &'static str {
-        match v {
-            FontTechnology::FeaturesOpentype => "features-opentype",
-            FontTechnology::FeaturesAat => "features-aat",
-            FontTechnology::FeaturesGraphite => "features-graphite",
-            FontTechnology::ColorColrv0 => "color-colrv0",
-            FontTechnology::ColorColrv1 => "color-colrv1",
-            FontTechnology::ColorSvg => "color-svg",
-            FontTechnology::ColorSbix => "color-sbix",
-            FontTechnology::ColorCbdt => "color-cbdt",
-            FontTechnology::Variations => "variations",
-            FontTechnology::Palettes => "palettes",
-            FontTechnology::Incremental => "incremental",
-        }
-    }
-}
-
-// PORT NOTE: Zig `css.DefineEnumProperty(@This())` — hand-rolled until
-// `#[derive(DefineEnumProperty)]` covers `&[u8]` lookup.
-impl css::EnumProperty for FontTechnology {
-    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
-        use bun_string::strings::eql_case_insensitive_ascii_check_length as eq;
-        if eq(ident, b"features-opentype") { return Some(Self::FeaturesOpentype); }
-        if eq(ident, b"features-aat") { return Some(Self::FeaturesAat); }
-        if eq(ident, b"features-graphite") { return Some(Self::FeaturesGraphite); }
-        if eq(ident, b"color-colrv0") { return Some(Self::ColorColrv0); }
-        if eq(ident, b"color-colrv1") { return Some(Self::ColorColrv1); }
-        if eq(ident, b"color-svg") { return Some(Self::ColorSvg); }
-        if eq(ident, b"color-sbix") { return Some(Self::ColorSbix); }
-        if eq(ident, b"color-cbdt") { return Some(Self::ColorCbdt); }
-        if eq(ident, b"variations") { return Some(Self::Variations); }
-        if eq(ident, b"palettes") { return Some(Self::Palettes); }
-        if eq(ident, b"incremental") { return Some(Self::Incremental); }
-        None
-    }
-}
-
-impl FontTechnology {
-    pub fn as_str(&self) -> &'static str {
-        css::enum_property_util::as_str(self)
-    }
-
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        css::enum_property_util::parse(input)
-    }
-
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::enum_property_util::to_css(self, dest)
-    }
-}
-
-impl crate::generics::ToCss for FontTechnology {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        FontTechnology::to_css(self, dest)
-    }
 }
 
 /// A `url()` value for the [src](https://drafts.csswg.org/css-fonts/#src-desc)

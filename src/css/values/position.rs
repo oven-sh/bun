@@ -394,35 +394,7 @@ impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent
     }
 }
 
-// `enum_property_util::parse` requires `EnumProperty`; provide for both side
-// keywords (case-insensitive matching mirrors Zig `comptimeEnumMap`).
-macro_rules! impl_position_keyword {
-    ($T:ident { $($lit:literal => $V:ident),* $(,)? }) => {
-        impl EnumProperty for $T {
-            fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
-                $(
-                    if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, $lit) {
-                        return Some($T::$V);
-                    }
-                )*
-                None
-            }
-        }
-        impl protocol::Parse for $T {
-            #[inline] fn parse(input: &mut css::Parser) -> CssResult<Self> { $T::parse(input) }
-        }
-        impl protocol::ToCss for $T {
-            #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-                $T::to_css(self, dest)
-            }
-        }
-    };
-}
-impl_position_keyword!(HorizontalPositionKeyword { b"left" => Left, b"right" => Right });
-impl_position_keyword!(VerticalPositionKeyword { b"top" => Top, b"bottom" => Bottom });
-
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-#[strum(serialize_all = "lowercase")]
+#[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
 pub enum HorizontalPositionKeyword {
     /// The `left` keyword.
     Left,
@@ -431,18 +403,6 @@ pub enum HorizontalPositionKeyword {
 }
 
 impl HorizontalPositionKeyword {
-    pub fn as_str(&self) -> &'static str {
-        css::enum_property_util::as_str(self)
-    }
-
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        css::enum_property_util::parse(input)
-    }
-
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::enum_property_util::to_css(self, dest)
-    }
-
     pub fn into_length_percentage(&self) -> LengthPercentage {
         match self {
             HorizontalPositionKeyword::Left => LengthPercentage::zero(),
@@ -453,8 +413,7 @@ impl HorizontalPositionKeyword {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-#[strum(serialize_all = "lowercase")]
+#[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
 pub enum VerticalPositionKeyword {
     /// The `top` keyword.
     Top,
@@ -463,18 +422,6 @@ pub enum VerticalPositionKeyword {
 }
 
 impl VerticalPositionKeyword {
-    pub fn as_str(&self) -> &'static str {
-        css::enum_property_util::as_str(self)
-    }
-
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        css::enum_property_util::parse(input)
-    }
-
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::enum_property_util::to_css(self, dest)
-    }
-
     pub fn into_length_percentage(&self) -> LengthPercentage {
         match self {
             VerticalPositionKeyword::Top => LengthPercentage::zero(),

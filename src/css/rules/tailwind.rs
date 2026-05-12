@@ -1,7 +1,7 @@
 pub use crate::css_parser as css;
 pub use crate::values as css_values;
 
-use crate::css_parser::{enum_property_util, Location, Parser, PrintErr, Printer};
+use crate::css_parser::{Location, PrintErr, Printer};
 
 pub use crate::css_parser::Error;
 
@@ -28,7 +28,7 @@ impl TailwindAtRule {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
 pub enum TailwindStyleName {
     /// This injects Tailwind's base styles and any base styles registered by
     ///  plugins.
@@ -45,44 +45,6 @@ pub enum TailwindStyleName {
     /// If omitted, Tailwind will append these classes to the very end of
     /// your stylesheet by default.
     Variants,
-}
-
-impl From<TailwindStyleName> for &'static str {
-    fn from(v: TailwindStyleName) -> &'static str {
-        match v {
-            TailwindStyleName::Base => "base",
-            TailwindStyleName::Components => "components",
-            TailwindStyleName::Utilities => "utilities",
-            TailwindStyleName::Variants => "variants",
-        }
-    }
-}
-
-// PORT NOTE: Zig `css.DefineEnumProperty(@This())` — hand-rolled until
-// `#[derive(DefineEnumProperty)]` covers `&[u8]` lookup.
-impl css::EnumProperty for TailwindStyleName {
-    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
-        use bun_string::strings::eql_case_insensitive_ascii_check_length as eq;
-        if eq(ident, b"base") { return Some(Self::Base); }
-        if eq(ident, b"components") { return Some(Self::Components); }
-        if eq(ident, b"utilities") { return Some(Self::Utilities); }
-        if eq(ident, b"variants") { return Some(Self::Variants); }
-        None
-    }
-}
-
-impl TailwindStyleName {
-    pub fn as_str(&self) -> &'static str {
-        enum_property_util::as_str::<Self>(self)
-    }
-
-    pub fn parse(input: &mut Parser) -> css::CssResult<Self> {
-        enum_property_util::parse::<Self>(input)
-    }
-
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        enum_property_util::to_css::<Self>(self, dest)
-    }
 }
 
 // ported from: src/css/rules/tailwind.zig

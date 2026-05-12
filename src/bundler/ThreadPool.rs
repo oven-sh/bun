@@ -527,15 +527,21 @@ impl Worker {
     // `Worker` is `Send` because its arena/backref pointers are
     // owned-heap or per-thread; the `unsafe impl Send for ThreadPool` (the
     // bundler pool that owns the workers vec) covers the cross-thread move.
-    /// SAFETY: `task` must be the `deinit_task` field of a live boxed `Worker`.
-    pub unsafe fn deinit_callback(task: *mut ThreadPoolLib::Task) {
+    /// Thread-pool idle-task callback (safe fn — coerces to the
+    /// `Task.callback` field type at the struct-init site). `task` is the
+    /// `deinit_task` field of a live boxed `Worker` — guaranteed by
+    /// [`Self::deinit_soon`], the sole scheduler of this callback.
+    pub fn deinit_callback(task: *mut ThreadPoolLib::Task) {
         bun_core::scoped_log!(ThreadPool, "Worker.deinit()");
-        // SAFETY: task points to Worker.deinit_task; offset_of recovers the parent.
+        // SAFETY: `task` points to `Worker.deinit_task` (intrusive field) —
+        // only ever invoked by the thread pool against a `Worker` enqueued via
+        // `deinit_soon`, so provenance covers the full `Worker` allocation.
         let this: *mut Worker = unsafe {
             bun_core::from_field_ptr!(Worker, deinit_task, task)
         };
-        // SAFETY: deinit_callback is only scheduled via `deinit_soon` on a live
-        // heap-allocated Worker; we hold exclusive ownership on this idle task.
+        // SAFETY: `deinit_soon` schedules this exactly once on a live
+        // heap-allocated `Worker`; the idle-task fires on the worker's own OS
+        // thread with no other live borrow, so we hold exclusive ownership.
         unsafe { Self::deinit(this) };
     }
 

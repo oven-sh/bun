@@ -331,10 +331,9 @@ impl Default for ParseTask {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// taskCallback / ioTaskCallback — thread-pool entry points. Real `unsafe fn`
-// signatures matching `ThreadPoolLib::Task.callback`; bodies dispatch to
-// `parse_worker::run_from_thread_pool` once the `ThreadPool::Worker` module
-// un-gates (lib.rs ` pub mod ThreadPool`).
+// taskCallback / ioTaskCallback — thread-pool entry points. Safe-fn wrappers
+// (coerce to the `ThreadPoolLib::Task.callback` field type at the struct-init
+// sites); bodies dispatch to `parse_worker::run_from_thread_pool`.
 // ───────────────────────────────────────────────────────────────────────────
 
 // CONCURRENCY: thread-pool callback — runs on worker (or IO-pool) threads,
@@ -347,8 +346,11 @@ impl Default for ParseTask {
 // shared (`Worker::get`, `ctx.graph.pool`, `ctx.transpiler.options`).
 // `ParseTask` is `Send` because its non-auto-`Send` fields are bundle-
 // lifetime arena slices / backref pointers (`ctx`, `path`, `contents`).
-pub unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
-    // SAFETY: task points to ParseTask.io_task (intrusive field).
+pub fn io_task_callback(task: *mut ThreadPoolLib::Task) {
+    // SAFETY: `task` points to `ParseTask.io_task` (intrusive field) — only
+    // ever invoked by the thread pool against a `ParseTask` it scheduled, so
+    // provenance covers the full `ParseTask` and the `&mut` is unique per the
+    // CONCURRENCY note above.
     let parse_task = unsafe {
         &mut *bun_core::from_field_ptr!(ParseTask, io_task, task)
     };
@@ -356,8 +358,9 @@ pub unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
 }
 
 // CONCURRENCY: see `io_task_callback` — same task, different intrusive field.
-pub unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
-    // SAFETY: task points to ParseTask.task (intrusive field).
+pub fn task_callback(task: *mut ThreadPoolLib::Task) {
+    // SAFETY: `task` points to `ParseTask.task` (intrusive field) — see
+    // `io_task_callback` for the dispatch invariant.
     let parse_task = unsafe {
         &mut *bun_core::from_field_ptr!(ParseTask, task, task)
     };

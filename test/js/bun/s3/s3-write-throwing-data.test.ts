@@ -31,14 +31,21 @@ test("S3Client presign with invalid expiresIn does not crash", () => {
   expect(() => s3.presign("ab", { expiresIn: -1 })).toThrow("expiresIn");
 });
 
-test("S3 file construction with options.type getter throwing does not crash", () => {
-  const throwingType = {
-    get type() {
-      throw new Error("type-boom");
-    },
-  };
+test("S3 file construction with options.type getter throwing after initS3 does not crash", () => {
+  // `getCredentialsWithOptions` reads `type` before `initS3`, and the constructor
+  // reads it again after. Return a value on the first read and throw on the second
+  // so the throw happens after the path has been moved into the store.
+  function throwingTypeAfterFirst() {
+    let n = 0;
+    return {
+      get type() {
+        if (n++ === 0) return undefined;
+        throw new Error("type-boom");
+      },
+    };
+  }
   const s3 = new Bun.S3Client(opts);
-  expect(() => s3.file("some/path", throwingType)).toThrow("type-boom");
-  expect(() => Bun.file("s3://bucket/some/path", throwingType)).toThrow("type-boom");
-  expect(() => Bun.S3Client.file("some/path", throwingType)).toThrow("type-boom");
+  expect(() => s3.file("some/path", throwingTypeAfterFirst())).toThrow("type-boom");
+  expect(() => Bun.file("s3://bucket/some/path", throwingTypeAfterFirst())).toThrow("type-boom");
+  expect(() => Bun.S3Client.file("some/path", throwingTypeAfterFirst())).toThrow("type-boom");
 });

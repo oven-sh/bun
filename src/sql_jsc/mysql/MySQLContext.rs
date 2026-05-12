@@ -1,4 +1,4 @@
-use crate::jsc::{CallFrame, JSGlobalObject, JSGlobalObjectSqlExt, JSValue, StrongOptional, VirtualMachineSqlExt as _};
+use crate::jsc::{CallFrame, JSGlobalObject, JSValue, StrongOptional, VirtualMachineSqlExt as _};
 
 #[repr(C)]
 #[derive(Default)]
@@ -11,9 +11,10 @@ pub struct MySQLContext {
 // TODO(b2-blocked): bun_jsc::host_fn proc-macro
 // (Zig: `@export(&JSC.toJSHostFn(init), .{ .name = "MySQLContext__init" })`).
 pub fn init(global: &JSGlobalObject, frame: &CallFrame) -> JSValue {
-    // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM via raw ptr,
-    // no other live borrow in this scope.
-    let ctx = &mut unsafe { &mut *global.sql_vm_ptr() }.sql_state().mysql_context;
+    // `bun_vm()` → `&'static VirtualMachine` (per-thread singleton); `as_mut()`
+    // is the canonical safe escape hatch for the shrinking set of `&mut self`
+    // helpers like `sql_state()` — one audited unsafe lives in bun_jsc.
+    let ctx = &mut global.bun_vm().as_mut().sql_state().mysql_context;
     ctx.on_query_resolve_fn.set(global, frame.argument(0));
     ctx.on_query_reject_fn.set(global, frame.argument(1));
     JSValue::UNDEFINED

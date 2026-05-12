@@ -2864,13 +2864,18 @@ pub mod JSZstd {
     pub type ZstdJob = jsc::AnyTaskJob<ZstdCtx>;
 
     /// Zig `ZstdJob.create` — free fn (not `impl ZstdJob`) because
-    /// `AnyTaskJob<_>` is a foreign type.
+    /// `AnyTaskJob<_>` is a foreign type. Returns the promise `JSValue`
+    /// directly so callers stay safe (the only state read back from the heap
+    /// job is `ctx.promise.value()`; capture it before moving the strong into
+    /// the ctx so no post-schedule raw deref is needed).
     fn create_job(
         global_this: &JSGlobalObject,
         buffer: node::StringOrBuffer,
         is_compress: bool,
         level: i32,
-    ) -> *mut ZstdJob {
+    ) -> JSValue {
+        let promise = jsc::JSPromiseStrong::init(global_this);
+        let promise_value = promise.value();
         let job = jsc::AnyTaskJob::create(
             global_this,
             ZstdCtx {
@@ -2881,31 +2886,25 @@ pub mod JSZstd {
                 level,
                 output: Vec::new(),
                 error_message: None,
-                promise: jsc::JSPromiseStrong::init(global_this),
+                promise,
             },
         )
         .expect("ZstdCtx::init is infallible");
         // SAFETY: `job` is a freshly-created live pointer.
         unsafe { jsc::AnyTaskJob::schedule(job) };
-        job
+        promise_value
     }
 
     #[bun_jsc::host_fn]
     pub fn compress(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let (buffer, _, level) = get_options_async(global_this, callframe)?;
-        let job = create_job(global_this, buffer, true, level);
-        // SAFETY: `job` is live; `ctx.promise` is not touched by the off-thread
-        // `run` body, and the JS-thread completion cannot run until this host
-        // fn returns.
-        Ok(unsafe { (*job).ctx.promise.value() })
+        Ok(create_job(global_this, buffer, true, level))
     }
 
     #[bun_jsc::host_fn]
     pub fn decompress(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let (buffer, _, _) = get_options_async(global_this, callframe)?;
-        let job = create_job(global_this, buffer, false, 0); // level is ignored for decompression
-        // SAFETY: see `compress`.
-        Ok(unsafe { (*job).ctx.promise.value() })
+        Ok(create_job(global_this, buffer, false, 0)) // level is ignored for decompression
     }
 }
 

@@ -637,12 +637,12 @@ fn print_source_at_address(
     }
     let do_llint = probably_llint && allow_llint;
 
-    let frame = fp as *const CallFrame;
-    if do_llint {
-        // SAFETY: fp is a raw frame pointer from the stack iterator; only dereferenced when
-        // do_llint holds (i.e. address is inside the JSC LLInt range, so fp is a JSC CallFrame).
-        let frame = unsafe { &*frame };
-        // SAFETY: VM singleton is process-lifetime; `global` is set before any
+    // SAFETY: fp is a raw frame pointer from the stack iterator; only dereferenced when
+    // do_llint holds (i.e. address is inside the JSC LLInt range, so fp is a JSC CallFrame).
+    // Single audited backref-deref hoisted for both LLInt branches below.
+    let frame: Option<&CallFrame> = do_llint.then(|| unsafe { &*(fp as *const CallFrame) });
+    if let Some(frame) = frame {
+        // VM singleton is process-lifetime; `global` is set before any
         // JS frame can be on the stack to inspect.
         let srcloc = frame.get_caller_src_loc(VirtualMachine::get().global());
         tty_config.set_color(out_stream, Color::Bold)?;
@@ -660,9 +660,8 @@ fn print_source_at_address(
         print_line_from_file_any_os,
         do_llint,
     )?;
-    if do_llint {
-        // SAFETY: see above — address is inside the JSC LLInt range, so fp is a JSC CallFrame.
-        let desc = unsafe { &*frame }.describe_frame();
+    if let Some(frame) = frame {
+        let desc = frame.describe_frame();
         write!(out_stream, "    {}\n    ", bstr::BStr::new(desc))?;
         tty_config.set_color(out_stream, Color::Green)?;
         out_stream.extend_from_slice(b"^");

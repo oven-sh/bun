@@ -114,9 +114,10 @@ pub fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
             ));
         }
         if data.is_string() {
-            // SAFETY: `is_string()` guarantees `as_string()` is non-null and
-            // points to a live JSString cell on the JSC heap.
-            break 'blk unsafe { &*data.as_string() }.to_slice(global_this);
+            // `is_string()` guarantees `as_string()` is non-null and points to a
+            // live JSString cell on the JSC heap. `JSString` is an `opaque_ffi!`
+            // ZST handle; `opaque_ref` is the centralised deref proof.
+            break 'blk bun_jsc::JSString::opaque_ref(data.as_string()).to_slice(global_this);
         }
         let Some(buffer) = data.as_array_buffer(global_this) else {
             let ty_str = data.js_type_string(global_this).to_slice(global_this);

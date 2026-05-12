@@ -4744,11 +4744,9 @@ impl VirtualMachine {
         }
 
         if value.js_type() == jsc::JSType::DOMWrapper {
-            if let Some(build_error) = value.as_::<crate::BuildMessage>() {
-                // SAFETY: `as_` returns a live `*mut BuildMessage` backed by
-                // the JSCell's private data; valid while `value` is alive.
-                // R-2: shared borrow — `logged` is `Cell<bool>`.
-                let build_error = unsafe { &*build_error };
+            // `as_class_ref` is the audited `as_::<T>() → &T` backref-deref;
+            // R-2: shared borrow — `logged` is `Cell<bool>`.
+            if let Some(build_error) = value.as_class_ref::<crate::BuildMessage>() {
                 if !build_error.logged.get() {
                     if self.had_errors {
                         let _ = writer.write_all(b"\n");
@@ -4767,11 +4765,7 @@ impl VirtualMachine {
                 }
                 bun_core::Output::flush();
                 return true;
-            } else if let Some(resolve_error) = value.as_::<crate::ResolveMessage>() {
-                // SAFETY: see above; `*mut ResolveMessage` is live while
-                // `value` is alive. R-2: deref as shared (`&*`); the only
-                // mutated field (`logged`) is `Cell<bool>`.
-                let resolve_error = unsafe { &*resolve_error };
+            } else if let Some(resolve_error) = value.as_class_ref::<crate::ResolveMessage>() {
                 if !resolve_error.logged.get() {
                     if self.had_errors {
                         let _ = writer.write_all(b"\n");

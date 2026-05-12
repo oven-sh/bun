@@ -1257,7 +1257,7 @@ impl EntriesMap {
 /// every `unsafe { self.entries.* }` call site previously had to re-assert in
 /// a SAFETY comment — the lock is now structurally tied to the access, so the
 /// raw-pointer escape (`unsafe { &mut *entries_option_map() }`) lives in
-/// exactly one place per operation instead of at ~dozen call sites.
+/// exactly one place ([`map_mut`]) instead of at ~dozen call sites.
 ///
 /// `bun_threading::MutexGuard` stores the mutex by raw pointer (no borrow of
 /// `RealFS`), so holding an `EntriesGuard` does **not** keep `&self`/`&mut self`
@@ -1268,22 +1268,31 @@ pub struct EntriesGuard {
     _lock: bun_threading::MutexGuard,
 }
 impl EntriesGuard {
+    /// Single `unsafe` deref site for the `entries_option_map()` singleton.
+    ///
+    /// Private: `&self → &mut Map` is sound only because `self._lock` is the
+    /// proof-of-exclusivity (`entries_mutex` held), the map lives in a
+    /// disjoint static allocation, and every caller below uses the borrow
+    /// for one map operation then drops it — no two `&mut` overlap. Do NOT
+    /// expose publicly (would let safe code create aliased `&mut`).
     #[inline]
-    fn inner(&self) -> *mut EntriesOptionMap { entries_option_map() }
+    #[allow(clippy::mut_from_ref)]
+    fn map_mut(&self) -> &mut EntriesOptionMap {
+        // SAFETY: `self._lock` holds `entries_mutex` for this guard's whole
+        // lifetime — sole `&mut` to the process-static singleton. The returned
+        // borrow is tied to `&self` (the guard), so it cannot outlive the lock.
+        unsafe { &mut *entries_option_map() }
+    }
 
     pub fn get(&self, key: &[u8]) -> Option<*mut EntriesOption> {
-        // SAFETY: `self._lock` holds `entries_mutex` — sole `&mut` to the singleton
-        // for the duration of this call.
-        let r = unsafe { (*self.inner()).get(key)? };
+        let r = self.map_mut().get(key)?;
         Some(std::ptr::from_mut::<EntriesOption>(r))
     }
     pub fn get_or_put(&self, key: &[u8]) -> core::result::Result<allocators::Result, AllocError> {
-        // SAFETY: `self._lock` holds `entries_mutex` — sole `&mut` to the singleton.
-        unsafe { (*self.inner()).get_or_put(key) }
+        self.map_mut().get_or_put(key)
     }
     pub fn at_index(&self, index: allocators::IndexType) -> Option<*mut EntriesOption> {
-        // SAFETY: `self._lock` holds `entries_mutex` — sole `&mut` to the singleton.
-        let r = unsafe { (*self.inner()).at_index(index)? };
+        let r = self.map_mut().at_index(index)?;
         Some(std::ptr::from_mut::<EntriesOption>(r))
     }
     pub fn put(
@@ -1291,17 +1300,14 @@ impl EntriesGuard {
         result: &mut allocators::Result,
         value: EntriesOption,
     ) -> core::result::Result<*mut EntriesOption, AllocError> {
-        // SAFETY: `self._lock` holds `entries_mutex` — sole `&mut` to the singleton.
-        let r = unsafe { (*self.inner()).put(result, value)? };
+        let r = self.map_mut().put(result, value)?;
         Ok(std::ptr::from_mut::<EntriesOption>(r))
     }
     pub fn mark_not_found(&self, result: allocators::Result) {
-        // SAFETY: `self._lock` holds `entries_mutex` — sole `&mut` to the singleton.
-        unsafe { (*self.inner()).mark_not_found(result) }
+        self.map_mut().mark_not_found(result)
     }
     pub fn remove(&self, key: &[u8]) -> bool {
-        // SAFETY: `self._lock` holds `entries_mutex` — sole `&mut` to the singleton.
-        unsafe { (*self.inner()).remove(key) }
+        self.map_mut().remove(key)
     }
 }
 

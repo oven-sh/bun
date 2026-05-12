@@ -4797,10 +4797,7 @@ impl<'a> Resolver<'a> {
                 module_type = module_type_from_ext(path.name.ext).unwrap_or(options::ModuleType::Unknown);
             }
 
-            if let Some(entries) = dir.get_entries(self.generation) {
-                // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
-                // Read-only `.get()` lookup — shared borrow only (no `&mut DirEntry` materialized).
-                let entries = unsafe { &*entries };
+            if let Some(entries) = dir.get_entries_ref(self.generation) {
                 if let Some(query) = entries.get(path.name.filename) {
                     let symlink_path = query.entry().symlink(self.rfs_ptr(), self.store_fd);
                     if !symlink_path.is_empty() {
@@ -6448,12 +6445,8 @@ impl<'a> Resolver<'a> {
                         return None;
                     }
                 };
-                let entries = match resolved_dir_info.get_entries(self.generation) {
-                    // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton;
-                    // outlives the resolver. Read-only (`.get()` / `.fd`) — shared borrow only,
-                    // so the `&mut Entry` writes below (separate EntryStore allocation) cannot
-                    // alias it.
-                    Some(e) => unsafe { &*e },
+                let entries = match resolved_dir_info.get_entries_ref(self.generation) {
+                    Some(e) => e,
                     None => {
                         esm_resolution.status = Status::ModuleNotFound;
                         return None;
@@ -6506,10 +6499,7 @@ impl<'a> Resolver<'a> {
                     // Try to have a friendly error message if people forget the "/index.js" suffix
                     if ends_with_star {
                         if let Ok(Some(dir_info_ref)) = self.dir_info_cached(abs_esm_path) {
-                            if let Some(dir_entries) = dir_info_ref.get_entries(self.generation) {
-                                // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
-                                // Read-only `.get()` lookup — shared borrow only.
-                                let dir_entries = unsafe { &*dir_entries };
+                            if let Some(dir_entries) = dir_info_ref.get_entries_ref(self.generation) {
                                 let index = b"index";
                                 let buf = bufs!(load_as_file);
                                 buf[..index.len()].copy_from_slice(index);
@@ -6924,16 +6914,16 @@ impl<'a> Resolver<'a> {
 
         // When this function halts, any item not processed means it's not found.
         // PORT NOTE: capture only what the cleanup needs by-value (store_fd) / by-Cell
-        // (open_dir_count) / by-raw-ptr (rfs) so the guard doesn't pin `&mut self`
-        // across the loop body. `need_to_close_files()` is evaluated AT DROP TIME
-        // (matching Zig's `defer`), not snapshotted up-front — the loop body calls
-        // `Fs.FileSystem.setMaxFd()` which can flip `needToCloseFiles()` mid-walk.
+        // (open_dir_count) so the guard doesn't pin `&mut self` across the loop
+        // body. `need_to_close_files()` is evaluated AT DROP TIME (matching
+        // Zig's `defer`), not snapshotted up-front — the loop body calls
+        // `Fs.FileSystem.setMaxFd()` which can flip `needToCloseFiles()`
+        // mid-walk. Reach the RealFS via the `&'static` singleton accessor
+        // instead of capturing a raw `*mut RealFS` (the read is `&self`-only).
         let close_dirs_store_fd = self.store_fd;
-        let close_dirs_rfs: *mut Fs::file_system::RealFS = rfs;
         scopeguard::defer! {
             let n = open_dir_count.get();
-            // SAFETY: `close_dirs_rfs` points at the process-global RealFS singleton.
-            if n > 0 && (!close_dirs_store_fd || unsafe { (*close_dirs_rfs).need_to_close_files() }) {
+            if n > 0 && (!close_dirs_store_fd || Fs::FileSystem::get().fs.need_to_close_files()) {
                 let open_dirs = &bufs!(open_dirs)[0..n];
                 for open_dir in open_dirs {
                     open_dir.close();
@@ -7689,10 +7679,7 @@ impl<'a> Resolver<'a> {
         base[0..b"index".len()].copy_from_slice(b"index");
         base[b"index".len()..].copy_from_slice(ext);
 
-        if let Some(entries) = dir_info.get_entries(self.generation) {
-            // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
-            // Read-only `.get()` lookup — shared borrow only.
-            let entries = unsafe { &*entries };
+        if let Some(entries) = dir_info.get_entries_ref(self.generation) {
             if let Some(lookup) = entries.get(&base[..]) {
                 if lookup.entry().kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
                     let out_buf: &[u8] = {
@@ -8443,10 +8430,7 @@ impl<'a> Resolver<'a> {
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
             if !self.opts.preserve_symlinks {
-                if let Some(parent_entries) = parent_.get_entries(self.generation) {
-                    // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
-                    // Read-only `.get()` lookup — shared borrow only.
-                    let parent_entries = unsafe { &*parent_entries };
+                if let Some(parent_entries) = parent_.get_entries_ref(self.generation) {
                     if let Some(lookup) = parent_entries.get(base) {
                         // SAFETY: entries_ptr is a slot in the BSSMap-backed entries singleton.
                         let entries_fd = unsafe { &*entries_ptr }.fd;

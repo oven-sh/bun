@@ -385,9 +385,7 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
     while i > 0 {
         if is_sep(path[usize::from(i)]) {
             working_mem[usize::from(i)] = 0;
-            // SAFETY: NUL written at [i]; [0..i] is readable.
-            let parent =
-                unsafe { bun_core::WStr::from_raw(working_mem.as_ptr(), usize::from(i)) };
+            let parent = bun_core::WStr::from_buf(&working_mem[..], usize::from(i));
             match sys::mkdir_w(parent) {
                 Ok(()) => {
                     working_mem[usize::from(i)] = bun_paths::SEP_WINDOWS as u16;
@@ -423,9 +421,7 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
     while i < len {
         if is_sep(path[usize::from(i)]) {
             working_mem[usize::from(i)] = 0;
-            // SAFETY: NUL written at [i]; [0..i] is readable.
-            let parent =
-                unsafe { bun_core::WStr::from_raw(working_mem.as_ptr(), usize::from(i)) };
+            let parent = bun_core::WStr::from_buf(&working_mem[..], usize::from(i));
             match sys::mkdir_w(parent) {
                 Ok(()) => {}
                 Err(err) => match err.get_errno() {
@@ -440,8 +436,7 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
 
     // Final component (no trailing sep case — Zig's `first_match + 1 != len` check).
     working_mem[usize::from(len)] = 0;
-    // SAFETY: NUL written at [len].
-    let leaf = unsafe { bun_core::WStr::from_raw(working_mem.as_ptr(), usize::from(len)) };
+    let leaf = bun_core::WStr::from_buf(&working_mem[..], usize::from(len));
     match sys::mkdir_w(leaf) {
         Ok(()) => Ok(()),
         Err(err) => match err.get_errno() {
@@ -686,8 +681,7 @@ impl HardLinkWindowsInstallTask {
 
         let dirpath_len = dest_len - basename - 1;
         dest[dirpath_len] = 0;
-        // SAFETY: NUL written at dest[dirpath_len]; dest[..dirpath_len] is readable.
-        let dirpath = unsafe { bun_core::WStr::from_raw(dest.as_ptr(), dirpath_len) };
+        let dirpath = bun_core::WStr::from_buf(dest, dirpath_len);
         let _ = mkdir_recursive_os_path(dirpath);
         dest[dirpath_len] = bun_paths::SEP_WINDOWS as u16;
 
@@ -1338,8 +1332,7 @@ impl<'a> PackageInstall<'a> {
             state.buf[i] = bun_paths::SEP_WINDOWS as u16;
             i += 1;
             state.buf[i] = 0;
-            // SAFETY: NUL written at [i].
-            let fullpath = unsafe { bun_core::WStr::from_raw(state.buf.as_ptr(), i) };
+            let fullpath = bun_core::WStr::from_buf(&state.buf[..], i);
 
             let _ = mkdir_recursive_os_path(fullpath);
             state.to_copy_buf_off = fullpath.len();
@@ -1431,14 +1424,12 @@ impl<'a> PackageInstall<'a> {
                     let dest_len = to_copy_into1_offset + entry.path.len();
                     head1[to_copy_into1_offset..dest_len].copy_from_slice(entry.path.as_slice());
                     head1[dest_len] = 0;
-                    // SAFETY: NUL written above.
-                    let dest = unsafe { bun_core::WStr::from_raw(head1.as_ptr(), dest_len) };
+                    let dest = bun_core::WStr::from_buf(head1, dest_len);
 
                     let src_len = to_copy_into2_offset + entry.path.len();
                     head2[to_copy_into2_offset..src_len].copy_from_slice(entry.path.as_slice());
                     head2[src_len] = 0;
-                    // SAFETY: NUL written above.
-                    let src = unsafe { bun_core::WStr::from_raw(head2.as_ptr(), src_len) };
+                    let src = bun_core::WStr::from_buf(head2, src_len);
 
                     match entry.kind {
                         EntryKind::Directory => {
@@ -1717,14 +1708,12 @@ impl<'a> PackageInstall<'a> {
                     let dest_len = to_copy_into1_offset + entry.path.len();
                     head1[to_copy_into1_offset..dest_len].copy_from_slice(entry.path.as_slice());
                     head1[dest_len] = 0;
-                    // SAFETY: head1[dest_len] == 0 written immediately above.
-                    let dest = unsafe { bun_core::WStr::from_raw(head1.as_ptr(), dest_len) };
+                    let dest = bun_core::WStr::from_buf(head1, dest_len);
 
                     let src_len = to_copy_into2_offset + entry.path.len();
                     head2[to_copy_into2_offset..src_len].copy_from_slice(entry.path.as_slice());
                     head2[src_len] = 0;
-                    // SAFETY: head2[src_len] == 0 written immediately above.
-                    let src = unsafe { bun_core::WStr::from_raw(head2.as_ptr(), src_len) };
+                    let src = bun_core::WStr::from_buf(head2, src_len);
 
                     queue.push(HardLinkWindowsInstallTask::init(
                         src.as_slice(),
@@ -1892,14 +1881,12 @@ impl<'a> PackageInstall<'a> {
                     let dest_len = to_copy_into1_offset + entry.path.len();
                     head1[to_copy_into1_offset..dest_len].copy_from_slice(entry.path.as_slice());
                     head1[dest_len] = 0;
-                    // SAFETY: head1[dest_len] == 0 written immediately above.
-                    let dest = unsafe { bun_core::WStr::from_raw(head1.as_ptr(), dest_len) };
+                    let dest = bun_core::WStr::from_buf(head1, dest_len);
 
                     let src_len = to_copy_into2_offset + entry.path.len();
                     head2[to_copy_into2_offset..src_len].copy_from_slice(entry.path.as_slice());
                     head2[src_len] = 0;
-                    // SAFETY: head2[src_len] == 0 written immediately above.
-                    let src = unsafe { bun_core::WStr::from_raw(head2.as_ptr(), src_len) };
+                    let src = bun_core::WStr::from_buf(head2, src_len);
 
                     match entry.kind {
                         EntryKind::Directory => {

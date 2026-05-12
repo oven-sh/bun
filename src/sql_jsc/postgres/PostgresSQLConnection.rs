@@ -969,10 +969,10 @@ bun_jsc::jsc_host_abi! {
 
 // TODO(b2-blocked): #[crate::jsc::host_fn] proc-macro attr
 pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM via raw ptr,
-    // no other live borrow in this scope.
-    let vm_ptr = global_object.sql_vm_ptr();
-    let vm = unsafe { &mut *vm_ptr };
+    // `bun_vm()` → `&'static VirtualMachine` (per-thread singleton); `as_mut()`
+    // is the canonical safe escape hatch (one audited unsafe in bun_jsc) for
+    // `&mut self` helpers like `ssl_ctx_cache()` / `postgres_socket_group()`.
+    let vm = global_object.bun_vm().as_mut();
     let arguments = callframe.arguments();
     let hostname_str = arguments[0].to_bun_string(global_object)?;
     let port = arguments[1].coerce::<i32>(global_object)?;
@@ -1136,10 +1136,10 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         nonpipelinable_requests: Cell::new(0),
         poll_ref: JsCell::new(KeepAlive::default()),
         global_object: BackRef::new(global_object),
-        // `vm` is the `&mut VirtualMachine` derived from `sql_vm_ptr()` above
-        // (full write provenance — same singleton as `global_object.bun_vm()`).
-        // `BackRef::new_mut` captures the `NonNull` so `vm_mut()` can later
-        // project `&mut *as_ptr()` without UB.
+        // `vm` is the `&mut VirtualMachine` from `bun_vm().as_mut()` above —
+        // the JS-thread singleton with full write provenance. `BackRef::new_mut`
+        // captures the `NonNull` so `vm_mut()` can later route through the same
+        // canonical `VirtualMachine::as_mut()` accessor.
         vm: BackRef::new_mut(vm),
         statements: JsCell::new(PreparedStatementsMap::default()),
         prepared_statement_id: Cell::new(0),

@@ -446,9 +446,11 @@ fn message_with_type_and_level_(
     }
 
     if message_type == MessageType::EndGroup {
-        unsafe {
-            (*console).default_indent = (*console).default_indent.saturating_sub(1);
-        }
+        // Safe accessor (set-once `VirtualMachine.console` box) — no other
+        // borrow of the console is live yet; the deferred `_indent_guard`
+        // captured only the raw pointer.
+        let c = vm_console_mut(global);
+        c.default_indent = c.default_indent.saturating_sub(1);
         return Ok(());
     }
 
@@ -469,8 +471,12 @@ fn message_with_type_and_level_(
         } else {
             "Assertion failed\n"
         };
-        let _ = unsafe { (*console).error_writer() }.write_all(text.as_bytes());
-        let _ = unsafe { (*console).error_writer() }.flush();
+        // Safe accessor — no other borrow of the console is live in this
+        // early-return arm (the deferred `_indent_guard` only holds the raw
+        // pointer, not a reference).
+        let ew = vm_console_mut(global).error_writer();
+        let _ = ew.write_all(text.as_bytes());
+        let _ = ew.flush();
         return Ok(());
     }
 
@@ -480,12 +486,24 @@ fn message_with_type_and_level_(
         Output::enable_ansi_colors_stdout()
     };
 
-    let raw_writer: &mut bun_core::io::Writer =
+    // Snapshot before borrowing the writer; `default_indent` is not mutated
+    // again until the deferred `_indent_guard` runs on scope exit, so the two
+    // later reads (FormatOptions / TablePrinter) can use this cached copy
+    // instead of re-dereferencing the raw `console` pointer.
+    let default_indent = vm_console_mut(global).default_indent;
+
+    // SAFETY: see [`vm_console`] — `console` points at the live boxed
+    // `ConsoleObject` for this VM; JS-thread-only. Kept as a raw deref (not
+    // `vm_console_mut`) so the resulting `writer` borrow does not pin a
+    // long-lived `&mut ConsoleObject` across the re-derive in the empty-`Log`
+    // arm below.
+    let raw_writer: &mut bun_core::io::Writer = unsafe {
         if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
-            unsafe { (*console).error_writer() }
+            (*console).error_writer()
         } else {
-            unsafe { (*console).writer() }
-        };
+            (*console).writer()
+        }
+    };
     // `bun_core::io::Writer: bun_io::Write` — `&mut Writer` unsize-coerces directly.
     let writer: &mut dyn bun_io::Write = raw_writer;
 
@@ -507,7 +525,7 @@ fn message_with_type_and_level_(
         enable_colors,
         add_newline: true,
         flush: true,
-        default_indent: unsafe { (*console).default_indent },
+        default_indent,
         max_depth: console_depth,
         error_display_level: match level {
             MessageLevel::Error => ErrorDisplayLevel::Full,
@@ -530,7 +548,7 @@ fn message_with_type_and_level_(
                 JSValue::UNDEFINED
             };
             let mut table_printer = TablePrinter::init(global, level, tabular_data, properties)?;
-            table_printer.value_formatter.indent += u32::from(unsafe { (*console).default_indent });
+            table_printer.value_formatter.indent += u32::from(default_indent);
 
             if enable_colors {
                 let _ = table_printer.print_table::<true>(writer);
@@ -566,8 +584,12 @@ fn message_with_type_and_level_(
     if print_length > 0 {
         format2(level, global, vals, print_length, writer, print_options)?;
     } else if message_type == MessageType::Log {
-        let _ = unsafe { (*console).writer() }.write_all(b"\n");
-        let _ = unsafe { (*console).writer() }.flush();
+        // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
+        // the only later uses are in the mutually-exclusive `Trace` block, and
+        // `message_type == Log` here.
+        let w = unsafe { (*console).writer() };
+        let _ = w.write_all(b"\n");
+        let _ = w.flush();
     } else if message_type != MessageType::Trace {
         let _ = writer.write_all(b"undefined\n");
     }

@@ -1118,8 +1118,8 @@ pub mod waiter_thread_posix {
         /// `jsc::Task` tag for this `T`'s `ResultTask` — Zig derived this at
         /// comptime via `TaggedPointerUnion`; Rust callers supply it.
         const TASK_TAG: TaskTag;
-        fn pid(this: *const Self) -> PidT;
-        fn event_loop(this: *const Self) -> EventLoopHandle;
+        fn pid(&self) -> PidT;
+        fn event_loop(&self) -> EventLoopHandle;
         /// # Safety
         /// `this` must be a live, strong-ref'd pointer; callee releases one ref.
         unsafe fn on_wait_pid_from_waiter_thread(
@@ -1132,14 +1132,12 @@ pub mod waiter_thread_posix {
     impl ProcessLike for Process {
         const TASK_TAG: TaskTag = task_tag::ProcessWaiterThreadTask;
         #[inline]
-        fn pid(this: *const Self) -> PidT {
-            // SAFETY: caller holds a strong ref.
-            unsafe { (*this).pid }
+        fn pid(&self) -> PidT {
+            self.pid
         }
         #[inline]
-        fn event_loop(this: *const Self) -> EventLoopHandle {
-            // SAFETY: caller holds a strong ref.
-            unsafe { (*this).event_loop }
+        fn event_loop(&self) -> EventLoopHandle {
+            self.event_loop
         }
         #[inline]
         unsafe fn on_wait_pid_from_waiter_thread(
@@ -1188,7 +1186,13 @@ pub mod waiter_thread_posix {
                 let mut remove = false;
 
                 let process = active[i];
-                let pid = T::pid(process);
+                // SAFETY: each `*mut T` in `active` was strong-ref'd by the
+                // producer (`Process::watch` → `ref_()`) before `append()`;
+                // the matching `deref()` is in `on_wait_pid_from_waiter_thread`,
+                // so the pointee outlives this shared borrow. Single deref
+                // serves both `pid()` and `event_loop()` accessor reads.
+                let process_ref = unsafe { &*process };
+                let pid = T::pid(process_ref);
                 // this case shouldn't really happen
                 if pid == 0 {
                     remove = true;
@@ -1203,7 +1207,7 @@ pub mod waiter_thread_posix {
                     if matched {
                         remove = true;
 
-                        match T::event_loop(process) {
+                        match T::event_loop(process_ref) {
                             EventLoopHandle::Js { owner } => {
                                 let ct = ConcurrentTask::create(Task::new(
                                     T::TASK_TAG,

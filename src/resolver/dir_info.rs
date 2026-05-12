@@ -260,6 +260,20 @@ impl DirInfo {
         }
     }
 
+    /// Shared-borrow variant of [`get_entries`](Self::get_entries) for the
+    /// read-only call sites (`.get()`, `.fd`, iteration). The `DirEntry` is a
+    /// slot in the BSSMap-backed `EntriesOptionMap` singleton (ARENA — process
+    /// lifetime), so a `&'static` reborrow of the `&'static mut` returned by
+    /// `entries_at` is sound and needs no `unsafe` here. Prefer this over
+    /// `get_entries` + per-site raw deref whenever the caller only reads.
+    pub fn get_entries_ref(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
+        let entries_ptr = fs::FileSystem::instance().fs.entries_at(self.entries, generation)?;
+        match entries_ptr {
+            fs::EntriesOption::Entries(entries) => Some(&**entries),
+            fs::EntriesOption::Err(_) => None,
+        }
+    }
+
     pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
         // SAFETY: read-only path; no other live `&mut EntriesOption` for this index
         // exists in this scope (resolver invariant).

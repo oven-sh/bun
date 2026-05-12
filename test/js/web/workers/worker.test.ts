@@ -257,6 +257,27 @@ describe("web worker", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/24256
+  // On the main thread there is no parent to receive messages from, so a
+  // `message` listener on globalThis must not keep the process alive.
+  describe.each([
+    ["globalThis.onmessage", `globalThis.onmessage = () => {};`],
+    ['addEventListener("message")', `globalThis.addEventListener("message", () => {});`],
+  ])("%s on the main thread does not keep the process alive", (_, setup) => {
+    test("exits", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `${setup} console.log("hello world");`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("hello world\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("worker with process.exit", done => {
     const worker = new Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
       smol: true,

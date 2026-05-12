@@ -127,6 +127,17 @@ pub mod fs {
                     // SAFETY: see `append_slice`.
                     Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
                 }
+                /// Zig: `FileSystem.DirnameStore.print(fmt, args)` — format
+                /// directly into the store's tail; no intermediate `String`.
+                pub fn print(
+                    &self,
+                    args: core::fmt::Arguments<'_>,
+                ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
+                    // SAFETY: see `append_slice`.
+                    let s = unsafe { &mut *$backing() }.print(args)?;
+                    // SAFETY: see `append_slice`.
+                    Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
+                }
                 #[inline]
                 pub fn exists(&self, value: &[u8]) -> bool {
                     // SAFETY: see `append_slice`.
@@ -2892,9 +2903,41 @@ pub mod cache {
                 // records provenance so `deinit()` is a no-op for this variant.
                 Ok(Contents::SharedBuffer { ptr: shared.list.as_ptr(), len: n })
             } else {
-                // `read_to_end` already loop-reads without pre-sizing, so it is
-                // correct for both `stream` and `!stream`.
-                let mut bytes = file.read_to_end().map_err(bun_core::Error::from)?;
+                // 16 KiB stack-buffer fast-path (fs.zig:1250-1301): try a
+                // sequential `read()` loop into a stack buffer FIRST. The
+                // overwhelmingly common case (package.json, .d.ts shims, small
+                // sources) fits in 16K, so we avoid the `fstat` + `pread(0)`
+                // round-trip of `read_to_end()` and allocate exactly once.
+                const STACK_BUF_LEN: usize = 16 * 1024;
+                let mut initial_buf = [core::mem::MaybeUninit::<u8>::uninit(); STACK_BUF_LEN];
+                // SAFETY: `u8` has no invalid bit-patterns; `read_all` only
+                // writes (never reads) the slice and we only expose `[..n]`
+                // afterwards. Same pattern as the `set_len(capacity())` arm
+                // above.
+                let initial_slice: &mut [u8] = unsafe {
+                    core::slice::from_raw_parts_mut(
+                        initial_buf.as_mut_ptr().cast::<u8>(),
+                        STACK_BUF_LEN,
+                    )
+                };
+                let n = file.read_all(initial_slice).map_err(bun_core::Error::from)?;
+
+                let mut bytes: Vec<u8> = if n + 1 < STACK_BUF_LEN {
+                    // Hit EOF inside the stack buffer — single exact-sized
+                    // alloc, no fstat (fs.zig:1260-1270).
+                    initial_slice[..n].to_vec()
+                } else {
+                    // ≥16383 bytes: fall through. Only NOW pay for `fstat` to
+                    // pre-size, seed with the already-read prefix, and continue
+                    // *sequential* `read()` from the current cursor — NOT
+                    // `read_to_end()`/`pread(0)`, which would re-read the
+                    // prefix (fs.zig:1276-1296).
+                    let size = file.get_end_pos().map_err(bun_core::Error::from)?;
+                    let mut v = Vec::with_capacity(size.max(n) + 1);
+                    v.extend_from_slice(&initial_slice[..n]);
+                    file.read_to_end_into(&mut v).map_err(bun_core::Error::from)?;
+                    v
+                };
                 // BOM strip / UTF-16→UTF-8 transcode (fs.zig:1264-1266 / 1299-1301).
                 if let Some(bom) = fs_mod::BOM::detect(&bytes) {
                     bytes = bom.remove_and_convert_to_utf8_and_free(bytes);
@@ -3684,12 +3727,6 @@ pub struct Bufs {
     #[cfg(not(windows))]
     pub win32_normalized_dir_info_cache: (),
 }
-// SAFETY: every field is a byte/integer array (`PathBuffer` = `[u8; N]`,
-// `[FD; 256]` where `Fd` is a `#[repr(C)]` integer newtype, `[MaybeUninit<_>;
-// 256]` which has no validity requirement, `()`). Zig left these `= undefined`;
-// the all-zero bit pattern is a valid `Bufs`.
-unsafe impl bun_core::Zeroable for Bufs {}
-
 // TODO(port): bun.ThreadlocalBuffers(Bufs) — lazily-allocated threadlocal Box<Bufs>.
 // In Rust we model it as a `thread_local! { static BUFS_STORAGE: RefCell<Box<Bufs>> }`
 // and the `bufs!()` macro hands out `&mut` to a single field. This relies on the
@@ -3704,7 +3741,15 @@ fn bufs_storage_get() -> *mut Bufs {
     BUFS_STORAGE.with(|cell| {
         let mut borrow = cell.borrow_mut();
         if borrow.is_none() {
-            *borrow = Some(bun_core::boxed_zeroed::<Bufs>());
+            // SAFETY: every field of `Bufs` is a byte/integer array
+            // (`PathBuffer` = `[u8; N]`, `[FD; 256]` where `Fd` is a
+            // `#[repr(C)]` integer newtype, `[MaybeUninit<_>; 256]` which has
+            // no validity requirement, `()`), so EVERY bit-pattern — not just
+            // all-zero — is a valid `Bufs`. Zig left these `= undefined`; each
+            // field is scratch (write-then-read within a single resolve call,
+            // including `open_dirs` which is bounded by `open_dir_count`), so
+            // there is no need to pay for zero-filling ~100 KiB on first use.
+            *borrow = Some(unsafe { Box::<Bufs>::new_uninit().assume_init() });
         }
         &raw mut **borrow.as_mut().unwrap()
     })

@@ -219,6 +219,19 @@ macro_rules! string_store_impl {
                 // borrow tied to `&mut self` is artificially short — re-erase to `'static`.
                 Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
             }
+            /// Zig: `FileSystem.DirnameStore.print(fmt, args)` — format directly
+            /// into the store's tail (no intermediate `String`). See
+            /// `BSSStringList::print` (bun_alloc) for the in-place writer.
+            pub fn print(
+                &self,
+                args: core::fmt::Arguments<'_>,
+            ) -> core::result::Result<&'static [u8], AllocError> {
+                let _guard = $mutex.lock_guard();
+                // SAFETY: `$mutex` held — sole live `&mut` to the process-lifetime singleton.
+                let s = unsafe { (*Self::backing()).print(args)? };
+                // SAFETY: re-erase to `'static`; storage owned by the process-lifetime singleton.
+                Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
+            }
             #[inline]
             pub fn exists(&self, value: &[u8]) -> bool {
                 let _guard = $mutex.lock_guard();
@@ -246,6 +259,48 @@ macro_rules! string_store_impl {
 }
 string_store_impl!(DirnameStore, DIRNAME_STORE_ZST, dirname_store_backing, DirnameStoreBacking, DIRNAME_STORE_MUTEX);
 string_store_impl!(FilenameStore, FILENAME_STORE_ZST, filename_store_backing, FilenameStoreBacking, FILENAME_STORE_MUTEX);
+
+/// Pre-resolved `FilenameStore` appender for the `readdir` hot loop.
+///
+/// `<FilenameStore as Appender>::append` re-evaluates `filename_store_backing()`
+/// (a `bss_singleton!` accessor: `Once::call_once` + `AtomicPtr::load`) and
+/// `FILENAME_STORE_MUTEX` (a `LazyLock` deref) on every call. `add_entry` runs
+/// once per directory entry, so for the @material-ui/icons-style 11,000-entry
+/// directories that's 22,000 redundant `Once`/`LazyLock` atomic checks per
+/// directory. Resolving both once up front and carrying the raw pointers across
+/// the loop drops that to a single check per `readdir`.
+pub(crate) struct FilenameStoreAppender {
+    backing: *mut FilenameStoreBacking,
+    mutex: &'static Mutex,
+}
+impl FilenameStoreAppender {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            // One `Once` check + one `LazyLock` deref, hoisted out of the per-entry loop.
+            backing: filename_store_backing(),
+            mutex: &FILENAME_STORE_MUTEX,
+        }
+    }
+}
+impl strings::Appender for FilenameStoreAppender {
+    fn append(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
+        let _guard = self.mutex.lock_guard();
+        // SAFETY: `mutex` is the same `FILENAME_STORE_MUTEX` that
+        // `string_store_impl!` takes; while held, this is the sole live `&mut`
+        // to the process-lifetime singleton.
+        let r = unsafe { (*self.backing).append(s)? };
+        // SAFETY: storage owned by the process-lifetime singleton; re-erase to `'static`.
+        Ok(unsafe { core::slice::from_raw_parts(r.as_ptr(), r.len()) })
+    }
+    fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
+        let _guard = self.mutex.lock_guard();
+        // SAFETY: see `append`.
+        let r = unsafe { (*self.backing).append_lower_case(s)? };
+        // SAFETY: see `append`.
+        Ok(unsafe { core::slice::from_raw_parts(r.as_ptr(), r.len()) })
+    }
+}
 
 pub(crate) struct FileSystem {
     pub top_level_dir: &'static [u8],
@@ -475,10 +530,25 @@ impl DirEntry {
     //     // dir.data.remove(name);
     // }
 
+    #[inline]
     pub fn add_entry<I: DirEntryIterator>(
         &mut self,
         prev_map: Option<&mut dir_entry::EntryMap>,
         entry: &bun_sys::dir_iterator::IteratorResult,
+        iterator: I,
+    ) -> Result<(), bun_core::Error> {
+        // Compatibility wrapper for callers outside the `readdir` hot loop —
+        // resolves the `FilenameStore` singleton on demand. Hot-loop callers
+        // should hoist `FilenameStoreAppender::new()` once and call
+        // `add_entry_with_store` directly.
+        self.add_entry_with_store(prev_map, entry, &mut FilenameStoreAppender::new(), iterator)
+    }
+
+    pub fn add_entry_with_store<I: DirEntryIterator>(
+        &mut self,
+        prev_map: Option<&mut dir_entry::EntryMap>,
+        entry: &bun_sys::dir_iterator::IteratorResult,
+        filename_store: &mut FilenameStoreAppender,
         iterator: I,
     ) -> Result<(), bun_core::Error> {
         use bun_sys::FileKind as DK;
@@ -543,12 +613,12 @@ impl DirEntry {
             // name_slice only lives for the duration of the iteration
             let name = strings::StringOrTinyString::init_append_if_needed(
                 name_slice,
-                &mut FilenameStore::instance(),
+                filename_store,
             )?;
 
             let name_lowercased = strings::StringOrTinyString::init_lower_case_append_if_needed(
                 name_slice,
-                &mut FilenameStore::instance(),
+                filename_store,
             )?;
 
             dir_entry::EntryStore::append(Entry {
@@ -1767,10 +1837,37 @@ impl RealFS {
             dir.fd = handle_fd;
         }
 
+        // PERF: drain `getdents64` to completion before populating `dir.data`
+        // so the dirent count is known up front and the `StringHashMap` can be
+        // sized once instead of rehashing log2(N) times. `IteratorResult` already
+        // owns its `Name` (heap `Vec`), so collecting just delays `Drop` — same
+        // total allocations, one extra `Vec` per directory vs ~14 rehashes for
+        // an 11k-entry directory. Seed the buffer from `prev_map` (re-reads are
+        // the common watch-mode path and the directory size rarely jumps).
+        let mut entries: Vec<bun_sys::dir_iterator::IteratorResult> = Vec::with_capacity(
+            prev_map.as_deref().map(|m| m.count()).unwrap_or(0),
+        );
         while let Some(entry_) = iter.next()? {
+            entries.push(entry_);
+        }
+
+        // One reserve for the whole directory — eliminates the incremental
+        // grow/rehash chain in `put_static_key`.
+        dir.data.ensure_unused_capacity(entries.len())?;
+
+        // Hoist the `FilenameStore` singleton resolution (Once + LazyLock atomic
+        // checks) out of the per-entry loop.
+        let mut filename_store = FilenameStoreAppender::new();
+
+        for entry_ in &entries {
             debug!("readdir entry {}", BStr::new(entry_.name.slice_u8()));
 
-            dir.add_entry(prev_map.as_deref_mut(), &entry_, &iterator)?;
+            dir.add_entry_with_store(
+                prev_map.as_deref_mut(),
+                entry_,
+                &mut filename_store,
+                &iterator,
+            )?;
         }
 
         debug!(

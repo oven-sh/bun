@@ -317,8 +317,9 @@ impl FilePoll {
     }
 
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
-        // SAFETY: vtable contract — uws loop is a disjoint allocation from `self`.
-        let loop_ = unsafe { vm.platform_event_loop() };
+        // `loop_mut()` — crate-private nonnull-asref accessor (single deref in
+        // `EventLoopCtx`); the uws loop is a disjoint allocation from `self`.
+        let loop_ = vm.loop_mut();
         // Stacked-Borrows: `self` may live inside `Store.hive`'s inline buffer,
         // so materializing `&mut Store` here (via `vm.file_polls()`) would assert
         // unique access over that buffer and invalidate `&mut self`'s provenance
@@ -385,7 +386,7 @@ impl FilePoll {
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::Closed);
         // this.deactivate(vm.event_loop_handle.?);
-        self.deactivate(unsafe { event_loop_ctx.platform_event_loop() });
+        self.deactivate(event_loop_ctx.loop_mut());
     }
 
     /// Prevent a poll from keeping the process alive.
@@ -395,7 +396,7 @@ impl FilePoll {
         }
         bun_core::scoped_log!(FilePoll, "unref");
         // this.deactivate(vm.event_loop_handle.?);
-        self.deactivate(unsafe { vm.platform_event_loop() });
+        self.deactivate(vm.loop_mut());
     }
 
     /// Allow a poll to keep the process alive.
@@ -406,7 +407,7 @@ impl FilePoll {
         }
         bun_core::scoped_log!(FilePoll, "ref");
         // this.activate(vm.event_loop_handle.?);
-        self.activate(unsafe { event_loop_ctx.platform_event_loop() });
+        self.activate(event_loop_ctx.loop_mut());
     }
 }
 

@@ -487,46 +487,40 @@ impl FilePoll {
     // put back via `Store::put`; Drop would be wrong here.
     pub fn deinit(&mut self) {
         let ctx = get_vm_ctx(self.allocator_type);
-        // SAFETY: `loop_` and `file_polls` borrow disjoint VM fields; neither
-        // is reborrowed inside `deinit_possibly_defer`.
-        let loop_ = unsafe { ctx.platform_event_loop() };
-        let file_polls = unsafe { ctx.file_polls() };
-        self.deinit_possibly_defer(ctx, loop_, file_polls, false);
+        self.deinit_possibly_defer(ctx, false);
     }
 
     pub fn deinit_force_unregister(&mut self) {
         let ctx = get_vm_ctx(self.allocator_type);
-        // SAFETY: see `deinit`.
-        let loop_ = unsafe { ctx.platform_event_loop() };
-        let file_polls = unsafe { ctx.file_polls() };
-        self.deinit_possibly_defer(ctx, loop_, file_polls, true);
+        self.deinit_possibly_defer(ctx, true);
     }
 
-    fn deinit_possibly_defer(
-        &mut self,
-        vm: EventLoopCtx,
-        loop_: &mut Loop,
-        polls: &mut Store,
-        force_unregister: bool,
-    ) {
-        let _ = self.unregister(loop_, force_unregister);
+    fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, force_unregister: bool) {
+        // `loop_mut()` is the crate-private nonnull-asref accessor (single
+        // deref in `EventLoopCtx`); the `&mut Loop` is consumed by `unregister`
+        // and dropped before any `&mut Store` is materialised.
+        let _ = self.unregister(vm.loop_mut(), force_unregister);
 
         self.owner.clear();
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
         self.flags = FlagsSet::empty();
         self.fd = INVALID_FD;
-        // `self` may live inside `polls.hive`'s inline array, so passing both
-        // `&mut Store` and `&mut FilePoll` would form overlapping unique borrows.
-        // Coerce to a raw pointer here (Zig `*FilePoll` semantics) and let
-        // `Store::put` access fields via raw-pointer ops.
-        polls.put(std::ptr::from_mut::<FilePoll>(self), vm, was_ever_registered);
+        // `self` may live inside the `Store.hive` inline array, so a
+        // `&mut Store` taken while `&mut self` is live would assert unique
+        // access over the slot and invalidate `self`'s tag (Stacked Borrows).
+        // Decay `self` to a raw slot pointer first, *then* materialise the
+        // `&mut Store` via the safe raw-pointer accessor + a single deref.
+        let this: *mut FilePoll = std::ptr::from_mut::<FilePoll>(self);
+        let polls: *mut Store = vm.file_polls_ptr();
+        // SAFETY: `polls` is the per-thread set-once `Store` back-pointer
+        // (`BackRef`-shaped); no other `&mut Store` is live in this scope and
+        // `&mut self` has been retired to `this` above. `Store::put` itself
+        // touches `this` only via raw-pointer ops.
+        unsafe { (*polls).put(this, vm, was_ever_registered) };
     }
 
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
-        // SAFETY: see `deinit`.
-        let loop_ = unsafe { vm.platform_event_loop() };
-        let file_polls = unsafe { vm.file_polls() };
-        self.deinit_possibly_defer(vm, loop_, file_polls, false);
+        self.deinit_possibly_defer(vm, false);
     }
 
     pub fn is_registered(&self) -> bool {
@@ -711,8 +705,9 @@ impl FilePoll {
     pub fn on_ended(&mut self, event_loop_ctx: EventLoopCtx) {
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::Closed);
-        // SAFETY: sole `&mut Loop` borrow in this scope.
-        self.deactivate(unsafe { event_loop_ctx.platform_event_loop() });
+        // `loop_mut()` — crate-private nonnull-asref accessor; `deactivate` is
+        // a leaf counter op so the `&mut Loop` borrow does not escape.
+        self.deactivate(event_loop_ctx.loop_mut());
     }
 
     #[inline]
@@ -1558,23 +1553,16 @@ pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_poi
     // SAFETY: `loop_` is the live uws loop. Do *not* materialize `&mut *loop_`
     // here — `on_update` (via `__bun_run_file_poll`) re-enters the loop and conjures
     // a fresh `&mut Loop` through `EventLoopCtx::platform_event_loop()`; a
-    // protected `&mut Loop` spanning that call would be SB-UB. Read the index and
-    // event via raw `(*loop_)` place access only (event is POD), then hand the
-    // handler a borrow of the disjoint stack copy.
-    let idx = unsafe { usize::try_from((*loop_).current_ready_poll).expect("int cast") };
+    // protected `&mut Loop` spanning that call would be SB-UB. Take a short-lived
+    // `&*loop_` only to copy the POD event onto the stack (the `BackRef`-style
+    // accessor returns by value), then drop the borrow before dispatching so the
+    // handler is free to form its own `&mut Loop`.
+    let ev = unsafe { &*loop_ }.current_ready_event();
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    {
-        // SAFETY: idx in bounds per loop contract; event is POD.
-        let ev = unsafe { ptr::read(ptr::addr_of!((*loop_).ready_polls[idx])) };
-        file_poll.on_kqueue_event(&ev);
-    }
+    file_poll.on_kqueue_event(&ev);
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        // SAFETY: idx in bounds per loop contract; event is POD.
-        let ev = unsafe { ptr::read(ptr::addr_of!((*loop_).ready_polls[idx])) };
-        file_poll.on_epoll_event(&ev);
-    }
+    file_poll.on_epoll_event(&ev);
 }
 
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]

@@ -85,6 +85,20 @@ impl PosixLoop {
         self.internal_loop_data.iteration_nr
     }
 
+    /// Copy out the ready-poll event at `current_ready_poll`.
+    ///
+    /// Safe back-reference accessor consolidating the C-dispatch
+    /// `(*loop_).ready_polls[(*loop_).current_ready_poll]` raw-deref pattern
+    /// into one short-lived `&self` borrow. `EventType` is POD (`epoll_event`
+    /// / `kevent64_s` / `kevent` — all `Copy` in `libc`), so the by-value
+    /// return is a stack copy the caller may borrow across re-entrant handler
+    /// dispatch without aliasing the loop.
+    #[inline]
+    pub fn current_ready_event(&self) -> EventType {
+        let idx = usize::try_from(self.current_ready_poll).expect("int cast");
+        self.ready_polls[idx]
+    }
+
     pub fn inc(&mut self) {
         bun_core::scoped_log!(Loop, "inc {} + 1 = {}", self.num_polls, self.num_polls + 1);
         self.num_polls += 1;

@@ -132,22 +132,28 @@ impl EventLoopCtx {
     // identical `ctx.platform_event_loop().op()` call sites into the single
     // deref inside [`loop_mut`].
     //
-    // `loop_mut` is the single nonnull-asref accessor: private, `&self → &mut`
-    // (so it must NOT be called twice with overlapping live results). Every
-    // caller below is a leaf op that consumes the borrow before returning and
-    // never re-enters `EventLoopCtx`, so no two `&mut Loop` ever coexist.
+    // `loop_mut` is the single nonnull-asref accessor: `pub(crate)`,
+    // `&self → &mut` (so it must NOT be called twice with overlapping live
+    // results). Every in-crate caller is a leaf op — counter bump,
+    // `FilePoll::activate`/`deactivate`, `unregister` — that consumes the
+    // borrow before returning and never re-enters `EventLoopCtx`, so no two
+    // `&mut Loop` ever coexist. Widened from impl-private to crate-private so
+    // `posix_event_loop`/`windows_event_loop` route their N identical
+    // `ctx.platform_event_loop()` derefs through this single accessor.
     #[inline]
-    fn loop_mut(&self) -> &mut bun_uws_sys::Loop {
+    pub(crate) fn loop_mut(&self) -> &mut bun_uws_sys::Loop {
         // SAFETY: per-thread set-once pointer (the uws loop singleton); the
         // event loop is single-threaded so no concurrent `&mut` exists, and
-        // every (private-to-this-impl) caller is a leaf counter op that drops
-        // the borrow before returning — see block comment above.
+        // every crate-internal caller is a leaf op that drops the borrow
+        // before returning — see block comment above.
         unsafe { &mut *self.platform_event_loop_ptr() }
     }
     #[inline]
     pub fn loop_ref(&self) { self.loop_mut().ref_(); }
     #[inline]
     pub fn loop_unref(&self) { self.loop_mut().unref(); }
+    #[inline]
+    pub fn loop_inc(&self) { self.loop_mut().inc(); }
     #[inline]
     pub fn loop_dec(&self) { self.loop_mut().dec(); }
     #[inline]

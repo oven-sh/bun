@@ -1195,60 +1195,16 @@ bun_alloc::bss_map_inner! { pub entries_option_map : EntriesOption, preallocate:
 
 /// ZST handle over the `entries_option_map()` singleton; keeps `RealFS.entries`
 /// field-shaped without inlining the (large) backing array.
+///
+/// All map access goes through [`EntriesGuard`] (obtained via
+/// [`RealFS::entries_locked`]), which holds `entries_mutex` as the structural
+/// proof-of-exclusivity and exposes the operations as safe methods. The former
+/// per-method `unsafe fn` surface (each requiring "caller holds
+/// `entries_mutex`") has been removed now that every call site uses the guard.
 pub struct EntriesMap(());
 impl EntriesMap {
     #[inline]
     pub const fn new() -> Self { Self(()) }
-    #[inline]
-    fn inner(&self) -> *mut EntriesOptionMap {
-        // PORT NOTE: returns the raw `*mut` singleton (Zig `*Self`). Do NOT materialize
-        // a `&'static mut` here — that asserts noalias for the whole map BEFORE
-        // `RealFS.entries_mutex` is taken, which is UB if two threads race. Form the
-        // `&mut` only for the duration of a single operation at the call site.
-        entries_option_map()
-    }
-    /// SAFETY: forms a `&mut BSSMapInner` over the process-global singleton for
-    /// the duration of the call. Caller must hold `RealFS.entries_mutex` so no
-    /// other thread is inside any `EntriesMap` method concurrently. Returns a
-    /// raw `*mut EntriesOption` (matching Zig's `*EntriesOption`) — caller
-    /// forms a short-lived `&mut` at the use site under the same lock; do NOT
-    /// hand out a `&'static mut` (two callers would alias the same slot).
-    pub unsafe fn get(&self, key: &[u8]) -> Option<*mut EntriesOption> {
-        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
-        let r = unsafe { (*self.inner()).get(key)? };
-        Some(std::ptr::from_mut::<EntriesOption>(r))
-    }
-    /// SAFETY: see [`get`] — mutates the singleton map.
-    pub unsafe fn get_or_put(&self, key: &[u8]) -> core::result::Result<allocators::Result, AllocError> {
-        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
-        unsafe { (*self.inner()).get_or_put(key) }
-    }
-    /// SAFETY: see [`get`].
-    pub unsafe fn at_index(&self, index: allocators::IndexType) -> Option<*mut EntriesOption> {
-        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
-        let r = unsafe { (*self.inner()).at_index(index)? };
-        Some(std::ptr::from_mut::<EntriesOption>(r))
-    }
-    /// SAFETY: see [`get`].
-    pub unsafe fn put(
-        &self,
-        result: &mut allocators::Result,
-        value: EntriesOption,
-    ) -> core::result::Result<*mut EntriesOption, AllocError> {
-        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
-        let r = unsafe { (*self.inner()).put(result, value)? };
-        Ok(std::ptr::from_mut::<EntriesOption>(r))
-    }
-    /// SAFETY: see [`get`] — mutates the singleton map.
-    pub unsafe fn mark_not_found(&self, result: allocators::Result) {
-        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
-        unsafe { (*self.inner()).mark_not_found(result) }
-    }
-    /// SAFETY: see [`get`] — mutates the singleton map.
-    pub unsafe fn remove(&self, key: &[u8]) -> bool {
-        // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
-        unsafe { (*self.inner()).remove(key) }
-    }
 }
 
 /// RAII guard over the `entries_option_map()` singleton: holds

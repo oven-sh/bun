@@ -1,4 +1,3 @@
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU8, AtomicU16, Ordering};
 
 use crate::event_loop::EventLoop;
@@ -113,12 +112,15 @@ pub extern "C" fn Bun__onPosixSignal(number: i32) {
     #[cfg(unix)]
     {
         let Some(vm) = VirtualMachine::get_main_thread_vm() else { return };
-        // SAFETY: `vm` and its event loop are process-lifetime; signal_handler is the
-        // boxed ring buffer installed by `Bun__ensureSignalHandler` below.
-        unsafe {
-            if let Some(handler) = (*(*vm).event_loop()).signal_handler {
-                let _ = (*handler.as_ptr()).enqueue(u8::try_from(number).expect("int cast"));
-            }
+        // SAFETY: `vm` and its event loop are process-lifetime; raw place
+        // projection reads only the `signal_handler` slot (no `&EventLoop`
+        // formed — the main thread may hold `&mut EventLoop` concurrently).
+        let handler = unsafe { (*(*vm).event_loop()).signal_handler };
+        if let Some(handler) = handler {
+            // `BackRef::deref` is the centralised set-once-NonNull proof; the
+            // pointee is all-atomic (`Sync`), so a `&PosixSignalHandle` from
+            // async-signal context is sound.
+            let _ = handler.enqueue(u8::try_from(number).expect("int cast"));
         }
     }
     #[cfg(not(unix))]
@@ -158,7 +160,8 @@ pub extern "C" fn Bun__ensureSignalHandler() {
             let this = unsafe { &mut *(*vm).event_loop() };
             if this.signal_handler.is_none() {
                 let boxed = PosixSignalHandle::new(PosixSignalHandle::default());
-                this.signal_handler = NonNull::new(bun_core::heap::into_raw(boxed));
+                this.signal_handler =
+                    Some(bun_ptr::BackRef::from(bun_core::heap::into_raw_nn(boxed)));
             }
         }
     }

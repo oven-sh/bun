@@ -95,8 +95,12 @@ pub struct EventLoop {
     pub imminent_gc_timer: AtomicPtr<()>,
 
     #[cfg(unix)]
-    // TODO(port): lifetime — ?*PosixSignalHandle (boxed, process-lifetime)
-    pub signal_handler: Option<NonNull<PosixSignalHandle>>,
+    /// Boxed `PosixSignalHandle` ring buffer, leaked once by
+    /// `Bun__ensureSignalHandler` and live for the process lifetime. Stored as
+    /// a [`bun_ptr::BackRef`] so the per-tick `drain()` / signal-context
+    /// `enqueue()` reads go through the single audited `BackRef::deref`
+    /// instead of an open-coded `NonNull::as_ref` `unsafe` at each site.
+    pub signal_handler: Option<bun_ptr::BackRef<PosixSignalHandle>>,
     #[cfg(not(unix))]
     pub signal_handler: (),
 }
@@ -516,10 +520,11 @@ impl EventLoop {
         #[cfg(unix)]
         {
             if let Some(signal_handler) = self.signal_handler {
-                // SAFETY: `signal_handler` is the boxed `PosixSignalHandle` installed by
-                // `Bun__ensureSignalHandler`; it lives for the process lifetime and is
-                // disjoint from `*self`, so passing `&mut *self` alongside is sound.
-                unsafe { (*signal_handler.as_ptr()).drain(self) };
+                // `signal_handler` is a `BackRef` to the leaked process-lifetime
+                // `PosixSignalHandle` (see field doc); the ring-buffer backing is
+                // disjoint from `*self`, so the `&PosixSignalHandle` materialised
+                // by `BackRef::deref` does not alias the `&mut self` passed here.
+                signal_handler.drain(self);
             }
         }
 

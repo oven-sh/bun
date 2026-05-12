@@ -27,8 +27,9 @@ impl JSCell {
     /// - [ECMA-262 §7.1.18 ToObject](https://tc39.es/ecma262/#sec-toobject)
     pub fn to_object<'a>(&'a self, global: &'a JSGlobalObject) -> &'a JSObject {
         // TODO(port): jsc.markMemberBinding(JSCell, @src()) — comptime binding marker, likely drop
-        // SAFETY: C++ side never returns null for ToObject on a cell.
-        unsafe { &*JSC__JSCell__toObject(self, global) }
+        // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
+        // centralised non-null deref proof (ToObject on a cell never returns null).
+        JSObject::opaque_ref(JSC__JSCell__toObject(self, global))
     }
 
     pub fn get_type(&self) -> u8 {

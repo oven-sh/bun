@@ -333,8 +333,9 @@ impl Timeout {
         // PORT NOTE: `Environment.ci_assert` → `debug_assertions`
         // (no `ci_assert` feature in bun_jsc; matches ptr/ref_count.rs precedent).
         #[cfg(debug_assertions)]
-        // SAFETY: `signal_` is non-null (caller contract).
-        if unsafe { (*signal_).aborted() } {
+        // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
+        // centralised non-null deref proof (caller contract: non-null).
+        if AbortSignal::opaque_ref(signal_).aborted() {
             panic!("unreachable: signal is already aborted");
         }
 
@@ -399,8 +400,9 @@ impl Timeout {
         let _guard = vm.enter_event_loop_scope();
         // signalAbort() releases the extra ref from timeout() after all
         // abort work completes, so we must not unref here.
-        // SAFETY: signal_ptr is held alive by the extra ref documented above.
-        unsafe { (*signal_ptr).signal(vm.global(), CommonAbortReason::Timeout) };
+        // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
+        // centralised non-null deref proof (held alive by the extra ref above).
+        AbortSignal::opaque_ref(signal_ptr).signal(vm.global(), CommonAbortReason::Timeout);
     }
 
     // This may run inside the "signal" call.

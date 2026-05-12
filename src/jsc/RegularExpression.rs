@@ -120,8 +120,10 @@ pub fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNull<()>>
 
 #[unsafe(no_mangle)]
 pub fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &BunString) -> bool {
-    // SAFETY: `regex` was produced by `__bun_regex_compile`.
-    unsafe { (*regex.as_ptr().cast::<RegularExpression>()).matches(*input) }
+    // `RegularExpression` is an `opaque_ffi!` ZST handle; `opaque_mut` is the
+    // centralised non-null deref proof. `regex` was produced by
+    // `__bun_regex_compile` and remains live until `__bun_regex_drop`.
+    RegularExpression::opaque_mut(regex.as_ptr().cast()).matches(*input)
 }
 
 #[unsafe(no_mangle)]

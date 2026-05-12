@@ -862,7 +862,9 @@ pub const SendQueue = struct {
     /// only *subsequent* sends behind it are actual backpressure.
     fn hasBufferedData(self: *const SendQueue) bool {
         if (self.waiting_for_ack != null and self.queue.items.len > 0) return true;
-        return self.bufferedBytes() > BACKPRESSURE_THRESHOLD_BYTES;
+        // `>=` mirrors Node's `writeQueueSize < 65536 * 2`: at exactly
+        // `BACKPRESSURE_THRESHOLD_BYTES` Node returns false (not less-than).
+        return self.bufferedBytes() >= BACKPRESSURE_THRESHOLD_BYTES;
     }
     /// Bytes sitting in userspace that the kernel hasn't accepted yet. On
     /// Windows an in-flight `uv_write` leaves the source item in place on

@@ -1260,14 +1260,14 @@ impl ServerConfig {
             return Err(JsError::Thrown);
         }
 
-        if let Some(v) = arg.get(global, "h3")? {
+        if let Some(v) = arg.get(global, "http3")? {
             args.h3 = v.to_boolean();
         }
         if global.has_exception() {
             return Err(JsError::Thrown);
         }
 
-        if let Some(v) = arg.get(global, "h1")? {
+        if let Some(v) = arg.get(global, "http1")? {
             args.h1 = v.to_boolean();
         }
         if global.has_exception() {
@@ -1413,11 +1413,11 @@ impl ServerConfig {
             }
         } else if !args.h1 {
             return Err(global
-                .throw_invalid_arguments(format_args!("Cannot disable h1 without enabling h3")));
+                .throw_invalid_arguments(format_args!("Cannot disable http1 without enabling http3")));
         }
         if !args.h1 && matches!(args.address, Address::Unix(_)) {
             return Err(global.throw_invalid_arguments(format_args!(
-                "Cannot disable h1 with a unix socket — HTTP/3 over AF_UNIX is not supported",
+                "Cannot disable http1 with a unix socket — HTTP/3 over AF_UNIX is not supported",
             )));
         }
 

@@ -62,6 +62,11 @@ const cases: Array<[string, number[]]> = [
   ["unterminated block comment at buffer end", [...Buffer.from("x=1/*"), ...Buffer.alloc(700, 0x63)]],
   ["unterminated block comment + 4-byte lead", [...Buffer.from("x=1/*"), ...Buffer.alloc(700, 0x63), 0xf0]],
   ["unterminated block comment + '*'", [...Buffer.from("x=1/*"), ...Buffer.alloc(700, 0x63), 0x2a]],
+  // After lexing `<!`, the lexer peeks 2 codepoints to check for `<!--`. The peek helper used
+  // to re-read the same codepoint N times instead of advancing, overshooting the end of the
+  // source when fewer than N bytes remained (or when the next codepoint was multi-byte).
+  ["<! + 1 ASCII byte", [0x3c, 0x21, 0x78]],
+  ["<! + 2-byte codepoint", [0x3c, 0x21, 0xc3, 0xb1]],
 ];
 
 for (const [name, bytes] of cases) {

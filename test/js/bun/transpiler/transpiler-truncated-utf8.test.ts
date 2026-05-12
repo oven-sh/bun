@@ -36,6 +36,8 @@ describe.skipIf(!(isLinux || isMacOS))("Bun.Transpiler.transformSync with trunca
         expect.stringContaining("ok: unterminated block comment at buffer end"),
         expect.stringContaining("ok: unterminated block comment + 4-byte lead"),
         expect.stringContaining("ok: unterminated block comment + '*'"),
+        expect.stringContaining("ok: <! + 1 ASCII byte"),
+        expect.stringContaining("ok: <! + 2-byte codepoint"),
         "DONE",
       ],
       stderr: "",

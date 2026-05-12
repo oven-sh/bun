@@ -186,8 +186,7 @@ bun_opaque::opaque_ffi! {
 impl Impl {
     pub fn init(global: &JSGlobalObject, value: JSValue) -> NonNull<Impl> {
         crate::mark_binding!();
-        // SAFETY: FFI call; `global` is a live JSGlobalObject.
-        NonNull::new(unsafe { Bun__StrongRef__new(global, value) })
+        NonNull::new(Bun__StrongRef__new(global, value))
             .expect("Bun__StrongRef__new returned null")
     }
 
@@ -202,14 +201,12 @@ impl Impl {
 
     pub fn set(this: NonNull<Impl>, global: &JSGlobalObject, value: JSValue) {
         crate::mark_binding!();
-        // SAFETY: `this` is a valid handle from `init`.
-        unsafe { Bun__StrongRef__set(this.as_ptr(), global, value) };
+        Bun__StrongRef__set(Impl::opaque_ref(this.as_ptr()), global, value);
     }
 
     pub fn clear(this: NonNull<Impl>) {
         crate::mark_binding!();
-        // SAFETY: `this` is a valid handle from `init`.
-        unsafe { Bun__StrongRef__clear(this.as_ptr()) };
+        Bun__StrongRef__clear(Impl::opaque_ref(this.as_ptr()));
     }
 
     /// SAFETY: `this` must be a valid handle from `init`; consumed here (do not reuse).
@@ -238,11 +235,16 @@ impl Impl {
 }
 
 // TODO(port): move to jsc_sys
+//
+// `Impl` and `JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles, so
+// `&Impl`/`&JSGlobalObject` are ABI-identical to non-null `*const T` and C++
+// mutating through them (HandleSet slot write) is interior mutation invisible
+// to Rust. `delete` consumes the C++ allocation and so stays `unsafe fn`.
 unsafe extern "C" {
     fn Bun__StrongRef__delete(this: *mut Impl);
-    fn Bun__StrongRef__new(global: *const JSGlobalObject, value: JSValue) -> *mut Impl;
-    fn Bun__StrongRef__set(this: *mut Impl, global: *const JSGlobalObject, value: JSValue);
-    fn Bun__StrongRef__clear(this: *mut Impl);
+    safe fn Bun__StrongRef__new(global: &JSGlobalObject, value: JSValue) -> *mut Impl;
+    safe fn Bun__StrongRef__set(this: &Impl, global: &JSGlobalObject, value: JSValue);
+    safe fn Bun__StrongRef__clear(this: &Impl);
 }
 
 pub use crate::deprecated_strong as deprecated;

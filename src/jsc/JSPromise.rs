@@ -36,13 +36,13 @@ pub enum Status {
 // keeps a raw `*mut c_void` ctx so it stays `unsafe fn`; the
 // `*mut JSPromise`-returning constructors stay raw (caller derefs).
 unsafe extern "C" {
-    fn JSC__JSPromise__create(arg0: &JSGlobalObject) -> *mut JSPromise;
-    fn JSC__JSPromise__rejectedPromise(arg0: &JSGlobalObject, js_value1: JSValue) -> *mut JSPromise;
+    safe fn JSC__JSPromise__create(arg0: &JSGlobalObject) -> *mut JSPromise;
+    safe fn JSC__JSPromise__rejectedPromise(arg0: &JSGlobalObject, js_value1: JSValue) -> *mut JSPromise;
     /// **DEPRECATED** This function does not notify the VM about the rejection,
     /// meaning it will not trigger unhandled rejection handling. Use
     /// `JSC__JSPromise__rejectedPromise` instead.
     safe fn JSC__JSPromise__rejectedPromiseValue(arg0: &JSGlobalObject, js_value1: JSValue) -> JSValue;
-    fn JSC__JSPromise__resolvedPromise(arg0: &JSGlobalObject, js_value1: JSValue) -> *mut JSPromise;
+    safe fn JSC__JSPromise__resolvedPromise(arg0: &JSGlobalObject, js_value1: JSValue) -> *mut JSPromise;
     safe fn JSC__JSPromise__resolvedPromiseValue(arg0: &JSGlobalObject, js_value1: JSValue) -> JSValue;
     fn JSC__JSPromise__wrap(
         arg0: *mut JSGlobalObject,
@@ -152,9 +152,9 @@ impl<T> Weak<T> {
         let prom = self.weak.swap().as_promise().unwrap();
         // Zig: `this.weak.deinit()` — drop the underlying weak handle now.
         self.weak = JscWeak::default();
-        // SAFETY: `as_promise()` returns a non-null `*mut JSPromise` for a live promise cell;
+        // `as_promise()` returns a non-null `*mut JSPromise` for a live promise cell;
         // GC-owned, so the resulting `&mut` is a resolver-style accessor (see `get`).
-        unsafe { &mut *prom }
+        JSPromise::opaque_mut(prom)
     }
 }
 
@@ -174,14 +174,12 @@ impl Strong {
     pub fn reject_without_swap(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) {
         let Some(v) = self.strong.get() else { return };
         let val = val.unwrap_or_else(|_| global.try_take_exception().unwrap());
-        // SAFETY: `as_promise()` returns a non-null `*mut JSPromise` for a live promise cell.
-        let _ = unsafe { &mut *v.as_promise().unwrap() }.reject(global, Ok(val));
+        let _ = JSPromise::opaque_mut(v.as_promise().unwrap()).reject(global, Ok(val));
     }
 
     pub fn resolve_without_swap(&mut self, global: &JSGlobalObject, val: JSValue) {
         let Some(v) = self.strong.get() else { return };
-        // SAFETY: `as_promise()` returns a non-null `*mut JSPromise` for a live promise cell.
-        let _ = unsafe { &mut *v.as_promise().unwrap() }.resolve(global, val);
+        let _ = JSPromise::opaque_mut(v.as_promise().unwrap()).resolve(global, val);
     }
 
     pub fn reject(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) -> Result<(), JsTerminated> {
@@ -286,9 +284,9 @@ impl Strong {
         let prom = self.strong.swap().as_promise().unwrap();
         // Zig: `this.strong.deinit()` — release the handle slot now.
         self.strong = JscStrong::empty();
-        // SAFETY: `as_promise()` returns a non-null `*mut JSPromise` for a live promise cell;
+        // `as_promise()` returns a non-null `*mut JSPromise` for a live promise cell;
         // GC-owned, so the resulting `&mut` is a resolver-style accessor (see `get`).
-        unsafe { &mut *prom }
+        JSPromise::opaque_mut(prom)
     }
 
     pub fn take(&mut self) -> Self {
@@ -394,10 +392,10 @@ impl JSPromise {
     /// `unsafe { (*p).status() }` deref so callers don't open-code it.
     #[inline]
     pub fn status_ptr(p: *mut JSPromise) -> Status {
-        // SAFETY: `p` is a non-null GC-managed cell tracked by the VM
-        // (caller obtained it from a strong-ref VM field or a fresh
+        // `p` is a non-null GC-managed cell tracked by the VM (caller obtained
+        // it from a strong-ref VM field or a fresh
         // `JSInternalPromise__resolvedPromise` return value).
-        unsafe { (*p).status() }
+        JSPromise::opaque_ref(p).status()
     }
 
     pub fn result(&mut self, vm: &VM) -> JSValue {
@@ -416,8 +414,8 @@ impl JSPromise {
     ///
     /// Note: If you want the result as a `JSValue`, use `resolved_promise_value` instead.
     pub fn resolved_promise(global: &JSGlobalObject, value: JSValue) -> &mut JSPromise {
-        // SAFETY: FFI returns a non-null GC-managed cell tied to `global`'s VM.
-        unsafe { &mut *JSC__JSPromise__resolvedPromise(global, value) }
+        // FFI returns a non-null GC-managed cell tied to `global`'s VM.
+        JSPromise::opaque_mut(JSC__JSPromise__resolvedPromise(global, value))
     }
 
     /// Create a new promise with an already fulfilled value.
@@ -430,8 +428,8 @@ impl JSPromise {
     ///
     /// Note: If you want the result as a `JSValue`, use `rejected_promise().to_js()` instead.
     pub fn rejected_promise(global: &JSGlobalObject, value: JSValue) -> &mut JSPromise {
-        // SAFETY: FFI returns a non-null GC-managed cell tied to `global`'s VM.
-        unsafe { &mut *JSC__JSPromise__rejectedPromise(global, value) }
+        // FFI returns a non-null GC-managed cell tied to `global`'s VM.
+        JSPromise::opaque_mut(JSC__JSPromise__rejectedPromise(global, value))
     }
 
     /// **DEPRECATED** use `rejected_promise` instead.
@@ -528,8 +526,8 @@ impl JSPromise {
     /// Note: You should use `resolved_promise` or `rejected_promise` if you want
     /// to create a promise that is already resolved or rejected.
     pub fn create(global: &JSGlobalObject) -> &mut JSPromise {
-        // SAFETY: FFI returns a non-null GC-managed cell tied to `global`'s VM.
-        unsafe { &mut *JSC__JSPromise__create(global) }
+        // FFI returns a non-null GC-managed cell tied to `global`'s VM.
+        JSPromise::opaque_mut(JSC__JSPromise__create(global))
     }
 
     /// **DEPRECATED** use `to_js` instead.

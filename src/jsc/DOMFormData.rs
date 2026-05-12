@@ -22,7 +22,7 @@ unsafe extern "C" {
         arg1: *mut c_void,
         arg2: unsafe extern "C" fn(arg0: *mut c_void, arg1: *mut ZigString),
     );
-    fn WebCore__DOMFormData__fromJS(js_value0: JSValue) -> *mut DOMFormData;
+    safe fn WebCore__DOMFormData__fromJS(js_value0: JSValue) -> *mut DOMFormData;
     safe fn WebCore__DOMFormData__append(
         arg0: &mut DOMFormData,
         arg1: &ZigString,
@@ -89,11 +89,13 @@ impl DOMFormData {
     }
 
     pub fn from_js<'a>(value: JSValue) -> Option<&'a mut DOMFormData> {
-        // SAFETY: returned pointer is valid while `value` is kept alive on the stack
-        // (conservative GC scan). Null → None.
+        // Returned pointer is valid while `value` is kept alive on the stack
+        // (conservative GC scan). Null → None. `DOMFormData` is an opaque ZST
+        // handle, so `opaque_mut` is the centralised zero-byte deref proof.
         // TODO(port): lifetime — unbounded `'a` is a placeholder; caller must keep `value`
         // stack-rooted for the lifetime of the returned reference.
-        unsafe { WebCore__DOMFormData__fromJS(value).as_mut() }
+        let p = WebCore__DOMFormData__fromJS(value);
+        (!p.is_null()).then(|| DOMFormData::opaque_mut(p))
     }
 
     pub fn append(&mut self, name_: &ZigString, value_: &ZigString) {

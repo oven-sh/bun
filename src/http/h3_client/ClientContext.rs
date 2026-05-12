@@ -11,7 +11,7 @@ use bun_uws::quic::context::ConnectResult;
 use bun_uws::Loop as UwsLoop;
 
 use super::callbacks;
-use super::client_session::{session_mut, ClientSession};
+use super::client_session::{quic_socket_mut, session_mut, ClientSession};
 use super::pending_connect::PendingConnect;
 use super::stream::Stream;
 use crate::h3_client as H3;
@@ -143,9 +143,11 @@ impl ClientContext {
         match result {
             ConnectResult::Socket(qs) => {
                 session_mut(session).qsocket = NonNull::new(qs);
-                // SAFETY: qs is a fresh quic socket whose ext slot was sized to
-                // hold a *mut ClientSession in get_or_create().
-                unsafe { *(*qs).ext::<ClientSession>() = NonNull::new(session) };
+                // `qs` is a fresh lsquic-owned socket — route the backref deref
+                // through the centralised [`quic_socket_mut`] accessor and use
+                // the safe `&mut` ext-slot accessor it exposes (sized for
+                // `*mut ClientSession` in `get_or_create`).
+                *quic_socket_mut(qs).ext::<ClientSession>() = NonNull::new(session);
                 bun_core::scoped_log!(
                     h3_client,
                     "connect {}:{} (sync)",

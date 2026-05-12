@@ -17,7 +17,8 @@
 /// Version 18: Include ESM record (module info) with an ES Module, see #15758
 /// Version 19: Sourcemap blob is InternalSourceMap (varint stream + sync points), not VLQ.
 /// Version 20: InternalSourceMap stream is bit-packed windows.
-const expected_version = 20;
+/// Version 21: Preserve non-ASCII bytes in String.raw / RegExp.source (printer no longer escapes > 0x7F).
+const expected_version = 21;
 
 const debug = Output.scoped(.cache, .visible);
 const MINIMUM_CACHE_SIZE = 50 * 1024;
@@ -688,7 +689,10 @@ pub const RuntimeTranspilerCache = struct {
             return;
         }
         bun.assert(this.entry == null);
-        const output_code = bun.String.cloneLatin1(output_code_bytes);
+        const output_code = if (bun.strings.firstNonASCII(output_code_bytes) != null)
+            bun.String.cloneUTF8(output_code_bytes)
+        else
+            bun.String.cloneLatin1(output_code_bytes);
         this.output_code = output_code;
 
         toFile(this.input_byte_length.?, this.input_hash.?, this.features_hash.?, sourcemap, esm_record, output_code, this.exports_kind) catch |err| {
@@ -696,7 +700,7 @@ pub const RuntimeTranspilerCache = struct {
             return;
         };
         if (comptime bun.Environment.allow_assert)
-            debug("put() = {d} bytes", .{output_code.latin1().len});
+            debug("put() = {d} bytes", .{output_code.byteSlice().len});
     }
 };
 

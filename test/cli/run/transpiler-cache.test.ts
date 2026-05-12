@@ -77,6 +77,28 @@ describe("transpiler cache", () => {
     expect(b.stdout == "");
     expect(newCacheCount()).toBe(0);
   });
+  test("preserves non-ASCII bytes in String.raw across put/get", () => {
+    // Pad the source above MINIMUM_CACHE_SIZE so the runtime transpiler cache fires.
+    // The padding line must use UTF-8 byte length (50KB of ASCII '*'), then append the
+    // assertion code. The fix this test guards: put() used to clone the printer's UTF-8
+    // output as Latin-1, corrupting multi-byte sequences before they reached disk.
+    const filler = "/*" + "*".repeat(50 * 1024) + "*/\n";
+    const code = `process.stdout.write(JSON.stringify({ raw: String.raw\`╭─╮\`, source: /╭─╮/.source }));`;
+    writeFileSync(join(temp_dir, "a.js"), filler + code);
+
+    const expected = { raw: "╭─╮", source: "╭─╮" };
+
+    const a = bunRun(join(temp_dir, "a.js"), env);
+    expect(JSON.parse(a.stdout)).toEqual(expected);
+    expect(newCacheCount()).toBe(1);
+
+    // Second run reads from the cache. Both the on-disk encoding (utf8) and the load
+    // path must round-trip the bytes; if either is broken, JSON.parse fails or the
+    // codepoints come back as Latin-1 split bytes.
+    const b = bunRun(join(temp_dir, "a.js"), env);
+    expect(JSON.parse(b.stdout)).toEqual(expected);
+    expect(newCacheCount()).toBe(0);
+  });
   test("ignores files under 50kb", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024 - 1, "1", "a"));
     const a = bunRun(join(temp_dir, "a.js"), env);

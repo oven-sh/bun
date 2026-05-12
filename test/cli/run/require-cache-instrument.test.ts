@@ -16,7 +16,7 @@
 // The test always "passes" so it doesn't gate CI; the diagnostic table is
 // the deliverable. The macOS `leaks` variant is the ground-truth backtrace.
 
-import { test, describe } from "bun:test";
+import { describe, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 

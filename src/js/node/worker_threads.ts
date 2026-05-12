@@ -202,12 +202,33 @@ function fakeParentPort() {
     self.removeEventListener(type, forwarders[type]);
   }
 
+  function invoke(entry, event: MessageEvent) {
+    if (typeof entry === "function") {
+      entry.$call(fake, event);
+    } else {
+      // { handleEvent } listener-object form.
+      entry.handleEvent.$call(entry, event);
+    }
+  }
+
   function dispatch(type: "message" | "messageerror", event: MessageEvent) {
     if (closed) return;
     // Copy so listeners added/removed during dispatch don't affect this round.
     const list = listeners[type].slice();
     for (let i = 0; i < list.length; i++) {
-      list[i].$call(fake, event);
+      // Isolate exceptions per listener: pre-PR each listener was a separate native
+      // EventTarget registration (which does this), and Node's NodeEventTarget does the same.
+      // A throw from one handler must not prevent later handlers from running. Re-throw on
+      // nextTick so it surfaces as an uncaught exception after the whole batch has run
+      // (reportError() inside a worker currently terminates the worker synchronously, so it
+      // can't be used here).
+      try {
+        invoke(list[i], event);
+      } catch (e) {
+        process.nextTick(err => {
+          throw err;
+        }, e);
+      }
     }
   }
 
@@ -217,15 +238,23 @@ function fakeParentPort() {
       self.addEventListener(type, listener, options);
       return;
     }
-    if (typeof listener !== "function" || closed) return;
+    if (closed) return;
+    if (typeof listener !== "function") {
+      if (listener == null || typeof listener !== "object" || typeof listener.handleEvent !== "function") return;
+    }
     let entry = listener;
     if (options && typeof options === "object" && options.once) {
       entry = function (event) {
         removeEventListener(type, entry);
-        listener.$call(this, event);
+        invoke(listener, event);
       };
       // Remember the wrapper so removeEventListener(listener) before it fires still works.
       listener[kOnceWrapper] = entry;
+    } else if (listeners[type].lastIndexOf(entry) !== -1) {
+      // DOM EventTarget dedup: a non-once listener already registered is a no-op. (.on() from
+      // injectFakeEmitter wraps every call so it never hits this path — Node EventEmitter
+      // allows duplicates and that still works.)
+      return;
     }
     listeners[type].push(entry);
     // Node: adding a 'message' or 'messageerror' listener refs the port.
@@ -241,9 +270,13 @@ function fakeParentPort() {
     }
     const list = listeners[type];
     if (listener) {
-      const target = listener[kOnceWrapper] || listener;
-      const idx = list.lastIndexOf(target);
+      const wrapper = listener[kOnceWrapper];
+      let idx = wrapper !== undefined ? list.lastIndexOf(wrapper) : -1;
+      if (idx === -1) idx = list.lastIndexOf(listener);
       if (idx !== -1) list.splice(idx, 1);
+      // Drop the stale wrapper reference so re-adding the same function without {once} and
+      // then removing it resolves to the right entry.
+      if (wrapper !== undefined) listener[kOnceWrapper] = undefined;
     } else {
       list.length = 0;
     }

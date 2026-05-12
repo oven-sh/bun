@@ -3442,16 +3442,25 @@ impl DuplexUpgradeContext {
         }
     }
 
+    /// Single `unsafe` site for the set-once `vm: *mut VirtualMachine` backref:
+    /// enqueue `self.task` on the owning VM's event loop. Both callers
+    /// (`deinit_in_next_tick` / `start_tls`) become safe.
+    #[inline]
+    fn enqueue_self_task(&mut self) {
+        // SAFETY: `vm` is the per-thread singleton stored at construction
+        // (`js_upgrade_duplex_to_tls`); the VM outlives every
+        // `DuplexUpgradeContext`. Single JS thread — no aliasing `&mut VM`.
+        unsafe { (*self.vm).enqueue_task(jsc::Task::init(&raw mut self.task)) };
+    }
+
     fn deinit_in_next_tick(&mut self) {
         self.task_event = EventState::Close;
-        // SAFETY: `vm` is the per-thread singleton stored at construction.
-        unsafe { (*self.vm).enqueue_task(jsc::Task::init(&raw mut self.task)) };
+        self.enqueue_self_task();
     }
 
     fn start_tls(&mut self) {
         self.task_event = EventState::StartTLS;
-        // SAFETY: `vm` is the per-thread singleton stored at construction.
-        unsafe { (*self.vm).enqueue_task(jsc::Task::init(&raw mut self.task)) };
+        self.enqueue_self_task();
     }
 
     /// # Safety

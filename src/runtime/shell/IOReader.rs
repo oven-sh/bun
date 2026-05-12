@@ -66,7 +66,7 @@ struct State {
     self_weak: std::sync::Weak<IOReader>,
     /// Backref so async read callbacks can drive `Yield::run`. See
     /// `IOWriter::interp`.
-    interp: *mut Interpreter,
+    interp: Option<bun_ptr::ParentRef<Interpreter>>,
 }
 
 pub struct IOReader {
@@ -151,7 +151,7 @@ impl IOReader {
                 is_reading: false,
                 started: false,
                 self_weak: w.clone(),
-                interp: core::ptr::null_mut(),
+                interp: None,
             }),
         });
         // PORT NOTE: set the parent backref after Arc allocation so the
@@ -171,7 +171,9 @@ impl IOReader {
 
     #[inline]
     pub fn set_interp(&self, interp: *mut Interpreter) {
-        self.state().interp = interp;
+        // SAFETY: `interp` is the live owning Interpreter (it owns the IO
+        // struct that holds this Arc); single-threaded.
+        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
     }
 
     #[inline]
@@ -354,16 +356,16 @@ impl IOReader {
     }
 
     fn run_yield(&self, y: Yield) {
-        let interp = self.state().interp;
-        if interp.is_null() {
+        let Some(interp) = self.state().interp else {
             debug_assert!(
                 matches!(y, Yield::Done | Yield::Suspended),
                 "IOReader async callback fired without interp backref"
             );
             return;
-        }
-        // SAFETY: interp outlives every IOReader. Single-threaded.
-        y.run(unsafe { &*interp });
+        };
+        // `ParentRef: Deref<Target=Interpreter>` — the interpreter owns the IO
+        // struct holding this Arc and outlives every IOReader. Single-threaded.
+        y.run(&interp);
     }
 }
 
@@ -434,13 +436,12 @@ fn dispatch_read_chunk(
     child: ChildPtr,
     chunk: &[u8],
     remove: &mut bool,
-    interp: *mut Interpreter,
+    interp: Option<bun_ptr::ParentRef<Interpreter>>,
 ) -> Yield {
-    if interp.is_null() {
+    let Some(interp) = interp else {
         return Yield::suspended();
-    }
-    // SAFETY: interp outlives the reader.
-    let interp = unsafe { &*interp };
+    };
+    let interp = interp.get();
     match child.tag {
         ReaderTag::Cat => crate::shell::builtins::cat::Cat::on_io_reader_chunk(
             interp, child.node, chunk, remove,
@@ -451,13 +452,12 @@ fn dispatch_read_chunk(
 fn dispatch_reader_done(
     child: ChildPtr,
     err: Option<sys::SystemError>,
-    interp: *mut Interpreter,
+    interp: Option<bun_ptr::ParentRef<Interpreter>>,
 ) -> Yield {
-    if interp.is_null() {
+    let Some(interp) = interp else {
         return Yield::suspended();
-    }
-    // SAFETY: interp outlives the reader.
-    let interp = unsafe { &*interp };
+    };
+    let interp = interp.get();
     match child.tag {
         ReaderTag::Cat => {
             crate::shell::builtins::cat::Cat::on_io_reader_done(interp, child.node, err)

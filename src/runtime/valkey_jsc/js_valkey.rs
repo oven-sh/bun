@@ -239,9 +239,11 @@ impl SubscriptionCtx {
         channel_name: JSValue,
         callback: JSValue,
     ) -> JsResult<()> {
-        let parent_ptr = std::ptr::from_ref::<JSValkeyClient>(self.parent());
-        let _guard = scopeguard::guard(parent_ptr, |p| unsafe {
-            (*p).on_new_subscription_callback_insert();
+        // `BackRef` (Copy + Deref) detaches the borrow so the guard closure is
+        // safe even though intervening JS may re-enter `&self`.
+        let parent_br = BackRef::new(self.parent());
+        let _guard = scopeguard::guard(parent_br, |p| {
+            p.on_new_subscription_callback_insert();
         });
         // PORT NOTE: Zig `defer` ≡ scopeguard-on-drop here.
         let map = self.subscription_callback_map();

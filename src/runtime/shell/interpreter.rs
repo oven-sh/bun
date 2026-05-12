@@ -1162,18 +1162,32 @@ impl Interpreter {
         self.estimated_size_for_gc.get()
     }
 
+    /// Safe accessor for the set-once `global_this: Cell<*mut JSGlobalObject>`
+    /// backref. `None` on the mini-event-loop path (never set); `Some` once
+    /// `create_shell_interpreter` populates it. Single `unsafe` deref site —
+    /// callers (`throw`, `finish_internal`) read through this instead of
+    /// open-coding the raw `&*self.global_this.get()` deref.
+    #[inline]
+    pub fn global_this_ref(&self) -> Option<&crate::jsc::JSGlobalObject> {
+        let g = self.global_this.get();
+        if g.is_null() {
+            return None;
+        }
+        // SAFETY: `global_this` is set exactly once by `create_shell_interpreter`
+        // from a live `&JSGlobalObject`; the global is process-lifetime and
+        // outlives the interpreter (held by the JS wrapper).
+        Some(unsafe { &*g })
+    }
+
     /// Spec: interpreter.zig `throwShellErr(err, event_loop)` — `mini` prints
     /// and exits(1); `js` raises a JS exception. Dispatch on `global_this`
     /// (set only on the JS event-loop path by `create_shell_interpreter`).
     pub fn throw(&self, err: ShellErr) {
-        let global = self.global_this.get();
-        if global.is_null() {
+        let Some(global) = self.global_this_ref() else {
             // Mini event loop — diverges (exit 1).
             err.throw_mini();
-        }
-        // SAFETY: `global_this` was set by `create_shell_interpreter`; the
-        // global outlives the interpreter (held by the JS wrapper).
-        let _ = err.throw_js(unsafe { &*global });
+        };
+        let _ = err.throw_js(global);
     }
 
     // ── run loop ───────────────────────────────────────────────────────────
@@ -1299,9 +1313,11 @@ impl Interpreter {
             if this_jsvalue != JSValue::ZERO {
                 if let Some(resolve) = JSShellInterpreter::resolve_get_cached(this_jsvalue) {
                     let loop_ = self.event_loop;
-                    // SAFETY: `global_this` was set by `create_shell_interpreter`;
-                    // the global outlives the interpreter (held by the JS wrapper).
-                    let global_this = unsafe { &*self.global_this.get() };
+                    // `global_this` is `Some` on the `EventLoopHandle::Js` path
+                    // (set by `create_shell_interpreter`); see `global_this_ref`.
+                    let global_this = self
+                        .global_this_ref()
+                        .expect("global_this set on Js event-loop path");
                     let buffered_stdout = self.get_buffered_stdout(global_this);
                     let buffered_stderr = self.get_buffered_stderr(global_this);
                     self.keep_alive.with_mut(|k| k.disable());

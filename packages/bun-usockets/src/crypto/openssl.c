@@ -120,8 +120,11 @@ static int us_ctx_cache_ex_idx = -1;
  * populated only with the process default CA set (no user ca/ca_file). Lets
  * us_internal_ssl_attach() know it's safe to swap in a fresh shared default
  * store per-SSL after tls.setDefaultCACertificates() mutates the defaults —
- * without clobbering a CTX that carried an explicit `ca` option. */
+ * without clobbering a CTX that carried an explicit `ca` option. The marker
+ * is the address of this static, not (void*)1 — a real object avoids the
+ * int→pointer portability nit some toolchains flag. */
 static int us_ctx_default_ca_ex_idx = -1;
+static char us_ctx_default_ca_marker;
 static int us_ssl_reneg_state_idx = -1;
 static int us_ssl_listener_ex_idx = -1;
 #ifdef _WIN32
@@ -566,7 +569,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
      * SSL objects can refresh to the current shared store if
      * tls.setDefaultCACertificates() was called after this CTX was built
      * (the fetch/https HTTPS context is built once at HTTP-thread spawn). */
-    SSL_CTX_set_ex_data(ssl_context, us_ctx_default_ca_ex_idx, (void *)1);
+    SSL_CTX_set_ex_data(ssl_context, us_ctx_default_ca_ex_idx, &us_ctx_default_ca_marker);
     SSL_CTX_set_verify(ssl_context,
         options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
                                     : SSL_VERIFY_PEER,

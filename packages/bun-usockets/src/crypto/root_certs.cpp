@@ -1,6 +1,7 @@
 #include "./root_certs.h"
 #include "./root_certs_header.h"
 #include "./internal/internal.h"
+#include <atomic>
 #include <mutex>
 #include <string.h>
 #include "./default_ciphers.h"
@@ -202,13 +203,16 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
 static std::mutex shared_store_mutex;
 static X509_STORE *shared_store = nullptr;
 static STACK_OF(X509) *user_root_certs = nullptr;
-static bool has_user_root_certs = false;
+// Atomic so the lock-free fast-path check in us_has_user_root_certs()
+// (called per-SSL from us_internal_ssl_attach) is well-defined when a
+// Worker is concurrently setting the override. Relaxed is enough: a
+// stale false falls through to the shared-store path (which also honours
+// the override under the mutex), a stale true just costs one extra
+// SSL_set0_verify_cert_store.
+static std::atomic<bool> has_user_root_certs { false };
 
 extern "C" int us_has_user_root_certs() {
-  // No lock: a cheap racy read is fine — the only consumer
-  // (us_internal_ssl_attach) falls through to the shared-store path on false,
-  // and a stale true costs one extra SSL_set0_verify_cert_store call.
-  return has_user_root_certs ? 1 : 0;
+  return has_user_root_certs.load(std::memory_order_relaxed) ? 1 : 0;
 }
 
 extern "C" void us_set_user_root_certs(STACK_OF(X509) *certs) {

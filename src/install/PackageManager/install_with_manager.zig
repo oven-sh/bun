@@ -664,7 +664,7 @@ pub fn installWithManager(
                 if (log_level != .silent) {
                     try manager.log.print(Output.errorWriter());
                     if (violations > 0) {
-                        Output.note("remove the offending version from bun.lock, raise the bound, or add it to <d>install.minimumReleaseAgeExcludes<r>", .{});
+                        Output.note("remove the offending version from bun.lock, lower <d>install.minimumReleaseAge<r>, or add it to <d>install.minimumReleaseAgeExcludes<r>", .{});
                     }
                 }
                 manager.log.reset();

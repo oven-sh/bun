@@ -151,7 +151,9 @@ struct X509DerLess {
 static unsigned long appendX509sFromPEM(std::span<const uint8_t> data, STACK_OF(X509) * out)
 {
     ERR_clear_error();
-    BIO* bio = BIO_new_mem_buf(data.data(), static_cast<int>(data.size()));
+    // BoringSSL takes ossl_ssize_t (= ptrdiff_t) here; an int cast would
+    // truncate a >2GB input and make BoringSSL treat it as NUL-terminated.
+    BIO* bio = BIO_new_mem_buf(data.data(), static_cast<ossl_ssize_t>(data.size()));
     if (bio == nullptr) {
         return ERR_peek_last_error();
     }

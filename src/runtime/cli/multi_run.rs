@@ -3,7 +3,7 @@ use core::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use bun_collections::StringArrayHashMap;
+use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
 use bun_core::{self as bun, Error, Global, Output, err};
 use bun_event_loop::EventLoopHandle;
@@ -320,9 +320,7 @@ impl<'a> State<'a> {
             let handle = unsafe { &*pipe.handle };
             self.write_line_with_prefix(handle, line, writer)?;
             // Remove processed line from buffer
-            let remaining_len = pipe.line_buffer.len() - (newline_pos + 1);
-            pipe.line_buffer.copy_within(newline_pos + 1.., 0);
-            pipe.line_buffer.truncate(remaining_len);
+            pipe.line_buffer.drain_front(newline_pos + 1);
         }
         Ok(())
     }
@@ -935,7 +933,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
                             matches.push(key);
                         }
                     }
-                    matches.sort();
+                    matches.as_mut_slice().sort();
                     for matched_name in &matches {
                         add_script_configs(
                             &mut configs,
@@ -1022,7 +1020,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
                     }
 
                     // Sort alphabetically
-                    matches.sort();
+                    matches.as_mut_slice().sort();
 
                     if matches.is_empty() {
                         Output::pretty_errorln(format_args!(

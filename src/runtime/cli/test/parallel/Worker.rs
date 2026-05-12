@@ -411,11 +411,8 @@ bun_spawn::link_impl_ProcessExit! {
     }
 }
 
+bun_core::intrusive_field!(Worker, ipc: Channel<Worker>);
 impl ChannelOwner for Worker {
-    /// `offset_of!(Worker, ipc)` — recovers `&mut Worker` from `&mut Channel<Worker>`
-    /// in platform callbacks`).
-    const CHANNEL_OFFSET: usize = core::mem::offset_of!(Worker, ipc);
-
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         // SAFETY: coord backref valid; mutation — see field TODO.
         unsafe { (*self.coord.cast_mut()).on_frame(self, kind, rd) };

@@ -1,3 +1,5 @@
+use bun_ptr::AsCtxPtr;
+
 use crate::shell::ast;
 use crate::shell::interpreter::{
     Interpreter, Node, NodeId, Pipe, ShellExecEnv, ShellExecEnvKind, StateKind, closefd, log,

@@ -1600,10 +1600,9 @@ impl UpdateInteractiveCommand {
                         let mut j: usize = 0;
                         // Calculate actual displayed text length including count if present
                         let dep_type_text_len: usize = if selected_count > 0 {
-                            // TODO(port): std.fmt.count("{d}") — count decimal digits
                             pkg.dependency_type.len()
                                 + 1
-                                + (bun_core::fmt::fast_digit_count(selected_count as u64) as usize) // +1 for space
+                                + bun_core::fmt::digit_count(selected_count) // +1 for space
                         } else {
                             pkg.dependency_type.len()
                         };

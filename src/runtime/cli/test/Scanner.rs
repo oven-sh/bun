@@ -371,11 +371,7 @@ impl<'a> Scanner<'a> {
 
                 if cfg!(debug_assertions) {
                     debug_assert!(
-                        strings::index_of(
-                            name,
-                            const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes()
-                        )
-                        .is_none()
+                        strings::index_of(name, bun_paths::NODE_MODULES_NEEDLE).is_none()
                     );
                 }
 

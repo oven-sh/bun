@@ -1198,7 +1198,7 @@ impl ID {
     }
 }
 
-const US_PER_S: i64 = 1_000_000;
-const NS_PER_US: i64 = 1_000;
+const US_PER_S: i64 = bun_core::time::US_PER_S as i64;
+const NS_PER_US: i64 = bun_core::time::NS_PER_US as i64;
 
 // ported from: src/runtime/timer/Timer.zig

@@ -185,19 +185,10 @@ fn append_with_escapes(output: &mut Vec<u8>, input: &[u8]) -> bool {
                 b'x' => {
                     // \xHH: hex value (up to 2 hex digits)
                     i += 2;
-                    let mut val: u8 = 0;
-                    let mut digits = 0;
-                    while digits < 2 && i < input.len() {
-                        if let Some(hv) = hex_digit_value(input[i]) {
-                            val = val.wrapping_mul(16).wrapping_add(hv);
-                            i += 1;
-                            digits += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    if digits > 0 {
-                        output.push(val);
+                    let (val, n) = bun_core::fmt::parse_hex_prefix(&input[i..], 2);
+                    i += n;
+                    if n > 0 {
+                        output.push(val as u8);
                     } else {
                         output.extend_from_slice(b"\\x");
                     }
@@ -215,5 +206,3 @@ fn append_with_escapes(output: &mut Vec<u8>, input: &[u8]) -> bool {
     }
     false
 }
-
-use bun_core::fmt::hex_digit_value;

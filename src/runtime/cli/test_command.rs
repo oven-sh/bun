@@ -174,15 +174,7 @@ pub fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> Result<(), bu
                 if i > last {
                     writer.write_all(&str_[last..i])?;
                 }
-                let escaped: &[u8] = match c {
-                    b'&' => b"&amp;",
-                    b'<' => b"&lt;",
-                    b'>' => b"&gt;",
-                    b'"' => b"&quot;",
-                    b'\'' => b"&apos;",
-                    _ => unreachable!(),
-                };
-                writer.write_all(escaped)?;
+                writer.write_all(bun_core::strings::xml_escape_entity(c).unwrap())?;
                 last = i + 1;
             }
             0..=0x1f => {
@@ -1801,9 +1793,7 @@ impl CommandLineReporter {
                         use std::io::Write as _;
                         let mut cursor = &mut shortname_buf[..];
                         let _ = cursor.write_all(b".lcov.info.");
-                        for b in base64_bytes {
-                            let _ = write!(cursor, "{:02x}", b);
-                        }
+                        let _ = write!(cursor, "{}", bun_core::fmt::hex_lower(&base64_bytes));
                         let _ = cursor.write_all(b".tmp\0");
                         let s = bun_core::slice_to_nul(&shortname_buf);
                         // NUL written above; `slice_to_nul` returns the prefix before it.

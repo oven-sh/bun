@@ -456,12 +456,7 @@ pub enum GitError {
     // were dropped (global mimalloc aborts on OOM), so OutOfMemory is gone.
 }
 
-impl From<GitError> for bun_core::Error {
-    fn from(e: GitError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-        // TODO(port): confirm bun_core::Error construction from error-set tag
-    }
-}
+bun_core::named_error_set!(GitError);
 
 /// Return the set of changed files (absolute paths) according to git.
 ///

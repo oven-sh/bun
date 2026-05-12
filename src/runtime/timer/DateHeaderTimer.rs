@@ -22,7 +22,7 @@ use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTim
 
 bun_output::declare_scope!(DateHeaderTimer, visible);
 
-const MS_PER_S: i64 = 1000;
+const MS_PER_S: i64 = bun_core::time::MS_PER_S as i64;
 
 pub struct DateHeaderTimer {
     pub event_loop_timer: EventLoopTimer,

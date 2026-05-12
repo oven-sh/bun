@@ -22,7 +22,7 @@ use super::{
     ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, InHeap, IntrusiveField,
 };
 
-const NS_PER_S: i64 = 1_000_000_000;
+const NS_PER_S: i64 = bun_core::time::NS_PER_S as i64;
 
 bun_opaque::opaque_ffi! {
     /// This is `WTF::RunLoop::TimerBase` from WebKit — opaque FFI handle.

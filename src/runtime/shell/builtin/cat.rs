@@ -1,6 +1,8 @@
 use core::ffi::CStr;
 use std::sync::Arc;
 
+use bun_ptr::AsCtxPtr;
+
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinInput, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{

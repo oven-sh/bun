@@ -106,3 +106,36 @@ test("bun add of a folder with `workspace:.` self-reference (isolated linker) do
   expect(stdout).toContain("installed test@");
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/24735
+// A package that depends on itself via `"./"` installs fine the first time
+// (the transitive folder dep gets a fresh package id with no deps), but on
+// the second install the lockfile is loaded with both entries resolving to
+// the same package path and `resolve()` would loop forever rebuilding the
+// tree.
+test("installing a self-referential folder dependency twice does not hang", async () => {
+  using dir = tempDir("issue-24735", {
+    "package/package.json": JSON.stringify({
+      name: "package",
+      dependencies: {
+        package: "./",
+      },
+    }),
+  });
+
+  for (let i = 0; i < 2; i++) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted", "./package"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Saved lockfile");
+    expect(stdout).toContain("installed package@");
+    expect(exitCode).toBe(0);
+  }
+});

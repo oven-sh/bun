@@ -94,6 +94,12 @@ impl AnyResponseExt for uws::AnyResponse {
     }
 }
 
+/// Back-reference to a stack-local "should this RequestContext defer its
+/// deinit until the JS callback returns" flag. The dispatching frame owns the
+/// `Cell<bool>`; `RequestContext` stores a `BackRef` to it (cleared before the
+/// frame unwinds), so reads/writes are safe `Cell` ops — no raw `*mut bool`.
+pub type DeferDeinitFlag = bun_ptr::BackRef<core::cell::Cell<bool>>;
+
 // `jsc.WebCore.HTTPServerWritable(ssl_enabled, http3)` — comptime type fn.
 pub type ResponseStream<const SSL_ENABLED: bool, const HTTP3: bool> =
     crate::webcore::streams::HTTPServerWritable<SSL_ENABLED, HTTP3>;
@@ -180,8 +186,12 @@ pub struct RequestContext<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE:
     pub response_buf_owned: Vec<u8>,
 
     /// Defer finalization until after the request handler task is completed?
-    // TODO(port): LIFETIMES.tsv = BORROW_PARAM Option<&'a mut bool>; raw ptr used to avoid <'a> in Phase A
-    pub defer_deinit_until_callback_completes: Option<*mut bool>,
+    ///
+    /// BORROW_PARAM: points at a `Cell<bool>` on the dispatching frame's
+    /// stack. `BackRef` encodes the outlives-holder invariant (the field is
+    /// always cleared before that frame returns) so reads/writes are safe
+    /// `Cell::get`/`set` instead of raw `*mut bool` deref.
+    pub defer_deinit_until_callback_completes: Option<DeferDeinitFlag>,
 
     pub additional_on_abort: Option<AdditionalOnAbortCallback>,
 
@@ -774,8 +784,7 @@ where
         self.flags.set_has_marked_complete(true);
 
         if let Some(defer_deinit) = self.defer_deinit_until_callback_completes {
-            // SAFETY: caller stack local, valid while set
-            unsafe { *defer_deinit = true };
+            defer_deinit.set(true);
             ctx_log!("deferred deinit <d> ({:p})<r>", self);
             return;
         }
@@ -850,16 +859,17 @@ where
         let has_responded = resp.has_responded();
         if !has_responded {
             let original_state = ctx.defer_deinit_until_callback_completes;
-            let mut should_deinit_context = match original_state {
-                // SAFETY: defer_deinit is a caller stack local valid while set
-                Some(defer_deinit) => unsafe { *defer_deinit },
+            let should_deinit_context = core::cell::Cell::new(match original_state {
+                // BackRef::get() → &Cell<bool>; second .get() reads the bool.
+                Some(defer_deinit) => defer_deinit.get().get(),
                 None => false,
-            };
-            ctx.defer_deinit_until_callback_completes = Some(&raw mut should_deinit_context);
+            });
+            ctx.defer_deinit_until_callback_completes =
+                Some(bun_ptr::BackRef::new(&should_deinit_context));
             ctx.run_error_handler(value);
             ctx.defer_deinit_until_callback_completes = original_state;
             // we try to deinit inside runErrorHandler so we just return here and let it deinit
-            if should_deinit_context {
+            if should_deinit_context.get() {
                 ctx.deinit();
                 return;
             }
@@ -1197,7 +1207,7 @@ where
         server: *const ThisServer,
         req: *mut Req<SSL_ENABLED, HTTP3>,
         resp: uws::AnyResponse,
-        should_deinit_context: Option<*mut bool>,
+        should_deinit_context: Option<DeferDeinitFlag>,
         method: Option<Method>,
     ) {
         let resolved_method = method

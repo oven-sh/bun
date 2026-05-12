@@ -71,7 +71,7 @@ pub use super::server_config::{self as server_config, ServerConfig};
 pub use super::server_web_socket::ServerWebSocket;
 pub use super::node_http_response::NodeHTTPResponse;
 pub use super::any_request_context::AnyRequestContext;
-pub use super::request_context::RequestContext as NewRequestContext;
+pub use super::request_context::{DeferDeinitFlag, RequestContext as NewRequestContext};
 
 // ─── RequestCtx trait ────────────────────────────────────────────────────────
 // PORT NOTE: Zig's `NewRequestContext` exposes `Req`/`Resp`/`http3` as comptime
@@ -115,7 +115,7 @@ pub trait RequestCtxOps: RequestCtx {
         server: *const Self::Server,
         req: &mut Self::Req,
         resp: &mut Self::Resp,
-        should_deinit_context: Option<*mut bool>,
+        should_deinit_context: Option<DeferDeinitFlag>,
         method: Option<http::Method>,
     );
     fn on_response(&mut self, server: &Self::Server, request_value: JSValue, response_value: JSValue);
@@ -125,7 +125,7 @@ pub trait RequestCtxOps: RequestCtx {
     fn to_async(&mut self, req: &mut Self::Req, request_object: &mut Request);
     fn ctx_method(&self) -> http::Method;
     fn set_upgrade_context(&mut self, ctx: Option<*mut WebSocketUpgradeContext>);
-    fn defer_deinit_ptr(&mut self) -> &mut Option<*mut bool>;
+    fn defer_deinit_ptr(&mut self) -> &mut Option<DeferDeinitFlag>;
     fn set_request_body(&mut self, body: Option<NonNull<BodyValue>>);
     fn request_body_mut(&mut self) -> Option<&mut BodyValue>;
     fn set_signal(&mut self, sig: *mut AbortSignal);
@@ -159,7 +159,7 @@ where
         server: *const ThisServer,
         req: &mut Self::Req,
         resp: &mut Self::Resp,
-        should_deinit_context: Option<*mut bool>,
+        should_deinit_context: Option<DeferDeinitFlag>,
         method: Option<http::Method>,
     ) {
         // SAFETY: `slot` points at a fresh HiveArray pool entry; treat as
@@ -183,7 +183,7 @@ where
     #[inline]
     fn set_upgrade_context(&mut self, c: Option<*mut WebSocketUpgradeContext>) { self.upgrade_context = c }
     #[inline]
-    fn defer_deinit_ptr(&mut self) -> &mut Option<*mut bool> { &mut self.defer_deinit_until_callback_completes }
+    fn defer_deinit_ptr(&mut self) -> &mut Option<DeferDeinitFlag> { &mut self.defer_deinit_until_callback_completes }
     #[inline]
     fn set_request_body(&mut self, body: Option<NonNull<BodyValue>>) { self.request_body = body }
     #[inline]
@@ -2613,11 +2613,11 @@ where
         let server = unsafe { &mut *server_ptr };
         let index = user_route.id;
 
-        let mut should_deinit_context = false;
+        let should_deinit_context = core::cell::Cell::new(false);
         let Some(mut prepared) = server.prepare_js_request_context_for::<Ctx>(
             req,
             resp,
-            Some(&mut should_deinit_context),
+            Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
             match user_route.route.method {
                 server_config::RouteMethod::Any => None,
@@ -2646,13 +2646,13 @@ where
             Err(err) => global.take_exception(err),
         };
 
-        server.handle_request_for::<Ctx>(&mut should_deinit_context, prepared, req, response_value);
+        server.handle_request_for::<Ctx>(&should_deinit_context, prepared, req, response_value);
     }
 
 
     fn handle_request_for<Ctx: RequestCtxOps<Server = Self>>(
         &mut self,
-        should_deinit_context: &mut bool,
+        should_deinit_context: &core::cell::Cell<bool>,
         prepared: PreparedRequestFor<'_, Ctx>,
         req: &mut Ctx::Req,
         response_value: JSValue,
@@ -2671,7 +2671,7 @@ where
 
         *RequestCtxOps::defer_deinit_ptr(ctx) = None;
 
-        if *should_deinit_context {
+        if should_deinit_context.get() {
             RequestCtxOps::deinit(ctx);
             return;
         }
@@ -2693,11 +2693,11 @@ where
         resp: &mut Ctx::Resp,
     ) {
         let self_ptr: *mut Self = self;
-        let mut should_deinit_context = false;
+        let should_deinit_context = core::cell::Cell::new(false);
         let Some(prepared) = self.prepare_js_request_context_for::<Ctx>(
             req,
             resp,
-            Some(&mut should_deinit_context),
+            Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::Yes,
             None,
         ) else { return };
@@ -2720,7 +2720,7 @@ where
             Err(err) => global.take_exception(err),
         };
 
-        this.handle_request_for::<Ctx>(&mut should_deinit_context, prepared, req, response_value);
+        this.handle_request_for::<Ctx>(&should_deinit_context, prepared, req, response_value);
     }
 
 
@@ -2729,7 +2729,7 @@ where
         &mut self,
         req: &mut Ctx::Req,
         resp: &mut Ctx::Resp,
-        should_deinit_context: Option<&mut bool>,
+        should_deinit_context: Option<DeferDeinitFlag>,
         create_js_request: CreateJsRequest,
         method: Option<http::Method>,
     ) -> Option<PreparedRequestFor<'_, Ctx>> {
@@ -2800,7 +2800,6 @@ where
         }
 
         let self_ptr: *const Self = self;
-        let should_deinit_ptr = should_deinit_context.map(|r| std::ptr::from_mut::<bool>(r));
         // SAFETY: both allocators hand out `*mut RequestContext<_, SSL, DEBUG, _>`; the
         // const-bool H3 parameter only affects associated consts/types, not layout, so
         // reinterpreting the slot pointer as the caller's `Ctx` monomorphization is sound.
@@ -2815,12 +2814,12 @@ where
         let ctx_slot: *mut Ctx = unsafe {
             if Ctx::IS_H3 {
                 let slot = (*self.h3_request_pool).claim();
-                Ctx::create_in(slot.addr().as_ptr().cast(), self_ptr, req, resp, should_deinit_ptr, method);
+                Ctx::create_in(slot.addr().as_ptr().cast(), self_ptr, req, resp, should_deinit_context, method);
                 // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
                 slot.assume_init().as_ptr().cast()
             } else {
                 let slot = (*self.request_pool).claim();
-                Ctx::create_in(slot.addr().as_ptr().cast(), self_ptr, req, resp, should_deinit_ptr, method);
+                Ctx::create_in(slot.addr().as_ptr().cast(), self_ptr, req, resp, should_deinit_context, method);
                 // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
                 slot.assume_init().as_ptr().cast()
             }
@@ -2970,13 +2969,12 @@ where
         let server_ptr = server_ref.as_ptr();
         let index = this.id;
 
-        let mut should_deinit_context = false;
-        let should_deinit_ptr: *mut bool = &raw mut should_deinit_context;
+        let should_deinit_context = core::cell::Cell::new(false);
         let Some(mut prepared) = Self::prepare_js_request_context(
             server_ptr,
             req,
             resp,
-            Some(should_deinit_ptr),
+            Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
             method,
         ) else { return };
@@ -3002,7 +3000,7 @@ where
             Err(err) => global.take_exception(err),
         };
 
-        Self::handle_request(server_ptr, should_deinit_ptr, prepared, req, response_value);
+        Self::handle_request(server_ptr, &should_deinit_context, prepared, req, response_value);
     }
 
     /// # Safety
@@ -3054,13 +3052,13 @@ where
         req.set_yield(false);
         // SAFETY: pointer is non-null and owns a fresh pool slot.
         let ctx_slot = unsafe { (*this.request_pool).get() };
-        let mut should_deinit_context = false;
+        let should_deinit_context = core::cell::Cell::new(false);
         <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
             ctx_slot,
             self_ptr,
             req,
             resp,
-            Some(&raw mut should_deinit_context),
+            Some(bun_ptr::BackRef::new(&should_deinit_context)),
             None,
         );
         // SAFETY: ctx_slot was just initialized by create_in.
@@ -3129,7 +3127,7 @@ where
 
         ctx.defer_deinit_until_callback_completes = None;
 
-        if should_deinit_context {
+        if should_deinit_context.get() {
             ctx.deinit();
             return;
         }

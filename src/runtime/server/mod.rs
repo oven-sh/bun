@@ -583,7 +583,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         this: *mut Self,
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
-        should_deinit_context: Option<*mut bool>,
+        should_deinit_context: Option<request_context::DeferDeinitFlag>,
         create_js_request: CreateJsRequest,
         method: Option<bun_http_types::Method::Method>,
     ) -> Option<PreparedRequest<SSL, DEBUG>> {
@@ -871,8 +871,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // borrow is live across this scope.
         let ctx_mut = unsafe { &mut *ctx };
         let original_state = ctx_mut.defer_deinit_until_callback_completes;
-        let mut should_deinit_context = false;
-        ctx_mut.defer_deinit_until_callback_completes = Some(&raw mut should_deinit_context);
+        let should_deinit_context = core::cell::Cell::new(false);
+        ctx_mut.defer_deinit_until_callback_completes =
+            Some(bun_ptr::BackRef::new(&should_deinit_context));
         ctx_mut.on_response(server, prepared.js_request, response_value);
         // SAFETY: re-borrow after `on_response` returned (which may have run
         // arbitrary JS but cannot free `ctx` while `defer_deinit_...` is set).
@@ -881,7 +882,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Reference in the stack here in case it is not for whatever reason
         prepared.js_request.ensure_still_alive();
 
-        if should_deinit_context {
+        if should_deinit_context.get() {
             // SAFETY: see above; `on_response` set the deferred flag instead of
             // freeing in-place.
             unsafe { (*ctx).deinit() };
@@ -916,15 +917,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `RequestContext`, then either tear down synchronously or transition to
     /// the async path.
     ///
-    /// PORT NOTE: `should_deinit_context` is the same `*mut bool` already
-    /// stored in `ctx.defer_deinit_until_callback_completes` by
-    /// `prepare_js_request_context`; taking it as a raw pointer (not `&mut
-    /// bool`) avoids materializing a second exclusive borrow that would
-    /// invalidate the stored pointer under Stacked Borrows before
-    /// `on_response` writes through it.
+    /// `should_deinit_context` is the same `Cell<bool>` already stored in
+    /// `ctx.defer_deinit_until_callback_completes` by
+    /// `prepare_js_request_context`; `&Cell` (shared) and the stored `BackRef`
+    /// can coexist under Stacked Borrows, so no raw-pointer dance is needed.
     fn handle_request(
         this: *mut Self,
-        should_deinit_context: *mut bool,
+        should_deinit_context: &core::cell::Cell<bool>,
         prepared: PreparedRequest<SSL, DEBUG>,
         req: &mut uws_sys::Request,
         response_value: JSValue,
@@ -948,9 +947,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // arbitrary JS but cannot free `ctx` while `defer_deinit_…` is set).
         unsafe { (*ctx).defer_deinit_until_callback_completes = None };
 
-        // SAFETY: `should_deinit_context` points at the caller's stack local;
-        // `on_response` may have written `true` through the alias stored in ctx.
-        if unsafe { *should_deinit_context } {
+        if should_deinit_context.get() {
             // SAFETY: `on_response` set the deferred flag instead of freeing
             // in-place; we own the slot now.
             unsafe { (*ctx).deinit() };
@@ -981,13 +978,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
     ) {
-        let mut should_deinit_context = false;
-        let should_deinit_ptr: *mut bool = &raw mut should_deinit_context;
+        let should_deinit_context = core::cell::Cell::new(false);
         let Some(prepared) = Self::prepare_js_request_context(
             this,
             req,
             resp,
-            Some(should_deinit_ptr),
+            Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::Yes,
             None,
         ) else {
@@ -1015,7 +1011,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             Err(err) => global.take_exception(err),
         };
 
-        Self::handle_request(this, should_deinit_ptr, prepared, req, response_value);
+        Self::handle_request(this, &should_deinit_context, prepared, req, response_value);
     }
 
     /// `server.zig:onUserRouteRequest` — dispatch a per-route handler
@@ -1031,13 +1027,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let server = user_route.server.cast_mut();
         let index = user_route.id;
 
-        let mut should_deinit_context = false;
-        let should_deinit_ptr: *mut bool = &raw mut should_deinit_context;
+        let should_deinit_context = core::cell::Cell::new(false);
         let Some(mut prepared) = Self::prepare_js_request_context(
             server,
             req,
             resp,
-            Some(should_deinit_ptr),
+            Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
             match &user_route.route.method {
                 server_config::RouteMethod::Any => None,
@@ -1069,7 +1064,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         )
         .unwrap_or_else(|err| global.take_exception(err));
 
-        Self::handle_request(server, should_deinit_ptr, prepared, req, response_value);
+        Self::handle_request(server, &should_deinit_context, prepared, req, response_value);
     }
 
     /// `server.zig:onNodeHTTPRequest` — node:http compat path; thin wrapper

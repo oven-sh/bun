@@ -410,7 +410,7 @@ impl Error {
         // we build the equivalent once at first use by interning every
         // platform `SystemErrno` tag name. After init, lookup is a plain
         // bounds-checked array index — same cost as the Zig version.
-        static ERRNO_MAP: std::sync::OnceLock<Box<[Error]>> = std::sync::OnceLock::new();
+        static ERRNO_MAP: crate::Once<Box<[Error]>> = crate::Once::new();
         let map = ERRNO_MAP.get_or_init(|| {
             SYSTEM_ERRNO_NAMES
                 .iter()

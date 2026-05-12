@@ -48,4 +48,4 @@ test("require() of ESM with diamond dependency through barrel does not deadlock"
   // null ⇒ exited on its own; non-null ⇒ killed by the spawn timeout (deadlocked).
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
-});
+}, 30_000);

@@ -699,6 +699,11 @@ pub fn load(
             {
                 var api_registry = std.mem.zeroes(Api.NpmRegistry);
                 api_registry.url = registry_;
+                // The env var only carries a URL. Preserve the token that
+                // `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` populated above so
+                // auth still applies to the forced host — same behaviour as
+                // `BUN_CONFIG_REGISTRY`.
+                api_registry.token = this.scope.token;
                 forced = api_registry;
             }
         }

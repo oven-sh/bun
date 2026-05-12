@@ -824,7 +824,7 @@ mod tests {
                 e.expected,
                 Wyhash::hash(e.seed, e.input),
                 "input={:?}",
-                std::str::from_utf8(e.input).unwrap()
+                bstr::BStr::new(e.input)
             );
         }
     }

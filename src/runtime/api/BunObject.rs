@@ -20,10 +20,9 @@ pub fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
     // a lossy conversion rather than silently dropping the whole component.
     #[inline]
     fn write_bytes<W: core::fmt::Write>(w: &mut W, bytes: &[u8]) -> core::fmt::Result {
-        match core::str::from_utf8(bytes) {
-            Ok(s) => w.write_str(s),
-            Err(_) => w.write_str(&String::from_utf8_lossy(bytes)),
-        }
+        // `bstr::BStr` Display lossily substitutes U+FFFD per invalid sequence
+        // (no allocation on the valid-UTF-8 fast path).
+        write!(w, "{}", bstr::BStr::new(bytes))
     }
 
     let relative_path: &[u8] = if strings::has_prefix(to, dir) {

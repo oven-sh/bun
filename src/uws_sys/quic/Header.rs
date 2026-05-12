@@ -264,11 +264,11 @@ mod classify_tests {
     fn all_entries_hit() {
         for &(k, v) in ENTRIES {
             let got = Qpack::classify(k).expect("known key must hit");
-            assert!(eq(got, v), "mismatch for {:?}", core::str::from_utf8(k));
+            assert!(eq(got, v), "mismatch for {:?}", bstr::BStr::new(k));
             // Mixed-case must fold.
             let upper: Vec<u8> = k.iter().map(u8::to_ascii_uppercase).collect();
             let got = Qpack::classify(&upper).expect("uppercase must hit");
-            assert!(eq(got, v), "case-fold mismatch for {:?}", core::str::from_utf8(k));
+            assert!(eq(got, v), "case-fold mismatch for {:?}", bstr::BStr::new(k));
         }
     }
 

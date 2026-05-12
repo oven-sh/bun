@@ -19,6 +19,16 @@
 
 use bun_core::Error;
 
+/// PHC / modular-crypt strings are 7-bit ASCII by spec; the third-party
+/// `argon2`/`bcrypt` crates take `&str`, so view-cast after the cheap
+/// `is_ascii` check (no full UTF-8 walk).
+#[inline]
+fn phc_ascii_str(s: &[u8]) -> Result<&str, Error> {
+    if !s.is_ascii() { return Err(bun_core::err!("InvalidEncoding")); }
+    // SAFETY: every byte < 0x80 ⇒ valid UTF-8.
+    Ok(unsafe { core::str::from_utf8_unchecked(s) })
+}
+
 /// `std.crypto.pwhash.Encoding`
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Encoding {
@@ -185,10 +195,9 @@ pub mod argon2 {
         _options: VerifyOptions,
     ) -> Result<(), Error> {
         // Zig accepts the encoded hash as `[]const u8` but PHC strings are
-        // 7-bit ASCII; reject non-UTF-8 input as a decode failure to match
+        // 7-bit ASCII; reject non-ASCII input as a decode failure to match
         // `phc_format.deserialize` behaviour.
-        let encoded = core::str::from_utf8(encoded_hash)
-            .map_err(|_| bun_core::err!("InvalidEncoding"))?;
+        let encoded = super::phc_ascii_str(encoded_hash)?;
 
         // Zig (argon2.zig:565-567) only accepts version 0x13: an explicit
         // `v=` segment that isn't `19` is `InvalidEncoding`, and a missing
@@ -333,10 +342,9 @@ pub mod bcrypt {
         password: &[u8],
         options: VerifyOptions,
     ) -> Result<(), Error> {
-        // Both the modular-crypt and PHC alphabets are pure ASCII; non-UTF-8
+        // Both the modular-crypt and PHC alphabets are pure ASCII; non-ASCII
         // input is a decode failure either way.
-        let encoded = core::str::from_utf8(encoded_hash)
-            .map_err(|_| bun_core::err!("InvalidEncoding"))?;
+        let encoded = super::phc_ascii_str(encoded_hash)?;
 
         // See `str_hash`: the `false` path's HMAC-SHA512 pre-hash is not
         // implemented in this shim and is unreachable from Bun.

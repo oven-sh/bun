@@ -2570,10 +2570,8 @@ pub fn get_thread_count() -> u16 {
         let from_env = || -> Option<u16> {
             for key in [crate::zstr!("UV_THREADPOOL_SIZE"), crate::zstr!("GOMAXPROCS")] {
                 if let Some(v) = getenv_z(key) {
-                    if let Ok(s) = core::str::from_utf8(v) {
-                        if let Ok(n) = s.trim().parse::<u16>() {
-                            if n >= MIN { return Some(n.min(MAX)); }
-                        }
+                    if let Ok(n) = crate::fmt::parse_int::<u16>(v.trim_ascii(), 10) {
+                        if n >= MIN { return Some(n.min(MAX)); }
                     }
                 }
                 // Windows: `getenv_z` is currently a no-op (no narrow C
@@ -2757,16 +2755,16 @@ macro_rules! __runtime_embed_impl {
     (@load $kind:expr, $sub:literal) => {{
         static __CELL: $crate::Once<String> = $crate::Once::new();
         __CELL.get_or_init(|| {
+            // CODEGEN_PATH/BASE_PATH come from `option_env!` (always &str → bytes);
+            // round-tripping through validation is wasted work.
+            // SAFETY: see above — provenance is a `&'static str` literal.
+            let __from = |b: &'static [u8]| unsafe { ::core::str::from_utf8_unchecked(b) };
             let mut p = match $kind {
                 $crate::EmbedKind::Codegen | $crate::EmbedKind::CodegenEager => {
-                    ::std::path::PathBuf::from(
-                        ::std::str::from_utf8($crate::build_options::CODEGEN_PATH).unwrap_or(""),
-                    )
+                    ::std::path::PathBuf::from(__from($crate::build_options::CODEGEN_PATH))
                 }
                 $crate::EmbedKind::Src | $crate::EmbedKind::SrcEager => {
-                    let mut b = ::std::path::PathBuf::from(
-                        ::std::str::from_utf8($crate::build_options::BASE_PATH).unwrap_or(""),
-                    );
+                    let mut b = ::std::path::PathBuf::from(__from($crate::build_options::BASE_PATH));
                     b.push("src");
                     b
                 }

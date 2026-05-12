@@ -605,16 +605,18 @@ impl ShellLsTask {
         let mtime = bun_sys::stat_mtime(&stat);
         let time_str = format_time(mtime.sec, self.now_secs);
 
+        // SAFETY: `perms`/`time_str` are filled with ASCII (`rwx-`/digits/
+        // spaces/month abbreviations) by `format_perms`/`format_time` above.
         let _ = write!(
             self.output,
             "{}{} {:>3} {:>5} {:>5} {:>8} {} ",
             file_type as char,
-            core::str::from_utf8(&perms).unwrap_or("?????????"),
+            unsafe { core::str::from_utf8_unchecked(&perms) },
             nlink,
             uid,
             gid,
             size,
-            core::str::from_utf8(&time_str).unwrap_or("??? ?? ??:??"),
+            unsafe { core::str::from_utf8_unchecked(&time_str) },
         );
         self.output.extend_from_slice(name);
         self.output.push(b'\n');

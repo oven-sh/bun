@@ -891,22 +891,59 @@ where
     }
 }
 
-/// Parse the **entire** byte slice `s` as a `T` via `core::str::FromStr`.
-/// Returns `None` if `s` is not valid UTF-8 or is not a complete `T` literal
-/// (no trailing garbage permitted — `b"1.5x"` → `None`).
-///
-/// Mirrors Zig `std.fmt.parseFloat` / `std.fmt.parseInt` full-match semantics.
-/// Do NOT confuse with `bun_string::wtf::parse_double`, which is PREFIX-match
-/// (WTF__parseDouble) and rejects inf/nan — use that one only where JS-engine
-/// number semantics are required.
-#[inline]
-pub fn parse_num<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
-    core::str::from_utf8(s).ok()?.parse::<T>().ok()
+// `WTF__parseDouble` — WebKit's JS-semantics double parser (Latin-1 input,
+// reports prefix length). Declared here (not via `bun_string`) so tier-0
+// callers can parse floats with no UTF-8 validation. Link-time symbol
+// provided by `src/jsc/bindings/wtf-bindings.cpp`.
+unsafe extern "C" {
+    fn WTF__parseDouble(bytes: *const u8, length: usize, counted: *mut usize) -> f64;
 }
 
-/// [`parse_num::<f64>`] — typed convenience.
+/// `std.fmt.parseFloat(f64, buf)` — full-match parse of `s` as an `f64`.
+/// Returns `None` on empty input, trailing garbage (`b"1.5x"`), or non-numeric
+/// input. Backed by `WTF__parseDouble` (no `&str` round-trip — digits are
+/// ASCII, validation is wasted work).
+///
+/// `WTF::parseDouble` rejects `inf`/`nan` (JS-number semantics); those are
+/// special-cased here so callers ported from `std.fmt.parseFloat` keep the
+/// same surface.
+pub fn parse_f64(s: &[u8]) -> Option<f64> {
+    if s.is_empty() { return None; }
+    let mut count: usize = 0;
+    // SAFETY: `s` is a valid slice; WTF reads at most `len` Latin-1 bytes.
+    let res = unsafe { WTF__parseDouble(s.as_ptr(), s.len(), &raw mut count) };
+    if count == s.len() { return Some(res); }
+    if count == 0 {
+        // WTF__parseDouble doesn't recognise inf/nan; std.fmt.parseFloat does.
+        let (neg, rest) = match s[0] { b'-' => (true, &s[1..]), b'+' => (false, &s[1..]), _ => (false, s) };
+        return match rest {
+            b if b.eq_ignore_ascii_case(b"inf") || b.eq_ignore_ascii_case(b"infinity") =>
+                Some(if neg { f64::NEG_INFINITY } else { f64::INFINITY }),
+            b if b.eq_ignore_ascii_case(b"nan") => Some(f64::NAN),
+            _ => None,
+        };
+    }
+    None // partial match → trailing garbage
+}
+
+/// `parse_f64` truncated to `f32`. (Zig `std.fmt.parseFloat(f32, ..)`.)
 #[inline]
-pub fn parse_f64(s: &[u8]) -> Option<f64> { parse_num(s) }
+pub fn parse_f32(s: &[u8]) -> Option<f32> { parse_f64(s).map(|v| v as f32) }
+
+/// Parse `s` as `T` for grammars whose alphabet is pure ASCII (IP addresses,
+/// booleans). Any non-ASCII byte short-circuits to `None`, so the `&str` view
+/// is always valid without a UTF-8 walk. **Do not** use for integers/floats —
+/// use [`parse_int`] / [`parse_f64`].
+#[inline]
+pub fn parse_ascii<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
+    if !s.is_ascii() { return None; }
+    // SAFETY: every byte < 0x80 ⇒ `s` is valid (ASCII ⊂ UTF-8).
+    unsafe { core::str::from_utf8_unchecked(s) }.parse::<T>().ok()
+}
+
+#[deprecated = "use parse_int / parse_f64 / parse_ascii (no from_utf8)"]
+#[inline]
+pub fn parse_num<T: core::str::FromStr>(s: &[u8]) -> Option<T> { parse_ascii(s) }
 
 // ───────────────────────────────────────────────────────────────────────────
 // Latin-1 formatting
@@ -2497,6 +2534,38 @@ pub fn hex_int_upper<const NIBBLES: usize>(value: u64) -> HexIntFormatter<false,
 #[inline]
 pub fn u64_hex_fixed<const LOWER: bool, const N: usize>(v: u64) -> [u8; N] {
     HexIntFormatter::<LOWER, N>::get_out_buf(v)
+}
+
+/// Upper-case `[u8; 2]` hex of a byte — for `\xHH` / `%HH` escapes. Replaces
+/// open-coded `HEX_CHARS[(b>>4)&0xF], HEX_CHARS[b&0xF]` indexing.
+#[inline(always)]
+pub const fn hex2_upper(b: u8) -> [u8; 2] {
+    [UPPER_HEX_TABLE[(b >> 4) as usize], UPPER_HEX_TABLE[(b & 0xF) as usize]]
+}
+/// Lower-case `[u8; 2]` hex of a byte.
+#[inline(always)]
+pub const fn hex2_lower(b: u8) -> [u8; 2] {
+    [LOWER_HEX_TABLE[(b >> 4) as usize], LOWER_HEX_TABLE[(b & 0xF) as usize]]
+}
+/// Upper-case `[u8; 4]` hex of a `u16` — for `\uXXXX` escapes.
+#[inline(always)]
+pub const fn hex4_upper(k: u16) -> [u8; 4] {
+    [
+        UPPER_HEX_TABLE[((k >> 12) & 0xF) as usize],
+        UPPER_HEX_TABLE[((k >> 8) & 0xF) as usize],
+        UPPER_HEX_TABLE[((k >> 4) & 0xF) as usize],
+        UPPER_HEX_TABLE[(k & 0xF) as usize],
+    ]
+}
+/// Lower-case `[u8; 4]` hex of a `u16`.
+#[inline(always)]
+pub const fn hex4_lower(k: u16) -> [u8; 4] {
+    [
+        LOWER_HEX_TABLE[((k >> 12) & 0xF) as usize],
+        LOWER_HEX_TABLE[((k >> 8) & 0xF) as usize],
+        LOWER_HEX_TABLE[((k >> 4) & 0xF) as usize],
+        LOWER_HEX_TABLE[(k & 0xF) as usize],
+    ]
 }
 
 /// `{:x}` — variable-width lower-hex of a u64 (no leading zeros; `0` → `"0"`),

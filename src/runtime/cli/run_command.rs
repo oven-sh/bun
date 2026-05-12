@@ -3570,10 +3570,7 @@ impl RunCommand {
                     if let Some(max) =
                         this_transpiler.env().get(b"MAX_DESCRIPTION_LEN")
                     {
-                        if let Some(max_len) = ::core::str::from_utf8(max)
-                            .ok()
-                            .and_then(|s| s.parse::<usize>().ok())
-                        {
+                        if let Ok(max_len) = bun_core::fmt::parse_int::<usize>(max, 10) {
                             max_description_len = max_len;
                         }
                     }

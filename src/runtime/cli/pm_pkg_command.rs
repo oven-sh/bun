@@ -35,8 +35,8 @@ enum SubCommand {
 
 impl SubCommand {
     fn from_string(str: &[u8]) -> Option<SubCommand> {
-        // TODO(port): strum::EnumString operates on &str; bytes here are CLI args (ASCII).
-        core::str::from_utf8(str).ok().and_then(|s| s.parse().ok())
+        // strum's `FromStr` needs `&str`; CLI sub-command names are pure-ASCII.
+        bun_core::fmt::parse_ascii(str)
     }
 }
 

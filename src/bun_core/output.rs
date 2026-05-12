@@ -1806,14 +1806,16 @@ impl AsRef<[u8]> for PrettyBuf {
 impl AsRef<str> for PrettyBuf {
     #[inline]
     fn as_ref(&self) -> &str {
-        // ANSI sequences + the original (assumed-UTF-8) template are valid UTF-8.
-        core::str::from_utf8(&self.0).unwrap_or("")
+        // SAFETY: contents are ANSI escape bytes (pure ASCII) interleaved with
+        // verbatim runs of a `&'static str` template — both UTF-8 by
+        // construction.
+        unsafe { core::str::from_utf8_unchecked(&self.0) }
     }
 }
 impl fmt::Display for PrettyBuf {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(core::str::from_utf8(&self.0).unwrap_or(""))
+        f.write_str(self.as_ref())
     }
 }
 

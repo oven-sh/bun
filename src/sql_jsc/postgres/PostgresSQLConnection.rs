@@ -1132,7 +1132,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
             // static message instead.
             return Err(global_object.throw(format_args!(
                 "{}",
-                core::str::from_utf8(err.message().unwrap_or(b"Failed to create SSL context")).unwrap_or("Failed to create SSL context")
+                bun_core::fmt::s(err.message().unwrap_or(b"Failed to create SSL context"))
             )));
         }
     }

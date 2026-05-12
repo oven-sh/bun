@@ -206,10 +206,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         let value = h.value_bytes();
         if name.first() == Some(&b':') {
             if name == b":status" {
-                status = core::str::from_utf8(value)
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(0);
+                status = bun_core::fmt::parse_int::<u16>(value, 10).unwrap_or(0);
             }
             i += 1;
             continue;

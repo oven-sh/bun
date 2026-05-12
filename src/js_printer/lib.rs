@@ -627,7 +627,7 @@ pub mod analyze_transpiled_module {
 /// link-interface); the printer just holds the raw pointer.
 pub type RuntimeTranspilerCacheRef = core::ptr::NonNull<bun_ast::RuntimeTranspilerCache>;
 
-use bun_core::fmt::UPPER_HEX_TABLE as HEX_CHARS; // remaining `\xHH` site below
+use bun_core::fmt::hex2_upper; // remaining `\xHH` site below
 use bun_str::printer::{
     FIRST_ASCII, LAST_ASCII, FIRST_HIGH_SURROGATE, LAST_LOW_SURROGATE, bmp_escape,
     surrogate_pair_escape,
@@ -943,8 +943,8 @@ where
                 i += width as usize;
 
                 if c <= 0xFF && !JSON {
-                    let k = usize::try_from(c).expect("int cast");
-                    writer.write_all(&[b'\\', b'x', HEX_CHARS[(k >> 4) & 0xF], HEX_CHARS[k & 0xF]])?;
+                    let h = hex2_upper(c as u8);
+                    writer.write_all(&[b'\\', b'x', h[0], h[1]])?;
                 } else if c <= 0xFFFF {
                     writer.write_all(&bmp_escape(c as u32))?;
                 } else {

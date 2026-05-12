@@ -3104,10 +3104,7 @@ impl VirtualMachine {
                 has_bun_garbage_collector_flag_enabled.store(true, core::sync::atomic::Ordering::Relaxed);
             }
             if let Some(value) = map.get(b"BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT") {
-                match core::str::from_utf8(value)
-                    .ok()
-                    .and_then(|s| s.parse::<usize>().ok())
-                {
+                match bun_core::fmt::parse_int::<usize>(value, 10).ok() {
                     Some(limit) => {
                         SYNTHETIC_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);
                         STRING_ALLOCATION_LIMIT

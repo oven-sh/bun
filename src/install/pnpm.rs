@@ -295,10 +295,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                     let end = strings::index_of_char(str, b'.')
                         .map(|i| i as usize)
                         .unwrap_or(str.len());
-                    match core::str::from_utf8(&str[0..end])
-                        .ok()
-                        .and_then(|s| s.parse::<f64>().ok())
-                    {
+                    match bun_core::fmt::parse_f64(&str[0..end]) {
                         Some(v) => break 'lockfile_version v,
                         None => break 'err,
                     }

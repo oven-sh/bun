@@ -2262,7 +2262,7 @@ pub mod printer {
     use crate::immutable::{self as strings, Encoding as StrEncoding};
     use crate::mutable_string::MutableString;
 
-    use bun_core::fmt::UPPER_HEX_TABLE as HEX_CHARS;
+    use bun_core::fmt::{hex2_upper, hex4_upper};
 
     pub const FIRST_ASCII: u32 = 0x20;
     pub const LAST_ASCII: u32 = 0x7E;
@@ -2274,30 +2274,19 @@ pub mod printer {
     /// 6-byte sequence `\uHHHH` (uppercase hex). Caller feeds the result to its
     /// own byte sink.
     #[inline]
-    pub fn bmp_escape(c: u32) -> [u8; 6] {
-        let k = c as usize;
-        [
-            b'\\', b'u',
-            HEX_CHARS[(k >> 12) & 15],
-            HEX_CHARS[(k >> 8) & 15],
-            HEX_CHARS[(k >> 4) & 15],
-            HEX_CHARS[k & 15],
-        ]
+    pub const fn bmp_escape(c: u32) -> [u8; 6] {
+        let h = hex4_upper(c as u16);
+        [b'\\', b'u', h[0], h[1], h[2], h[3]]
     }
 
     /// Encode a supplementary code point (`c > 0xFFFF`) as a 12-byte UTF-16
     /// surrogate-pair `\uHHHH\uHHHH` escape (uppercase hex).
     #[inline]
-    pub fn surrogate_pair_escape(c: u32) -> [u8; 12] {
-        let k = (c - 0x10000) as usize;
-        let lo = FIRST_HIGH_SURROGATE as usize + ((k >> 10) & 0x3FF);
-        let hi = FIRST_LOW_SURROGATE as usize + (k & 0x3FF);
-        [
-            b'\\', b'u',
-            HEX_CHARS[lo >> 12], HEX_CHARS[(lo >> 8) & 15], HEX_CHARS[(lo >> 4) & 15], HEX_CHARS[lo & 15],
-            b'\\', b'u',
-            HEX_CHARS[hi >> 12], HEX_CHARS[(hi >> 8) & 15], HEX_CHARS[(hi >> 4) & 15], HEX_CHARS[hi & 15],
-        ]
+    pub const fn surrogate_pair_escape(c: u32) -> [u8; 12] {
+        let [lo, hi] = bun_core::strings::encode_surrogate_pair(c);
+        let l = hex4_upper(lo);
+        let h = hex4_upper(hi);
+        [b'\\', b'u', l[0], l[1], l[2], l[3], b'\\', b'u', h[0], h[1], h[2], h[3]]
     }
 
     /// Byte-sink alias so `write_pre_quoted_string` works for `Vec<u8>`,
@@ -2433,12 +2422,8 @@ pub mod printer {
                 _ => {
                     i += width as usize;
                     if c <= 0xFF && !json {
-                        let k = c as usize;
-                        writer.write_all(&[
-                            b'\\', b'x',
-                            HEX_CHARS[(k >> 4) & 0xF],
-                            HEX_CHARS[k & 0xF],
-                        ])?;
+                        let h = hex2_upper(c as u8);
+                        writer.write_all(&[b'\\', b'x', h[0], h[1]])?;
                     } else if c <= 0xFFFF {
                         writer.write_all(&bmp_escape(c as u32))?;
                     } else {

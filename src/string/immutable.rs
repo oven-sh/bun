@@ -1904,7 +1904,6 @@ fn _decode_hex_to_bytes<Char: Copy + Into<u32>, const TRUNCATE: bool>(
     Ok(dest_len - remain.len())
 }
 
-use bun_core::fmt::hex_char_lower as byte2hex;
 
 pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
     if cfg!(debug_assertions) {
@@ -2702,7 +2701,8 @@ pub fn percent_encode_write(
 
         // URL encode the code point
         for &byte in to_encode {
-            writer.extend_from_slice(&[b'%', byte2hex((byte >> 4) & 0xF), byte2hex(byte & 0xF)]);
+            let h = bun_core::fmt::hex2_lower(byte);
+            writer.extend_from_slice(&[b'%', h[0], h[1]]);
         }
     }
 

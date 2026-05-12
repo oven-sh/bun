@@ -1615,10 +1615,9 @@ pub mod strings {
         if s.len() >= 512 {
             return false;
         }
-        match core::str::from_utf8(s) {
-            Ok(s) => s.parse::<core::net::Ipv6Addr>().is_ok(),
-            Err(_) => false,
-        }
+        // IPv6 textual grammar is pure ASCII; parse_ascii short-circuits on
+        // any high byte, so no UTF-8 validation walk.
+        crate::fmt::parse_ascii::<core::net::Ipv6Addr>(s).is_some()
     }
 
     pub fn starts_with_uuid(s: &[u8]) -> bool {

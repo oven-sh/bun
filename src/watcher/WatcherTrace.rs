@@ -60,7 +60,9 @@ pub fn write_events(watchlist: &WatchList, events: &[WatchEvent], changed_files:
                 let mut c = std::io::Cursor::new(&mut name_buf[..]);
                 let _ = write!(c, "{}", err.kind());
                 let n = c.position() as usize;
-                core::str::from_utf8(&name_buf[..n]).unwrap_or("WriteFailed")
+                // SAFETY: `write!(.., "{}", io::ErrorKind)` emits an ASCII variant
+                // name (`NotFound`, `PermissionDenied`, …) — pure-ASCII output.
+                unsafe { core::str::from_utf8_unchecked(&name_buf[..n]) }
             };
             output::err(name, "Failed to flush watcher trace file", ());
         }

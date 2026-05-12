@@ -76,11 +76,7 @@ fn unescape_postgres_string<'a>(input: &[u8], buffer: &'a mut [u8]) -> Result<&'
                     if i + 2 >= input.len() {
                         return Err(err!("InvalidEscapeSequence"));
                     }
-                    // TODO(port): from_utf8 on 2 hex bytes is safe but technically
-                    // violates the no-from_utf8 rule; consider a direct hex decoder.
-                    let hex_str = core::str::from_utf8(&input[i + 1..i + 3])
-                        .map_err(|_| err!("InvalidEscapeSequence"))?;
-                    let hex_value = u8::from_str_radix(hex_str, 16)
+                    let hex_value = bun_core::fmt::parse_int::<u8>(&input[i + 1..i + 3], 16)
                         .map_err(|_| err!("InvalidEscapeSequence"))?;
                     buffer[out_index] = hex_value;
                     i += 2;

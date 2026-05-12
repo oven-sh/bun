@@ -688,11 +688,11 @@ impl<'a> JsonParser<'a> {
                 self.pos += 1;
             }
         }
-        let s = core::str::from_utf8(&self.input[start..self.pos]).map_err(|_| ())?;
+        let s = &self.input[start..self.pos];
         if is_float {
-            Ok(JsonValue::Float(s.parse::<f64>().map_err(|_| ())?))
+            Ok(JsonValue::Float(bun_core::fmt::parse_f64(s).ok_or(())?))
         } else {
-            Ok(JsonValue::Integer(s.parse::<i64>().map_err(|_| ())?))
+            Ok(JsonValue::Integer(bun_core::fmt::parse_int::<i64>(s, 10).map_err(|_| ())?))
         }
     }
 }

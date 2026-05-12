@@ -172,10 +172,9 @@ pub unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun_uws::S
         match cache.get_or_create_opts(Default::default(), &mut err) {
             Some(ctx) => rare.default_client_ssl_ctx = Some(ctx),
             None => {
-                let msg = err.message().unwrap_or(b"unknown");
                 bun_core::Output::panic(format_args!(
                     "default client SSL_CTX init failed: {}",
-                    core::str::from_utf8(msg).unwrap_or("unknown"),
+                    bun_core::fmt::s(err.message().unwrap_or(b"unknown")),
                 ))
             }
         }

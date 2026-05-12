@@ -459,8 +459,7 @@ impl<'a> URL<'a> {
     }
 
     pub fn get_port(&self) -> Option<u16> {
-        // TODO(port): std.fmt.parseInt on []const u8 — port digits are always ASCII
-        core::str::from_utf8(self.port).ok()?.parse::<u16>().ok()
+        bun_core::fmt::parse_int::<u16>(self.port, 10).ok()
     }
 
     pub fn get_port_auto(&self) -> u16 {

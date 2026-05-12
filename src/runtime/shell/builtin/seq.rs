@@ -209,6 +209,6 @@ impl Seq {
 }
 
 #[inline]
-fn parse_f32(bytes: &[u8]) -> Option<f32> { bun_core::fmt::parse_num(bytes) }
+fn parse_f32(bytes: &[u8]) -> Option<f32> { bun_core::fmt::parse_f32(bytes) }
 
 // ported from: src/shell/builtin/seq.zig

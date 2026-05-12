@@ -691,11 +691,7 @@ impl JSValkeyClient {
 
         // Parse database number from pathname (e.g., "/1" -> database 1)
         let database: u32 = if pathname_utf8.slice().len() > 1 {
-            // SAFETY: pathname is ASCII digits if it parses; from_utf8 is fine here for parseInt.
-            core::str::from_utf8(&pathname_utf8.slice()[1..])
-                .ok()
-                .and_then(|s| s.parse::<u32>().ok())
-                .unwrap_or(0)
+            bun_core::fmt::parse_int::<u32>(&pathname_utf8.slice()[1..], 10).unwrap_or(0)
         } else {
             0
         };

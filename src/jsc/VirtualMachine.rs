@@ -3025,8 +3025,11 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:498 `loadExtraEnvAndSourceCodePrinter`.
     pub fn load_extra_env_and_source_code_printer(&mut self) {
-        // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
-        let map = unsafe { &mut *(*self.transpiler.env).map };
+        // `Transpiler::env_mut()` encapsulates the raw-ptr deref; the returned
+        // `&'static mut Loader` is independent of `&self`, so `map` may be held
+        // across the `&mut self` writes below.
+        let env = self.transpiler.env_mut();
+        let map = &mut *env.map;
 
         ensure_source_code_printer();
 
@@ -3330,11 +3333,9 @@ impl VirtualMachine {
         self.hot_reload_deferred = false;
 
         bun_core::debug!("Reloading...");
-        // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
-        let should_clear_terminal = !unsafe {
-            (*self.transpiler.env)
-                .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout())
-        };
+        let should_clear_terminal = !self
+            .env_loader()
+            .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());
         if self.hot_reload == HOT_RELOAD_WATCH {
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);

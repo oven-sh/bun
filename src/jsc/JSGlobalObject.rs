@@ -1672,8 +1672,10 @@ unsafe extern "C" {
 impl ScriptExecutionContextIdentifier {
     /// Returns `None` if the context referred to by `self` no longer exists.
     pub fn global_object(self) -> Option<GlobalRef> {
-        // SAFETY: FFI call returns a valid pointer or null; the JSGlobalObject is
-        // owned by the VM and outlives any ScriptExecutionContext id pointing at it.
+        // FFI call returns a valid pointer or null; the JSGlobalObject is owned
+        // by the VM and outlives any ScriptExecutionContext id pointing at it.
+        // SAFETY: `as_ref` on a pointer that is either null or a live opaque
+        // ZST handle (zero-byte deref).
         unsafe { ScriptExecutionContextIdentifier__getGlobalObject(self.0).as_ref() }.map(GlobalRef::from)
     }
 
@@ -1690,5 +1692,6 @@ impl ScriptExecutionContextIdentifier {
 }
 
 unsafe extern "C" {
-    fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
+    // safe: by-value `u32` in, raw nullable pointer out (caller checks before deref).
+    safe fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
 }

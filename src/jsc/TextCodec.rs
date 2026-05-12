@@ -15,7 +15,9 @@ unsafe extern "C" {
         out_saw_error: *mut bool,
     ) -> BunString;
     fn Bun__deleteTextCodec(codec: *mut TextCodec);
-    fn Bun__stripBOMFromTextCodec(codec: *mut TextCodec);
+    // safe: `TextCodec` is an `opaque_ffi!` ZST handle; `&mut` is ABI-identical
+    // to a non-null `*mut` and C++ mutating codec state is interior to the cell.
+    safe fn Bun__stripBOMFromTextCodec(codec: &mut TextCodec);
     fn Bun__isEncodingSupported(encoding_name: *const u8, encoding_name_len: usize) -> bool;
     fn Bun__getCanonicalEncodingName(
         encoding_name: *const u8,
@@ -70,8 +72,7 @@ impl TextCodec {
 
     pub fn strip_bom(&mut self) {
         mark_binding!();
-        // SAFETY: `self` is a valid live codec.
-        unsafe { Bun__stripBOMFromTextCodec(self) }
+        Bun__stripBOMFromTextCodec(self)
     }
 
     pub fn is_supported(encoding: &[u8]) -> bool {

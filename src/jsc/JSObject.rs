@@ -7,7 +7,8 @@ use bun_string::{String as BunString, ZigString};
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
-    static JSC__JSObject__maxInlineCapacity: c_uint;
+    // safe: read-only `const unsigned` exported by C++ (link-time constant).
+    safe static JSC__JSObject__maxInlineCapacity: c_uint;
 
     safe fn JSC__JSObject__getIndex(this: JSValue, global_this: &JSGlobalObject, i: u32) -> JSValue;
     safe fn Bun__JSObject__getCodePropertyVMInquiry(global: &JSGlobalObject, obj: &JSObject) -> JSValue;
@@ -43,8 +44,7 @@ bun_opaque::opaque_ffi! {
 impl JSObject {
     #[inline]
     pub fn max_inline_capacity() -> c_uint {
-        // SAFETY: const exported by C++; read-only.
-        unsafe { JSC__JSObject__maxInlineCapacity }
+        JSC__JSObject__maxInlineCapacity
     }
 
     pub fn to_js(&self) -> JSValue {

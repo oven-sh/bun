@@ -68,38 +68,47 @@ impl BunFrontendDevServerAgent {
         !self.handle.is_null()
     }
 
+    /// `&mut Handle` accessor for the FFI shims. `handle` is set by the C++
+    /// inspector backend (`frontend_dev_server_agent_set_enabled`) and stays
+    /// live while the agent is enabled. Returns `None` when disabled.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn handle_mut(&self) -> Option<&mut InspectorBunFrontendDevServerAgentHandle> {
+        if self.handle.is_null() {
+            return None;
+        }
+        // `opaque_mut` is the audited safe `*mut → &mut` for opaque ZST
+        // handles (zero-byte deref; see `bun_opaque::opaque_deref_mut`).
+        Some(InspectorBunFrontendDevServerAgentHandle::opaque_mut(self.handle))
+    }
+
     pub fn notify_client_connected(&self, dev_server_id: DebuggerId, connection_id: i32) {
-        if let Some(handle) = core::ptr::NonNull::new(self.handle) {
-            // SAFETY: handle non-null (agent enabled by C++).
-            unsafe {
-                ffi::InspectorBunFrontendDevServerAgent__notifyClientConnected(
-                    handle.as_ptr(),
-                    dev_server_id.get(),
-                    connection_id,
-                )
-            }
+        if let Some(handle) = self.handle_mut() {
+            ffi::InspectorBunFrontendDevServerAgent__notifyClientConnected(
+                handle,
+                dev_server_id.get(),
+                connection_id,
+            )
         }
     }
 
     pub fn notify_client_disconnected(&self, dev_server_id: DebuggerId, connection_id: i32) {
-        if let Some(handle) = core::ptr::NonNull::new(self.handle) {
-            // SAFETY: handle non-null (agent enabled by C++).
-            unsafe {
-                ffi::InspectorBunFrontendDevServerAgent__notifyClientDisconnected(
-                    handle.as_ptr(),
-                    dev_server_id.get(),
-                    connection_id,
-                )
-            }
+        if let Some(handle) = self.handle_mut() {
+            ffi::InspectorBunFrontendDevServerAgent__notifyClientDisconnected(
+                handle,
+                dev_server_id.get(),
+                connection_id,
+            )
         }
     }
 
     pub fn notify_bundle_start(&self, dev_server_id: DebuggerId, trigger_files: &mut [BunString]) {
-        if let Some(handle) = core::ptr::NonNull::new(self.handle) {
-            // SAFETY: handle non-null; slice valid for the call.
+        if let Some(handle) = self.handle_mut() {
+            // SAFETY: `trigger_files` is a valid contiguous slice for the call;
+            // `(ptr, len)` pair derived from it.
             unsafe {
                 ffi::InspectorBunFrontendDevServerAgent__notifyBundleStart(
-                    handle.as_ptr(),
+                    handle,
                     dev_server_id.get(),
                     trigger_files.as_mut_ptr(),
                     trigger_files.len(),
@@ -109,15 +118,12 @@ impl BunFrontendDevServerAgent {
     }
 
     pub fn notify_bundle_complete(&self, dev_server_id: DebuggerId, duration_ms: f64) {
-        if let Some(handle) = core::ptr::NonNull::new(self.handle) {
-            // SAFETY: handle non-null (agent enabled by C++).
-            unsafe {
-                ffi::InspectorBunFrontendDevServerAgent__notifyBundleComplete(
-                    handle.as_ptr(),
-                    dev_server_id.get(),
-                    duration_ms,
-                )
-            }
+        if let Some(handle) = self.handle_mut() {
+            ffi::InspectorBunFrontendDevServerAgent__notifyBundleComplete(
+                handle,
+                dev_server_id.get(),
+                duration_ms,
+            )
         }
     }
 
@@ -126,15 +132,12 @@ impl BunFrontendDevServerAgent {
         dev_server_id: DebuggerId,
         build_errors_payload_base64: &mut BunString,
     ) {
-        if let Some(handle) = core::ptr::NonNull::new(self.handle) {
-            // SAFETY: handle non-null; payload valid for the call.
-            unsafe {
-                ffi::InspectorBunFrontendDevServerAgent__notifyBundleFailed(
-                    handle.as_ptr(),
-                    dev_server_id.get(),
-                    build_errors_payload_base64,
-                )
-            }
+        if let Some(handle) = self.handle_mut() {
+            ffi::InspectorBunFrontendDevServerAgent__notifyBundleFailed(
+                handle,
+                dev_server_id.get(),
+                build_errors_payload_base64,
+            )
         }
     }
 
@@ -148,17 +151,14 @@ impl BunFrontendDevServerAgent {
         url: &mut BunString,
         route_bundle_id: i32,
     ) {
-        if let Some(handle) = core::ptr::NonNull::new(self.handle) {
-            // SAFETY: handle non-null; url valid for the call.
-            unsafe {
-                ffi::InspectorBunFrontendDevServerAgent__notifyClientNavigated(
-                    handle.as_ptr(),
-                    dev_server_id.get(),
-                    connection_id,
-                    url,
-                    route_bundle_id,
-                )
-            }
+        if let Some(handle) = self.handle_mut() {
+            ffi::InspectorBunFrontendDevServerAgent__notifyClientNavigated(
+                handle,
+                dev_server_id.get(),
+                connection_id,
+                url,
+                route_bundle_id,
+            )
         }
     }
 
@@ -167,15 +167,12 @@ impl BunFrontendDevServerAgent {
         dev_server_id: DebuggerId,
         client_error_payload_base64: &mut BunString,
     ) {
-        if let Some(handle) = core::ptr::NonNull::new(self.handle) {
-            // SAFETY: handle non-null; payload valid for the call.
-            unsafe {
-                ffi::InspectorBunFrontendDevServerAgent__notifyClientErrorReported(
-                    handle.as_ptr(),
-                    dev_server_id.get(),
-                    client_error_payload_base64,
-                )
-            }
+        if let Some(handle) = self.handle_mut() {
+            ffi::InspectorBunFrontendDevServerAgent__notifyClientErrorReported(
+                handle,
+                dev_server_id.get(),
+                client_error_payload_base64,
+            )
         }
     }
 
@@ -184,31 +181,25 @@ impl BunFrontendDevServerAgent {
         dev_server_id: DebuggerId,
         visualizer_payload_base64: &mut BunString,
     ) {
-        if let Some(handle) = core::ptr::NonNull::new(self.handle) {
-            // SAFETY: handle non-null; payload valid for the call.
-            unsafe {
-                ffi::InspectorBunFrontendDevServerAgent__notifyGraphUpdate(
-                    handle.as_ptr(),
-                    dev_server_id.get(),
-                    visualizer_payload_base64,
-                )
-            }
+        if let Some(handle) = self.handle_mut() {
+            ffi::InspectorBunFrontendDevServerAgent__notifyGraphUpdate(
+                handle,
+                dev_server_id.get(),
+                visualizer_payload_base64,
+            )
         }
     }
 
     /// `notifyConsoleLog`. `kind` is `DevServer.ConsoleLogKind as u8` (`b'l'`
     /// / `b'e'`) — caller in `bun_runtime` does `kind as u8`.
     pub fn notify_console_log(&self, dev_server_id: DebuggerId, kind: u8, data: &mut BunString) {
-        if let Some(handle) = core::ptr::NonNull::new(self.handle) {
-            // SAFETY: handle non-null; data valid for the call.
-            unsafe {
-                ffi::InspectorBunFrontendDevServerAgent__notifyConsoleLog(
-                    handle.as_ptr(),
-                    dev_server_id.get(),
-                    kind,
-                    data,
-                )
-            }
+        if let Some(handle) = self.handle_mut() {
+            ffi::InspectorBunFrontendDevServerAgent__notifyConsoleLog(
+                handle,
+                dev_server_id.get(),
+                kind,
+                data,
+            )
         }
     }
 }
@@ -228,55 +219,60 @@ pub fn frontend_dev_server_agent_set_enabled(
 
 mod ffi {
     use super::{BunString, InspectorBunFrontendDevServerAgentHandle};
+    // SAFETY (safe fn): `InspectorBunFrontendDevServerAgentHandle` is an
+    // `opaque_ffi!` ZST handle (`!Freeze` via `UnsafeCell`); `BunString` is a
+    // `#[repr(C)]` in-param the C++ side reads/consumes in-place. `&mut T` is
+    // ABI-identical to a non-null `*mut T`. `notifyBundleStart` keeps a raw
+    // `(ptr, len)` pair (slice not FFI-safe) and stays `unsafe`.
     unsafe extern "C" {
-        pub fn InspectorBunFrontendDevServerAgent__notifyClientConnected(
-            agent: *mut InspectorBunFrontendDevServerAgentHandle,
+        pub safe fn InspectorBunFrontendDevServerAgent__notifyClientConnected(
+            agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             connection_id: i32,
         );
-        pub fn InspectorBunFrontendDevServerAgent__notifyClientDisconnected(
-            agent: *mut InspectorBunFrontendDevServerAgentHandle,
+        pub safe fn InspectorBunFrontendDevServerAgent__notifyClientDisconnected(
+            agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             connection_id: i32,
         );
         pub fn InspectorBunFrontendDevServerAgent__notifyBundleStart(
-            agent: *mut InspectorBunFrontendDevServerAgentHandle,
+            agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             trigger_files: *mut BunString,
             trigger_files_len: usize,
         );
-        pub fn InspectorBunFrontendDevServerAgent__notifyBundleComplete(
-            agent: *mut InspectorBunFrontendDevServerAgentHandle,
+        pub safe fn InspectorBunFrontendDevServerAgent__notifyBundleComplete(
+            agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             duration_ms: f64,
         );
-        pub fn InspectorBunFrontendDevServerAgent__notifyBundleFailed(
-            agent: *mut InspectorBunFrontendDevServerAgentHandle,
+        pub safe fn InspectorBunFrontendDevServerAgent__notifyBundleFailed(
+            agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
-            build_errors_payload_base64: *mut BunString,
+            build_errors_payload_base64: &mut BunString,
         );
-        pub fn InspectorBunFrontendDevServerAgent__notifyClientNavigated(
-            agent: *mut InspectorBunFrontendDevServerAgentHandle,
+        pub safe fn InspectorBunFrontendDevServerAgent__notifyClientNavigated(
+            agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             connection_id: i32,
-            url: *mut BunString,
+            url: &mut BunString,
             route_bundle_id: i32,
         );
-        pub fn InspectorBunFrontendDevServerAgent__notifyClientErrorReported(
-            agent: *mut InspectorBunFrontendDevServerAgentHandle,
+        pub safe fn InspectorBunFrontendDevServerAgent__notifyClientErrorReported(
+            agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
-            client_error_payload_base64: *mut BunString,
+            client_error_payload_base64: &mut BunString,
         );
-        pub fn InspectorBunFrontendDevServerAgent__notifyGraphUpdate(
-            agent: *mut InspectorBunFrontendDevServerAgentHandle,
+        pub safe fn InspectorBunFrontendDevServerAgent__notifyGraphUpdate(
+            agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
-            visualizer_payload_base64: *mut BunString,
+            visualizer_payload_base64: &mut BunString,
         );
-        pub fn InspectorBunFrontendDevServerAgent__notifyConsoleLog(
-            agent: *mut InspectorBunFrontendDevServerAgentHandle,
+        pub safe fn InspectorBunFrontendDevServerAgent__notifyConsoleLog(
+            agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             kind: u8,
-            data: *mut BunString,
+            data: &mut BunString,
         );
     }
 }
@@ -940,27 +936,32 @@ pub enum TestType {
 bun_opaque::opaque_ffi! { pub struct TestReporterHandle; }
 
 // TODO(port): move to jsc_sys
+//
+// SAFETY (safe fn): `TestReporterHandle` and `CallFrame` are `opaque_ffi!`
+// ZST handles (`!Freeze` via `UnsafeCell`); `BunString` is a `#[repr(C)]`
+// in/out-param the C++ side reads/consumes in-place. Remaining args are
+// by-value scalars.
 unsafe extern "C" {
-    fn Bun__TestReporterAgentReportTestFound(
-        agent: *mut TestReporterHandle,
-        call_frame: *const CallFrame,
+    safe fn Bun__TestReporterAgentReportTestFound(
+        agent: &mut TestReporterHandle,
+        call_frame: &CallFrame,
         test_id: c_int,
-        name: *mut BunString,
+        name: &mut BunString,
         item_type: TestType,
         parent_id: c_int,
     );
-    fn Bun__TestReporterAgentReportTestFoundWithLocation(
-        agent: *mut TestReporterHandle,
+    safe fn Bun__TestReporterAgentReportTestFoundWithLocation(
+        agent: &mut TestReporterHandle,
         test_id: c_int,
-        name: *mut BunString,
+        name: &mut BunString,
         item_type: TestType,
         parent_id: c_int,
-        source_url: *mut BunString,
+        source_url: &mut BunString,
         line: c_int,
     );
-    fn Bun__TestReporterAgentReportTestStart(agent: *mut TestReporterHandle, test_id: c_int);
-    fn Bun__TestReporterAgentReportTestEnd(
-        agent: *mut TestReporterHandle,
+    safe fn Bun__TestReporterAgentReportTestStart(agent: &mut TestReporterHandle, test_id: c_int);
+    safe fn Bun__TestReporterAgentReportTestEnd(
+        agent: &mut TestReporterHandle,
         test_id: c_int,
         bun_test_status: TestStatus,
         elapsed: f64,
@@ -976,19 +977,7 @@ impl TestReporterHandle {
         item_type: TestType,
         parent_id: i32,
     ) {
-        // SAFETY: `self` is a live C++ handle; `call_frame` is an opaque JSC
-        // register-file pointer (ZST on the Rust side) that C++ only reads to
-        // extract source-location info — no Rust-visible bytes are mutated.
-        unsafe {
-            Bun__TestReporterAgentReportTestFound(
-                self,
-                call_frame,
-                test_id,
-                name,
-                item_type,
-                parent_id,
-            );
-        }
+        Bun__TestReporterAgentReportTestFound(self, call_frame, test_id, name, item_type, parent_id);
     }
 
     pub fn report_test_found_with_location(
@@ -1000,26 +989,17 @@ impl TestReporterHandle {
         source_url: &mut BunString,
         line: i32,
     ) {
-        // SAFETY: self is a live C++ handle
-        unsafe {
-            Bun__TestReporterAgentReportTestFoundWithLocation(
-                self, test_id, name, item_type, parent_id, source_url, line,
-            );
-        }
+        Bun__TestReporterAgentReportTestFoundWithLocation(
+            self, test_id, name, item_type, parent_id, source_url, line,
+        );
     }
 
     pub fn report_test_start(&mut self, test_id: c_int) {
-        // SAFETY: self is a live C++ handle
-        unsafe {
-            Bun__TestReporterAgentReportTestStart(self, test_id);
-        }
+        Bun__TestReporterAgentReportTestStart(self, test_id);
     }
 
     pub fn report_test_end(&mut self, test_id: c_int, bun_test_status: TestStatus, elapsed: f64) {
-        // SAFETY: self is a live C++ handle
-        unsafe {
-            Bun__TestReporterAgentReportTestEnd(self, test_id, bun_test_status, elapsed);
-        }
+        Bun__TestReporterAgentReportTestEnd(self, test_id, bun_test_status, elapsed);
     }
 }
 

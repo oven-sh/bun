@@ -24,15 +24,12 @@ impl WeakImpl {
         ref_type: WeakRefType,
         ctx: Option<NonNull<c_void>>,
     ) -> NonNull<WeakImpl> {
-        // SAFETY: FFI call; `global_this` is a live JSGlobalObject.
-        NonNull::new(unsafe {
-            Bun__WeakRef__new(
-                global_this,
-                value,
-                ref_type,
-                ctx.map_or(core::ptr::null_mut(), |p| p.as_ptr()),
-            )
-        })
+        NonNull::new(Bun__WeakRef__new(
+            global_this,
+            value,
+            ref_type,
+            ctx.map_or(core::ptr::null_mut(), |p| p.as_ptr()),
+        ))
         .expect("Bun__WeakRef__new returned null")
     }
 
@@ -65,12 +62,14 @@ impl WeakImpl {
 //
 // `WeakImpl` is an opaque `UnsafeCell`-backed ZST handle (`&WeakImpl` is
 // ABI-identical to non-null `*const WeakImpl`; C++ slot mutation is interior).
-// `new` keeps a raw `*mut c_void` ctx and `delete` consumes the allocation, so
-// both stay `unsafe fn`.
+// `new` is `safe fn`: `&JSGlobalObject` is the non-null handle proof, and `ctx`
+// is an opaque round-trip pointer C++ only stores and forwards to the finalizer
+// (never dereferenced as Rust data) — same contract as `JSC__VM__holdAPILock`.
+// `delete` consumes the allocation and so stays `unsafe fn`.
 unsafe extern "C" {
     fn Bun__WeakRef__delete(this: *mut WeakImpl);
-    fn Bun__WeakRef__new(
-        global: *const JSGlobalObject,
+    safe fn Bun__WeakRef__new(
+        global: &JSGlobalObject,
         value: JSValue,
         ref_type: WeakRefType,
         ctx: *mut c_void,

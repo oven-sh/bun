@@ -239,8 +239,7 @@ impl TopExceptionScope {
         let _ = proof;
         #[cfg(any(debug_assertions, bun_asan))]
         debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
-        // SAFETY: bytes was initialized by init().
-        unsafe { TopExceptionScope__assertNoException(&raw mut self.bytes) };
+        TopExceptionScope__assertNoException(&mut self.bytes);
         unreachable!("assertionFailure called without a pending exception");
     }
 
@@ -252,23 +251,20 @@ impl TopExceptionScope {
     pub fn exception(&mut self) -> Option<NonNull<Exception>> {
         #[cfg(any(debug_assertions, bun_asan))]
         debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
-        // SAFETY: bytes was initialized by init().
-        unsafe { NonNull::new(TopExceptionScope__pureException(&raw mut self.bytes)) }
+        NonNull::new(TopExceptionScope__pureException(&mut self.bytes))
     }
 
     pub fn clear_exception(&mut self) {
         #[cfg(any(debug_assertions, bun_asan))]
         debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
-        // SAFETY: bytes was initialized by init().
-        unsafe { TopExceptionScope__clearException(&raw mut self.bytes) }
+        TopExceptionScope__clearException(&mut self.bytes)
     }
 
     /// Get the thrown exception if it exists, or if an unhandled trap causes an exception to be thrown
     pub fn exception_including_traps(&mut self) -> Option<NonNull<Exception>> {
         #[cfg(any(debug_assertions, bun_asan))]
         debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
-        // SAFETY: bytes was initialized by init().
-        unsafe { NonNull::new(TopExceptionScope__exceptionIncludingTraps(&raw mut self.bytes)) }
+        NonNull::new(TopExceptionScope__exceptionIncludingTraps(&mut self.bytes))
     }
 
     /// Intended for use with `?`. Returns if there is already a pending exception or if traps cause
@@ -728,6 +724,13 @@ macro_rules! call_check_slow {
     };
 }
 
+// safe fn: `&mut [u8; SIZE]` is ABI-identical to a non-null `*mut [u8; SIZE]`
+// (thin pointer to a fixed-size array). Every `&mut self.bytes` reachable here
+// has been seated by `init_in_place` (the sole constructor path), so the C++
+// `ExceptionScope` invariant is encoded in the `TopExceptionScope` type — no
+// caller-side precondition. `__construct` keeps `unsafe fn` (NUL-terminated
+// `*const c_char` precondition) and `__destruct` keeps `unsafe fn`
+// (consumes; double-destruct is UB and is gated by `unsafe fn destroy`).
 unsafe extern "C" {
     fn TopExceptionScope__construct(
         ptr: *mut [u8; SIZE],
@@ -739,12 +742,12 @@ unsafe extern "C" {
         alignment: usize,
     );
     /// only returns exceptions that have already been thrown. does not check traps
-    fn TopExceptionScope__pureException(ptr: *mut [u8; SIZE]) -> *mut Exception;
-    fn TopExceptionScope__clearException(ptr: *mut [u8; SIZE]);
+    safe fn TopExceptionScope__pureException(ptr: &mut [u8; SIZE]) -> *mut Exception;
+    safe fn TopExceptionScope__clearException(ptr: &mut [u8; SIZE]);
     /// returns if an exception was already thrown, or if a trap (like another thread requesting
     /// termination) causes an exception to be thrown
-    fn TopExceptionScope__exceptionIncludingTraps(ptr: *mut [u8; SIZE]) -> *mut Exception;
-    fn TopExceptionScope__assertNoException(ptr: *mut [u8; SIZE]);
+    safe fn TopExceptionScope__exceptionIncludingTraps(ptr: &mut [u8; SIZE]) -> *mut Exception;
+    safe fn TopExceptionScope__assertNoException(ptr: &mut [u8; SIZE]);
     fn TopExceptionScope__destruct(ptr: *mut [u8; SIZE]);
 }
 

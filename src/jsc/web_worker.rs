@@ -214,7 +214,10 @@ pub enum Status {
 // (see JSGlobalObject.rs externs) it crosses FFI as `*const` even when C++
 // mutates — Rust never reads/writes bytes through it, so no `*mut` needed.
 unsafe extern "C" {
-    fn WebWorker__teardownJSCVM(global: *const JSGlobalObject);
+    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
+    // ABI-identical to non-null `*const`); C++ mutating VM state through it is
+    // interior to the cell.
+    safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
     fn WebWorker__dispatchExit(cpp_worker: *mut c_void, exit_code: i32);
     // Re-declared here (also private in VM.rs) so `thread_main` can take the
     // API lock as a raw FFI call with NO RAII guard — see PORT NOTE there.
@@ -1249,8 +1252,9 @@ impl WebWorker {
 
         // ---- 3. JSC VM teardown --------------------------------------------
         if let Some(global) = global_object {
-            // SAFETY: global valid; JSC VM still alive.
-            unsafe { WebWorker__teardownJSCVM(global) };
+            // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
+            // centralised non-null deref proof (JSC VM still alive here).
+            WebWorker__teardownJSCVM(JSGlobalObject::opaque_ref(global));
         }
 
         // JSC is down; no more resolver/module-loader access past this point.

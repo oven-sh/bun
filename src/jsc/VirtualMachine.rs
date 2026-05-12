@@ -4761,12 +4761,10 @@ impl VirtualMachine {
                 }
                 self.had_errors = self.had_errors || build_error.msg.kind == bun_ast::Kind::Err;
                 if exception_list.is_some() {
-                    // SAFETY: `log` is set in `init` and live for VM lifetime.
-                    if let Some(log) = self.log {
-                        let _ = unsafe {
-                            (*log.as_ptr())
-                                .add_msg(build_error.msg.clone())
-                        };
+                    // `log_mut()` is the centralized set-once `Option<NonNull>`
+                    // accessor — single audited deref lives there.
+                    if let Some(log) = self.log_mut() {
+                        let _ = log.add_msg(build_error.msg.clone());
                     }
                 }
                 bun_core::Output::flush();
@@ -4786,12 +4784,10 @@ impl VirtualMachine {
                 }
                 self.had_errors = self.had_errors || resolve_error.msg.kind == bun_ast::Kind::Err;
                 if exception_list.is_some() {
-                    // SAFETY: see above.
-                    if let Some(log) = self.log {
-                        let _ = unsafe {
-                            (*log.as_ptr())
-                                .add_msg(resolve_error.msg.clone())
-                        };
+                    // `log_mut()` is the centralized set-once `Option<NonNull>`
+                    // accessor — single audited deref lives there.
+                    if let Some(log) = self.log_mut() {
+                        let _ = log.add_msg(resolve_error.msg.clone());
                     }
                 }
                 bun_core::Output::flush();

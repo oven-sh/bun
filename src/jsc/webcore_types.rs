@@ -742,14 +742,13 @@ pub mod store {
             // SAFETY: every writer of `stored_name` adopts a heap allocation via
             // `PathString::init_owned`, or leaves it `EMPTY`.
             unsafe { self.stored_name.deinit_owned() };
-            if let Some(ptr) = self.ptr.take() {
-                // SAFETY: `ptr[..cap]` is the allocation owned by
-                // `self.allocator`; sole owner at drop time.
-                let buf = unsafe {
-                    core::slice::from_raw_parts_mut(ptr.as_ptr(), self.cap as usize)
-                };
-                self.allocator.raw_free(buf, bun_alloc::Alignment::of::<u8>(), 0);
-            }
+            // Route through the existing accessor instead of re-deriving the
+            // slice from raw parts here: `allocated_slice` already encapsulates
+            // the `(ptr, cap)` → `&[u8]` invariant (and the `None` ⇒ `&[]`
+            // case), and `StdAllocator::free` is `raw_free` with byte alignment
+            // plus an empty-slice early-out — identical to the previous
+            // open-coded `raw_free(.., Alignment::of::<u8>(), 0)`.
+            self.allocator.free(self.allocated_slice());
         }
     }
 

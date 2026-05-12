@@ -7,7 +7,7 @@
 //! (`bun_runtime::test_runner`) — a forward-dep cycle — so it dispatches
 //! through [`RuntimeHooks::retroactively_report_discovered_tests`].
 
-use core::cell::UnsafeCell;
+use core::cell::{Cell, UnsafeCell};
 use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -44,28 +44,36 @@ bun_opaque::opaque_ffi! {
 /// `notifyClientNavigated`, `DevServer.ConsoleLogKind` in `notifyConsoleLog`)
 /// are forward deps; both reduce to `i32` / `u8` at the C++ FFI boundary, so
 /// callers in `bun_runtime` resolve them before calling.
+///
+/// Both fields are `Copy`, so `Cell<T>` gives interior mutability with zero
+/// `unsafe` — every method takes `&self`, and callers reaching this through a
+/// shared `&Debugger` borrow no longer need `&mut` (or the `UnsafeCell` deref
+/// in `DevServer::inspector`).
 pub struct BunFrontendDevServerAgent {
-    pub next_inspector_connection_id: i32,
-    pub handle: *mut InspectorBunFrontendDevServerAgentHandle,
+    pub next_inspector_connection_id: Cell<i32>,
+    pub handle: Cell<*mut InspectorBunFrontendDevServerAgentHandle>,
 }
 
 impl Default for BunFrontendDevServerAgent {
     fn default() -> Self {
-        Self { next_inspector_connection_id: 0, handle: core::ptr::null_mut() }
+        Self {
+            next_inspector_connection_id: Cell::new(0),
+            handle: Cell::new(core::ptr::null_mut()),
+        }
     }
 }
 
 impl BunFrontendDevServerAgent {
     /// `nextConnectionID` — wrapping post-increment.
-    pub fn next_connection_id(&mut self) -> i32 {
-        let id = self.next_inspector_connection_id;
-        self.next_inspector_connection_id = self.next_inspector_connection_id.wrapping_add(1);
+    pub fn next_connection_id(&self) -> i32 {
+        let id = self.next_inspector_connection_id.get();
+        self.next_inspector_connection_id.set(id.wrapping_add(1));
         id
     }
 
     #[inline]
     pub fn is_enabled(&self) -> bool {
-        !self.handle.is_null()
+        !self.handle.get().is_null()
     }
 
     /// `&mut Handle` accessor for the FFI shims. `handle` is set by the C++
@@ -74,12 +82,13 @@ impl BunFrontendDevServerAgent {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     fn handle_mut(&self) -> Option<&mut InspectorBunFrontendDevServerAgentHandle> {
-        if self.handle.is_null() {
+        let handle = self.handle.get();
+        if handle.is_null() {
             return None;
         }
         // `opaque_mut` is the audited safe `*mut → &mut` for opaque ZST
         // handles (zero-byte deref; see `bun_opaque::opaque_deref_mut`).
-        Some(InspectorBunFrontendDevServerAgentHandle::opaque_mut(self.handle))
+        Some(InspectorBunFrontendDevServerAgentHandle::opaque_mut(handle))
     }
 
     pub fn notify_client_connected(&self, dev_server_id: DebuggerId, connection_id: i32) {
@@ -213,7 +222,7 @@ pub fn frontend_dev_server_agent_set_enabled(
     if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
         // `dbg: &mut Debugger`, so safe `UnsafeCell::get_mut` applies — no
         // raw-pointer deref needed.
-        dbg.frontend_dev_server_agent.get_mut().handle = agent;
+        dbg.frontend_dev_server_agent.get_mut().handle.set(agent);
     }
 }
 

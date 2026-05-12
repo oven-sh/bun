@@ -1419,79 +1419,78 @@ static ERROR_MAP: [Error; SystemErrno::MAX] = {
 
 pub mod uv_e {
     use super::uv;
-    // TODO(port): Zig type was `comptime_int`; pick concrete int width matching uv constants.
-    type UvInt = i32;
-
-    // Zig: @"2BIG" — Rust identifiers cannot start with a digit.
-    pub const _2BIG: UvInt = -uv::UV_E2BIG;
-    pub const ACCES: UvInt = -uv::UV_EACCES;
-    pub const ADDRINUSE: UvInt = -uv::UV_EADDRINUSE;
-    pub const ADDRNOTAVAIL: UvInt = -uv::UV_EADDRNOTAVAIL;
-    pub const AFNOSUPPORT: UvInt = -uv::UV_EAFNOSUPPORT;
-    pub const AGAIN: UvInt = -uv::UV_EAGAIN;
-    pub const ALREADY: UvInt = -uv::UV_EALREADY;
-    pub const BADF: UvInt = -uv::UV_EBADF;
-    pub const BUSY: UvInt = -uv::UV_EBUSY;
-    pub const CANCELED: UvInt = -uv::UV_ECANCELED;
-    pub const CHARSET: UvInt = -uv::UV_ECHARSET;
-    pub const CONNABORTED: UvInt = -uv::UV_ECONNABORTED;
-    pub const CONNREFUSED: UvInt = -uv::UV_ECONNREFUSED;
-    pub const CONNRESET: UvInt = -uv::UV_ECONNRESET;
-    pub const DESTADDRREQ: UvInt = -uv::UV_EDESTADDRREQ;
-    pub const EXIST: UvInt = -uv::UV_EEXIST;
-    pub const FAULT: UvInt = -uv::UV_EFAULT;
-    pub const HOSTUNREACH: UvInt = -uv::UV_EHOSTUNREACH;
-    pub const INTR: UvInt = -uv::UV_EINTR;
-    pub const INVAL: UvInt = -uv::UV_EINVAL;
-    pub const IO: UvInt = -uv::UV_EIO;
-    pub const ISCONN: UvInt = -uv::UV_EISCONN;
-    pub const ISDIR: UvInt = -uv::UV_EISDIR;
-    pub const LOOP: UvInt = -uv::UV_ELOOP;
-    pub const MFILE: UvInt = -uv::UV_EMFILE;
-    pub const MSGSIZE: UvInt = -uv::UV_EMSGSIZE;
-    pub const NAMETOOLONG: UvInt = -uv::UV_ENAMETOOLONG;
-    pub const NETDOWN: UvInt = -uv::UV_ENETDOWN;
-    pub const NETUNREACH: UvInt = -uv::UV_ENETUNREACH;
-    pub const NFILE: UvInt = -uv::UV_ENFILE;
-    pub const NOBUFS: UvInt = -uv::UV_ENOBUFS;
-    pub const NODEV: UvInt = -uv::UV_ENODEV;
-    pub const NOENT: UvInt = -uv::UV_ENOENT;
-    pub const NOMEM: UvInt = -uv::UV_ENOMEM;
-    pub const NONET: UvInt = -uv::UV_ENONET;
-    pub const NOSPC: UvInt = -uv::UV_ENOSPC;
-    pub const NOSYS: UvInt = -uv::UV_ENOSYS;
-    pub const NOTCONN: UvInt = -uv::UV_ENOTCONN;
-    pub const NOTDIR: UvInt = -uv::UV_ENOTDIR;
-    pub const NOTEMPTY: UvInt = -uv::UV_ENOTEMPTY;
-    pub const NOTSOCK: UvInt = -uv::UV_ENOTSOCK;
-    pub const NOTSUP: UvInt = -uv::UV_ENOTSUP;
-    pub const PERM: UvInt = -uv::UV_EPERM;
-    pub const PIPE: UvInt = -uv::UV_EPIPE;
-    pub const PROTO: UvInt = -uv::UV_EPROTO;
-    pub const PROTONOSUPPORT: UvInt = -uv::UV_EPROTONOSUPPORT;
-    pub const PROTOTYPE: UvInt = -uv::UV_EPROTOTYPE;
-    pub const ROFS: UvInt = -uv::UV_EROFS;
-    pub const SHUTDOWN: UvInt = -uv::UV_ESHUTDOWN;
-    pub const SPIPE: UvInt = -uv::UV_ESPIPE;
-    pub const SRCH: UvInt = -uv::UV_ESRCH;
-    pub const TIMEDOUT: UvInt = -uv::UV_ETIMEDOUT;
-    pub const TXTBSY: UvInt = -uv::UV_ETXTBSY;
-    pub const XDEV: UvInt = -uv::UV_EXDEV;
-    pub const FBIG: UvInt = -uv::UV_EFBIG;
-    pub const NOPROTOOPT: UvInt = -uv::UV_ENOPROTOOPT;
-    pub const RANGE: UvInt = -uv::UV_ERANGE;
-    pub const NXIO: UvInt = -uv::UV_ENXIO;
-    pub const MLINK: UvInt = -uv::UV_EMLINK;
-    pub const HOSTDOWN: UvInt = -uv::UV_EHOSTDOWN;
-    pub const REMOTEIO: UvInt = -uv::UV_EREMOTEIO;
-    pub const NOTTY: UvInt = -uv::UV_ENOTTY;
-    pub const FTYPE: UvInt = -uv::UV_EFTYPE;
-    pub const ILSEQ: UvInt = -uv::UV_EILSEQ;
-    pub const OVERFLOW: UvInt = -uv::UV_EOVERFLOW;
-    pub const SOCKTNOSUPPORT: UvInt = -uv::UV_ESOCKTNOSUPPORT;
-    pub const NODATA: UvInt = -uv::UV_ENODATA;
-    pub const UNATCH: UvInt = -uv::UV_EUNATCH;
-    pub const NOEXEC: UvInt = -uv::UV_ENOEXEC;
+    // Zig: @"2BIG" — Rust identifiers cannot start with a digit → `_2BIG`.
+    crate::__decl_uv_e! {
+        _2BIG          = -uv::UV_E2BIG          => "E2BIG",
+        ACCES          = -uv::UV_EACCES         => "EACCES",
+        ADDRINUSE      = -uv::UV_EADDRINUSE     => "EADDRINUSE",
+        ADDRNOTAVAIL   = -uv::UV_EADDRNOTAVAIL  => "EADDRNOTAVAIL",
+        AFNOSUPPORT    = -uv::UV_EAFNOSUPPORT   => "EAFNOSUPPORT",
+        AGAIN          = -uv::UV_EAGAIN         => "EAGAIN",
+        ALREADY        = -uv::UV_EALREADY       => "EALREADY",
+        BADF           = -uv::UV_EBADF          => "EBADF",
+        BUSY           = -uv::UV_EBUSY          => "EBUSY",
+        CANCELED       = -uv::UV_ECANCELED      => "ECANCELED",
+        CHARSET        = -uv::UV_ECHARSET       => "ECHARSET",
+        CONNABORTED    = -uv::UV_ECONNABORTED   => "ECONNABORTED",
+        CONNREFUSED    = -uv::UV_ECONNREFUSED   => "ECONNREFUSED",
+        CONNRESET      = -uv::UV_ECONNRESET     => "ECONNRESET",
+        DESTADDRREQ    = -uv::UV_EDESTADDRREQ   => "EDESTADDRREQ",
+        EXIST          = -uv::UV_EEXIST         => "EEXIST",
+        FAULT          = -uv::UV_EFAULT         => "EFAULT",
+        HOSTUNREACH    = -uv::UV_EHOSTUNREACH   => "EHOSTUNREACH",
+        INTR           = -uv::UV_EINTR          => "EINTR",
+        INVAL          = -uv::UV_EINVAL         => "EINVAL",
+        IO             = -uv::UV_EIO            => "EIO",
+        ISCONN         = -uv::UV_EISCONN        => "EISCONN",
+        ISDIR          = -uv::UV_EISDIR         => "EISDIR",
+        LOOP           = -uv::UV_ELOOP          => "ELOOP",
+        MFILE          = -uv::UV_EMFILE         => "EMFILE",
+        MSGSIZE        = -uv::UV_EMSGSIZE       => "EMSGSIZE",
+        NAMETOOLONG    = -uv::UV_ENAMETOOLONG   => "ENAMETOOLONG",
+        NETDOWN        = -uv::UV_ENETDOWN       => "ENETDOWN",
+        NETUNREACH     = -uv::UV_ENETUNREACH    => "ENETUNREACH",
+        NFILE          = -uv::UV_ENFILE         => "ENFILE",
+        NOBUFS         = -uv::UV_ENOBUFS        => "ENOBUFS",
+        NODEV          = -uv::UV_ENODEV         => "ENODEV",
+        NOENT          = -uv::UV_ENOENT         => "ENOENT",
+        NOMEM          = -uv::UV_ENOMEM         => "ENOMEM",
+        NONET          = -uv::UV_ENONET         => "ENONET",
+        NOSPC          = -uv::UV_ENOSPC         => "ENOSPC",
+        NOSYS          = -uv::UV_ENOSYS         => "ENOSYS",
+        NOTCONN        = -uv::UV_ENOTCONN       => "ENOTCONN",
+        NOTDIR         = -uv::UV_ENOTDIR        => "ENOTDIR",
+        NOTEMPTY       = -uv::UV_ENOTEMPTY      => "ENOTEMPTY",
+        NOTSOCK        = -uv::UV_ENOTSOCK       => "ENOTSOCK",
+        NOTSUP         = -uv::UV_ENOTSUP        => "ENOTSUP",
+        PERM           = -uv::UV_EPERM          => "EPERM",
+        PIPE           = -uv::UV_EPIPE          => "EPIPE",
+        PROTO          = -uv::UV_EPROTO         => "EPROTO",
+        PROTONOSUPPORT = -uv::UV_EPROTONOSUPPORT => "EPROTONOSUPPORT",
+        PROTOTYPE      = -uv::UV_EPROTOTYPE     => "EPROTOTYPE",
+        ROFS           = -uv::UV_EROFS          => "EROFS",
+        SHUTDOWN       = -uv::UV_ESHUTDOWN      => "ESHUTDOWN",
+        SPIPE          = -uv::UV_ESPIPE         => "ESPIPE",
+        SRCH           = -uv::UV_ESRCH          => "ESRCH",
+        TIMEDOUT       = -uv::UV_ETIMEDOUT      => "ETIMEDOUT",
+        TXTBSY         = -uv::UV_ETXTBSY        => "ETXTBSY",
+        XDEV           = -uv::UV_EXDEV          => "EXDEV",
+        FBIG           = -uv::UV_EFBIG          => "EFBIG",
+        NOPROTOOPT     = -uv::UV_ENOPROTOOPT    => "ENOPROTOOPT",
+        RANGE          = -uv::UV_ERANGE         => "ERANGE",
+        NXIO           = -uv::UV_ENXIO          => "ENXIO",
+        MLINK          = -uv::UV_EMLINK         => "EMLINK",
+        HOSTDOWN       = -uv::UV_EHOSTDOWN      => "EHOSTDOWN",
+        REMOTEIO       = -uv::UV_EREMOTEIO      => "EREMOTEIO",
+        NOTTY          = -uv::UV_ENOTTY         => "ENOTTY",
+        FTYPE          = -uv::UV_EFTYPE         => "EFTYPE",
+        ILSEQ          = -uv::UV_EILSEQ         => "EILSEQ",
+        OVERFLOW       = -uv::UV_EOVERFLOW      => "EOVERFLOW",
+        SOCKTNOSUPPORT = -uv::UV_ESOCKTNOSUPPORT => "ESOCKTNOSUPPORT",
+        NODATA         = -uv::UV_ENODATA        => "ENODATA",
+        UNATCH         = -uv::UV_EUNATCH        => "EUNATCH",
+        NOEXEC         = -uv::UV_ENOEXEC        => "ENOEXEC",
+    }
 }
 
 // ported from: src/errno/windows_errno.zig

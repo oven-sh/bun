@@ -96,10 +96,8 @@ where
         match str.len() {
             n if n >= 1 && n < MAX_BYTES => {
                 let mut tmp = [0u8; MAX_BYTES];
-                for (i, &ch) in str.iter().enumerate() {
-                    tmp[i] = ch.to_ascii_lowercase();
-                }
                 // @memset(tmp[str.len..], 0) — already zeroed
+                bun_core::strings::copy_lowercase(str, &mut tmp[..str.len()]);
                 Self::read_le(&tmp)
             }
             n if n == MAX_BYTES => {

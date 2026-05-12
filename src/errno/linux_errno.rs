@@ -157,79 +157,80 @@ impl SystemErrno {
 #[allow(non_upper_case_globals)]
 pub mod uv_e {
     use super::SystemErrno;
-
-    // TODO(port): Zig name was `@"2BIG"`; Rust idents cannot start with a digit.
-    pub const _2BIG: i32 = SystemErrno::E2BIG as i32;
-    pub const ACCES: i32 = SystemErrno::EACCES as i32;
-    pub const ADDRINUSE: i32 = SystemErrno::EADDRINUSE as i32;
-    pub const ADDRNOTAVAIL: i32 = SystemErrno::EADDRNOTAVAIL as i32;
-    pub const AFNOSUPPORT: i32 = SystemErrno::EAFNOSUPPORT as i32;
-    pub const AGAIN: i32 = SystemErrno::EAGAIN as i32;
-    pub const ALREADY: i32 = SystemErrno::EALREADY as i32;
-    pub const BADF: i32 = SystemErrno::EBADF as i32;
-    pub const BUSY: i32 = SystemErrno::EBUSY as i32;
-    pub const CANCELED: i32 = SystemErrno::ECANCELED as i32;
-    // Linux lacks ECHARSET; libuv uses synthetic UV_ECHARSET = -4080.
-    pub const CHARSET: i32 = -bun_libuv_sys::UV_ECHARSET;
-    pub const CONNABORTED: i32 = SystemErrno::ECONNABORTED as i32;
-    pub const CONNREFUSED: i32 = SystemErrno::ECONNREFUSED as i32;
-    pub const CONNRESET: i32 = SystemErrno::ECONNRESET as i32;
-    pub const DESTADDRREQ: i32 = SystemErrno::EDESTADDRREQ as i32;
-    pub const EXIST: i32 = SystemErrno::EEXIST as i32;
-    pub const FAULT: i32 = SystemErrno::EFAULT as i32;
-    pub const HOSTUNREACH: i32 = SystemErrno::EHOSTUNREACH as i32;
-    pub const INTR: i32 = SystemErrno::EINTR as i32;
-    pub const INVAL: i32 = SystemErrno::EINVAL as i32;
-    pub const IO: i32 = SystemErrno::EIO as i32;
-    pub const ISCONN: i32 = SystemErrno::EISCONN as i32;
-    pub const ISDIR: i32 = SystemErrno::EISDIR as i32;
-    pub const LOOP: i32 = SystemErrno::ELOOP as i32;
-    pub const MFILE: i32 = SystemErrno::EMFILE as i32;
-    pub const MSGSIZE: i32 = SystemErrno::EMSGSIZE as i32;
-    pub const NAMETOOLONG: i32 = SystemErrno::ENAMETOOLONG as i32;
-    pub const NETDOWN: i32 = SystemErrno::ENETDOWN as i32;
-    pub const NETUNREACH: i32 = SystemErrno::ENETUNREACH as i32;
-    pub const NFILE: i32 = SystemErrno::ENFILE as i32;
-    pub const NOBUFS: i32 = SystemErrno::ENOBUFS as i32;
-    pub const NODEV: i32 = SystemErrno::ENODEV as i32;
-    pub const NOENT: i32 = SystemErrno::ENOENT as i32;
-    pub const NOMEM: i32 = SystemErrno::ENOMEM as i32;
-    pub const NONET: i32 = SystemErrno::ENONET as i32;
-    pub const NOSPC: i32 = SystemErrno::ENOSPC as i32;
-    pub const NOSYS: i32 = SystemErrno::ENOSYS as i32;
-    pub const NOTCONN: i32 = SystemErrno::ENOTCONN as i32;
-    pub const NOTDIR: i32 = SystemErrno::ENOTDIR as i32;
-    pub const NOTEMPTY: i32 = SystemErrno::ENOTEMPTY as i32;
-    pub const NOTSOCK: i32 = SystemErrno::ENOTSOCK as i32;
-    pub const NOTSUP: i32 = SystemErrno::ENOTSUP as i32;
-    pub const PERM: i32 = SystemErrno::EPERM as i32;
-    pub const PIPE: i32 = SystemErrno::EPIPE as i32;
-    pub const PROTO: i32 = SystemErrno::EPROTO as i32;
-    pub const PROTONOSUPPORT: i32 = SystemErrno::EPROTONOSUPPORT as i32;
-    pub const PROTOTYPE: i32 = SystemErrno::EPROTOTYPE as i32;
-    pub const ROFS: i32 = SystemErrno::EROFS as i32;
-    pub const SHUTDOWN: i32 = SystemErrno::ESHUTDOWN as i32;
-    pub const SPIPE: i32 = SystemErrno::ESPIPE as i32;
-    pub const SRCH: i32 = SystemErrno::ESRCH as i32;
-    pub const TIMEDOUT: i32 = SystemErrno::ETIMEDOUT as i32;
-    pub const TXTBSY: i32 = SystemErrno::ETXTBSY as i32;
-    pub const XDEV: i32 = SystemErrno::EXDEV as i32;
-    pub const FBIG: i32 = SystemErrno::EFBIG as i32;
-    pub const NOPROTOOPT: i32 = SystemErrno::ENOPROTOOPT as i32;
-    pub const RANGE: i32 = SystemErrno::ERANGE as i32;
-    pub const NXIO: i32 = SystemErrno::ENXIO as i32;
-    pub const MLINK: i32 = SystemErrno::EMLINK as i32;
-    pub const HOSTDOWN: i32 = SystemErrno::EHOSTDOWN as i32;
-    pub const REMOTEIO: i32 = SystemErrno::EREMOTEIO as i32;
-    pub const NOTTY: i32 = SystemErrno::ENOTTY as i32;
-    // Linux lacks EFTYPE; libuv uses synthetic UV_EFTYPE = -4028.
-    pub const FTYPE: i32 = -bun_libuv_sys::UV_EFTYPE;
-    pub const ILSEQ: i32 = SystemErrno::EILSEQ as i32;
-    pub const OVERFLOW: i32 = SystemErrno::EOVERFLOW as i32;
-    pub const SOCKTNOSUPPORT: i32 = SystemErrno::ESOCKTNOSUPPORT as i32;
-    pub const NODATA: i32 = SystemErrno::ENODATA as i32;
-    pub const UNATCH: i32 = SystemErrno::EUNATCH as i32;
-    pub const NOEXEC: i32 = SystemErrno::ENOEXEC as i32;
+    // Zig name was `@"2BIG"`; Rust idents cannot start with a digit → `_2BIG`.
+    crate::__decl_uv_e! {
+        _2BIG          = SystemErrno::E2BIG as i32           => "E2BIG",
+        ACCES          = SystemErrno::EACCES as i32          => "EACCES",
+        ADDRINUSE      = SystemErrno::EADDRINUSE as i32      => "EADDRINUSE",
+        ADDRNOTAVAIL   = SystemErrno::EADDRNOTAVAIL as i32   => "EADDRNOTAVAIL",
+        AFNOSUPPORT    = SystemErrno::EAFNOSUPPORT as i32    => "EAFNOSUPPORT",
+        AGAIN          = SystemErrno::EAGAIN as i32          => "EAGAIN",
+        ALREADY        = SystemErrno::EALREADY as i32        => "EALREADY",
+        BADF           = SystemErrno::EBADF as i32           => "EBADF",
+        BUSY           = SystemErrno::EBUSY as i32           => "EBUSY",
+        CANCELED       = SystemErrno::ECANCELED as i32       => "ECANCELED",
+        // Linux lacks ECHARSET; libuv uses synthetic UV_ECHARSET = -4080.
+        CHARSET        = -bun_libuv_sys::UV_ECHARSET         => "ECHARSET",
+        CONNABORTED    = SystemErrno::ECONNABORTED as i32    => "ECONNABORTED",
+        CONNREFUSED    = SystemErrno::ECONNREFUSED as i32    => "ECONNREFUSED",
+        CONNRESET      = SystemErrno::ECONNRESET as i32      => "ECONNRESET",
+        DESTADDRREQ    = SystemErrno::EDESTADDRREQ as i32    => "EDESTADDRREQ",
+        EXIST          = SystemErrno::EEXIST as i32          => "EEXIST",
+        FAULT          = SystemErrno::EFAULT as i32          => "EFAULT",
+        HOSTUNREACH    = SystemErrno::EHOSTUNREACH as i32    => "EHOSTUNREACH",
+        INTR           = SystemErrno::EINTR as i32           => "EINTR",
+        INVAL          = SystemErrno::EINVAL as i32          => "EINVAL",
+        IO             = SystemErrno::EIO as i32             => "EIO",
+        ISCONN         = SystemErrno::EISCONN as i32         => "EISCONN",
+        ISDIR          = SystemErrno::EISDIR as i32          => "EISDIR",
+        LOOP           = SystemErrno::ELOOP as i32           => "ELOOP",
+        MFILE          = SystemErrno::EMFILE as i32          => "EMFILE",
+        MSGSIZE        = SystemErrno::EMSGSIZE as i32        => "EMSGSIZE",
+        NAMETOOLONG    = SystemErrno::ENAMETOOLONG as i32    => "ENAMETOOLONG",
+        NETDOWN        = SystemErrno::ENETDOWN as i32        => "ENETDOWN",
+        NETUNREACH     = SystemErrno::ENETUNREACH as i32     => "ENETUNREACH",
+        NFILE          = SystemErrno::ENFILE as i32          => "ENFILE",
+        NOBUFS         = SystemErrno::ENOBUFS as i32         => "ENOBUFS",
+        NODEV          = SystemErrno::ENODEV as i32          => "ENODEV",
+        NOENT          = SystemErrno::ENOENT as i32          => "ENOENT",
+        NOMEM          = SystemErrno::ENOMEM as i32          => "ENOMEM",
+        NONET          = SystemErrno::ENONET as i32          => "ENONET",
+        NOSPC          = SystemErrno::ENOSPC as i32          => "ENOSPC",
+        NOSYS          = SystemErrno::ENOSYS as i32          => "ENOSYS",
+        NOTCONN        = SystemErrno::ENOTCONN as i32        => "ENOTCONN",
+        NOTDIR         = SystemErrno::ENOTDIR as i32         => "ENOTDIR",
+        NOTEMPTY       = SystemErrno::ENOTEMPTY as i32       => "ENOTEMPTY",
+        NOTSOCK        = SystemErrno::ENOTSOCK as i32        => "ENOTSOCK",
+        NOTSUP         = SystemErrno::ENOTSUP as i32         => "ENOTSUP",
+        PERM           = SystemErrno::EPERM as i32           => "EPERM",
+        PIPE           = SystemErrno::EPIPE as i32           => "EPIPE",
+        PROTO          = SystemErrno::EPROTO as i32          => "EPROTO",
+        PROTONOSUPPORT = SystemErrno::EPROTONOSUPPORT as i32 => "EPROTONOSUPPORT",
+        PROTOTYPE      = SystemErrno::EPROTOTYPE as i32      => "EPROTOTYPE",
+        ROFS           = SystemErrno::EROFS as i32           => "EROFS",
+        SHUTDOWN       = SystemErrno::ESHUTDOWN as i32       => "ESHUTDOWN",
+        SPIPE          = SystemErrno::ESPIPE as i32          => "ESPIPE",
+        SRCH           = SystemErrno::ESRCH as i32           => "ESRCH",
+        TIMEDOUT       = SystemErrno::ETIMEDOUT as i32       => "ETIMEDOUT",
+        TXTBSY         = SystemErrno::ETXTBSY as i32         => "ETXTBSY",
+        XDEV           = SystemErrno::EXDEV as i32           => "EXDEV",
+        FBIG           = SystemErrno::EFBIG as i32           => "EFBIG",
+        NOPROTOOPT     = SystemErrno::ENOPROTOOPT as i32     => "ENOPROTOOPT",
+        RANGE          = SystemErrno::ERANGE as i32          => "ERANGE",
+        NXIO           = SystemErrno::ENXIO as i32           => "ENXIO",
+        MLINK          = SystemErrno::EMLINK as i32          => "EMLINK",
+        HOSTDOWN       = SystemErrno::EHOSTDOWN as i32       => "EHOSTDOWN",
+        REMOTEIO       = SystemErrno::EREMOTEIO as i32       => "EREMOTEIO",
+        NOTTY          = SystemErrno::ENOTTY as i32          => "ENOTTY",
+        // Linux lacks EFTYPE; libuv uses synthetic UV_EFTYPE = -4028.
+        FTYPE          = -bun_libuv_sys::UV_EFTYPE           => "EFTYPE",
+        ILSEQ          = SystemErrno::EILSEQ as i32          => "EILSEQ",
+        OVERFLOW       = SystemErrno::EOVERFLOW as i32       => "EOVERFLOW",
+        SOCKTNOSUPPORT = SystemErrno::ESOCKTNOSUPPORT as i32 => "ESOCKTNOSUPPORT",
+        NODATA         = SystemErrno::ENODATA as i32         => "ENODATA",
+        UNATCH         = SystemErrno::EUNATCH as i32         => "EUNATCH",
+        NOEXEC         = SystemErrno::ENOEXEC as i32         => "ENOEXEC",
+    }
 }
 
 use super::GetErrno;

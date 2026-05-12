@@ -2169,10 +2169,13 @@ pub fn init(
         }
     }
 
-    // SAFETY: singleton fully initialized; main thread, no workers yet. Wrapped
-    // once as `ParentRef` so the two read-only `options` projections below go
-    // through safe `Deref` instead of per-site raw deref.
-    let mgr_ref = unsafe { bun_ptr::ParentRef::<PackageManager>::from_raw(manager_ptr) };
+    // Singleton fully initialized; main thread, no workers yet. Wrapped once as
+    // `ParentRef` so the two read-only `options` projections below go through
+    // safe `Deref` instead of per-site raw deref. Safe `From<NonNull>`
+    // construction — `manager_ptr` is the live singleton address.
+    let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
+        NonNull::new(manager_ptr).expect("manager singleton non-null"),
+    );
     let mut ca: Vec<ZBox> = Vec::new();
     {
         let options = &mgr_ref.options;

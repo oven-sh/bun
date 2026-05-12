@@ -1138,12 +1138,15 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             heap: io_heap::IntrusiveField::default(),
         });
 
-        // SAFETY: `new` returned a freshly boxed non-null ptr; we hold the only
+        // `new` returned a freshly boxed non-null ptr; we hold the only
         // reference. Wrap once as `ParentRef` so the read-only field accesses
         // below go through safe `Deref` instead of three per-site raw-deref
         // blocks. The shared borrow ends (NLL) before `spawn_next_script` takes
-        // the raw `*mut` for exclusive access.
-        let lss = unsafe { bun_ptr::ParentRef::<Self>::from_raw(lifecycle_subprocess) };
+        // the raw `*mut` for exclusive access. Safe `From<NonNull>`
+        // construction — `Self::new` returns `Box::into_raw`, never null.
+        let lss = bun_ptr::ParentRef::<Self>::from(
+            core::ptr::NonNull::new(lifecycle_subprocess).expect("Box::into_raw is non-null"),
+        );
 
         if log_level.is_verbose() {
             Output::pretty_errorln(format_args!(

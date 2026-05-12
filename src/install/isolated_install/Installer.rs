@@ -613,7 +613,12 @@ fn download_error_reason(e: bun_core::Error) -> &'static [u8] {
 
 pub struct Task {
     pub entry_id: StoreEntryId,
-    pub installer: *mut Installer<'static>, // BACKREF: Installer owns tasks[]
+    /// BACKREF: `Installer` owns `tasks[]` and outlives every `Task`. Stored as
+    /// `BackRef` so worker-thread read sites use safe `Deref`/`get()` instead of
+    /// per-site raw-pointer derefs. Constructed with a `NonNull::dangling()`
+    /// placeholder (never dereferenced) and patched to the real address before
+    /// any `start_task` call — see `isolated_install.rs`.
+    pub installer: bun_ptr::BackRef<Installer<'static>>,
 
     pub task: thread_pool::Task,
     pub next: bun_threading::Link<Task>, // INTRUSIVE: bun.UnboundedQueue(Task, .next) link
@@ -786,7 +791,7 @@ impl Task {
         // lives outside the `Installer` allocation and `items_step()` is atomic.
         // This also avoids leaking the erased `'static` from
         // `*mut Installer<'static>` into a whole-struct borrow.
-        let store: &Store = unsafe { *core::ptr::addr_of!((*self.installer).store) };
+        let store: &Store = unsafe { *core::ptr::addr_of!((*self.installer.as_ptr()).store) };
         store.entries.items_step()[self.entry_id.get() as usize]
             .store(next_step as u32, Ordering::Release);
 
@@ -816,16 +821,19 @@ impl Task {
         //     while these locals are live — that would reborrow through
         //     `&Installer` and alias `*manager_ptr` / `*lockfile_ptr`.
         let installer_ptr = self.installer;
-        let installer = unsafe { &*installer_ptr };
+        let installer = installer_ptr.get();
         let manager_ptr: *mut PackageManager = installer.manager;
         let lockfile_ptr: *mut Lockfile = installer.lockfile;
-        // SAFETY: BACKREF — `manager_ptr` is non-null and the `PackageManager`
-        // outlives every `Task` (see top-of-fn note). Wrapped once as
-        // `ParentRef` so the read-only deref sites below go through safe
-        // `Deref`/`get()` instead of per-site `unsafe { &* }`. Mutation and
-        // narrowed `addr_of_mut!` field projections still go through the raw
-        // `manager_ptr` directly (same provenance tag as `manager_ref.ptr`).
-        let manager_ref = unsafe { bun_ptr::ParentRef::<PackageManager>::from_raw(manager_ptr) };
+        // BACKREF — `manager_ptr` is non-null and the `PackageManager` outlives
+        // every `Task` (see top-of-fn note). Wrapped once as `ParentRef` so the
+        // read-only deref sites below go through safe `Deref`/`get()` instead
+        // of per-site `unsafe { &* }`. Mutation and narrowed `addr_of_mut!`
+        // field projections still go through the raw `manager_ptr` directly
+        // (same provenance tag as `manager_ref.ptr`). Safe `From<NonNull>`
+        // construction — non-null is guaranteed by the BACKREF field invariant.
+        let manager_ref = bun_ptr::ParentRef::<PackageManager>::from(
+            core::ptr::NonNull::new(manager_ptr).expect("Installer.manager BACKREF is non-null"),
+        );
         // Read-only `&Lockfile` via the BACKREF accessor (centralised deref);
         // same provenance as `&*lockfile_ptr`. `lockfile_ptr` itself is kept
         // raw for the narrowed `addr_of_mut!((*lockfile_ptr).trusted_dependencies)`
@@ -1873,7 +1881,7 @@ impl Task {
         // exclusivity contract; "deref it fresh per call" alone would not prevent
         // the `&mut` lifetimes from overlapping).
         let installer_ptr = this.installer;
-        let installer = unsafe { &*installer_ptr };
+        let installer = installer_ptr.get();
         let manager_ptr: *mut PackageManager = installer.manager;
 
         match res {

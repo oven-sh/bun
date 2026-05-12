@@ -1312,13 +1312,16 @@ fn print_install_summary(
         // `manager.track_installed_bin`, none of which overlap `lockfile` /
         // `options` / `update_requests`.
         let mgr: *mut PackageManager = this;
-        // SAFETY: `mgr` is the sole provenance root from here through the
-        // `Tree::print` call; the `Printer` reborrows shared `lockfile` /
-        // `options` / `update_requests`, and the `&mut *mgr` passed to
-        // `Tree::print` only touches disjoint `PackageManager` fields. Wrapped
-        // once as `ParentRef` so the three read-only field reborrows go through
-        // safe `Deref` instead of three per-site raw projections.
-        let mgr_ref = unsafe { bun_ptr::ParentRef::<PackageManager>::from_raw(mgr) };
+        // `mgr` is the sole provenance root from here through the `Tree::print`
+        // call; the `Printer` reborrows shared `lockfile` / `options` /
+        // `update_requests`, and the `&mut *mgr` passed to `Tree::print` only
+        // touches disjoint `PackageManager` fields. Wrapped once as `ParentRef`
+        // so the three read-only field reborrows go through safe `Deref`
+        // instead of three per-site raw projections. Safe `From<NonNull>`
+        // construction — `mgr` was just derived from `&mut *this`.
+        let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
+            core::ptr::NonNull::new(mgr).expect("derived from &mut, non-null"),
+        );
         let printer = Printer {
             lockfile: &mgr_ref.lockfile,
             options: &mgr_ref.options,

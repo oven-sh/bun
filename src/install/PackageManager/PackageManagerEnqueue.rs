@@ -1070,10 +1070,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 }
                                                 // PORT NOTE: reshaped for borrowck — `find_result`
                                                 // borrows `loaded_manifest`; route the manifest
-                                                // through a raw pointer so the `&mut PackageManager`
-                                                // call below doesn't conflict.
-                                                let manifest_ptr: *const Npm::PackageManifest =
-                                                    loaded_manifest.as_ref().unwrap();
+                                                // through a `BackRef` so the `&mut PackageManager`
+                                                // call below doesn't conflict. `loaded_manifest`
+                                                // is owned by this stack frame and not touched
+                                                // until the call returns.
+                                                let manifest_ref = bun_ptr::BackRef::new(
+                                                    loaded_manifest.as_ref().unwrap(),
+                                                );
                                                 if let Some(new_resolve_result) =
                                                     get_or_put_resolved_package_with_find_result(
                                                         // SAFETY: see `this_ptr` note above.
@@ -1084,10 +1087,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                         version.clone(),
                                                         id,
                                                         dependency.behavior,
-                                                        // SAFETY: `loaded_manifest` is owned by this
-                                                        // stack frame and not touched until the call
-                                                        // returns.
-                                                        unsafe { &*manifest_ptr },
+                                                        manifest_ref.get(),
                                                         find_result,
                                                         install_peer,
                                                         success_fn,
@@ -1702,11 +1702,11 @@ fn enqueue_git_clone(
     // `Log`/`Box<PatchTask>` drop glue) for the next `put()` to drop. With
     // `get_init` the slot is claimed only after the value is fully constructed.
     let value = Task::Task {
-        // SAFETY: `this` is a live `&mut PackageManager`; the task is owned by
+        // `this` is a live `&mut PackageManager`; the task is owned by
         // `this.preallocated_resolve_tasks` and never outlives the manager.
-        package_manager: Some(unsafe {
-            bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<PackageManager>(this))
-        }),
+        // Safe `From<NonNull>` construction preserves the `&mut`-derived write
+        // provenance for `assume_mut()` in `Task::callback`.
+        package_manager: Some(bun_ptr::ParentRef::from(core::ptr::NonNull::from(&mut *this))),
         log: bun_ast::Log::init(),
         tag: crate::package_manager_task::Tag::GitClone,
         request: crate::package_manager_task::Request {
@@ -1883,11 +1883,11 @@ fn enqueue_local_tarball(
     // Build the `Task` value *before* claiming a hive slot — the `.expect()`s
     // below can unwind, and `Task` carries drop glue. See `enqueue_git_clone`.
     let value = Task::Task {
-        // SAFETY: `this` is a live `&mut PackageManager`; the task is owned by
+        // `this` is a live `&mut PackageManager`; the task is owned by
         // `this.preallocated_resolve_tasks` and never outlives the manager.
-        package_manager: Some(unsafe {
-            bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<PackageManager>(this))
-        }),
+        // Safe `From<NonNull>` construction preserves the `&mut`-derived write
+        // provenance for `assume_mut()` in `Task::callback`.
+        package_manager: Some(bun_ptr::ParentRef::from(core::ptr::NonNull::from(&mut *this))),
         log: bun_ast::Log::init(),
         tag: crate::package_manager_task::Tag::LocalTarball,
         request: crate::package_manager_task::Request {
@@ -2378,16 +2378,16 @@ fn get_or_put_resolved_package(
             // borrow `*this`.
             let name_str = this.lockfile.str_detached(&name);
 
-            let scope: *const crate::npm::registry::Scope =
-                unsafe { &(*this_ptr).options }.scope_for_package_name(name_str);
+            let scope = bun_ptr::BackRef::new(
+                unsafe { &(*this_ptr).options }.scope_for_package_name(name_str),
+            );
             // SAFETY: `manifests` projected from `this_ptr`; the lookup holds
             // only that disjoint field borrow alongside the shared `options`
-            // / `lockfile` projections above.
+            // / `lockfile` projections above. `scope` points into
+            // `(*this_ptr).options`, disjoint from `manifests`.
             let Some(manifest) = (unsafe { &mut (*this_ptr).manifests }).by_name_hash(
                 cache_ctx,
-                // SAFETY: `scope` points into `(*this_ptr).options`, disjoint
-                // from `manifests`; not mutated before this read.
-                unsafe { &*scope },
+                scope.get(),
                 name_hash,
                 ManifestLoad::LoadFromMemoryFallbackToDisk,
                 needs_ext,
@@ -2522,9 +2522,9 @@ fn get_or_put_resolved_package(
             };
 
             // PORT NOTE: reshaped for borrowck — `manifest`/`find_result`
-            // borrow `this.manifests`; detach via raw so the `&mut *this`
-            // call can proceed.
-            let manifest_ptr: *const Npm::PackageManifest = manifest;
+            // borrow `this.manifests`; detach via `BackRef` so the `&mut *this`
+            // call can proceed (`this.manifests` is not mutated by the callee).
+            let manifest_ref: bun_ptr::BackRef<Npm::PackageManifest> = bun_ptr::BackRef::new(manifest);
             get_or_put_resolved_package_with_find_result(
                 // SAFETY: see `this_ptr` note above.
                 unsafe { &mut *this_ptr },
@@ -2534,8 +2534,7 @@ fn get_or_put_resolved_package(
                 version,
                 dependency_id,
                 behavior,
-                // SAFETY: `this.manifests` is not mutated by the callee.
-                unsafe { &*manifest_ptr },
+                manifest_ref.get(),
                 find_result,
                 install_peer,
                 success_fn,

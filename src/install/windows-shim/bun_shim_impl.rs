@@ -285,10 +285,16 @@ impl core::fmt::Display for FailReason {
         // The Zig `comptime std.mem.indexOf(u8, template, "{s}")` check is replaced by an
         // explicit match on the one variant whose template contains `{s}`.
         if matches!(self, FailReason::InterpreterNotFound) {
-            // SAFETY: failure_reason_argument is set before InterpreterNotFound is raised.
-            let arg = unsafe { FAILURE_REASON_ARGUMENT.read().unwrap() };
-            // SAFETY: arg points into FAILURE_REASON_DATA which is a static buffer.
-            let arg_slice = unsafe { bun_core::ffi::slice(arg.0, arg.1) };
+            // `FAILURE_REASON_LEN` is set before InterpreterNotFound is raised;
+            // safe atomic load (`usize` is `Copy`, no cell-deref needed).
+            let len = FAILURE_REASON_LEN.load(core::sync::atomic::Ordering::Relaxed);
+            debug_assert_ne!(len, usize::MAX);
+            // SAFETY: `FAILURE_REASON_DATA` is a static `[u8; 512]`; `len ≤ 512`
+            // was bounded by the producer loop, and this path is single-threaded
+            // (standalone exe / just-before-exit), so the bytes are stable.
+            let arg_slice = unsafe {
+                bun_core::ffi::slice(FAILURE_REASON_DATA.get().cast::<u8>().cast_const(), len)
+            };
             // Zig spec writes raw bytes (`{s}`). `arg_slice` is filled by truncating
             // UTF-16 code units to 7 bits (`& 0x7F`) — every byte is < 0x80, hence
             // valid single-byte UTF-8. Avoids `bstr` so the standalone PE stays
@@ -301,8 +307,8 @@ impl core::fmt::Display for FailReason {
             writer.write_str(arg_str)?;
             writer.write_str("\" not found in %PATH%\n\n")?;
             if DBG {
-                // SAFETY: single-threaded standalone exe; debug-only reset.
-                unsafe { FAILURE_REASON_ARGUMENT.write(None) };
+                // Safe atomic store; debug-only reset to the `None` sentinel.
+                FAILURE_REASON_LEN.store(usize::MAX, core::sync::atomic::Ordering::Relaxed);
             }
         } else {
             writer.write_str(template)?;
@@ -375,10 +381,13 @@ impl core::fmt::Write for NtWriter {
 // PORTING.md §Global mutable state: standalone single-threaded shim exe (or
 // just-before-exit path when linked into bun). RacyCell — no concurrency.
 static FAILURE_REASON_DATA: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::new([0; 512]);
-// Stored as (ptr, len) into FAILURE_REASON_DATA; Option<&'static [u8]> would also work but
-// keeps a reference across an interior-mutable static which Rust dislikes.
-static FAILURE_REASON_ARGUMENT: bun_core::RacyCell<Option<(*const u8, usize)>> =
-    bun_core::RacyCell::new(None);
+// Length of the argument written into `FAILURE_REASON_DATA[..len]`. The pointer
+// half of the original Zig `?[]const u8` is always `FAILURE_REASON_DATA.as_ptr()`,
+// so storing only the `usize` length lets this be a plain `AtomicUsize` (safe
+// `.load()`/`.store()`) instead of a `RacyCell<Option<(*const u8, usize)>>`
+// requiring unsafe `read()`/`write()`. `usize::MAX` encodes `None`.
+static FAILURE_REASON_LEN: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(usize::MAX);
 
 #[cold]
 #[inline(never)]
@@ -1346,20 +1355,22 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                             // This trade off is made to reduce the binary size of the shim.
                             // SAFETY: FAILURE_REASON_DATA is a static buffer; this code path is only
                             // reached single-threaded (standalone exe or just before process exit).
-                            unsafe {
+                            // `spawn_command_line` is the live UTF-16 command line buffer.
+                            let len = unsafe {
                                 let data = &mut *FAILURE_REASON_DATA.get();
-                                FAILURE_REASON_ARGUMENT.write(Some('brk: {
-                                    let mut i: u32 = 0;
-                                    while i < 512
-                                        && *spawn_command_line.add(i as usize) != ' ' as u16
-                                    {
-                                        data[i as usize] =
-                                            (*spawn_command_line.add(i as usize) & 0x7F) as u8;
-                                        i += 1;
-                                    }
-                                    break 'brk (data.as_ptr(), i as usize);
-                                }));
-                            }
+                                let mut i: u32 = 0;
+                                while i < 512
+                                    && *spawn_command_line.add(i as usize) != ' ' as u16
+                                {
+                                    data[i as usize] =
+                                        (*spawn_command_line.add(i as usize) & 0x7F) as u8;
+                                    i += 1;
+                                }
+                                i as usize
+                            };
+                            // Safe atomic store of the length; the pointer half is implicit
+                            // (always `FAILURE_REASON_DATA.as_ptr()` — see the static's doc).
+                            FAILURE_REASON_LEN.store(len, core::sync::atomic::Ordering::Relaxed);
                             return LauncherMode::fail(MODE, FailReason::InterpreterNotFound);
                         } else {
                             return LauncherMode::fail(MODE, FailReason::BinNotFound);

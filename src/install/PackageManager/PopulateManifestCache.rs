@@ -69,7 +69,7 @@ fn start_manifest_task(
     // borrows `&mut manager.preallocated_network_tasks`, so compute everything
     // that needs `&manager` *before* taking that borrow, then populate the pool
     // slot through a raw pointer (matches `runTasks::generate_network_task_for_tarball`).
-    let scope: *const crate::npm::registry::Scope = manager.scope_for_package_name(pkg_name);
+    let scope = bun_ptr::BackRef::new(manager.scope_for_package_name(pkg_name));
     // Backref address only — stored, not dereffed in this function.
     // TODO(port): lifetime — BACKREF.
     let manager_backref: *mut PackageManager = manager;
@@ -88,11 +88,11 @@ fn start_manifest_task(
     // SAFETY: `write_init` populated every field with a drop-safe value;
     // `unsafe_http_client` is `MaybeUninit` and overwritten by `for_manifest`.
     let task = unsafe { &mut *net_ptr };
-    // SAFETY: `scope` points into `manager.options` which is not mutated by
+    // `scope` points into `manager.options` which is not mutated by
     // `for_manifest` (it only writes the pool slot and `manager.log`).
     task.for_manifest(
         pkg_name,
-        unsafe { &*scope },
+        scope.get(),
         None,
         is_optional,
         needs_extended_manifest,
@@ -179,11 +179,12 @@ pub fn populate_manifest_cache(
                 // provenance root. `by_name`'s `pm`-derived reads are hoisted
                 // into the by-value `cache_ctx`, so the call holds only
                 // `&mut manifests`.
-                let scope: *const crate::npm::registry::Scope =
-                    unsafe { &(*manager_ptr).options }.scope_for_package_name(pkg_name_slice);
+                let scope = bun_ptr::BackRef::new(
+                    unsafe { &(*manager_ptr).options }.scope_for_package_name(pkg_name_slice),
+                );
                 let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
                     cache_ctx,
-                    unsafe { &*scope },
+                    scope.get(),
                     pkg_name_slice,
                     ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended_manifest,
@@ -225,11 +226,12 @@ pub fn populate_manifest_cache(
                         unsafe { (*manager_ptr).options.minimum_release_age_ms.is_some() };
                     let package_name = pkg_names[pkg_id as usize].slice(string_buf);
                     // SAFETY: see disjoint-field note on the `.All` arm above.
-                    let scope: *const crate::npm::registry::Scope =
-                        unsafe { &(*manager_ptr).options }.scope_for_package_name(package_name);
+                    let scope = bun_ptr::BackRef::new(
+                        unsafe { &(*manager_ptr).options }.scope_for_package_name(package_name),
+                    );
                     let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
                         cache_ctx,
-                        unsafe { &*scope },
+                        scope.get(),
                         package_name,
                         ManifestLoad::LoadFromMemoryFallbackToDisk,
                         needs_extended_manifest,

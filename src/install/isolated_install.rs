@@ -1938,8 +1938,9 @@ pub fn install_isolated_packages(
             for (i, slot) in uninit.iter_mut().enumerate() {
                 slot.write(installer::Task {
                     entry_id: store::entry::Id::from(u32::try_from(i).expect("int cast")),
-                    // patched below once `installer` has an address
-                    installer: core::ptr::null_mut(),
+                    // patched below once `installer` has an address — dangling
+                    // placeholder is never dereferenced
+                    installer: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
                     result: installer::Result::None,
                     task: bun_threading::thread_pool::Task {
                         callback: installer::Task::callback,
@@ -1991,13 +1992,16 @@ pub fn install_isolated_packages(
 
         // PORT NOTE: reshaped for borrowck — Zig writes `installer: &installer`
         // into `installer.tasks[i]`; in Rust the back-pointer is taken before
-        // the `tasks` borrow. `Task.installer` is typed `*mut Installer<'static>`
-        // (raw back-ref, no real `'static` data), so erase the lifetime via a
-        // void-pointer cast — `*mut T` is invariant and won't coerce on its own.
+        // the `tasks` borrow. `Task.installer` is typed
+        // `BackRef<Installer<'static>>` (raw back-ref, no real `'static` data),
+        // so erase the lifetime via a void-pointer cast — `*mut T` is invariant
+        // and won't coerce on its own.
         let installer_ptr: *mut store::Installer<'static> =
             (&raw mut installer).cast::<()>().cast();
+        let installer_backref =
+            bun_ptr::BackRef::from(core::ptr::NonNull::new(installer_ptr).unwrap());
         for task in installer.tasks.iter_mut() {
-            task.installer = installer_ptr;
+            task.installer = installer_backref;
         }
 
         // PORT NOTE: hoisted — Zig lazily calls `globalLinkDirPath()` inside

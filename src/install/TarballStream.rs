@@ -174,14 +174,17 @@ impl TarballStream {
         network_task: *mut NetworkTask,
         manager: *mut PackageManager,
     ) -> *mut TarballStream {
-        // SAFETY: caller guarantees `extract_task` is live for the lifetime
-        // of this stream (it is published back to the main thread only in
-        // `finish()`); see Zig `init` which takes `*Task`. Wrapped once as
-        // `ParentRef` so the union read goes through the centralised
-        // tag-checked `request_extract()` accessor; `extract` is the active
-        // `Request` variant for streaming tarballs (set by
-        // `enqueueExtractNPMPackage`, `tag == Tag::Extract`).
-        let extract_task = unsafe { bun_ptr::ParentRef::<Task>::from_raw_mut(extract_task) };
+        // Caller guarantees `extract_task` is live for the lifetime of this
+        // stream (it is published back to the main thread only in `finish()`);
+        // see Zig `init` which takes `*Task`. Wrapped once as `ParentRef` so
+        // the union read goes through the centralised tag-checked
+        // `request_extract()` accessor; `extract` is the active `Request`
+        // variant for streaming tarballs (set by `enqueueExtractNPMPackage`,
+        // `tag == Tag::Extract`). Safe `From<NonNull>` construction — caller
+        // passes a non-null `*mut Task` (Zig `*Task`).
+        let extract_task = bun_ptr::ParentRef::<Task>::from(
+            core::ptr::NonNull::new(extract_task).expect("extract_task non-null (Zig *Task)"),
+        );
         let tarball = &extract_task.request_extract().tarball;
 
         // For GitHub/URL/local tarballs we need a SHA-512 to record in the

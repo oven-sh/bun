@@ -1819,9 +1819,12 @@ pub fn generate_network_task_for_tarball<'a>(
     let scope = this.scope_for_package_name(pkg_name);
 
     let extract_tarball = ExtractTarball {
-        // SAFETY: BACKREF — `this_backref` is non-null and the PackageManager
-        // outlives every ExtractTarball it enqueues.
-        package_manager: unsafe { bun_ptr::BackRef::from_raw(this_backref) },
+        // BACKREF — `this_backref` is non-null (just derived from `&mut *this`)
+        // and the PackageManager outlives every ExtractTarball it enqueues.
+        // Safe `From<NonNull>` construction.
+        package_manager: bun_ptr::BackRef::from(
+            core::ptr::NonNull::new(this_backref).expect("derived from &mut, non-null"),
+        ),
         name: strings::StringOrTinyString::init_append_if_needed(
             pkg_name,
             &mut crate::network_task::filename_store_appender(),

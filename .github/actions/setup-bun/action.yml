@@ -71,9 +71,9 @@ runs:
           grep " ${target}.zip\$" SHASUMS256.txt | sha256sum -c -
         fi
 
-        unzip ${target}.zip
+        unzip "${target}.zip"
         mkdir -p "$BUN_BIN_DIR"
-        mv ${target}/bun* "$BUN_BIN_DIR"/
+        mv "${target}"/bun* "$BUN_BIN_DIR"/
         chmod +x "$BUN_BIN_DIR"/*
         ln -fs "$BUN_BIN_DIR"/bun "$BUN_BIN_DIR"/bunx
-        echo "$BUN_BIN_DIR" >> ${GITHUB_PATH}
+        echo "$BUN_BIN_DIR" >> "$GITHUB_PATH"

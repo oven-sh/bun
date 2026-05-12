@@ -1474,7 +1474,7 @@ pub mod js_bundler {
                 unsafe {
                     (*(*(*this.bv2).graph.pool.as_ptr()).worker_pool).schedule(
                         bun_threading::thread_pool::Batch::from(
-                            core::ptr::addr_of_mut!((*this.parse_task).task),
+                            core::ptr::addr_of_mut!((*this.parse_task.as_ptr()).task),
                         ),
                     );
                 }

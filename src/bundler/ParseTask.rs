@@ -2037,9 +2037,10 @@ fn get_source_code(
     this: &mut crate::Worker,
     log: &mut Log,
 ) -> core::result::Result<CacheEntry, AnyError> {
-    // SAFETY: `Worker.arena` points at `Worker.heap` once `has_created` (see
+    // `Worker.arena` is a `BackRef` to `Worker.heap` once `has_created` (see
     // `ThreadPool::Worker::create`); the worker is pinned for the bundle pass.
-    let bump: &Bump = unsafe { &*this.arena };
+    // Disjoint-field borrow vs `this.data` below.
+    let bump: &Bump = this.arena.get();
 
     // `has_created` ⇒ `data`/`transpiler` were initialized in `create()`.
     let data = this.data.as_mut().expect("Worker.data set in create()");

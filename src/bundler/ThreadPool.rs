@@ -421,7 +421,7 @@ impl ThreadPool {
                 // Placeholder — overwritten by `init()` immediately below.
                 ctx: bun_ptr::BackRef::from(NonNull::<BundleV2<'static>>::dangling()),
                 heap: None,
-                arena: ptr::null(),
+                arena: bun_ptr::BackRef::from(NonNull::<ThreadLocalArena>::dangling()),
                 thread: NonNull::new(ThreadPoolLib::Thread::current()).map(bun_ptr::ParentRef::from),
                 data: None,
                 quit: false,
@@ -454,10 +454,13 @@ pub struct Worker {
 
     /// Thread-local memory arena
     /// All allocations are freed in `deinit` at the very end of bundling.
-    // PORT NOTE: self-referential borrow of `heap` — kept as a raw pointer so
-    // it can be reseated in `create()` without a self-borrow. Zig stored the
-    // `std.mem.Allocator` vtable; here it's just `&heap`.
-    pub arena: *const ThreadLocalArena,
+    // PORT NOTE: self-referential borrow of `heap` — `BackRef` (not a real
+    // `&'self ThreadLocalArena`) so it can be reseated in `create()` without a
+    // self-borrow and so call sites read it via safe `Deref` instead of
+    // open-coding a raw deref. Zig stored the `std.mem.Allocator` vtable; here
+    // it's just `&heap`. Dangling until `create()` runs; every read site is
+    // post-`has_created`.
+    pub arena: bun_ptr::BackRef<ThreadLocalArena>,
 
     /// BACKREF (LIFETIMES.tsv): the owning `BundleV2` strictly outlives every
     /// `Worker` it creates (workers are torn down in `deinit_without_freeing_arena`
@@ -486,18 +489,16 @@ pub struct Worker {
 
 impl Worker {
     /// Reborrow the self-referential `arena` (= `&self.heap`) as a shared
-    /// reference. Centralises the per-call-site `unsafe { &*worker.arena }`
-    /// into one accessor; see PORT NOTE on the field.
+    /// reference. `BackRef` field, so the deref is encapsulated in
+    /// [`bun_ptr::BackRef::get`]; see PORT NOTE on the field.
     ///
-    /// SAFETY (encapsulated): `arena` is set to `&self.heap` in
-    /// [`Worker::create`] before any caller can observe the `Worker`, and is
-    /// never null or dangling after that point. The pointee is the worker's
-    /// own `heap` field, which is pinned for the worker's lifetime.
+    /// `arena` is set to `&self.heap` in [`Worker::create`] before any caller
+    /// can observe the `Worker`, and is never dangling after that point. The
+    /// pointee is the worker's own `heap` field, which is pinned for the
+    /// worker's lifetime.
     #[inline]
     pub fn arena(&self) -> &ThreadLocalArena {
-        debug_assert!(!self.arena.is_null(), "Worker.arena read before create()");
-        // SAFETY: see fn doc — self-referential, set in create(), never null.
-        unsafe { &*self.arena }
+        self.arena.get()
     }
 }
 
@@ -636,15 +637,16 @@ impl Worker {
         // Self-referential — `arena` borrows `self.heap`. `Option::insert`
         // returns the stable address of the in-place payload (Worker is
         // heap-pinned, so this never moves).
-        self.arena = std::ptr::from_ref::<ThreadLocalArena>(
+        self.arena = bun_ptr::BackRef::new(
             self.heap.insert(ThreadLocalArena::new()),
         );
 
         // SAFETY: self-referential — `self.arena` was just set to `&self.heap`
         // (Worker is heap-pinned, address stable). `'static` is sound for the
         // erased `Transpiler<'static>` slot below; the arena outlives
-        // `WorkerData`. Single deref site for the three uses that follow.
-        let arena_ref: &'static ThreadLocalArena = unsafe { &*self.arena };
+        // `WorkerData`. Single detach for the three uses that follow.
+        let arena_ref: &'static ThreadLocalArena =
+            unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
 
         // Zig: `.{ .arena = this.arena }` then `reset()`. The Rust
         // ASTMemoryAllocator owns its bump arena internally and ignores the
@@ -699,8 +701,10 @@ impl Worker {
                 let client: &Transpiler<'_> =
                     self.ctx.client_transpiler_ref().unwrap();
                 // SAFETY: `self.arena` points at `self.heap` (set in `create()`),
-                // pinned for the worker's lifetime.
-                let arena_ref: &'static ThreadLocalArena = unsafe { &*self.arena };
+                // pinned for the worker's lifetime; detach to `'static` for the
+                // erased `Transpiler<'static>` slot.
+                let arena_ref: &'static ThreadLocalArena =
+                    unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
                 let mut boxed =
                     Box::new(Self::initialize_transpiler(data.log, client, arena_ref));
                 // Wire self-refs after the value reached its final (heap) address.

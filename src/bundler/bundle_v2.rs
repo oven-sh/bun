@@ -1223,7 +1223,7 @@ pub mod api {
             pub path: Box<[u8]>,
             pub namespace: Box<[u8]>,
             pub value: LoadValue,
-            pub parse_task: *mut ParseTask,
+            pub parse_task: bun_ptr::BackRef<ParseTask>,
             /// Faster path: skip the extra threadpool dispatch when the file is not found.
             pub was_file: bool,
             /// Defer may only be called once.
@@ -1242,7 +1242,7 @@ pub mod api {
                     .unwrap_or(Loader::Js);
                 Self {
                     bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
-                    parse_task: parse,
+                    parse_task: bun_ptr::BackRef::new_mut(parse),
                     source_index: parse.source_index,
                     default_loader,
                     value: LoadValue::Pending,
@@ -1268,13 +1268,13 @@ pub mod api {
             }
             /// Shared access to the heap-allocated `ParseTask` this load wraps.
             ///
-            /// SAFETY (encapsulated): `parse_task` is set from `&mut ParseTask`
-            /// in `init` (never null) and the task outlives the `Load` — it is
-            /// only handed to the thread-pool *after* the plugin load resolves,
-            /// so no concurrent mutation overlaps a `&` borrow here.
+            /// `parse_task` is a `BackRef` set from `&mut ParseTask` in `init`
+            /// (never null) and the task outlives the `Load` — it is only
+            /// handed to the thread-pool *after* the plugin load resolves, so
+            /// no concurrent mutation overlaps a `&` borrow here.
             #[inline]
             pub fn parse_task(&self) -> &ParseTask {
-                unsafe { &*self.parse_task }
+                self.parse_task.get()
             }
             /// Exclusive access to the wrapped `ParseTask`.
             ///
@@ -1283,7 +1283,9 @@ pub mod api {
             /// yet scheduled at any call site that uses this accessor.
             #[inline]
             pub fn parse_task_mut(&mut self) -> &mut ParseTask {
-                unsafe { &mut *self.parse_task }
+                // SAFETY: see fn doc — exclusivity established by `&mut self`;
+                // backref liveness established by the `BackRef` invariant.
+                unsafe { self.parse_task.get_mut() }
             }
             #[inline]
             pub fn bake_graph(&self) -> crate::bake_types::Graph {

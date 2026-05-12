@@ -89,11 +89,13 @@ static AST_THEAP: Cell<*mut mimalloc::THeap> = Cell::new(core::ptr::null_mut());
 // they back. This collapses ~10⁵ `mi_heap_malloc` calls per `next lint` run to
 // ~10² chunk refills, matching Zig.
 //
-// State is keyed to `AST_HEAP`: [`set_thread_heap`] clears it whenever the
-// heap pointer *changes* (different arena, destroyed-and-recreated heap, or
-// cleared to null) and leaves it intact when re-installing the *same* heap (so
-// `Scope::exit` returning to `store_ast_alloc_heap`'s unchanged heap keeps the
-// warm chunk).
+// State is keyed to `AST_HEAP`: [`set_thread_heap`] *unconditionally* clears
+// it. We cannot keep a warm chunk across a same-pointer re-install because
+// `MimallocArena::reset()` does `mi_heap_destroy` + `mi_heap_new`, and
+// mimalloc recycles the freed `mi_heap_t` slot — so the new heap's pointer is
+// frequently identical to the destroyed one's while the old chunk's page has
+// already been released to the global pool (and may be re-initialized by
+// another thread).
 
 /// Next-free byte within the current bump chunk. Null ⇒ no chunk yet.
 #[thread_local]
@@ -115,16 +117,17 @@ const BUMP_CHUNK_MAX: usize = 8 * 1024 * 1024;
 ///
 /// Also eagerly resolves and caches this thread's `mi_theap_t*` for `heap`
 /// (one `mi_heap_theap` call per scope entry instead of one `_mi_heap_theap`
-/// per allocation), and discards the bump-chunk state when `heap` differs from
-/// the previously-installed one — the old chunk belongs to the old heap and
-/// may be about to be `mi_heap_destroy`ed.
+/// per allocation), and unconditionally discards the bump-chunk state.
 #[inline]
 pub fn set_thread_heap(heap: *mut mimalloc::Heap) {
-    if AST_HEAP.replace(heap) != heap {
-        AST_BUMP_CUR.set(core::ptr::null_mut());
-        AST_BUMP_END.set(core::ptr::null_mut());
-        AST_BUMP_NEXT.set(BUMP_CHUNK_INIT);
-    }
+    AST_HEAP.set(heap);
+    // Unconditionally invalidate the bump chunk: callers may have just
+    // `mi_heap_destroy`+`mi_heap_new`'d the arena, and mimalloc recycles the
+    // freed `mi_heap_t*` slot, so pointer-equality with the previous value
+    // does NOT imply the old chunk is still live.
+    AST_BUMP_CUR.set(core::ptr::null_mut());
+    AST_BUMP_END.set(core::ptr::null_mut());
+    AST_BUMP_NEXT.set(BUMP_CHUNK_INIT);
     AST_THEAP.set(if heap.is_null() {
         core::ptr::null_mut()
     } else {
@@ -250,14 +253,14 @@ fn bump_refill(theap: *mut mimalloc::THeap, layout: Layout) -> *mut u8 {
 //   *may* be reclaimed). `grow`/`shrink` either extend the last bump in place
 //   or carve a fresh sub-slice and `memcpy` the prefix, preserving
 //   `min(old, new)` bytes as required.
-// - Global-fallback path (TL heap null): `allocate`/`grow`/`shrink` forward to
-//   `mi_malloc[_aligned]` / `mi_realloc_aligned`, and `deallocate` to
-//   `mi_free`, with the standard mimalloc contracts. The fallback path never
-//   produces bump-interior pointers, so `mi_free`/`mi_realloc` see only real
-//   block heads. The pre-existing assumption — that an `AstVec` allocated
-//   under an active AST scope is not later freed/grown after the scope exits
-//   — is unchanged (such buffers are bulk-freed by the arena reset; the
-//   caller never owns them past `pop`/`exit`).
+// - Global-fallback path (TL heap null): `allocate`/`grow` forward to
+//   `mi_malloc[_aligned]` (grow = allocate-new + memcpy), `shrink` keeps the
+//   existing slot, and `deallocate` is a no-op. None of these pass `ptr` back
+//   to mimalloc, because `ptr` may be a *bump-interior* pointer that was
+//   handed out under an AST scope on a different thread and is only now being
+//   dropped/grown with no scope active (e.g. `BundleV2::clone_ast`). Buffers
+//   allocated on the global fallback path therefore leak until process exit —
+//   the documented pre-bump-layer status quo.
 // - `AstAlloc` is a ZST: every instance is trivially "the same allocator", so
 //   the "pointers may be freed by any clone" requirement is satisfied.
 // - `Send + Sync` (auto-derived for a fieldless ZST) is sound: each call reads
@@ -293,34 +296,32 @@ unsafe impl Allocator for AstAlloc {
 
     #[inline]
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        // Only free when no AST scope is active. While a TL heap is set the
-        // pointer is interior to a bump chunk owned by that heap, reclaimed by
-        // `mi_heap_destroy` on the next `MimallocArena::reset()`; the no-op
-        // here is what keeps `Expr::Data::clone_in`'s `ptr::read` bitwise copy
-        // of `Vec` headers sound (two headers may alias one buffer; neither
-        // ever frees it).
+        // Unconditional no-op.
         //
-        // When the TL heap is *null* the buffer was allocated on the global
-        // mimalloc heap (bundler block-store path / any parse outside an
-        // `ASTMemoryAllocator` scope) and there is no arena reset to reclaim
-        // it. Before AstAlloc this was a `Vec<T, Global>` whose `Drop` *did*
-        // free; an unconditional no-op would regress that path. `mi_free` is
-        // heap-agnostic and thread-safe, so freeing here is correct for the
-        // global-fallback case. The `clone_in` invariant is unaffected:
-        // `clone_in` only runs under an active AST scope, so this branch is
-        // never taken there.
-        if thread_heap().is_null() {
-            // SAFETY: heap-null ⇒ `ptr` came from `mi_malloc*` /
-            // `mi_realloc_aligned` (the global-fallback branches of
-            // `allocate`/`grow`), never from the bump path. `mi_free` accepts
-            // any mimalloc block head.
-            unsafe { mimalloc::mi_free(ptr.as_ptr().cast()) };
-        }
-        // TL heap set → strict no-op. NOT a last-alloc rewind: two
-        // `Vec<_, AstAlloc>` headers may alias one buffer (the `clone_in`
-        // invariant above), so reclaiming on drop of one would corrupt the
-        // other. The bytes are recovered by `mi_heap_destroy` on
-        // `MimallocArena::reset()`.
+        // While a TL heap is set the pointer is interior to a bump chunk owned
+        // by that heap, reclaimed by `mi_heap_destroy` on the next
+        // `MimallocArena::reset()`; the no-op here is what keeps
+        // `Expr::Data::clone_in`'s `ptr::read` bitwise copy of `Vec` headers
+        // sound (two headers may alias one buffer; neither ever frees it).
+        //
+        // When the TL heap is *null* we *cannot* tell whether `ptr` is a real
+        // `mi_malloc` block head (global-fallback `allocate`) or a
+        // bump-interior pointer that was allocated under an AST scope on
+        // another thread / earlier on this thread and is only now being
+        // dropped after the scope exited — `BundleV2::clone_ast` does exactly
+        // this (worker allocates `module_scope.{generated,members}` under the
+        // bump path; main thread drops the old `AstVec` with no scope active).
+        // Passing a bump-interior pointer to `mi_free` corrupts the heap
+        // (debug mimalloc: `_mi_page_ptr_unalign` assert; release: ASAN
+        // use-after-poison / freelist corruption). The `Allocator` trait
+        // permits a no-op `deallocate`, so leak the global-fallback case —
+        // restoring the documented pre-bump-layer behaviour ("global-fallback
+        // buffers leak until process exit").
+        //
+        // NOT a last-alloc rewind even under a TL heap: two `Vec<_, AstAlloc>`
+        // headers may alias one buffer (the `clone_in` invariant above), so
+        // reclaiming on drop of one would corrupt the other. The bytes are
+        // recovered by `mi_heap_destroy` on `MimallocArena::reset()`.
         let _ = (ptr, layout);
     }
 
@@ -333,14 +334,23 @@ unsafe impl Allocator for AstAlloc {
     ) -> Result<NonNull<[u8]>, AllocError> {
         let theap = AST_THEAP.get();
         if theap.is_null() {
-            // SAFETY: heap-null ⇒ `ptr` is a real mimalloc block head from the
-            // global-fallback `allocate`/`grow` (see `deallocate` note).
-            // `mi_realloc_aligned` accepts cross-heap pointers and preserves
-            // the prefix.
-            let p = unsafe {
-                mimalloc::mi_realloc_aligned(ptr.as_ptr().cast(), new.size(), new.align())
-            };
-            return alloc_result(p.cast(), new.size());
+            // `ptr`'s provenance is unknown here (see `deallocate` note: it
+            // may be a bump-interior pointer from another thread's AST scope,
+            // not a mimalloc block head), so `mi_realloc_aligned` is unsound.
+            // Allocate a fresh global block, copy the prefix, and abandon the
+            // old slot — same leak semantics as `deallocate`.
+            let p = if mimalloc::must_use_aligned_alloc(new.align()) {
+                mimalloc::mi_malloc_aligned(new.size(), new.align())
+            } else {
+                mimalloc::mi_malloc(new.size())
+            }
+            .cast::<u8>();
+            let p = NonNull::new(p).ok_or(AllocError)?;
+            // SAFETY: `p` is a fresh `new.size()`-byte block disjoint from
+            // `ptr`; `old.size()` bytes at `ptr` are initialized per the
+            // `grow` contract; `old.size() <= new.size()`.
+            unsafe { core::ptr::copy_nonoverlapping(ptr.as_ptr(), p.as_ptr(), old.size()) };
+            return Ok(NonNull::slice_from_raw_parts(p, new.size()));
         }
         // Bump path. Try in-place extend first: if `ptr` is the last bump and
         // already satisfies the new alignment, just move `cur` forward.
@@ -361,9 +371,8 @@ unsafe impl Allocator for AstAlloc {
         // the chunk (bump-arena semantics; reclaimed on `mi_heap_destroy`).
         // `ptr` may also be a real mimalloc block head (allocated under
         // heap-null then grown after a scope was entered) — copying is
-        // correct there too; the old block is reclaimed by `mi_free` if it
-        // was global, or by `mi_heap_destroy` if it was a prior arena's, per
-        // the same lifecycle assumption as `deallocate`.
+        // correct there too; the old block leaks per the same semantics as
+        // `deallocate`.
         let mut p = bump_try(cur, end, new);
         if p.is_null() {
             p = bump_refill(theap, new);
@@ -384,17 +393,13 @@ unsafe impl Allocator for AstAlloc {
         old: Layout,
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        if AST_THEAP.get().is_null() {
-            // SAFETY: see `grow` heap-null branch.
-            let p = unsafe {
-                mimalloc::mi_realloc_aligned(ptr.as_ptr().cast(), new.size(), new.align())
-            };
-            return alloc_result(p.cast(), new.size());
-        }
-        // Bump path: keep the existing slot — it already holds ≥ `new.size()`
-        // bytes at ≥ `old.align()` alignment, and the `Allocator::shrink`
-        // contract guarantees `new.size() <= old.size()`. No last-alloc rewind
-        // (see `deallocate`: aliased headers via `clone_in`).
+        // Keep the existing slot in all cases — it already holds ≥
+        // `new.size()` bytes at ≥ `old.align()` alignment, and the
+        // `Allocator::shrink` contract guarantees `new.size() <= old.size()`.
+        // No `mi_realloc_aligned` even when the TL heap is null: `ptr`'s
+        // provenance is unknown there (see `deallocate` note). No last-alloc
+        // rewind under a TL heap (see `deallocate`: aliased headers via
+        // `clone_in`).
         debug_assert!(new.align() <= old.align());
         let _ = old;
         Ok(NonNull::slice_from_raw_parts(ptr, new.size()))

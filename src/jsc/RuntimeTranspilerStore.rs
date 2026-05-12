@@ -457,6 +457,33 @@ static AST_MEMORY_STORE: Cell<Option<NonNull<ASTMemoryAllocator>>> = Cell::new(N
 #[thread_local]
 static SOURCE_CODE_PRINTER: Cell<Option<NonNull<BufferPrinter>>> = Cell::new(None);
 
+/// Get-or-leak accessor for the three `#[thread_local]` `Cell<Option<NonNull<T>>>`
+/// slots above. Consolidates the per-slot open-coded
+/// `match { Some(p) => p, None => leak }` + `NonNull::as_mut` pattern
+/// (previously four separate audited derefs across `run()`) into the single
+/// SAFETY block below. Returns `&'static mut T` because the Box is leaked for
+/// the worker thread's lifetime and `#[thread_local]` guarantees per-thread
+/// exclusive access; callers reborrow `&'static T` where a shared ref suffices.
+#[inline]
+fn tls_get_or_leak<T>(
+    slot: &Cell<Option<NonNull<T>>>,
+    init: impl FnOnce() -> Box<T>,
+) -> &'static mut T {
+    let p = slot.get().unwrap_or_else(|| {
+        let p = bun_core::heap::into_raw_nn(init());
+        slot.set(Some(p));
+        p
+    });
+    // SAFETY: `p` is the `NonNull` produced by `heap::into_raw_nn(Box<T>)`
+    // (either just now or on a prior call) and never freed — the slot is a
+    // per-worker-thread leak. `#[thread_local]` storage means only this thread
+    // ever observes `p`, and every borrow returned here is scoped to one
+    // `TranspilerJob::run()` activation (no `&T`/`&mut T` from a prior call
+    // survives — see the `PARSE_ARENA` doc comment), so the `&mut` is
+    // exclusive for its actual use.
+    unsafe { &mut *p.as_ptr() }
+}
+
 impl TranspilerJob {
     /// Zig `deinit` — kept as a private inherent fn (not `impl Drop`) because the slot
     /// is recycled into the HiveArray via `store.put(this)` rather than dropped, and
@@ -590,36 +617,28 @@ impl TranspilerJob {
         // per-iteration `mi_heap_new` count is unchanged vs. a stack-local
         // `Arena::new()`+`Drop` — the hoist is for lifetime soundness, not to
         // reduce heap churn (only a non-mimalloc arena type could do that).
-        let arena_ptr: NonNull<Arena> = match PARSE_ARENA.get() {
-            Some(p) => {
-                // SAFETY: thread-local owns the leaked Box; only this thread
-                // touches it, and no `&Arena` from a prior `run()` survives
-                // (every borrow taken below is scoped to that call's stack
-                // frame). `reset()` re-stamps the debug owning-thread id, so a
-                // pool worker that picked this up after a different worker
-                // first populated the slot would still pass the thread-lock
-                // assert — though `#[thread_local]` already guarantees same-
-                // thread here.
-                // Per-`import()` on the transpiler-pool worker. Like
-                // `transpile_source_code_arena`, paying `mi_heap_destroy +
-                // mi_heap_new` for every module memsets a fresh per-heap
-                // arena bitmap on the next first-alloc; retaining up to 8 M of
-                // garbage between modules keeps the heap (and its bitmap) warm.
-                unsafe { (*p.as_ptr()).reset_retain_with_limit(8 * 1024 * 1024) };
-                p
-            }
-            None => {
-                let p = bun_core::heap::into_raw_nn(Box::new(Arena::new()));
-                PARSE_ARENA.set(Some(p));
-                p
-            }
-        };
-        // SAFETY: `Transpiler<'static>` (the `vm.transpiler` value-copy below)
-        // requires `&'static Arena` for `set_arena`. The leaked `Box<Arena>`
-        // backing `PARSE_ARENA` lives for the worker thread's lifetime, so this
-        // reference is genuinely `'static`. Stacked-Borrows: Shared tag from a
-        // raw pointer; no `&mut Arena` is formed for the rest of this call.
-        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(arena_ptr.as_ref()) };
+        let arena_is_reused = PARSE_ARENA.get().is_some();
+        let arena = tls_get_or_leak(&PARSE_ARENA, || Box::new(Arena::new()));
+        if arena_is_reused {
+            // No `&Arena` from a prior `run()` survives (every borrow taken
+            // below is scoped to that call's stack frame). `reset()` re-stamps
+            // the debug owning-thread id, so a pool worker that picked this up
+            // after a different worker first populated the slot would still
+            // pass the thread-lock assert — though `#[thread_local]` already
+            // guarantees same-thread here.
+            // Per-`import()` on the transpiler-pool worker. Like
+            // `transpile_source_code_arena`, paying `mi_heap_destroy +
+            // mi_heap_new` for every module memsets a fresh per-heap arena
+            // bitmap on the next first-alloc; retaining up to 8 M of garbage
+            // between modules keeps the heap (and its bitmap) warm.
+            arena.reset_retain_with_limit(8 * 1024 * 1024);
+        }
+        // `Transpiler<'static>` (the `vm.transpiler` value-copy below) requires
+        // `&'static Arena` for `set_arena`. The leaked `Box<Arena>` backing
+        // `PARSE_ARENA` lives for the worker thread's lifetime, so the
+        // `&'static mut → &'static` coercion is genuinely `'static`. No
+        // `&mut Arena` is formed for the rest of this call.
+        let arena_ref: &'static Arena = arena;
 
         // `defer this.dispatchToMainThread()` — fires on every return path.
         let this_ptr: *mut TranspilerJob = self;
@@ -647,16 +666,8 @@ impl TranspilerJob {
             return;
         }
 
-        let mut ast_store_ptr = match AST_MEMORY_STORE.get() {
-            Some(p) => p,
-            None => {
-                let p = bun_core::heap::into_raw_nn(Box::new(ASTMemoryAllocator::new(arena_ref)));
-                AST_MEMORY_STORE.set(Some(p));
-                p
-            }
-        };
-        // SAFETY: thread-local owns the leaked Box; only this thread touches it.
-        let ast_memory_store = unsafe { ast_store_ptr.as_mut() };
+        let ast_memory_store =
+            tls_get_or_leak(&AST_MEMORY_STORE, || Box::new(ASTMemoryAllocator::new(arena_ref)));
         // Zig: `var ast_scope = ast_memory_store.?.enter(allocator); defer ast_scope.exit();`
         // PORT NOTE: Zig passed `allocator` to `enter()`; Rust signature folds the arena
         // into `ASTMemoryAllocator::new`. `Scope` restores the previous
@@ -1067,19 +1078,12 @@ impl TranspilerJob {
             }
         }
 
-        let mut printer_ptr = match SOURCE_CODE_PRINTER.get() {
-            Some(p) => p,
-            None => {
-                let writer = BufferWriter::init();
-                let mut bp = Box::new(BufferPrinter::init(writer));
-                bp.ctx.append_null_byte = false;
-                let p = bun_core::heap::into_raw_nn(bp);
-                SOURCE_CODE_PRINTER.set(Some(p));
-                p
-            }
-        };
-        // SAFETY: thread-local owns the leaked Box; only this thread touches it.
-        let source_code_printer = unsafe { printer_ptr.as_mut() };
+        let source_code_printer = tls_get_or_leak(&SOURCE_CODE_PRINTER, || {
+            let writer = BufferWriter::init();
+            let mut bp = Box::new(BufferPrinter::init(writer));
+            bp.ctx.append_null_byte = false;
+            bp
+        });
 
         // PORT NOTE: Zig copies BufferPrinter by value here (`var printer = source_code_printer.?.*`)
         // and writes it back later. We swap the buffer out instead and write it back via the

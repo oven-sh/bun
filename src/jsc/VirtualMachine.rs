@@ -557,12 +557,17 @@ impl Drop for AutoGcOnDrop<'_> {
 /// [`VirtualMachine::disable_macro_mode`] — the Rust spelling of Zig's
 /// `vm.enableMacroMode(); defer vm.disableMacroMode();` (Macro.zig:120).
 ///
-/// Holds a raw `*mut` (not `&'a mut`) because callers continue to access the
+/// Holds a [`BackRef`] (not `&'a mut`) because callers continue to access the
 /// per-thread VM (event loop, `run_with_api_lock`) while the guard is live;
-/// an exclusive borrow would forbid that under stacked-borrows.
+/// an exclusive borrow would forbid that under stacked-borrows. The backref
+/// invariant (VM outlives guard) is the caller's `new` contract; mutation
+/// routes through [`VirtualMachine::as_mut`] (thread-local provenance) so the
+/// guard never forms its own `&mut VM`.
+///
+/// [`BackRef`]: bun_ptr::BackRef
 #[must_use = "macro mode is disabled on drop; bind to a named local"]
 pub struct MacroModeGuard {
-    vm: *mut VirtualMachine,
+    vm: bun_ptr::BackRef<VirtualMachine>,
 }
 impl MacroModeGuard {
     /// # Safety
@@ -570,16 +575,17 @@ impl MacroModeGuard {
     /// valid until the returned guard is dropped.
     #[inline]
     pub unsafe fn new(vm: *mut VirtualMachine) -> Self {
-        // SAFETY: caller contract.
-        unsafe { &mut *vm }.enable_macro_mode();
+        // Caller contract: `vm` is the non-null per-thread singleton.
+        let vm = bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null"));
+        vm.get().as_mut().enable_macro_mode();
         Self { vm }
     }
 }
 impl Drop for MacroModeGuard {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: per `new` contract — `vm` outlives the guard.
-        unsafe { (*self.vm).disable_macro_mode() };
+        // Per `new` contract — `vm` outlives the guard (BackRef invariant).
+        self.vm.get().as_mut().disable_macro_mode();
     }
 }
 
@@ -4192,21 +4198,25 @@ impl VirtualMachine {
         // (including `?` from `ResolveMessage::create` below), so the VM's
         // `log` cannot be left pointing at the dropped stack `log`. Hand-roll
         // a drop guard (no captured borrows) so the unique `&mut *jsc_vm_ptr`
-        // below isn't kept alive across the closure.
+        // below isn't kept alive across the closure. `BackRef` + `as_mut`
+        // route the restore through thread-local provenance.
         struct RestoreLog {
-            vm: *mut VirtualMachine,
+            vm: bun_ptr::BackRef<VirtualMachine>,
             old_log: NonNull<bun_ast::Log>,
         }
         impl Drop for RestoreLog {
             fn drop(&mut self) {
-                // SAFETY: `vm` is the live per-thread VM (caller is on the JS
+                // `vm` is the live per-thread VM (caller is on the JS
                 // thread); `old_log` outlives the VM (Box::leak in `init`).
-                let jsc_vm = unsafe { &mut *self.vm };
+                let jsc_vm = self.vm.get().as_mut();
                 jsc_vm.log = Some(self.old_log);
                 jsc_vm.transpiler.resolver.log = &raw mut *self.old_log.as_ptr();
             }
         }
-        let _restore = RestoreLog { vm: jsc_vm_ptr, old_log };
+        let _restore = RestoreLog {
+            vm: bun_ptr::BackRef::from(NonNull::new(jsc_vm_ptr).expect("vm non-null")),
+            old_log,
+        };
         // PORT NOTE: reshaped for borrowck — re-derive from raw so the unique
         // borrow doesn't span the guard's drop.
         // SAFETY: per-thread VM is live for this synchronous call.
@@ -5460,18 +5470,20 @@ impl VirtualMachine {
         let prev_had_errors = self.had_errors;
         self.had_errors = true;
         // PORT NOTE: Zig `defer this.had_errors = prev_had_errors;` — restore on
-        // every exit (including `?` from `JSError` paths).
+        // every exit (including `?` from `JSError` paths). `BackRef` holds the
+        // VM without a live borrow; the write at drop routes through
+        // `VirtualMachine::as_mut` (thread-local provenance).
         struct RestoreHadErrors {
-            vm: *mut VirtualMachine,
+            vm: bun_ptr::BackRef<VirtualMachine>,
             prev: bool,
         }
         impl Drop for RestoreHadErrors {
             fn drop(&mut self) {
-                // SAFETY: `vm` is the live per-thread VM (caller is on the JS thread).
-                unsafe { (*self.vm).had_errors = self.prev };
+                // `vm` is the live per-thread VM (caller is on the JS thread).
+                self.vm.get().as_mut().had_errors = self.prev;
             }
         }
-        let _restore_had_errors = RestoreHadErrors { vm: std::ptr::from_mut(self), prev: prev_had_errors };
+        let _restore_had_errors = RestoreHadErrors { vm: bun_ptr::BackRef::new_mut(self), prev: prev_had_errors };
 
         if allow_side_effects {
             if let Some(debugger) = self.debugger.as_deref_mut() {
@@ -5760,16 +5772,21 @@ impl VirtualMachine {
         // This is usually unsafe to do, but we are protecting them each time first.
         let mut errors_to_append: Vec<JSValue> = Vec::new();
         // PORT NOTE: Zig `defer { for (..) |e| e.unprotect(); deinit(); }`.
-        struct UnprotectAll(*mut Vec<JSValue>);
+        // `BackRef` (constructed from `&raw mut` via `NonNull` so the tag is
+        // not popped by later `errors_to_append.push` reborrows) lets the drop
+        // body read the Vec safely.
+        struct UnprotectAll(bun_ptr::BackRef<Vec<JSValue>>);
         impl Drop for UnprotectAll {
             fn drop(&mut self) {
-                // SAFETY: borrows the caller's stack `Vec`, live for this scope.
-                for v in unsafe { (*self.0).iter() } {
+                // BackRef invariant: borrows the caller's stack `Vec`, live for this scope.
+                for v in self.0.iter() {
                     v.unprotect();
                 }
             }
         }
-        let _unprotect_guard = UnprotectAll(&raw mut errors_to_append);
+        let _unprotect_guard = UnprotectAll(bun_ptr::BackRef::from(
+            NonNull::new(&raw mut errors_to_append).expect("stack addr"),
+        ));
 
         if is_error_instance {
             let mut saw_cause = false;

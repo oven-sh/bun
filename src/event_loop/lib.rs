@@ -80,7 +80,9 @@ impl JsEventLoop {
     /// `jsc::VirtualMachine::get().event_loop()` for the current thread.
     #[inline]
     pub fn current() -> Self {
-        // SAFETY: `__bun_js_event_loop_current` panics if no VM on this thread.
+        // SAFETY: `__bun_js_event_loop_current` returns the live per-thread
+        // `jsc::EventLoop` (panics if none), so the `link_interface!` owner
+        // invariant for `Self::new` is upheld for every dispatch on this handle.
         unsafe { Self::new(JsEventLoopKind::Jsc, any_event_loop::__bun_js_event_loop_current()) }
     }
 }

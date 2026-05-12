@@ -1293,6 +1293,18 @@ pub(crate) mod safe_libc {
         // ABI is the same `__s32` either way, so a `c_int` decl is ABI-correct
         // on every Linux libc.
         pub(crate) safe fn inotify_rm_watch(fd: c_int, wd: c_int) -> c_int;
+        // Out-param is `&mut [c_int; 2]` (thin pointer, non-null, valid for two
+        // `c_int` writes); kernel only writes the slot and reports failure via
+        // the return value — no other preconditions.
+        pub(crate) safe fn pipe(fds: &mut [c_int; 2]) -> c_int;
+        pub(crate) safe fn socketpair(domain: c_int, ty: c_int, proto: c_int, fds: &mut [c_int; 2]) -> c_int;
+        // `&`/`&mut` to POD `termios`/`rlimit` — non-null, valid for read/write;
+        // bad fd/resource → errno (`ENOTTY`/`EINVAL`/…), never UB. `resource`
+        // is ABI-`int` on every Unix (glibc's `__rlimit_resource_t` is a
+        // `c_uint`-typed enum, same 32-bit register slot).
+        pub(crate) safe fn tcsetattr(fd: c_int, action: c_int, t: &libc::termios) -> c_int;
+        pub(crate) safe fn getrlimit(resource: c_int, rlim: &mut libc::rlimit) -> c_int;
+        pub(crate) safe fn setrlimit(resource: c_int, rlim: &libc::rlimit) -> c_int;
     }
 }
 
@@ -2219,7 +2231,7 @@ mod posix_impl {
     /// set it themselves (matches Zig).
     pub fn pipe() -> Maybe<[Fd; 2]> {
         let mut fds = [0i32; 2];
-        check!(unsafe { libc::pipe(fds.as_mut_ptr()) }, Tag::pipe);
+        check!(safe_libc::pipe(&mut fds), Tag::pipe);
         Ok([Fd::from_native(fds[0]), Fd::from_native(fds[1])])
     }
     pub fn isatty(fd: Fd) -> bool {
@@ -2323,11 +2335,11 @@ mod posix_impl {
         #[cfg(target_os = "linux")]
         {
             let ty = ty | libc::SOCK_CLOEXEC | if nonblock { libc::SOCK_NONBLOCK } else { 0 };
-            check!(unsafe { libc::socketpair(domain, ty, proto, fds.as_mut_ptr()) }, Tag::socketpair);
+            check!(safe_libc::socketpair(domain, ty, proto, &mut fds), Tag::socketpair);
         }
         #[cfg(not(target_os = "linux"))]
         {
-            check!(unsafe { libc::socketpair(domain, ty, proto, fds.as_mut_ptr()) }, Tag::socketpair);
+            check!(safe_libc::socketpair(domain, ty, proto, &mut fds), Tag::socketpair);
             let close_both = |e: Error| {
                 safe_libc::close(fds[0]); safe_libc::close(fds[1]);
                 Err::<[Fd; 2], _>(e)
@@ -6514,9 +6526,14 @@ pub mod posix {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     pub fn sysinfo() -> super::Maybe<libc::sysinfo> {
+        unsafe extern "C" {
+            // safe: out-param is `&mut libc::sysinfo` (non-null, valid for
+            // `sizeof(sysinfo)` writes); kernel only writes the slot and
+            // reports failure via the return value — no other preconditions.
+            safe fn sysinfo(info: &mut libc::sysinfo) -> core::ffi::c_int;
+        }
         let mut info: libc::sysinfo = bun_core::ffi::zeroed();
-        // SAFETY: `info` is exclusive and valid for `sizeof(sysinfo)` writes.
-        let rc = unsafe { libc::sysinfo(&mut info) };
+        let rc = sysinfo(&mut info);
         if rc != 0 { return Err(super::err_with(super::Tag::TODO)); }
         Ok(info)
     }
@@ -6652,8 +6669,7 @@ pub mod posix {
     }
     #[cfg(unix)]
     pub fn tcsetattr(fd: c_int, action: TCSA, t: &Termios) -> core::result::Result<(), super::Error> {
-        // SAFETY: t is a valid termios.
-        let rc = unsafe { libc::tcsetattr(fd, action as c_int, t) };
+        let rc = crate::safe_libc::tcsetattr(fd, action as c_int, t);
         if rc < 0 { return Err(super::err_with(super::Tag::ioctl)); }
         Ok(())
     }
@@ -6675,16 +6691,14 @@ pub mod posix {
     #[cfg(unix)]
     pub fn getrlimit(res: RlimitResource) -> core::result::Result<Rlimit, super::Error> {
         let mut r = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
-        // SAFETY: r is written on success.
-        let rc = unsafe { libc::getrlimit(res as _, &raw mut r) };
+        let rc = crate::safe_libc::getrlimit(res as c_int, &mut r);
         if rc < 0 { return Err(super::err_with(super::Tag::getrlimit)); }
         Ok(Rlimit { cur: r.rlim_cur as u64, max: r.rlim_max as u64 })
     }
     #[cfg(unix)]
     pub fn setrlimit(res: RlimitResource, lim: Rlimit) -> core::result::Result<(), super::Error> {
         let r = libc::rlimit { rlim_cur: lim.cur as _, rlim_max: lim.max as _ };
-        // SAFETY: r is a valid rlimit.
-        let rc = unsafe { libc::setrlimit(res as _, &raw const r) };
+        let rc = crate::safe_libc::setrlimit(res as c_int, &r);
         if rc < 0 { return Err(super::err_with(super::Tag::setrlimit)); }
         Ok(())
     }

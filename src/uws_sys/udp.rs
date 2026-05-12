@@ -210,7 +210,11 @@ impl PacketBuffer {
     }
 
     pub fn get_payload(&mut self, index: c_int) -> &mut [u8] {
-        // SAFETY: payload pointer is valid for `len` bytes per uSockets contract.
+        // SAFETY: for `index < packet_count`, uSockets returns a non-null
+        // pointer to `len` initialized bytes inside the C-owned packet buffer,
+        // exclusively loaned to the data callback for its duration. The
+        // returned borrow is tied to `&mut self`, so the borrow checker
+        // prevents overlapping `&mut` via `get_peer`/`get_payload`.
         unsafe {
             let payload = us_udp_packet_buffer_payload(self, index);
             let len = us_udp_packet_buffer_payload_length(self, index);

@@ -382,6 +382,10 @@ mod safe_c {
         pub(super) safe fn kqueue() -> c_int;
         pub(super) safe fn epoll_create1(flags: c_int) -> c_int;
         pub(super) safe fn eventfd(initval: libc::c_uint, flags: c_int) -> c_int;
+        // Out-param `tp` is `&mut timespec` (non-null, valid for write); libc
+        // only writes the slot and reports failure via the return value —
+        // bad `clk_id` → `EINVAL`, never UB.
+        pub(super) safe fn clock_gettime(clk_id: libc::clockid_t, tp: &mut libc::timespec) -> c_int;
     }
 }
 
@@ -927,8 +931,7 @@ impl IoRequestLoop {
     pub fn update_timespec(timespec: &mut libc::timespec) {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            // SAFETY: valid out-pointer.
-            let rc = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, timespec) };
+            let rc = safe_c::clock_gettime(libc::CLOCK_MONOTONIC, timespec);
             debug_assert!(rc == 0);
         }
         #[cfg(windows)]
@@ -945,8 +948,7 @@ impl IoRequestLoop {
         }
         #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
         {
-            // SAFETY: valid out-pointer.
-            let rc = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, timespec) };
+            let rc = safe_c::clock_gettime(libc::CLOCK_MONOTONIC, timespec);
             if rc != 0 {
                 return;
             }

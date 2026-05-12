@@ -145,4 +145,4 @@ test("worker.disconnect() with a net.Server exits instead of hanging", async () 
   });
   expect(stdout).toContain("[master] all workers exited");
   expect(exitCode).toBe(0);
-}, 30_000);
+});

@@ -18,7 +18,7 @@ impl Default for HTTPServerAgent {
     fn default() -> Self {
         Self {
             agent: None,
-            next_server_id: ServerId::new(0),
+            next_server_id: ServerId::init(0),
         }
     }
 }
@@ -204,7 +204,7 @@ impl InspectorHTTPServerAgent {
         unsafe {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerStarted(
                 core::ptr::from_mut(agent).cast(),
-                server_id.0 as _,
+                server_id.get() as _,
                 hot_reload_id as _,
                 address,
                 start_time,
@@ -224,7 +224,7 @@ impl InspectorHTTPServerAgent {
         unsafe {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerStopped(
                 core::ptr::from_mut(agent).cast(),
-                server_id.0 as _,
+                server_id.get() as _,
                 timestamp,
             );
         }
@@ -242,7 +242,7 @@ impl InspectorHTTPServerAgent {
         unsafe {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerRoutesUpdated(
                 core::ptr::from_mut(agent).cast(),
-                server_id.0 as _,
+                server_id.get() as _,
                 hot_reload_id as _,
                 routes.as_mut_ptr().cast(),
                 routes.len(),

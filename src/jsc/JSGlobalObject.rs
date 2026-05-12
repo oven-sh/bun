@@ -1484,19 +1484,7 @@ impl From<ScriptExecutionContextIdentifier> for u32 {
     fn from(id: ScriptExecutionContextIdentifier) -> u32 { id.0 }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// `core::fmt::Write` adapter for `Vec<u8>` — `std::io::Write` is banned per
-// PORTING.md (no std I/O in lower crates), and `Vec<u8>` does not implement
-// `core::fmt::Write` directly.
-// ──────────────────────────────────────────────────────────────────────────────
-struct WriteVec<'a>(&'a mut Vec<u8>);
-impl core::fmt::Write for WriteVec<'_> {
-    #[inline]
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        self.0.extend_from_slice(s.as_bytes());
-        Ok(())
-    }
-}
+use bun_core::fmt::VecWriter as WriteVec;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Exported (callconv(.c)) functions — Zig used `comptime { @export(...) }`.

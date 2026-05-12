@@ -34,25 +34,14 @@ pub fn from_js<V: Copy>(
 }
 
 pub fn from_js_case_insensitive<V: Copy>(
-    map: &'static phf::Map<&'static [u8], V>,
+    map: &phf::Map<&'static [u8], V>,
     global_this: &JSGlobalObject,
     input: JSValue,
 ) -> JsResult<Option<V>> {
     // `defer str.deref()` — `OwnedString` releases the +1 ref on Drop.
     let str = OwnedString::new(BunString::from_js(input, global_this)?);
     debug_assert!(str.tag() != Tag::Dead);
-    // Zig used `str.inMapCaseInsensitive(Map)`, which dispatches through the
-    // map's length-bucketed comptime tables with an ASCII-case-insensitive
-    // comparator. `phf` has no case-insensitive mode, so scan entries with the
-    // same `eqlCaseInsensitiveASCII` comparator the Zig path used.
-    let utf8 = str.to_utf8();
-    let probe = utf8.slice();
-    // PERF(port): linear ASCII case-insensitive scan over all entries; the Zig
-    // path was O(1) via length bucketing — profile in Phase B.
-    Ok(map
-        .entries()
-        .find(|(k, _)| bun_string::strings::eql_case_insensitive_ascii(probe, k, true))
-        .map(|(_, v)| *v))
+    Ok(str.in_map_case_insensitive(map))
 }
 
 // ported from: src/jsc/comptime_string_map_jsc.zig

@@ -278,27 +278,8 @@ mod ffi {
 }
 
 /// `bun.GenericIndex(i32, Debugger)`
-///
-/// PORT NOTE: `bun_core::GenericIndex<I, M>` only bounds `I: GenericIndexInt`
-/// for unsigned ints, so we hand-roll the `i32` flavor here. The null sentinel
-/// is `std.math.maxInt(i32)` (bun.zig:3514), NOT `-1`. `Default` is
-/// intentionally NOT derived: `0` is a valid index in spec.
-#[repr(transparent)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub struct DebuggerId(pub i32);
-impl DebuggerId {
-    pub const INVALID: Self = Self(i32::MAX);
-    #[inline]
-    pub const fn new(i: i32) -> Self {
-        debug_assert!(i != i32::MAX, "DebuggerId::new: maxInt is reserved for Optional::none");
-        Self(i)
-    }
-    #[inline]
-    pub const fn get(self) -> i32 {
-        debug_assert!(self.0 != i32::MAX, "DebuggerId::get: corrupted (== none sentinel)");
-        self.0
-    }
-}
+pub enum DebuggerMarker {}
+pub type DebuggerId = bun_core::GenericIndex<i32, DebuggerMarker>;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Wait {

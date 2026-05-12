@@ -71,21 +71,9 @@ unsafe extern "C" {
 }
 
 impl SystemError {
+    #[inline]
     pub fn get_errno(&self) -> bun_sys::E {
-        // Inverse of `bun.sys.Error.toSystemError()` (negated Node-style errno).
-        // `self.errno` is a `#[repr(C)]` `c_int` read across FFI and not
-        // guaranteed to be a declared `E` discriminant; Zig `@enumFromInt` is
-        // unchecked, but in Rust an out-of-range `#[repr(u16)]` enum value is
-        // immediate UB. Validate and fall back to SUCCESS for unmapped values.
-        let n = self.errno.wrapping_neg();
-        #[cfg(windows)]
-        {
-            u16::try_from(n).ok().and_then(bun_sys::E::try_from_raw).unwrap_or(bun_sys::E::SUCCESS)
-        }
-        #[cfg(not(windows))]
-        {
-            bun_sys::SystemErrno::init(i64::from(n)).unwrap_or(bun_sys::SystemErrno::SUCCESS)
-        }
+        bun_sys::e_from_negated(self.errno)
     }
 
     pub fn deref(&self) {

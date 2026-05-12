@@ -857,16 +857,8 @@ pub fn usage<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> Result<()
 
 #[cfg(test)]
 fn test_usage(expected: &[u8], params: &[Param<Help>]) -> Result<(), bun_core::Error> {
-    // TODO(port): std.io.fixedBufferStream — using a Vec<u8> via fmt::Write shim
     let mut buf = Vec::<u8>::with_capacity(1024);
-    struct VecW<'a>(&'a mut Vec<u8>);
-    impl fmt::Write for VecW<'_> {
-        fn write_str(&mut self, s: &str) -> fmt::Result {
-            self.0.extend_from_slice(s.as_bytes());
-            Ok(())
-        }
-    }
-    usage(&mut VecW(&mut buf), params)?;
+    usage(&mut bun_core::fmt::VecWriter(&mut buf), params)?;
     assert_eq!(expected, &buf[..]);
     Ok(())
 }

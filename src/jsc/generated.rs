@@ -688,11 +688,115 @@ impl SocketConfig {
 // contract.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Expands to a `pub mod $mod_name` containing the standard
-/// `from_js` / `from_js_direct` / `to_js` / `get_constructor` quartet plus a
-/// cached-accessor pair for every listed property. Kept crate-private; callers
-/// outside this crate use [`crate::codegen_cached_accessors!`] which wraps the
-/// same extern contract without the module scaffolding.
+// ──────────────────────────────────────────────────────────────────────────
+// `impl_js_class_via_generated!` — single-source `JsClass` impl that delegates
+// to a per-type generated accessor module (any module exposing the standard
+// `from_js` / `from_js_direct` / `to_js` [/ `get_constructor`] free-fn surface:
+// `crate::generated_classes::js_$T` from generate-classes.ts, the
+// `js_class_module!` expansions in this file, or `bun_sql_jsc::jsc::codegen`).
+//
+// The three generators disagree on `from_js`'s return shape
+// (`Option<NonNull<T>>` vs `Option<*mut T>` vs `Option<*mut ()>`); the
+// [`IntoRawMut`] adapter erases that difference with a single `.cast()`, so
+// one macro body compiles against all three. `to_js` uniformly takes
+// `*mut <gen-payload>`, which `.cast()` reaches from `*mut Self` regardless of
+// whether the payload is `Self`, `Self<'static>`, or type-erased `()`.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Adapter erasing the `from_js` return-type difference between accessor-module
+/// generators (`NonNull<U>` vs `*mut U`). Used by
+/// [`impl_js_class_via_generated!`]; not part of the public API.
+#[doc(hidden)]
+pub trait IntoRawMut<T> {
+    fn into_raw_mut(self) -> *mut T;
+}
+#[doc(hidden)]
+impl<T, U> IntoRawMut<T> for core::ptr::NonNull<U> {
+    #[inline]
+    fn into_raw_mut(self) -> *mut T { self.as_ptr().cast() }
+}
+#[doc(hidden)]
+impl<T, U> IntoRawMut<T> for *mut U {
+    #[inline]
+    fn into_raw_mut(self) -> *mut T { self.cast() }
+}
+
+/// `impl JsClass for $T` that boxes `self` into the GC-owned `m_ctx` slot and
+/// routes every method through `$gen` (a `js_$T`-shaped accessor module).
+///
+/// # Forms
+/// ```ignore
+/// impl_js_class_via_generated!(Foo => crate::generated_classes::js_Foo);
+/// impl_js_class_via_generated!(Foo => path::to::JSFoo, no_constructor);
+/// impl_js_class_via_generated!(for<'a> Foo<'a> => js_Foo, no_constructor);
+/// ```
+///
+/// `no_constructor` skips `get_constructor` (the `.classes.ts` `noConstructor:
+/// true` case — no `${T}__getConstructor` C++ export); the trait default
+/// (`JSValue::UNDEFINED`) applies.
+///
+/// **Do not use** when `to_js` carries side-effects beyond box-and-hand-off
+/// (e.g. `Request` runs `calculate_estimated_byte_size` + body-stream GC
+/// migration) or when the payload is intrusively refcounted and never held
+/// by-value (e.g. `HTMLBundle`).
+#[macro_export]
+macro_rules! impl_js_class_via_generated {
+    // `for<…>` arms FIRST: a leading `for` would otherwise feed into the `:ty`
+    // arm's fragment parser, which commits to HRTB syntax and hard-errors on
+    // `for<'a> Struct<'a>` ("expected trait") instead of backtracking.
+    (for<$($lt:lifetime),+> $T:ty => $gen:path) => {
+        $crate::impl_js_class_via_generated!(@emit { $($lt),+ } $T => $gen { with_ctor });
+    };
+    (for<$($lt:lifetime),+> $T:ty => $gen:path, no_constructor) => {
+        $crate::impl_js_class_via_generated!(@emit { $($lt),+ } $T => $gen {});
+    };
+    ($T:ty => $gen:path) => {
+        $crate::impl_js_class_via_generated!(@emit {} $T => $gen { with_ctor });
+    };
+    ($T:ty => $gen:path, no_constructor) => {
+        $crate::impl_js_class_via_generated!(@emit {} $T => $gen {});
+    };
+    (@emit { $($lt:lifetime),* } $T:ty => $gen:path { $($with_ctor:ident)? }) => {
+        impl<$($lt),*> $crate::JsClass for $T {
+            #[inline]
+            fn from_js(v: $crate::JSValue) -> ::core::option::Option<*mut Self> {
+                use $gen as __g;
+                __g::from_js(v).map($crate::generated::IntoRawMut::into_raw_mut)
+            }
+            #[inline]
+            fn from_js_direct(v: $crate::JSValue) -> ::core::option::Option<*mut Self> {
+                use $gen as __g;
+                __g::from_js_direct(v).map($crate::generated::IntoRawMut::into_raw_mut)
+            }
+            #[inline]
+            fn to_js(self, g: &$crate::JSGlobalObject) -> $crate::JSValue {
+                use $gen as __g;
+                // Ownership of the boxed payload transfers to the C++ wrapper
+                // (freed via `${T}Class__finalize`). `.cast()` erases any
+                // payload-type / lifetime mismatch between `Self` and the
+                // accessor module's monomorphized pointee.
+                __g::to_js($crate::heap::into_raw(::std::boxed::Box::new(self)).cast(), g)
+            }
+            $(
+                #[inline]
+                fn get_constructor(g: &$crate::JSGlobalObject) -> $crate::JSValue {
+                    let _: &str = ::core::stringify!($with_ctor); // bind the rep var
+                    use $gen as __g;
+                    __g::get_constructor(g)
+                }
+            )?
+        }
+    };
+}
+
+/// Expands to a `pub mod $mod` containing the standard `.classes.ts` codegen
+/// surface for a JS wrapper class: `from_js` / `from_js_direct` / `from_js_ref`
+/// / `to_js` / `to_js_unchecked` / `dangerously_set_ptr` / `get_constructor`,
+/// plus a cached-accessor pair per listed property.
+///
+/// Mirrors Zig `jsc.Codegen.JS${T}` (one impl, generated once — see
+/// `src/codegen/generate-classes.ts:2428`). All extern symbols use
+/// `JSC_CALLCONV` (= sysv64 on win-x64, C otherwise).
 ///
 /// `$Payload` is the native `m_ctx` payload type. When the payload struct is
 /// defined in (or below) this crate — e.g. `webcore_types::Blob` — pass it so
@@ -700,16 +804,34 @@ impl SocketConfig {
 /// (avoids `clashing_extern_declarations`). When the payload lives in a
 /// dependent crate (`bun_runtime`), pass `()` (type-erased; the dependent
 /// crate casts).
+///
+/// # Forms
+/// ```ignore
+/// js_class_module!(JSFoo = "Foo" { propA, propB });                 // Payload = ()
+/// js_class_module!(JSFoo = "Foo" as super::Foo { propA });          // typed Payload
+/// js_class_module!(JSFoo = "Foo" as super::Foo, impl_js_class {});  // + impl JsClass for Foo
+/// ```
+#[macro_export]
 macro_rules! js_class_module {
     // Shorthand: payload erased to `()` (lives in a higher crate).
     (
         $mod_name:ident = $TypeName:literal { $( $prop:ident ),* $(,)? }
     ) => {
-        js_class_module!($mod_name = $TypeName as () { $( $prop ),* });
+        $crate::js_class_module!($mod_name = $TypeName as () { $( $prop ),* });
+    };
+    // Typed payload + auto-`impl JsClass for $Payload` delegating back into the
+    // emitted module. Opt-in (some payloads — e.g. the SQL connection types —
+    // hand-roll `JsClass` separately to layer on extra behaviour).
+    (
+        $mod_name:ident = $TypeName:literal as $Payload:ty, impl_js_class { $( $prop:ident ),* $(,)? }
+    ) => {
+        $crate::js_class_module!($mod_name = $TypeName as $Payload { $( $prop ),* });
+        $crate::impl_js_class_via_generated!($Payload => $mod_name);
     };
     (
         $mod_name:ident = $TypeName:literal as $Payload:ty { $( $prop:ident ),* $(,)? }
     ) => {
+        #[allow(non_snake_case)]
         pub mod $mod_name {
             use $crate::{JSGlobalObject, JSValue};
             $crate::codegen_cached_accessors!($TypeName; $( $prop ),*);
@@ -734,33 +856,20 @@ macro_rules! js_class_module {
             // precondition. `__create`/`__dangerously_set_ptr` keep `unsafe`
             // because they install `ptr` into a GC cell whose finalizer will
             // later free it (deferred deref → ownership precondition).
-            #[cfg(all(windows, target_arch = "x86_64"))]
-            #[allow(improper_ctypes)]
-            unsafe extern "sysv64" {
-                #[link_name = concat!($TypeName, "__fromJS")]
-                safe fn __from_js(value: JSValue) -> *mut Payload;
-                #[link_name = concat!($TypeName, "__fromJSDirect")]
-                safe fn __from_js_direct(value: JSValue) -> *mut Payload;
-                #[link_name = concat!($TypeName, "__create")]
-                fn __create(global: *mut JSGlobalObject, ptr: *mut Payload) -> JSValue;
-                #[link_name = concat!($TypeName, "__getConstructor")]
-                safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
-                #[link_name = concat!($TypeName, "__dangerouslySetPtr")]
-                fn __dangerously_set_ptr(value: JSValue, ptr: *mut Payload) -> bool;
-            }
-            #[cfg(not(all(windows, target_arch = "x86_64")))]
-            #[allow(improper_ctypes)]
-            unsafe extern "C" {
-                #[link_name = concat!($TypeName, "__fromJS")]
-                safe fn __from_js(value: JSValue) -> *mut Payload;
-                #[link_name = concat!($TypeName, "__fromJSDirect")]
-                safe fn __from_js_direct(value: JSValue) -> *mut Payload;
-                #[link_name = concat!($TypeName, "__create")]
-                fn __create(global: *mut JSGlobalObject, ptr: *mut Payload) -> JSValue;
-                #[link_name = concat!($TypeName, "__getConstructor")]
-                safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
-                #[link_name = concat!($TypeName, "__dangerouslySetPtr")]
-                fn __dangerously_set_ptr(value: JSValue, ptr: *mut Payload) -> bool;
+            $crate::jsc_abi_extern! {
+                #[allow(improper_ctypes)]
+                {
+                    #[link_name = concat!($TypeName, "__fromJS")]
+                    safe fn __from_js(value: JSValue) -> *mut Payload;
+                    #[link_name = concat!($TypeName, "__fromJSDirect")]
+                    safe fn __from_js_direct(value: JSValue) -> *mut Payload;
+                    #[link_name = concat!($TypeName, "__create")]
+                    fn __create(global: *mut JSGlobalObject, ptr: *mut Payload) -> JSValue;
+                    #[link_name = concat!($TypeName, "__getConstructor")]
+                    safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
+                    #[link_name = concat!($TypeName, "__dangerouslySetPtr")]
+                    fn __dangerously_set_ptr(value: JSValue, ptr: *mut Payload) -> bool;
+                }
             }
 
             /// Return the wrapped native pointer if `value` is (a subclass of)
@@ -777,6 +886,18 @@ macro_rules! js_class_module {
             pub fn from_js_direct(value: JSValue) -> ::core::option::Option<*mut Payload> {
                 let ptr = __from_js_direct(value);
                 if ptr.is_null() { None } else { Some(ptr) }
+            }
+
+            /// [`from_js`] as a [`ParentRef`](::bun_ptr::ParentRef) — wraps the
+            /// raw `m_ctx` backref deref. The payload is GC-rooted by the
+            /// caller's `CallFrame` for the duration of the host call, so the
+            /// `ParentRef` invariant (pointee outlives holder) holds for any
+            /// stack-scoped use.
+            #[inline]
+            pub fn from_js_ref(v: JSValue) -> ::core::option::Option<::bun_ptr::ParentRef<Payload>> {
+                from_js(v)
+                    .and_then(::core::ptr::NonNull::new)
+                    .map(::bun_ptr::ParentRef::from)
             }
 
             /// Create a new JS wrapper instance owning `ptr`. The C++ side

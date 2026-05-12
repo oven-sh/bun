@@ -1,8 +1,6 @@
-use core::mem::offset_of;
-
 use bun_io::{self as Async, KeepAlive};
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, Taskable, TaskTag};
-use bun_threading::{work_pool::WorkPool, WorkPoolTask};
+use bun_threading::{work_pool::WorkPool, IntrusiveWorkTask as _, WorkPoolTask};
 
 use crate::event_loop::EventLoop;
 use crate::js_promise::{JSPromise, Strong as JSPromiseStrong};
@@ -48,6 +46,8 @@ pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
     pub ref_: KeepAlive,
 }
 
+bun_threading::intrusive_work_task!(['a, Context: ConcurrentPromiseTaskContext] ConcurrentPromiseTask<'a, Context>, task);
+
 // SAFETY: `ConcurrentPromiseTask` is heap-allocated and only its address crosses
 // threads via the intrusive `task` node and the concurrent queue. All access to
 // `ctx` / `promise` / `global_this` is sequenced by the work-pool → on_finish →
@@ -77,17 +77,15 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
             concurrent_task: ConcurrentTask::default(),
             ref_: KeepAlive::default(),
         });
-        this.ref_.ref_(js_event_loop_ctx());
+        this.ref_.ref_(Async::js_vm_ctx());
         this
     }
 
     /// SAFETY: `task` points to the `task` field of a heap-allocated `Self`
     /// created in [`create_on_js_thread`].
     pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: recover the parent via offset_of.
-        let this: *mut Self = unsafe {
-            bun_core::from_field_ptr!(Self, task, task)
-        };
+        // SAFETY: `task` points to `Self.task`.
+        let this = unsafe { Self::from_task_ptr(task) };
         // SAFETY: `this` is alive for the duration of the thread-pool callback;
         // exclusively owned by the work pool at this point.
         unsafe { (*this).ctx.run() };
@@ -97,7 +95,7 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
 
     pub fn run_from_js(&mut self) -> Result<(), JsTerminated> {
         let promise = self.promise.swap();
-        self.ref_.unref(js_event_loop_ctx());
+        self.ref_.unref(Async::js_vm_ctx());
 
         self.ctx.then(promise)
     }
@@ -131,14 +129,6 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         // SAFETY: caller contract above.
         drop(unsafe { bun_core::heap::take(this) });
     }
-}
-
-/// Bridge to the aio-level `EventLoopCtx` used by `KeepAlive`.
-/// `ConcurrentPromiseTask` always runs on the JS event loop, so the global `Js`
-/// ctx is the correct erasure (Zig passed `this.event_loop.virtual_machine`).
-#[inline]
-fn js_event_loop_ctx() -> Async::EventLoopCtx {
-    Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js)
 }
 
 // ported from: src/jsc/ConcurrentPromiseTask.zig

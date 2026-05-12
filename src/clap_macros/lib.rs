@@ -109,7 +109,9 @@ impl<'a> TokenizeAny<'a> {
     }
 }
 
-// local copy: proc-macro crate cannot depend on bun_string
+// local copy: proc-macro crate compiles for the HOST and cannot depend on
+// bun_string/bun_alloc (would drag mimalloc-sys + parking_lot into the
+// proc-macro build for a 6-line helper) — KEEP trim_left/trim bodies as-is.
 fn trim_left(s: &[u8]) -> &[u8] {
     let mut i = 0;
     while i < s.len() && (s[i] == b' ' || s[i] == b'\t') {

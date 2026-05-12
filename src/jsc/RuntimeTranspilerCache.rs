@@ -599,7 +599,6 @@ impl RuntimeTranspilerCache {
     pub fn write_cache_filename(buf: &mut [u8], input_hash: u64) -> Result<usize, bun_core::Error> {
         // Zig: "{x}" on std.mem.asBytes(&input_hash) — hex-encodes the 8 native-endian bytes.
         let bytes = input_hash.to_ne_bytes();
-        const HEX: &[u8; 16] = b"0123456789abcdef";
         let suffix: &[u8] = if cfg!(debug_assertions) {
             b".debug.pile"
         } else {
@@ -609,12 +608,7 @@ impl RuntimeTranspilerCache {
         if buf.len() < needed {
             return Err(bun_core::err!(NoSpaceLeft));
         }
-        let mut i = 0usize;
-        for b in bytes {
-            buf[i] = HEX[(b >> 4) as usize];
-            buf[i + 1] = HEX[(b & 0x0f) as usize];
-            i += 2;
-        }
+        let i = bun_core::fmt::bytes_to_hex_lower(&bytes, &mut buf[..bytes.len() * 2]);
         buf[i..i + suffix.len()].copy_from_slice(suffix);
         Ok(needed)
     }

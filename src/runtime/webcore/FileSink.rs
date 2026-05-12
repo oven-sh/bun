@@ -37,6 +37,28 @@ bun_core::declare_scope!(FileSink, visible);
 #[ref_count(destroy = Self::deinit)]
 pub struct FileSink {
     ref_count: Cell<u32>,
+    /// #53265/#53570/#53753 probe: poisoned to `FILESINK_DEAD` immediately
+    /// before `heap::take` in `destroy()`, so a second `finalize()` on the
+    /// same `m_sinkPtr` (double-finalize from JS{FileSink,Controller} both
+    /// dtor'ing, OR a stale wrapper after the slot was freed-but-not-reused)
+    /// is detected before reading garbage. If the slot WAS reused by a fresh
+    /// `FileSink::init()`, magic is `FILESINK_LIVE` again — that case is
+    /// indistinguishable from a legitimate finalize on the new sink (and is
+    /// only a bug if two JS wrappers share the address, which the
+    /// `LIVE_WRAPPER_COUNT` field catches). Windows-only to keep posix layout
+    /// (and the perf cost) unchanged. Remove with the rest of the probe once
+    /// root-caused.
+    #[cfg(windows)]
+    magic: Cell<u32>,
+    /// Count of live JS-side wrappers (`JSFileSink` + controller) holding this
+    /// `m_sinkPtr`. Incremented in `to_js`/`assign_to_stream`; `finalize`
+    /// decrements and only `deref()`s on the last one. The Zig protocol
+    /// implicitly relied on each wrapper-creation path also `ref_()`ing, but
+    /// the Rust port's `to_js` does NOT — so two wrappers sharing one
+    /// `ref_count==1` box would double-finalize. This field makes the
+    /// per-wrapper accounting explicit. Windows-only while #53265 is open.
+    #[cfg(windows)]
+    live_wrappers: Cell<u32>,
     pub writer: JsCell<IOWriter>,
     pub event_loop_handle: EventLoopHandle,
     pub written: Cell<usize>,
@@ -118,6 +140,11 @@ impl Drop for FileSinkRef {
 /// so leak tests can detect native FileSink leaks that are invisible to
 /// `heapStats()` (which only counts JS wrapper objects).
 pub static LIVE_COUNT: AtomicI32 = AtomicI32::new(0);
+
+#[cfg(windows)]
+const FILESINK_LIVE: u32 = 0xF11E_51A1; // "FileSink" alive
+#[cfg(windows)]
+const FILESINK_DEAD: u32 = 0xDEAD_51A1;
 
 pub mod testing_apis {
     use super::*;
@@ -848,6 +875,41 @@ impl FileSink {
         // TODO(port): `.classes.ts` finalize — see PORTING.md §JSC. Runs during
         // lazy sweep; must not touch live JS cells.
 
+        // ── #53265 magic check (must be FIRST — before any field deref) ──────
+        #[cfg(windows)]
+        {
+            let m = self.magic.get();
+            if m != FILESINK_LIVE {
+                // Freed-then-finalized-again, OR m_sinkPtr never pointed at a
+                // FileSink. Dump first 64 bytes so the next CI log shows what
+                // type's bytes are actually here. DO NOT deref any other field.
+                // SAFETY: `self` is at minimum a valid-for-read 64-byte region
+                // (mimalloc never hands out <64B for a 520B alloc class).
+                let head = unsafe {
+                    core::slice::from_raw_parts(
+                        (self as *const Self).cast::<u8>(),
+                        64,
+                    )
+                };
+                panic!(
+                    "FileSink::finalize: bad magic {m:#x} (LIVE={:#x} DEAD={:#x}) at self={:p}; \
+                     m_sinkPtr is stale or not-a-FileSink. head[0..64]={:02x?}",
+                    FILESINK_LIVE, FILESINK_DEAD, self as *const _, head,
+                );
+            }
+            // Per-wrapper accounting: only the LAST wrapper's finalize tears
+            // down + derefs. Earlier ones just decrement. (Zig's protocol has
+            // each wrapper-creation path `ref_()` so `deref()` here balanced;
+            // the Rust port's `to_js` doesn't `ref_()`, so two wrappers would
+            // double-deref without this.)
+            let w = self.live_wrappers.get();
+            if w > 1 {
+                self.live_wrappers.set(w - 1);
+                return;
+            }
+            self.live_wrappers.set(0);
+        }
+
         // ── #53265/#53570 Windows Strong-corruption probe ────────────────────
         // The shared Strong::Impl::destroy panic tail can't distinguish which
         // of the 3 Optional fields holds a small-integer "handle". Probe each
@@ -1039,6 +1101,8 @@ impl FileSink {
         LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
         // SAFETY: caller contract — `this` is valid and uniquely owned.
         let self_ = unsafe { &mut *this };
+        #[cfg(windows)]
+        self_.magic.set(FILESINK_DEAD);
         // PORT NOTE: pending/readable_stream/js_sink_ref are dropped by Box drop
         // below; explicit `.deinit()` calls from the Zig are subsumed.
         if let Some(global) = self_.js_global() {
@@ -1051,6 +1115,8 @@ impl FileSink {
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
+        #[cfg(windows)]
+        self.live_wrappers.set(self.live_wrappers.get() + 1);
         JSSink::create_object(global_this, self, 0)
     }
 
@@ -1062,6 +1128,8 @@ impl FileSink {
         // the encoded usize directly until that lands.
         destructor: Option<usize>,
     ) -> JSValue {
+        #[cfg(windows)]
+        self.live_wrappers.set(self.live_wrappers.get() + 1);
         JSSink::create_object(global_this, self, destructor.unwrap_or(0))
     }
 
@@ -1160,7 +1228,11 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         Self::finalize(self)
     }
     fn construct(this: &mut core::mem::MaybeUninit<Self>) {
-        this.write(Self::construct());
+        let sink = Self::construct();
+        // `js_construct` will hand the box to C++ `JSFileSink` immediately.
+        #[cfg(windows)]
+        sink.live_wrappers.set(1);
+        this.write(sink);
     }
     fn write_bytes(&mut self, data: streams::Result) -> streams::result::Writable {
         Self::write(self, data)
@@ -1257,6 +1329,10 @@ impl FileSink {
     fn default_fields() -> FileSink {
         FileSink {
             ref_count: Cell::new(1),
+            #[cfg(windows)]
+            magic: Cell::new(FILESINK_LIVE),
+            #[cfg(windows)]
+            live_wrappers: Cell::new(0),
             writer: JsCell::new(IOWriter::default()),
             // PORT NOTE: `EventLoopHandle` has no `Default`; null Js variant is the
             // closest sentinel — every constructor overwrites this field.
@@ -1383,6 +1459,11 @@ impl FileSink {
         // JSValue bits back through this `void**`.
         let signal_ptr: *mut *mut c_void =
             unsafe { (&raw mut (*self.signal.as_ptr()).ptr).cast::<*mut c_void>() };
+        // Controller wrapper holds the same `m_sinkPtr`; its dtor calls
+        // `FileSink__finalize` too. Account for it so the second finalize
+        // is a no-op decrement instead of a double-deref.
+        #[cfg(windows)]
+        self.live_wrappers.set(self.live_wrappers.get() + 1);
         let promise_result = JSSink::assign_to_stream(global_this, stream.value, self, signal_ptr);
 
         if let Some(err) = promise_result.to_error() {

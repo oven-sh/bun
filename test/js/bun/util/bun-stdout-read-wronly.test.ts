@@ -34,25 +34,28 @@ test.skipIf(isWindows)("Bun.file(fd).text() rejects on a write-only FIFO instead
 // This is the fuzzer-reduced case: HTMLRewriter picks up Blob.prototype.text as
 // the document text handler and synchronously waits on the returned promise.
 // When stdout is a shell pipe (O_WRONLY FIFO) this used to wedge the process.
-test.skipIf(isWindows)("HTMLRewriter.onDocument(Bun.stdout).transform() does not hang when stdout is a pipe", async () => {
-  const script = `
+test.skipIf(isWindows)(
+  "HTMLRewriter.onDocument(Bun.stdout).transform() does not hang when stdout is a pipe",
+  async () => {
+    const script = `
     const r = new HTMLRewriter();
     r.onDocument(Bun.stdout);
     try { r.transform(new SharedArrayBuffer(16)); } catch {}
     console.error("done");
   `;
-  // Use a shell pipeline so the child's stdout is a real FIFO (write-only),
-  // matching how shells / fuzzilli set up stdio.
-  await using proc = Bun.spawn({
-    cmd: ["sh", "-c", `"$0" -e "$1" | cat > /dev/null`, bunExe(), script],
-    env: bunEnv,
-    stdin: "ignore",
-    stdout: "ignore",
-    stderr: "pipe",
-  });
+    // Use a shell pipeline so the child's stdout is a real FIFO (write-only),
+    // matching how shells / fuzzilli set up stdio.
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `"$0" -e "$1" | cat > /dev/null`, bunExe(), script],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect(stderr.trim()).toBe("done");
-  expect(exitCode).toBe(0);
-});
+    expect(stderr.trim()).toBe("done");
+    expect(exitCode).toBe(0);
+  },
+);

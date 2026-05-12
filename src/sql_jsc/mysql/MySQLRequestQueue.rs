@@ -131,18 +131,25 @@ impl MySQLRequestQueue {
         // independent of the outer shared borrow.
         let conn_ref =
             ParentRef::from(NonNull::new(connection).expect("advance: connection non-null"));
+        // R-2: read-only queue accesses (`readable_length`, `peek_item`,
+        // scalar field reads, `can_pipeline`) go through a `ParentRef<Self>`;
+        // each `Deref` materialises a fresh short-lived `&Self` child of the
+        // same SharedRW raw root as `this`, so interleaving with the raw
+        // `(*this).field = …` writes below is sound under Stacked Borrows.
+        let queue_ref: ParentRef<Self> =
+            ParentRef::from(NonNull::new(this).expect("queue field of non-null connection"));
         // PORT NOTE: reshaped for borrowck — Zig `defer { while ... }` cleanup
         // became a post-block pass; early `return`s in the Zig loop become
         // `break 'advance` so cleanup always runs at function exit.
         'advance: {
             let mut offset: usize = 0;
 
-            // SAFETY: caller contract; each `(*this)` deref forms a fresh
-            // short-lived borrow — no two `&mut` overlap.
-            while unsafe { (*this).requests.readable_length() } > offset
+            // Each remaining `(*this)` deref below forms a fresh short-lived
+            // `&mut` — no two overlap; reads route through `queue_ref` (`&T`).
+            while queue_ref.requests.readable_length() > offset
                 && conn_ref.is_able_to_write()
             {
-                let request: *mut JSMySQLQuery = unsafe { (*this).requests.peek_item(offset) };
+                let request: *mut JSMySQLQuery = queue_ref.requests.peek_item(offset);
                 // Queue holds a ref on every request; pointer is non-null and
                 // live. `JSMySQLQuery` is a separate heap allocation — never
                 // aliases `*this` or `*connection`. R-2: `ParentRef` yields
@@ -170,9 +177,8 @@ impl MySQLRequestQueue {
                 }
                 if req.is_running() {
                     debug!("isRunning");
-                    let total_requests_running = unsafe {
-                        ((*this).pipelined_requests + (*this).nonpipelinable_requests) as usize
-                    };
+                    let total_requests_running =
+                        (queue_ref.pipelined_requests + queue_ref.nonpipelinable_requests) as usize;
                     if offset < total_requests_running {
                         offset += total_requests_running;
                     } else {
@@ -222,11 +228,11 @@ impl MySQLRequestQueue {
 
                     if req.is_pipelined() {
                         unsafe { (*this).pipelined_requests += 1 };
-                        // SAFETY: `can_pipeline` takes `&self` + `&MySQLConnection`;
+                        // `can_pipeline` takes `&self` + `&MySQLConnection`;
                         // both shared reborrows are children of the same raw
                         // tag (`this` was projected from `connection`), so
                         // overlapping shared reads are sound.
-                        if unsafe { (*this).can_pipeline(conn_ref.get()) } {
+                        if queue_ref.can_pipeline(conn_ref.get()) {
                             debug!("pipelined requests");
                             offset += 1;
                             continue;
@@ -241,9 +247,14 @@ impl MySQLRequestQueue {
         }
 
         // Zig: defer { while ... } — runs at function exit.
-        // SAFETY: caller contract; fresh short-lived `(*this)` borrow per access.
-        while unsafe { (*this).requests.readable_length() } > 0 {
-            let request: *mut JSMySQLQuery = unsafe { (*this).requests.peek_item(0) };
+        // SAFETY: caller contract; `'advance` block is finished, so no `conn_ref`
+        // / `req.run()` path re-derives `&MySQLConnection` (and thus the queue
+        // bytes) for the remainder of the function — a single `&mut Self` is
+        // exclusive here. `req` below points at a separate heap allocation that
+        // never aliases `*this`.
+        let queue = unsafe { &mut *this };
+        while queue.requests.readable_length() > 0 {
+            let request: *mut JSMySQLQuery = queue.requests.peek_item(0);
             // Queue holds a ref on every request (taken in `add()`), so the
             // pointer is non-null and live. Separate heap allocation — never
             // aliases `*this`. R-2: `ParentRef` yields `&T` only; every method
@@ -253,7 +264,7 @@ impl MySQLRequestQueue {
             // so we do the cleanup her
             if req.is_completed() {
                 debug!("isCompleted discard after advance");
-                unsafe { (*this).requests.discard(1) };
+                queue.requests.discard(1);
                 // SAFETY: queue held one ref; pointer is live until this deref.
                 unsafe { JSMySQLQuery::deref(request) };
                 continue;

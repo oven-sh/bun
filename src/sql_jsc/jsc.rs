@@ -228,9 +228,9 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
     }
     #[inline]
     fn sql_vm(&self) -> &VirtualMachine {
-        // SAFETY: bunVM returns a valid *VirtualMachine for this global,
-        // live for the VM lifetime.
-        unsafe { &*JSC__JSGlobalObject__bunVM(self).cast::<VirtualMachine>() }
+        // `JSGlobalObject::bun_vm` is the canonical safe accessor (single
+        // audited deref in bun_jsc); the VM is a process-lifetime singleton.
+        self.bun_vm()
     }
     #[inline]
     fn sql_vm_ptr(&self) -> *mut VirtualMachine {
@@ -476,14 +476,15 @@ impl AutoFlusher {
         extern "C" fn trampoline<T: HasAutoFlush>(ctx: *mut c_void) -> bool {
             T::on_auto_flush(ctx.cast::<T>())
         }
-        // SAFETY: vm.event_loop() is the live VM-owned loop; deferred_tasks
-        // is an embedded field with stable address for the VM lifetime.
-        let q = unsafe { &mut (*vm.event_loop()).deferred_tasks };
+        // `event_loop_mut()` is the canonical safe `&mut EventLoop` accessor
+        // (single audited deref inside `VirtualMachine`); `deferred_tasks` is an
+        // embedded field with stable address for the VM lifetime.
+        let q = &mut vm.event_loop_mut().deferred_tasks;
         q.post_task(NonNull::new(this.cast::<c_void>()), trampoline::<T>);
     }
     pub fn unregister_deferred_microtask_with_type<T>(this: *mut T, vm: &VirtualMachine) {
-        // SAFETY: see register_deferred_microtask_with_type_unchecked.
-        let q = unsafe { &mut (*vm.event_loop()).deferred_tasks };
+        // See register_deferred_microtask_with_type_unchecked.
+        let q = &mut vm.event_loop_mut().deferred_tasks;
         q.unregister_task(NonNull::new(this.cast::<c_void>()));
     }
 }

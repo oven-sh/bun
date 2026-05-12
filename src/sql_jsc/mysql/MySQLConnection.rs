@@ -909,17 +909,18 @@ impl MySQLConnection {
                     self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                     self.queue.mark_as_ready_for_query();
                     self.queue.mark_current_request_as_finished(request);
-                    let connection = self.get_js_connection();
                     // TODO(b2-blocked): ErrorPacket is not Clone in bun_sql; the
                     // Zig passes statement.error_response by value (struct copy).
                     // Send a default packet as a placeholder until ErrorPacket
                     // grows Clone or a borrowed-variant overload lands.
-                    // SAFETY: connection is live (parent of `*self`); kept raw —
-                    // `on_error_packet` may run JS that re-enters `connection_mut()`.
-                    unsafe {
-                        (*connection)
-                            .on_error_packet(Some(request), ErrorPacket::default())
-                    };
+                    //
+                    // R-2: `on_error_packet` is `&self`; route through the
+                    // audited `js_connection_ref()` container_of accessor (one
+                    // centralised unsafe). `*self` sits inside the parent's
+                    // `JsCell`, so re-entrant `connection_mut()` does not alias
+                    // this outer shared borrow.
+                    self.js_connection_ref()
+                        .on_error_packet(Some(request), ErrorPacket::default());
                     let _ = self.flush_queue();
                 }
             }
@@ -1173,9 +1174,14 @@ impl MySQLConnection {
                 self.queue.mark_as_ready_for_query();
                 self.queue.mark_current_request_as_finished(request);
 
-                let connection = self.get_js_connection();
-                // SAFETY: connection/request are live.
-                unsafe { (*connection).on_error_packet(Some(request), err) };
+                // R-2: `on_error_packet` is `&self`; `js_connection_ref()` is
+                // the audited container_of accessor (one centralised unsafe).
+                // The `&JSMySQLConnection` it yields lives only for this call —
+                // identical footprint to the prior `(*ptr).on_error_packet()`
+                // temporary — and `*self` sits inside the parent's `JsCell`, so
+                // re-entrant `connection_mut()` does not alias the outer
+                // shared borrow.
+                self.js_connection_ref().on_error_packet(Some(request), err);
                 self.advance();
             }
 
@@ -1191,18 +1197,16 @@ impl MySQLConnection {
         Ok(())
     }
 
-    // PORT NOTE: reshaped for borrowck — `request`/`statement` come from
-    // `self.queue` so passing `&mut self` alongside `&mut JSMySQLQuery` would
-    // alias. `request` is `&JSMySQLQuery` (R-2: fully interior-mutable, so a
-    // shared borrow is sound across the re-entrant `on_query_result` callback);
-    // `statement` stays raw `*mut` because `MySQLStatement` has plain fields
-    // and `on_query_result` may re-enter `request.get_statement()` — holding a
-    // `&mut MySQLStatement` across that would alias. The queue's intrusive ref
-    // keeps both alive.
+    // PORT NOTE: reshaped for borrowck — `request` comes from `self.queue` so
+    // passing `&mut self` alongside `&mut JSMySQLQuery` would alias. `request`
+    // is `&JSMySQLQuery` (R-2: fully interior-mutable, so a shared borrow is
+    // sound across the re-entrant `on_query_result` callback). The statement is
+    // re-fetched via the single-unsafe `request.get_statement()` accessor at
+    // each touch point so no `&mut MySQLStatement` spans the re-entrant
+    // `on_query_result` call (which may itself call `get_statement()`).
     fn handle_result_set_ok(
         &mut self,
         request: &JSMySQLQuery,
-        statement: *mut MySQLStatement,
         status_flags: StatusFlags,
         last_insert_id: u64,
         affected_rows: u64,
@@ -1217,22 +1221,24 @@ impl MySQLConnection {
             self.queue.mark_current_request_as_finished(request);
         }
 
-        // SAFETY: statement is live (owned by request).
-        let result_count = unsafe { (*statement).result_count };
-        let connection = self.get_js_connection();
-        // SAFETY: connection is live (parent of `*self`); deref kept raw because
-        // `on_query_result` may re-enter `connection_mut()` via JS callbacks, so
-        // no `&JSMySQLConnection` may be held across it that was derived from
-        // `&self` (see `js_connection_ref` doc — read-only callers only).
-        unsafe {
-            (*connection).on_query_result(
-                request,
-                MySQLQueryResult { result_count, last_insert_id, affected_rows, is_last_result },
-            )
-        };
+        // Short-lived borrow via the audited accessor; dropped before the
+        // re-entrant `on_query_result` call below.
+        let result_count = request.get_statement().map_or(0, |s| s.result_count);
+        // R-2: `on_query_result` is `&self`; `js_connection_ref()` is the
+        // audited container_of accessor. The `&JSMySQLConnection` lives only for
+        // this call (same footprint as the prior `(*ptr).on_query_result()`
+        // temporary). `*self` sits inside the parent's `JsCell` (`UnsafeCell`),
+        // so re-entrant `connection_mut()` writes through SharedRW provenance
+        // independent of this outer shared borrow.
+        self.js_connection_ref().on_query_result(
+            request,
+            MySQLQueryResult { result_count, last_insert_id, affected_rows, is_last_result },
+        );
 
-        // SAFETY: statement is live.
-        unsafe { (*statement).reset() };
+        // Re-fetch (fresh `&mut`) so no borrow spanned the JS callback above.
+        if let Some(s) = request.get_statement() {
+            s.reset();
+        }
 
         // Use flushQueue instead of just advance to ensure any data written
         // by queries added during onQueryResult is actually sent.
@@ -1320,10 +1326,11 @@ impl MySQLConnection {
                 self.queue.mark_as_ready_for_query();
                 self.queue.mark_current_request_as_finished(request);
 
-                let connection = self.get_js_connection();
-                // SAFETY: connection is live (parent of `*self`); kept raw —
-                // `on_error_packet` may run JS that re-enters `connection_mut()`.
-                unsafe { (*connection).on_error_packet(Some(request), err) };
+                // R-2: `on_error_packet` is `&self`; route through the audited
+                // `js_connection_ref()` container_of accessor. `*self` lives
+                // inside the parent's `JsCell`, so re-entrant `connection_mut()`
+                // does not alias this outer shared borrow.
+                self.js_connection_ref().on_error_packet(Some(request), err);
                 let _ = self.flush_queue();
             }
 
@@ -1331,8 +1338,8 @@ impl MySQLConnection {
                 // `get_statement()` derefs the intrusive `*mut MySQLStatement`
                 // held by the request (separate heap allocation); the `&mut` is
                 // rooted in the local `ThisPtr`, not `self`, so `&mut self`
-                // calls below do not conflict. `handle_result_set_ok` /
-                // `on_result_row` reborrow it (`&mut → *mut` coercion / `&mut`).
+                // calls below do not conflict. `handle_result_set_ok` re-fetches
+                // via the same accessor; `on_result_row` reborrows `&mut`.
                 let Some(statement) = request.get_statement() else {
                     debug!("Unexpected result set packet");
                     return Err(AnyMySQLError::UnexpectedPacket);
@@ -1344,9 +1351,10 @@ impl MySQLConnection {
                     if packet_type == PacketType::OK {
                         // if packet type is OK it means the query is done and no results are returned
                         ok.decode_internal(reader)?;
+                        // NLL: caller's `statement` borrow ends here;
+                        // `handle_result_set_ok` re-fetches via the accessor.
                         self.handle_result_set_ok(
                             request,
-                            statement,
                             ok.status_flags,
                             ok.last_insert_id,
                             ok.affected_rows,
@@ -1430,7 +1438,7 @@ impl MySQLConnection {
                             // Final EOF after all row data - terminates the result set
                             let mut eof = EOFPacket::default();
                             eof.decode_internal(reader)?;
-                            self.handle_result_set_ok(request, statement, eof.status_flags, 0, 0);
+                            self.handle_result_set_ok(request, eof.status_flags, 0, 0);
                             return Ok(());
                         }
 
@@ -1439,7 +1447,6 @@ impl MySQLConnection {
 
                         self.handle_result_set_ok(
                             request,
-                            statement,
                             ok.status_flags,
                             ok.last_insert_id,
                             ok.affected_rows,
@@ -1447,13 +1454,13 @@ impl MySQLConnection {
                         return Ok(());
                     }
 
-                    let connection = self.get_js_connection();
-
-                    // SAFETY: connection is the parent JSMySQLConnection
-                    // containing `*self`; kept raw — `on_result_row` re-enters
-                    // `connection_mut()` (mark_current_request_as_finished), so
-                    // no `&JSMySQLConnection` derived from `&self` may span it.
-                    unsafe { (*connection).on_result_row(request, statement, reader)? };
+                    // R-2: `on_result_row` is `&self`; route through the audited
+                    // `js_connection_ref()` container_of accessor. The
+                    // `&JSMySQLConnection` is held only for this call (identical
+                    // footprint to the prior `(*ptr).on_result_row()` temporary);
+                    // `*self` sits inside the parent's `JsCell`, so re-entrant
+                    // `connection_mut()` does not alias this shared borrow.
+                    self.js_connection_ref().on_result_row(request, statement, reader)?;
                 }
             }
         }

@@ -1521,6 +1521,25 @@ fn owned_key<A: Allocator + Default>(key: &[u8]) -> StringHashMapKey<A> {
     StringHashMapKey::Owned(box_key::<A>(key))
 }
 
+impl<V, A: Allocator + HashbrownAllocator + Clone> StringHashMap<V, A> {
+    /// `const` constructor — empty map, no heap touch. Exists so aggregates
+    /// that embed a `StringHashMap` (e.g. `js_ast::Scope::EMPTY`) can be
+    /// spelled as a `const` and used with struct-update syntax in hot
+    /// allocation paths, instead of calling the `Default` chain at runtime
+    /// for every field. `hashbrown::HashMap::with_hasher_in` and
+    /// `BuildHasherDefault::new` are both `const fn`, so this is a true
+    /// compile-time value (all-zeros for ZST `A`).
+    #[inline]
+    pub const fn new_in(alloc: A) -> Self {
+        Self {
+            inner: hashbrown::HashMap::with_hasher_in(
+                core::hash::BuildHasherDefault::new(),
+                alloc,
+            ),
+        }
+    }
+}
+
 impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
     pub fn new() -> Self {
         Self::default()

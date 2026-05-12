@@ -1,19 +1,24 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+
+setDefaultTimeout(1000 * 60);
 
 type Registry = {
   server: ReturnType<typeof Bun.serve>;
   hits: string[];
+  auth: (string | null)[];
   url: string;
 };
 
 function makeRegistry(): Registry {
   const hits: string[] = [];
+  const auth: (string | null)[] = [];
   const server = Bun.serve({
     port: 0,
     fetch(req) {
       hits.push(new URL(req.url).pathname);
+      auth.push(req.headers.get("authorization"));
       // 404 is fine — we only care which registry was contacted.
       return new Response(JSON.stringify({ error: "not found" }), {
         status: 404,
@@ -21,7 +26,7 @@ function makeRegistry(): Registry {
       });
     },
   });
-  return { server, hits, url: `http://localhost:${server.port}/` };
+  return { server, hits, auth, url: `http://localhost:${server.port}/` };
 }
 
 function makeEnv(dir: string, extra: Record<string, string | undefined> = {}) {
@@ -35,6 +40,9 @@ function makeEnv(dir: string, extra: Record<string, string | undefined> = {}) {
     BUN_CONFIG_REGISTRY: undefined,
     NPM_CONFIG_REGISTRY: undefined,
     npm_config_registry: undefined,
+    BUN_CONFIG_TOKEN: undefined,
+    NPM_CONFIG_TOKEN: undefined,
+    npm_config_token: undefined,
     BUN_CONFIG_FORCE_REGISTRY: undefined,
     ...extra,
   };
@@ -192,5 +200,48 @@ describe("install.forceRegistry", () => {
       forced: ["/@scoped%2fpkg", "/no-deps"],
       other: [],
     });
+  });
+
+  test("BUN_CONFIG_FORCE_REGISTRY preserves BUN_CONFIG_TOKEN", async () => {
+    const forced = makeRegistry();
+    await using _f = forced.server;
+
+    using dir = tempDir("force-registry-token", {
+      "home/.keep": "",
+      "project/bunfig.toml": `[install]\ncache = false\n`,
+      "project/package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
+    });
+
+    await runInstall(
+      String(dir),
+      makeEnv(String(dir), {
+        BUN_CONFIG_FORCE_REGISTRY: forced.url,
+        BUN_CONFIG_TOKEN: "corp-token-123",
+      }),
+    );
+
+    expect(forced.hits).toEqual(["/no-deps"]);
+    expect(forced.auth).toEqual(["Bearer corp-token-123"]);
+  });
+
+  test("forceRegistry object carries its own token", async () => {
+    const forced = makeRegistry();
+    const other = makeRegistry();
+    await using _f = forced.server;
+    await using _o = other.server;
+
+    using dir = tempDir("force-registry-obj-token", {
+      "home/.bunfig.toml": `[install]\nforceRegistry = { url = "${forced.url}", token = "corp-token-456" }\n`,
+      "project/bunfig.toml": `[install]\ncache = false\nregistry = { url = "${other.url}", token = "project-token" }\n`,
+      "project/package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
+    });
+
+    await runInstall(String(dir), makeEnv(String(dir)));
+
+    expect({ forced: forced.hits, other: other.hits }).toEqual({
+      forced: ["/no-deps"],
+      other: [],
+    });
+    expect(forced.auth).toEqual(["Bearer corp-token-456"]);
   });
 });

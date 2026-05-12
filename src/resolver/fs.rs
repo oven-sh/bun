@@ -1696,8 +1696,16 @@ impl ModKey {
         HASH_NAME_BUF.with_borrow_mut(|buf| {
             let len = buf.len();
             let mut cursor = &mut buf[..];
-            write!(&mut cursor, "{}-{:x}", BStr::new(basename), hex_int)
+            // Zig `{s}` writes `[]const u8` verbatim — `BStr`'s `Display` would
+            // lossily emit U+FFFD for non-UTF-8 bytes (and 1→3 expand), so use
+            // raw `io::Write` for the basename.
+            cursor
+                .write_all(basename)
                 .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+            cursor
+                .write_all(b"-")
+                .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+            write!(&mut cursor, "{:x}", hex_int).map_err(|_| bun_core::err!("NoSpaceLeft"))?;
             let written = len - cursor.len();
             // SAFETY: threadlocal buffer outlives caller's use (matches Zig pattern)
             Ok(unsafe { bun_ptr::detach_lifetime(&buf[..written]) })
@@ -1728,15 +1736,12 @@ impl ModKey {
         const NS_PER_S: i128 = 1_000_000_000;
         // PORT NOTE: `bun_sys::Stat` is `libc::stat`; Zig's `std.fs.File.stat()` returned a
         // normalized struct with `mtime: i128` ns. Reconstruct from `st_mtime` (sec) +
-        // `st_mtime_nsec` (ns) where available.
-        #[cfg(target_os = "linux")]
-        let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
-        #[cfg(target_os = "macos")]
+        // `st_mtime_nsec` (ns). The `libc` crate flattens BSD/Darwin `st_mtimespec` into
+        // `st_mtime`/`st_mtime_nsec`, so the access is uniform on all `unix`.
+        #[cfg(unix)]
         let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
         #[cfg(windows)]
         let mtime: i128 = (stat.mtim.sec as i128) * NS_PER_S + stat.mtim.nsec as i128;
-        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-        let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S;
         let seconds = mtime / NS_PER_S;
 
         // We can't detect changes if the file system zeros out the modification time

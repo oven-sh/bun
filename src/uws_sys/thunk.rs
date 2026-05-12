@@ -173,8 +173,11 @@ pub unsafe fn connecting_ext_owner<'a, T>(c: *mut ConnectingSocket) -> Option<&'
 /// See [`socket_ext_owner`].
 #[inline(always)]
 pub unsafe fn connecting_ext_ptr<T>(c: *mut ConnectingSocket) -> Option<NonNull<T>> {
-    // SAFETY: per caller contract above.
-    unsafe { *(*c).ext::<Option<NonNull<T>>>() }
+    // S008: `ConnectingSocket` is an `opaque_ffi!` ZST — `opaque_mut` is the
+    // safe const-asserted ZST deref accessor; reading the `Copy` slot needs
+    // no further `unsafe`. (Function stays `unsafe fn` for the type-pun
+    // contract: caller asserts the ext slot was sized for `Option<NonNull<T>>`.)
+    *ConnectingSocket::opaque_mut(c).ext::<Option<NonNull<T>>>()
 }
 
 // ───────────────────────── safe-surface trampoline ──────────────────────────

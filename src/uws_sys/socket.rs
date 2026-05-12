@@ -510,8 +510,9 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
             return None;
         }
 
-        // SAFETY: ext storage is sized for `?*This` and `raw` is live.
-        unsafe { *(*raw).ext::<Option<core::ptr::NonNull<This>>>() = core::ptr::NonNull::new(this) };
+        // ext storage is sized for `?*This` above; `raw` is non-null (checked).
+        // S008: `sock()` is the safe opaque-ZST deref accessor.
+        *sock(raw).ext::<Option<core::ptr::NonNull<This>>>() = core::ptr::NonNull::new(this);
         if let Some(set) = set_socket_field {
             // PORT NOTE: reshaped for borrowck — `Self` holds `&'a mut` (BORROW_PARAM)
             // so it isn't `Clone`; rebuild the `Connected(raw)` variant instead.
@@ -586,19 +587,17 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         ) {
             crate::ConnectResult::Failed => Err(ConnectError::FailedToOpenSocket),
             crate::ConnectResult::Socket(s) => {
-                // SAFETY: ext storage is sized for `?*Owner` and `s` is live.
-                unsafe {
-                    *(*s).ext::<Option<core::ptr::NonNull<Owner>>>() =
-                        core::ptr::NonNull::new(owner)
-                };
+                // S008: `sock()` is the safe opaque-ZST deref accessor; ext
+                // storage was sized for `?*Owner` above.
+                *sock(s).ext::<Option<core::ptr::NonNull<Owner>>>() =
+                    core::ptr::NonNull::new(owner);
                 Ok(Self { socket: InternalSocket::Connected(s) })
             }
             crate::ConnectResult::Connecting(cs) => {
-                // SAFETY: ext storage is sized for `?*Owner` and `cs` is live.
-                unsafe {
-                    *(*cs).ext::<Option<core::ptr::NonNull<Owner>>>() =
-                        core::ptr::NonNull::new(owner)
-                };
+                // S008: `conn()` is the safe opaque-ZST deref accessor; ext
+                // storage was sized for `?*Owner` above.
+                *conn(cs).ext::<Option<core::ptr::NonNull<Owner>>>() =
+                    core::ptr::NonNull::new(owner);
                 Ok(Self { socket: InternalSocket::Connecting(cs) })
             }
         }
@@ -624,10 +623,9 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         if s.is_null() {
             return Err(ConnectError::FailedToOpenSocket);
         }
-        // SAFETY: ext storage is sized for `?*Owner` and `s` is live.
-        unsafe {
-            *(*s).ext::<Option<core::ptr::NonNull<Owner>>>() = core::ptr::NonNull::new(owner)
-        };
+        // S008: `sock()` is the safe opaque-ZST deref accessor; ext storage
+        // was sized for `?*Owner` above and `s` is non-null (checked).
+        *sock(s).ext::<Option<core::ptr::NonNull<Owner>>>() = core::ptr::NonNull::new(owner);
         Ok(Self { socket: InternalSocket::Connected(s) })
     }
 
@@ -642,15 +640,16 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         owner: *mut Owner,
         set_socket_field: impl FnOnce(&mut Owner, Self),
     ) -> bool {
-        // SAFETY: `tcp` is a live socket the caller is moving into `g`.
-        let Some(new_s) = (unsafe {
-            (*tcp).adopt(g, kind, size_of::<*mut c_void>() as i32, size_of::<*mut c_void>() as i32)
-        }) else {
+        // S008: `sock()` is the safe opaque-ZST deref accessor; `tcp` is a
+        // live socket the caller is moving into `g`.
+        let Some(new_s) = sock(tcp)
+            .adopt(g, kind, size_of::<*mut c_void>() as i32, size_of::<*mut c_void>() as i32)
+        else {
             return false;
         };
         let new_s = new_s.as_ptr();
-        // SAFETY: ext storage is sized for `*anyopaque` and `new_s` is live.
-        unsafe { *(*new_s).ext::<*mut c_void>() = owner.cast::<c_void>() };
+        // S008: ext storage is sized for `*anyopaque`; `new_s` is `NonNull`.
+        *sock(new_s).ext::<*mut c_void>() = owner.cast::<c_void>();
         // SAFETY: caller guarantees `owner` is a valid unique pointer.
         set_socket_field(unsafe { &mut *owner }, Self { socket: InternalSocket::Connected(new_s) });
         true

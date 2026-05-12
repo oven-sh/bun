@@ -171,8 +171,10 @@ impl StatWatcherScheduler {
         })
     }
 
-    // SAFETY: called only when ref_count reaches zero; `this` was Box-allocated by RefPtr::new.
-    unsafe fn deinit(this: *mut StatWatcherScheduler) {
+    // Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
+    // whose generated trait `destructor` upholds the sole-owner contract
+    // (called only when ref_count reaches zero; `this` was Box-allocated by RefPtr::new).
+    fn deinit(this: *mut StatWatcherScheduler) {
         // SAFETY: last reference; exclusive access.
         let this_ref = unsafe { &*this };
         bun_core::assertf!(
@@ -313,8 +315,12 @@ impl StatWatcherScheduler {
         WorkPool::schedule(&raw mut self.task);
     }
 
-    unsafe fn work_pool_callback(task: *mut WorkPoolTask) {
-        // SAFETY: `task` points to `StatWatcherScheduler.task`; recover parent via offset_of.
+    /// Thread-pool callback (safe fn — coerces to the `WorkPoolTask.callback`
+    /// field type at the struct-init site in `init`).
+    fn work_pool_callback(task: *mut WorkPoolTask) {
+        // SAFETY: `task` points to `StatWatcherScheduler.task` — only ever
+        // invoked by the thread pool against a scheduler it scheduled in
+        // `timer_callback`, so provenance covers the full allocation.
         let this: *mut StatWatcherScheduler = unsafe {
             bun_core::from_field_ptr!(StatWatcherScheduler, task, task)
         };
@@ -560,11 +566,13 @@ impl StatWatcher {
         // unlock on Drop of guard
     }
 
-    // SAFETY: called only when ref_count reaches zero; `this` was Box-allocated.
-    // Not `impl Drop` — this is a `.classes.ts` m_ctx payload with intrusive
-    // refcount; teardown is driven by ref_count, and `finalize()` is the GC
-    // entry point.
-    unsafe fn deinit(this: *mut StatWatcher) {
+    // Safe fn: reachable via the `#[ref_count(destroy = …)]` derive (whose
+    // generated trait `destructor` upholds the sole-owner contract) and
+    // the `errdefer` scopeguard in `do_watch` (which owns the only reference
+    // on the error path). Not `impl Drop` — this is a `.classes.ts` m_ctx
+    // payload with intrusive refcount; teardown is driven by ref_count, and
+    // `finalize()` is the GC entry point.
+    fn deinit(this: *mut StatWatcher) {
         log!("deinit {:x}", this as usize);
 
         // SAFETY: last ref; exclusive access. R-2: deref as shared (`&*`) —
@@ -861,11 +869,9 @@ impl StatWatcher {
             scheduler: Self::lazy_scheduler(vm),
         });
         let this_ptr = bun_core::heap::into_raw(this);
-        // errdefer this.deinit()
-        let guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` was heap-allocated above; on the error path we own the only reference.
-            unsafe { Self::deinit(p) }
-        });
+        // errdefer this.deinit() — `p` was heap-allocated above; on the error
+        // path we own the only reference (sole-owner contract for `deinit`).
+        let guard = scopeguard::guard(this_ptr, |p| Self::deinit(p));
         // SAFETY: `this_ptr` just leaked from Box; alive until deref drops it.
         // R-2: deref as shared (`&*`) — all field mutation goes through
         // Cell/JsCell so `&` suffices (and `to_js_ptr` below creates the JS

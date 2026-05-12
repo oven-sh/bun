@@ -225,9 +225,9 @@ impl NativeBrotli {
     /// then frees the Box-allocated payload — matches Zig
     /// `bun.ptr.RefCount(.., deinit, .{}).deref()` → `deinit()` + `bun.destroy(this)`.
     ///
-    /// # Safety
-    /// `this` is the sole live owner of a Box-allocated `Self`.
-    unsafe fn destroy_on_zero(this: *mut Self) {
+    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
+    /// whose generated trait `destroy` upholds the sole-owner contract.
+    fn destroy_on_zero(this: *mut Self) {
         // SAFETY: refcount hit zero ⇒ no other borrow remains.
         unsafe { (*this).deinit() };
         // SAFETY: allocated via `Box::new` in `constructor`.
@@ -542,7 +542,9 @@ fn code_for_error(err: c::BrotliDecoderErrorCode2) -> *const core::ffi::c_char {
 
 /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
 /// (see `CompressionStream::write` in node_zlib_binding.rs). Zig: `.callback = undefined`.
-unsafe fn noop_task_callback(_task: *mut WorkPoolTask) {}
+/// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
+/// struct-init site; the body never dereferences the pointer.
+fn noop_task_callback(_task: *mut WorkPoolTask) {}
 
 crate::__compression_stream_mixin_reexports!(NativeBrotli);
 } // mod _impl

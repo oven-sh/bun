@@ -85,10 +85,11 @@ pub struct JSBundleCompletionTask {
 impl JSBundleCompletionTask {
     /// `RefCounted` destructor — last ref dropped.
     ///
-    /// # Safety
-    /// `this` must be the sole owner of a `heap::alloc`'d allocation.
-    unsafe fn deinit(this: *mut Self) {
-        // SAFETY: caller contract.
+    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
+    /// whose generated trait `destructor` upholds the sole-owner contract.
+    fn deinit(this: *mut Self) {
+        // SAFETY: refcount hit zero; `this` is the sole owner of a
+        // `heap::alloc`'d allocation.
         let mut boxed = unsafe { bun_core::heap::take(this) };
         boxed.poll_ref.disable();
         if let Some(plugin) = boxed.plugins.take() {

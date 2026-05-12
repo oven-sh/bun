@@ -23,7 +23,9 @@ use crate::node::util::validators;
 
 /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
 /// (see `CompressionStream::write` in node_zlib_binding.rs). Zig: `.callback = undefined`.
-unsafe fn noop_task_callback(_task: *mut WorkPoolTask) {}
+/// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
+/// struct-init site; the body never dereferences the pointer.
+fn noop_task_callback(_task: *mut WorkPoolTask) {}
 
 // `mod js { write_callback_*, error_callback_*, dictionary_* }` is emitted by
 // `__impl_compression_stream!` below (wraps `bun_jsc::codegen_cached_accessors!`).

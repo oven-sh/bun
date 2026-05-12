@@ -1851,7 +1851,10 @@ impl Terminal {
 /// `.classes.ts` m_ctx payload: destruction is driven by `deref_()` reaching zero,
 /// and the body calls `bun.destroy(this)` (frees its own allocation). Drop cannot
 /// express that. Kept as a free fn called from `deref_()`.
-unsafe fn deinit_and_destroy(this: *mut Terminal) {
+///
+/// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
+/// whose generated trait `destructor` upholds the sole-owner contract.
+fn deinit_and_destroy(this: *mut Terminal) {
     bun_output::scoped_log!(Terminal, "deinit");
     // SAFETY: caller is `deref_()` with ref_count == 0; `this` was heap-allocated.
     // R-2: deref as shared — `close_internal` takes `&self` and all field

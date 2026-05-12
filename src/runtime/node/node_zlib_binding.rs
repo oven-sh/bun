@@ -411,8 +411,12 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     }
 
     // Zig: nested `const AsyncJob = struct { ... }` — namespacing only.
-    unsafe fn async_job_run_task(task: *mut WorkPoolTask) {
-        // SAFETY: task points to T.task; recover *mut T via container_of
+    // Safe fn: coerces to the `WorkPoolTask.callback` field type at the
+    // struct-init site in `write` above.
+    fn async_job_run_task(task: *mut WorkPoolTask) {
+        // SAFETY: `task` points to `T.task` — only ever invoked by the thread
+        // pool against a `T` scheduled in `write`, so provenance covers the
+        // full `T` allocation. Recover *mut T via container_of
         // (`CompressionStreamImpl::from_task`). The task field is a
         // `JsCell<WorkPoolTask>` — `#[repr(transparent)]` over the value, so
         // `offset_of!(T, task)` is the value's offset.

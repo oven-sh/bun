@@ -666,8 +666,12 @@ impl<C: TaskContext> AsyncTask<C> {
         unsafe { (*this).promise.value() }
     }
 
-    unsafe fn run_callback(work_task: *mut WorkPoolTask) {
-        // SAFETY: work_task points to the `task` field of an AsyncTask<C> allocated by `create`.
+    /// Thread-pool callback (safe fn — coerces to the `WorkPoolTask.callback`
+    /// field type at the struct-init site in `create`).
+    fn run_callback(work_task: *mut WorkPoolTask) {
+        // SAFETY: `work_task` points to the `task` field of an `AsyncTask<C>`
+        // allocated by `create` — only ever invoked by the thread pool against
+        // a task it scheduled, so provenance covers the full allocation.
         let this: *mut Self = unsafe {
             bun_core::from_field_ptr!(Self, task, work_task)
         };

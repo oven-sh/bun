@@ -1149,12 +1149,13 @@ pub struct H2FrameParser {
 impl H2FrameParser {
     /// `RefCounted` destructor thunk: `deinit` takes `&self`, not `*mut Self`.
     ///
-    /// # Safety
-    /// Refcount must have reached zero; `this` is the sole owner of the
-    /// `heap::alloc` allocation. `deinit` frees `this` via `heap::take`.
+    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
+    /// whose generated trait `destroy` upholds the sole-owner contract
+    /// (refcount hit zero; `this` is the sole owner of the `heap::alloc`
+    /// allocation). `deinit` frees `this` via `heap::take`.
     #[inline]
-    unsafe fn deinit_raw(this: *mut Self) {
-        // SAFETY: caller contract.
+    fn deinit_raw(this: *mut Self) {
+        // SAFETY: refcount hit zero; sole owner.
         unsafe { (*this).deinit() };
     }
 

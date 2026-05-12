@@ -1317,9 +1317,9 @@ type CronJobDerefOnDrop = bun_ptr::ScopedRef<CronJob>;
 impl CronJob {
     /// `CellRefCounted::destroy` target (refcount hit zero).
     ///
-    /// # Safety
-    /// `this` is the sole live owner of its `heap::alloc` allocation.
-    unsafe fn destroy_impl(this: *mut Self) {
+    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
+    /// whose generated trait `destroy` upholds the sole-owner contract.
+    fn destroy_impl(this: *mut Self) {
         // deinit: this_value.deinit() then destroy.
         // SAFETY: last ref; nobody else holds a pointer.
         // PORT NOTE: `JsRef::deinit()` was dropped — Strong's Drop on

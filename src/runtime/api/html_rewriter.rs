@@ -1917,10 +1917,10 @@ impl AttributeIterator {
     /// `CellRefCounted::destroy` target — detach the lol-html iterator before
     /// freeing the Box.
     ///
-    /// # Safety
-    /// `this` is the sole live owner of a `heap::alloc`'d `Self`.
-    unsafe fn destroy_on_zero(this: *mut Self) {
-        // SAFETY: refcount hit zero; sole owner.
+    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
+    /// whose generated trait `destroy` upholds the sole-owner contract.
+    fn destroy_on_zero(this: *mut Self) {
+        // SAFETY: refcount hit zero; sole owner of a `heap::alloc`'d `Self`.
         unsafe { (*this).detach() };
         drop(unsafe { bun_core::heap::take(this) });
     }
@@ -2025,10 +2025,10 @@ impl Element {
     /// `CellRefCounted::destroy` target — invalidate borrowed sub-objects
     /// before freeing the Box.
     ///
-    /// # Safety
-    /// `this` is the sole live owner of a `heap::alloc`'d `Self`.
-    unsafe fn destroy_on_zero(this: *mut Self) {
-        // SAFETY: refcount hit zero; sole owner.
+    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
+    /// whose generated trait `destroy` upholds the sole-owner contract.
+    fn destroy_on_zero(this: *mut Self) {
+        // SAFETY: refcount hit zero; sole owner of a `heap::alloc`'d `Self`.
         unsafe { (*this).invalidate() };
         drop(unsafe { bun_core::heap::take(this) });
     }

@@ -1074,8 +1074,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // js_bun_spawn_bindings.zig:627 — `spawn_options.deinit()`.)
             spawn_options.deinit();
             let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
-                // SAFETY: argv[0] is a NUL-terminated string we built above.
-                unsafe { &*(std::ptr::from_ref::<[u8]>(bun_core::ffi::cstr(argv[0]).to_bytes()) as *const ZStr) }
+                // SAFETY: argv[0] is non-null and points at a NUL-terminated
+                // string we built above (lives in `arg0_backing`/`arg_backing`).
+                ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
             } else {
                 ZStr::EMPTY
             };
@@ -1109,8 +1110,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                     | sys::Errno::EISDIR
                     | sys::Errno::ENOTDIR) => {
                         let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
-                            // SAFETY: argv[0] is a NUL-terminated string we built above.
-                            unsafe { &*(std::ptr::from_ref::<[u8]>(bun_core::ffi::cstr(argv[0]).to_bytes()) as *const ZStr) }
+                            // SAFETY: argv[0] is non-null and points at a NUL-terminated
+                            // string we built above (lives in `arg0_backing`/`arg_backing`).
+                            ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
                         } else {
                             ZStr::EMPTY
                         };

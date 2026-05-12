@@ -20,7 +20,9 @@ use bun_zlib::NodeMode;
 
 /// Placeholder WorkPoolTask callback — overwritten by CompressionStream::write
 /// before the task is ever scheduled (mirrors Zig `.{ .callback = undefined }`).
-unsafe fn unset_task_callback(_: *mut WorkPoolTask) {
+/// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
+/// struct-init site; the body never dereferences the pointer.
+fn unset_task_callback(_: *mut WorkPoolTask) {
     unreachable!("WorkPoolTask scheduled before CompressionStream set its callback");
 }
 

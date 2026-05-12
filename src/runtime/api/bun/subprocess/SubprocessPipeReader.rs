@@ -376,8 +376,11 @@ impl PipeReader {
     }
 
     /// Called when ref_count hits zero. Consumes the Box allocation.
-    unsafe fn deinit(this: *mut PipeReader) {
-        // SAFETY: caller guarantees `this` is the unique owner (refcount == 0).
+    ///
+    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
+    /// whose generated trait `destructor` upholds the sole-owner contract.
+    fn deinit(this: *mut PipeReader) {
+        // SAFETY: refcount == 0 ⇒ `this` is the unique owner.
         let this_ref = unsafe { &mut *this };
 
         #[cfg(unix)]

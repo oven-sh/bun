@@ -2267,6 +2267,41 @@ static napi_value test_napi_get_named_property_copied_string(const Napi::Callbac
   return ok(env);
 }
 
+// https://github.com/oven-sh/bun/issues/13771
+// When a threadsafe function is created with func = NULL, Node.js passes
+// NULL as js_callback to call_js_cb. Native modules (e.g. napi-rs,
+// lightningcss) check `js_callback == NULL` to detect this case, so we must
+// not pass a non-null value like `undefined` here.
+static napi_threadsafe_function tsfn_13771 = nullptr;
+
+static void test_issue_13771_callback(napi_env env, napi_value js_callback,
+                                      void *context, void *data) {
+  if (js_callback == nullptr) {
+    printf("PASS: js_callback is NULL\n");
+  } else {
+    napi_valuetype type;
+    napi_typeof(env, js_callback, &type);
+    printf("FAIL: js_callback is not NULL (napi_typeof = %d)\n", type);
+  }
+  napi_release_threadsafe_function(tsfn_13771, napi_tsfn_release);
+  tsfn_13771 = nullptr;
+}
+
+static napi_value test_issue_13771(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  Napi::HandleScope scope(env);
+  napi_value name = Napi::String::New(env, "tsfn_null_func");
+
+  NODE_API_CALL(env,
+                napi_create_threadsafe_function(
+                    env, /* func */ nullptr, /* async_resource */ nullptr,
+                    name, 0, 1, nullptr, nullptr, nullptr,
+                    &test_issue_13771_callback, &tsfn_13771));
+  NODE_API_CALL(env, napi_call_threadsafe_function(tsfn_13771, nullptr,
+                                                   napi_tsfn_nonblocking));
+  return env.Undefined();
+}
+
 // https://github.com/oven-sh/bun/issues/25933
 // When a threadsafe function is created inside AsyncLocalStorage.run(),
 // the js_callback gets wrapped in AsyncContextFrame. napi_typeof must
@@ -2429,6 +2464,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports,
                     test_external_buffer_with_pending_exception);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
+  REGISTER_FUNCTION(env, exports, test_issue_13771);
   REGISTER_FUNCTION(env, exports, test_issue_25933);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_async_context_frame);
   REGISTER_FUNCTION(env, exports, test_napi_create_tsfn_async_context_frame);

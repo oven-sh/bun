@@ -179,6 +179,17 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("issue_13771", () => {
+    it("call_js_cb receives NULL js_callback when threadsafe function was created with func = NULL", async () => {
+      // https://github.com/oven-sh/bun/issues/13771
+      // Native modules (e.g. napi-rs, lightningcss) check `js_callback == NULL`
+      // to detect when no JS function was provided. Bun was passing `undefined`
+      // instead, causing napi-rs type checks to panic.
+      const result = await checkSameOutput("test_tsfn_null_js_callback", []);
+      expect(result).toContain("PASS: js_callback is NULL");
+    });
+  });
+
   describe("napi_get_value_string_utf8 with buffer", () => {
     // see https://github.com/oven-sh/bun/issues/6949
     it("copies one char", async () => {

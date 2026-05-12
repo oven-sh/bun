@@ -391,25 +391,29 @@ impl FileSystemRouter {
         if let Some(dir_ref) = root_dir_info {
             if let Some(entries) = dir_ref.get_entries_const() {
                 'outer: for &entry_ptr in entries.data.values() {
-                    // SAFETY: `entry_ptr` is a `*mut Entry` into the process-static
-                    // EntryStore; no other live `&mut` to it in this scope.
-                    let base = unsafe { &*entry_ptr }.base();
-                    if base.first() == Some(&b'.') {
+                    // BACKREF: `entry_ptr` is a `*mut Entry` into the process-static
+                    // EntryStore; the store outlives this loop. Wrap once so the
+                    // shared-only reads below are safe `Deref`s.
+                    let entry = BackRef::from(
+                        core::ptr::NonNull::new(entry_ptr).expect("EntryStore entry"),
+                    );
+                    if entry.base().first() == Some(&b'.') {
                         continue 'outer;
                     }
                     // SAFETY: `transpiler.fs` is the FileSystem singleton; `&mut .fs`
-                    // (the `Implementation` field) is the lazy-stat receiver.
+                    // (the `Implementation` field) is the lazy-stat receiver. `kind`
+                    // needs `&mut Entry` to update the cached stat; no shared borrow
+                    // of `*entry_ptr` is live across this block.
                     let kind = {
                         let fs_impl = unsafe { &mut (*vm.transpiler.fs).fs };
                         unsafe { &mut *entry_ptr }.kind(fs_impl, false)
                     };
                     if kind == Fs::EntryKind::Dir {
                         for banned_dir in Router::BANNED_DIRS.iter() {
-                            if unsafe { &*entry_ptr }.base() == *banned_dir {
+                            if entry.base() == *banned_dir {
                                 continue 'outer;
                             }
                         }
-                        let entry = unsafe { &*entry_ptr };
                         let abs_parts: [&[u8]; 2] = [entry.dir, entry.base()];
                         // `abs()` writes into a thread-local buffer; copy out
                         // before recursing (recursion overwrites it).

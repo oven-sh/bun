@@ -40,6 +40,25 @@ pub enum Readable {
 }
 
 impl Readable {
+    /// Mutable borrow of the `Pipe` payload's `PipeReader`.
+    ///
+    /// Centralises the `IntrusiveRc → &mut T` deref so the per-match-arm
+    /// `unsafe` blocks (`ref_`/`unref`/`close` and the `Subprocess` callers in
+    /// `on_close_io`/`on_process_exit`/`testing_apis`) collapse to this one
+    /// site. `IntrusiveRc` (= `RefPtr`) deliberately has no `DerefMut`; the
+    /// invariant that makes `&mut` sound here is that `Readable::Pipe` holds
+    /// the owning strong ref for the variant's lifetime (created by
+    /// `PipeReader::create`, released by `detach()`/`deref()` only after the
+    /// variant is moved out), the reader lives in its own heap allocation
+    /// disjoint from `Readable`/`Subprocess`, and access is
+    /// single-JS-mutator-thread.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub(super) fn pipe_reader_mut(pipe: &IntrusiveRc<PipeReader>) -> &mut PipeReader {
+        // SAFETY: see fn doc — owning IntrusiveRc, heap-disjoint, single-thread.
+        unsafe { &mut *pipe.as_ptr() }
+    }
+
     pub fn memory_cost(&self) -> usize {
         match self {
             Readable::Pipe(pipe) => mem::size_of::<PipeReader>() + pipe.memory_cost(),
@@ -58,8 +77,7 @@ impl Readable {
     pub fn ref_(&mut self) {
         match self {
             Readable::Pipe(pipe) => {
-                // SAFETY: holding the IntrusiveRc keeps the PipeReader alive; RefPtr has no DerefMut.
-                unsafe { (*pipe.as_ptr()).update_ref(true) };
+                Self::pipe_reader_mut(pipe).update_ref(true);
             }
             _ => {}
         }
@@ -68,8 +86,7 @@ impl Readable {
     pub fn unref(&mut self) {
         match self {
             Readable::Pipe(pipe) => {
-                // SAFETY: holding the IntrusiveRc keeps the PipeReader alive; RefPtr has no DerefMut.
-                unsafe { (*pipe.as_ptr()).update_ref(false) };
+                Self::pipe_reader_mut(pipe).update_ref(false);
             }
             _ => {}
         }
@@ -165,8 +182,7 @@ impl Readable {
                 *self = Readable::Closed;
             }
             Readable::Pipe(pipe) => {
-                // SAFETY: holding the IntrusiveRc keeps the PipeReader alive; RefPtr has no DerefMut.
-                unsafe { (*pipe.as_ptr()).close() };
+                Self::pipe_reader_mut(pipe).close();
             }
             _ => {}
         }

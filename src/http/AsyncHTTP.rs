@@ -720,21 +720,22 @@ impl<'a> AsyncHTTP<'a> {
         // PORT NOTE: Zig leaked `ctx` (never destroyed). `Box::leak` is forbidden
         // (PORTING.md §Forbidden); allocate via `heap::alloc` and reclaim once
         // the single sync callback has fired and we've read the result.
-        let ctx: *mut SingleHTTPChannel = bun_core::heap::into_raw(Box::new(SingleHTTPChannel::init()));
+        let ctx = bun_core::heap::into_raw_nn(Box::new(SingleHTTPChannel::init()));
         self.result_callback =
-            HTTPClientResultCallback::new::<SingleHTTPChannel>(ctx, send_sync_callback);
+            HTTPClientResultCallback::new::<SingleHTTPChannel>(ctx.as_ptr(), send_sync_callback);
 
         let mut batch = Batch::default();
         self.schedule(&mut batch);
         crate::HTTPThread::schedule(batch);
 
-        // SAFETY: `ctx` is a live heap allocation we own; the HTTP thread only
-        // touches it inside `send_sync_callback`, whose final action is
-        // `write_item`, so by the time `read_item` returns the callback has
-        // finished and no other reference remains.
-        let result = unsafe { (*ctx).read_item() };
+        // `ctx` is a live heap allocation we own; the HTTP thread only touches
+        // it inside `send_sync_callback`, whose final action is `write_item`,
+        // so by the time `read_item` returns the callback has finished and no
+        // other reference remains. `read_item` takes `&self` (channel internals
+        // are interior-mutable), so a `ParentRef` shared deref is sufficient.
+        let result = bun_ptr::ParentRef::from(ctx).read_item();
         // SAFETY: see above — sole owner, callback completed.
-        drop(unsafe { bun_core::heap::take(ctx) });
+        drop(unsafe { bun_core::heap::take(ctx.as_ptr()) });
         if let Some(err) = result.fail {
             return Err(err);
         }

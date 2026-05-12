@@ -287,8 +287,8 @@ impl<'a> InternalState<'a> {
                                 body_out_str.list.capacity(),
                             )
                         };
-                        // SAFETY: decompressor was returned by libdeflate_alloc_decompressor.
-                        let result = unsafe { &mut *deflater.decompressor }
+                        let result = deflater
+                            .decompressor_mut()
                             .decompress(buffer, allocated, bun_libdeflate::Encoding::Gzip);
 
                         if result.status == bun_libdeflate::Status::Success {
@@ -301,8 +301,7 @@ impl<'a> InternalState<'a> {
                     }
                 }
 
-                // SAFETY: decompressor was returned by libdeflate_alloc_decompressor.
-                let result = unsafe { &mut *deflater.decompressor }.decompress(
+                let result = deflater.decompressor_mut().decompress(
                     buffer,
                     &mut deflater.shared_buffer,
                     match self.encoding {

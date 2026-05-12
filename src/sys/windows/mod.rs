@@ -4294,9 +4294,8 @@ pub struct UpdateStdioModeFlagsOpts {
 pub fn update_stdio_mode_flags(i: bun_sys::Stdio, opts: UpdateStdioModeFlagsOpts) -> Result<DWORD, bun_core::Error> {
     let fd = i.fd();
     let mut original_mode: DWORD = 0;
-    // SAFETY: fd is a valid console handle
-    if unsafe { externs::GetConsoleMode(fd.native(), &mut original_mode) } != 0 {
-        if unsafe { externs::SetConsoleMode(fd.native(), (original_mode | opts.set) & !opts.unset) } == 0 {
+    if kernel32_2::GetConsoleMode(fd.native(), &mut original_mode) != 0 {
+        if kernel32_2::SetConsoleMode(fd.native(), (original_mode | opts.set) & !opts.unset) == 0 {
             return Err(get_last_error());
         }
     } else {
@@ -4329,10 +4328,7 @@ impl Drop for StdinModeGuard {
     #[inline]
     fn drop(&mut self) {
         if let Some(mode) = self.original {
-            // SAFETY: stdin handle is valid for the lifetime of the process.
-            unsafe {
-                let _ = externs::SetConsoleMode(bun_sys::Stdio::StdIn.fd().native(), mode);
-            }
+            let _ = kernel32_2::SetConsoleMode(bun_sys::Stdio::StdIn.fd().native(), mode);
         }
     }
 }
@@ -4358,8 +4354,12 @@ pub fn is_watcher_child() -> bool {
 pub fn become_watcher_manager() -> ! {
     // this process will be the parent of the child process that actually runs the script
     let mut procinfo: PROCESS_INFORMATION = bun_core::ffi::zeroed();
-    // SAFETY: FFI call has no input invariants; mutates process-global stdio inheritance flags
-    unsafe { externs::windows_enable_stdio_inheritance() };
+    unsafe extern "C" {
+        // safe: no args; C++ shim mutates process-global stdio inheritance
+        // flags — no preconditions.
+        safe fn windows_enable_stdio_inheritance();
+    }
+    windows_enable_stdio_inheritance();
     // SAFETY: null args allowed
     let job = unsafe { externs::CreateJobObjectA(ptr::null_mut(), ptr::null()) };
     if job.is_null() {
@@ -4416,8 +4416,7 @@ pub fn become_watcher_manager() -> ! {
             bun_core::Output::panic(format_args!("Failed to wait for child process: {}\n", err.0));
         }
         let mut exit_code: DWORD = 0;
-        // SAFETY: hProcess valid, exit_code is out-param
-        if unsafe { externs::GetExitCodeProcess(procinfo.hProcess, &mut exit_code) } == 0 {
+        if kernel32_2::GetExitCodeProcess(procinfo.hProcess, &mut exit_code) == 0 {
             // Capture before NtClose — closing the handle may overwrite the
             // thread's last-error.
             let err = Win32Error(GetLastError() as u16);
@@ -4480,8 +4479,7 @@ pub fn spawn_watcher_child(
     // SAFETY: NUL written at [len]
     let image_path_z = bun_str::WStr::from_buf(&wbuf[..], image_path.len());
 
-    // SAFETY: returns owned env block or null
-    let kernelenv = unsafe { kernel32_2::GetEnvironmentStringsW() };
+    let kernelenv = kernel32_2::GetEnvironmentStringsW();
     let _free_env = scopeguard::guard(kernelenv, |envptr| {
         if !envptr.is_null() {
             // SAFETY: envptr was returned from GetEnvironmentStringsW and is non-null
@@ -4837,6 +4835,14 @@ mod kernel32_2 {
         pub(super) safe fn GetEnvironmentStringsW() -> LPWSTR;
         pub(super) fn FreeEnvironmentStringsW(penv: LPWSTR) -> BOOL;
         pub(super) fn GetEnvironmentVariableW(lpName: LPCWSTR, lpBuffer: *mut WCHAR, nSize: DWORD) -> DWORD;
+        // safe: by-value `HANDLE`/`DWORD` only; bad handle → BOOL 0 +
+        // GetLastError, never UB. Out-param is `&mut DWORD` (non-null, valid
+        // for write). Local `safe fn` re-decls so in-crate callers drop the
+        // per-site `unsafe { }`; the `bun_windows_sys::externs` raw decls stay
+        // re-exported for out-of-crate callers.
+        pub(super) safe fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: &mut DWORD) -> BOOL;
+        pub(super) safe fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
+        pub(super) safe fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: &mut DWORD) -> BOOL;
     }
 }
 

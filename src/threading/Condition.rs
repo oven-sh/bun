@@ -53,12 +53,17 @@ use core::sync::atomic::Ordering;
 #[cfg(not(windows))]
 use crate::Futex;
 use crate::Mutex;
+use crate::guarded::GuardedLock;
 
 #[derive(Default)]
 pub struct Condition {
     // PORT NOTE: Zig field name `impl` is a Rust keyword; renamed to `impl_`.
     impl_: Impl,
 }
+
+/// `parking_lot::Condvar` drop-in alias. Same type, different spelling so
+/// migrated call sites can keep `Condvar::new()` / `notify_one()` / `notify_all()`.
+pub type Condvar = Condition;
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeoutError {
@@ -73,6 +78,13 @@ impl From<TimeoutError> for bun_core::Error {
 }
 
 impl Condition {
+    /// Const-init an empty condition variable (Zig: `.{}`). Required for
+    /// `static` items — this is the `parking_lot::Condvar::new()` parity that
+    /// `std::sync::Condvar` lacks.
+    pub const fn new() -> Self {
+        Self { impl_: Impl::new() }
+    }
+
     /// Atomically releases the Mutex, blocks the caller thread, then re-acquires the Mutex on return.
     /// "Atomically" here refers to accesses done on the Condition after acquiring the Mutex.
     ///
@@ -126,6 +138,45 @@ impl Condition {
     pub fn broadcast(&self) {
         self.impl_.wake(Notify::All);
     }
+
+    // ── parking_lot::Condvar parity (guard-style API) ─────────────────────
+    //
+    // Zig's `Condition.wait` takes a bare `*Mutex` (the caller writes
+    // `mutex.lock(); defer mutex.unlock(); cond.wait(&mutex)`). Rust callers
+    // hold a `GuardedLock<'_, T>` instead, so these overloads peel the inner
+    // `&Mutex` out of the guard and forward. The mutex is unlocked for the
+    // duration of the OS wait and re-locked before return, so the guard's
+    // `Drop` (which unlocks once) remains balanced.
+    //
+    // `guard` is `&mut` so the protected `T` cannot be observed while the
+    // mutex is released inside the wait — same contract as
+    // `parking_lot::Condvar::wait(&mut MutexGuard<T>)`.
+
+    /// [`wait`](Self::wait) for callers holding a [`GuardedLock`].
+    pub fn wait_guarded<T>(&self, guard: &mut GuardedLock<'_, T, Mutex>) {
+        self.wait(guard.mutex())
+    }
+
+    /// [`timed_wait`](Self::timed_wait) for callers holding a [`GuardedLock`].
+    pub fn timed_wait_guarded<T>(
+        &self,
+        guard: &mut GuardedLock<'_, T, Mutex>,
+        timeout_ns: u64,
+    ) -> Result<(), TimeoutError> {
+        self.timed_wait(guard.mutex(), timeout_ns)
+    }
+
+    /// Alias for [`signal`](Self::signal) — `parking_lot::Condvar` spelling.
+    #[inline]
+    pub fn notify_one(&self) {
+        self.signal()
+    }
+
+    /// Alias for [`broadcast`](Self::broadcast) — `parking_lot::Condvar` spelling.
+    #[inline]
+    pub fn notify_all(&self) {
+        self.broadcast()
+    }
 }
 
 #[cfg(windows)]
@@ -174,13 +225,17 @@ mod windows_impl {
 
     impl Default for WindowsImpl {
         fn default() -> Self {
-            Self {
-                condition: core::cell::UnsafeCell::new(windows::CONDITION_VARIABLE::default()),
-            }
+            Self::new()
         }
     }
 
     impl WindowsImpl {
+        pub(super) const fn new() -> Self {
+            Self {
+                condition: core::cell::UnsafeCell::new(windows::CONDITION_VARIABLE_INIT),
+            }
+        }
+
         pub(super) fn wait(&self, mutex: &Mutex, timeout: Option<u64>) -> Result<(), TimeoutError> {
             let mut timeout_overflowed = false;
             let mut timeout_ms: windows::DWORD = windows::INFINITE;
@@ -264,6 +319,13 @@ struct FutexImpl {
 
 #[cfg(not(windows))]
 impl FutexImpl {
+    const fn new() -> Self {
+        Self {
+            state: AtomicU32::new(0),
+            epoch: AtomicU32::new(0),
+        }
+    }
+
     const ONE_WAITER: u32 = 1;
     const WAITER_MASK: u32 = 0xffff;
 

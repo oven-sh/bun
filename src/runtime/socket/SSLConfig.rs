@@ -434,12 +434,13 @@ pub extern "C" fn Bun__WebSocket__parseSSLConfig(
 /// (and all duped cert/key/CA strings inside it) when `connect()` never
 /// hands the pointer off to a Zig upgrade client.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(
+pub extern "C" fn Bun__WebSocket__freeSSLConfig(
     config: *mut bun_http::ssl_config::SSLConfig,
 ) {
-    // SAFETY: `config` was produced by `heap::alloc` (via `Option<Box<_>>`
-    // FFI niche) in `Bun__WebSocket__parseSSLConfig`; caller transfers
-    // ownership back. `bun_http::SSLConfig::drop` runs `deinit()`.
+    // SAFETY: C++-only entry point; `config` was produced by `heap::alloc`
+    // (via `Option<Box<_>>` FFI niche) in `Bun__WebSocket__parseSSLConfig` and
+    // the caller transfers ownership back. `bun_http::SSLConfig::drop` runs
+    // `deinit()`.
     drop(unsafe { bun_core::heap::take(config) });
 }
 

@@ -346,11 +346,11 @@ impl<W: fmt::Write + ?Sized> fmt::Write for FmtAdapter<'_, W> {
 impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
     fn write_all(&mut self, buf: &[u8]) -> Result<()> {
         // Fast path: valid UTF-8 (overwhelmingly the case for our printers).
-        let r = match core::str::from_utf8(buf) {
-            Ok(s) => self.inner.write_str(s),
+        let r = match bun_string::strings::str_utf8(buf) {
+            Some(s) => self.inner.write_str(s),
             // PERF(port): lossy alloc only on invalid UTF-8; Zig had no
             // text/bytes split so this branch is the price of bridging.
-            Err(_) => self.inner.write_str(&String::from_utf8_lossy(buf)),
+            None => self.inner.write_str(&String::from_utf8_lossy(buf)),
         };
         r.map_err(|_| bun_core::err!("FmtError"))
     }

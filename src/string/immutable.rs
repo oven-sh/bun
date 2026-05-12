@@ -1672,6 +1672,23 @@ pub fn is_valid_utf8(slice: &[u8]) -> bool {
     simdutf::validate::utf8(slice)
 }
 
+/// SIMD-validated `&str` view of `bytes`; `None` if not valid UTF-8.
+///
+/// This is the codebase-wide replacement for `core::str::from_utf8` — every
+/// runtime UTF-8 validation goes through simdutf (~3-10× faster than std's
+/// scalar DFA on AVX2/NEON). NOT `const`: the one allowed exception is
+/// `bun_core::env::const_str_slice` (compile-time git-SHA slicing), which is
+/// the only place `core::str::from_utf8` may appear.
+#[inline]
+pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
+    if simdutf::validate::utf8(bytes) {
+        // SAFETY: simdutf just validated `bytes` as well-formed UTF-8.
+        Some(unsafe { core::str::from_utf8_unchecked(bytes) })
+    } else {
+        None
+    }
+}
+
 pub use index_of_newline_or_non_ascii as index_of_newline_or_non_ascii_or_ansi;
 
 /// Checks if slice[offset..] has any < 0x20 or > 127 characters

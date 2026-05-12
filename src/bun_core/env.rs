@@ -250,6 +250,11 @@ const fn const_str_slice(s: &'static str, start: usize, end: usize) -> &'static 
     // `[u8]::split_at` and `str::from_utf8` are both `const` on stable, so the
     // sub-slice + UTF-8 check happens entirely at compile time without raw
     // pointer arithmetic.
+    //
+    // ALLOWED `core::str::from_utf8`: this is the ONE permitted call site in
+    // the codebase. simdutf is the runtime validator (`bun_string::strings::
+    // {is_valid_utf8, str_utf8}`); `const fn` cannot call FFI, and this body
+    // const-evals at compile time only (git-SHA slicing).
     let (head, _) = s.as_bytes().split_at(end);
     let (_, sub) = head.split_at(start);
     match core::str::from_utf8(sub) {

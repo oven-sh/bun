@@ -950,7 +950,7 @@ impl<'a> fmt::Display for StorePathFormatter<'a> {
         // `fmt::Error` rather than corrupt the path.
         let mut buf = Vec::with_capacity(self.str.len());
         self.write_to(&mut buf).map_err(|_| fmt::Error)?;
-        f.write_str(core::str::from_utf8(&buf).map_err(|_| fmt::Error)?)
+        f.write_str(bun_string::strings::str_utf8(&buf).ok_or(fmt::Error)?)
     }
 }
 

@@ -226,8 +226,7 @@ impl<'a> DataURL<'a> {
             trailing_start -= 1;
         }
 
-        // TODO(b2-blocked): bun_simdutf_sys::validate::utf8 — crate not in deps; use std fallback.
-        if core::str::from_utf8(text).is_err() {
+        if !strings::is_valid_utf8(text) {
             return false;
         }
 

@@ -28,11 +28,7 @@ describe.concurrent("#18192 Bun.file().slice().stream() on large files", () => {
         stderr: "pipe",
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stderr).toBe("");
       expect(stdout.trim()).toBe(JSON.stringify({ len: 1, first: "A" }));
@@ -73,11 +69,7 @@ describe.concurrent("#18192 Bun.file().slice().stream() on large files", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("OK");

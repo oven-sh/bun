@@ -309,7 +309,7 @@ export const globalFlags: Flag[] = [
 
   // ─── Unwinding / exception tables ───
   // These go together: -fno-unwind-tables at compile, --no-eh-frame-hdr at
-  // link (LTO only), and strip -R .eh_frame at post-link (LTO only).
+  // link (release glibc), and strip -R .eh_frame at post-link (release glibc).
   // See linkerFlags and stripFlags below — kept adjacent intentionally.
   {
     flag: ["-fno-unwind-tables", "-fno-asynchronous-unwind-tables"],
@@ -921,15 +921,18 @@ export const linkerFlags: Flag[] = [
   },
   {
     // Paired with compile-side -fno-unwind-tables above.
-    // Only in LTO builds — otherwise .eh_frame is needed for backtraces.
+    // Gated on release (not LTO): the workspace is `panic = "abort"` and
+    // C++ is `-fno-exceptions`/`-fno-unwind-tables`, so nothing unwinds at
+    // runtime regardless of LTO. Backtraces walk frame pointers (forced on
+    // both sides). Debug builds keep .eh_frame for gdb/libunwind.
     flag: "-Wl,--no-eh-frame-hdr",
-    when: c => c.linux && c.lto,
-    desc: "Omit eh_frame header (LTO builds; size opt; see stripFlags for matching -R .eh_frame)",
+    when: c => c.linux && c.abi === "gnu" && c.release,
+    desc: "Omit eh_frame header (release; size/RSS opt; see stripFlags for matching -R .eh_frame)",
   },
   {
     flag: "-Wl,--eh-frame-hdr",
-    when: c => c.linux && !c.lto,
-    desc: "Keep eh_frame header (non-LTO; needed for backtraces)",
+    when: c => c.linux && !(c.abi === "gnu" && c.release),
+    desc: "Keep eh_frame header (debug/musl/android; needed for DWARF backtraces)",
   },
   {
     flag: c => `--ld-path=${c.ld}`,
@@ -952,15 +955,25 @@ export const linkerFlags: Flag[] = [
       "-Wl,-z,stack-size=12800000",
       "-Wl,-z,lazy",
       "-Wl,-z,norelro",
+      // (no --pack-dyn-relocs=relr: DT_RELR needs glibc ≥ 2.36 to load,
+      // and we wrap symbols for portability down to 2.17. With -no-pie
+      // there are <500 R_*_RELATIVE entries anyway — not worth the compat
+      // break. The .data.rel.ro RW-segment cost is handled by the
+      // sections.lds overlay below instead.)
       "-Wl,-O2",
       "-Wl,--gdb-index",
       "-Wl,-z,combreloc",
-      "-Wl,--sort-section=name",
+      // NOTE: --sort-section=name was here historically; lld ignores it
+      // for the default `.text` rule and it never partitioned hot/cold —
+      // fat-LTO emits all 14k Rust .text.* sections in crate-alphabetical
+      // order, so hot bun_clap shared 64 KB fault-around blocks with cold
+      // bun_install/bun_bundler/bun_css. Replaced by the explicit
+      // --symbol-ordering-file below.
       "-Wl,--hash-style=both",
       "-Wl,--build-id=sha1",
     ],
     when: c => c.linux,
-    desc: "Linux linker tuning: lazy binding, large stack, compressed debug, fast gdb loading",
+    desc: "Linux linker tuning: lazy binding, large stack, fast gdb loading",
   },
   {
     flag: "-Wl,--gc-sections",
@@ -968,9 +981,13 @@ export const linkerFlags: Flag[] = [
     desc: "Garbage-collect unused sections (release only; debug keeps Zig dbHelper symbols)",
   },
   {
-    flag: c => [c.profile ? "-Wl,-icf=none" : "-Wl,-icf=safe", `-Wl,-Map=${c.buildDir}/${bunExeName(c)}.linker-map`],
+    // Always icf=safe in release. The stripped `bun` shares its build-id
+    // with `bun-profile`, so disabling ICF on the profile binary "for perf
+    // symbolication" would also bloat the shipped binary's .text — and
+    // `perf` symbolicates folded functions fine via the linker-map anyway.
+    flag: c => ["-Wl,-icf=safe", `-Wl,-Map=${c.buildDir}/${bunExeName(c)}.linker-map`],
     when: c => c.linux && c.release && !c.asan && !c.valgrind,
-    desc: "Identical-code-folding (none on profile builds so perf symbolication is exact; safe on regular release)",
+    desc: "Identical-code-folding (safe; perf symbolication uses the linker-map)",
   },
 
   // ─── Symbols / exports ───
@@ -995,6 +1012,11 @@ export const linkerFlags: Flag[] = [
     ],
     when: c => c.linux,
     desc: "Dynamic symbol list + version script",
+  },
+  {
+    flag: c => [`-Wl,--symbol-ordering-file=${c.cwd}/src/startup.order`, "-Wl,--no-warn-symbol-ordering"],
+    when: c => c.linux && c.release,
+    desc: "Cluster hot startup .text (RSS/iTLB); see src/startup.order to regenerate",
   },
 
   // ─── FreeBSD ───
@@ -1069,8 +1091,10 @@ export function linkDepends(cfg: Config): string[] {
   if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
   if (cfg.windows) return [join(cfg.cwd, "src/symbols.def")];
   if (cfg.darwin) return [join(cfg.cwd, "src/symbols.txt")];
-  // linux: ELF dynamic-list + version script
-  return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
+  // linux: ELF dynamic-list + version script + .text ordering
+  const deps = [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
+  if (cfg.release) deps.push(join(cfg.cwd, "src/startup.order"));
+  return deps;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1108,14 +1132,17 @@ export const stripFlags: Flag[] = [
   {
     // musl: no eh_frame handling differences, but CMake gates on NOT musl so we do too.
     //
-    // Gated on LTO to match -Wl,--no-eh-frame-hdr in linkerFlags above. GNU
-    // strip does not rewrite the program header table, so on a non-LTO
-    // build (which links WITH --eh-frame-hdr) removing .eh_frame_hdr here
-    // would leave an orphan PT_GNU_EH_FRAME phdr pointing at unmapped
-    // memory — any C++ unwind (e.g. WTF::Thread teardown after a worker
-    // exits) would then fault reading it.
+    // Gated on release to match -Wl,--no-eh-frame-hdr in linkerFlags above
+    // (both fire on `c.linux && c.abi === "gnu" && c.release`). GNU strip
+    // does not rewrite the program header table, so the PT_GNU_EH_FRAME
+    // phdr must already be absent at link time — which the matching
+    // --no-eh-frame-hdr above guarantees. Nothing unwinds at runtime
+    // (`panic = "abort"`, `-fno-exceptions`); release backtraces use frame
+    // pointers. Saves ~962 KB of R-segment (.eh_frame 806 KB +
+    // .eh_frame_hdr 142 KB + .gcc_except_table 13 KB) that otherwise gets
+    // dragged into RSS via 64 KB fault-around on adjacent .rodata reads.
     flag: ["-R", ".eh_frame", "-R", ".eh_frame_hdr", "-R", ".gcc_except_table"],
-    when: c => c.linux && c.abi === "gnu" && c.lto,
+    when: c => c.linux && c.abi === "gnu" && c.release,
     desc: "Remove unwind sections (GNU strip required — llvm-strip leaves [LOAD #2 [R]])",
   },
 ];

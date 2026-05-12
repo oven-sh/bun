@@ -227,6 +227,12 @@ export const webkit: Dependency = {
     // (macOS: Homebrew headers + system libs; Linux: libicu-dev) — cmake
     // auto-detects.
     const optFlags: string[] = computeCpuTargetFlags(cfg);
+    // -fno-pic: match bun's own C++ (flags.ts) so JSC/WTF const-pointer
+    // tables land in .rodata instead of .data.rel.ro. We link -no-pie, so
+    // PIC codegen here is pure overhead (GOT indirections + ~550 KB of
+    // RW-segment vtables that would otherwise be shared RO). Android stays
+    // PIC because bionic mandates PIE.
+    if (cfg.unix && cfg.abi !== "android") optFlags.push("-fno-pic", "-fno-pie");
     if (cfg.lto) optFlags.push("-flto=full");
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {
@@ -294,6 +300,12 @@ export const webkit: Dependency = {
             CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: "BOTH",
           }
         : {}),
+      // Match bun's -fno-pic: WebKit's CMake defaults POSITION_INDEPENDENT_CODE
+      // to ON for static-archive targets, which puts ~550 KB of vtables into
+      // .data.rel.ro. We link -no-pie so this is dead weight in the RW
+      // PT_LOAD. Android (PIE) overrides via the -fPIC in optFlags above
+      // never being suppressed there.
+      ...(cfg.abi !== "android" ? { CMAKE_POSITION_INDEPENDENT_CODE: "OFF" } : {}),
       PORT: "JSCOnly",
       ENABLE_STATIC_JSC: "ON",
       USE_THIN_ARCHIVES: "OFF",

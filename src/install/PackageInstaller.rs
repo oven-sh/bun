@@ -1251,11 +1251,11 @@ impl<'a> PackageInstaller<'a> {
 
         // PORT NOTE: reshaped for borrowck — `PackageInstall` borrows several `self.*`
         // fields while subsequent code also accesses `self.manager` / `self.node_modules`
-        // / `self.lockfile` mutably (Zig aliased freely). Detach the borrows via raw
-        // pointers so `installer`'s lifetime is independent of `&mut self`.
-        // SAFETY: BACKREF — none of these fields are dropped, moved, or resized while
+        // / `self.lockfile` mutably (Zig aliased freely). Detach the borrows via a
+        // `ParentRef` so `installer`'s lifetime is independent of `&mut self`.
+        // BACKREF — none of these fields are dropped, moved, or resized while
         // `installer` is alive (matches Zig invariant; see `PackageInstaller` field docs).
-        let node_modules_ptr: *const NodeModulesFolder = &raw const self.node_modules;
+        let node_modules_ref = bun_ptr::ParentRef::<NodeModulesFolder>::new(&self.node_modules);
         let mut installer = PackageInstall {
             progress: if self.manager().options.log_level.show_progress() {
                 Some(progress!(self))
@@ -1272,7 +1272,7 @@ impl<'a> PackageInstaller<'a> {
                 path: Box::<[u8]>::from(p),
             }),
             package_version,
-            node_modules: unsafe { &*node_modules_ptr },
+            node_modules: node_modules_ref.get(),
             // BACKREF accessor — `self.lockfile` is `*mut Lockfile` (never null,
             // outlives `'a`); `lockfile()` centralises the raw deref so this
             // site stays safe.
@@ -2018,9 +2018,9 @@ impl<'a> PackageInstaller<'a> {
             // `&self.node_modules`, but this else-branch never reads `destination_dir`
             // (it only `close()`s it at the end, which is a no-op for `NodeModulesPath`).
             // Detach via raw ptr so subsequent `&mut self` calls type-check.
-            // SAFETY: BACKREF — `self.node_modules` is not moved/dropped in this branch.
+            // BACKREF — `self.node_modules` is not moved/dropped in this branch.
             let mut destination_dir = LazyPackageDestinationDir::NodeModulesPath {
-                node_modules: unsafe { &*node_modules_ptr },
+                node_modules: node_modules_ref.get(),
                 root_node_modules_dir: self.root_node_modules_folder,
             };
 

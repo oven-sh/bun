@@ -1524,6 +1524,17 @@ impl Lockfile {
         }
 
         let cache_ctx = manager.manifest_disk_cache_ctx();
+        // PORT NOTE: heavy borrowck overlap — Zig calls
+        // `manager.manifests.byNameHash(manager, …)` (manifests is a field of
+        // manager) and then opens a `string_builder` on `manager.lockfile`
+        // while still holding `&manifest`. Route through a raw root so disjoint
+        // fields (`manifests`, `lockfile.{string_pool, buffers.*}`) can be
+        // split. BACKREF `mgr_ref` wraps the same root for the read-only
+        // `options` projection so it goes through safe `ParentRef::Deref`.
+        let manager_ptr: *mut PackageManager = manager;
+        let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
+            core::ptr::NonNull::new(manager_ptr).expect("derived from &mut, non-null"),
+        );
         let mut pkgs = self.packages.slice();
         let len = pkgs.len();
 
@@ -1552,17 +1563,11 @@ impl Lockfile {
 
             match pkg_res.tag {
                 ResolutionTag::Npm => {
-                    // PORT NOTE: heavy borrowck overlap — Zig calls
-                    // `manager.manifests.byNameHash(manager, …)` (manifests is a
-                    // field of manager) and then opens a `string_builder` on
-                    // `manager.lockfile` while still holding `&manifest`. Route
-                    // through a raw root so disjoint fields (`manifests`,
-                    // `lockfile.{string_pool, buffers.*}`) can be split.
-                    // SAFETY: `manager_ptr` is the live exclusive borrow's address.
-                    // `manifests` and `lockfile` are non-overlapping fields; nothing
-                    // below resizes/relocates `manifests` while `manifest` is held.
-                    let manager_ptr: *mut PackageManager = manager;
-                    let scope = unsafe { &(*manager_ptr).options }.scope_for_package_name(
+                    // `options` read via BACKREF `mgr_ref` (see hoisted note
+                    // above); `manifests` and `lockfile` are non-overlapping
+                    // fields and nothing below resizes/relocates `manifests`
+                    // while `manifest` is held.
+                    let scope = mgr_ref.options.scope_for_package_name(
                         pkg_name.slice(self.buffers.string_bytes.as_slice()),
                     );
                     // SAFETY: `manifests` projected from `manager_ptr`; the

@@ -133,6 +133,15 @@ pub fn populate_manifest_cache(
     // provenance root and reborrow `manager` per-call.
     let cache_ctx = manager.manifest_disk_cache_ctx();
     let manager_ptr: *mut PackageManager = manager;
+    // BACKREF wrapper over the same provenance root for the read-only
+    // `options` projections in the loop body — collapses four per-site raw
+    // `(*manager_ptr).options` derefs into safe `Deref` through
+    // `ParentRef::get()`. Mutation (`manifests`, whole-`&mut PackageManager`)
+    // still goes through `manager_ptr` directly. Safe `From<NonNull>`
+    // construction — `manager_ptr` was just derived from `&mut *manager`.
+    let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
+        core::ptr::NonNull::new(manager_ptr).expect("derived from &mut, non-null"),
+    );
     // SAFETY: `manager_ptr` is the live exclusive borrow's address; we only
     // take *shared* projections of `lockfile` here, and the loop body never
     // mutates `lockfile.buffers` / `lockfile.packages`.
@@ -169,19 +178,21 @@ pub fn populate_manifest_cache(
 
                 let pkg_name = pkg_names[pkg_id as usize];
                 let pkg_name_slice = pkg_name.slice(string_buf);
-                // SAFETY: see provenance-root note above; `options` is not
-                // mutated between here and the `start_manifest_task` call.
+                // `options` is not mutated between here and the
+                // `start_manifest_task` call — read via the BACKREF `mgr_ref`.
                 let needs_extended_manifest =
-                    unsafe { (*manager_ptr).options.minimum_release_age_ms.is_some() };
+                    mgr_ref.options.minimum_release_age_ms.is_some();
 
-                // SAFETY: `scope_for_package_name` borrows only `options`;
-                // `manifests` is a disjoint field projected from the same raw
-                // provenance root. `by_name`'s `pm`-derived reads are hoisted
-                // into the by-value `cache_ctx`, so the call holds only
-                // `&mut manifests`.
+                // `scope_for_package_name` borrows only `options` (via the
+                // BACKREF `mgr_ref`); `manifests` is a disjoint field projected
+                // from the same raw provenance root. `by_name`'s `pm`-derived
+                // reads are hoisted into the by-value `cache_ctx`, so the call
+                // holds only `&mut manifests`.
                 let scope = bun_ptr::BackRef::new(
-                    unsafe { &(*manager_ptr).options }.scope_for_package_name(pkg_name_slice),
+                    mgr_ref.options.scope_for_package_name(pkg_name_slice),
                 );
+                // SAFETY: `manifests` is disjoint from `options`/`lockfile`;
+                // `manager_ptr` is the SRW root.
                 let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
                     cache_ctx,
                     scope.get(),
@@ -221,14 +232,17 @@ pub fn populate_manifest_cache(
                         continue;
                     }
 
-                    // SAFETY: see provenance-root note above.
+                    // `options` read via BACKREF `mgr_ref` — see provenance-root
+                    // note above.
                     let needs_extended_manifest =
-                        unsafe { (*manager_ptr).options.minimum_release_age_ms.is_some() };
+                        mgr_ref.options.minimum_release_age_ms.is_some();
                     let package_name = pkg_names[pkg_id as usize].slice(string_buf);
-                    // SAFETY: see disjoint-field note on the `.All` arm above.
+                    // See disjoint-field note on the `.All` arm above.
                     let scope = bun_ptr::BackRef::new(
-                        unsafe { &(*manager_ptr).options }.scope_for_package_name(package_name),
+                        mgr_ref.options.scope_for_package_name(package_name),
                     );
+                    // SAFETY: `manifests` is disjoint from `options`/`lockfile`;
+                    // `manager_ptr` is the SRW root.
                     let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
                         cache_ctx,
                         scope.get(),

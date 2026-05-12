@@ -1418,21 +1418,21 @@ impl Diff {
                         let mut workspace_pkg = Package::default();
 
                         // The cache entry borrows `pm.workspace_package_json_cache`;
-                        // capture stable raw pointers to its fields so the
+                        // capture a stable BACKREF to its `source` so the
                         // `&mut pm` reborrow below doesn't conflict. The entry
                         // lives in a `StringHashMap` whose backing storage is
                         // not touched by `parse_with_json`.
-                        let (source_ptr, json_root): (*const bun_ast::Source, Expr) = match pm
+                        let (source_ref, json_root): (bun_ptr::ParentRef<bun_ast::Source>, Expr) = match pm
                             .workspace_package_json_cache
                             .get_with_path(&mut *log, package_json_path.slice(), Default::default())
                             .unwrap()
                         {
-                            Ok(entry) => (&raw const entry.source, entry.root),
+                            Ok(entry) => (bun_ptr::ParentRef::new(&entry.source), entry.root),
                             Err(_) => break 'update_mapping false,
                         };
-                        // SAFETY: see note above — entry storage is stable for
-                        // the remainder of this block.
-                        let source = unsafe { &*source_ptr };
+                        // BACKREF — entry storage is stable for the remainder
+                        // of this block (see note above).
+                        let source = source_ref.get();
 
                         let mut resolver: () = ();
                         workspace_pkg.parse_with_json::<()>(

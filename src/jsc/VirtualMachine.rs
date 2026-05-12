@@ -4990,11 +4990,16 @@ impl VirtualMachine {
         // and survives the `&mut self` reborrows below.
         let global = self.global();
         error_instance.to_zig_exception(global, exception);
-        let mut enable_source_code_preview = allow_source_code_preview
-            && !(bun_core::env_var::feature_flag::BUN_DISABLE_SOURCE_CODE_PREVIEW::get()
-                .unwrap_or(false)
-                || bun_core::env_var::feature_flag::BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW::get()
-                    .unwrap_or(false));
+        // `Cell<bool>` so the `Tail` drop-guard below can hold a shared `&Cell`
+        // and read the *current* value at scope-exit without a raw-ptr deref,
+        // while the body freely `.set()`s it (Zig late-evaluated `defer`).
+        let enable_source_code_preview = Cell::new(
+            allow_source_code_preview
+                && !(bun_core::env_var::feature_flag::BUN_DISABLE_SOURCE_CODE_PREVIEW::get()
+                    .unwrap_or(false)
+                    || bun_core::env_var::feature_flag::BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW::get()
+                        .unwrap_or(false)),
+        );
 
         // PORT NOTE: Zig modeled the two `defer` blocks below at fn-top; in
         // Rust we run them on the way out via this guard so every early
@@ -5003,7 +5008,7 @@ impl VirtualMachine {
             this: *mut VirtualMachine,
             exception: *mut ZigException,
             exception_list: Option<&'a mut ExceptionList>,
-            enable_source_code_preview: *const bool,
+            enable_source_code_preview: &'a Cell<bool>,
             source_code_slice: *const Option<bun_string::ZigStringSlice>,
         }
         impl Drop for Tail<'_> {
@@ -5014,8 +5019,8 @@ impl VirtualMachine {
                 let exception = unsafe { &mut *self.exception };
                 #[cfg(debug_assertions)]
                 {
-                    // SAFETY: stack-local raw ptrs; live for guard scope.
-                    let preview = unsafe { *self.enable_source_code_preview };
+                    let preview = self.enable_source_code_preview.get();
+                    // SAFETY: stack-local raw ptr; live for guard scope.
                     let slice = unsafe { &*self.source_code_slice };
                     if !preview && slice.is_some() {
                         bun_core::Output::panic(format_args!(
@@ -5047,7 +5052,7 @@ impl VirtualMachine {
             this: self,
             exception,
             exception_list,
-            enable_source_code_preview: &raw const enable_source_code_preview,
+            enable_source_code_preview: &enable_source_code_preview,
             source_code_slice,
         };
         // SAFETY: re-borrow through the guard's raw ptrs; `_tail` does not
@@ -5149,7 +5154,7 @@ impl VirtualMachine {
         // Don't show source code preview for REPL frames — it would show the
         // transformed IIFE wrapper code, not what the user typed.
         if frames[top].source_url.eql_comptime("[repl]") {
-            enable_source_code_preview = false;
+            enable_source_code_preview.set(false);
         }
 
         let top_source_url = frames[top].source_url.to_utf8();
@@ -5191,7 +5196,7 @@ impl VirtualMachine {
             } else {
                 None
             };
-            let external_code = if enable_source_code_preview
+            let external_code = if enable_source_code_preview.get()
                 && !already_remapped
                 && lookup.source_map.as_deref().is_some_and(|m| m.is_external())
             {
@@ -5207,7 +5212,7 @@ impl VirtualMachine {
             }
 
             let code: bun_string::ZigStringSlice = 'code: {
-                if !enable_source_code_preview {
+                if !enable_source_code_preview.get() {
                     break 'code bun_string::ZigStringSlice::EMPTY;
                 }
                 if let Some(src) = external_code {
@@ -5252,7 +5257,7 @@ impl VirtualMachine {
                 code
             };
 
-            if enable_source_code_preview && code.slice().is_empty() {
+            if enable_source_code_preview.get() && code.slice().is_empty() {
                 exception.collect_source_lines(error_instance, global);
             }
 
@@ -5298,7 +5303,7 @@ impl VirtualMachine {
             if !code.slice().is_empty() {
                 *source_code_slice = Some(code);
             }
-        } else if enable_source_code_preview {
+        } else if enable_source_code_preview.get() {
             exception.collect_source_lines(error_instance, global);
         }
 

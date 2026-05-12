@@ -1,4 +1,8 @@
 name: VSCode Extension Publish
+
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:

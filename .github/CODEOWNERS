@@ -1,5 +1,7 @@
 # Project
 /.github/CODEOWNERS @Jarred-Sumner
+/.github/workflows/ @Jarred-Sumner
+/.buildkite/ @Jarred-Sumner
 
 # Tests
 /test/expectations.txt @Jarred-Sumner

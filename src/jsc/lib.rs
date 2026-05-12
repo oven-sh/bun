@@ -1277,9 +1277,15 @@ unsafe extern "C" {
     safe fn ZigString__toAtomicValue(this: &bun_core::ZigString, global: &JSGlobalObject) -> JSValue;
     // ZigString__toExternalValue: use the generated `cpp::` re-export (canonical signature).
     safe fn ZigString__toJSONObject(this: &bun_core::ZigString, global: &JSGlobalObject) -> JSValue;
-    fn ZigString__external(
-        this: *const bun_core::ZigString,
-        global: *const JSGlobalObject,
+    // safe: `ZigString`/`JSGlobalObject` are `#[repr(C)]`/opaque-ZST handles (`&`
+    // is ABI-identical to non-null `*const`); `ctx` is an opaque round-trip
+    // pointer C++ stores into the external string's finalizer slot and forwards
+    // to `callback` on GC (never dereferenced as Rust data) — same contract as
+    // `JSC__JSGlobalObject__queueMicrotaskCallback`. The caller-side ownership
+    // transfer is documented at the (already-safe) public wrapper.
+    safe fn ZigString__external(
+        this: &bun_core::ZigString,
+        global: &JSGlobalObject,
         ctx: *mut core::ffi::c_void,
         callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
     ) -> JSValue;
@@ -1828,8 +1834,8 @@ impl ZigStringJsc for bun_core::ZigString {
                 .throw();
             return JSValue::ZERO;
         }
-        // SAFETY: ownership of the buffer + `ctx` transfers to JSC's finalizer.
-        unsafe { ZigString__external(self, global, ctx, callback) }
+        // Ownership of the buffer + `ctx` transfers to JSC's finalizer.
+        ZigString__external(self, global, ctx, callback)
     }
     #[inline]
     fn with_encoding(mut self) -> Self {

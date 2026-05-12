@@ -576,7 +576,10 @@ pub fn processSubtree(
                 if (pkg_id == parent_pkg_id) {
                     break :hoisted .dependency_loop;
                 }
-                var ancestor_id = this.id;
+                // `this` may be a dangling pointer after the `builder.list.append`
+                // above reallocated, so walk from `next.parent` (which was set to
+                // the original `this.id` and lives in the fresh `trees` slice).
+                var ancestor_id = next.parent;
                 while (ancestor_id != invalid_id) : (ancestor_id = trees[ancestor_id].parent) {
                     const ancestor_dep_id = trees[ancestor_id].dependency_id;
                     const ancestor_pkg_id: PackageID = if (ancestor_dep_id == root_dep_id)

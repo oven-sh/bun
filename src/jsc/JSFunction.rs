@@ -1,5 +1,4 @@
 use core::marker::{PhantomData, PhantomPinned};
-use core::mem::MaybeUninit;
 
 use bun_string::{String as BunString, ZigString};
 
@@ -47,9 +46,10 @@ pub struct CreateJSFunctionOptions {
 // TODO(port): move to jsc_sys
 //
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; the remaining
-// params are by-value scalars / `#[repr(C)]` PODs / fn-ptrs, so the
-// constructor and `optimizeSoon` shims are declared `safe fn`. `getSourceCode`
-// writes through a raw `*mut ZigString` out-param and stays `unsafe`.
+// params are by-value scalars / `#[repr(C)]` PODs / fn-ptrs, so all three
+// shims are declared `safe fn`. `getSourceCode` writes a `ZigString` view into
+// the `&mut` out-param on success and leaves it untouched on failure — `&mut
+// ZigString` is ABI-identical to a non-null `*mut ZigString`.
 unsafe extern "C" {
     safe fn JSFunction__createFromZig(
         global: &JSGlobalObject,
@@ -63,7 +63,7 @@ unsafe extern "C" {
 
     pub safe fn JSC__JSFunction__optimizeSoon(value: JSValue);
 
-    fn JSC__JSFunction__getSourceCode(value: JSValue, out: *mut ZigString) -> bool;
+    safe fn JSC__JSFunction__getSourceCode(value: JSValue, out: &mut ZigString) -> bool;
 }
 
 impl JSFunction {
@@ -94,12 +94,10 @@ impl JSFunction {
     }
 
     pub fn get_source_code(value: JSValue) -> Option<BunString> {
-        let mut str = MaybeUninit::<ZigString>::uninit();
-        // SAFETY: `JSC__JSFunction__getSourceCode` writes to `*out` and returns true on
-        // success; on false, `out` is left untouched and we never read it.
-        if unsafe { JSC__JSFunction__getSourceCode(value, str.as_mut_ptr()) } {
-            // SAFETY: initialized by the FFI call above (returned true).
-            Some(BunString::init(unsafe { str.assume_init() }))
+        let mut str = ZigString::EMPTY;
+        // C++ overwrites `str` on success and leaves it untouched on failure.
+        if JSC__JSFunction__getSourceCode(value, &mut str) {
+            Some(BunString::init(str))
         } else {
             None
         }

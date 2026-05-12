@@ -1865,10 +1865,13 @@ unsafe extern "C" {
         eval_mode: bool,
         worker_ptr: *mut c_void,
     ) -> *mut JSGlobalObject;
-    fn Bun__loadHTMLEntryPoint(global: *mut JSGlobalObject) -> *mut JSInternalPromise;
+    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
+    // ABI-identical to a non-null `*mut`); remaining args are by-value scalars.
+    // The returned cell pointer is GC-owned (caller checks before deref).
+    safe fn Bun__loadHTMLEntryPoint(global: &JSGlobalObject) -> *mut JSInternalPromise;
     fn JSC__VM__holdAPILock(vm: &VM, ctx: *mut c_void, callback: extern "C" fn(ctx: *mut c_void));
-    fn NodeModuleModule__callOverriddenRunMain(global: *mut JSGlobalObject, argv1: JSValue) -> JSValue;
-    fn JSC__JSInternalPromise__resolvedPromise(global: *mut JSGlobalObject, value: JSValue) -> *mut JSInternalPromise;
+    safe fn NodeModuleModule__callOverriddenRunMain(global: &JSGlobalObject, argv1: JSValue) -> JSValue;
+    safe fn JSC__JSInternalPromise__resolvedPromise(global: &JSGlobalObject, value: JSValue) -> *mut JSInternalPromise;
 }
 
 fn get_origin_timestamp() -> u64 {
@@ -2238,13 +2241,11 @@ impl VirtualMachine {
                 cold();
                 self.pending_internal_promise = None;
                 self.pending_internal_promise_is_protected = false;
-                let global = self.global;
                 let global_ref = self.global();
                 let argv1 = jsc::bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)
                     .map_err(|_| bun_core::err!("JSError"))?;
-                // SAFETY: extern "C" FFI; global valid for VM lifetime.
-                let ret = jsc::from_js_host_call_generic(global_ref, || unsafe {
-                    NodeModuleModule__callOverriddenRunMain(global, argv1)
+                let ret = jsc::from_js_host_call_generic(global_ref, || {
+                    NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
                 })
                 .map_err(|_| bun_core::err!("JSError"))?;
                 // If the override stored a promise itself, use that; otherwise
@@ -2252,8 +2253,7 @@ impl VirtualMachine {
                 if let Some(stored) = self.pending_internal_promise {
                     return Ok(stored);
                 }
-                // SAFETY: extern "C" FFI; global valid for VM lifetime.
-                let resolved = unsafe { JSC__JSInternalPromise__resolvedPromise(global, ret) };
+                let resolved = JSC__JSInternalPromise__resolvedPromise(global_ref, ret);
                 self.pending_internal_promise = Some(resolved);
                 self.pending_internal_promise_is_protected = false;
                     return Ok(resolved);
@@ -2269,10 +2269,9 @@ impl VirtualMachine {
                     .map(NonNull::as_ptr)
                     .ok_or_else(|| bun_core::err!("JSError"))?
             } else {
-                // SAFETY: extern "C" FFI; global valid for VM lifetime.
                 let p: *mut JSInternalPromise =
-                    jsc::from_js_host_call_generic(global_ref, || unsafe {
-                        Bun__loadHTMLEntryPoint(global)
+                    jsc::from_js_host_call_generic(global_ref, || {
+                        Bun__loadHTMLEntryPoint(global_ref)
                     })
                     .map_err(|_| bun_core::err!("JSError"))?;
                 if p.is_null() {

@@ -858,8 +858,7 @@ impl JSValue {
         if !self.is_cell() { return None; }
         let mut ptr: *const u8 = core::ptr::null();
         let mut len: usize = 0;
-        // SAFETY: out-params are valid; FFI writes only when returning true.
-        if unsafe { JSC__JSValue__getClassInfoName(self, &raw mut ptr, &raw mut len) } {
+        if JSC__JSValue__getClassInfoName(self, &mut ptr, &mut len) {
             // SAFETY: C++ guarantees `ptr[..len]` is a static `ClassInfo::className`.
             Some(unsafe { bun_core::ffi::slice(ptr, len) })
         } else {
@@ -1653,7 +1652,9 @@ unsafe extern "C" {
     safe fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
     safe fn Bun__attachAsyncStackFromPromise(global: &JSGlobalObject, err: JSValue, promise: &JSPromise);
     safe fn JSC__JSValue__isAnyError(this: JSValue) -> bool;
-    fn JSC__JSValue__getClassInfoName(this: JSValue, out: *mut *const u8, len: *mut usize) -> bool;
+    // safe: `JSValue` is a by-value scalar; `&mut *const u8` / `&mut usize` are
+    // ABI-identical to non-null `*mut` out-params the C++ side fills on success.
+    safe fn JSC__JSValue__getClassInfoName(this: JSValue, out: &mut *const u8, len: &mut usize) -> bool;
     safe fn JSC__JSValue__getLengthIfPropertyExistsInternal(this: JSValue, global: &JSGlobalObject) -> f64;
     safe fn JSC__JSValue__parseJSON(this: JSValue, global: &JSGlobalObject) -> JSValue;
     safe fn JSC__JSValue__toZigString(this: JSValue, out: &mut bun_string::ZigString, global: &JSGlobalObject);

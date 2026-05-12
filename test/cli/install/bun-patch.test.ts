@@ -528,7 +528,9 @@ module.exports = function isOdd(i) {
         "index.js": `console.log(require(${JSON.stringify(pkgName)}));`,
       });
 
-      expectNoError(await $`${bunExe()} pm pack --destination ${tempdir}`.env(bunEnv).cwd(join(tempdir, "tarball-src")));
+      expectNoError(
+        await $`${bunExe()} pm pack --destination ${tempdir}`.env(bunEnv).cwd(join(tempdir, "tarball-src")),
+      );
       expectNoError(await $`${bunExe()} i`.env(bunEnv).cwd(tempdir));
 
       const patchArg = makeArg(pkgName);

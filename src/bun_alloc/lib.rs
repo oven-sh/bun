@@ -1689,15 +1689,25 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
 /// TODO(port): const-generic arithmetic (`COUNT = _COUNT * 2`) and per-monomorphization
 /// a raw mutable INSTANCE static are not expressible on stable Rust. Phase B: instantiate per use-site
 /// via `macro_rules!` or pin concrete `COUNT` constants.
+///
+/// `#[repr(C)]` with the small mutated scalars (`mutex`, `head`, `used`,
+/// `tail`'s header) laid out *before* the giant `backing_buf` array. Storage
+/// comes from [`bss_lazy_bytes`] (anonymous mmap, demand-zero), so each page
+/// faults only on first write. With default repr rustc placed `used: u32`
+/// *after* `backing_buf` (~1.2 MB into the largest instantiation), so
+/// `init_at`'s startup writes faulted tail pages Zig never touches. With this
+/// layout every startup write lands in page 0 of the mapping; subsequent pages
+/// fault only as `append` actually fills them.
+#[repr(C)]
 pub struct BSSList<ValueType, const COUNT: usize /* = _COUNT * 2 */> {
     pub mutex: Mutex,
     // LIFETIMES.tsv: dual semantics — points at sibling `tail` OR a heap alloc.
     // TODO(port): lifetime — keep raw NonNull; self-referential when `head == &self.tail`.
     pub head: Option<NonNull<BSSListOverflowBlock<ValueType>>>,
+    pub used: u32,
     pub tail: BSSListOverflowBlock<ValueType>,
     // Zig leaves `backing_buf` undefined; only `[0..used]` is initialized.
     pub backing_buf: [MaybeUninit<ValueType>; COUNT],
-    pub used: u32,
 }
 
 // SAFETY: `head` is a self-referential `NonNull` into `self.tail` or a heap block owned by
@@ -1715,11 +1725,16 @@ const BSS_LIST_CHUNK_SIZE: usize = 256;
 /// `OverflowListBlock::is_full` always true and `at_index`'s `idx % COUNT` panic.
 pub const BSS_OVERFLOW_BLOCK_SIZE: usize = 64;
 
+/// `#[repr(C)]` with `prev` before `data` so the inline `BSSList::tail` block's
+/// scalar fields cluster at the front of the singleton mapping (see the layout
+/// note on [`BSSList`]). Heap-allocated overflow blocks don't care about page
+/// locality; the constraint is on the inline-tail instance.
+#[repr(C)]
 pub struct BSSListOverflowBlock<ValueType> {
     pub used: AtomicU16,
+    pub prev: Option<Box<BSSListOverflowBlock<ValueType>>>,
     // Zig leaves `data` undefined; only `[0..used]` is initialized.
     pub data: [MaybeUninit<ValueType>; BSS_LIST_CHUNK_SIZE],
-    pub prev: Option<Box<BSSListOverflowBlock<ValueType>>>,
 }
 
 impl<ValueType> BSSListOverflowBlock<ValueType> {
@@ -1748,6 +1763,20 @@ impl<ValueType> BSSListOverflowBlock<ValueType> {
         // SAFETY: just initialized on the line above.
         Ok(unsafe { self.data[index as usize].assume_init_mut() })
     }
+
+    /// Reserve a slot and return its uninitialized storage. Caller MUST
+    /// initialize the slot before any other access.
+    #[inline(always)]
+    pub fn append_uninit(
+        &mut self,
+    ) -> core::result::Result<*mut MaybeUninit<ValueType>, AllocError> {
+        let index = self.used.fetch_add(1, Ordering::AcqRel);
+        if index as usize >= BSS_LIST_CHUNK_SIZE {
+            return Err(AllocError);
+        }
+        // SAFETY: `index < BSS_LIST_CHUNK_SIZE` checked above.
+        Ok(unsafe { self.data.as_mut_ptr().add(index as usize) })
+    }
 }
 
 // `deinit` for OverflowBlock: walks `prev` and frees each. With `prev: Option<Box<..>>`,
@@ -1770,19 +1799,23 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         index as usize / BSS_LIST_CHUNK_SIZE
     }
 
-    /// In-place field initialization into uninitialized storage.
+    /// In-place field initialization into demand-zero storage.
     ///
-    /// SAFETY: `slot` must point to writable, properly-aligned, uninitialized
-    /// (or droppable-as-uninit) storage of `size_of::<Self>()` bytes that lives
-    /// for `'static`. `backing_buf` and `tail.data` are intentionally left
-    /// uninitialized (Zig leaves them `undefined`); only `[0..used]` is read.
+    /// SAFETY: `slot` must point to writable, properly-aligned, **all-zeros**
+    /// storage of `size_of::<Self>()` bytes that lives for `'static` — i.e. it
+    /// came from [`bss_heap_init`] / [`bss_lazy_bytes`]. `mutex`
+    /// (`parking_lot::RawMutex::INIT` is all-zeros), `used`, `tail.used`, and
+    /// `tail.prev` (`None` is the null niche) are already bit-zero in that
+    /// storage, so the *only* required write is the non-zero self-referential
+    /// `head = &tail`. Skipping the redundant zero-writes keeps every startup
+    /// write within page 0 of the singleton mapping (see the `#[repr(C)]`
+    /// layout note on [`BSSList`]). `backing_buf` and `tail.data` are
+    /// intentionally left uninitialized (Zig leaves them `undefined`); only
+    /// `[0..used]` is read.
     pub unsafe fn init_at(slot: *mut Self) {
-        // SAFETY: caller contract — `slot` is a valid, exclusive, aligned `*mut Self`.
+        // SAFETY: caller contract — `slot` is a valid, exclusive, aligned,
+        // all-zeros `*mut Self`.
         unsafe {
-            addr_of_mut!((*slot).mutex).write(Mutex::new());
-            addr_of_mut!((*slot).used).write(0);
-            addr_of_mut!((*slot).tail.used).write(AtomicU16::new(0));
-            addr_of_mut!((*slot).tail.prev).write(None);
             // Zig: `instance.head = &instance.tail` — self-referential; raw NonNull.
             let tail_ptr = addr_of_mut!((*slot).tail);
             addr_of_mut!((*slot).head).write(Some(NonNull::new_unchecked(tail_ptr)));
@@ -1815,17 +1848,19 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         base <= p && p + value.len() <= end
     }
 
-    fn append_overflow(
+    /// Reserve an overflow slot and return its uninitialized storage. Mutex is
+    /// held by the caller (`append_uninit`). Cold path — only hit after the
+    /// `COUNT`-sized backing buffer fills.
+    #[cold]
+    fn append_overflow_uninit(
         &mut self,
-        value: ValueType,
-    ) -> core::result::Result<&mut ValueType, AllocError> {
+    ) -> core::result::Result<*mut MaybeUninit<ValueType>, AllocError> {
         self.used += 1;
         // SAFETY: head is always non-null after init() (points at self.tail or heap block).
         let mut head_ptr = self.head.unwrap();
         // Zig: `self.head.append(value) catch { allocate new block; retry }`.
-        // Restructured to avoid consuming `value` twice (no `Clone` bound, per
-        // PORTING.md §Forbidden): check capacity first, allocate the new block
-        // if needed, then `append(value)` exactly once. Safe under `self.mutex`.
+        // Restructured to check capacity first, allocate the new block if
+        // needed, then reserve exactly one slot. Safe under `self.mutex`.
         // SAFETY: `head_ptr` is a valid exclusive ref (mutex held).
         let head_full = unsafe {
             (*head_ptr.as_ptr()).used.load(Ordering::Acquire) as usize >= BSS_LIST_CHUNK_SIZE
@@ -1846,7 +1881,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
                 None
             } else {
                 // SAFETY: the previous head was `Box::into_raw`'d by an earlier
-                // `append_overflow` and is exclusively owned via `self.head`.
+                // `append_overflow_uninit` and is exclusively owned via `self.head`.
                 Some(unsafe { Box::from_raw(head_ptr.as_ptr()) })
             };
             let raw = Box::into_raw(new_block);
@@ -1856,10 +1891,19 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         }
         // SAFETY: `head_ptr` is the (possibly freshly-allocated) head block with
         // free capacity; no other alias exists (mutex held).
-        unsafe { (*head_ptr.as_ptr()).append(value) }
+        unsafe { (*head_ptr.as_ptr()).append_uninit() }
     }
 
-    /// Append `value`, returning a stable `*mut` to its slot.
+    /// Reserve a slot and return its uninitialized storage. Caller MUST
+    /// `ptr::write` the slot before any other access; the slot index is already
+    /// accounted in `used`, so leaving it uninitialized is UB on later read.
+    ///
+    /// This is the slot-reservation primitive: it lets large `ValueType`s be
+    /// constructed directly in the destination, matching Zig's result-location
+    /// semantics. The by-value `append` below forces a stack temporary +
+    /// memcpy into the slot which Rust does not reliably NRVO across a
+    /// non-inlined call boundary; `append_uninit` exposes the slot pointer so
+    /// the caller's struct literal lowers straight into it.
     ///
     /// Takes `*mut Self` (not `&mut self`) so callers can pass the raw
     /// `bss_list!` singleton pointer directly without first materializing a
@@ -1870,10 +1914,10 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     ///
     /// SAFETY: `this` must point to a live, initialized `BSSList` (typically
     /// the `bss_list!` singleton). Concurrent callers are allowed.
-    pub unsafe fn append(
+    #[inline(always)]
+    pub unsafe fn append_uninit(
         this: *mut Self,
-        value: ValueType,
-    ) -> core::result::Result<*mut ValueType, AllocError> {
+    ) -> core::result::Result<*mut MaybeUninit<ValueType>, AllocError> {
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
         // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
         // `&mut *this` formed below does not alias a live guard borrow.
@@ -1881,15 +1925,33 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
         let this = unsafe { &mut *this };
         if this.used as usize > Self::MAX_INDEX {
-            this.append_overflow(value).map(core::ptr::from_mut)
+            this.append_overflow_uninit()
         } else {
             let index = this.used as usize;
-            // Raw write — slot is uninit; Zig assignment has no drop glue.
-            this.backing_buf[index].write(value);
             this.used += 1;
-            // SAFETY: just initialized on the line above.
-            Ok(core::ptr::from_mut(unsafe { this.backing_buf[index].assume_init_mut() }))
+            // SAFETY: `index <= MAX_INDEX < COUNT` checked above.
+            Ok(unsafe { this.backing_buf.as_mut_ptr().add(index) })
         }
+    }
+
+    /// Append `value`, returning a stable `*mut` to its slot.
+    ///
+    /// Thin wrapper over `append_uninit` for callers with a small/already-built
+    /// value. For large `ValueType`s constructed at the call site, prefer
+    /// `append_uninit` + in-place write to avoid the by-value stack copy.
+    ///
+    /// SAFETY: `this` must point to a live, initialized `BSSList` (typically
+    /// the `bss_list!` singleton). Concurrent callers are allowed.
+    #[inline]
+    pub unsafe fn append(
+        this: *mut Self,
+        value: ValueType,
+    ) -> core::result::Result<*mut ValueType, AllocError> {
+        // SAFETY: forwarded — see `append_uninit`.
+        let slot = unsafe { Self::append_uninit(this)? };
+        // SAFETY: `slot` is a freshly-reserved uninit cell exclusively owned by
+        // this thread (index already bumped under the mutex).
+        unsafe { Ok(core::ptr::from_mut((*slot).write(value))) }
     }
 
     // Zig: `pub const Pair = struct { index: IndexType, value: *ValueType };`
@@ -1901,12 +1963,12 @@ impl<ValueType, const COUNT: usize> Drop for BSSList<ValueType, COUNT> {
         // Zig `deinit`: `self.head.deinit()` walks `prev` and frees each heap block.
         // The inline `self.tail` is not Boxed and must not be Box-dropped; the
         // `prev: Option<Box<..>>` chain stops at `None` before reaching it
-        // (see `append_overflow`). Singleton `loaded = false` reset belongs to the
+        // (see `append_overflow_uninit`). Singleton `loaded = false` reset belongs to the
         // Phase-B static wrapper, not here.
         if let Some(head) = self.head.take() {
             let tail_ptr: *const BSSListOverflowBlock<ValueType> = core::ptr::addr_of!(self.tail);
             if !core::ptr::eq(head.as_ptr().cast_const(), tail_ptr) {
-                // SAFETY: `head` was `Box::into_raw`'d by `append_overflow` and is
+                // SAFETY: `head` was `Box::into_raw`'d by `append_overflow_uninit` and is
                 // exclusively owned by this struct. Dropping the Box recursively
                 // drops `prev`, freeing the whole heap chain.
                 drop(unsafe { Box::from_raw(head.as_ptr()) });

@@ -405,6 +405,33 @@ impl Source {
         Self::configure_thread();
     }
 
+    /// Like [`configure_thread`] but **skips** the JSC `StackCheck` FFI call
+    /// (`Bun__StackCheck__initialize` → `WTF::StackBounds::currentThreadStackBoundsInternal`).
+    ///
+    /// Use on pure-Rust worker threads (ThreadPool workers, HTTP client,
+    /// watchers) that never execute JavaScript. On the `bun install` cold path
+    /// the WTF/JSC `.text` pages backing those C++ symbols sit ~6 pages across
+    /// three otherwise-untouched 64 KB blocks; faulting them in from every
+    /// worker is pure overhead when no JS will ever run on that thread.
+    ///
+    /// Threads that *may* run JS (web workers, debugger, the main VM thread)
+    /// must keep using [`configure_thread`] / [`configure_named_thread`].
+    pub fn configure_thread_no_js() {
+        if SOURCE_SET.get() {
+            return;
+        }
+        debug_assert!(STDOUT_STREAM_SET.load(Ordering::Relaxed));
+        // SAFETY: STDOUT_STREAM/STDERR_STREAM are write-once before any thread calls this.
+        SOURCE.with_borrow_mut(|s| unsafe { Source::init(s, STDOUT_STREAM.read(), STDERR_STREAM.read()) });
+        // Intentionally NOT calling `crate::StackCheck::configure_thread()`.
+    }
+
+    /// Named variant of [`configure_thread_no_js`].
+    pub fn configure_named_thread_no_js(name: &crate::ZStr) {
+        Global::set_thread_name(name);
+        Self::configure_thread_no_js();
+    }
+
     pub fn is_no_color() -> bool {
         // Zig output.zig:99 — parsed bool, default false. NO_COLOR=0 → false.
         env_var::NO_COLOR.get().unwrap_or(false)

@@ -664,20 +664,22 @@ pub mod fs {
 
     // Port of `threadlocal var temp_entries_option: EntriesOption = undefined` —
     // `read_directory*` returns a pointer into this when the entry-cache is
-    // disabled or the path is `mark_not_found`.
+    // disabled or the path is `mark_not_found`. `RefCell` (not `UnsafeCell`) so
+    // the per-thread unique-borrow is debug-checked; matches the sibling
+    // `TEMP_ENTRIES_OPTION` in `fs.rs`.
     thread_local! {
-        static TEMP_ENTRIES_OPTION: core::cell::UnsafeCell<core::mem::MaybeUninit<EntriesOption>> =
-            const { core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()) };
+        static TEMP_ENTRIES_OPTION: core::cell::RefCell<core::mem::MaybeUninit<EntriesOption>> =
+            const { core::cell::RefCell::new(core::mem::MaybeUninit::uninit()) };
     }
 
     fn temp_entries_option_write(value: EntriesOption) -> &'static mut EntriesOption {
-        TEMP_ENTRIES_OPTION.with(|slot| {
-            // SAFETY: threadlocal storage; single-threaded per-slot access by construction.
-            let slot = unsafe { &mut *slot.get() };
+        TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
             slot.write(value);
             // SAFETY: just wrote; threadlocal storage outlives caller (matches Zig
             // `&temp_entries_option`). Re-erase to 'static for the BSSMap-shaped
-            // unbounded `&mut EntriesOption` return type.
+            // unbounded `&mut EntriesOption` return type — the `RefMut` guard
+            // drops immediately on return, so no live `RefCell` borrow aliases
+            // the escaped reference.
             unsafe { &mut *slot.as_mut_ptr() }
         })
     }

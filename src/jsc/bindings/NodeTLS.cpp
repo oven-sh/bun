@@ -167,7 +167,13 @@ static unsigned long appendX509sFromPEM(std::span<const uint8_t> data, STACK_OF(
 
     size_t pushed = 0;
     while (X509* x = PEM_read_bio_X509(bio, nullptr, [](char*, int, int, void*) -> int { return 0; }, nullptr)) {
-        sk_X509_push(out, x);
+        if (!sk_X509_push(out, x)) {
+            X509_free(x);
+            BIO_free(bio);
+            while (pushed-- > 0) X509_free(sk_X509_pop(out));
+            OPENSSL_PUT_ERROR(PEM, ERR_R_MALLOC_FAILURE);
+            return ERR_peek_last_error();
+        }
         pushed++;
     }
     BIO_free(bio);
@@ -269,7 +275,13 @@ JSC_DEFINE_HOST_FUNCTION(resetRootCertStore, (JSC::JSGlobalObject * globalObject
         X509* cert = sk_X509_value(parsed, i);
         if (seen.insert(cert).second) {
             X509_up_ref(cert);
-            sk_X509_push(deduped, cert);
+            if (!sk_X509_push(deduped, cert)) {
+                X509_free(cert); // drop the up_ref we just took
+                sk_X509_pop_free(deduped, X509_free);
+                freeParsed();
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
         }
     }
     freeParsed();

@@ -792,9 +792,18 @@ impl VirtualMachine {
     /// never freed; callers previously open-coded `unsafe { &*vm.transpiler.env }`.
     #[inline]
     pub fn env_loader(&self) -> &'static bun_dotenv::Loader<'static> {
-        // SAFETY: `transpiler.env` is set during `Transpiler::init` to a
-        // process-lifetime allocation and never null while a VM is installed.
-        unsafe { &*self.transpiler.env }
+        self.env_loader_opt()
+            .expect("transpiler.env set during Transpiler::init")
+    }
+
+    /// Nullable variant of [`Self::env_loader`] for the early-boot window where
+    /// `Transpiler::init` has not yet run (e.g. `GarbageCollectionController::init`
+    /// is reached from `JSGlobalObject::create` before `init_runtime_state`).
+    #[inline]
+    pub fn env_loader_opt(&self) -> Option<&'static bun_dotenv::Loader<'static>> {
+        // SAFETY: when non-null, `transpiler.env` is set during `Transpiler::init`
+        // to a process-lifetime allocation; never freed while a VM is installed.
+        unsafe { self.transpiler.env.as_ref() }
     }
 
     #[inline]
@@ -878,9 +887,9 @@ impl VirtualMachine {
     /// `Box::leak`ed in `init()` and outlives the VM.
     #[inline]
     pub fn log_ref(&self) -> Option<&bun_ast::Log> {
-        // SAFETY: `log` is `Box::leak`ed in `init()`; non-null `NonNull` is
-        // valid for the VM lifetime.
-        self.log.map(|p| unsafe { p.as_ref() })
+        // Reborrow `&mut Log` → `&Log`; the single `unsafe` deref lives in
+        // `log_mut()` (set-once `Option<NonNull>` accessor pattern).
+        self.log_mut().map(|l| &*l)
     }
 
     /// Safe `&mut bun_ast::Log` accessor. See [`Self::log_ref`].

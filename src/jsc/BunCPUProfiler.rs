@@ -45,7 +45,14 @@ unsafe extern "C" {
     /// `VM` is an opaque `UnsafeCell`-backed ZST handle; `&mut VM` is
     /// ABI-identical to a non-null `VM*`.
     safe fn Bun__startCPUProfiler(vm: &mut VM);
-    fn Bun__stopCPUProfiler(vm: *mut VM, out_json: *mut BunString, out_text: *mut BunString);
+    /// `Option<&mut BunString>` is ABI-identical to a nullable `*mut BunString`
+    /// via the guaranteed null-pointer optimization; the C++ side writes a +1
+    /// ref into each non-null out-param and ignores nulls.
+    safe fn Bun__stopCPUProfiler(
+        vm: &mut VM,
+        out_json: Option<&mut BunString>,
+        out_text: Option<&mut BunString>,
+    );
     /// Plain by-value `c_int`; sets a global sampler interval, no pointer invariants.
     safe fn Bun__setSamplingInterval(interval_microseconds: c_int);
 }
@@ -66,16 +73,12 @@ pub fn stop_and_write_profile(
     let mut json_string = BunString::empty();
     let mut text_string = BunString::empty();
 
-    // Call the unified C++ function with pointers for requested formats
-    // SAFETY: vm is a valid exclusive reference to the opaque JSC VM; out
-    // pointers are either valid exclusive &mut BunString or null.
-    unsafe {
-        Bun__stopCPUProfiler(
-            vm,
-            if config.json_format { &raw mut json_string } else { core::ptr::null_mut() },
-            if config.md_format { &raw mut text_string } else { core::ptr::null_mut() },
-        );
-    }
+    // Call the unified C++ function with optional out-params for requested formats.
+    Bun__stopCPUProfiler(
+        vm,
+        config.json_format.then_some(&mut json_string),
+        config.md_format.then_some(&mut text_string),
+    );
     // C++ handed back +1 refs into json_string/text_string. `bun_string::String`
     // is `Copy` (no Drop), so wrap in `OwnedString` for scope-exit `deref()` —
     // the Rust spelling of Zig's `defer json_string.deref(); defer text_string.deref();`.

@@ -116,51 +116,56 @@ bun_opaque::opaque_ffi! {
 }
 
 // TODO(port): move to jsc_sys
+//
+// `safe fn`: `InspectorHTTPServerAgent` is an `opaque_ffi!` ZST handle
+// (`!Freeze` via `UnsafeCell`); `BunString` is `#[repr(C)]` and read-only
+// across the call. `&mut`/`&` are ABI-identical to non-null `*mut`/`*const`.
+// Remaining args are by-value scalars / `#[repr(u8)]` enums.
 unsafe extern "C" {
-    pub fn Bun__HTTPServerAgent__notifyRequestWillBeSent(
-        agent: *mut InspectorHTTPServerAgent,
+    pub safe fn Bun__HTTPServerAgent__notifyRequestWillBeSent(
+        agent: &mut InspectorHTTPServerAgent,
         request_id: RequestId,
         server_id: ServerId,
         route_id: RouteId,
-        url: *const BunString,
-        full_url: *const BunString,
+        url: &BunString,
+        full_url: &BunString,
         method: HTTPMethod,
-        headers_json: *const BunString,
-        params_json: *const BunString,
+        headers_json: &BunString,
+        params_json: &BunString,
         has_body: bool,
         timestamp: f64,
     );
-    pub fn Bun__HTTPServerAgent__notifyResponseReceived(
-        agent: *mut InspectorHTTPServerAgent,
+    pub safe fn Bun__HTTPServerAgent__notifyResponseReceived(
+        agent: &mut InspectorHTTPServerAgent,
         request_id: RequestId,
         server_id: ServerId,
         status_code: i32,
-        status_text: *const BunString,
-        headers_json: *const BunString,
+        status_text: &BunString,
+        headers_json: &BunString,
         has_body: bool,
         timestamp: f64,
     );
-    pub fn Bun__HTTPServerAgent__notifyBodyChunkReceived(
-        agent: *mut InspectorHTTPServerAgent,
+    pub safe fn Bun__HTTPServerAgent__notifyBodyChunkReceived(
+        agent: &mut InspectorHTTPServerAgent,
         request_id: RequestId,
         server_id: ServerId,
         flags: i32,
-        chunk: *const BunString,
+        chunk: &BunString,
         timestamp: f64,
     );
-    pub fn Bun__HTTPServerAgent__notifyRequestFinished(
-        agent: *mut InspectorHTTPServerAgent,
+    pub safe fn Bun__HTTPServerAgent__notifyRequestFinished(
+        agent: &mut InspectorHTTPServerAgent,
         request_id: RequestId,
         server_id: ServerId,
         timestamp: f64,
         duration: f64,
     );
-    pub fn Bun__HTTPServerAgent__notifyRequestHandlerException(
-        agent: *mut InspectorHTTPServerAgent,
+    pub safe fn Bun__HTTPServerAgent__notifyRequestHandlerException(
+        agent: &mut InspectorHTTPServerAgent,
         request_id: RequestId,
         server_id: ServerId,
-        message: *const BunString,
-        url: *const BunString,
+        message: &BunString,
+        url: &BunString,
         line: i32,
         timestamp: f64,
     );

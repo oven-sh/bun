@@ -1099,9 +1099,11 @@ pub mod store {
         /// `ptr` must be a live `Store` allocated by `Store::new`/`Box::new`.
         #[inline]
         pub unsafe fn retained(ptr: NonNull<Store>) -> Self {
-            // SAFETY: caller contract.
-            unsafe { ptr.as_ref() }.ref_();
-            Self { ptr }
+            let this = Self { ptr };
+            // Deref impl encapsulates the `NonNull::as_ref` (caller contract
+            // discharges its liveness precondition).
+            this.ref_();
+            this
         }
 
         #[inline]

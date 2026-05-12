@@ -1136,7 +1136,7 @@ pub const Formatter = struct {
 
         pub fn canHaveCircularReferences(tag: Tag) bool {
             return switch (tag) {
-                .Function, .Array, .Object, .Map, .Set, .Error, .Class, .Event => true,
+                .Function, .Array, .Object, .Map, .Set, .Error, .Class, .Event, .JSX => true,
                 else => false,
             };
         }
@@ -3140,13 +3140,12 @@ pub const Formatter = struct {
                     }
                 }
 
-                if (try value.get(this.globalThis, "props")) |props| {
+                if (try value.get(this.globalThis, "props")) |props| props: {
                     const prev_quote_strings = this.quote_strings;
                     defer this.quote_strings = prev_quote_strings;
                     this.quote_strings = true;
 
-                    // SAFETY: JSX props are always objects
-                    const props_obj = props.getObject().?;
+                    const props_obj = props.getObject() orelse break :props;
                     var props_iter = try jsc.JSPropertyIterator(.{
                         .skip_empty_name = true,
                         .include_value = true,

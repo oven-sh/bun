@@ -292,9 +292,7 @@ impl Context {
     pub fn set_params(&mut self, key: c_uint, value: u32) -> Error {
         match self.mode {
             bun_zlib::NodeMode::BROTLI_ENCODE => {
-                // SAFETY: state was created by BrotliEncoderCreateInstance.
-                if c::BrotliEncoderSetParameter(unsafe { &mut *self.state_ptr().cast() }, key, value) == 0
-                {
+                if c::BrotliEncoderSetParameter(self.encoder_mut(), key, value) == 0 {
                     return Error::init(
                         c"Setting parameter failed".as_ptr(),
                         -1,
@@ -304,9 +302,7 @@ impl Context {
                 Error::ok()
             }
             bun_zlib::NodeMode::BROTLI_DECODE => {
-                // SAFETY: state was created by BrotliDecoderCreateInstance.
-                if c::BrotliDecoderSetParameter(unsafe { &mut *self.state_ptr().cast() }, key, value) == 0
-                {
+                if c::BrotliDecoderSetParameter(self.decoder_mut(), key, value) == 0 {
                     return Error::init(
                         c"Setting parameter failed".as_ptr(),
                         -1,
@@ -330,14 +326,12 @@ impl Context {
     /// Use close() for full cleanup that also sets mode to NONE.
     fn deinit_state(&mut self) {
         match self.mode {
-            bun_zlib::NodeMode::BROTLI_ENCODE => unsafe {
-                // SAFETY: state was created by BrotliEncoderCreateInstance.
-                c::BrotliEncoderDestroyInstance(self.state_ptr().cast())
-            },
-            bun_zlib::NodeMode::BROTLI_DECODE => unsafe {
-                // SAFETY: state was created by BrotliDecoderCreateInstance.
-                c::BrotliDecoderDestroyInstance(self.state_ptr().cast())
-            },
+            bun_zlib::NodeMode::BROTLI_ENCODE => {
+                c::BrotliEncoder::destroy_instance(self.encoder_mut())
+            }
+            bun_zlib::NodeMode::BROTLI_DECODE => {
+                c::BrotliDecoder::destroy_instance(self.decoder_mut())
+            }
             _ => unreachable!(),
         }
         self.state = None;
@@ -417,8 +411,7 @@ impl Context {
                 };
                 // SAFETY: d was just written by the line above.
                 if unsafe { self.last_result.d } == c::BrotliDecoderResult::err {
-                    // SAFETY: state is a live decoder.
-                    self.error_ = c::BrotliDecoderGetErrorCode(unsafe { &*self.state_ptr().cast::<c::BrotliDecoder>() });
+                    self.error_ = c::BrotliDecoderGetErrorCode(self.decoder_mut());
                 }
             }
             _ => unreachable!(),
@@ -474,6 +467,29 @@ impl Context {
     #[inline]
     fn state_ptr(&self) -> *mut c_void {
         self.state.map_or(ptr::null_mut(), |p| p.as_ptr())
+    }
+
+    /// `&mut` to the live encoder state. Single unsafe deref site for the
+    /// set-once `state: Option<NonNull<c_void>>` (encode mode) so callers
+    /// hitting the `pub safe fn` brotli FFI surface stay safe.
+    #[inline]
+    fn encoder_mut(&mut self) -> &mut c::BrotliEncoder {
+        debug_assert!(matches!(self.mode, bun_zlib::NodeMode::BROTLI_ENCODE));
+        // SAFETY: callers branch on `mode == BROTLI_ENCODE`, so `state` was
+        // populated by `BrotliEncoderCreateInstance` in `init()` and is not
+        // yet freed (`deinit_state` clears it after destroy).
+        unsafe { &mut *self.state.unwrap().as_ptr().cast() }
+    }
+
+    /// `&mut` to the live decoder state. Single unsafe deref site for the
+    /// set-once `state: Option<NonNull<c_void>>` (decode mode).
+    #[inline]
+    fn decoder_mut(&mut self) -> &mut c::BrotliDecoder {
+        debug_assert!(matches!(self.mode, bun_zlib::NodeMode::BROTLI_DECODE));
+        // SAFETY: callers branch on `mode == BROTLI_DECODE`, so `state` was
+        // populated by `BrotliDecoderCreateInstance` in `init()` and is not
+        // yet freed.
+        unsafe { &mut *self.state.unwrap().as_ptr().cast() }
     }
 }
 

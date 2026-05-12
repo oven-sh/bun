@@ -702,14 +702,14 @@ mod platform {
                     self.buf.len().saturating_sub(name_byte_offset) / size_of::<u16>();
                 let name_len_u16 =
                     (file_name_length / 2).min(max_name_u16).min(buf_remaining_u16);
-                // SAFETY: name_byte_offset + name_len_u16*2 ≤ buf.len() by clamp above;
-                // FileName is u16-aligned (NextEntryOffset/record is 8-byte aligned).
-                let dir_info_name = unsafe {
-                    core::slice::from_raw_parts(
-                        p.add(name_byte_offset).cast::<u16>(),
-                        name_len_u16,
-                    )
-                };
+                // name_byte_offset + name_len_u16*2 ≤ buf.len() by clamp above.
+                // `buf` follows the 8-byte `Fd` in a `repr(C, align(8))` struct so
+                // it is itself 8-byte aligned, and per MS docs each record (and
+                // thus its FileName at offset 64) lands on an 8-byte boundary —
+                // bytemuck checks the u8→u16 alignment at runtime.
+                let dir_info_name: &[u16] = bytemuck::cast_slice(
+                    &self.buf[name_byte_offset..name_byte_offset + name_len_u16 * 2],
+                );
 
                 if dir_info_name == [b'.' as u16]
                     || dir_info_name == [b'.' as u16, b'.' as u16]

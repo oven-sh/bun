@@ -226,6 +226,21 @@ pub trait CompressionStreamImpl: Sized + Taskable + 'static {
     fn global_this(&self) -> &JSGlobalObject;
     fn stream(&self) -> &JsCell<Self::Stream>;
     fn write_result_ptr(&self) -> Option<*mut u32>;
+
+    /// Write `(avail_out, avail_in)` into the JS-owned 2-element `Uint32Array`
+    /// (`this._writeState`). Single unsafe deref site for the set-once
+    /// `write_result: Cell<Option<NonNull<u32>>>` field so callers stay safe.
+    #[inline]
+    fn flush_write_result(&self) {
+        let Some(write_result) = self.write_result_ptr() else { return };
+        // SAFETY: `write_result` points at a 2-element `u32[]` owned by JS
+        // (set in each impl's `init()`); both indices are in-bounds and the
+        // backing buffer is kept alive by `this._writeState` /
+        // `_handle[owner_symbol]`.
+        let (r1, r0) = unsafe { (&mut *write_result.add(1), &mut *write_result) };
+        self.stream().with_mut(|s| s.update_write_result(r1, r0));
+    }
+
     fn poll_ref(&self) -> &JsCell<CountedKeepAlive>;
     fn this_value(&self) -> &JsCell<StrongOptional>;
     fn task(&self) -> &JsCell<WorkPoolTask>;
@@ -480,12 +495,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             return;
         }
 
-        if let Some(write_result) = this.write_result_ptr() {
-            // SAFETY: `write_result` points at a 2-element u32[] owned by JS
-            // (set in `init()`); both indices are in-bounds.
-            let (r1, r0) = unsafe { (&mut *write_result.add(1), &mut *write_result) };
-            this.stream().with_mut(|s| s.update_write_result(r1, r0));
-        }
+        this.flush_write_result();
         this_value.ensure_still_alive();
 
         let write_callback: JSValue = T::write_callback_get_cached(this_value).unwrap();
@@ -629,11 +639,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         this.stream().with_mut(|s| s.do_work());
         if Self::check_error(this, global_this, this_value) {
-            if let Some(write_result) = this.write_result_ptr() {
-                // SAFETY: `write_result` points at a 2-element u32[] owned by JS.
-                let (r1, r0) = unsafe { (&mut *write_result.add(1), &mut *write_result) };
-                this.stream().with_mut(|s| s.update_write_result(r1, r0));
-            }
+            this.flush_write_result();
             this.write_in_progress().set(false);
         }
         // SAFETY: matching `ref_()` above. The bracketed `ref_()`/`deref()`

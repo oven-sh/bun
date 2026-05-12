@@ -1518,8 +1518,10 @@ pub mod js_bundler {
 
     // `Plugin` is an `opaque_ffi!` handle (`repr(C)` + `UnsafeCell` marker), so
     // `&mut Plugin`/`&Plugin` are ABI-identical to non-null pointers and the
-    // validity proof lives in the type. `tombstone`/`runSetupFunction` keep raw
-    // `*mut` because their callers hold only a raw pointer.
+    // validity proof lives in the type. `tombstone` keeps raw `*mut` because
+    // its caller (`destroy`) holds only a raw pointer; `runSetupFunction` and
+    // `globalObject` take `&Plugin` so `add_plugin` can hold a shared reborrow
+    // alongside the returned `&JSGlobalObject` without an `unsafe` escape hatch.
     unsafe extern "C" {
         safe fn JSBundlerPlugin__create(
             global: &JSGlobalObject,
@@ -1532,11 +1534,11 @@ pub mod js_bundler {
             build_result: JSValue,
             rejection: JSValue,
         ) -> JSValue;
-        safe fn JSBundlerPlugin__globalObject(plugin: &mut Plugin) -> *mut JSGlobalObject;
+        safe fn JSBundlerPlugin__globalObject(plugin: &Plugin) -> *mut JSGlobalObject;
         safe fn JSBundlerPlugin__appendDeferPromise(plugin: &mut Plugin) -> JSValue;
         safe fn JSBundlerPlugin__setConfig(plugin: &mut Plugin, config: *mut c_void);
-        fn JSBundlerPlugin__runSetupFunction(
-            plugin: *mut Plugin,
+        safe fn JSBundlerPlugin__runSetupFunction(
+            plugin: &Plugin,
             object: JSValue,
             config: JSValue,
             onstart_promises_array: JSValue,
@@ -1564,7 +1566,7 @@ pub mod js_bundler {
         ) -> JsResult<JSValue>;
         /// SAFETY: `this` must be a live handle previously returned by `Plugin::create`.
         unsafe fn destroy(this: *mut Plugin);
-        fn global_object(&mut self) -> &JSGlobalObject;
+        fn global_object(&self) -> &JSGlobalObject;
         fn append_defer_promise(&mut self) -> JSValue;
         fn add_plugin(
             &mut self,
@@ -1631,7 +1633,7 @@ pub mod js_bundler {
             JSValue::from_cell(this).unprotect();
         }
 
-        fn global_object(&mut self) -> &JSGlobalObject {
+        fn global_object(&self) -> &JSGlobalObject {
             // SAFETY: returned global is non-null and outlives `self` (the
             // plugin holds a strong ref to its global).
             unsafe { &*JSBundlerPlugin__globalObject(self) }
@@ -1651,10 +1653,11 @@ pub mod js_bundler {
         ) -> JsResult<JSValue> {
             jsc::mark_binding();
             let _tracer = bun_core::perf::trace("JSBundler.addPlugin");
-            // SAFETY: self is valid opaque FFI handle; raw ptr avoids the
-            // closure-vs-`self.global_object()` aliasing borrow conflict.
-            let this: *mut Plugin = self;
-            jsc::from_js_host_call(self.global_object(), || unsafe {
+            // `global_object` and `runSetupFunction` both take `&Plugin`, so a
+            // single shared reborrow of `*self` serves both the host-call guard
+            // and the closure body — no raw-pointer escape hatch needed.
+            let this: &Plugin = &*self;
+            jsc::from_js_host_call(this.global_object(), || {
                 JSBundlerPlugin__runSetupFunction(
                     this,
                     object,

@@ -131,19 +131,18 @@ impl EnvStr {
         match self.tag() {
             Tag::Empty => b"",
             Tag::Slice => self.cast_slice(),
-            Tag::Refcounted => {
-                // SAFETY: tag == Refcounted guarantees ptr is a live *mut RefCountedStr
-                // (set by init_ref_counted/dupe_ref_counted).
-                unsafe { (*self.cast_ref_counted()).byte_slice() }
-            }
+            Tag::Refcounted => match self.as_ref_counted() {
+                Some(r) => r.byte_slice(),
+                // Unreachable: tag check above guarantees `Some`.
+                None => b"",
+            },
         }
     }
 
     pub fn memory_cost(self) -> usize {
         let divisor: usize = 'brk: {
             if let Some(refc) = self.as_ref_counted() {
-                // SAFETY: as_ref_counted returned a live *mut RefCountedStr
-                break 'brk unsafe { (*refc).refcount.get() } as usize;
+                break 'brk refc.refcount.get() as usize;
             }
             break 'brk 1;
         };
@@ -159,22 +158,30 @@ impl EnvStr {
 
     pub fn ref_(self) {
         if let Some(refc) = self.as_ref_counted() {
-            // SAFETY: as_ref_counted returned a live *mut RefCountedStr
-            unsafe { (*refc).ref_() };
+            refc.ref_();
         }
     }
 
     pub fn deref(self) {
-        if let Some(refc) = self.as_ref_counted() {
-            // SAFETY: as_ref_counted returned a live *mut RefCountedStr
-            unsafe { RefCountedStr::deref(refc) };
+        if self.tag() == Tag::Refcounted {
+            // SAFETY: tag == Refcounted guarantees a live *mut RefCountedStr;
+            // `deref` may free it, so this stays raw-ptr (not `as_ref_counted`).
+            unsafe { RefCountedStr::deref(self.cast_ref_counted()) };
         }
     }
 
+    /// Shared-borrow accessor for the ref-counted backing — centralises the
+    /// `unsafe { &*self.cast_ref_counted() }` back-ref deref under the
+    /// `Tag::Refcounted ⇒ live heap RefCountedStr` invariant. Returns `None`
+    /// for `Slice`/`Empty`. The borrow is tied to `&self` (best-effort: `EnvStr`
+    /// is `Copy`, so the caller is still responsible for keeping the +1 alive).
     #[inline]
-    fn as_ref_counted(self) -> Option<*mut RefCountedStr> {
+    fn as_ref_counted(&self) -> Option<&RefCountedStr> {
         if self.tag() == Tag::Refcounted {
-            return Some(self.cast_ref_counted());
+            // SAFETY: tag == Refcounted guarantees `ptr` is a live
+            // *mut RefCountedStr (set by init_ref_counted/dupe_ref_counted)
+            // with refcount >= 1; read-only borrow here.
+            return Some(unsafe { &*self.cast_ref_counted() });
         }
         None
     }

@@ -448,9 +448,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         let native_callback = self.native_callback.replace(NativeCallbacks::None);
         match native_callback {
             NativeCallbacks::H2(h2) => {
-                // SAFETY: `RefPtr` lacks `DerefMut`; reach the pointee via the
-                // raw NonNull (intrusive refcount keeps it alive until `drop`).
-                unsafe { (*h2.as_ptr()).on_native_close() };
+                // `RefPtr: Deref<Target = H2FrameParser>`; `on_native_close`
+                // takes `&self`, so no raw-pointer reach-through is needed.
+                h2.on_native_close();
                 // Zig `h2.deref()` — IntrusiveRc::drop decrements.
                 drop(h2);
             }
@@ -3139,9 +3139,9 @@ impl NativeCallbacks {
         match self {
             NativeCallbacks::H2(h2) => {
                 // TODO: properly propagate exception upwards
-                // SAFETY: intrusive refcount keeps `h2` alive; `RefPtr` lacks
-                // `DerefMut`, so reach the pointee via the raw NonNull.
-                if unsafe { (*h2.as_ptr()).on_native_read(data) }.is_err() {
+                // `RefPtr: Deref<Target = H2FrameParser>`; `on_native_read`
+                // takes `&self`.
+                if h2.on_native_read(data).is_err() {
                     return false;
                 }
                 true
@@ -3152,8 +3152,8 @@ impl NativeCallbacks {
     pub fn on_writable(&self) -> bool {
         match self {
             NativeCallbacks::H2(h2) => {
-                // SAFETY: see `on_data`.
-                unsafe { (*h2.as_ptr()).on_native_writable() };
+                // `on_native_writable(&self)` — Deref through `RefPtr`.
+                h2.on_native_writable();
                 true
             }
             NativeCallbacks::None => false,
@@ -3313,9 +3313,9 @@ impl DuplexUpgradeContext {
 
     fn on_error(&mut self, err_value: JSValue) {
         if self.is_open {
-            if let Some(tls) = &mut self.tls {
-                // SAFETY: intrusive refcount; single-threaded dispatch.
-                unsafe { (*tls.as_ptr()).handle_error(err_value) };
+            if let Some(tls) = &self.tls {
+                // `RefPtr: Deref<Target = TLSSocket>`; `handle_error(&self)`.
+                tls.handle_error(err_value);
             }
         } else {
             if let Some(tls) = self.tls.take() {

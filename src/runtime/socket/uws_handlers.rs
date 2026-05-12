@@ -156,8 +156,9 @@ where
         // dispatch for SEMI_SOCKET, so no `on_handshake`/`on_close` lands
         // in JS before we read `ext`/`this`.
         let this = ext.get();
-        // SAFETY: `s` is a live socket passed by the trampoline.
-        unsafe { (*s).close(CloseCode::failure) };
+        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
+        // deref (`s` is a live socket passed by the trampoline).
+        us_socket_t::opaque_mut(s).close(CloseCode::failure);
         // SAFETY: snapshot of the ext slot taken before close; unique heap
         // owner, single-threaded dispatch (same contract as `ExtSlot::owner_mut`,
         // but the slot storage may have been freed by `close` so we deref the
@@ -266,8 +267,9 @@ where
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
         // Close first, then notify — see `PtrHandler::on_connect_error`.
         let this = *ext;
-        // SAFETY: `s` is a live socket passed by the trampoline.
-        unsafe { (*s).close(CloseCode::failure) };
+        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
+        // deref (`s` is a live socket passed by the trampoline).
+        us_socket_t::opaque_mut(s).close(CloseCode::failure);
         if let Some(t) = this {
             // SAFETY: see `on_open`.
             unsafe { T::on_connect_error(t.as_ptr(), wrap::<SSL>(s), code) };
@@ -513,15 +515,20 @@ where
     const HAS_ON_HANDSHAKE: bool = true;
 
     fn on_open_no_ext(s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
-        // SAFETY: `s` is a live socket; `group()` is non-null for accepted
-        // sockets and `owner` was stashed at listen time.
-        let listener = unsafe { (*s).group().owner::<api::Listener>() };
+        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
+        // deref; `group()` is non-null for accepted sockets and `owner` was
+        // stashed at listen time.
+        let listener = us_socket_t::opaque_mut(s).group().owner::<api::Listener>();
         // on_create allocates the NewSocket, stashes it in ext, and
         // restamps kind → .bun_socket_*. Fire the user `open` handler
         // (markActive, ALPN, JS callback) before returning so the same
         // dispatch tick that accepted the fd sees an open socket — the
         // old `configure({onCreate, onOpen})` path did this in one
         // on_open call.
+        //
+        // SAFETY: `owner::<Listener>()` returns the back-pointer stashed by
+        // `Listener::listen`; the listener strictly outlives every accepted
+        // socket and is read-only here.
         let ns = api::Listener::on_create::<SSL>(unsafe { &*listener }, wrap::<SSL>(s));
         // SAFETY: `on_create` returns a freshly-boxed `NewSocket`; the `*mut`
         // `on_*` methods hold no `&mut NewSocket` across re-entrant JS calls.
@@ -647,8 +654,9 @@ where
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
         // Close before notify — see PtrHandler::on_connect_error.
         let this = ext.get();
-        // SAFETY: `s` is a live socket passed by the trampoline.
-        unsafe { (*s).close(CloseCode::failure) };
+        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
+        // deref (`s` is a live socket passed by the trampoline).
+        us_socket_t::opaque_mut(s).close(CloseCode::failure);
         // SAFETY: snapshot of the ext slot taken before close; unique heap
         // owner, single-threaded dispatch (same contract as `ExtSlot::owner_mut`).
         if let Some(t) = unsafe { thunk::ext_owner(&this) } {
@@ -731,8 +739,9 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
         // Close before notify — see PtrHandler::on_connect_error. SEMI_SOCKET
         // close skips dispatch, so the tagged owner survives the close.
         let owner = *ext;
-        // SAFETY: `s` is a live socket passed by the trampoline.
-        unsafe { (*s).close(CloseCode::failure) };
+        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
+        // deref (`s` is a live socket passed by the trampoline).
+        us_socket_t::opaque_mut(s).close(CloseCode::failure);
         let Some(owner) = owner else { return };
         swallow(HttpH::<SSL>::on_connect_error(owner.as_ptr(), wrap::<SSL>(s), code));
     }

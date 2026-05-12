@@ -309,9 +309,9 @@ impl SubscriptionCtx {
         let Some(callbacks) = self.get_callbacks(global_object, channel_name)? else {
             debug!(
                 "No callbacks found for channel {}",
-                // SAFETY: `as_string()` returns a live JSString cell when the
-                // value is string-typed (channel names always are here).
-                unsafe { &*channel_name.as_string() }.get_zig_string(global_object)
+                // `JSString` is an `opaque_ffi!` ZST — `opaque_ref` is the safe
+                // deref (`as_string()` returns a live cell for string values).
+                bun_jsc::JSString::opaque_ref(channel_name.as_string()).get_zig_string(global_object)
             );
             return Ok(());
         };

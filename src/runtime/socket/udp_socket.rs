@@ -109,10 +109,7 @@ unsafe extern "C" {
 }
 
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
-    // SAFETY: socket.user() was set to `*mut UDPSocket` in `udp_socket()` via the `user` arg to
-    // `uws::udp::Socket::create`. uws guarantees the user pointer is non-null here.
-    // R-2: deref as shared (`&*const`) — all mutated fields are `Cell`/`JsCell`.
-    let this: &UDPSocket = unsafe { &*(*socket).user().cast::<UDPSocket>() };
+    let this: &UDPSocket = UDPSocket::from_uws(socket);
     this.closed.set(true);
     this.poll_ref.with_mut(|p| p.disable());
     this.this_value.with_mut(|r| r.downgrade());
@@ -126,8 +123,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
     // fatal socket condition, not a drainable error queue). Builds a
     // SystemError from the ICMP errno (ECONNREFUSED, EHOSTUNREACH,
     // ENETUNREACH, EMSGSIZE, ...) and dispatches through the 'error' handler.
-    // SAFETY: see on_close.
-    let this: &UDPSocket = unsafe { &*(*socket).user().cast::<UDPSocket>() };
+    let this: &UDPSocket = UDPSocket::from_uws(socket);
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();
     let err_value = sys_err.to_js(global_this);
@@ -135,8 +131,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
 }
 
 extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
-    // SAFETY: see on_close.
-    let this: &UDPSocket = unsafe { &*(*socket).user().cast::<UDPSocket>() };
+    let this: &UDPSocket = UDPSocket::from_uws(socket);
     let Some(this_value) = this.this_value.get().try_get() else { return };
     let Some(callback) = js::on_drain_get_cached(this_value) else { return };
     if callback.is_empty_or_undefined_or_null() {
@@ -154,8 +149,7 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
 }
 
 extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketBuffer, packets: c_int) {
-    // SAFETY: see on_close.
-    let udp_socket: &UDPSocket = unsafe { &*(*socket).user().cast::<UDPSocket>() };
+    let udp_socket: &UDPSocket = UDPSocket::from_uws(socket);
     let Some(this_value) = udp_socket.this_value.get().try_get() else { return };
     let Some(callback) = js::on_data_get_cached(this_value) else { return };
     if callback.is_empty_or_undefined_or_null() {
@@ -472,6 +466,22 @@ pub struct UDPSocket {
 impl UDPSocket {
     pub fn new(init: Self) -> *mut Self {
         bun_core::heap::into_raw(Box::new(init))
+    }
+
+    /// Recover `&UDPSocket` from the uws user-data slot. Centralises the
+    /// `unsafe { &*(*socket).user().cast() }` back-ref deref shared by every
+    /// `extern "C"` callback below — the user pointer was set to the
+    /// heap-allocated `UDPSocket` in [`udp_socket`] via
+    /// `uws::udp::Socket::create(.., user_data = this_ptr)` and remains live
+    /// until `on_close` (uws guarantees no callback after close). All mutated
+    /// fields are `Cell`/`JsCell`, so a shared borrow is sufficient (R-2).
+    #[inline]
+    fn from_uws<'a>(socket: *mut uws::udp::Socket) -> &'a UDPSocket {
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let user = uws::udp::Socket::opaque_mut(socket).user();
+        // SAFETY: `user` was set to `*mut UDPSocket` at creation; non-null and
+        // live for the callback's duration (back-ref invariant).
+        unsafe { &*user.cast::<UDPSocket>() }
     }
 
     pub fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
@@ -1167,9 +1177,9 @@ impl UDPSocket {
                     break 'brk array_buffer.slice();
                 }
                 // Phase 1 stored the primitive JSString; `asString()` is a
-                // plain cast (no `toPrimitive`, no user JS).
-                // SAFETY: val is a primitive JSString cell (guaranteed by phase 1).
-                string_slices.push(unsafe { (*val.as_string()).to_slice(global_this) });
+                // plain cast (no `toPrimitive`, no user JS). `JSString` is an
+                // `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
+                string_slices.push(bun_jsc::JSString::opaque_ref(val.as_string()).to_slice(global_this));
                 break 'brk string_slices.last().unwrap().slice();
             };
             payloads[slice_idx] = slice.as_ptr();
@@ -1554,12 +1564,11 @@ impl UDPSocket {
     pub fn js_connect(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<2>();
 
-        let Some(this_ptr) = call_frame.this().as_::<UDPSocket>() else {
+        // `as_class_ref` is the safe `&T` downcast (encapsulates `&*from_js`);
+        // mutation goes through `Cell`, so a shared borrow suffices (R-2).
+        let Some(this) = call_frame.this().as_class_ref::<UDPSocket>() else {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected UDPSocket as 'this'")));
         };
-        // SAFETY: from_js_direct yielded a live payload pointer. R-2: shared
-        // borrow — mutation through `Cell`.
-        let this = unsafe { &*this_ptr };
 
         if this.connect_info.get().is_some() {
             return Err(global_this.throw(format_args!("Socket is already connected")));
@@ -1606,12 +1615,11 @@ impl UDPSocket {
 
     // PORT NOTE: see `js_connect` — codegen `JsClass` derive owns the link name.
     pub fn js_disconnect(global_object: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let Some(this_ptr) = call_frame.this().as_::<UDPSocket>() else {
+        // `as_class_ref` is the safe `&T` downcast (encapsulates `&*from_js`);
+        // mutation goes through `Cell`, so a shared borrow suffices (R-2).
+        let Some(this) = call_frame.this().as_class_ref::<UDPSocket>() else {
             return Err(global_object.throw_invalid_arguments(format_args!("Expected UDPSocket as 'this'")));
         };
-        // SAFETY: from_js_direct yielded a live payload pointer. R-2: shared
-        // borrow — mutation through `Cell`.
-        let this = unsafe { &*this_ptr };
 
         if this.connect_info.get().is_none() {
             return Err(global_object.throw(format_args!("Socket is not connected")));

@@ -76,8 +76,9 @@ static TABLES: std::sync::LazyLock<[Option<&'static VTable>; SOCKET_KIND_COUNT]>
 
 #[inline]
 fn vt(s: *mut us_socket_t) -> &'static VTable {
-    // SAFETY: `s` is non-null — loop.c only dispatches live sockets.
-    let s = unsafe { &mut *s };
+    // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref
+    // (loop.c only dispatches live, non-null sockets).
+    let s = us_socket_t::opaque_mut(s);
     let kind = s.kind();
     match kind {
         SocketKind::Invalid => {
@@ -91,8 +92,8 @@ fn vt(s: *mut us_socket_t) -> &'static VTable {
         | SocketKind::UwsHttpTls
         | SocketKind::UwsWs
         | SocketKind::UwsWsTls => {
-            // SAFETY: raw_group() is non-null for any socket with a valid kind.
-            unsafe { (*s.raw_group()).vtable.expect("group vtable") }
+            // `raw_group()` already returns `&mut SocketGroup` for `us_socket_t`.
+            s.raw_group().vtable.expect("group vtable")
         }
         _ => TABLES[kind as usize].expect("kind vtable"),
     }
@@ -100,8 +101,9 @@ fn vt(s: *mut us_socket_t) -> &'static VTable {
 
 #[inline]
 fn vtc(c: *mut ConnectingSocket) -> &'static VTable {
-    // SAFETY: `c` is non-null — loop.c only dispatches live connecting sockets.
-    let c = unsafe { &mut *c };
+    // `ConnectingSocket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
+    // deref (loop.c only dispatches live, non-null connecting sockets).
+    let c = ConnectingSocket::opaque_mut(c);
     let kind = c.kind();
     match kind {
         SocketKind::Invalid => {
@@ -206,13 +208,17 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
     data: *mut u8,
     len: c_int,
 ) -> *mut us_socket_t {
-    // SAFETY: `s` is non-null per loop.c contract.
-    debug_assert!(unsafe { (*s).kind() } == SocketKind::BunSocketTls);
+    // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref
+    // (`s` is non-null per loop.c contract).
+    let s_ref = us_socket_t::opaque_mut(s);
+    debug_assert!(s_ref.kind() == SocketKind::BunSocketTls);
     // `bun.jsc.API.NewSocket(true)` → the runtime-local `socket::NewSocket<true>`.
     type TLSSocket = super::NewSocket<true>;
     // SAFETY: ext slot for BunSocketTls always holds a non-null *mut TLSSocket
-    // (stamped at construction); deref of both the slot and the pointer is sound.
-    let tls: &TLSSocket = unsafe { &**(*s).ext::<*mut TLSSocket>() };
+    // (stamped at construction); the slot read is safe via `opaque_mut`, only
+    // the final `&*tls_ptr` needs the deref invariant.
+    let tls_ptr: *mut TLSSocket = *s_ref.ext::<*mut TLSSocket>();
+    let tls: &TLSSocket = unsafe { &*tls_ptr };
     if let Some(raw) = tls.twin.get().as_ref() {
         // `twin` is `IntrusiveRc<Self>` (intrusive ref-counted heap pointer);
         // grab the raw `*mut` without consuming the ref so the +1 stays put.

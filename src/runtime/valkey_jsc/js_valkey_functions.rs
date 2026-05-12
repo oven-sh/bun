@@ -1781,7 +1781,8 @@ impl JSValkeyClient {
                     // TODO(port): {f} format spec on ZigString
                     return Err(global.throw(format_args!(
                         "Failed to remove handler for channel {}",
-                        unsafe { &*channel.as_string() }.get_zig_string(global)
+                        // `JSString` is an `opaque_ffi!` ZST — safe deref.
+                        bun_jsc::JSString::opaque_ref(channel.as_string()).get_zig_string(global)
                     )));
                 }
             };

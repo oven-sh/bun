@@ -439,17 +439,21 @@ impl NewBuilder<VLQSourceMap> {
 
             match c {
                 14..=127 => {
-                    if let Some(j) = strings::index_of_newline_or_non_ascii(
-                        slice,
-                        u32::try_from(i).expect("int cast"),
-                    ) {
-                        self.generated_column +=
-                            i32::try_from((j as usize - i) + 1).expect("int cast");
+                    // Hot path: Zig uses unchecked `@intCast` here. `i` is bounded by
+                    // `slice.len()` (itself a sub-slice indexed by a `u32` offset), and
+                    // column deltas are bounded by that same length, so these casts
+                    // cannot truncate in practice. Keep the bound check in debug only.
+                    debug_assert!(i <= u32::MAX as usize);
+                    if let Some(j) = strings::index_of_newline_or_non_ascii(slice, i as u32) {
+                        let advance = (j as usize - i) + 1;
+                        debug_assert!(advance <= i32::MAX as usize);
+                        self.generated_column += advance as i32;
                         i = j as usize;
                         continue;
                     } else {
-                        self.generated_column +=
-                            i32::try_from(slice[i..].len()).expect("int cast") + 1;
+                        let remaining = slice[i..].len();
+                        debug_assert!(remaining <= i32::MAX as usize);
+                        self.generated_column += remaining as i32 + 1;
                         i = n;
                         break;
                     }

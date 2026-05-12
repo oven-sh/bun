@@ -12,6 +12,17 @@
 //!   4. `Output.Source.Stdio.init()` — stdout/stderr writers
 //!   5. `StackCheck.configureThread()`
 //!   6. `cli::Cli::start()` → `Global::exit(0)`
+//!
+//! ## Layout
+//!
+//! Every callee of `main()` below is hand-listed in `src/startup.order`
+//! (the `main() direct-call chain` block) so lld's `--symbol-ordering-file`
+//! packs them into one contiguous `.text` run. Without that, fat-LTO emits
+//! the C-ABI leaves (`bun_initialize_process`, `bun_warn_avx_missing`,
+//! `__wrap_quick_exit`, `__wrap_gettid`, …) in crate-alphabetical order —
+//! ~6 MB from `main` amid cold JSC/WebCore code — and each call faults a
+//! separate 64 KB page run on cold start. **If you add or reorder a step
+//! here, mirror it in `src/startup.order`.**
 
 #![allow(unused_imports)]
 #![warn(unused_must_use)]

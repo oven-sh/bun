@@ -2013,6 +2013,7 @@ dependencies = [
  "libc",
  "phf 0.11.3",
  "scopeguard",
+ "smallvec",
  "strum",
  "typed-arena",
 ]

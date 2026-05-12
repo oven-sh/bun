@@ -98,9 +98,20 @@ fn generate_compile_result_for_js_chunk_impl(
         .as_mut()
         .expect("Worker.temporary_arena set in create()");
     let mut buffer_writer = js_printer::BufferWriter::init();
-    // PERF(port): was arena bulk-free (.retain_capacity) — profile in Phase B
+    // Zig: `defer _ = arena.reset(.retain_capacity)` on a `std.heap.ArenaAllocator`
+    // (O(1) bump rewind, chunks retained). `temporary_arena` is a `MimallocArena`
+    // here because `temp_arena` flows into `Stmt::allocate`/`Expr::allocate`/
+    // `Binding::alloc`/`ArenaVec`, all of which take `&MimallocArena` concretely;
+    // a plain `reset()` would be `mi_heap_destroy + mi_heap_new` *per part_range*
+    // (perf-probe: 46× for one elysia build). Use `reset_retain_with_limit` — the
+    // codebase's mapping for Zig's `.retain_*` modes (see `ModuleLoader`'s
+    // `transpile_source_code_arena`): keep the heap warm across part_ranges and
+    // only pay the destroy+new round-trip once accumulated scratch exceeds the
+    // limit. 8 MiB matches the module-arena precedent and comfortably covers a
+    // worker's full part_range set for typical bundles, so this is ~one
+    // `mi_heap_new` per worker instead of one per module.
     let arena = scopeguard::guard(&mut *arena, |a| {
-        a.reset();
+        let _ = a.reset_retain_with_limit(8 * 1024 * 1024);
     });
     let stmt_list = worker
         .stmt_list

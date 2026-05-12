@@ -389,9 +389,12 @@ pub fn host_fn_static_passthrough(
 /// to [`JsHostFn`] when Rust passes it as a callback (e.g. `JSValue::then2`).
 /// All other thunks take references directly.
 ///
-/// Panics if `global` or `callframe` is null. Both are `opaque_ffi!` ZST
-/// handles, so the `*mut → &` conversion is the centralised
-/// [`bun_opaque::opaque_deref`] proof (zero-byte deref, null-checked).
+/// Both are `opaque_ffi!` ZST handles, so the `*mut → &` conversion is the
+/// centralised [`bun_opaque::opaque_deref_nn`] proof (zero-byte deref). JSC's
+/// host-call ABI never passes null for either argument — `globalObject` comes
+/// from the running VM and `callFrame` is the on-stack frame pointer — so the
+/// unchecked `_nn` variant is used to drop the two `testq; je <panic>` pairs
+/// from every `HOST_EXPORT` entry (`debug_assert!`ed in debug builds).
 #[track_caller]
 #[inline]
 pub fn host_fn_static_raw<R: IntoHostFnReturn>(
@@ -399,7 +402,10 @@ pub fn host_fn_static_raw<R: IntoHostFnReturn>(
     callframe: *mut CallFrame,
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> R,
 ) -> JSValue {
-    host_fn_static(JSGlobalObject::opaque_ref(global), CallFrame::opaque_ref(callframe), f)
+    // SAFETY: JSC host-function ABI — `global`/`callframe` are always non-null.
+    let (global, callframe) =
+        unsafe { (JSGlobalObject::opaque_ref_nn(global), CallFrame::opaque_ref_nn(callframe)) };
+    host_fn_static(global, callframe, f)
 }
 
 /// Raw-pointer entry for `host`-shape exports, no exception scope.
@@ -410,7 +416,10 @@ pub fn host_fn_static_passthrough_raw(
     callframe: *mut CallFrame,
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> JSValue,
 ) -> JSValue {
-    host_fn_static_passthrough(JSGlobalObject::opaque_ref(global), CallFrame::opaque_ref(callframe), f)
+    // SAFETY: JSC host-function ABI — `global`/`callframe` are always non-null.
+    let (global, callframe) =
+        unsafe { (JSGlobalObject::opaque_ref_nn(global), CallFrame::opaque_ref_nn(callframe)) };
+    host_fn_static_passthrough(global, callframe, f)
 }
 
 /// Lazy property creator / free getter: `fn(&JSGlobalObject) -> R`. Used by

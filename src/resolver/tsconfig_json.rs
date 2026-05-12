@@ -33,15 +33,19 @@ pub enum JsonMode {
 /// this struct owns one. The arena is **never reset** — package.json/tsconfig
 /// ASTs are cached process-long ("DirInfo cache is reused globally / so we
 /// cannot free these", package_json.zig).
+///
+/// The arena is lazy-initialized on first `parse()`. `Resolver::for_worker`
+/// creates one `CacheSet` (and thus one `JsonCache`) per bundler worker thread,
+/// but those workers share the global `DirInfo` cache and almost never call
+/// `parse_*` themselves — eagerly constructing `Arena::new()` here costs one
+/// `mi_heap_new` per worker (≈11 empty heaps on a typical build/elysia run).
 pub struct JsonCache {
-    bump: bun_alloc::Arena,
+    bump: Option<bun_alloc::Arena>,
 }
 
 impl JsonCache {
     pub fn init() -> JsonCache {
-        JsonCache {
-            bump: bun_alloc::Arena::new(),
-        }
+        JsonCache { bump: None }
     }
 
     /// Port of `cache::Json::parse` (cache.zig:287).
@@ -57,9 +61,10 @@ impl JsonCache {
         ) -> Result<bun_ast::Expr, bun_core::Error>,
     ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
         let mut temp_log = bun_ast::Log::init();
+        let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
         // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(log, source) catch {}`
         // runs after the `func() catch null` body; here the append is hoisted past the match.
-        let result = match func(source, &mut temp_log, &self.bump) {
+        let result = match func(source, &mut temp_log, bump) {
             // Lift the T2 value-subset `bun_ast::Expr` into the full
             // `bun_ast::Expr` (src/js_parser/ast/Expr.rs `From` impl).
             Ok(expr) => Some(bun_ast::Expr::from(expr)),

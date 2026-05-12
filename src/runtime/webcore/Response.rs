@@ -416,13 +416,27 @@ impl Response {
         self.init.get().headers.as_deref()
     }
 
+    /// R-2 `JsCell` escape hatch — single-JS-thread invariant. Centralises the
+    /// `unsafe { self.init.get_mut() }` deref so the four call sites
+    /// ([`get_init_headers_mut`], [`header`], [`get_or_create_headers`],
+    /// [`get_content_type`]) read it as a plain `&mut Init`.
+    ///
+    /// # Safety (encapsulated)
+    /// `Response` is JS-thread-affine (`!Sync`) and `init` is never reborrowed
+    /// across re-entrant JS; the returned `&mut Init` is held only for FFI
+    /// out-param writes (`FetchHeaders::fast_get`/`put`) that do not call back
+    /// into Response host-fns, so no overlapping `&mut Init` is live.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn init_mut(&self) -> &mut Init {
+        // SAFETY: see fn doc — single-JS-thread, no overlapping `&mut Init`.
+        unsafe { self.init.get_mut() }
+    }
+
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn get_init_headers_mut(&self) -> Option<&mut FetchHeaders> {
-        // SAFETY: R-2 `JsCell` escape hatch — single-JS-thread invariant. The
-        // `&mut FetchHeaders` is derived from a stable C++ heap pointer and is
-        // not held across calls that re-enter Response host-fns.
-        unsafe { self.init.get_mut() }.headers.as_deref_mut()
+        self.init_mut().headers.as_deref_mut()
     }
 
     #[inline]
@@ -662,10 +676,8 @@ impl Response {
         // PORT NOTE: reshaped for borrowck — `FetchHeaders::fast_get` takes
         // `&mut self` (FFI writes through an out-param), so we return the
         // owned `ZigString` instead of a borrowed slice. Callers do
-        // `.slice()` themselves.
-        // SAFETY: R-2 `JsCell` escape hatch — the `&mut FetchHeaders` is a
-        // C++-side opaque handle; the FFI out-param write does not re-enter JS.
-        unsafe { self.init.get_mut() }.headers.as_mut()?.fast_get(name)
+        // `.slice()` themselves. R-2 escape hatch via `init_mut()`.
+        self.init_mut().headers.as_mut()?.fast_get(name)
     }
 
     pub fn is_ok(&self) -> bool {
@@ -716,11 +728,10 @@ impl Response {
 
     #[allow(clippy::mut_from_ref)]
     fn get_or_create_headers(&self, global_this: &JSGlobalObject) -> JsResult<&mut HeadersRef> {
-        // SAFETY: R-2 `JsCell` escape hatch — single-JS-thread invariant. The
-        // returned `&mut HeadersRef` borrows `self.init`; callers
-        // (`get_headers`, `construct_*`) do not hold the borrow across calls
-        // that re-enter Response host-fns.
-        let init = unsafe { self.init.get_mut() };
+        // R-2 escape hatch via `init_mut()` — the returned `&mut HeadersRef`
+        // borrows `self.init`; callers (`get_headers`, `construct_*`) do not
+        // hold the borrow across calls that re-enter Response host-fns.
+        let init = self.init_mut();
         if init.headers.is_none() {
             init.headers = Some(HeadersRef::create_empty());
 
@@ -744,9 +755,9 @@ impl Response {
     }
 
     pub fn get_content_type(&self) -> JsResult<Option<ZigStringSlice>> {
-        // SAFETY: R-2 `JsCell` escape hatch — `fast_get` (FFI out-param write)
+        // R-2 escape hatch via `init_mut()` — `fast_get` (FFI out-param write)
         // does not re-enter JS.
-        if let Some(headers) = unsafe { self.init.get_mut() }.headers.as_mut() {
+        if let Some(headers) = self.init_mut().headers.as_mut() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
                 return Ok(Some(value.to_slice()));
             }

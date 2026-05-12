@@ -569,12 +569,13 @@ impl ServerWebSocket {
         bun_output::scoped_log!(WebSocketServer, "finalize");
         self.this_value.with_mut(|v| v.finalize());
         if let Some(signal) = self.signal.take() {
-            // SAFETY: `signal` was stored with a +1 ref by the upgrade caller;
-            // it stays live until this paired unref.
-            unsafe {
-                signal.as_ref().pending_activity_unref();
-                signal.as_ref().unref();
-            }
+            // `signal` was stored with a +1 ref by the upgrade caller; it
+            // stays live until this paired `unref()`, so the transient
+            // `BackRef` (pointee-outlives-holder) is sound for both calls —
+            // same pattern as `on_close()`'s `_cleanup` guard.
+            let sig = bun_ptr::BackRef::from(signal);
+            sig.pending_activity_unref();
+            sig.unref();
         }
     }
 

@@ -648,16 +648,19 @@ impl Request {
 bun_jsc::jsc_abi_extern! {
     #[allow(improper_ctypes)]
     #[link_name = "Bun__JSRequest__createForBake"]
-    fn Bun__JSRequest__createForBake(
-        global_object: *const JSGlobalObject,
+    // `&JSGlobalObject` discharges the only deref'd-param precondition;
+    // `request_ptr` is stored opaquely as `void* m_ctx` (module-private —
+    // sole caller forwards `from_ref(self)`). Matches the `*__createObject`
+    // precedent.
+    safe fn Bun__JSRequest__createForBake(
+        global_object: &JSGlobalObject,
         request_ptr: *mut Request,
     ) -> JSValue;
 }
 
 impl Request {
     pub fn to_js_for_bake(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_jsc::from_js_host_call(global_object, || unsafe {
-            // SAFETY: FFI to C++; pointers valid for the duration of the call.
+        bun_jsc::from_js_host_call(global_object, || {
             // C++ stores `self` as opaque `void* m_ctx`; see `to_js` note.
             Bun__JSRequest__createForBake(
                 global_object,

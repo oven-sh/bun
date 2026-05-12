@@ -30,8 +30,11 @@ unsafe extern "C" {
     fn WebCore__FetchHeaders__copyTo(arg0: *mut FetchHeaders, arg1: *mut StringPointer, arg2: *mut StringPointer, arg3: *mut u8);
     safe fn WebCore__FetchHeaders__count(arg0: &FetchHeaders, arg1: &mut u32, arg2: &mut u32);
     safe fn WebCore__FetchHeaders__createEmpty() -> *mut FetchHeaders;
-    fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: *const c_void) -> *mut FetchHeaders;
-    fn WebCore__FetchHeaders__createFromUWS(arg1: *mut c_void) -> *mut FetchHeaders;
+    // safe: `arg0`/`arg1` are opaque handles to C++-owned request structs
+    // (PicoHeaders / uWS HttpRequest); never dereferenced as Rust data — same
+    // round-trip contract as `Zig__GlobalObject__resetModuleRegistryMap`.
+    safe fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: *const c_void) -> *mut FetchHeaders;
+    safe fn WebCore__FetchHeaders__createFromUWS(arg1: *mut c_void) -> *mut FetchHeaders;
     fn WebCore__FetchHeaders__createValueNotJS(arg0: *const JSGlobalObject, arg1: *mut StringPointer, arg2: *mut StringPointer, arg3: *const ZigString, arg4: u32) -> *mut FetchHeaders;
     fn WebCore__FetchHeaders__createValue(arg0: *const JSGlobalObject, arg1: *mut StringPointer, arg2: *mut StringPointer, arg3: *const ZigString, arg4: u32) -> JSValue;
     // safe: `FetchHeaders` is an `opaque_ffi!` ZST handle; `&mut` is ABI-identical
@@ -43,11 +46,14 @@ unsafe extern "C" {
     safe fn WebCore__FetchHeaders__get_(arg0: &FetchHeaders, arg1: &ZigString, arg2: &mut ZigString, arg3: &JSGlobalObject);
     safe fn WebCore__FetchHeaders__has(arg0: &FetchHeaders, arg1: &ZigString, arg2: &JSGlobalObject) -> bool;
     safe fn WebCore__FetchHeaders__isEmpty(arg0: &FetchHeaders) -> bool;
-    fn WebCore__FetchHeaders__put_(arg0: *mut FetchHeaders, arg1: *const ZigString, arg2: *const ZigString, arg3: *const JSGlobalObject);
+    safe fn WebCore__FetchHeaders__put_(arg0: &FetchHeaders, arg1: &ZigString, arg2: &ZigString, arg3: &JSGlobalObject);
     safe fn WebCore__FetchHeaders__remove(arg0: &FetchHeaders, arg1: &ZigString, arg2: &JSGlobalObject);
     safe fn WebCore__FetchHeaders__toJS(arg0: &FetchHeaders, arg1: &JSGlobalObject) -> JSValue;
-    fn WebCore__FetchHeaders__toUWSResponse(arg0: *mut FetchHeaders, kind: ResponseKind, arg2: *mut c_void);
-    fn WebCore__FetchHeaders__createFromH3(arg0: *mut c_void) -> *mut FetchHeaders;
+    // safe: `FetchHeaders` is an opaque ZST handle (`&mut` ≡ non-null `*mut`);
+    // `arg2` is an opaque handle to a C++-owned uWS response (never dereferenced
+    // as Rust data).
+    safe fn WebCore__FetchHeaders__toUWSResponse(arg0: &mut FetchHeaders, kind: ResponseKind, arg2: *mut c_void);
+    safe fn WebCore__FetchHeaders__createFromH3(arg0: *mut c_void) -> *mut FetchHeaders;
 
     safe fn WebCore__FetchHeaders__createFromJS(arg0: &JSGlobalObject, arg1: JSValue) -> *mut FetchHeaders;
 
@@ -151,26 +157,17 @@ impl FetchHeaders {
     }
 
     pub fn create_from_uws(uws_request: *mut c_void) -> NonNull<FetchHeaders> {
-        // SAFETY: uws_request must point to a live uWS HttpRequest.
-        NonNull::new(unsafe { WebCore__FetchHeaders__createFromUWS(uws_request) })
+        NonNull::new(WebCore__FetchHeaders__createFromUWS(uws_request))
             .expect("WebCore__FetchHeaders__createFromUWS returned null")
     }
 
     pub fn create_from_h3(h3_request: *mut c_void) -> NonNull<FetchHeaders> {
-        // SAFETY: h3_request must point to a live H3 request.
-        NonNull::new(unsafe { WebCore__FetchHeaders__createFromH3(h3_request) })
+        NonNull::new(WebCore__FetchHeaders__createFromH3(h3_request))
             .expect("WebCore__FetchHeaders__createFromH3 returned null")
     }
 
     pub fn to_uws_response(&mut self, kind: ResponseKind, uws_response: *mut c_void) {
-        // SAFETY: self is a valid FetchHeaders handle; uws_response points to a live uWS response
-        unsafe {
-            WebCore__FetchHeaders__toUWSResponse(
-                self,
-                kind,
-                uws_response,
-            )
-        }
+        WebCore__FetchHeaders__toUWSResponse(self, kind, uws_response)
     }
 
     pub fn create_empty() -> NonNull<FetchHeaders> {
@@ -185,16 +182,15 @@ impl FetchHeaders {
             ptr: pico_headers_list.as_ptr().cast::<c_void>(),
             len: pico_headers_list.len(),
         };
-        // SAFETY: &out lives across the call; C++ copies the headers synchronously.
-        NonNull::new(unsafe {
-            WebCore__FetchHeaders__createFromPicoHeaders_((&raw const out).cast::<c_void>())
-        })
+        // `out` lives across the call; C++ copies the headers synchronously.
+        NonNull::new(WebCore__FetchHeaders__createFromPicoHeaders_(
+            std::ptr::from_ref(&out).cast::<c_void>(),
+        ))
         .expect("WebCore__FetchHeaders__createFromPicoHeaders_ returned null")
     }
 
     pub fn create_from_pico_headers_(pico_headers: *const c_void) -> NonNull<FetchHeaders> {
-        // SAFETY: pico_headers must point to a valid PicoHeaders struct.
-        NonNull::new(unsafe { WebCore__FetchHeaders__createFromPicoHeaders_(pico_headers) })
+        NonNull::new(WebCore__FetchHeaders__createFromPicoHeaders_(pico_headers))
             .expect("WebCore__FetchHeaders__createFromPicoHeaders_ returned null")
     }
 

@@ -18,8 +18,11 @@ unsafe extern "C" {
         length: u32,
         names: *mut ExternColumnIdentifier,
     ) -> JSValue;
-    fn JSC__JSObject__create(
-        global_object: *mut JSGlobalObject,
+    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
+    // ABI-identical to non-null `*const`); `ctx` is an opaque round-trip pointer
+    // C++ only forwards to `initializer` (never dereferenced as Rust data).
+    safe fn JSC__JSObject__create(
+        global_object: &JSGlobalObject,
         length: usize,
         ctx: *mut c_void,
         initializer: InitializeCallback,
@@ -178,18 +181,14 @@ impl JSObject {
         global: &JSGlobalObject,
         length: usize,
     ) -> JSValue {
-        // SAFETY: `initializer_call::<Ctx>` casts `ctx` back to `*mut Ctx`, which
-        // is exactly what we pass here. `global.as_ptr()` is the centralized
-        // opaque-handle → `*mut` conversion (JSC mutates VM/heap state through
-        // it; interior mutability is the intended contract per JSObject.zig).
-        unsafe {
-            JSC__JSObject__create(
-                global.as_ptr(),
-                length,
-                std::ptr::from_mut::<Ctx>(creator).cast::<c_void>(),
-                initializer_call::<Ctx>,
-            )
-        }
+        // `ctx` is the `&mut Ctx` round-tripped through `*mut c_void`;
+        // `initializer_call::<Ctx>` casts it back. C++ only forwards it.
+        JSC__JSObject__create(
+            global,
+            length,
+            std::ptr::from_mut::<Ctx>(creator).cast::<c_void>(),
+            initializer_call::<Ctx>,
+        )
     }
 
     #[track_caller]

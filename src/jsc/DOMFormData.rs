@@ -11,7 +11,7 @@ bun_opaque::opaque_ffi! {
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
-    fn WebCore__DOMFormData__cast_(js_value0: JSValue, arg1: *mut VM) -> *mut DOMFormData;
+    safe fn WebCore__DOMFormData__cast_(js_value0: JSValue, arg1: &VM) -> *mut DOMFormData;
     safe fn WebCore__DOMFormData__create(arg0: &JSGlobalObject) -> JSValue;
     safe fn WebCore__DOMFormData__createFromURLQuery(
         arg0: &JSGlobalObject,
@@ -31,12 +31,17 @@ unsafe extern "C" {
         arg1: &ZigString,
         arg2: &ZigString,
     );
-    fn WebCore__DOMFormData__appendBlob(
-        arg0: *mut DOMFormData,
-        arg1: *mut JSGlobalObject,
-        arg2: *const ZigString,
+    // safe: `DOMFormData`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST
+    // handles; `&ZigString` is ABI-identical to non-null `*const ZigString` and
+    // C++ only reads the named struct via `toStringCopy`. `arg3` is an opaque
+    // `*Blob` C++ owns (never dereferenced as Rust data) — same round-trip
+    // contract as `Zig__GlobalObject__resetModuleRegistryMap`'s `map` param.
+    safe fn WebCore__DOMFormData__appendBlob(
+        arg0: &mut DOMFormData,
+        arg1: &JSGlobalObject,
+        arg2: &ZigString,
         arg3: *mut c_void,
-        arg4: *const ZigString,
+        arg4: &ZigString,
     );
     safe fn WebCore__DOMFormData__count(arg0: &mut DOMFormData) -> usize;
 
@@ -111,11 +116,7 @@ impl DOMFormData {
         blob: *mut c_void,
         filename_: &ZigString,
     ) {
-        // SAFETY: all pointers valid for the call; `blob` is an opaque *Blob owned by caller.
-        // C++ only reads the ZigString params via `toStringCopy` (bindings.cpp).
-        unsafe {
-            WebCore__DOMFormData__appendBlob(self, global.as_ptr(), name_, blob, filename_);
-        }
+        WebCore__DOMFormData__appendBlob(self, global, name_, blob, filename_);
     }
 
     pub fn count(&mut self) -> usize {

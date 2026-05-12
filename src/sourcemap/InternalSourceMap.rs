@@ -317,6 +317,10 @@ fn zigzag_decode(value: u32) -> i32 {
 /// Max bytes for a zig-zag-encoded i32 in 7-bit varint form: ceil(32 / 7) = 5.
 const MAX_VARINT_LEN: usize = 5;
 
+// PERF: force-inline so the per-delta loops in `flush_window` see the 1-byte
+// fast path branchlessly and LLVM can hoist the `buf_ptr.add(w)` arithmetic.
+// Zig leaves this to LLVM (single-CGU); Rust needs the hint across CGUs.
+#[inline(always)]
 fn write_varint(buf: *mut u8, signed: i32) -> usize {
     let mut v = zigzag_encode(signed);
     let mut i: usize = 0;
@@ -911,29 +915,37 @@ struct Delta {
     d_src_idx: i32,
 }
 
+// `#[repr(C)]` pins declaration order so the per-mapping read/modify/write set
+// (`state`, `pending_generated_line_delta`, `count`, `pending_n` — 29 bytes)
+// lands at offset 0 in the head cache line, with `sync_entries`' NonNull ptr
+// (the `Option<Builder>` niche) immediately after at offset 32 in the *same*
+// line. The inlined `VLQSourceMap::append`/`append_line_separator` (Chunk.zig
+// 103/107 are `pub inline fn`) thus touch one line on the fast path instead of
+// straddling the 1280-byte `pending` array. (benches: lint/create-vue)
+#[repr(C)]
 pub struct Builder {
+    state: State,
+    pending_generated_line_delta: i32,
+    count: u32,
+    pending_n: u8,
     sync_entries: Vec<SyncEntry>,
     win_stream: Vec<u8>,
     /// Only `[0..pending_n]` are initialized; matches Zig's `undefined` init.
     pending: [MaybeUninit<State>; SYNC_INTERVAL],
-    pending_n: u8,
-    pending_generated_line_delta: i32,
-    state: State,
-    count: u32,
     finalized: Option<MutableString>,
 }
 
 impl Default for Builder {
     fn default() -> Self {
         Builder {
+            state: State::default(),
+            pending_generated_line_delta: 0,
+            count: 0,
+            pending_n: 0,
             sync_entries: Vec::new(),
             win_stream: Vec::new(),
             // Zig: `undefined` — slots are written before read (gated by pending_n).
             pending: [MaybeUninit::uninit(); SYNC_INTERVAL],
-            pending_n: 0,
-            pending_generated_line_delta: 0,
-            state: State::default(),
-            count: 0,
             finalized: None,
         }
     }
@@ -962,7 +974,13 @@ impl Builder {
         };
         self.pending_generated_line_delta = 0;
 
-        self.pending[self.pending_n as usize].write(self.state);
+        let i = self.pending_n as usize;
+        debug_assert!(i < SYNC_INTERVAL);
+        // SAFETY: invariant `pending_n < SYNC_INTERVAL` between flushes — the
+        // tail of this fn flushes (resetting to 0) the moment it would reach
+        // SYNC_INTERVAL, so on entry `pending_n <= SYNC_INTERVAL-1`. Elides the
+        // per-mapping bounds check (Zig: `self.pending[n]` is unchecked in release).
+        unsafe { self.pending.get_unchecked_mut(i) }.write(self.state);
         self.pending_n += 1;
         self.count += 1;
 
@@ -982,7 +1000,10 @@ impl Builder {
             core::slice::from_raw_parts(self.pending.as_ptr().cast::<State>(), n as usize)
         };
         let seed = pending[0];
-        let start_off: u32 = u32::try_from(self.win_stream.len()).expect("int cast");
+        // PERF(port): @intCast — win_stream is bounded by total mapping count × ~5B/mapping;
+        // u32 overflow would mean a >4 GiB sourcemap stream, unreachable in practice.
+        debug_assert!(self.win_stream.len() <= u32::MAX as usize);
+        let start_off: u32 = self.win_stream.len() as u32;
         self.sync_entries.push(SyncEntry {
             generated_line: seed.generated_line,
             generated_column: seed.generated_column,
@@ -1009,7 +1030,12 @@ impl Builder {
             let d_orig_line = cur.original_line - prev.original_line;
             let d_orig_col = cur.original_column - prev.original_column;
             let d_src_idx = cur.source_index - prev.source_index;
-            deltas_buf[k].write(Delta { d_gen_line, d_gen_col, d_orig_line, d_orig_col, d_src_idx });
+            // SAFETY: k ranges over 0..pending.len()-1 == 0..n_deltas, and
+            // n_deltas <= SYNC_INTERVAL-1 == deltas_buf.len(). Elides the
+            // per-delta bounds check so this loop matches Zig's unchecked
+            // `deltas[k] = .{...}` and stays vectorizable.
+            unsafe { deltas_buf.get_unchecked_mut(k) }
+                .write(Delta { d_gen_line, d_gen_col, d_orig_line, d_orig_col, d_src_idx });
             if d_gen_line > 1 || d_gen_line < 0 {
                 flags |= FLAG_HAS_GEN_LINE_EXCEPTIONS;
             }
@@ -1063,7 +1089,11 @@ impl Builder {
             }
             w += write_varint(unsafe { buf_ptr.add(w) }, d.d_gen_col);
         }
-        let gen_col_len: u16 = u16::try_from(w - win_hdr::GEN_COL_LANE_OFF).expect("int cast");
+        // PERF(port): @intCast — n_deltas <= 63, MAX_VARINT_LEN == 5, so each
+        // section is <= 315 bytes < u16::MAX. Drop the panic edge so the hot
+        // window-emit path has no unwind landing pads.
+        debug_assert!(w - win_hdr::GEN_COL_LANE_OFF <= u16::MAX as usize);
+        let gen_col_len: u16 = (w - win_hdr::GEN_COL_LANE_OFF) as u16;
         unsafe {
             buf_ptr
                 .add(win_hdr::GEN_COL_LEN_OFF)
@@ -1077,14 +1107,16 @@ impl Builder {
                 w += write_varint(unsafe { buf_ptr.add(w) }, d.d_orig_line);
             }
         }
-        let orig_line_len: u16 = u16::try_from(w - orig_line_start).expect("int cast");
+        debug_assert!(w - orig_line_start <= u16::MAX as usize);
+        let orig_line_len: u16 = (w - orig_line_start) as u16;
         let orig_col_start = w;
         for d in deltas {
             if d.d_orig_col != d.d_gen_col {
                 w += write_varint(unsafe { buf_ptr.add(w) }, d.d_orig_col);
             }
         }
-        let orig_col_len: u16 = u16::try_from(w - orig_col_start).expect("int cast");
+        debug_assert!(w - orig_col_start <= u16::MAX as usize);
+        let orig_col_len: u16 = (w - orig_col_start) as u16;
         unsafe {
             buf_ptr
                 .add(win_hdr::ORIG_LINE_LEN_OFF)

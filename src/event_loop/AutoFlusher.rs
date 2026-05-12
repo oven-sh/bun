@@ -26,10 +26,13 @@ pub trait HasAutoFlusher: Sized {
 /// calling convention is honest.
 #[inline]
 pub fn erase_flush_callback<T: HasAutoFlusher>() -> DeferredRepeatingTask {
-    unsafe extern "C" fn trampoline<T: HasAutoFlusher>(ctx: *mut c_void) -> bool {
-        // SAFETY: `ctx` is exactly the `*mut T` registered by
-        // `register_deferred_microtask_with_type_unchecked` below;
-        // `DeferredTaskQueue::run` feeds it back unchanged.
+    // Body is fully safe (`cast` + safe trait call); a safe `extern "C"` fn
+    // item coerces to the `DeferredRepeatingTask` fn-ptr slot. `ctx` is
+    // exactly the `*mut T` registered by
+    // `register_deferred_microtask_with_type_unchecked` below;
+    // `DeferredTaskQueue::run` feeds it back unchanged — the deref happens
+    // inside the `HasAutoFlusher` impl, not here.
+    extern "C" fn trampoline<T: HasAutoFlusher>(ctx: *mut c_void) -> bool {
         T::on_auto_flush(ctx.cast::<T>())
     }
     trampoline::<T>

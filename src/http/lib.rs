@@ -646,6 +646,27 @@ impl<'a> HTTPClient<'a> {
         // SAFETY: `self` is a valid reference (non-null, aligned).
         NonNull::from(self).cast::<HTTPClient<'static>>()
     }
+
+    /// Upgrade an [`as_erased_ptr`](Self::as_erased_ptr) back-reference to
+    /// `&mut HTTPClient`.
+    ///
+    /// INVARIANT: every `NonNull<HTTPClient<'static>>` reaching here is a
+    /// back-ref produced by `as_erased_ptr` and stored in an intrusive
+    /// container (h2/h3 `Stream.client`, `PendingConnect.waiters`,
+    /// `ClientSession.pending_attach`, socket ext slots) whose holder is
+    /// strictly outlived by the `HTTPClient`'s embedding `AsyncHTTP`. All such
+    /// access is HTTP-thread-only, so the returned `&mut` is the sole live
+    /// borrow for its scope. The `HTTPClient` is a distinct allocation from
+    /// every holder.
+    ///
+    /// Centralises the back-ref upgrade previously open-coded in
+    /// `h2_client::ClientSession::{stream_client_mut, pending_client_mut}`,
+    /// `h2_client::PendingConnect::waiter_mut`, and `h3_client::client_mut`.
+    #[inline(always)]
+    pub(crate) fn from_erased_backref<'b>(p: NonNull<HTTPClient<'static>>) -> &'b mut HTTPClient<'static> {
+        // SAFETY: see INVARIANT above.
+        unsafe { &mut *p.as_ptr() }
+    }
 }
 
 impl Drop for HTTPClient<'_> {

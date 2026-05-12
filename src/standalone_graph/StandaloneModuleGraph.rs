@@ -429,8 +429,8 @@ pub enum LazySourceMap {
 }
 
 /// It probably is not possible to run two decoding jobs on the same file
-// PORTING.md §Concurrency: parking_lot::Mutex for const-init statics.
-static INIT_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+// PORTING.md §Concurrency: `bun_threading::Guarded` for const-init statics.
+static INIT_LOCK: bun_threading::Guarded<()> = bun_threading::Guarded::new(());
 
 impl LazySourceMap {
     pub fn load(&mut self) -> Option<Arc<SourceMap::ParsedSourceMap>> {

@@ -585,8 +585,8 @@ mod draft {
 
     // Locked to avoid interleaving panic messages from multiple threads.
     // TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
-    // PORTING.md §Concurrency: parking_lot::Mutex<()> for a bare critical section.
-    static PANIC_MUTEX: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+    // PORTING.md §Concurrency: `bun_threading::Guarded<()>` for a bare critical section.
+    static PANIC_MUTEX: bun_threading::Guarded<()> = bun_threading::Guarded::new(());
 
     thread_local! {
         /// Counts how many times the panic handler is invoked by this thread.
@@ -606,7 +606,7 @@ mod draft {
         pub static CURRENT_ACTION: Cell<Option<Action>> = const { Cell::new(None) };
     }
 
-    // PORTING.md §Concurrency: parking_lot::Mutex<Vec<..>> instead of bare Mutex + global Vec.
+    // PORTING.md §Concurrency: `bun_threading::Guarded<Vec<..>>` instead of bare Mutex + global Vec.
     // Stores a boxed type-erased closure (not a bare fn pointer) so that
     // `append_pre_crash_handler` can monomorphize a wrapper that actually invokes the
     // caller's typed handler — mirroring Zig's `comptime handler` trampoline.
@@ -614,8 +614,8 @@ mod draft {
     // SAFETY: only accessed under the mutex; the opaque ptr is never dereferenced
     // except by the registered callback on the crash thread.
     unsafe impl Send for CrashHandlerEntry {}
-    static BEFORE_CRASH_HANDLERS: parking_lot::Mutex<Vec<CrashHandlerEntry>> =
-        parking_lot::Mutex::new(Vec::new());
+    static BEFORE_CRASH_HANDLERS: bun_threading::Guarded<Vec<CrashHandlerEntry>> =
+        bun_threading::Guarded::new(Vec::new());
 
     /// Prevents crash reports from being uploaded to any server. Reports will still be printed and
     /// abort the process. Overrides BUN_CRASH_REPORT_URL, BUN_ENABLE_CRASH_REPORTING, and all other

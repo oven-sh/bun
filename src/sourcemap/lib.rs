@@ -784,7 +784,7 @@ pub mod SavedSourceMap {
         use core::sync::atomic::{AtomicBool, Ordering};
 
         static SEEN_INVALID: AtomicBool = AtomicBool::new(false);
-        static PATH: parking_lot::Mutex<Option<Box<[u8]>>> = parking_lot::Mutex::new(None);
+        static PATH: bun_core::Mutex<Option<Box<[u8]>>> = bun_core::Mutex::new(None);
 
         #[inline]
         pub fn set_seen_invalid(v: bool) {

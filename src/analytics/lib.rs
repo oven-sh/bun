@@ -107,8 +107,8 @@ pub mod features {
     // `BUILTIN_MODULES.lock().insert(<&'static str>::from(hardcoded))`.
     // PERF(port): Zig used a packed `EnumSet` (bitset); BTreeSet is O(log n)
     // insert — fine for ≤~80 entries written once each at module-load time.
-    pub static BUILTIN_MODULES: parking_lot::Mutex<std::collections::BTreeSet<&'static str>> =
-        parking_lot::const_mutex(std::collections::BTreeSet::new());
+    pub static BUILTIN_MODULES: bun_core::Mutex<std::collections::BTreeSet<&'static str>> =
+        bun_core::Mutex::new(std::collections::BTreeSet::new());
     // PORT NOTE: Zig used a plain mutable global; wrapped in a Mutex here
     // because the set is not a single atomic word.
 

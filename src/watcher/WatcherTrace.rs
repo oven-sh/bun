@@ -2,16 +2,16 @@ use std::io::Write as _;
 
 use bun_core::{ZStr, env_var, fmt as bun_fmt, output};
 use bun_sys::{Fd, File, O};
-use parking_lot::Mutex;
+use bun_threading::Guarded;
 
 use crate::watcher_impl::{ChangedFilePath, WatchEvent, WatchList};
 
 /// Optional trace file for debugging watcher events.
 // PORTING.md §Concurrency: Zig used a bare `var trace_file: ?File = null` plus
 // the implicit single-threaded init/watcher-thread/deinit ordering. Rust
-// `static mut` is forbidden — wrap in `parking_lot::Mutex` (cheap when
+// `static mut` is forbidden — wrap in `bun_threading::Guarded` (cheap when
 // uncontended; only the watcher thread touches this after init).
-static TRACE_FILE: Mutex<Option<File>> = Mutex::new(None);
+static TRACE_FILE: Guarded<Option<File>> = Guarded::new(None);
 
 /// Initialize trace file if BUN_WATCHER_TRACE env var is set.
 /// Only checks once on first call.

@@ -249,8 +249,9 @@ fn on_drain_shim(this: *mut NodeHTTPResponse, off: u64, resp: uws::AnyResponse) 
 // longer implemented here — the deferred-task registration is inlined in
 // `register_auto_flush` / `unregister_auto_flush` below so the whole path is
 // `&self`. The `DeferredRepeatingTask` trampoline that the trait would have
-// generated is local:
-unsafe extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
+// generated is local. Body discharges its own preconditions; a safe
+// `extern "C" fn` coerces to the `DeferredRepeatingTask` pointer at `post_task`.
+extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
     // SAFETY: `ctx` is the `*const NodeHTTPResponse` registered by
     // `register_auto_flush`; `DeferredTaskQueue::run` feeds it back unchanged
     // on the JS thread. `on_auto_flush` takes `&self`.

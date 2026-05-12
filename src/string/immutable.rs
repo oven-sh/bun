@@ -410,10 +410,11 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// `bun.reinterpretSlice` — `&[T]` → `&[u8]` view (T must be u8/u16 in practice).
+/// Safe via [`bun_core::cast_slice`]: the `NoUninit` bound proves every byte of
+/// `T` is initialized, and `u8` is `AnyBitPattern` with align 1.
 #[inline]
-fn reinterpret_to_u8<T: Copy>(s: &[T]) -> &[u8] {
-    // SAFETY: u8 has align 1; reading any `T: Copy` as bytes is sound.
-    unsafe { core::slice::from_raw_parts(s.as_ptr().cast(), core::mem::size_of_val(s)) }
+fn reinterpret_to_u8<T: bun_core::NoUninit>(s: &[T]) -> &[u8] {
+    bun_core::cast_slice::<T, u8>(s)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -455,7 +456,7 @@ pub fn contains_char(self_: &[u8], char: u8) -> bool {
 }
 
 #[inline]
-pub fn contains_char_t<T: Copy + Eq + Into<u32>>(self_: &[T], char: u8) -> bool {
+pub fn contains_char_t<T: bun_core::NoUninit + Eq + Into<u32>>(self_: &[T], char: u8) -> bool {
     // TODO(port): Zig dispatched on T at comptime; in Rust we branch on size_of.
     if core::mem::size_of::<T>() == 1 {
         contains_char(reinterpret_to_u8(self_), char)
@@ -1080,7 +1081,7 @@ pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
     self_.len() >= prefix.len() && eql_case_insensitive_ascii(&self_[0..prefix.len()], prefix, false)
 }
 
-pub fn starts_with_generic<T: Copy>(self_: &[T], str: &[T]) -> bool {
+pub fn starts_with_generic<T: bun_core::NoUninit>(self_: &[T], str: &[T]) -> bool {
     if str.len() > self_.len() {
         return false;
     }
@@ -1194,11 +1195,12 @@ pub fn eql(self_: &[u8], other: &[u8]) -> bool {
     eql_long(self_, other, false)
 }
 
-pub fn eql_comptime_t<T: Copy + Eq>(self_: &[T], alt: &'static [u8]) -> bool {
+pub fn eql_comptime_t<T: bun_core::NoUninit + Eq>(self_: &[T], alt: &'static [u8]) -> bool {
     // TODO(port): Zig dispatched on T at comptime (u16 → eql_comptime_utf16).
     if core::mem::size_of::<T>() == 2 {
-        // SAFETY: T is u16-sized; reinterpret as &[u16].
-        let s16 = unsafe { core::slice::from_raw_parts(self_.as_ptr().cast::<u16>(), self_.len()) };
+        // `NoUninit` + size_of::<T>()==2 lets bytemuck prove the &[T]→&[u16]
+        // reinterpret is sound (align checked at runtime; T is u16 in practice).
+        let s16: &[u16] = bun_core::cast_slice(self_);
         return eql_comptime_utf16(s16, alt);
     }
     // T is u8-sized in remaining branch.
@@ -1232,7 +1234,7 @@ pub fn has_prefix_comptime_utf16(self_: &[u16], alt: &'static [u8]) -> bool {
         && self_[..alt.len()].iter().zip(alt.iter()).all(|(&u, &b)| u == u16::from(b))
 }
 
-pub fn has_prefix_comptime_type<T: Copy + Eq>(self_: &[T], alt: &'static [T]) -> bool {
+pub fn has_prefix_comptime_type<T: bun_core::NoUninit + Eq>(self_: &[T], alt: &'static [T]) -> bool {
     // TODO(port): Zig accepted heterogeneous `alt: anytype` and widened u8→u16 via `w(alt)`.
     // Rust callers must pass the correctly-typed literal (use `crate::w!` for u16).
     self_.len() >= alt.len() && eql_comptime_check_len_with_type::<T, false>(&self_[0..alt.len()], alt)
@@ -1275,7 +1277,7 @@ fn eql_comptime_check_len_u8_impl(a: &[u8], b: &[u8], check_len: bool) -> bool {
     unsafe { a.get_unchecked(..b.len()) == b }
 }
 
-fn eql_comptime_check_len_with_known_type<T: Copy + Eq, const CHECK_LEN: bool>(
+fn eql_comptime_check_len_with_known_type<T: bun_core::NoUninit + Eq, const CHECK_LEN: bool>(
     a: &[T],
     b: &[T],
 ) -> bool {
@@ -1294,7 +1296,7 @@ fn eql_comptime_check_len_with_known_type<T: Copy + Eq, const CHECK_LEN: bool>(
 ///
 ///   strings.eql_comptime(input, b"hello world");
 ///   strings.eql_comptime(input, b"hai");
-pub fn eql_comptime_check_len_with_type<T: Copy + Eq, const CHECK_LEN: bool>(
+pub fn eql_comptime_check_len_with_type<T: bun_core::NoUninit + Eq, const CHECK_LEN: bool>(
     a: &[T],
     b: &[T],
 ) -> bool {
@@ -1328,7 +1330,7 @@ pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
     bun_core::strings::eql_case_insensitive_ascii(a, b, check_len)
 }
 
-pub fn eql_case_insensitive_t<T: Copy + Into<u32>>(a: &[T], b: &[u8]) -> bool {
+pub fn eql_case_insensitive_t<T: bun_core::NoUninit + Into<u32>>(a: &[T], b: &[u8]) -> bool {
     if a.len() != b.len() || a.is_empty() {
         return false;
     }
@@ -1352,7 +1354,7 @@ pub fn eql_case_insensitive_t<T: Copy + Into<u32>>(a: &[T], b: &[u8]) -> bool {
     true
 }
 
-pub fn has_prefix_case_insensitive_t<T: Copy + Into<u32>>(str: &[T], prefix: &[u8]) -> bool {
+pub fn has_prefix_case_insensitive_t<T: bun_core::NoUninit + Into<u32>>(str: &[T], prefix: &[u8]) -> bool {
     if str.len() < prefix.len() {
         return false;
     }
@@ -1363,7 +1365,7 @@ pub fn has_prefix_case_insensitive(str: &[u8], prefix: &[u8]) -> bool {
     has_prefix_case_insensitive_t(str, prefix)
 }
 
-pub fn eql_long_t<T: Copy, const CHECK_LEN: bool>(a_str: &[T], b_str: &[T]) -> bool {
+pub fn eql_long_t<T: bun_core::NoUninit, const CHECK_LEN: bool>(a_str: &[T], b_str: &[T]) -> bool {
     if CHECK_LEN {
         let len = b_str.len();
         if len == 0 {
@@ -2087,7 +2089,7 @@ pub fn trim_leading_pattern2(slice_: &[u8], byte1: u8, byte2: u8) -> &[u8] {
 }
 
 /// prefix is of type &[u8] or &[u16]
-pub fn trim_prefix_comptime<'a, T: Copy + Eq>(buffer: &'a [T], prefix: &'static [T]) -> &'a [T] {
+pub fn trim_prefix_comptime<'a, T: bun_core::NoUninit + Eq>(buffer: &'a [T], prefix: &'static [T]) -> &'a [T] {
     if has_prefix_comptime_type(buffer, prefix) {
         &buffer[prefix.len()..]
     } else {
@@ -2723,7 +2725,7 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
 
 /// Generic. Works on &[u8], &[u16], etc
 #[inline]
-pub fn index_of_scalar<T: Copy + Eq>(input: &[T], scalar: T) -> Option<usize> {
+pub fn index_of_scalar<T: bun_core::NoUninit + Eq>(input: &[T], scalar: T) -> Option<usize> {
     // TODO(port): Zig specialized T==u8 → index_of_char_usize (highway).
     if core::mem::size_of::<T>() == 1 {
         let scalar_u8 = reinterpret_to_u8(core::slice::from_ref(&scalar))[0];
@@ -2733,7 +2735,7 @@ pub fn index_of_scalar<T: Copy + Eq>(input: &[T], scalar: T) -> Option<usize> {
 }
 
 /// Generic. Works on &[u8], &[u16], etc
-pub fn contains_scalar<T: Copy + Eq>(input: &[T], item: T) -> bool {
+pub fn contains_scalar<T: bun_core::NoUninit + Eq>(input: &[T], item: T) -> bool {
     index_of_scalar(input, item).is_some()
 }
 

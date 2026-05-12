@@ -703,8 +703,11 @@ impl IoRequestLoop {
             for event in current_events {
                 let pollable = Pollable::from(event.u64);
                 if pollable.tag() == PollableTag::Empty {
-                    // SAFETY: LOOP is initialized (we are running inside it).
-                    if event.u64 == unsafe { (*LOOP.get()).as_ptr() } as usize as u64 {
+                    // `self` *is* `(*LOOP.get()).assume_init_ref()` (see
+                    // `on_spawn_io_thread`), and `MaybeUninit<T>` is
+                    // `repr(transparent)`, so its address equals the sentinel
+                    // stored in `load()` — no need to re-deref the cell.
+                    if event.u64 == core::ptr::from_ref(self) as usize as u64 {
                         // Edge-triggered: no need to read the eventfd counter
                         continue;
                     }

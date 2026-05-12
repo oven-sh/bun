@@ -148,13 +148,13 @@ pub mod ffi {
         // ── EVP / EC ──────────────────────────────────────────────────────
         pub safe fn EVP_PKEY_id(pkey: &EVP_PKEY) -> c_int;
         pub safe fn EVP_PKEY_bits(pkey: &EVP_PKEY) -> c_int;
-        // SAFETY (unsafe fn): returns +1 EC_KEY; caller must EC_KEY_free. Kept raw to
-        // avoid a panic-on-null behavior change in the unchecked EC chain below.
-        pub fn EVP_PKEY_get1_EC_KEY(pkey: *mut EVP_PKEY) -> *mut EC_KEY;
-        // SAFETY (unsafe fn): `key` must be non-null; result is borrowed from `key`.
-        pub fn EC_KEY_get0_group(key: *const EC_KEY) -> *const EC_GROUP;
-        // SAFETY (unsafe fn): `group` must be non-null.
-        pub fn EC_GROUP_get_curve_name(group: *const EC_GROUP) -> c_int;
+        // Returns a +1 `EC_KEY*` (caller owns; the sole call site mirrors the
+        // Zig spec and intentionally leaks it). The only pointer arg is an
+        // opaque-ZST `&EVP_PKEY`, so the call itself has no precondition.
+        pub safe fn EVP_PKEY_get1_EC_KEY(pkey: &EVP_PKEY) -> *mut EC_KEY;
+        // Result is borrowed from `key`; opaque-ZST ref ⇒ no caller precondition.
+        pub safe fn EC_KEY_get0_group(key: &EC_KEY) -> *const EC_GROUP;
+        pub safe fn EC_GROUP_get_curve_name(group: &EC_GROUP) -> c_int;
 
         // ── OBJ ──────────────────────────────────────────────────────────
         // Pure NID→short-name lookup; takes a by-value int and returns a
@@ -675,10 +675,12 @@ pub fn get_ephemeral_key_info(this: &This, global: &JSGlobalObject, _frame: &Cal
         ffi::EVP_PKEY_EC | ffi::EVP_PKEY_X25519 | ffi::EVP_PKEY_X448 => {
             let curve_name: &[u8];
             if kid == ffi::EVP_PKEY_EC {
-                // SAFETY: raw_key is a non-null EVP_PKEY of type EVP_PKEY_EC (checked just above).
-                let ec = unsafe { ffi::EVP_PKEY_get1_EC_KEY(raw_key) };
-                // SAFETY: ec is the EC_KEY returned for an EC pkey; EC_KEY_get0_group on it is valid.
-                let nid = unsafe { ffi::EC_GROUP_get_curve_name(ffi::EC_KEY_get0_group(ec)) };
+                // `pkey` is non-null (guarded above) and `kid == EVP_PKEY_EC`, so
+                // BoringSSL guarantees a non-null EC_KEY with a group set; the
+                // `opaque_ref` chain panics (not UB) if that invariant ever broke.
+                let ec = ffi::EVP_PKEY_get1_EC_KEY(pkey);
+                let group = ffi::EC_KEY_get0_group(ffi::EC_KEY::opaque_ref(ec));
+                let nid = ffi::EC_GROUP_get_curve_name(ffi::EC_GROUP::opaque_ref(group));
                 let nid_str = ffi::OBJ_nid2sn(nid);
                 if !nid_str.is_null() {
                     // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.

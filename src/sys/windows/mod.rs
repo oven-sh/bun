@@ -4725,8 +4725,9 @@ pub fn spawn_watcher_child(
         },
         lpAttributeList: p.as_mut_ptr(),
     };
-    // SAFETY: procinfo is POD
-    unsafe { ptr::write_bytes(core::ptr::from_mut(procinfo).cast::<u8>(), 0, size_of::<PROCESS_INFORMATION>()); }
+    // `PROCESS_INFORMATION: bun_core::ffi::Zeroable` — all-zero is a valid
+    // value, so the safe `zeroed()` constructor replaces `ptr::write_bytes`.
+    *procinfo = bun_core::ffi::zeroed();
     // SAFETY: all pointers valid; envbuf double-NUL terminated
     let rc = unsafe {
         kernel32::CreateProcessW(

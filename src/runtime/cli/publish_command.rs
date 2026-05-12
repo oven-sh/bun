@@ -70,7 +70,7 @@ pub struct ReadmeInfo {
 /// Matches npm's `{README,README.*}` glob case-insensitively. Generic
 /// over char type so it works for both UTF-8 readdir entries and UTF-16
 /// tar entry names on Windows.
-fn is_readme_filename_t<T: Copy + Into<u32>>(name: &[T]) -> bool {
+fn is_readme_filename_t<T: bun_core::NoUninit + Into<u32>>(name: &[T]) -> bool {
     const README: &[u8] = b"README";
     if name.len() < README.len() {
         return false;

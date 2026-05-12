@@ -2579,11 +2579,13 @@ impl<'a> StringBuilder<'a> {
     }
 
     pub fn allocated_slice(&self) -> &[u8] {
-        match self.ptr {
-            // SAFETY: ptr was set by allocate() to a region of length self.cap inside
-            // lockfile.buffers.string_bytes.
-            Some(ptr) => unsafe { bun_core::ffi::slice(ptr, self.cap) },
-            None => b"",
+        // `allocate()` resized `string_bytes` to `off + cap` and recorded `off`,
+        // so the region is addressable by safe indexing — no need for the cached
+        // raw `ptr`.
+        if self.ptr.is_some() {
+            &self.string_bytes[self.off..self.off + self.cap]
+        } else {
+            b""
         }
     }
 
@@ -2631,13 +2633,12 @@ impl<'a> StringBuilder<'a> {
             debug_assert!(self.ptr.is_some()); // must call allocate first
         }
 
-        // SAFETY: ptr is non-null (asserted above) and points into string_bytes with
-        // self.cap bytes available; slice.len() fits within remaining capacity.
-        let final_slice = unsafe {
-            let dst = self.ptr.unwrap().add(self.len);
-            core::ptr::copy_nonoverlapping(slice.as_ptr(), dst, slice.len());
-            bun_core::ffi::slice(dst, slice.len())
-        };
+        // `allocate()` resized `string_bytes` to `off + cap`; write via safe
+        // indexing instead of the cached raw `ptr` + `copy_nonoverlapping`.
+        let start = self.off + self.len;
+        let end = start + slice.len();
+        self.string_bytes[start..end].copy_from_slice(slice);
+        let final_slice = &self.string_bytes[start..end];
         self.len += slice.len();
 
         if cfg!(debug_assertions) {
@@ -2659,12 +2660,12 @@ impl<'a> StringBuilder<'a> {
 
         let string_entry = self.string_pool.get_or_put(hash).expect("unreachable");
         if !string_entry.found_existing {
-            // SAFETY: see append_without_pool.
-            let final_slice = unsafe {
-                let dst = self.ptr.unwrap().add(self.len);
-                core::ptr::copy_nonoverlapping(slice.as_ptr(), dst, slice.len());
-                bun_core::ffi::slice(dst, slice.len())
-            };
+            // See `append_without_pool` — safe indexing into the region
+            // `allocate()` already resized.
+            let start = self.off + self.len;
+            let end = start + slice.len();
+            self.string_bytes[start..end].copy_from_slice(slice);
+            let final_slice = &self.string_bytes[start..end];
             self.len += slice.len();
 
             *string_entry.value_ptr =

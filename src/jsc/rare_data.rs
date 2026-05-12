@@ -155,7 +155,11 @@ impl EntropyCache {
 // CleanupHook
 // ──────────────────────────────────────────────────────────────────────────
 
-pub type CleanupHookFunction = unsafe extern "C" fn(*mut c_void);
+// Safe fn-pointer type: `ctx` is an opaque round-trip pointer the registrant
+// supplied alongside `func`; the caller (`execute`) never dereferences it, only
+// forwards it. Each implementor (e.g. N-API's `run_as_cleanup_hook`) owns the
+// cast/deref locally, so invoking the pointer carries no caller-side precondition.
+pub type CleanupHookFunction = extern "C" fn(*mut c_void);
 
 #[derive(Clone, Copy)]
 pub struct CleanupHook {
@@ -174,8 +178,7 @@ impl CleanupHook {
     }
 
     pub fn execute(self) {
-        // SAFETY: ctx/func were registered together by the N-API caller.
-        unsafe { (self.func)(self.ctx) };
+        (self.func)(self.ctx);
     }
 
     pub fn from(

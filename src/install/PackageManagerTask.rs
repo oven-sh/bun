@@ -136,13 +136,9 @@ impl Id {
     pub fn for_bin_link(package_id: PackageID) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(b"bin-link:");
-        // SAFETY: reading raw bytes of a POD value for hashing
-        hasher.update(unsafe {
-            bun_core::ffi::slice(
-                (&raw const package_id).cast::<u8>(),
-                core::mem::size_of::<PackageID>(),
-            )
-        });
+        // `PackageID` is `u32`: `bytemuck::bytes_of` gives the same
+        // native-endian byte view as Zig `std.mem.asBytes`.
+        hasher.update(bytemuck::bytes_of(&package_id));
         Id(hasher.final_())
     }
 

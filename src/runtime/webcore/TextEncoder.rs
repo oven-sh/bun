@@ -170,7 +170,10 @@ struct RopeStringEncoder<'a> {
 }
 
 impl<'a> RopeStringEncoder<'a> {
-    pub unsafe extern "C" fn append8(it: *mut JSStringIterator, ptr: *const u8, len: u32) {
+    // The four rope-iteration callbacks discharge their raw-pointer
+    // preconditions locally; safe fn items coerce to the `JSStringIterator`
+    // callback-pointer field types at `iter()` below.
+    pub extern "C" fn append8(it: *mut JSStringIterator, ptr: *const u8, len: u32) {
         // SAFETY: `it` is non-null and exclusively accessed for the duration of
         // the callback (provided by JSC rope iteration).
         let it = unsafe { &mut *it };
@@ -189,7 +192,7 @@ impl<'a> RopeStringEncoder<'a> {
         }
     }
 
-    pub unsafe extern "C" fn append16(it: *mut JSStringIterator, _: *const u16, _: u32) {
+    pub extern "C" fn append16(it: *mut JSStringIterator, _: *const u16, _: u32) {
         // SAFETY: `it` is non-null and exclusively accessed for the duration of
         // the callback (provided by JSC rope iteration).
         let it = unsafe { &mut *it };
@@ -200,7 +203,7 @@ impl<'a> RopeStringEncoder<'a> {
         it.stop = 1;
     }
 
-    pub unsafe extern "C" fn write8(it: *mut JSStringIterator, ptr: *const u8, len: u32, offset: u32) {
+    pub extern "C" fn write8(it: *mut JSStringIterator, ptr: *const u8, len: u32, offset: u32) {
         // SAFETY: `it` is non-null and exclusively accessed for the duration of
         // the callback (provided by JSC rope iteration).
         let it = unsafe { &mut *it };
@@ -219,7 +222,7 @@ impl<'a> RopeStringEncoder<'a> {
         }
     }
 
-    pub unsafe extern "C" fn write16(it: *mut JSStringIterator, _: *const u16, _: u32, _: u32) {
+    pub extern "C" fn write16(it: *mut JSStringIterator, _: *const u16, _: u32, _: u32) {
         // SAFETY: `it` is non-null and exclusively accessed for the duration of
         // the callback (provided by JSC rope iteration).
         let it = unsafe { &mut *it };

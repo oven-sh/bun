@@ -38,7 +38,10 @@ unsafe extern "C" {
         arg1: *mut c_void,
         arg_fn2: Option<unsafe extern "C" fn(*mut c_void, JSValue)>,
     ) -> *mut AbortSignal;
-    fn WebCore__AbortSignal__cleanNativeBindings(arg0: &AbortSignal, arg1: *mut c_void);
+    // safe: `arg1` is an opaque round-trip pointer used only for identity
+    // comparison on the C++ side (removes the listener entry whose `ctx == arg1`);
+    // never dereferenced, so no caller-side precondition beyond the `&AbortSignal`.
+    safe fn WebCore__AbortSignal__cleanNativeBindings(arg0: &AbortSignal, arg1: *mut c_void);
     safe fn WebCore__AbortSignal__create(arg0: &JSGlobalObject) -> JSValue;
     safe fn WebCore__AbortSignal__fromJS(value0: JSValue) -> *mut AbortSignal;
     safe fn WebCore__AbortSignal__ref(arg0: &AbortSignal) -> *mut AbortSignal;
@@ -93,8 +96,7 @@ impl AbortSignal {
     }
 
     pub fn clean_native_bindings(&self, ctx: *mut c_void) {
-        // SAFETY: `ctx` is an opaque round-trip pointer; C++ never dereferences it as Rust data.
-        unsafe { WebCore__AbortSignal__cleanNativeBindings(self, ctx) }
+        WebCore__AbortSignal__cleanNativeBindings(self, ctx)
     }
 
     pub fn signal(&self, global_object: &JSGlobalObject, reason: CommonAbortReason) {

@@ -15,29 +15,10 @@ pub extern "C" fn timer_callback(_: *mut bun_sys::windows::libuv::Timer) {}
 
 /// Port of `std.Thread.ResetEvent` — single-shot manual-reset event used to
 /// block `spawn()` until the bundle thread has initialized its `Waker`.
-// PORT NOTE: `bun_threading` has no ResetEvent; this is the minimal subset
-// (`wait`/`set`) the Zig source touches. Backed by `parking_lot` so wakeups
-// are not lost if `set()` races ahead of `wait()`.
-#[derive(Default)]
-pub struct ResetEvent {
-    inner: parking_lot::Mutex<bool>,
-    cv: parking_lot::Condvar,
-}
-
-impl ResetEvent {
-    pub fn wait(&self) {
-        let mut guard = self.inner.lock();
-        while !*guard {
-            self.cv.wait(&mut guard);
-        }
-    }
-
-    pub fn set(&self) {
-        let mut guard = self.inner.lock();
-        *guard = true;
-        self.cv.notify_all();
-    }
-}
+// PORT NOTE: re-export `bun_threading::ResetEvent` (futex-backed); the local
+// `wait()`/`set()`/`Default` API is identical, and the futex impl preserves
+// the "set-before-wait does not deadlock" property the parking_lot draft had.
+pub use bun_threading::ResetEvent;
 
 /// Result of a `Bun.build` invocation handed back to the JS thread.
 // PORT NOTE: mirrors `BundleV2.JSBundleCompletionTask.Result` (bundle_v2.zig).

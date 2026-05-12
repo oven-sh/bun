@@ -114,9 +114,9 @@ pub struct UUID7 {
     pub bytes: [u8; 16],
 }
 
-// PORTING.md §Concurrency: prefer parking_lot for static-initialized mutexes.
-// (`bun_threading::Mutex` has no `const fn new()`.)
-static UUID_V7_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+// PORTING.md §Concurrency: `bun_threading::Guarded` has a `const fn new()` so
+// it can back a `static` directly (no lazy init).
+static UUID_V7_LOCK: bun_threading::Guarded<()> = bun_threading::Guarded::new(());
 static UUID_V7_LAST_TIMESTAMP: AtomicU64 = AtomicU64::new(0);
 static UUID_V7_COUNTER: AtomicU32 = AtomicU32::new(0);
 

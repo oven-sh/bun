@@ -64,14 +64,14 @@ pub struct ThreadPool {
     // concurrently from arbitrary worker-pool threads, and a `&mut self` here
     // would alias `&mut ThreadPool` across threads (UB before the lock is even
     // reached).
-    pub workers_assignments: parking_lot::Mutex<ArrayHashMap<ThreadId, *mut Worker>>,
+    pub workers_assignments: bun_threading::Guarded<ArrayHashMap<ThreadId, *mut Worker>>,
     // BACKREF (LIFETIMES.tsv row 170: ThreadPool.v2). `BundleV2` is generic
     // over `'a`; erase to `'static` behind the raw pointer like ParseTask.ctx.
     pub v2: *const BundleV2<'static>,
 }
 
 // SAFETY: `ThreadPool` is shared across worker threads; the only mutated
-// field (`workers_assignments`) is guarded by its `parking_lot::Mutex`, and
+// field (`workers_assignments`) is guarded by its `bun_threading::Guarded`, and
 // the raw-pointer fields are externally synchronized exactly as in the Zig
 // source.
 unsafe impl Send for ThreadPool {}
@@ -86,7 +86,7 @@ impl Default for ThreadPool {
             io_pool: None,
             worker_pool: ptr::null_mut(),
             worker_pool_is_owned: false,
-            workers_assignments: parking_lot::Mutex::new(ArrayHashMap::default()),
+            workers_assignments: bun_threading::Guarded::new(ArrayHashMap::default()),
             v2: ptr::null(),
         }
     }
@@ -260,7 +260,7 @@ impl ThreadPool {
             // BACKREF: lifetime erased behind the raw pointer.
             v2: std::ptr::from_ref::<V2>(v2).cast(),
             worker_pool_is_owned: false,
-            workers_assignments: parking_lot::Mutex::new(ArrayHashMap::default()),
+            workers_assignments: bun_threading::Guarded::new(ArrayHashMap::default()),
         }
     }
 
@@ -410,7 +410,7 @@ impl ThreadPool {
     // callers re-borrow `ThreadPool` while holding the worker (Zig: `*Worker`).
     // Takes `&self` (not `&mut`) because this is called concurrently from
     // worker-pool threads via `Worker::get`; mutation goes through the
-    // `parking_lot::Mutex` on `workers_assignments`.
+    // `bun_threading::Guarded` on `workers_assignments`.
     pub fn get_worker(&self, id: ThreadId) -> &'static mut Worker {
         let worker: *mut Worker;
         {
@@ -619,7 +619,7 @@ impl Worker {
         // SAFETY: `ctx` is a BACKREF; `graph.pool` is a `NonNull<ThreadPool>`
         // pointing at the bundle-owned pool that outlives every worker. We only
         // need a shared `&ThreadPool` — `get_worker` takes `&self` and serializes
-        // map mutation via the internal `parking_lot::Mutex`, so concurrent
+        // map mutation via the internal `bun_threading::Guarded`, so concurrent
         // entry from multiple worker threads is sound.
         let pool: &ThreadPool = ctx.graph.pool();
         let worker = pool.get_worker(bun_threading::current_thread_id());

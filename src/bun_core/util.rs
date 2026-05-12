@@ -3159,21 +3159,25 @@ fn argv_storage() -> &'static [ZBox] {
     })
 }
 
+#[cold]
+#[inline(never)]
+fn argv_view_init() {
+    let storage: &'static [ZBox] = argv_storage();
+    // ARGV_STORAGE is process-static via `Once`; `as_zstr` borrows for `'static`.
+    let mut view: Vec<&'static ZStr> = storage.iter().map(ZBox::as_zstr).collect();
+    // Zig `initArgv`: splice BUN_OPTIONS tokens after argv[0].
+    if let Some(opts) = crate::env_var::BUN_OPTIONS.get() {
+        let original_len = view.len();
+        append_options_env::<&'static ZStr>(opts, &mut view);
+        set_bun_options_argc(view.len() - original_len);
+    }
+    // SAFETY: single-threaded lazy init guarded by Once.
+    unsafe { ARGV.write(Vec::leak(view)) };
+}
+
 #[inline]
 fn argv_view() -> &'static [&'static ZStr] {
-    ARGV_INIT.call_once(|| {
-        let storage: &'static [ZBox] = argv_storage();
-        // ARGV_STORAGE is process-static via `Once`; `as_zstr` borrows for `'static`.
-        let mut view: Vec<&'static ZStr> = storage.iter().map(ZBox::as_zstr).collect();
-        // Zig `initArgv`: splice BUN_OPTIONS tokens after argv[0].
-        if let Some(opts) = crate::env_var::BUN_OPTIONS.get() {
-            let original_len = view.len();
-            append_options_env::<&'static ZStr>(opts, &mut view);
-            set_bun_options_argc(view.len() - original_len);
-        }
-        // SAFETY: single-threaded lazy init guarded by Once.
-        unsafe { ARGV.write(Vec::leak(view)) };
-    });
+    ARGV_INIT.call_once(argv_view_init);
     // SAFETY: ARGV is a Copy fat-pointer; only mutated via `set_argv` during
     // single-threaded startup or by the Once above.
     unsafe { ARGV.read() }

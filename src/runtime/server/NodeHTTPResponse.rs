@@ -205,11 +205,15 @@ fn vm_get<'a>() -> &'a mut VirtualMachine {
     VirtualMachine::get().as_mut()
 }
 
-/// `JSGlobalObject::bun_vm()` (lib.rs variant) returns `*mut`; deref for `Ref::ref/unref`.
+/// `&mut` to this thread's VM for `Ref::ref/unref` etc. Takes `_global` for
+/// call-site symmetry with the .zig spec but reads the thread-local directly:
+/// `VirtualMachine::as_mut()` ignores its receiver and re-reads the TLS slot,
+/// so routing through `global.bun_vm()` was pure overhead on the per-request
+/// path (`NodeHTTPResponse__createForJS` disasm showed the `bunVM` FFI result
+/// dropped on the floor).
 #[inline(always)]
-fn bun_vm_mut(global: &JSGlobalObject) -> &mut VirtualMachine {
-    // SAFETY: JS-thread only; bun_vm() returns the live VM for this global.
-    global.bun_vm().as_mut()
+fn bun_vm_mut(_global: &JSGlobalObject) -> &mut VirtualMachine {
+    VirtualMachine::get_mut()
 }
 
 /// `globalObject.ERR(.CODE, msg, .{}).throw()`
@@ -723,13 +727,22 @@ impl NodeHTTPResponse {
             200
         };
 
-        // PERF(port): was stack-fallback (256 bytes) — profile in Phase B.
-        let status_message_slice = if !status_message_value.is_undefined() {
-            status_message_value.to_slice(global_object)?
+        // Hot path: src/js/node/_http_server.ts always sets `response.statusMessage`,
+        // so we always land here with a short JS string. `to_slice()` would do
+        // 2×ref + 2×deref FFI (OwnedString + ZigStringSlice::WTF); instead hold
+        // the +1 from `to_bun_string` in an `OwnedString` and borrow the bytes
+        // without the inner ref bump (Zig: `defer str.deref()` + `toUTF8`).
+        let status_message_str;
+        let status_message_slice;
+        let status_message_bytes: &[u8] = if !status_message_value.is_undefined() {
+            status_message_str = bun_core::OwnedString::new(
+                status_message_value.to_bun_string(global_object)?,
+            );
+            status_message_slice = status_message_str.to_utf8_without_ref();
+            status_message_slice.slice()
         } else {
-            ZigStringSlice::EMPTY
+            &[]
         };
-        // status_message_slice drops at scope exit.
 
         if global_object.has_exception() {
             return Err(jsc::JsError::Thrown);
@@ -746,20 +759,18 @@ impl NodeHTTPResponse {
         // Validate status message does not contain invalid characters (defense-in-depth
         // against HTTP response splitting). Matches Node.js checkInvalidHeaderChar:
         // rejects any char not in [\t\x20-\x7e\x80-\xff].
-        if status_message_slice.slice().len() > 0 {
-            for &c in status_message_slice.slice() {
-                if c != b'\t' && (c < 0x20 || c == 0x7f) {
-                    return err_throw(
-                        global_object,
-                        ErrorCode::ERR_INVALID_CHAR,
-                        "Invalid character in statusMessage",
-                    );
-                }
+        for &c in status_message_bytes {
+            if c != b'\t' && (c < 0x20 || c == 0x7f) {
+                return err_throw(
+                    global_object,
+                    ErrorCode::ERR_INVALID_CHAR,
+                    "Invalid character in statusMessage",
+                );
             }
         }
 
         'do_it: {
-            if status_message_slice.slice().is_empty() {
+            if status_message_bytes.is_empty() {
                 if let Some(status_message) =
                     HTTPStatusText::get(u16::try_from(status_code).expect("int cast"))
                 {
@@ -773,28 +784,44 @@ impl NodeHTTPResponse {
                 }
             }
 
-            let message: &[u8] = if status_message_slice.slice().len() > 0 {
-                status_message_slice.slice()
+            let message: &[u8] = if !status_message_bytes.is_empty() {
+                status_message_bytes
             } else {
                 b"HM"
             };
-            let mut status_message: Vec<u8> = Vec::new();
-            {
-                use std::io::Write;
-                let _ = write!(
-                    &mut status_message,
-                    "{} {}",
-                    status_code,
-                    BStr::new(message)
+
+            // Zig spec (NodeHTTPResponse.zig:455/491): 256-byte stackFallback +
+            // `{d} {s}` (plain memcpy). The previous Vec + write! + BStr-Display
+            // path showed up at 0.54% incl in perf (core::fmt vtable + BStr UTF-8
+            // chunk-validation). status_code is 100..=999 → always 3 digits.
+            let mut itoa_buf = bun_core::fmt::ItoaBuf::new();
+            let code = bun_core::fmt::itoa(&mut itoa_buf, status_code);
+            let n = code.len() + 1 + message.len();
+
+            let mut stack_buf = [0u8; 256];
+            if n <= stack_buf.len() {
+                stack_buf[..code.len()].copy_from_slice(code);
+                stack_buf[code.len()] = b' ';
+                stack_buf[code.len() + 1..n].copy_from_slice(message);
+                write_head_internal(
+                    &raw_response,
+                    global_object,
+                    &stack_buf[..n],
+                    headers_object_value,
+                );
+            } else {
+                // Heap fallback for absurdly long status messages (> 252 bytes).
+                let mut heap = Vec::with_capacity(n);
+                heap.extend_from_slice(code);
+                heap.push(b' ');
+                heap.extend_from_slice(message);
+                write_head_internal(
+                    &raw_response,
+                    global_object,
+                    &heap,
+                    headers_object_value,
                 );
             }
-            write_head_internal(
-                &raw_response,
-                global_object,
-                &status_message,
-                headers_object_value,
-            );
-            break 'do_it;
         }
 
         Ok(JSValue::UNDEFINED)

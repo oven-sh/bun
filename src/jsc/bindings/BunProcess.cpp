@@ -1046,6 +1046,7 @@ static const NeverDestroyed<String>* getSignalNames()
         MAKE_STATIC_STRING_IMPL("SIGIO"),
         MAKE_STATIC_STRING_IMPL("SIGINFO"),
         MAKE_STATIC_STRING_IMPL("SIGSYS"),
+        MAKE_STATIC_STRING_IMPL("SIGBREAK"),
     };
 
     return signalNames;
@@ -1060,12 +1061,16 @@ static void loadSignalNumberMap()
         signalNameToNumberMap = new HashMap<String, int>();
         signalNameToNumberMap->reserveInitialCapacity(31);
 #if OS(WINDOWS)
-        // libuv supported signals
+        // libuv-supported console-control signals on Windows:
+        // CTRL_C_EVENT → SIGINT, CTRL_BREAK_EVENT → SIGBREAK,
+        // CTRL_CLOSE_EVENT → SIGHUP, plus SIGWINCH on console resize.
+        signalNameToNumberMap->add(signalNames[0], SIGHUP);
         signalNameToNumberMap->add(signalNames[1], SIGINT);
         signalNameToNumberMap->add(signalNames[2], SIGQUIT);
         signalNameToNumberMap->add(signalNames[9], SIGKILL);
         signalNameToNumberMap->add(signalNames[15], SIGTERM);
         signalNameToNumberMap->add(signalNames[27], SIGWINCH);
+        signalNameToNumberMap->add(signalNames[31], SIGBREAK);
 #else
         signalNameToNumberMap->add(signalNames[0], SIGHUP);
         signalNameToNumberMap->add(signalNames[1], SIGINT);
@@ -1485,6 +1490,9 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #endif
 #ifdef SIGSYS
             signalNumberToNameMap->add(SIGSYS, signalNames[30]);
+#endif
+#ifdef SIGBREAK
+            signalNumberToNameMap->add(SIGBREAK, signalNames[31]);
 #endif
         });
 

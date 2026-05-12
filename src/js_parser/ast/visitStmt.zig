@@ -1046,10 +1046,23 @@ pub fn VisitStmt(
                         data.no = p.visitSingleStmt(no, .none);
                     }
 
-                    // Trim unnecessary "else" clauses
-                    if (p.options.features.minify_syntax) {
-                        if (data.no != null and @as(Stmt.Tag, data.no.?.data) == .s_empty) {
-                            data.no = null;
+                    // Trim an "else" clause whose body was emptied by dead-code
+                    // elimination. This avoids emitting `else {}` for e.g.
+                    // `if (true) { A } else { B }` where B was pruned. Gated on
+                    // the union of DCE and minify_syntax so the pre-existing
+                    // `deadCodeElimination: false, minify: { syntax: true }`
+                    // configuration (which already dropped the `else {}`)
+                    // doesn't regress to `else ;`.
+                    if (p.options.features.dead_code_elimination or p.options.features.minify_syntax) {
+                        if (data.no) |no_stmt| {
+                            const no_is_empty = switch (no_stmt.data) {
+                                .s_empty => true,
+                                .s_block => |block| block.stmts.len == 0,
+                                else => false,
+                            };
+                            if (no_is_empty) {
+                                data.no = null;
+                            }
                         }
                     }
                 }

@@ -99,10 +99,24 @@ function ClientRequest(input, options, cb) {
   let writeCount = 0;
   let resolveNextChunk: ((end: boolean) => void) | undefined = _end => {};
 
+  // Node sends headers + first chunk immediately on the first write(). We
+  // defer by a tick so that `write(chunk); end();` in the same tick still
+  // takes the non-duplex fast path via send(). If end() hasn't been called by
+  // then, start the request in duplex mode so the server can respond while
+  // the body stream stays open (docker-modem relies on this for
+  // `container.exec` with stdin: true).
+  function startFetchAfterFirstWriteNT(self) {
+    if (!fetching && !self.destroyed && !self.finished) {
+      startFetch();
+    }
+  }
+
   const pushChunk = chunk => {
     this[kBodyChunks].push(chunk);
     if (writeCount > 1) {
       startFetch();
+    } else if (writeCount === 1) {
+      process.nextTick(startFetchAfterFirstWriteNT, this);
     }
     resolveNextChunk?.(false);
   };
@@ -192,10 +206,6 @@ function ClientRequest(input, options, cb) {
 
   this.flushHeaders = function () {
     if (!fetching) {
-      this[kAbortController] ??= new AbortController();
-      this[kAbortController].signal.addEventListener("abort", onAbort, {
-        once: true,
-      });
       startFetch();
     }
   };
@@ -272,6 +282,16 @@ function ClientRequest(input, options, cb) {
     }
 
     fetching = true;
+
+    // Every entry point that dispatches the request (send(), flushHeaders(),
+    // and the write() → pushChunk paths) must have an AbortController wired
+    // up before the fetch starts so that req.abort()/req.destroy()/timeouts
+    // and options.signal can cancel the in-flight request. Centralise that
+    // here so new callers cannot forget it.
+    if (!this[kAbortController]) {
+      this[kAbortController] = new AbortController();
+      this[kAbortController].signal.addEventListener("abort", onAbort, { once: true });
+    }
 
     const method = this[kMethod];
 
@@ -429,10 +449,20 @@ function ClientRequest(input, options, cb) {
                   res._dump();
                 }
               } finally {
-                maybeEmitClose();
+                if (self.finished) {
+                  maybeEmitClose();
+                } else {
+                  // Request body is still streaming (duplex); emitting
+                  // 'prefinish'/'close' now would fire before 'finish' (or
+                  // with no 'finish' at all). Defer until req.end() runs
+                  // and send() schedules maybeEmitFinish().
+                  deferredRequestClose = true;
+                }
                 if (res.statusCode === 304) {
                   res.complete = true;
-                  maybeEmitClose();
+                  // maybeEmitClose() already ran above (finished) or is
+                  // deferred via deferredRequestClose (duplex) — no need to
+                  // call it again and bypass the self.finished gate.
                   return;
                 }
               }
@@ -442,9 +472,10 @@ function ClientRequest(input, options, cb) {
           );
         };
 
-        if (!keepOpen) {
-          handleResponse();
-        }
+        // Emit the response as soon as headers arrive, even when the request
+        // body is still being streamed (duplex mode). Node.js emits 'response'
+        // independently of whether req.end() has been called.
+        handleResponse();
 
         onEnd();
       });
@@ -554,11 +585,21 @@ function ClientRequest(input, options, cb) {
 
   let onEnd = () => {};
   let handleResponse: (() => void) | undefined = () => {};
+  // Set once handleResponse()'s nextTick has run and found the writable side
+  // still open; send() uses this to emit 'close' in the correct order after
+  // 'finish' once req.end() is eventually called.
+  let deferredRequestClose = false;
+
+  function emitFinishAndDeferredCloseNT() {
+    maybeEmitFinish();
+    if (deferredRequestClose) {
+      deferredRequestClose = false;
+      maybeEmitClose();
+    }
+  }
 
   const send = () => {
     this.finished = true;
-    this[kAbortController] ??= new AbortController();
-    this[kAbortController].signal.addEventListener("abort", onAbort, { once: true });
 
     var body = this[kBodyChunks] && this[kBodyChunks].length > 1 ? new Blob(this[kBodyChunks]) : this[kBodyChunks]?.[0];
 
@@ -571,7 +612,7 @@ function ClientRequest(input, options, cb) {
       if (!!$debug) globalReportError(err);
       this.emit("error", err);
     } finally {
-      process.nextTick(maybeEmitFinish.bind(this));
+      process.nextTick(emitFinishAndDeferredCloseNT);
     }
   };
 

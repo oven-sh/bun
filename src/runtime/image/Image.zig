@@ -1195,31 +1195,17 @@ pub const PipelineTask = struct {
     }
 
     /// Fixed Sharp order: rotate → flip/flop → resize. Each stage replaces
-    /// `d` in place; the old buffer is freed before assigning the new one so
-    /// peak memory is at most 2× one frame. Every stage hand-swaps only the
-    /// pixel slots — rotate/resize return a fresh `Decoded` with
-    /// `icc_profile == null`, so overwriting `d.*` wholesale would drop the
-    /// source's colour profile. Geometry doesn't change colour meaning, so
-    /// the profile survives unchanged.
+    /// `d` via `Decoded.replace*` — frees the old buffer first (peak memory
+    /// ≤ 2× one frame) and touches only pixel slots so the source's
+    /// `icc_profile` survives every geometry stage.
     fn applyPipeline(this: *PipelineTask, d: *codecs.Decoded) codecs.Error!void {
         const p = this.pipeline;
-        if (p.rotate != 0) {
-            const next = try codecs.rotate(d.rgba, d.width, d.height, p.rotate);
-            bun.default_allocator.free(d.rgba);
-            d.rgba = next.rgba;
-            d.width = next.width;
-            d.height = next.height;
-        }
-        if (p.flip) {
-            const next = try codecs.flip(d.rgba, d.width, d.height, false);
-            bun.default_allocator.free(d.rgba);
-            d.rgba = next;
-        }
-        if (p.flop) {
-            const next = try codecs.flip(d.rgba, d.width, d.height, true);
-            bun.default_allocator.free(d.rgba);
-            d.rgba = next;
-        }
+        if (p.rotate != 0)
+            d.replace(try codecs.rotate(d.rgba, d.width, d.height, p.rotate));
+        if (p.flip)
+            d.replaceRgba(try codecs.flip(d.rgba, d.width, d.height, false));
+        if (p.flop)
+            d.replaceRgba(try codecs.flip(d.rgba, d.width, d.height, true));
         if (p.resize) |r| {
             const t = resolveResize(r, d.width, d.height);
             // Guard the output canvas AND the H-then-V intermediate (always
@@ -1232,9 +1218,7 @@ pub const PipelineTask = struct {
                 @as(u64, t.w) * d.height > this.max_pixels)
                 return error.TooManyPixels;
             if (t.w != d.width or t.h != d.height) {
-                const next = try codecs.resize(d.rgba, d.width, d.height, t.w, t.h, r.filter);
-                bun.default_allocator.free(d.rgba);
-                d.rgba = next;
+                d.replaceRgba(try codecs.resize(d.rgba, d.width, d.height, t.w, t.h, r.filter));
                 d.width = t.w;
                 d.height = t.h;
             }
@@ -1292,25 +1276,12 @@ pub const PipelineTask = struct {
 
     fn applyOrientation(d: *codecs.Decoded, orient: exif.Orientation) codecs.Error!void {
         const t = orient.transform();
-        if (t.flip) {
-            const next = try codecs.flip(d.rgba, d.width, d.height, false);
-            bun.default_allocator.free(d.rgba);
-            d.rgba = next;
-        }
-        if (t.flop) {
-            const next = try codecs.flip(d.rgba, d.width, d.height, true);
-            bun.default_allocator.free(d.rgba);
-            d.rgba = next;
-        }
-        if (t.rotate != 0) {
-            // Swap pixel slots only — `next` carries no ICC profile, and the
-            // one on `d` (set by decode) must survive EXIF auto-orient.
-            const next = try codecs.rotate(d.rgba, d.width, d.height, t.rotate);
-            bun.default_allocator.free(d.rgba);
-            d.rgba = next.rgba;
-            d.width = next.width;
-            d.height = next.height;
-        }
+        if (t.flip)
+            d.replaceRgba(try codecs.flip(d.rgba, d.width, d.height, false));
+        if (t.flop)
+            d.replaceRgba(try codecs.flip(d.rgba, d.width, d.height, true));
+        if (t.rotate != 0)
+            d.replace(try codecs.rotate(d.rgba, d.width, d.height, t.rotate));
     }
 
     fn deinit(this: *PipelineTask) void {

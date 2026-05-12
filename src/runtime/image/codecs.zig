@@ -161,6 +161,24 @@ pub const Decoded = struct {
         bun.default_allocator.free(self.rgba);
         if (self.icc_profile) |p| bun.default_allocator.free(p);
     }
+
+    /// Free the current buffer and adopt `next`. Dimensions unchanged —
+    /// for flip/flop and other same-size transforms.
+    pub inline fn replaceRgba(self: *Decoded, next: []u8) void {
+        bun.default_allocator.free(self.rgba);
+        self.rgba = next;
+    }
+
+    /// Free the current buffer and adopt `next`'s pixel slots, keeping this
+    /// `icc_profile`. `next` comes from rotate (which never carries one —
+    /// geometry doesn't change colour meaning); overwriting `self.*`
+    /// wholesale would drop the source's profile. See #30197.
+    pub inline fn replace(self: *Decoded, next: Decoded) void {
+        bun.debugAssert(next.icc_profile == null);
+        self.replaceRgba(next.rgba);
+        self.width = next.width;
+        self.height = next.height;
+    }
 };
 
 pub const Error = error{

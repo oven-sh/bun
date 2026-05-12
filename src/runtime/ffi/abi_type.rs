@@ -118,6 +118,74 @@ pub static ABI_TYPE_LABEL: phf::Map<&'static [u8], ABIType> = phf::phf_map! {
     b"napi_value" => ABIType::NapiValue,
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-variant string table — single source of truth for the four exhaustive
+// matches that previously lived in typename_label / param_typename_label /
+// ToCFormatter / ToJSFormatter. Indexed by `self as usize` (discriminants are
+// contiguous 0..=20). Zig has no equivalent table; this is a Rust-side
+// deduplication of ffi.zig:2145-2324.
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct AbiRow {
+    /// C type name for return/decl position (`typename_label`).
+    c_type: &'static [u8],
+    /// C type name for parameter position (`param_typename_label`). Differs
+    /// from `c_type` only for Uint32T (int32_t — see ffi.ts) and Buffer.
+    c_param_type: &'static [u8],
+    /// `(T)` cast prefix emitted by `ToCFormatter` when `exact` is set. Empty
+    /// when no cast is wanted (Buffer) or the row is unreachable (Void/Napi*).
+    to_c_cast: &'static str,
+    /// `JSVALUE_TO_*( ` macro head. `None` for the three early-return arms
+    /// (Void / NapiEnv / NapiValue) handled inline by `ToCFormatter`.
+    to_c_macro: Option<&'static str>,
+    /// `(prefix, suffix)` wrapping the symbol in `ToJSFormatter`. `None` for
+    /// the three special arms (Void / NapiEnv / Buffer) handled inline.
+    to_js: Option<(&'static str, &'static str)>,
+}
+
+#[rustfmt::skip]
+static ABI_TABLE: [AbiRow; 21] = {
+    const fn r(
+        c_type: &'static [u8],
+        c_param_type: &'static [u8],
+        to_c_cast: &'static str,
+        to_c_macro: Option<&'static str>,
+        to_js: Option<(&'static str, &'static str)>,
+    ) -> AbiRow {
+        AbiRow { c_type, c_param_type, to_c_cast, to_c_macro, to_js }
+    }
+    [
+    /* Char      */ r(b"char",       b"char",       "(char)",     Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int8T     */ r(b"int8_t",     b"int8_t",     "(int8_t)",   Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint8T    */ r(b"uint8_t",    b"uint8_t",    "(uint8_t)",  Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int16T    */ r(b"int16_t",    b"int16_t",    "(int16_t)",  Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint16T   */ r(b"uint16_t",   b"uint16_t",   "(uint16_t)", Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int32T    */ r(b"int32_t",    b"int32_t",    "(int32_t)",  Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint32T   */ r(b"uint32_t",   b"int32_t",    "(uint32_t)", Some("JSVALUE_TO_INT32("),               Some(("UINT32_TO_JSVALUE(", ")"))),
+    /* Int64T    */ r(b"int64_t",    b"int64_t",    "(int64_t)",  Some("JSVALUE_TO_INT64("),               Some(("INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
+    /* Uint64T   */ r(b"uint64_t",   b"uint64_t",   "(uint64_t)", Some("JSVALUE_TO_UINT64("),              Some(("UINT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
+    /* Double    */ r(b"double",     b"double",     "(double)",   Some("JSVALUE_TO_DOUBLE("),              Some(("DOUBLE_TO_JSVALUE(", ")"))),
+    /* Float     */ r(b"float",      b"float",      "(float)",    Some("JSVALUE_TO_FLOAT("),               Some(("FLOAT_TO_JSVALUE(", ")"))),
+    /* Bool      */ r(b"bool",       b"bool",       "(bool)",     Some("JSVALUE_TO_BOOL("),                Some(("BOOLEAN_TO_JSVALUE(", ")"))),
+    /* Ptr       */ r(b"void*",      b"void*",      "(void*)",    Some("JSVALUE_TO_PTR("),                 Some(("PTR_TO_JSVALUE(", ")"))),
+    /* Void      */ r(b"void",       b"void",       "",           None,                                    None),
+    /* CString   */ r(b"void*",      b"void*",      "(void*)",    Some("JSVALUE_TO_PTR("),                 Some(("PTR_TO_JSVALUE(", ")"))),
+    /* I64Fast   */ r(b"int64_t",    b"int64_t",    "(int64_t)",  Some("JSVALUE_TO_INT64("),               Some(("INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t)", ")"))),
+    /* U64Fast   */ r(b"uint64_t",   b"uint64_t",   "(uint64_t)", Some("JSVALUE_TO_UINT64("),              Some(("UINT64_TO_JSVALUE(JS_GLOBAL_OBJECT, ", ")"))),
+    /* Function  */ r(b"void*",      b"void*",      "(void*)",    Some("JSVALUE_TO_PTR("),                 Some(("PTR_TO_JSVALUE(", ")"))),
+    /* NapiEnv   */ r(b"napi_env",   b"napi_env",   "",           None,                                    None),
+    /* NapiValue */ r(b"napi_value", b"napi_value", "",           None,                                    Some(("((EncodedJSValue) {.asNapiValue = ", " } )"))),
+    /* Buffer    */ r(b"void*",      b"buffer",     "",           Some("JSVALUE_TO_TYPED_ARRAY_VECTOR("),  None),
+    ]
+};
+
+impl ABIType {
+    #[inline]
+    fn row(self) -> &'static AbiRow {
+        &ABI_TABLE[self as usize]
+    }
+}
+
 impl ABIType {
     pub const MAX: i32 = ABIType::NapiValue as i32;
 
@@ -204,24 +272,7 @@ impl ABIType {
     }
 
     pub fn typename_label(self) -> &'static [u8] {
-        match self {
-            ABIType::Buffer | ABIType::Function | ABIType::CString | ABIType::Ptr => b"void*",
-            ABIType::Bool => b"bool",
-            ABIType::Int8T => b"int8_t",
-            ABIType::Uint8T => b"uint8_t",
-            ABIType::Int16T => b"int16_t",
-            ABIType::Uint16T => b"uint16_t",
-            ABIType::Int32T => b"int32_t",
-            ABIType::Uint32T => b"uint32_t",
-            ABIType::I64Fast | ABIType::Int64T => b"int64_t",
-            ABIType::U64Fast | ABIType::Uint64T => b"uint64_t",
-            ABIType::Double => b"double",
-            ABIType::Float => b"float",
-            ABIType::Char => b"char",
-            ABIType::Void => b"void",
-            ABIType::NapiEnv => b"napi_env",
-            ABIType::NapiValue => b"napi_value",
-        }
+        self.row().c_type
     }
 
     pub fn param_typename(self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
@@ -230,25 +281,7 @@ impl ABIType {
     }
 
     pub fn param_typename_label(self) -> &'static [u8] {
-        match self {
-            ABIType::Function | ABIType::CString | ABIType::Ptr => b"void*",
-            ABIType::Bool => b"bool",
-            ABIType::Int8T => b"int8_t",
-            ABIType::Uint8T => b"uint8_t",
-            ABIType::Int16T => b"int16_t",
-            ABIType::Uint16T => b"uint16_t",
-            // see the comment in ffi.ts about why `uint32_t` acts as `int32_t`
-            ABIType::Int32T | ABIType::Uint32T => b"int32_t",
-            ABIType::I64Fast | ABIType::Int64T => b"int64_t",
-            ABIType::U64Fast | ABIType::Uint64T => b"uint64_t",
-            ABIType::Double => b"double",
-            ABIType::Float => b"float",
-            ABIType::Char => b"char",
-            ABIType::Void => b"void",
-            ABIType::NapiEnv => b"napi_env",
-            ABIType::NapiValue => b"napi_value",
-            ABIType::Buffer => b"buffer",
-        }
+        self.row().c_param_type
     }
 }
 
@@ -279,69 +312,19 @@ pub struct ToCFormatter<'a> {
 
 impl fmt::Display for ToCFormatter<'_> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.tag {
-            ABIType::Void => return Ok(()),
-            ABIType::Bool => {
-                if self.exact {
-                    writer.write_str("(bool)")?;
-                }
-                writer.write_str("JSVALUE_TO_BOOL(")?;
-            }
-            ABIType::Char
-            | ABIType::Int8T
-            | ABIType::Uint8T
-            | ABIType::Int16T
-            | ABIType::Uint16T
-            | ABIType::Int32T
-            | ABIType::Uint32T => {
-                if self.exact {
-                    write!(writer, "({})", <&'static str>::from(self.tag))?;
-                }
-                writer.write_str("JSVALUE_TO_INT32(")?;
-            }
-            ABIType::I64Fast | ABIType::Int64T => {
-                if self.exact {
-                    writer.write_str("(int64_t)")?;
-                }
-                writer.write_str("JSVALUE_TO_INT64(")?;
-            }
-            ABIType::U64Fast | ABIType::Uint64T => {
-                if self.exact {
-                    writer.write_str("(uint64_t)")?;
-                }
-                writer.write_str("JSVALUE_TO_UINT64(")?;
-            }
-            ABIType::Function | ABIType::CString | ABIType::Ptr => {
-                if self.exact {
-                    writer.write_str("(void*)")?;
-                }
-                writer.write_str("JSVALUE_TO_PTR(")?;
-            }
-            ABIType::Double => {
-                if self.exact {
-                    writer.write_str("(double)")?;
-                }
-                writer.write_str("JSVALUE_TO_DOUBLE(")?;
-            }
-            ABIType::Float => {
-                if self.exact {
-                    writer.write_str("(float)")?;
-                }
-                writer.write_str("JSVALUE_TO_FLOAT(")?;
-            }
-            ABIType::NapiEnv => {
-                writer.write_str("((napi_env)&Bun__thisFFIModuleNapiEnv)")?;
-                return Ok(());
-            }
-            ABIType::NapiValue => {
-                fmt::Display::fmt(BStr::new(self.symbol), writer)?;
-                writer.write_str(".asNapiValue")?;
-                return Ok(());
-            }
-            ABIType::Buffer => {
-                writer.write_str("JSVALUE_TO_TYPED_ARRAY_VECTOR(")?;
-            }
+        let row = self.tag.row();
+        let Some(macro_) = row.to_c_macro else {
+            return match self.tag {
+                ABIType::Void => Ok(()),
+                ABIType::NapiEnv => writer.write_str("((napi_env)&Bun__thisFFIModuleNapiEnv)"),
+                ABIType::NapiValue => write!(writer, "{}.asNapiValue", BStr::new(self.symbol)),
+                _ => unreachable!(),
+            };
+        };
+        if self.exact && !row.to_c_cast.is_empty() {
+            writer.write_str(row.to_c_cast)?;
         }
+        writer.write_str(macro_)?;
         fmt::Display::fmt(BStr::new(self.symbol), writer)?;
         writer.write_str(")")
     }
@@ -354,43 +337,14 @@ pub struct ToJSFormatter<'a> {
 
 impl fmt::Display for ToJSFormatter<'_> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let sym = BStr::new(self.symbol);
-        match self.tag {
-            ABIType::Void => Ok(()),
-            ABIType::Bool => write!(writer, "BOOLEAN_TO_JSVALUE({})", sym),
-            ABIType::Char
-            | ABIType::Int8T
-            | ABIType::Uint8T
-            | ABIType::Int16T
-            | ABIType::Uint16T
-            | ABIType::Int32T => write!(writer, "INT32_TO_JSVALUE((int32_t){})", sym),
-            ABIType::Uint32T => write!(writer, "UINT32_TO_JSVALUE({})", sym),
-            ABIType::I64Fast => {
-                write!(
-                    writer,
-                    "INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t){})",
-                    sym
-                )
-            }
-            ABIType::Int64T => {
-                write!(writer, "INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, {})", sym)
-            }
-            ABIType::U64Fast => {
-                write!(writer, "UINT64_TO_JSVALUE(JS_GLOBAL_OBJECT, {})", sym)
-            }
-            ABIType::Uint64T => {
-                write!(writer, "UINT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, {})", sym)
-            }
-            ABIType::Function | ABIType::CString | ABIType::Ptr => {
-                write!(writer, "PTR_TO_JSVALUE({})", sym)
-            }
-            ABIType::Double => write!(writer, "DOUBLE_TO_JSVALUE({})", sym),
-            ABIType::Float => write!(writer, "FLOAT_TO_JSVALUE({})", sym),
-            ABIType::NapiEnv => writer.write_str("((napi_env)&Bun__thisFFIModuleNapiEnv)"),
-            ABIType::NapiValue => {
-                write!(writer, "((EncodedJSValue) {{.asNapiValue = {} }} )", sym)
-            }
-            ABIType::Buffer => writer.write_str("0"),
+        match self.tag.row().to_js {
+            Some((pre, suf)) => write!(writer, "{pre}{}{suf}", BStr::new(self.symbol)),
+            None => match self.tag {
+                ABIType::Void => Ok(()),
+                ABIType::NapiEnv => writer.write_str("((napi_env)&Bun__thisFFIModuleNapiEnv)"),
+                ABIType::Buffer => writer.write_str("0"),
+                _ => unreachable!(),
+            },
         }
     }
 }

@@ -61,8 +61,7 @@ type StrDiffList<'a> = DiffList<&'a [u8]>;
 #[allow(dead_code)]
 fn diff_list_to_js(global: &JSGlobalObject, diff_list: StrDiffList<'_>) -> JsResult<JSValue> {
     // todo: replace with toJS
-    let array = JSValue::create_empty_array(global, diff_list.len())?;
-    for (i, line) in diff_list.iter().enumerate() {
+    JSValue::create_array_from_iter(global, diff_list.iter(), |line| {
         let obj = JSValue::create_empty_object_with_null_prototype(global);
         if obj.is_empty() {
             return Err(global.throw_out_of_memory());
@@ -77,9 +76,8 @@ fn diff_list_to_js(global: &JSGlobalObject, diff_list: StrDiffList<'_>) -> JsRes
             bstring::String::static_(b"value"),
             JSValue::from_any(global, line.value)?,
         );
-        array.put_index(global, i as u32, obj)?;
-    }
-    Ok(array)
+        Ok(obj)
+    })
 }
 
 // =============================================================================

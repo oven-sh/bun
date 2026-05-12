@@ -1785,12 +1785,12 @@ fn console_print_runtime_object_inner<const C: bool>(
         let internals = &timer.internals;
         let id = internals.id;
         formatter.add_for_new_line(
-            "Timeout(# ) ".len() + bun_core::fmt::fast_digit_count(id.max(0) as u64) as usize,
+            "Timeout(# ) ".len() + bun_core::fmt::digit_count(id.max(0)),
         );
         let mut w = AsFmt::new(writer_);
         if internals.flags.get().kind() == crate::timer::Kind::SetInterval {
             formatter.add_for_new_line(
-                "repeats ".len() + bun_core::fmt::fast_digit_count(id.max(0) as u64) as usize,
+                "repeats ".len() + bun_core::fmt::digit_count(id.max(0)),
             );
             let _ = write!(
                 w,
@@ -1823,7 +1823,7 @@ fn console_print_runtime_object_inner<const C: bool>(
     if let Some(immediate) = value.as_class_ref::<crate::timer::ImmediateObject>() {
         let id = immediate.internals.id;
         formatter.add_for_new_line(
-            "Immediate(# ) ".len() + bun_core::fmt::fast_digit_count(id.max(0) as u64) as usize,
+            "Immediate(# ) ".len() + bun_core::fmt::digit_count(id.max(0)),
         );
         let mut w = AsFmt::new(writer_);
         let _ = write!(

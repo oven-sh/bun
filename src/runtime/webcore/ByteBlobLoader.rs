@@ -82,15 +82,9 @@ impl readable_stream::SourceContext for ByteBlobLoader {
     }
 }
 
-impl ByteBlobLoader {
-    pub fn parent(&mut self) -> &mut Source {
-        // SAFETY: self is the `context` field embedded inside a `Source`; callers only invoke
-        // this on a `ByteBlobLoader` that was constructed as `Source.context`.
-        unsafe {
-            &mut *bun_core::from_field_ptr!(Source, context, std::ptr::from_mut::<Self>(self))
-        }
-    }
+bun_core::impl_field_parent! { ByteBlobLoader => Source.context; pub fn parent_const; pub fn parent; }
 
+impl ByteBlobLoader {
     pub fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
         // TODO(port): in-place init — `self` is a pre-allocated slot inside `Source`
         let store = blob.store.get().as_ref().unwrap().clone();
@@ -199,7 +193,7 @@ impl ByteBlobLoader {
             self.content_type_allocated = false;
         }
 
-        self.parent().is_closed.set(true);
+        self.parent_const().is_closed.set(true);
         Some(blob::Any::Blob(blob))
     }
 

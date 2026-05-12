@@ -15,7 +15,8 @@ use bun_core::{Output, ZBox, env_var, fmt as bun_fmt, zstr};
 use bun_core::{ZStr, ZigString, strings};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsCell, JsClass,
-    JsError, JsResult, ModuleLoader, SystemError, VirtualMachine, ZigStringJsc, host_fn,
+    JsError, JsResult, ModuleLoader, SystemError, VirtualMachine, ZigStringJsc,
+    host_fn,
 };
 use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::fs as Fs;
@@ -76,14 +77,9 @@ fn create_object_2(
     unsafe { JSC__JSValue__createObject2(global, key1, key2, value1, value2) }
 }
 
-/// `bun.String.toJSArray` — local shim over `JSValue::create_empty_array`.
+/// `bun.String.toJSArray` — local shim over `JSValue::create_array_from_iter`.
 fn strings_to_js_array(global: &JSGlobalObject, strs: &[bun_core::String]) -> JsResult<JSValue> {
-    let arr = JSValue::create_empty_array(global, strs.len())?;
-    for (i, s) in strs.iter().enumerate() {
-        let v = jsc::bun_string_jsc::to_js(s, global)?;
-        arr.put_index(global, i as u32, v)?;
-    }
-    Ok(arr)
+    JSValue::create_array_from_iter(global, strs.iter(), |s| jsc::bun_string_jsc::to_js(s, global))
 }
 
 // `bun_tcc_sys` is an un-gated workspace crate and a direct dep of
@@ -257,12 +253,6 @@ impl FFI {
         // `close()`. Under the `Box<Self>` finalize contract an empty body would
         // drop, so leak the allocation back to preserve the spec'd no-op.
         let _ = bun_core::heap::release(self);
-    }
-
-    /// `.classes.ts` declares `noConstructor: true`; the `JsClass` macro still
-    /// requires the symbol to exist.
-    pub fn constructor(global: &JSGlobalObject, _: &CallFrame) -> JsResult<Box<FFI>> {
-        Err(global.throw(format_args!("FFI is not constructable")))
     }
 }
 

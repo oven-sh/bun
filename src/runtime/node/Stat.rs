@@ -8,7 +8,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 // libc-stat → uv_stat_t field copy on both POSIX and Windows there.
 pub use bun_sys::PosixStat;
 
-const MS_PER_S: i64 = 1000;
+const MS_PER_S: i64 = bun_core::time::MS_PER_S as i64;
 const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 
 /// Stats and BigIntStats classes from node:fs

@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 
 use bun_core::{self, err};
 use bun_jsc::{JSGlobalObject, JSValue, event_loop::EventLoop};
-use bun_ptr::RefPtr;
+use bun_ptr::{AsCtxPtr, RefPtr};
 use bun_sys::{self, Fd, FdExt};
 
 use crate::api::bun_spawn::stdio::Stdio;

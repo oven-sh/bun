@@ -505,6 +505,12 @@ impl Default for SourceMapStore {
     }
 }
 
+// Intrusive backref: recover the owning DevServer. Caller must guarantee `self`
+// is the `source_maps` field of a live, heap-allocated `DevServer` (always
+// true for production use; the `Default::default()` instance must never call
+// this).
+bun_core::impl_field_parent! { SourceMapStore => DevServer.source_maps; pub fn mut owner; }
+
 impl SourceMapStore {
     /// `SourceMapStore.empty` (Zig: `pub const empty: Self = .{ ... }`).
     /// PORT NOTE: ArrayHashMap/LinearFifo have no `const fn` ctors; callers use
@@ -512,17 +518,6 @@ impl SourceMapStore {
     #[inline]
     pub fn empty() -> Self {
         Self::default()
-    }
-
-    /// Intrusive backref: recover the owning DevServer.
-    ///
-    /// SAFETY: caller must guarantee `self` is the `source_maps` field of a
-    /// live, heap-allocated `DevServer` (always true for production use; the
-    /// `Default::default()` instance must never call this).
-    pub unsafe fn owner(&mut self) -> *mut DevServer {
-        unsafe {
-            bun_core::from_field_ptr!(DevServer, source_maps, std::ptr::from_mut::<Self>(self))
-        }
     }
 
     #[inline]

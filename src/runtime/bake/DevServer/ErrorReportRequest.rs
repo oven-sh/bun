@@ -33,7 +33,7 @@ use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
 
 use super::source_map_store::{self, GetResult, Key as SourceMapKey};
 use super::{CLIENT_PREFIX, DevServer};
-use crate::bake::dev_server_body::parse_hex_to_int;
+use bun_core::fmt::parse_hex_to_int;
 use crate::server::StaticRoute;
 use crate::server::static_route::InitFromBytesOptions;
 
@@ -47,9 +47,8 @@ pub struct ErrorReportRequest {
     body: uws::BodyReaderMixin<ErrorReportRequest>,
 }
 
+bun_core::intrusive_field!(ErrorReportRequest, body: uws::BodyReaderMixin<ErrorReportRequest>);
 impl BodyReaderHandler for ErrorReportRequest {
-    const MIXIN_OFFSET: usize = core::mem::offset_of!(ErrorReportRequest, body);
-
     unsafe fn on_body(
         this: *mut Self,
         body: &[u8],
@@ -448,9 +447,6 @@ pub fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_stor
         return None;
     }
     let hex = &after_prefix[after_prefix.len() - MIN_LEN..][..core::mem::size_of::<u64>() * 2];
-    if hex.len() != core::mem::size_of::<u64>() * 2 {
-        return None;
-    }
     Some(source_map_store::Key::init(parse_hex_to_int::<u64>(hex)?))
 }
 

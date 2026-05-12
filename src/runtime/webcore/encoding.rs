@@ -52,7 +52,7 @@ const fn encoding_from_u8(n: u8) -> Encoding {
 
 /// `Encoding` discriminants as `u8` consts for use in `const ENCODING: u8`
 /// generic args (stable-Rust workaround for `adt_const_params`).
-#[allow(non_snake_case)]
+#[allow(non_snake_case, dead_code)]
 mod enc {
     use super::Encoding;
     pub const UTF8: u8 = Encoding::Utf8 as u8;
@@ -67,6 +67,53 @@ mod enc {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// `dispatch_encoding!` — Rust spelling of Zig's `switch (enc) { inline else
+// => |e| f(..., e) }`. Expands a runtime [`Encoding`] into nine monomorphized
+// arms, binding the discriminant as a `const $E: u8` usable in const-generic
+// position (`f::<$E>(..)`). Stable-Rust workaround for `adt_const_params`.
+//
+// Two forms:
+//   • pure      — every variant maps 1:1 to its own discriminant.
+//   • override  — leading explicit arms (aliasing / `unreachable!()`), macro
+//                 fills the identity tail; overridden tail arms are dead and
+//                 silenced with `#[allow(unreachable_patterns)]`.
+//
+// Uses `$crate` paths so call sites need no imports beyond the macro itself.
+// ────────────────────────────────────────────────────────────────────────────
+macro_rules! dispatch_encoding {
+    // pure: every variant → its own discriminant
+    ($scrut:expr, |$E:ident| $body:expr) => {
+        match $scrut {
+            $crate::node::types::Encoding::Utf8      => { const $E: u8 = $crate::node::types::Encoding::Utf8      as u8; $body }
+            $crate::node::types::Encoding::Ucs2      => { const $E: u8 = $crate::node::types::Encoding::Ucs2      as u8; $body }
+            $crate::node::types::Encoding::Utf16le   => { const $E: u8 = $crate::node::types::Encoding::Utf16le   as u8; $body }
+            $crate::node::types::Encoding::Latin1    => { const $E: u8 = $crate::node::types::Encoding::Latin1    as u8; $body }
+            $crate::node::types::Encoding::Ascii     => { const $E: u8 = $crate::node::types::Encoding::Ascii     as u8; $body }
+            $crate::node::types::Encoding::Base64    => { const $E: u8 = $crate::node::types::Encoding::Base64    as u8; $body }
+            $crate::node::types::Encoding::Base64url => { const $E: u8 = $crate::node::types::Encoding::Base64url as u8; $body }
+            $crate::node::types::Encoding::Hex       => { const $E: u8 = $crate::node::types::Encoding::Hex       as u8; $body }
+            $crate::node::types::Encoding::Buffer    => { const $E: u8 = $crate::node::types::Encoding::Buffer    as u8; $body }
+        }
+    };
+    // override: leading explicit arms; identity tail is filled and silenced
+    ($scrut:expr, { $($pat:pat => $arm:expr),+ $(,)? }, |$E:ident| $body:expr) => {
+        match $scrut {
+            $($pat => $arm,)+
+            #[allow(unreachable_patterns)] $crate::node::types::Encoding::Utf8      => { const $E: u8 = $crate::node::types::Encoding::Utf8      as u8; $body }
+            #[allow(unreachable_patterns)] $crate::node::types::Encoding::Ucs2      => { const $E: u8 = $crate::node::types::Encoding::Ucs2      as u8; $body }
+            #[allow(unreachable_patterns)] $crate::node::types::Encoding::Utf16le   => { const $E: u8 = $crate::node::types::Encoding::Utf16le   as u8; $body }
+            #[allow(unreachable_patterns)] $crate::node::types::Encoding::Latin1    => { const $E: u8 = $crate::node::types::Encoding::Latin1    as u8; $body }
+            #[allow(unreachable_patterns)] $crate::node::types::Encoding::Ascii     => { const $E: u8 = $crate::node::types::Encoding::Ascii     as u8; $body }
+            #[allow(unreachable_patterns)] $crate::node::types::Encoding::Base64    => { const $E: u8 = $crate::node::types::Encoding::Base64    as u8; $body }
+            #[allow(unreachable_patterns)] $crate::node::types::Encoding::Base64url => { const $E: u8 = $crate::node::types::Encoding::Base64url as u8; $body }
+            #[allow(unreachable_patterns)] $crate::node::types::Encoding::Hex       => { const $E: u8 = $crate::node::types::Encoding::Hex       as u8; $body }
+            #[allow(unreachable_patterns)] $crate::node::types::Encoding::Buffer    => { const $E: u8 = $crate::node::types::Encoding::Buffer    as u8; $body }
+        }
+    };
+}
+pub(crate) use dispatch_encoding;
+
+// ────────────────────────────────────────────────────────────────────────────
 // Exported C ABI entry points
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -79,17 +126,10 @@ pub extern "C" fn Bun__encoding__writeLatin1(
     encoding: u8,
 ) -> usize {
     // SAFETY: caller (C++) guarantees `input[..len]` and `to[..to_len]` are valid.
-    let r = match encoding_from_u8(encoding) {
-        Encoding::Utf8 => write_u8::<{ enc::UTF8 }>(input, len, to, to_len),
-        Encoding::Latin1 => write_u8::<{ enc::LATIN1 }>(input, len, to, to_len),
-        Encoding::Ascii => write_u8::<{ enc::ASCII }>(input, len, to, to_len),
+    let r = dispatch_encoding!(encoding_from_u8(encoding), {
         Encoding::Ucs2 => write_u8::<{ enc::UTF16LE }>(input, len, to, to_len),
-        Encoding::Utf16le => write_u8::<{ enc::UTF16LE }>(input, len, to, to_len),
-        Encoding::Base64 => write_u8::<{ enc::BASE64 }>(input, len, to, to_len),
-        Encoding::Base64url => write_u8::<{ enc::BASE64URL }>(input, len, to, to_len),
-        Encoding::Hex => write_u8::<{ enc::HEX }>(input, len, to, to_len),
         Encoding::Buffer => unreachable!(),
-    };
+    }, |E| write_u8::<E>(input, len, to, to_len));
     r.unwrap_or(0)
 }
 
@@ -101,17 +141,11 @@ pub extern "C" fn Bun__encoding__writeUTF16(
     to_len: usize,
     encoding: u8,
 ) -> usize {
-    let r = match encoding_from_u8(encoding) {
-        Encoding::Utf8 => write_u16::<{ enc::UTF8 }, false>(input, len, to, to_len),
+    let r = dispatch_encoding!(encoding_from_u8(encoding), {
         Encoding::Latin1 => write_u16::<{ enc::ASCII }, false>(input, len, to, to_len),
-        Encoding::Ascii => write_u16::<{ enc::ASCII }, false>(input, len, to, to_len),
         Encoding::Ucs2 => write_u16::<{ enc::UTF16LE }, false>(input, len, to, to_len),
-        Encoding::Utf16le => write_u16::<{ enc::UTF16LE }, false>(input, len, to, to_len),
-        Encoding::Base64 => write_u16::<{ enc::BASE64 }, false>(input, len, to, to_len),
-        Encoding::Base64url => write_u16::<{ enc::BASE64URL }, false>(input, len, to, to_len),
-        Encoding::Hex => write_u16::<{ enc::HEX }, false>(input, len, to, to_len),
         Encoding::Buffer => unreachable!(),
-    };
+    }, |E| write_u16::<E, false>(input, len, to, to_len));
     r.unwrap_or(0)
 }
 
@@ -140,16 +174,10 @@ pub extern "C" fn Bun__encoding__constructFromLatin1(
     // pointer with `MarkedArrayBuffer_deallocator`, which frees it on GC. Wrapping
     // in `ManuallyDrop` prevents Rust from also freeing it at scope exit (which
     // would be a use-after-free + double-free). Mirrors encoding.zig:42-54.
-    let mut slice = core::mem::ManuallyDrop::new(match encoding_from_u8(encoding) {
-        Encoding::Hex => construct_from_u8::<{ enc::HEX }>(input, len),
-        Encoding::Ascii => construct_from_u8::<{ enc::ASCII }>(input, len),
-        Encoding::Base64url => construct_from_u8::<{ enc::BASE64URL }>(input, len),
-        Encoding::Utf16le => construct_from_u8::<{ enc::UTF16LE }>(input, len),
+    let mut slice = core::mem::ManuallyDrop::new(dispatch_encoding!(encoding_from_u8(encoding), {
         Encoding::Ucs2 => construct_from_u8::<{ enc::UTF16LE }>(input, len),
-        Encoding::Utf8 => construct_from_u8::<{ enc::UTF8 }>(input, len),
-        Encoding::Base64 => construct_from_u8::<{ enc::BASE64 }>(input, len),
         Encoding::Latin1 | Encoding::Buffer => unreachable!(),
-    });
+    }, |E| construct_from_u8::<E>(input, len)));
     JSValue::create_buffer(global_object, &mut slice[..])
 }
 
@@ -164,17 +192,10 @@ pub extern "C" fn Bun__encoding__constructFromUTF16(
     // pointer with `MarkedArrayBuffer_deallocator`, which frees it on GC. Wrapping
     // in `ManuallyDrop` prevents Rust from also freeing it at scope exit (which
     // would be a use-after-free + double-free). Mirrors encoding.zig:56-69.
-    let mut slice = core::mem::ManuallyDrop::new(match encoding_from_u8(encoding) {
-        Encoding::Base64 => construct_from_u16::<{ enc::BASE64 }>(input, len),
-        Encoding::Hex => construct_from_u16::<{ enc::HEX }>(input, len),
-        Encoding::Base64url => construct_from_u16::<{ enc::BASE64URL }>(input, len),
-        Encoding::Utf16le => construct_from_u16::<{ enc::UTF16LE }>(input, len),
+    let mut slice = core::mem::ManuallyDrop::new(dispatch_encoding!(encoding_from_u8(encoding), {
         Encoding::Ucs2 => construct_from_u16::<{ enc::UTF16LE }>(input, len),
-        Encoding::Utf8 => construct_from_u16::<{ enc::UTF8 }>(input, len),
-        Encoding::Ascii => construct_from_u16::<{ enc::ASCII }>(input, len),
-        Encoding::Latin1 => construct_from_u16::<{ enc::LATIN1 }>(input, len),
         Encoding::Buffer => unreachable!(),
-    });
+    }, |E| construct_from_u16::<E>(input, len)));
     JSValue::create_buffer(global_object, &mut slice[..])
 }
 
@@ -217,22 +238,11 @@ pub fn to_string(
     global_object: &JSGlobalObject,
     encoding: impl Into<Encoding>,
 ) -> JsResult<JSValue> {
-    match encoding.into() {
-        // treat buffer as utf8
-        // callers are expected to check that before constructing `Buffer` objects
-        Encoding::Buffer | Encoding::Utf8 => {
-            to_string_comptime::<{ enc::UTF8 }>(input, global_object)
-        }
-
-        // PERF(port): was `inline else` comptime monomorphization — profile in Phase B
-        Encoding::Ascii => to_string_comptime::<{ enc::ASCII }>(input, global_object),
-        Encoding::Latin1 => to_string_comptime::<{ enc::LATIN1 }>(input, global_object),
-        Encoding::Ucs2 => to_string_comptime::<{ enc::UCS2 }>(input, global_object),
-        Encoding::Utf16le => to_string_comptime::<{ enc::UTF16LE }>(input, global_object),
-        Encoding::Hex => to_string_comptime::<{ enc::HEX }>(input, global_object),
-        Encoding::Base64 => to_string_comptime::<{ enc::BASE64 }>(input, global_object),
-        Encoding::Base64url => to_string_comptime::<{ enc::BASE64URL }>(input, global_object),
-    }
+    // treat buffer as utf8 — callers are expected to check that before
+    // constructing `Buffer` objects
+    dispatch_encoding!(encoding.into(), {
+        Encoding::Buffer => to_string_comptime::<{ enc::UTF8 }>(input, global_object),
+    }, |E| to_string_comptime::<E>(input, global_object))
 }
 
 pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> BunString {
@@ -354,18 +364,7 @@ pub fn to_string_comptime<const ENCODING: u8>(
 }
 
 pub fn to_bun_string(input: &[u8], encoding: impl Into<Encoding>) -> BunString {
-    // PERF(port): was `inline else` comptime monomorphization — profile in Phase B
-    match encoding.into() {
-        Encoding::Utf8 => to_bun_string_comptime::<{ enc::UTF8 }>(input),
-        Encoding::Ascii => to_bun_string_comptime::<{ enc::ASCII }>(input),
-        Encoding::Latin1 => to_bun_string_comptime::<{ enc::LATIN1 }>(input),
-        Encoding::Buffer => to_bun_string_comptime::<{ enc::BUFFER }>(input),
-        Encoding::Ucs2 => to_bun_string_comptime::<{ enc::UCS2 }>(input),
-        Encoding::Utf16le => to_bun_string_comptime::<{ enc::UTF16LE }>(input),
-        Encoding::Hex => to_bun_string_comptime::<{ enc::HEX }>(input),
-        Encoding::Base64 => to_bun_string_comptime::<{ enc::BASE64 }>(input),
-        Encoding::Base64url => to_bun_string_comptime::<{ enc::BASE64URL }>(input),
-    }
+    dispatch_encoding!(encoding.into(), |E| to_bun_string_comptime::<E>(input))
 }
 
 pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
@@ -821,35 +820,14 @@ pub fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> 
 
 /// Runtime-dispatch wrapper over [`construct_from_u8`].
 fn construct_from_u8_dyn(input: &[u8], encoding: Encoding) -> Vec<u8> {
-    // PERF(port): was `inline else` over Encoding — profile in Phase B.
     let (p, n) = (input.as_ptr(), input.len());
-    match encoding {
-        Encoding::Utf8 => construct_from_u8::<{ enc::UTF8 }>(p, n),
-        Encoding::Ucs2 => construct_from_u8::<{ enc::UCS2 }>(p, n),
-        Encoding::Utf16le => construct_from_u8::<{ enc::UTF16LE }>(p, n),
-        Encoding::Latin1 => construct_from_u8::<{ enc::LATIN1 }>(p, n),
-        Encoding::Ascii => construct_from_u8::<{ enc::ASCII }>(p, n),
-        Encoding::Base64 => construct_from_u8::<{ enc::BASE64 }>(p, n),
-        Encoding::Base64url => construct_from_u8::<{ enc::BASE64URL }>(p, n),
-        Encoding::Hex => construct_from_u8::<{ enc::HEX }>(p, n),
-        Encoding::Buffer => construct_from_u8::<{ enc::BUFFER }>(p, n),
-    }
+    dispatch_encoding!(encoding, |E| construct_from_u8::<E>(p, n))
 }
 
 /// Runtime-dispatch wrapper over [`construct_from_u16`].
 fn construct_from_u16_dyn(input: &[u16], encoding: Encoding) -> Vec<u8> {
     let (p, n) = (input.as_ptr(), input.len());
-    match encoding {
-        Encoding::Utf8 => construct_from_u16::<{ enc::UTF8 }>(p, n),
-        Encoding::Ucs2 => construct_from_u16::<{ enc::UCS2 }>(p, n),
-        Encoding::Utf16le => construct_from_u16::<{ enc::UTF16LE }>(p, n),
-        Encoding::Latin1 => construct_from_u16::<{ enc::LATIN1 }>(p, n),
-        Encoding::Ascii => construct_from_u16::<{ enc::ASCII }>(p, n),
-        Encoding::Base64 => construct_from_u16::<{ enc::BASE64 }>(p, n),
-        Encoding::Base64url => construct_from_u16::<{ enc::BASE64URL }>(p, n),
-        Encoding::Hex => construct_from_u16::<{ enc::HEX }>(p, n),
-        Encoding::Buffer => construct_from_u16::<{ enc::BUFFER }>(p, n),
-    }
+    dispatch_encoding!(encoding, |E| construct_from_u16::<E>(p, n))
 }
 
 /// Runtime-dispatch wrapper over [`encode_into_from16`] (Zig passed
@@ -859,17 +837,7 @@ fn encode_into_from16_dyn(
     to: &mut [u8],
     encoding: Encoding,
 ) -> Result<usize, bun_core::Error> {
-    match encoding {
-        Encoding::Utf8 => encode_into_from16::<{ enc::UTF8 }, true>(input, to),
-        Encoding::Ucs2 => encode_into_from16::<{ enc::UCS2 }, true>(input, to),
-        Encoding::Utf16le => encode_into_from16::<{ enc::UTF16LE }, true>(input, to),
-        Encoding::Latin1 => encode_into_from16::<{ enc::LATIN1 }, true>(input, to),
-        Encoding::Ascii => encode_into_from16::<{ enc::ASCII }, true>(input, to),
-        Encoding::Base64 => encode_into_from16::<{ enc::BASE64 }, true>(input, to),
-        Encoding::Base64url => encode_into_from16::<{ enc::BASE64URL }, true>(input, to),
-        Encoding::Hex => encode_into_from16::<{ enc::HEX }, true>(input, to),
-        Encoding::Buffer => encode_into_from16::<{ enc::BUFFER }, true>(input, to),
-    }
+    dispatch_encoding!(encoding, |E| encode_into_from16::<E, true>(input, to))
 }
 
 /// Runtime-dispatch wrapper over [`encode_into_from8`].
@@ -878,17 +846,7 @@ fn encode_into_from8_dyn(
     to: &mut [u8],
     encoding: Encoding,
 ) -> Result<usize, bun_core::Error> {
-    match encoding {
-        Encoding::Utf8 => encode_into_from8::<{ enc::UTF8 }>(input, to),
-        Encoding::Ucs2 => encode_into_from8::<{ enc::UCS2 }>(input, to),
-        Encoding::Utf16le => encode_into_from8::<{ enc::UTF16LE }>(input, to),
-        Encoding::Latin1 => encode_into_from8::<{ enc::LATIN1 }>(input, to),
-        Encoding::Ascii => encode_into_from8::<{ enc::ASCII }>(input, to),
-        Encoding::Base64 => encode_into_from8::<{ enc::BASE64 }>(input, to),
-        Encoding::Base64url => encode_into_from8::<{ enc::BASE64URL }>(input, to),
-        Encoding::Hex => encode_into_from8::<{ enc::HEX }>(input, to),
-        Encoding::Buffer => encode_into_from8::<{ enc::BUFFER }>(input, to),
-    }
+    dispatch_encoding!(encoding, |E| encode_into_from8::<E>(input, to))
 }
 
 /// `bun.String.{encodeInto,encode}` (string.zig:630-644). Extension trait —

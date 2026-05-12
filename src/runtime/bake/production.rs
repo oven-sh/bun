@@ -1204,17 +1204,13 @@ pub fn build_with_vm(
             .map_err(js_err)?;
 
         if !params_buf.is_empty() {
+            // reverse-index fill ≡ forward fill over `.iter().rev()`
+            // (slice iterators are ExactSize + DoubleEnded).
             let param_info_array =
-                JSValue::create_empty_array(global, params_buf.len()).map_err(js_err)?;
-            for (i, param) in params_buf.iter().enumerate() {
-                param_info_array
-                    .put_index(
-                        global,
-                        u32::try_from(params_buf.len() - i - 1).expect("int cast"),
-                        jsc::bun_string_jsc::create_utf8_for_js(global, param).map_err(js_err)?,
-                    )
-                    .map_err(js_err)?;
-            }
+                JSValue::create_array_from_iter(global, params_buf.iter().rev(), |param| {
+                    jsc::bun_string_jsc::create_utf8_for_js(global, param)
+                })
+                .map_err(js_err)?;
             route_param_info
                 .put_index(
                     global,

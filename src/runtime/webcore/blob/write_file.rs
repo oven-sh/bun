@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_core::Error;
 use bun_core::ZigString;
-use bun_io as io;
+use bun_io::{self as io, IntrusiveIoRequest as _};
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::{
@@ -66,6 +66,7 @@ pub struct WriteFile {
 }
 
 bun_threading::intrusive_work_task!(WriteFile, task);
+bun_io::intrusive_io_request!(WriteFile, io_request);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Zig: `pub const getFd = FileOpener(@This()).getFd;`
@@ -180,13 +181,7 @@ impl FileCloser for WriteFile {
 
     fn schedule_close(request: &mut io::Request) -> io::Action<'_> {
         // SAFETY: request is &mut self.io_request (intrusive); recover parent.
-        let this: &mut WriteFile = unsafe {
-            &mut *(bun_core::from_field_ptr!(
-                WriteFile,
-                io_request,
-                std::ptr::from_mut::<io::Request>(request)
-            ))
-        };
+        let this = unsafe { &mut *WriteFile::from_io_request(std::ptr::from_mut(request)) };
         fn on_done(ctx: *mut ()) {
             // SAFETY: ctx is `self as *mut WriteFile` set below.
             let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(ctx.cast()) };
@@ -223,13 +218,7 @@ impl WriteFile {
 
     pub fn on_writable(request: &mut io::Request) {
         // SAFETY: request points to WriteFile.io_request
-        let this: &mut WriteFile = unsafe {
-            &mut *bun_core::from_field_ptr!(
-                WriteFile,
-                io_request,
-                std::ptr::from_mut::<io::Request>(request)
-            )
-        };
+        let this = unsafe { &mut *WriteFile::from_io_request(std::ptr::from_mut(request)) };
         this.on_ready();
     }
 
@@ -259,13 +248,7 @@ impl WriteFile {
         bun_output::scoped_log!(WriteFile, "WriteFile.onRequestWritable()");
         request.scheduled = false;
         // SAFETY: request points to WriteFile.io_request (intrusive); recover parent.
-        let this: &mut WriteFile = unsafe {
-            &mut *bun_core::from_field_ptr!(
-                WriteFile,
-                io_request,
-                std::ptr::from_mut::<io::Request>(request)
-            )
-        };
+        let this = unsafe { &mut *WriteFile::from_io_request(std::ptr::from_mut(request)) };
         io::Action::Writable(io::FileAction {
             on_error: Self::on_io_error,
             ctx: std::ptr::from_mut::<WriteFile>(this).cast::<()>(),
@@ -613,7 +596,7 @@ mod windows_impl {
     use super::*;
     use core::ptr::null_mut;
 
-    use bun_io::{self as aio, KeepAlive};
+    use bun_io::{self as aio, IntrusiveUvFs as _, KeepAlive};
     // `bun_jsc::EventLoop`/`ManagedTask` are *modules* (Zig-style namespace
     // re-exports); the structs live one level deeper.
     use bun_jsc::{ConcurrentTask, ManagedTask::ManagedTask, event_loop::EventLoop};
@@ -637,6 +620,8 @@ mod windows_impl {
 
         pub owned_fd: bool,
     }
+
+    bun_io::intrusive_uv_fs!(WriteFileWindows, io_request);
 
     #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
     pub enum WriteFileWindowsError {
@@ -859,8 +844,7 @@ mod windows_impl {
             // pointer (NOT `&mut`) because the paths below may free `*this`
             // (`throw`/`do_write_loop` → `deinit`), and a `&mut` argument/local
             // would be invalidated by that deallocation (Stacked Borrows).
-            let this: *mut WriteFileWindows =
-                unsafe { bun_core::from_field_ptr!(WriteFileWindows, io_request, req) };
+            let this: *mut WriteFileWindows = unsafe { WriteFileWindows::from_uv_fs(req) };
             debug_assert!(core::ptr::eq(
                 this,
                 // SAFETY: req == &(*this).io_request; data was set to `this` in create_with_ctx/open.
@@ -1049,8 +1033,7 @@ mod windows_impl {
             // pointer (NOT `&mut`) because the paths below may free `*this`
             // (`throw`/`do_write_loop` → `deinit`), and a `&mut` would be
             // invalidated by that deallocation (Stacked Borrows).
-            let this: *mut WriteFileWindows =
-                unsafe { bun_core::from_field_ptr!(WriteFileWindows, io_request, req) };
+            let this: *mut WriteFileWindows = unsafe { WriteFileWindows::from_uv_fs(req) };
             debug_assert!(core::ptr::eq(
                 this,
                 // SAFETY: req == &(*this).io_request; data was set to `this` in do_write_loop.

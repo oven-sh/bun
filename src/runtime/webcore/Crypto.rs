@@ -335,8 +335,7 @@ impl Crypto {
 
     // `#[JsClass]` emits `CryptoClass__construct` calling this.
     pub fn constructor(global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<*mut Crypto> {
-        Err(bun_jsc::Error::ILLEGAL_CONSTRUCTOR
-            .throw(global, format_args!("Crypto is not constructable")))
+        Err(global.throw_illegal_constructor("Crypto"))
     }
 }
 

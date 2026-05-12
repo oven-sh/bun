@@ -75,52 +75,39 @@ where
 
     if !content_type.is_empty() {
         writer.write_str("\n")?;
-        // PORT NOTE: Zig `defer formatter.indent -|= 1;` runs on every exit.
-        // A scopeguard would alias `&mut formatter`, so run the fallible body
-        // in a closure and `indent_dec()` unconditionally before propagating.
-        formatter.indent_inc();
-        let r: core::fmt::Result = (|| {
-            formatter.write_indent(writer)?;
-            write!(
-                writer,
-                "{}",
-                output::pretty_fmt_args(
-                    "type<d>:<r> <green>\"{}\"<r>",
-                    ENABLE_ANSI_COLORS,
-                    (bstr::BStr::new(content_type),),
-                ),
-            )?;
+        let mut formatter = formatter.indented();
+        formatter.write_indent(writer)?;
+        write!(
+            writer,
+            "{}",
+            output::pretty_fmt_args(
+                "type<d>:<r> <green>\"{}\"<r>",
+                ENABLE_ANSI_COLORS,
+                (bstr::BStr::new(content_type),),
+            ),
+        )?;
 
-            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
-            if offset > 0 {
-                writer.write_str("\n")?;
-            }
-            Ok(())
-        })();
-        formatter.indent_dec();
-        r?;
+        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+        if offset > 0 {
+            writer.write_str("\n")?;
+        }
     }
 
     if offset > 0 {
-        // PORT NOTE: Zig `defer formatter.indent -|= 1;` — see above.
-        formatter.indent_inc();
-        let r: core::fmt::Result = (|| {
-            formatter.write_indent(writer)?;
+        let mut formatter = formatter.indented();
+        formatter.write_indent(writer)?;
 
-            write!(
-                writer,
-                "{}",
-                output::pretty_fmt_args(
-                    "offset<d>:<r> <yellow>{}<r>",
-                    ENABLE_ANSI_COLORS,
-                    (offset,)
-                ),
-            )?;
+        write!(
+            writer,
+            "{}",
+            output::pretty_fmt_args(
+                "offset<d>:<r> <yellow>{}<r>",
+                ENABLE_ANSI_COLORS,
+                (offset,)
+            ),
+        )?;
 
-            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)
-        })();
-        formatter.indent_dec();
-        r?;
+        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
     }
     s3_client::write_format_credentials::<F, W, ENABLE_ANSI_COLORS>(
         &**credentials,

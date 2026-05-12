@@ -6,7 +6,7 @@ mod _impl {
     use core::ffi::c_void;
 
     use crate::node::Encoding;
-    use crate::webcore::encoding as encoder;
+    use crate::webcore::encoding::{self as encoder, dispatch_encoding};
     use bun_core::ZigString;
 
     impl BufferVectorized {
@@ -27,160 +27,22 @@ mod _impl {
             let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, fill_length) };
 
             // PORT NOTE: encoder::write_u8/write_u16 take the encoding as a const-generic
-            // `u8` (stable-Rust workaround for `adt_const_params`) — pass `Encoding::* as u8`.
-            let result = match encoding {
-                Encoding::Utf8 => {
-                    if str.is_16_bit() {
-                        let s = str.utf16_slice_aligned();
-                        encoder::write_u16::<{ Encoding::Utf8 as u8 }, true>(
-                            s.as_ptr(),
-                            s.len(),
-                            buf.as_mut_ptr(),
-                            buf.len(),
-                        )
-                    } else {
-                        let s = str.slice();
-                        encoder::write_u8::<{ Encoding::Utf8 as u8 }>(
-                            s.as_ptr(),
-                            s.len(),
-                            buf.as_mut_ptr(),
-                            buf.len(),
-                        )
-                    }
-                }
-                Encoding::Ascii => {
-                    if str.is_16_bit() {
-                        let s = str.utf16_slice_aligned();
-                        encoder::write_u16::<{ Encoding::Ascii as u8 }, true>(
-                            s.as_ptr(),
-                            s.len(),
-                            buf.as_mut_ptr(),
-                            buf.len(),
-                        )
-                    } else {
-                        let s = str.slice();
-                        encoder::write_u8::<{ Encoding::Ascii as u8 }>(
-                            s.as_ptr(),
-                            s.len(),
-                            buf.as_mut_ptr(),
-                            buf.len(),
-                        )
-                    }
-                }
-                Encoding::Latin1 => {
-                    if str.is_16_bit() {
-                        let s = str.utf16_slice_aligned();
-                        encoder::write_u16::<{ Encoding::Latin1 as u8 }, true>(
-                            s.as_ptr(),
-                            s.len(),
-                            buf.as_mut_ptr(),
-                            buf.len(),
-                        )
-                    } else {
-                        let s = str.slice();
-                        encoder::write_u8::<{ Encoding::Latin1 as u8 }>(
-                            s.as_ptr(),
-                            s.len(),
-                            buf.as_mut_ptr(),
-                            buf.len(),
-                        )
-                    }
-                }
-                Encoding::Buffer => {
-                    if str.is_16_bit() {
-                        let s = str.utf16_slice_aligned();
-                        encoder::write_u16::<{ Encoding::Buffer as u8 }, true>(
-                            s.as_ptr(),
-                            s.len(),
-                            buf.as_mut_ptr(),
-                            buf.len(),
-                        )
-                    } else {
-                        let s = str.slice();
-                        encoder::write_u8::<{ Encoding::Buffer as u8 }>(
-                            s.as_ptr(),
-                            s.len(),
-                            buf.as_mut_ptr(),
-                            buf.len(),
-                        )
-                    }
-                }
-                Encoding::Utf16le | Encoding::Ucs2 => {
-                    if str.is_16_bit() {
-                        let s = str.utf16_slice_aligned();
-                        encoder::write_u16::<{ Encoding::Utf16le as u8 }, true>(
-                            s.as_ptr(),
-                            s.len(),
-                            buf.as_mut_ptr(),
-                            buf.len(),
-                        )
-                    } else {
-                        let s = str.slice();
-                        encoder::write_u8::<{ Encoding::Utf16le as u8 }>(
-                            s.as_ptr(),
-                            s.len(),
-                            buf.as_mut_ptr(),
-                            buf.len(),
-                        )
-                    }
-                }
-                Encoding::Base64 => {
-                    if str.is_16_bit() {
-                        let s = str.utf16_slice_aligned();
-                        encoder::write_u16::<{ Encoding::Base64 as u8 }, true>(
-                            s.as_ptr(),
-                            s.len(),
-                            buf.as_mut_ptr(),
-                            buf.len(),
-                        )
-                    } else {
-                        let s = str.slice();
-                        encoder::write_u8::<{ Encoding::Base64 as u8 }>(
-                            s.as_ptr(),
-                            s.len(),
-                            buf.as_mut_ptr(),
-                            buf.len(),
-                        )
-                    }
-                }
-                Encoding::Base64url => {
-                    if str.is_16_bit() {
-                        let s = str.utf16_slice_aligned();
-                        encoder::write_u16::<{ Encoding::Base64url as u8 }, true>(
-                            s.as_ptr(),
-                            s.len(),
-                            buf.as_mut_ptr(),
-                            buf.len(),
-                        )
-                    } else {
-                        let s = str.slice();
-                        encoder::write_u8::<{ Encoding::Base64url as u8 }>(
-                            s.as_ptr(),
-                            s.len(),
-                            buf.as_mut_ptr(),
-                            buf.len(),
-                        )
-                    }
-                }
-                Encoding::Hex => {
-                    if str.is_16_bit() {
-                        let s = str.utf16_slice_aligned();
-                        encoder::write_u16::<{ Encoding::Hex as u8 }, true>(
-                            s.as_ptr(),
-                            s.len(),
-                            buf.as_mut_ptr(),
-                            buf.len(),
-                        )
-                    } else {
-                        let s = str.slice();
-                        encoder::write_u8::<{ Encoding::Hex as u8 }>(
-                            s.as_ptr(),
-                            s.len(),
-                            buf.as_mut_ptr(),
-                            buf.len(),
-                        )
-                    }
-                }
+            // `u8` (stable-Rust workaround for `adt_const_params`) — `dispatch_encoding!`
+            // expands the runtime `encoding` into nine monomorphized arms.
+            let result = if str.is_16_bit() {
+                let s = str.utf16_slice_aligned();
+                dispatch_encoding!(encoding, {
+                    Encoding::Ucs2 => encoder::write_u16::<{ Encoding::Utf16le as u8 }, true>(
+                        s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(),
+                    ),
+                }, |E| encoder::write_u16::<E, true>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len()))
+            } else {
+                let s = str.slice();
+                dispatch_encoding!(encoding, {
+                    Encoding::Ucs2 => encoder::write_u8::<{ Encoding::Utf16le as u8 }>(
+                        s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(),
+                    ),
+                }, |E| encoder::write_u8::<E>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len()))
             };
             // Zig writeU8/writeU16 return `!usize`; Rust port returns `Result<usize, _>` so `written` is already usize.
             let Ok(written) = result else {

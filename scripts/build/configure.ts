@@ -224,6 +224,26 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
     ...(input.overrides ?? {}),
   };
 
+  // Guard: build/btg is reserved for the LTO bench profile. Configuring it
+  // with any other profile (e.g. `--profile=release --build-dir=build/btg`,
+  // or a legacy configure.json migrated to {profile:"release",overrides:{…}})
+  // persists lto:false and silently links the non-LTO WebKit prebuilt — the
+  // bench suite then reports a phantom ~6-8% time / ~1 MB RSS "regression"
+  // that is pure binary layout (.data.rel.ro vtables, outlined JSC slow-
+  // paths), not src/ code. Fail loudly so the bench harness can't produce a
+  // de-LTO'd comparison binary. See profiles.ts:btg.
+  if (
+    partial.buildDir !== undefined &&
+    resolve(partial.buildDir) === resolve("build", "btg") &&
+    input.profile !== "btg"
+  ) {
+    throw new BuildError(`build/btg must be configured with --profile=btg (lto:true)`, {
+      hint:
+        `Got profile=${input.profile ?? "<none>"}. Run \`bun run build:btg\` ` +
+        `(or \`rm build/btg/configure.json\` first if regen is replaying a stale config).`,
+    });
+  }
+
   const toolchain = resolveToolchain();
   mark("resolveToolchain");
   const cfg = resolveConfig(partial, toolchain);

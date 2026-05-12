@@ -369,8 +369,25 @@ impl JSValue {
     #[inline] pub fn is_truthy(self) -> bool { self.to_boolean() }
 
     /// `jsType()` — only valid when `is_cell()`. Reads the JSCell type byte.
+    ///
+    /// Source-inlined body of `JSC__JSValue__jsType` (bindings.cpp:2755) so the
+    /// 2-insn fast path survives no-LTO targets (e.g. aarch64-musl, where
+    /// cross-language LTO is disabled — config.ts:631). With the FFI shim the
+    /// call cannot inline into Rust callers and shows up as a separate symbol;
+    /// the real body is just `movzbl 0x5(%rdi),%eax` after the cell check.
     #[inline] pub fn js_type(self) -> JSType {
-        JSC__JSValue__jsType(self)
+        if self.is_cell() {
+            // `JSCell::m_type` lives at byte offset 5 of every cell header
+            // (StructureID:u32, indexingTypeAndMisc:u8, type:u8, …) — see
+            // JSType.rs module doc and `JSCell::typeInfoTypeOffset()`.
+            // SAFETY: `is_cell()` proved `self.0` is a non-null GC-heap cell
+            // pointer; the header byte at +5 is always initialized. `JSType`
+            // is `#[repr(transparent)] u8`, so any byte is a valid value.
+            unsafe { JSType(*(self.0 as *const u8).add(5)) }
+        } else {
+            // C++ returns 0 (`CellType`) for non-cells.
+            JSType::Cell
+        }
     }
 
     /// `jsTypeLoose()` (JSValue.zig:291) — `js_type` but maps non-cell numbers

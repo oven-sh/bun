@@ -8,12 +8,27 @@
 #
 # Generated against the *release* (ICF'd) binary so the kept-representative
 # names match what lld actually links — see -Wl,-icf=safe in flags.ts.
-# Unknown symbols are silently ignored (paired with
-# -Wl,--no-warn-symbol-ordering in flags.ts) so monomorphisation-hash
-# changes in mangled names degrade gracefully. Regenerate when convenient:
+#
+# This file is NOT passed to lld verbatim. Rust v0-mangled entries embed a
+# per-crate disambiguator hash (`Cs<hash>_<len><crate>`) that churns whenever
+# a crate's source/feature/dep-graph/rustc changes, so the checked-in hashes
+# below are treated as wildcards: scripts/build/rewrite-startup-order.ts
+# substitutes the live hash from `nm libbun_rust.a` at link time and writes
+# `${buildDir}/startup.order.resolved`, which is what flags.ts actually feeds
+# to `-Wl,--symbol-ordering-file=`. C++/_Z* and hand-listed entries pass
+# through unchanged. Unknown symbols are still silently ignored (paired with
+# -Wl,--no-warn-symbol-ordering) so genuinely-removed functions degrade
+# gracefully — but a stale crate hash no longer silently de-clusters the
+# whole hot path.
+#
+# Regenerate when the *call order* changes (new init step, moved hot path),
+# not when hashes drift. Run from inside a real install fixture so the
+# no-op-verify path is captured, and loop the workload so the ~2ms install
+# fast-path gets enough samples to surface every ICF representative:
 #
 #   for cmd in 'empty.js' '.' 'run hello' 'install --frozen-lockfile'; do
-#     perf record -q -e instructions:u -c 3000 -- ./build/release/bun-profile $cmd
+#     perf record -q -e instructions:u -c 200 -- \
+#       bash -c 'for i in $(seq 200); do ./build/release/bun-profile '"$cmd"'; done'
 #     perf script -F ip,sym,dso | grep -F bun-profile')' | awk 'NF{print $2}'
 #   done | awk '!seen[$0]++' >> src/startup.order
 #
@@ -722,6 +737,9 @@ _ZN4bssl18CRYPTO_new_ex_dataEP17crypto_ex_data_st
 _ZN3WTF19ScopedLambdaFunctorIFSt8optionalIjEvEZN3JSC23MarkingConstraintSolver5drainERNS_9BitVectorEE3$_0E12implFunctionEPv
 pas_segregated_view_get_size_directory_slow
 _ZN3JSC11MarkedBlock6Handle6isLiveEjjbPKNS_8HeapCellE
+__bun_tick_queue_with_count
+_RNvNtCsdUGwqtdHSXW_11bun_runtime8dispatch21tick_queue_with_count
+_RNvNtCsdUGwqtdHSXW_11bun_runtime8dispatch8run_task
 _ZN3JSC14MicrotaskQueue9drainImplILb1EEESt4pairIPNS_14JSGlobalObjectEbES4_RNS_2VMERNS_17TopExceptionScopeE
 _ZN3JSC6ParserINS_5LexerIDsEEE16popScopeInternalEPNS_5ScopeEb
 _ZN3JSC23ModuleProgramExecutable20getUnlinkedCodeBlockEPNS_14JSGlobalObjectE

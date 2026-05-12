@@ -13,6 +13,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 #![warn(unreachable_pub)]
+#![feature(hasher_prefixfree_extras)]
 const PRIMES: [u64; 5] = [
     0xa0761d6478bd642f,
     0xe7037ed1a0b428db,
@@ -611,10 +612,18 @@ impl core::hash::Hasher for OneShotHasher {
     fn write_u32(&mut self, n: u32) { self.write_u64(u64::from(n)); }
     #[inline(always)]
     fn write_u64(&mut self, n: u64) {
-        // Cheap diffusion for integer keys / length prefixes — one 128-bit
-        // multiply, same primitive wyhash uses internally (`mum`).
+        // Cheap diffusion for integer keys — one 128-bit multiply, same
+        // primitive wyhash uses internally (`mum`).
         self.hash = mum(self.hash ^ n, PRIMES[4]);
     }
+    /// No-op: keys hashed through this hasher are never cross-type, so the
+    /// prefix-freedom guarantee `<[T] as Hash>` buys is unused. Skipping it
+    /// makes `<[u8] as Hash>` collapse to a single `write(bytes)` →
+    /// `Wyhash11::hash(0, bytes)` — the exact shape of Zig's
+    /// `bun.StringHashMapContext.hash`. perf showed `hashbrown::make_hash`
+    /// outlined with the extra `mum` from the length prefix as dead weight.
+    #[inline(always)]
+    fn write_length_prefix(&mut self, _len: usize) {}
     #[inline(always)]
     fn write_usize(&mut self, n: usize) { self.write_u64(n as u64); }
     #[inline(always)]

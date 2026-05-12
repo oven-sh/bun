@@ -1807,6 +1807,11 @@ impl ZigString {
         ZigString { ptr: self.ptr, len: self.len.min(len) }
     }
     /// `ZigString.toSlice` — borrowed-or-owned UTF-8.
+    ///
+    /// `#[inline]` so the 32-byte `ZigStringSlice` enum return is constructed
+    /// directly in the caller's slot (NRVO-ish) instead of being assembled in a
+    /// local and AVX-memcpy'd out — measurable in `path.join` per-arg loops.
+    #[inline]
     pub fn to_slice(&self) -> ZigStringSlice {
         if self.len == 0 { return ZigStringSlice::EMPTY; }
         if self.is_16bit() {
@@ -1926,6 +1931,7 @@ impl ZigStringSlice {
             _ => Self::Owned(self.slice().to_vec()),
         }
     }
+    #[inline]
     pub fn slice(&self) -> &[u8] {
         match self {
             Self::Static(p, l) if *l == 0 => &[],

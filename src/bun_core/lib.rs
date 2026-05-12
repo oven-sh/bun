@@ -769,6 +769,14 @@ pub mod strings {
 
     #[inline]
     pub fn is_all_ascii(slice: &[u8]) -> bool {
+        // Short-string fast path: for ≤32 bytes the scalar loop wins. Without
+        // cross-LTO the FFI path is Rust → `simdutf__validate_ascii` shim
+        // (push/mov/pop/jmp) → `simdutf::validate_ascii` (runtime CPU-dispatch
+        // vtable load + indirect call) → impl; on the `path.dirname` micro the
+        // 2-hop dispatch was ~60% of the SIMD work for 14-byte inputs.
+        if slice.len() <= 32 {
+            return slice.iter().all(|&b| b < 0x80);
+        }
         // SAFETY: FFI reads exactly slice.len() bytes.
         unsafe { simdutf::simdutf__validate_ascii(slice.as_ptr(), slice.len()) }
     }

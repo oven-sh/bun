@@ -75,8 +75,18 @@ unsafe extern "C" {
     );
 }
 
+// NOTE: every public wrapper below is `#[inline(always)]`. They are thin
+// ptr/len shims around the `extern "C"` highway_* dispatch stubs; inlining
+// them puts the FFI call directly at the hot lexer/printer call site so that
+// (a) the Rust-side frame disappears unconditionally, and (b) cross-language
+// LTO (`--profile=btg`, crossLangLto=true) can fold the C dispatch shim
+// straight into the caller. Without this the profile shows the C shim as a
+// distinct hot leaf (e.g. `highway_index_of_newline_or_non_ascii` self-samples
+// in lint/create-vue benches).
+
 /// Count frequencies of [a-zA-Z0-9_$] characters in a string
 /// Updates the provided frequency array with counts (adds delta for each occurrence)
+#[inline(always)]
 pub fn scan_char_frequency(text: &[u8], freqs: &mut [i32; 64], delta: i32) {
     if text.is_empty() || delta == 0 {
         return;
@@ -88,6 +98,7 @@ pub fn scan_char_frequency(text: &[u8], freqs: &mut [i32; 64], delta: i32) {
     }
 }
 
+#[inline(always)]
 pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
     if haystack.is_empty() {
         return None;
@@ -105,6 +116,7 @@ pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
     Some(result)
 }
 
+#[inline(always)]
 pub fn index_of_interesting_character_in_string_literal(slice: &[u8], quote_type: u8) -> Option<usize> {
     if slice.is_empty() {
         return None;
@@ -122,6 +134,7 @@ pub fn index_of_interesting_character_in_string_literal(slice: &[u8], quote_type
     Some(result)
 }
 
+#[inline(always)]
 pub fn index_of_newline_or_non_ascii(haystack: &[u8]) -> Option<usize> {
     debug_assert!(!haystack.is_empty());
 
@@ -141,6 +154,7 @@ pub fn index_of_newline_or_non_ascii(haystack: &[u8]) -> Option<usize> {
     Some(result)
 }
 
+#[inline(always)]
 pub fn index_of_newline_or_non_ascii_or_ansi(haystack: &[u8]) -> Option<usize> {
     debug_assert!(!haystack.is_empty());
 
@@ -161,6 +175,7 @@ pub fn index_of_newline_or_non_ascii_or_ansi(haystack: &[u8]) -> Option<usize> {
 }
 
 /// Checks if the string contains any newlines, non-ASCII characters, or quotes
+#[inline(always)]
 pub fn contains_newline_or_non_ascii_or_quote(text: &[u8]) -> bool {
     if text.is_empty() {
         return false;
@@ -174,6 +189,7 @@ pub fn contains_newline_or_non_ascii_or_quote(text: &[u8]) -> bool {
 /// Looks for characters above ASCII (> 127), control characters (< 0x20),
 /// backslash characters (`\`), the quote character itself, and for backtick
 /// strings also the dollar sign (`$`)
+#[inline(always)]
 pub fn index_of_needs_escape_for_javascript_string(slice: &[u8], quote_char: u8) -> Option<u32> {
     if slice.is_empty() {
         return None;
@@ -209,6 +225,7 @@ pub fn index_of_needs_escape_for_javascript_string(slice: &[u8], quote_char: u8)
     Some(result as u32)
 }
 
+#[inline(always)]
 pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     if haystack.is_empty() || chars.is_empty() {
         return None;
@@ -242,6 +259,7 @@ pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
 
 // TODO(port): Zig accepts `[]align(1) const u16` (unaligned). Rust `&[u16]` requires
 // 2-byte alignment; callers passing unaligned data must go through the raw extern.
+#[inline(always)]
 pub fn copy_u16_to_u8(input: &[u16], output: &mut [u8]) {
     // SAFETY: input.ptr/len readable, output.ptr writable for at least input.len() bytes
     // (caller contract matches Zig: output.len >= input.len()).
@@ -250,6 +268,7 @@ pub fn copy_u16_to_u8(input: &[u16], output: &mut [u8]) {
 
 /// Apply a WebSocket mask to data using SIMD acceleration
 /// If skip_mask is true, data is copied without masking
+#[inline(always)]
 pub fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_mask: bool) {
     if input.is_empty() {
         return;
@@ -275,6 +294,7 @@ pub fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_
 /// aliasing. The C++ kernel reads-before-writes per lane (it's `dst[i] =
 /// src[i] ^ mask[i&3]`), so feeding it `src == dst` is sound — that's exactly
 /// what the Zig build does.
+#[inline(always)]
 pub fn fill_with_skip_mask_inplace(mask: [u8; 4], buf: &mut [u8], skip_mask: bool) {
     if buf.is_empty() {
         return;
@@ -301,6 +321,7 @@ pub fn fill_with_skip_mask_inplace(mask: [u8; 4], buf: &mut [u8], skip_mask: boo
 /// - Non-ASCII characters (which implicitly include `\n`, `\r`)
 /// - `#`
 /// - `@`
+#[inline(always)]
 pub fn index_of_newline_or_non_ascii_or_hash_or_at(haystack: &[u8]) -> Option<usize> {
     if haystack.is_empty() {
         return None;
@@ -321,6 +342,7 @@ pub fn index_of_newline_or_non_ascii_or_hash_or_at(haystack: &[u8]) -> Option<us
 /// Scans for:
 /// - " "
 /// - Non-ASCII characters (which implicitly include `\n`, `\r`, '\t')
+#[inline(always)]
 pub fn index_of_space_or_newline_or_non_ascii(haystack: &[u8]) -> Option<usize> {
     if haystack.is_empty() {
         return None;

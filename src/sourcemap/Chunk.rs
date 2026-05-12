@@ -127,11 +127,13 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
     Ok(())
 }
 
-// TODO: remove the indirection by having generic functions for SourceMapFormat and NewBuilder. Source maps are always VLQ
+// NOTE: `SourceMapFormat<T>`/`SourceMapFormatCtx` are kept for source-level
+// parity with Zig's `SourceMapFormat(Type)` shape, but `VLQSourceMap` is the
+// only implementor and `NewBuilder`'s hot methods are now concretized on it
+// (see the `impl NewBuilder<VLQSourceMap>` block below).
 
 /// Trait capturing the methods `SourceMapFormat<T>` forwards to its `ctx`.
 /// In Zig this was structural (comptime duck typing on `Type`).
-// TODO(port): Zig comment above says to remove this indirection entirely.
 pub trait SourceMapFormatCtx: Sized {
     fn init(prepend_count: bool) -> Self;
     fn append_line_separator(&mut self) -> Result<(), bun_core::Error>;
@@ -364,7 +366,17 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
 
 pub type SourceMapper<T> = SourceMapFormat<T>;
 
-impl<T: SourceMapFormatCtx> NewBuilder<T> {
+// PERF(codegen): the hot-path methods below are implemented on the *concrete*
+// `NewBuilder<VLQSourceMap>` (the only instantiation — see `Builder` alias
+// below) rather than on `impl<T: SourceMapFormatCtx> NewBuilder<T>`. When these
+// were generic, rustc deferred monomorphization to every downstream crate that
+// called them, so `add_source_mapping` + `update_generated_line_and_column`
+// were re-emitted in `bun_js_printer`, `bun_bundler`, and `bun_runtime` CGUs
+// (≈7.3 MB of duplicated text, each copy far from
+// `internal_source_map::Builder::flush_window` which lives here). Making them
+// concrete + `#[inline(never)]` pins exactly one copy in the `bun_sourcemap`
+// CGU, adjacent to `flush_window`, and downstream crates emit a plain `call`.
+impl NewBuilder<VLQSourceMap> {
     #[inline(never)]
     pub fn generate_chunk(&mut self, output: &[u8]) -> Chunk {
         self.update_generated_line_and_column(output);
@@ -395,6 +407,7 @@ impl<T: SourceMapFormatCtx> NewBuilder<T> {
 
     // Scan over the printed text since the last source mapping and update the
     // generated line and column numbers
+    #[inline(never)]
     pub fn update_generated_line_and_column(&mut self, output: &[u8]) {
         let slice = &output[self.last_generated_update as usize..];
         let mut needs_mapping =
@@ -490,6 +503,7 @@ impl<T: SourceMapFormatCtx> NewBuilder<T> {
         self.has_prev_state = true;
     }
 
+    #[inline(never)]
     pub fn add_source_mapping(&mut self, loc: Loc, output: &[u8]) {
         if
         // don't insert mappings for same location twice

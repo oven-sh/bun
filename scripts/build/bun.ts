@@ -35,7 +35,7 @@ import { assert } from "./error.ts";
 import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
-import { emitRust, rustLibPath } from "./rust.ts";
+import { emitRust, emitStartupOrder, rustLibPath } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims } from "./shims.ts";
 import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
@@ -467,6 +467,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // is needed; if a member ever isn't, `rustLinkFlags()` in rust.ts is the
   // wrapping helper.
   const shims = emitShims(n, cfg);
+  // Resolve src/startup.order's Rust crate hashes against the staticlib
+  // before lld reads it. Linux release only; no-op elsewhere. The resolved
+  // file is already in linkImplicitInputs() via linkDepends().
+  emitStartupOrder(n, cfg, rustObjects);
   const exe = link(n, cfg, exeName, [...allObjects, ...rustObjects, ...windowsRes], {
     libs: depLibs,
     flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags],
@@ -607,6 +611,10 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   const windowsRes = cfg.windows ? [emitWindowsResources(n, cfg)] : [];
 
   const shims = emitShims(n, cfg);
+  // Same hash-resolution step as full mode — the downloaded libbun_rust.a
+  // came from a different agent/rustc, so the checked-in hashes are even
+  // less likely to match. Linux release only; no-op elsewhere.
+  emitStartupOrder(n, cfg, rustObjects);
   const exe = link(n, cfg, exeName, [archive, ...rustObjects, ...windowsRes], {
     libs: depLibs,
     flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags],

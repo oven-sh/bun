@@ -139,9 +139,16 @@ pub enum RunTaskResult {
 /// This is the body of one iteration of Zig `tickQueueWithCount`'s `while`
 /// loop (the per-item `switch`). The surrounding drain loop + microtask flush
 /// lives in [`tick_queue_with_count`] below.
-// PERF(port): was inline switch — Zig `inline else` monomorphized every arm.
-// The `match` below preserves direct-call inlining; profile in Phase B.
-#[inline]
+// PERF(startup/dot): `#[inline(never)]` is deliberate. Zig's `inline else`
+// monomorphized every arm into the drain loop, but in Rust `#[inline]` here
+// bloated `tick_queue_with_count` to ~14 KB of `.text` interleaved with cold
+// shell/bake code, blowing the iTLB fault-around window for `bun <file>`.
+// Keeping `run_task` out-of-line lets `tick_queue_with_count` stay a tight
+// drain-loop wrapper (front-clustered via `src/startup.order`), and the cold
+// Shell*/Bake* clusters are further hoisted into [`run_task_cold`] so this
+// function's hot residue (AnyTask/ManagedTask/CppTask + fs/napi) fits in 1-2
+// pages.
+#[inline(never)]
 pub fn run_task(
     task: Task,
     el: &mut EventLoop,
@@ -160,31 +167,6 @@ pub fn run_task(
     /// Raw `*mut T` (for `heap::take`/self-consuming entry points).
     macro_rules! cast_ptr {
         ($ty:ty) => { task.ptr.cast::<$ty>() };
-    }
-    /// Shell builtin tasks: route through `ShellTask::run_from_main_thread`
-    /// so the keep-alive ref taken in `ShellTask::schedule` is unref'd before
-    /// the per-builtin body runs (Zig: `InnerShellTask.runFromMainThread`).
-    /// The wrapper recovers `&mut Interpreter` from the embedded
-    /// `ShellTask.interp` back-ref.
-    macro_rules! shell_dispatch {
-        ($ty:ty) => {{
-            // SAFETY: §Dispatch — `t` is a live heap-allocated shell task;
-            // `interp` was set at schedule time and outlives the task.
-            unsafe { ShellTask::run_from_main_thread::<$ty>(cast_ptr!($ty)) };
-        }};
-        // `.task.task.runFromMainThread()` shape (cond-expr wraps an inner
-        // `task: ShellTask`-embedding struct one level deeper). Not a
-        // `ShellTaskCtx` implementor, so unref + interp-recovery are inlined.
-        (nested $ty:ty) => {{
-            let t = cast_ptr!($ty);
-            // SAFETY: see above; `task.task` is the embedded ShellTask.
-            unsafe {
-                let st = &raw mut (*t).task.task;
-                (*st).keep_alive.unref((*st).event_loop.as_event_loop_ctx());
-                let interp = &*(*st).interp;
-                <$ty>::run_from_main_thread(t, interp);
-            }
-        }};
     }
 
     // NB: `TaskTag` is `#[derive(PartialEq, Eq)]` over `u8` → structural-match
@@ -227,58 +209,23 @@ pub fn run_task(
             ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveFilesTask))?;
         }
 
-        // ── shell interpreter ────────────────────────────────────────────
-        task_tag::ShellAsync => {
-            // Spec Task.zig:161 `runFromMainThread()` — Rust port routes via
-            // (interp, NodeId).
-            let t = cast!(crate::shell::dispatch_tasks::ShellAsyncTask);
-            // SAFETY: `interp` set at enqueue; outlives task.
-            let interp = unsafe { &*t.interp };
-            ShellAsync::run_from_main_thread(interp, t.node);
-        }
-        task_tag::ShellAsyncSubprocessDone => {
-            let t = cast_ptr!(ShellAsyncSubprocessDone);
-            // SAFETY: live Box'd task.
-            unsafe { ShellAsyncSubprocessDone::run_from_main_thread(t) };
-        }
-        task_tag::ShellIOWriterAsyncDeinit => {
-            let t = cast_ptr!(ShellIOWriterAsyncDeinit);
-            // SAFETY: live Box'd task.
-            unsafe { ShellIOWriterAsyncDeinit::run_from_main_thread(t) };
-        }
-        task_tag::ShellIOWriter => {
-            let t = cast_ptr!(ShellIOWriter);
-            // SAFETY: live IOWriter (ref-counted).
-            unsafe { ShellIOWriter::run_from_main_thread(t) };
-        }
-        task_tag::ShellIOReaderAsyncDeinit => {
-            let t = cast_ptr!(ShellIOReaderAsyncDeinit);
-            // SAFETY: live Box'd task.
-            unsafe { ShellIOReaderAsyncDeinit::run_from_main_thread(t) };
-        }
-        task_tag::ShellCondExprStatTask => {
-            // Spec: `task.get(..).?.task.runFromMainThread()` — one level of
-            // `.task` indirection in Zig too.
-            shell_dispatch!(nested ShellCondExprStatTask);
-        }
-        task_tag::ShellCpTask => shell_dispatch!(ShellCpTask),
-        task_tag::ShellTouchTask => shell_dispatch!(ShellTouchTask),
-        task_tag::ShellMkdirTask => shell_dispatch!(ShellMkdirTask),
-        task_tag::ShellLsTask => shell_dispatch!(ShellLsTask),
-        task_tag::ShellMvBatchedTask => shell_dispatch!(ShellMvBatchedTask),
-        task_tag::ShellMvCheckTargetTask => shell_dispatch!(ShellMvCheckTargetTask),
-        task_tag::ShellRmTask => shell_dispatch!(ShellRmTask),
-        task_tag::ShellRmDirTask => {
-            let t = cast_ptr!(ShellRmDirTask);
-            // SAFETY: live DirTask child of a ShellRmTask tree.
-            unsafe { ShellRmDirTask::run_from_main_thread(t) };
-        }
-        task_tag::ShellGlobTask => shell_dispatch!(ShellGlobTask),
-        task_tag::ShellYesTask => {
-            // Declared in the union but never dispatched here in Zig (covered
-            // by the trailing `else` panic). Mirror that.
-            panic!("Unexpected Task tag: {}", task.tag.0);
-        }
+        // ── shell interpreter (cold — hoisted to `run_task_cold`) ────────
+        task_tag::ShellAsync
+        | task_tag::ShellAsyncSubprocessDone
+        | task_tag::ShellIOWriterAsyncDeinit
+        | task_tag::ShellIOWriter
+        | task_tag::ShellIOReaderAsyncDeinit
+        | task_tag::ShellCondExprStatTask
+        | task_tag::ShellCpTask
+        | task_tag::ShellTouchTask
+        | task_tag::ShellMkdirTask
+        | task_tag::ShellLsTask
+        | task_tag::ShellMvBatchedTask
+        | task_tag::ShellMvCheckTargetTask
+        | task_tag::ShellRmTask
+        | task_tag::ShellRmDirTask
+        | task_tag::ShellGlobTask
+        | task_tag::ShellYesTask => run_task_cold(task),
 
         // ── fetch / S3 ───────────────────────────────────────────────────
         task_tag::FetchTasklet => {
@@ -383,13 +330,8 @@ pub fn run_task(
             unsafe { hot_reloader::HotReloadTask::deinit(t) };
             return Ok(RunTaskResult::EarlyReturn);
         }
-        task_tag::BakeHotReloadEvent => {
-            // SAFETY: §Dispatch — tag identifies pointee; the event is an inline
-            // element of `DevServer.watcher_atomics.events[_]` and `run` itself
-            // re-derives `&mut DevServer` from the BACKREF, so pass the raw
-            // pointer to avoid materialising an aliasing `&mut` here.
-            unsafe { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
-        }
+        // ── bake dev-server (cold — hoisted to `run_task_cold`) ──────────
+        task_tag::BakeHotReloadEvent => run_task_cold(task),
         task_tag::FSWatchTask => {
             // Zig: `defer t.deinit(); t.run();` — the task is heap-allocated
             // (cloned from `FSWatcher.current_task` at enqueue). `deinit` is
@@ -558,6 +500,115 @@ pub fn run_task(
         }
     }
     Ok(RunTaskResult::Continue)
+}
+
+/// Cold-path arms hoisted out of [`run_task`].
+///
+/// Shell* / Bake* (and, when they land, Install*) tags are never seen during
+/// `bun <file>` startup or the `dot` benchmark, but their per-arm bodies pull
+/// in `bun_shell` / `bun_bake` call sites that LLVM otherwise interleaves with
+/// the hot AnyTask/ManagedTask/CppTask jump table. Splitting them behind a
+/// `#[cold]` boundary lets lld place this whole cluster after the
+/// front-clustered startup window (see `src/startup.order`).
+///
+/// Returns `()` — none of the cold arms can fail or early-return; the caller
+/// falls through to `Ok(RunTaskResult::Continue)`.
+#[cold]
+#[inline(never)]
+fn run_task_cold(task: Task) {
+    /// Raw `*mut T` (for `heap::take`/self-consuming entry points).
+    macro_rules! cast_ptr {
+        ($ty:ty) => { task.ptr.cast::<$ty>() };
+    }
+    /// Shell builtin tasks: route through `ShellTask::run_from_main_thread`
+    /// so the keep-alive ref taken in `ShellTask::schedule` is unref'd before
+    /// the per-builtin body runs (Zig: `InnerShellTask.runFromMainThread`).
+    /// The wrapper recovers `&mut Interpreter` from the embedded
+    /// `ShellTask.interp` back-ref.
+    macro_rules! shell_dispatch {
+        ($ty:ty) => {{
+            // SAFETY: §Dispatch — `t` is a live heap-allocated shell task;
+            // `interp` was set at schedule time and outlives the task.
+            unsafe { ShellTask::run_from_main_thread::<$ty>(cast_ptr!($ty)) };
+        }};
+        // `.task.task.runFromMainThread()` shape (cond-expr wraps an inner
+        // `task: ShellTask`-embedding struct one level deeper). Not a
+        // `ShellTaskCtx` implementor, so unref + interp-recovery are inlined.
+        (nested $ty:ty) => {{
+            let t = cast_ptr!($ty);
+            // SAFETY: see above; `task.task` is the embedded ShellTask.
+            unsafe {
+                let st = &raw mut (*t).task.task;
+                (*st).keep_alive.unref((*st).event_loop.as_event_loop_ctx());
+                let interp = &*(*st).interp;
+                <$ty>::run_from_main_thread(t, interp);
+            }
+        }};
+    }
+
+    match task.tag {
+        // ── shell interpreter ────────────────────────────────────────────
+        task_tag::ShellAsync => {
+            // Spec Task.zig:161 `runFromMainThread()` — Rust port routes via
+            // (interp, NodeId).
+            // SAFETY: §Dispatch — tag identifies pointee.
+            let t = unsafe { &mut *cast_ptr!(crate::shell::dispatch_tasks::ShellAsyncTask) };
+            // SAFETY: `interp` set at enqueue; outlives task.
+            let interp = unsafe { &*t.interp };
+            ShellAsync::run_from_main_thread(interp, t.node);
+        }
+        task_tag::ShellAsyncSubprocessDone => {
+            let t = cast_ptr!(ShellAsyncSubprocessDone);
+            // SAFETY: live Box'd task.
+            unsafe { ShellAsyncSubprocessDone::run_from_main_thread(t) };
+        }
+        task_tag::ShellIOWriterAsyncDeinit => {
+            let t = cast_ptr!(ShellIOWriterAsyncDeinit);
+            // SAFETY: live Box'd task.
+            unsafe { ShellIOWriterAsyncDeinit::run_from_main_thread(t) };
+        }
+        task_tag::ShellIOWriter => {
+            let t = cast_ptr!(ShellIOWriter);
+            // SAFETY: live IOWriter (ref-counted).
+            unsafe { ShellIOWriter::run_from_main_thread(t) };
+        }
+        task_tag::ShellIOReaderAsyncDeinit => {
+            let t = cast_ptr!(ShellIOReaderAsyncDeinit);
+            // SAFETY: live Box'd task.
+            unsafe { ShellIOReaderAsyncDeinit::run_from_main_thread(t) };
+        }
+        task_tag::ShellCondExprStatTask => {
+            // Spec: `task.get(..).?.task.runFromMainThread()` — one level of
+            // `.task` indirection in Zig too.
+            shell_dispatch!(nested ShellCondExprStatTask);
+        }
+        task_tag::ShellCpTask => shell_dispatch!(ShellCpTask),
+        task_tag::ShellTouchTask => shell_dispatch!(ShellTouchTask),
+        task_tag::ShellMkdirTask => shell_dispatch!(ShellMkdirTask),
+        task_tag::ShellLsTask => shell_dispatch!(ShellLsTask),
+        task_tag::ShellMvBatchedTask => shell_dispatch!(ShellMvBatchedTask),
+        task_tag::ShellMvCheckTargetTask => shell_dispatch!(ShellMvCheckTargetTask),
+        task_tag::ShellRmTask => shell_dispatch!(ShellRmTask),
+        task_tag::ShellRmDirTask => {
+            let t = cast_ptr!(ShellRmDirTask);
+            // SAFETY: live DirTask child of a ShellRmTask tree.
+            unsafe { ShellRmDirTask::run_from_main_thread(t) };
+        }
+        task_tag::ShellGlobTask => shell_dispatch!(ShellGlobTask),
+
+        // ── bake dev-server ──────────────────────────────────────────────
+        task_tag::BakeHotReloadEvent => {
+            // SAFETY: §Dispatch — tag identifies pointee; the event is an inline
+            // element of `DevServer.watcher_atomics.events[_]` and `run` itself
+            // re-derives `&mut DevServer` from the BACKREF, so pass the raw
+            // pointer to avoid materialising an aliasing `&mut` here.
+            unsafe { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
+        }
+
+        // ShellYesTask + any tag the hot path mis-routed: producer bug.
+        // Spec Task.zig:529-535 `bun.Output.panic("Unexpected Task tag: {d}")`.
+        _ => panic!("Unexpected Task tag: {}", task.tag.0),
+    }
 }
 
 /// Compile-time guard that the arm count above tracks

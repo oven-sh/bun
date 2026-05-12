@@ -1,3 +1,5 @@
+use core::mem;
+
 use bun_alloc::AllocError;
 use bun_collections::{VecExt, MultiArrayList};
 use bun_ast::Loc;
@@ -145,7 +147,7 @@ impl LineOffsetTable {
     pub fn generate(contents: &[u8], approximate_line_count: i32) -> Result<List, AllocError> {
         let mut list = List::default();
         // Preallocate the top-level table using the approximate line count from the lexer
-        list.ensure_unused_capacity(usize::try_from(approximate_line_count.max(1)).expect("int cast"))?;
+        list.ensure_unused_capacity(approximate_line_count.max(1) as usize)?;
         let mut column: i32 = 0;
         let mut byte_offset_to_first_non_ascii: u32 = 0;
         let mut column_byte_offset: u32 = 0;
@@ -154,8 +156,15 @@ impl LineOffsetTable {
         // the idea here is:
         // we want to avoid re-allocating this array _most_ of the time
         // when lines _do_ have unicode characters, they probably still won't be longer than 255 much
-        // PERF(port): was stack-fallback (std.heap.stackFallback @sizeOf(i32)*256) — profile in Phase B
-        let mut columns_for_non_ascii: Vec<i32> = Vec::with_capacity(120);
+        // PERF(port): Zig used std.heap.stackFallback(@sizeOf(i32)*256). We keep a heap scratch
+        // buffer instead and `mem::replace` it into the table on non-ASCII lines (no clone), so
+        // ASCII-only lines (the overwhelming majority) touch no allocation at all.
+        const SCRATCH_CAP: usize = 120;
+        let mut columns_for_non_ascii: Vec<i32> = Vec::with_capacity(SCRATCH_CAP);
+
+        // Hoist the base pointer so per-iteration offset math is a single sub + truncate,
+        // matching Zig's `@truncate(@intFromPtr(remaining.ptr) - @intFromPtr(contents.ptr))`.
+        let base = contents.as_ptr() as usize;
 
         let mut remaining = contents;
         while !remaining.is_empty() {
@@ -176,37 +185,41 @@ impl LineOffsetTable {
             };
             let cp_len = len_ as usize;
 
+            let offset = (remaining.as_ptr() as usize - base) as u32;
+
             if column == 0 {
-                line_byte_offset =
-                    ((remaining.as_ptr() as usize) - (contents.as_ptr() as usize)) as u32;
+                line_byte_offset = offset;
             }
 
             if c > 0x7F && columns_for_non_ascii.is_empty() {
-                debug_assert!((remaining.as_ptr() as usize) >= (contents.as_ptr() as usize));
+                debug_assert!(remaining.as_ptr() as usize >= base);
                 // we have a non-ASCII character, so we need to keep track of the
                 // mapping from byte offsets to UTF-16 code unit counts
-                columns_for_non_ascii.push(column);
-                // PERF(port): was assume_capacity
-                column_byte_offset = u32::try_from(
-                    ((remaining.as_ptr() as usize) - (contents.as_ptr() as usize))
-                        - (line_byte_offset as usize),
-                )
-                .unwrap();
+                // Scratch always has capacity here (initial SCRATCH_CAP, or freshly
+                // replaced after the previous non-ASCII line), so this never reallocs.
+                columns_for_non_ascii.append_assume_capacity(column);
+                column_byte_offset = offset - line_byte_offset;
                 byte_offset_to_first_non_ascii = column_byte_offset;
             }
 
             // Update the per-byte column offsets
             if !columns_for_non_ascii.is_empty() {
-                let line_bytes_so_far =
-                    (((remaining.as_ptr() as usize) - (contents.as_ptr() as usize)) as u32)
-                        - line_byte_offset;
-                columns_for_non_ascii
-                    .reserve(((line_bytes_so_far - column_byte_offset) + 1) as usize);
-                while column_byte_offset <= line_bytes_so_far {
-                    columns_for_non_ascii.push(column);
-                    // PERF(port): was assume_capacity
-                    column_byte_offset += 1;
+                let line_bytes_so_far = offset - line_byte_offset;
+                let need = (line_bytes_so_far - column_byte_offset + 1) as usize;
+                columns_for_non_ascii.reserve(need);
+                // SAFETY: `reserve(need)` guarantees `need` spare slots past `len`; i32 is
+                // trivially-copyable so a raw store initializes the slot. This is the direct
+                // equivalent of Zig's `appendAssumeCapacity` loop — avoids the per-push
+                // RawVec capacity branch that showed up as +5.5M instr on build/create-vue.
+                unsafe {
+                    let len = columns_for_non_ascii.len();
+                    let p = columns_for_non_ascii.as_mut_ptr().add(len);
+                    for i in 0..need {
+                        *p.add(i) = column;
+                    }
+                    columns_for_non_ascii.set_len(len + need);
                 }
+                column_byte_offset = line_bytes_so_far + 1;
             } else {
                 match c {
                     // (@max('\r', '\n') + 1)...127  ==  14..=127
@@ -239,16 +252,18 @@ impl LineOffsetTable {
                         continue;
                     }
 
-                    // We don't call .toOwnedSlice() because it is expensive to
-                    // reallocate the array AND when inside an Arena, it's
-                    // hideously expensive
-                    //
-                    // PERF(port): Zig used a stack-fallback allocator for the scratch list and
-                    // duped onto `allocator` only when stack-owned, then reset the fixed buffer.
-                    // Here the scratch is a heap Vec; we always dupe into a fresh Vec
-                    // (mirrors `allocator.dupe`) and `.clear()` to reuse capacity. Profile in
-                    // Phase B.
-                    let owned = columns_for_non_ascii.to_vec();
+                    // Zig used a stack-fallback allocator and duped onto `allocator` only when
+                    // stack-owned, then reset the fixed buffer. The Rust scratch is already
+                    // heap-owned, so for non-ASCII lines we hand the buffer over directly
+                    // (no clone) and re-prime a fresh scratch; for ASCII-only lines (almost
+                    // all of them) we store an inline `Vec::new()` and keep the scratch as-is.
+                    // Previously this was an unconditional `.to_vec()` which dominated
+                    // `generate` on build/create-vue (2.4× vs Zig).
+                    let owned = if columns_for_non_ascii.is_empty() {
+                        Vec::new()
+                    } else {
+                        mem::replace(&mut columns_for_non_ascii, Vec::with_capacity(SCRATCH_CAP))
+                    };
 
                     list.append(LineOffsetTable {
                         byte_offset_to_start_of_line: line_byte_offset,
@@ -260,9 +275,6 @@ impl LineOffsetTable {
                     byte_offset_to_first_non_ascii = 0;
                     column_byte_offset = 0;
                     line_byte_offset = 0;
-
-                    // reset the list to use the stack-allocated memory
-                    columns_for_non_ascii.clear();
                 }
                 _ => {
                     // Mozilla's "source-map" library counts columns using UTF-16 code units
@@ -275,22 +287,29 @@ impl LineOffsetTable {
 
         // Mark the start of the next line
         if column == 0 {
-            line_byte_offset = u32::try_from(contents.len()).expect("int cast");
+            line_byte_offset = contents.len() as u32;
         }
 
         if !columns_for_non_ascii.is_empty() {
-            let line_bytes_so_far = u32::try_from(contents.len()).expect("int cast") - line_byte_offset;
-            columns_for_non_ascii.reserve(((line_bytes_so_far - column_byte_offset) + 1) as usize);
-            while column_byte_offset <= line_bytes_so_far {
-                columns_for_non_ascii.push(column);
-                // PERF(port): was assume_capacity
-                column_byte_offset += 1;
+            let line_bytes_so_far = contents.len() as u32 - line_byte_offset;
+            let need = (line_bytes_so_far - column_byte_offset + 1) as usize;
+            columns_for_non_ascii.reserve(need);
+            // SAFETY: same invariant as the in-loop fill above.
+            unsafe {
+                let len = columns_for_non_ascii.len();
+                let p = columns_for_non_ascii.as_mut_ptr().add(len);
+                for i in 0..need {
+                    *p.add(i) = column;
+                }
+                columns_for_non_ascii.set_len(len + need);
             }
         }
         {
-            // PERF(port): Zig checked stack_fallback.ownsSlice and duped onto `allocator` if so;
-            // here we always dupe the scratch Vec into a fresh Vec.
-            let owned = columns_for_non_ascii.to_vec();
+            let owned = if columns_for_non_ascii.is_empty() {
+                Vec::new()
+            } else {
+                columns_for_non_ascii
+            };
             list.append(LineOffsetTable {
                 byte_offset_to_start_of_line: line_byte_offset,
                 byte_offset_to_first_non_ascii,

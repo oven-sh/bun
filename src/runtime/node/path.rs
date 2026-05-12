@@ -1656,23 +1656,46 @@ pub fn join(
     // here the `ZigStringSlice` RAII guards live inline in `owned` for the same
     // effect. ASCII-only inputs (the common case) borrow the WTF backing without
     // allocating; only non-ASCII triggers a transcode allocation.
-    let mut owned: SmallVec<[ZigStringSlice; 8]> = SmallVec::new();
-    let mut paths: SmallVec<[&[u8]; 8]> = SmallVec::new();
+    //
+    // Single pass, like Zig: fill the ownership array and the `&[u8]` view in
+    // the same iteration. Pre-reserve so the inline/heap buffer never moves.
+    let mut owned: SmallVec<[ZigStringSlice; 8]> = SmallVec::with_capacity(args_len);
+    let mut paths: SmallVec<[&[u8]; 8]> = SmallVec::with_capacity(args_len);
 
     for (i, &path_ptr) in args.iter().enumerate() {
-        // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
-        validate_string(global_object, path_ptr, format_args!("paths[{}]", i))?;
-        let path_zstr = path_ptr.get_zig_string(global_object)?;
-        if path_zstr.len > 0 {
-            owned.push(path_zstr.to_slice());
+        // Inline the `is_string` fast path; only build `format_args!("paths[{i}]")`
+        // on the cold error branch (it materialises a 48-byte `fmt::Arguments`
+        // every iteration otherwise).
+        if !path_ptr.is_string() {
+            #[cold]
+            #[inline(never)]
+            fn not_a_string(g: &JSGlobalObject, v: JSValue, i: usize) -> crate::jsc::JsError {
+                validate_string(g, v, format_args!("paths[{}]", i)).unwrap_err()
+            }
+            return Err(not_a_string(global_object, path_ptr, i));
         }
-    }
-    for s in &owned {
-        paths.push(s.slice());
+        let path_zstr = path_ptr.get_zig_string(global_object)?;
+        if path_zstr.len == 0 {
+            continue;
+        }
+        let zss = path_zstr.to_slice();
+        // SAFETY: `ZigStringSlice::slice()` yields a view whose backing storage
+        // is independent of the enum value's own address — `Static`/`WTF` carry
+        // a raw `(*const u8, len)` and `Owned` points at a heap `Vec` buffer —
+        // so moving `zss` into `owned` (and any later `owned.push` realloc)
+        // does not invalidate `(ptr, len)`. The bytes stay valid for as long as
+        // the guard lives in `owned`, which is anchored past the use of `paths`
+        // by the explicit `drop(owned)` below.
+        let s = zss.slice();
+        let (ptr, len) = (s.as_ptr(), s.len());
+        owned.push(zss);
+        paths.push(unsafe { core::slice::from_raw_parts(ptr, len) });
     }
     // Empty entries are skipped both here and inside `join_*_t`, matching Zig.
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
-    join_js_t::<u8>(global_object, pool, is_windows, &paths)
+    let result = join_js_t::<u8>(global_object, pool, is_windows, &paths);
+    drop(owned); // ownership anchor for the raw views in `paths`
+    result
 }
 
 /// Based on Node v21.6.1 private helper normalizeString:

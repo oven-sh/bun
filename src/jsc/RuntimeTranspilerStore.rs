@@ -1005,11 +1005,6 @@ impl TranspilerJob {
                 tag: this_tag,
                 ..Default::default()
             });
-            // Precompute the WTF::StringImpl hash on the worker thread so the JS thread
-            // doesn't pay `hashSlowCase` over the (potentially multi-MB) cached output on
-            // first use. The cache-miss and already_bundled branches already do this; the
-            // warm-cache path was the only one that didn't (Zig parity — also omitted there).
-            self.resolved_source.as_mut().source_code.ensure_hash();
 
             return;
         }

@@ -3221,22 +3221,37 @@ pub fn to_utf16_alloc(
 
     let out_length = simdutf::length::utf16::from::utf8(bytes);
     let cap = out_length + if sentinel { 1 } else { 0 };
-    let mut out = vec![0u16; cap.max(1)];
-    let res = simdutf::convert::utf8::to::utf16::with_errors::le(bytes, &mut out[..out_length.max(1)]);
+    // Hot path: allocate uninitialised and let simdutf write directly into the
+    // spare capacity — avoids the redundant zero-fill of `vec![0u16; cap]`,
+    // which for large source files (build/create-next benches) is a measurable
+    // memset. `.max(1)` keeps the buffer pointer non-dangling so simdutf never
+    // sees `Vec::with_capacity(0)`'s `0x2` sentinel.
+    let mut out: Vec<u16> = Vec::with_capacity(cap.max(1));
+    // SAFETY: `out` has ≥ `out_length` u16 of capacity (just reserved). simdutf
+    // never reads from the output buffer and writes at most `out_length` code
+    // units (the upper bound returned by `utf16_length_from_utf8`), so passing
+    // uninitialised storage is sound. We only commit the length after success.
+    let res = unsafe {
+        simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
+            bytes.as_ptr(),
+            bytes.len(),
+            out.as_mut_ptr(),
+        )
+    };
     if res.is_successful() && out_length > 0 {
+        // SAFETY: on success simdutf has initialised exactly `out_length` u16s
+        // at the start of `out`'s allocation, and `out_length <= capacity`.
+        unsafe { out.set_len(out_length) };
         if sentinel {
-            out[out_length] = 0;
-            out.truncate(out_length + 1);
-        } else {
-            out.truncate(out_length);
+            out.push(0);
         }
         return Ok(Some(out));
     }
     if fail_if_invalid {
         return Err(ToUTF16Error::InvalidByteSequence);
     }
-    // Slow path: WTF-8 decode with replacement. Reuse `out` capacity.
-    out.clear();
+    // Slow path: WTF-8 decode with replacement. `out` is still len 0 (we never
+    // committed the failed fast-path write); reuse its capacity.
     out.reserve(bytes.len() + if sentinel { 1 } else { 0 });
     let mut remaining = bytes;
     while let Some(i) = first_non_ascii(remaining) {

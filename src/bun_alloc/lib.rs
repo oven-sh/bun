@@ -1337,8 +1337,9 @@ pub fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
 
 /// Reserve `size` bytes of demand-zero-faulted, process-lifetime storage.
 ///
-/// On unix this is `mmap(MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE)`: pages are
-/// not committed until first written to, so a 532 KiB `BSSStringList` backing
+/// On unix this carves a sub-range out of a single process-wide
+/// `mmap(MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE)` arena: pages are not
+/// committed until first written to, so a 532 KiB `BSSStringList` backing
 /// buffer that only ever sees a handful of filenames touches one or two pages
 /// instead of all 130. On Windows this falls back to `mi_zalloc_aligned`
 /// (eager commit, but still all-zeros so callers may rely on that uniformly).
@@ -1346,32 +1347,25 @@ pub fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
 /// The mapping is **never freed** — these are Zig-port `.bss`-semantics
 /// singletons. Do not call from code paths that need to release the storage.
 ///
-/// Returned pointer is page-aligned on unix and `align`-aligned on Windows.
+/// **Coalesced arena.** In Zig these singletons are linker-adjacent `.bss`
+/// globals: one VMA, demand-faulted page-by-page. The original Rust port
+/// `mmap`ed each one separately, costing 6 `mmap` syscalls + 6 VMAs on the
+/// `bun run <npm-script>` path (≈2 MiB total across `entry_store_backing`,
+/// `dirname_store_backing`, `hash_map_instance`, …) before any user code
+/// runs. We instead bump-allocate every request out of one lazily-mapped
+/// [`BSS_ARENA_SIZE`] region, restoring the single-VMA `.bss` locality and
+/// dropping the syscall count to 1. Requests that overflow the arena (none
+/// today; the headroom is ~2×) fall through to a dedicated `mmap`.
+///
+/// Returned pointer is `align`-aligned (`align ≤ 4096`).
 #[doc(hidden)]
 #[inline]
 pub fn bss_lazy_bytes(size: usize, align: usize) -> NonNull<u8> {
     debug_assert!(size > 0);
     #[cfg(unix)]
     let ptr = {
-        debug_assert!(align <= 4096);
-        let _ = align;
-        // SAFETY: mmap with MAP_ANONYMOUS ignores fd/offset; len is non-zero; on
-        // success the returned region is owned exclusively by this process and
-        // zero-filled on first touch.
-        let p = unsafe {
-            libc::mmap(
-                core::ptr::null_mut(),
-                size,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
-                -1,
-                0,
-            )
-        };
-        if p == libc::MAP_FAILED {
-            crate::out_of_memory();
-        }
-        p.cast::<u8>()
+        debug_assert!(align <= 4096 && align.is_power_of_two());
+        bss_arena_bump(size, align)
     };
     #[cfg(not(unix))]
     let ptr = {
@@ -1384,6 +1378,97 @@ pub fn bss_lazy_bytes(size: usize, align: usize) -> NonNull<u8> {
         mimalloc::mi_zalloc_aligned(size, align).cast::<u8>()
     };
     NonNull::new(ptr).expect("OOM")
+}
+
+/// Size of the shared demand-zero arena backing every `bss_*!` singleton on
+/// unix. Sum of all live monomorphizations on the `bun run` path is ≈2 MiB
+/// (`entry_store_backing` 1,216,560 B + `dirname_store_backing` 528,384 B +
+/// `hash_map_instance` 229,440 B + slice/key buffers); 4 MiB leaves ~2×
+/// headroom. `MAP_NORESERVE` means the unused tail costs only address space.
+#[cfg(unix)]
+const BSS_ARENA_SIZE: usize = 4 * 1024 * 1024;
+
+/// Bump-allocate `size` bytes at `align` out of the process-wide `.bss` arena,
+/// mapping it on first call. Returns a pointer into a `MAP_ANONYMOUS|MAP_NORESERVE`
+/// region (zero-on-read, demand-faulted). Falls back to a dedicated `mmap` if
+/// the arena is exhausted. Never returns null.
+#[cfg(unix)]
+fn bss_arena_bump(size: usize, align: usize) -> *mut u8 {
+    use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+
+    static BASE: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
+    static CURSOR: AtomicUsize = AtomicUsize::new(0);
+
+    // Resolve the arena base. Fast path is one Acquire load; the cold path
+    // maps the 4 MiB region once and publishes via CAS. A losing racer's
+    // mapping is leaked (≤ one per process; `MAP_NORESERVE` so it costs no
+    // committed memory) — same race policy as `bss_singleton!`.
+    let mut base = BASE.load(Ordering::Acquire);
+    if base.is_null() {
+        #[cold]
+        #[inline(never)]
+        fn map_arena() -> *mut u8 {
+            bss_mmap_noreserve(BSS_ARENA_SIZE)
+        }
+        let fresh = map_arena();
+        base = match BASE.compare_exchange(
+            core::ptr::null_mut(),
+            fresh,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => fresh,
+            Err(winner) => winner, // leak `fresh` (untouched MAP_NORESERVE)
+        };
+    }
+
+    // Bump the cursor: round up to `align`, reserve `size`. CAS loop because
+    // alignment padding makes the increment input-dependent. Contention is
+    // ~nil (called a handful of times from `Transpiler::init` on the main
+    // thread); the loop is for correctness, not throughput.
+    let mut cur = CURSOR.load(Ordering::Relaxed);
+    loop {
+        let aligned = (cur + align - 1) & !(align - 1);
+        let next = aligned + size;
+        if next > BSS_ARENA_SIZE {
+            // Overflow — shouldn't happen with today's singletons (see
+            // `BSS_ARENA_SIZE`); satisfy with a dedicated mapping so the
+            // caller's lazy-fault contract still holds.
+            return bss_mmap_noreserve(size);
+        }
+        match CURSOR.compare_exchange_weak(cur, next, Ordering::AcqRel, Ordering::Relaxed) {
+            // SAFETY: `aligned + size <= BSS_ARENA_SIZE`; `base` spans
+            // `[0, BSS_ARENA_SIZE)` from a single `mmap`, so the offset is
+            // in-bounds of that allocation.
+            Ok(_) => return unsafe { base.add(aligned) },
+            Err(observed) => cur = observed,
+        }
+    }
+}
+
+/// One `mmap(MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE)` of `len` RW bytes.
+/// Aborts on `MAP_FAILED`. Returned pointer is page-aligned and the region
+/// reads as all-zeros until written.
+#[cfg(unix)]
+#[inline]
+fn bss_mmap_noreserve(len: usize) -> *mut u8 {
+    // SAFETY: `MAP_ANONYMOUS` ignores fd/offset; `len` is non-zero; on success
+    // the region is owned exclusively by this process and zero-filled on first
+    // touch.
+    let p = unsafe {
+        libc::mmap(
+            core::ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+            -1,
+            0,
+        )
+    };
+    if p == libc::MAP_FAILED {
+        crate::out_of_memory();
+    }
+    p.cast::<u8>()
 }
 
 /// Reserve `count` elements of `T` as a lazy-faulted slice. See [`bss_lazy_bytes`].

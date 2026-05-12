@@ -1295,6 +1295,16 @@ fn wait_for_peers(this: &mut PackageManager) -> Result<(), bun_core::Error> {
     RunAndWaitClosure::<true, false>::run_and_wait(this)
 }
 
+// Outlined cold so the install fast path (`install_with_manager` tail) does not
+// pull `bun_core::output`'s panic/format machinery into its own body. The
+// function is additionally split so that the no-op path — a repeat
+// `bun install` with nothing to do, which prints only the single
+// "Checked N installs" line — touches ~2 i-cache pages instead of the ~5 the
+// monolithic body required: every other output section (tree, added, removed,
+// failures, fallback timestamp, blocked-scripts) lives in its own
+// `#[cold] #[inline(never)]` helper that LLVM places in `.text.unlikely`.
+#[cold]
+#[inline(never)]
 fn print_install_summary(
     this: &mut PackageManager,
     ctx: Command::Context,
@@ -1306,56 +1316,7 @@ fn print_install_summary(
 
     let mut printed_timestamp = false;
     if this.options.do_.summary() {
-        // PORT NOTE: reshaped for borrowck — Zig builds `Printer` borrowing
-        // `this.lockfile` / `this.options` while also passing `this` (the
-        // PackageManager) to `Tree::print`. Route through a single `*mut
-        // PackageManager` provenance root and reborrow disjoint fields
-        // through it (Zig `*T` semantics): `Tree::print` only reads
-        // `manager.{updating_packages, workspace_name_hash}` and writes
-        // `manager.track_installed_bin`, none of which overlap `lockfile` /
-        // `options` / `update_requests`.
-        let mgr: *mut PackageManager = this;
-        // `mgr` is the sole provenance root from here through the `Tree::print`
-        // call; the `Printer` reborrows shared `lockfile` / `options` /
-        // `update_requests`, and the `&mut *mgr` passed to `Tree::print` only
-        // touches disjoint `PackageManager` fields. Wrapped once as `ParentRef`
-        // so the three read-only field reborrows go through safe `Deref`
-        // instead of three per-site raw projections. Safe `From<NonNull>`
-        // construction — `mgr` was just derived from `&mut *this`.
-        let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
-            core::ptr::NonNull::new(mgr).expect("derived from &mut, non-null"),
-        );
-        let printer = Printer {
-            lockfile: &mgr_ref.lockfile,
-            options: &mgr_ref.options,
-            updates: &mgr_ref.update_requests,
-            successfully_installed: install_summary.successfully_installed.as_ref(),
-        };
-
-        {
-            Output::flush();
-            // Ensure at this point buffering is enabled.
-            // We deliberately do not disable it after this.
-            Output::enable_buffering();
-            let writer = Output::writer_buffered();
-            // Runtime bool → comptime dispatch (Zig `switch (b) { inline else => |c| ... }`).
-            if Output::enable_ansi_colors_stdout() {
-                LockfilePrinter::Tree::print::<_, true>(
-                    &printer,
-                    unsafe { &mut *mgr },
-                    writer,
-                    log_level,
-                )?;
-            } else {
-                LockfilePrinter::Tree::print::<_, false>(
-                    &printer,
-                    unsafe { &mut *mgr },
-                    writer,
-                    log_level,
-                )?;
-            }
-        }
-        drop(printer);
+        print_summary_tree(this, install_summary, log_level)?;
 
         if !did_meta_hash_change {
             this.summary.remove = 0;
@@ -1364,38 +1325,13 @@ fn print_install_summary(
         }
 
         if install_summary.success > 0 {
-            // it's confusing when it shows 3 packages and says it installed 1
-            let pkgs_installed = install_summary.success.max(this.update_requests.len() as u32);
-            Output::pretty(format_args!(
-                "<green>{}<r> package{}<r> installed ",
-                pkgs_installed,
-                if pkgs_installed == 1 { "" } else { "s" },
-            ));
-            // TODO(port): Output::pretty multi-arg formatting
-            Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
+            print_summary_installed(this, ctx.start_time, install_summary);
             printed_timestamp = true;
-            print_blocked_packages_info(install_summary, this.options.global);
-
-            if this.summary.remove > 0 {
-                Output::pretty(format_args!("Removed: <cyan>{}<r>\n", this.summary.remove));
-            }
         } else if this.summary.remove > 0 {
-            if this.subcommand == Subcommand::Remove {
-                for request in &this.update_requests {
-                    Output::prettyln(format_args!("<r><red>-<r> {}", bstr::BStr::new(request.name)));
-                }
-            }
-
-            Output::pretty(format_args!(
-                "<r><b>{}<r> package{} removed ",
-                this.summary.remove,
-                if this.summary.remove == 1 { "" } else { "s" },
-            ));
-            // TODO(port): Output::pretty multi-arg formatting
-            Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
+            print_summary_removed(this, ctx.start_time, install_summary);
             printed_timestamp = true;
-            print_blocked_packages_info(install_summary, this.options.global);
         } else if install_summary.skipped > 0 && install_summary.fail == 0 && this.update_requests.is_empty() {
+            // Hot no-op path (install/fastify bench): kept inline.
             let count = this.lockfile.packages.len() as PackageID;
             if count != install_summary.skipped {
                 if !this.options.enable.only_missing() {
@@ -1425,28 +1361,131 @@ fn print_install_summary(
         }
 
         if install_summary.fail > 0 {
-            Output::prettyln(format_args!(
-                "<r>Failed to install <red><b>{}<r> package{}\n",
-                install_summary.fail,
-                if install_summary.fail == 1 { "" } else { "s" },
-            ));
-            // TODO(port): Output::pretty multi-arg formatting
-            Output::flush();
+            print_summary_failed(install_summary);
         }
     }
 
-    if this.options.do_.summary() {
-        if !printed_timestamp {
-            Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
-            Output::prettyln(format_args!("<d> done<r>"));
-            printed_timestamp = true;
-            let _ = printed_timestamp;
-        }
+    if this.options.do_.summary() && !printed_timestamp {
+        print_summary_timing_fallback(ctx.start_time);
     }
 
     Ok(())
 }
 
+#[cold]
+#[inline(never)]
+fn print_summary_tree(
+    this: &mut PackageManager,
+    install_summary: &PackageInstallSummary,
+    log_level: Options::LogLevel,
+) -> Result<(), bun_core::Error> {
+    // PORT NOTE: reshaped for borrowck — Zig builds `Printer` borrowing
+    // `this.lockfile` / `this.options` while also passing `this` (the
+    // PackageManager) to `Tree::print`. Route through a single `*mut
+    // PackageManager` provenance root and reborrow disjoint fields
+    // through it (Zig `*T` semantics): `Tree::print` only reads
+    // `manager.{updating_packages, workspace_name_hash}` and writes
+    // `manager.track_installed_bin`, none of which overlap `lockfile` /
+    // `options` / `update_requests`.
+    let mgr: *mut PackageManager = this;
+    // `mgr` is the sole provenance root from here through the `Tree::print`
+    // call; the `Printer` reborrows shared `lockfile` / `options` /
+    // `update_requests`, and the `&mut *mgr` passed to `Tree::print` only
+    // touches disjoint `PackageManager` fields. Wrapped once as `ParentRef`
+    // so the three read-only field reborrows go through safe `Deref`
+    // instead of three per-site raw projections. Safe `From<NonNull>`
+    // construction — `mgr` was just derived from `&mut *this`.
+    let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
+        core::ptr::NonNull::new(mgr).expect("derived from &mut, non-null"),
+    );
+    let printer = Printer {
+        lockfile: &mgr_ref.lockfile,
+        options: &mgr_ref.options,
+        updates: &mgr_ref.update_requests,
+        successfully_installed: install_summary.successfully_installed.as_ref(),
+    };
+
+    Output::flush();
+    // Ensure at this point buffering is enabled.
+    // We deliberately do not disable it after this.
+    Output::enable_buffering();
+    let writer = Output::writer_buffered();
+    // Runtime bool → comptime dispatch (Zig `switch (b) { inline else => |c| ... }`).
+    if Output::enable_ansi_colors_stdout() {
+        LockfilePrinter::Tree::print::<_, true>(&printer, unsafe { &mut *mgr }, writer, log_level)?;
+    } else {
+        LockfilePrinter::Tree::print::<_, false>(&printer, unsafe { &mut *mgr }, writer, log_level)?;
+    }
+    Ok(())
+}
+
+#[cold]
+#[inline(never)]
+fn print_summary_installed(
+    this: &PackageManager,
+    start_time: i128,
+    install_summary: &PackageInstallSummary,
+) {
+    // it's confusing when it shows 3 packages and says it installed 1
+    let pkgs_installed = install_summary.success.max(this.update_requests.len() as u32);
+    Output::pretty(format_args!(
+        "<green>{}<r> package{}<r> installed ",
+        pkgs_installed,
+        if pkgs_installed == 1 { "" } else { "s" },
+    ));
+    // TODO(port): Output::pretty multi-arg formatting
+    Output::print_start_end_stdout(start_time, nano_timestamp());
+    print_blocked_packages_info(install_summary, this.options.global);
+
+    if this.summary.remove > 0 {
+        Output::pretty(format_args!("Removed: <cyan>{}<r>\n", this.summary.remove));
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn print_summary_removed(
+    this: &PackageManager,
+    start_time: i128,
+    install_summary: &PackageInstallSummary,
+) {
+    if this.subcommand == Subcommand::Remove {
+        for request in &this.update_requests {
+            Output::prettyln(format_args!("<r><red>-<r> {}", bstr::BStr::new(request.name)));
+        }
+    }
+
+    Output::pretty(format_args!(
+        "<r><b>{}<r> package{} removed ",
+        this.summary.remove,
+        if this.summary.remove == 1 { "" } else { "s" },
+    ));
+    // TODO(port): Output::pretty multi-arg formatting
+    Output::print_start_end_stdout(start_time, nano_timestamp());
+    print_blocked_packages_info(install_summary, this.options.global);
+}
+
+#[cold]
+#[inline(never)]
+fn print_summary_failed(install_summary: &PackageInstallSummary) {
+    Output::prettyln(format_args!(
+        "<r>Failed to install <red><b>{}<r> package{}\n",
+        install_summary.fail,
+        if install_summary.fail == 1 { "" } else { "s" },
+    ));
+    // TODO(port): Output::pretty multi-arg formatting
+    Output::flush();
+}
+
+#[cold]
+#[inline(never)]
+fn print_summary_timing_fallback(start_time: i128) {
+    Output::print_start_end_stdout(start_time, nano_timestamp());
+    Output::prettyln(format_args!("<d> done<r>"));
+}
+
+#[cold]
+#[inline(never)]
 fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
     let packages_count = summary.packages_with_blocked_scripts.len();
     let mut scripts_count: usize = 0;

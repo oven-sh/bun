@@ -1141,25 +1141,19 @@ use crate::webcore::blob::read_file::ReadFile;
 use crate::webcore::blob::write_file::WriteFile;
 
 /// `bun_io::__bun_io_pollable_on_ready` body — declared `extern "Rust"` in
-/// `bun_io`. Spec `io.zig:626`: `inline else => |t| this.onReady()` where
-/// `this` is recovered from the embedded `io_poll` field.
-///
-/// # Safety
-/// `poll` is the `io_poll` field of a live owner of type `tag`.
+/// `bun_io`. The low IO crate decodes the kernel token into a typed
+/// `bun_io_types::pollable::Owner`; concrete owner modules keep the
+/// layout-dependent recovery from their embedded `io_poll` fields.
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
-    match tag {
-        bun_io::PollableTag::ReadFile => {
-            // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
-            this.on_ready();
+pub fn __bun_io_pollable_on_ready(owner: bun_io_types::pollable::Owner) {
+    match owner {
+        bun_io_types::pollable::Owner::ReadFile(owner) => {
+            ReadFile::poll_ready(owner);
         }
-        bun_io::PollableTag::WriteFile => {
-            // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-            this.on_ready();
+        bun_io_types::pollable::Owner::WriteFile(owner) => {
+            WriteFile::poll_ready(owner);
         }
-        bun_io::PollableTag::Empty => {
+        bun_io_types::pollable::Owner::Empty => {
             // Waker / unblock-only — caller already filtered this out.
             debug_assert!(false, "io::Poll on_ready with Empty tag");
         }
@@ -1168,30 +1162,19 @@ pub unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bu
 
 /// `bun_io::__bun_io_pollable_on_io_error` body — declared `extern "Rust"` in
 /// `bun_io`. Spec `io.zig:629`: `this.onIOError(err)`.
-///
-/// # Safety
-/// `poll` is the `io_poll` field of a live owner of type `tag`.
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_io_pollable_on_io_error(
-    tag: bun_io::PollableTag,
-    poll: *mut bun_io::Poll,
+pub fn __bun_io_pollable_on_io_error(
+    owner: bun_io_types::pollable::Owner,
     err: bun_sys::Error,
 ) {
-    match tag {
-        bun_io::PollableTag::ReadFile => {
-            // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
-            this.on_io_error(err);
+    match owner {
+        bun_io_types::pollable::Owner::ReadFile(owner) => {
+            ReadFile::poll_error(owner, err);
         }
-        bun_io::PollableTag::WriteFile => {
-            // SAFETY: per fn contract.
-            let this = unsafe { bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-            // PORT NOTE: WriteFile::on_io_error already takes `*mut ()` (it
-            // self-recovers via the io_request path elsewhere); reuse that
-            // shape rather than reborrowing `&mut`.
-            WriteFile::on_io_error(this.cast(), err);
+        bun_io_types::pollable::Owner::WriteFile(owner) => {
+            WriteFile::poll_error(owner, err);
         }
-        bun_io::PollableTag::Empty => {
+        bun_io_types::pollable::Owner::Empty => {
             debug_assert!(false, "io::Poll on_io_error with Empty tag");
             let _ = err;
         }

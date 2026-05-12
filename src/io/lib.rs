@@ -770,14 +770,15 @@ impl IoRequestLoop {
 
             for event in current_events {
                 let pollable = Pollable::from(event.u64);
-                if pollable.tag() == PollableTag::Empty {
+                let owner = pollable.owner();
+                if owner.is_empty() {
                     // SAFETY: LOOP is initialized (we are running inside it).
                     if event.u64 == unsafe { (*LOOP.get()).as_ptr() } as usize as u64 {
                         // Edge-triggered: no need to read the eventfd counter
                         continue;
                     }
                 }
-                Poll::on_update_epoll(pollable.poll(), pollable.tag(), *event);
+                Poll::on_update_epoll(owner, *event);
             }
         }
     }
@@ -1107,24 +1108,12 @@ impl Pollable {
         }
     }
 
+    pub(crate) fn owner(self) -> pollable::Owner {
+        self.token.decode()
+    }
+
     fn owner_token<T>(p: *mut Poll) -> TypedOwnerToken<T> {
         TypedOwnerToken::from_usize(p as usize).expect("Pollable owner pointer must be non-null")
-    }
-
-    pub(crate) fn poll(self) -> *mut Poll {
-        self.token.owner_addr() as *mut Poll
-    }
-
-    pub(crate) fn tag(self) -> PollableTag {
-        match self.token.kind_checked() {
-            Some(pollable::Kind::Empty) => PollableTag::Empty,
-            Some(pollable::Kind::ReadFile) => PollableTag::ReadFile,
-            Some(pollable::Kind::WriteFile) => PollableTag::WriteFile,
-            // Only `init` writes the tag bits, so any other value is memory
-            // corruption / a logic bug — match Zig's safety-checked
-            // `@enumFromInt` and trap rather than fabricate a discriminant.
-            None => unreachable!("invalid PollableTag"),
-        }
     }
 
     pub(crate) fn ptr(self) -> u64 {
@@ -1164,14 +1153,12 @@ impl Default for Poll {
 pub type Tag = PollableTag;
 
 unsafe extern "Rust" {
-    /// Hot-path dispatch for `Pollable` owners. The concrete owners
-    /// (`ReadFile` / `WriteFile`) live in `bun_runtime::webcore::blob` (T6);
-    /// io (T2) only knows the embedded `*mut Poll` and the tag. The body is
-    /// `#[no_mangle]` in `bun_runtime::dispatch` and recovers the parent
-    /// struct via `container_of(io_poll)` per spec `io.zig:626`.
+    /// Hot-path dispatch for `Pollable` owners. The concrete owner recovery
+    /// lives in `bun_runtime::webcore::blob`; io only decodes the kernel token
+    /// into the typed owner from `bun_io_types`.
     /// PERF(port): was inline switch (cold path — Bun.write / Bun.file().text() only).
-    fn __bun_io_pollable_on_ready(tag: PollableTag, poll: *mut Poll);
-    fn __bun_io_pollable_on_io_error(tag: PollableTag, poll: *mut Poll, err: sys::Error);
+    fn __bun_io_pollable_on_ready(owner: pollable::Owner);
+    fn __bun_io_pollable_on_io_error(owner: pollable::Owner, err: sys::Error);
 }
 
 #[derive(enumset::EnumSetType)]
@@ -1400,24 +1387,19 @@ impl Poll {
         }
 
         let pollable = Pollable::from(event.udata as u64);
-        let tag = pollable.tag();
+        let owner = pollable.owner();
         // The waker is registered with udata=0 → tag=.empty. The wakeup exists
         // only to unblock kevent() so the pending queue drains.
-        if tag == PollableTag::Empty {
+        if owner.is_empty() {
             return;
         }
-        let poll = pollable.poll();
-        // CYCLEBREAK: owner (ReadFile/WriteFile) is T6; dispatch via link-time
-        // `extern "Rust"` defined in `bun_runtime::dispatch`. The
-        // container_of(io_poll) recovery happens there.
+        // The kernel surface is still a packed token, but the Rust delivery is
+        // the decoded typed owner; layout recovery stays with the runtime owner.
         if event.flags == libc::EV_ERROR {
             log!("error({}) = {}", event.ident, event.data);
-            // SAFETY: poll is the `io_poll` field of a live owner; link-time
-            // extern body matches on `tag`.
             unsafe {
                 __bun_io_pollable_on_io_error(
-                    tag,
-                    poll,
+                    owner,
                     // `event.data` is a kernel-supplied errno; do NOT transmute into the
                     // closed `sys::Errno` enum (size mismatch on darwin/freebsd where it
                     // is `#[repr(u16)]`, and UB for unmapped discriminants). Store the
@@ -1427,31 +1409,26 @@ impl Poll {
             };
         } else {
             log!("ready({}) = {}", event.ident, event.data);
-            // SAFETY: as above.
-            unsafe { __bun_io_pollable_on_ready(tag, poll) };
+            unsafe { __bun_io_pollable_on_ready(owner) };
         }
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn on_update_epoll(poll: *mut Poll, tag: PollableTag, event: linux::epoll_event) {
+    pub fn on_update_epoll(owner: pollable::Owner, event: linux::epoll_event) {
         // ignore empty tags. This case should be unreachable in practice
-        if tag == PollableTag::Empty {
+        if owner.is_empty() {
             return;
         }
-        // CYCLEBREAK: owner (ReadFile/WriteFile) is T6; dispatch via link-time
-        // `extern "Rust"` defined in `bun_runtime::dispatch`. The
-        // container_of(io_poll) recovery happens there.
+        // The kernel surface is still a packed token, but the Rust delivery is
+        // the decoded typed owner; layout recovery stays with the runtime owner.
         if event.events & linux::EPOLL_ERR != 0 {
             let errno = sys::get_errno(event.events as isize);
             log!("error() = {:?}", errno);
-            // SAFETY: poll is the `io_poll` field of a live owner; link-time
-            // extern body matches on `tag`.
             // TODO(b2-blocked): bun_sys::Tag::epoll_ctl
-            unsafe { __bun_io_pollable_on_io_error(tag, poll, sys::Error::from_code(errno, sys::Tag::TODO)) };
+            unsafe { __bun_io_pollable_on_io_error(owner, sys::Error::from_code(errno, sys::Tag::TODO)) };
         } else {
             log!("ready()");
-            // SAFETY: as above.
-            unsafe { __bun_io_pollable_on_ready(tag, poll) };
+            unsafe { __bun_io_pollable_on_ready(owner) };
         }
     }
 

@@ -142,15 +142,16 @@ FilePoll production path
   │     ├─> runtime DNS resolver and macOS DNS request polls
   │     └─> ParentDeathWatchdog
   ├─> construction
-  │     ├─> direct producers call Owner::typed::<file_poll::Variant>(ptr)
-  │     └─> generic writer parents expose type PollOwner: file_poll::Variant
+  │     ├─> direct producers construct closed variants such as Owner::Process(handle)
+  │     ├─> typed helpers such as Owner::dns_resolver(ptr) wrap raw OS callback pointers once
+  │     └─> generic writer parents expose type PollOwner: file_poll::PipeWriterVariant
   ├─> storage
   │     └─> bun_io::FilePoll stores bun_io_types::file_poll::Owner as a closed typed enum
   └─> consumer
         └─> bun_runtime::dispatch::__bun_run_file_poll
               ├─> matches owner.kind()
-              ├─> recovers owner.ptr() in the one runtime dispatch site
-              └─> calls the concrete handler for that closed owner kind
+              ├─> pulls typed handles from owner.process_handle(), owner.buffered_reader_handle(), etc.
+              └─> calls owner-crate helper APIs that keep layout recovery local
 ```
 
 The important detail is that writer families no longer thread a raw
@@ -174,14 +175,13 @@ higher crate supplied the parent:
 FilePollRef::init(
     loop_,
     fd,
-    Owner::typed::<Parent::PollOwner>(std::ptr::from_mut(self).cast()),
+    Parent::PollOwner::writer_owner(writer),
 )
 ```
 
-`Owner::from_raw_parts(kind, ptr)` remains only as an unsafe escape hatch for
-raw ABI edges. Normal producers call `Owner::typed::<Variant>(ptr)`, which
-builds the enum variant and ties the owner token to the marker type in the
-type crate.
+There is no public `Owner::from_raw_parts(kind, ptr)` / `Owner::typed<T>(ptr)`
+escape hatch in the normal FilePoll path. The type crate owns the closed
+variants and marker-to-variant mapping.
 
 Pollable remains scalar because that is the kernel ABI:
 
@@ -193,8 +193,8 @@ Pollable production path
   │     └─> epoll_event.data.u64 / kevent.udata carries the packed token
   └─> consumer: bun_io::IoRequestLoop::tick_epoll / Poll::on_update_kqueue
         ├─> Pollable::from(raw) wraps the same Token
-        ├─> Pollable::tag() recovers pollable::Kind
-        └─> Pollable::poll() recovers the embedded Poll pointer for runtime dispatch
+        ├─> Token::decode() recovers bun_io_types::pollable::Owner
+        └─> runtime dispatch receives typed ReadFileOwner / WriteFileOwner, not tag + *mut Poll
 ```
 
 ## Process Exit
@@ -679,9 +679,9 @@ LifecycleScript output reader target
 ```
 Safety invariants
   ├─> typed construction
-  │     └─> producer code names a marker type, not a raw integer tag
+  │     └─> producer code names a marker/handle type, not a raw integer tag
   ├─> centralized recovery
-  │     └─> pointer recovery happens in the owner dispatch site for that family
+  │     └─> pointer recovery happens in the module that owns that field layout
   ├─> complete discriminants
   │     └─> every runtime dispatch arm has a sibling marker in the type crate
   ├─> effect ownership
@@ -698,7 +698,7 @@ Safety invariants
 Production migration
   ├─> move each shared owner/state family into the natural sibling type crate
   ├─> replace raw tag constants with associated marker types at generic producer boundaries
-  ├─> keep direct constructors small: Owner::typed::<Variant>(ptr)
+  ├─> keep direct constructors explicit: Owner::Process(handle), Owner::pipe_writer::<Variant>(ptr)
   ├─> keep effect application in the owning crate
   ├─> add reducer tests in the type crate for value-only state machines
   └─> add production-path tests around the owner crate where effects are applied

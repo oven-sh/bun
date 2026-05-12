@@ -5,6 +5,7 @@ use core::sync::atomic::{AtomicU8, AtomicPtr, Ordering};
 
 use bun_core::{self, Error};
 use bun_io::{self as io, FileAction};
+use bun_io_types::pollable;
 use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
     SysErrorJsc as _, SystemError,
@@ -257,6 +258,25 @@ impl FileCloser for ReadFile {
 }
 
 impl ReadFile {
+    #[inline]
+    unsafe fn from_poll(owner: pollable::ReadFileOwner) -> *mut Self {
+        let poll = owner.poll.get() as *mut io::Poll;
+        unsafe { bun_core::from_field_ptr!(ReadFile, io_poll, poll) }
+    }
+
+    pub fn poll_ready(owner: pollable::ReadFileOwner) {
+        // SAFETY: `owner` is decoded from the kernel token registered from
+        // this `ReadFile`'s embedded `io_poll` field.
+        let this = unsafe { &mut *Self::from_poll(owner) };
+        this.on_ready();
+    }
+
+    pub fn poll_error(owner: pollable::ReadFileOwner, err: bun_sys::Error) {
+        // SAFETY: same invariant as `poll_ready`.
+        let this = unsafe { &mut *Self::from_poll(owner) };
+        this.on_io_error(err);
+    }
+
     pub fn update(&mut self) {
         #[cfg(windows)]
         {

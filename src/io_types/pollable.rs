@@ -89,6 +89,13 @@ pub enum Owner {
     WriteFile(WriteFileOwner),
 }
 
+impl Owner {
+    #[inline]
+    pub const fn is_empty(self) -> bool {
+        matches!(self, Self::Empty)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReadFileOwner {
     pub poll: OwnerToken<ReadFile>,

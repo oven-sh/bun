@@ -4,6 +4,7 @@ use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_core::Error;
 use bun_io as io;
+use bun_io_types::pollable;
 use bun_jsc::{
     self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError, SysErrorJsc,
 };
@@ -161,6 +162,25 @@ impl WriteFile {
 
     pub const OPEN_FLAGS: i32 =
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::NONBLOCK;
+
+    #[inline]
+    unsafe fn from_poll(owner: pollable::WriteFileOwner) -> *mut Self {
+        let poll = owner.poll.get() as *mut io::Poll;
+        unsafe { bun_core::from_field_ptr!(WriteFile, io_poll, poll) }
+    }
+
+    pub fn poll_ready(owner: pollable::WriteFileOwner) {
+        // SAFETY: `owner` is decoded from the kernel token registered from
+        // this `WriteFile`'s embedded `io_poll` field.
+        let this = unsafe { &mut *Self::from_poll(owner) };
+        this.on_ready();
+    }
+
+    pub fn poll_error(owner: pollable::WriteFileOwner, err: sys::Error) {
+        // SAFETY: same invariant as `poll_ready`.
+        let this = unsafe { Self::from_poll(owner) };
+        Self::on_io_error(this.cast(), err);
+    }
 
     pub fn on_writable(request: &mut io::Request) {
         // SAFETY: request points to WriteFile.io_request

@@ -71,14 +71,27 @@ pub mod ffi {
     pub const NID_id_GostR3410_2012_256: c_int = 979;
     pub const NID_id_GostR3410_2012_512: c_int = 980;
 
+    // ffi-safe-fn: every handle type below (`SSL`, `X509`, `SSL_CIPHER`,
+    // `EVP_PKEY`, `EC_KEY`, `EC_GROUP`) is an `opaque_ffi!` ZST — `&T`
+    // dereferences zero bytes, carries no `dereferenceable`/`noalias`
+    // obligation, and the `UnsafeCell` body lets BoringSSL mutate through a
+    // shared ref. Functions whose *only* pointer arguments are such handles
+    // (plus by-value scalars) therefore have no caller-side precondition and
+    // are declared `safe fn`; callers convert raw pointers via the
+    // const-asserted `T::opaque_ref` (panics on null, which every call site
+    // already guards). Functions that additionally take raw out-params /
+    // caller-owned buffers / +1 ownership pointers keep `unsafe fn`.
     unsafe extern "C" {
         // ── SSL session/handshake info ───────────────────────────────────
-        pub fn SSL_get_version(ssl: *const SSL) -> *const c_char;
-        pub fn SSL_get_peer_certificate(ssl: *const SSL) -> *mut X509;
-        pub fn SSL_get_certificate(ssl: *const SSL) -> *mut X509;
-        pub fn SSL_set_max_send_fragment(ssl: *mut SSL, max_send_fragment: usize) -> c_int;
+        pub safe fn SSL_get_version(ssl: &SSL) -> *const c_char;
+        pub safe fn SSL_get_peer_certificate(ssl: &SSL) -> *mut X509;
+        pub safe fn SSL_get_certificate(ssl: &SSL) -> *mut X509;
+        pub safe fn SSL_set_max_send_fragment(ssl: &SSL, max_send_fragment: usize) -> c_int;
+        // SAFETY (unsafe fn): `buf` must be writable for `count` bytes.
         pub fn SSL_get_finished(ssl: *const SSL, buf: *mut c_void, count: usize) -> usize;
+        // SAFETY (unsafe fn): `buf` must be writable for `count` bytes.
         pub fn SSL_get_peer_finished(ssl: *const SSL, buf: *mut c_void, count: usize) -> usize;
+        // SAFETY (unsafe fn): out-params must each be null or point to a valid `c_int`/`u8`.
         pub fn SSL_get_shared_sigalgs(
             ssl: *mut SSL,
             idx: c_int,
@@ -88,6 +101,7 @@ pub mod ffi {
             rsig: *mut u8,
             rhash: *mut u8,
         ) -> c_int;
+        // SAFETY (unsafe fn): `out`/`label`/`context` must be valid for the given lengths.
         pub fn SSL_export_keying_material(
             ssl: *mut SSL,
             out: *mut u8,
@@ -98,19 +112,24 @@ pub mod ffi {
             context_len: usize,
             use_context: c_int,
         ) -> c_int;
-        pub fn SSL_session_reused(ssl: *const SSL) -> c_int;
-        pub fn SSL_get_privatekey(ssl: *const SSL) -> *mut EVP_PKEY;
+        pub safe fn SSL_session_reused(ssl: &SSL) -> c_int;
+        pub safe fn SSL_get_privatekey(ssl: &SSL) -> *mut EVP_PKEY;
 
         // ── SSL_SESSION ───────────────────────────────────────────────────
-        pub fn SSL_get_session(ssl: *const SSL) -> *mut SSL_SESSION;
+        pub safe fn SSL_get_session(ssl: &SSL) -> *mut SSL_SESSION;
+        // SAFETY (unsafe fn): `session` must be a live SSL_SESSION (or null); BoringSSL bumps its refcount.
         pub fn SSL_set_session(ssl: *mut SSL, session: *mut SSL_SESSION) -> c_int;
+        // SAFETY (unsafe fn): consumes a +1 reference; `session` must be uniquely owned or null.
         pub fn SSL_SESSION_free(session: *mut SSL_SESSION);
+        // SAFETY (unsafe fn): out-params must point to valid `*const u8` / `usize` slots.
         pub fn SSL_SESSION_get0_ticket(
             session: *const SSL_SESSION,
             out_ticket: *mut *const u8,
             out_len: *mut usize,
         );
+        // SAFETY (unsafe fn): `pp` (when non-null) must point to a buffer with capacity for the encoded session.
         pub fn i2d_SSL_SESSION(session: *mut SSL_SESSION, pp: *mut *mut u8) -> c_int;
+        // SAFETY (unsafe fn): `*pp` must be readable for `length` bytes.
         pub fn d2i_SSL_SESSION(
             a: *mut *mut SSL_SESSION,
             pp: *mut *const u8,
@@ -118,19 +137,23 @@ pub mod ffi {
         ) -> *mut SSL_SESSION;
 
         // ── SSL_CIPHER ────────────────────────────────────────────────────
-        pub fn SSL_get_current_cipher(ssl: *const SSL) -> *const SSL_CIPHER;
-        pub fn SSL_CIPHER_get_name(cipher: *const SSL_CIPHER) -> *const c_char;
-        pub fn SSL_CIPHER_standard_name(cipher: *const SSL_CIPHER) -> *const c_char;
-        pub fn SSL_CIPHER_get_version(cipher: *const SSL_CIPHER) -> *const c_char;
+        pub safe fn SSL_get_current_cipher(ssl: &SSL) -> *const SSL_CIPHER;
+        pub safe fn SSL_CIPHER_get_name(cipher: &SSL_CIPHER) -> *const c_char;
+        pub safe fn SSL_CIPHER_standard_name(cipher: &SSL_CIPHER) -> *const c_char;
+        pub safe fn SSL_CIPHER_get_version(cipher: &SSL_CIPHER) -> *const c_char;
 
         // ── X509 ─────────────────────────────────────────────────────────
-        pub fn X509_up_ref(x: *mut X509) -> c_int;
+        pub safe fn X509_up_ref(x: &X509) -> c_int;
 
         // ── EVP / EC ──────────────────────────────────────────────────────
-        pub fn EVP_PKEY_id(pkey: *const EVP_PKEY) -> c_int;
-        pub fn EVP_PKEY_bits(pkey: *const EVP_PKEY) -> c_int;
+        pub safe fn EVP_PKEY_id(pkey: &EVP_PKEY) -> c_int;
+        pub safe fn EVP_PKEY_bits(pkey: &EVP_PKEY) -> c_int;
+        // SAFETY (unsafe fn): returns +1 EC_KEY; caller must EC_KEY_free. Kept raw to
+        // avoid a panic-on-null behavior change in the unchecked EC chain below.
         pub fn EVP_PKEY_get1_EC_KEY(pkey: *mut EVP_PKEY) -> *mut EC_KEY;
+        // SAFETY (unsafe fn): `key` must be non-null; result is borrowed from `key`.
         pub fn EC_KEY_get0_group(key: *const EC_KEY) -> *const EC_GROUP;
+        // SAFETY (unsafe fn): `group` must be non-null.
         pub fn EC_GROUP_get_curve_name(group: *const EC_GROUP) -> c_int;
 
         // ── OBJ ──────────────────────────────────────────────────────────
@@ -203,23 +226,20 @@ pub fn set_servername(this: &This, global: &JSGlobalObject, frame: &CallFrame) -
 
 pub fn get_peer_x509_certificate(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
-    // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.get().ssl().
-    let cert = unsafe { ffi::SSL_get_peer_certificate(ssl_ptr) };
+    let cert = ffi::SSL_get_peer_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
     if !cert.is_null() {
-        // SAFETY: cert is a non-null *mut X509 (null-checked above).
-        return X509::to_js_object(unsafe { &mut *cert }, global);
+        return X509::to_js_object(boringssl::X509::opaque_mut(cert), global);
     }
     Ok(JSValue::UNDEFINED)
 }
 
 pub fn get_x509_certificate(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
-    // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.get().ssl().
-    let cert = unsafe { ffi::SSL_get_certificate(ssl_ptr) };
+    let cert = ffi::SSL_get_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
     if !cert.is_null() {
-        // SAFETY: cert is a non-null *mut X509 (null-checked above); X509_up_ref bumps the refcount before handing to JS.
-        unsafe { ffi::X509_up_ref(cert) };
-        return X509::to_js_object(unsafe { &mut *cert }, global);
+        // X509_up_ref bumps the refcount before handing to JS.
+        ffi::X509_up_ref(boringssl::X509::opaque_ref(cert));
+        return X509::to_js_object(boringssl::X509::opaque_mut(cert), global);
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -228,8 +248,7 @@ pub fn get_tls_version(this: &This, global: &JSGlobalObject, _frame: &CallFrame)
     jsc::mark_binding();
 
     let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::NULL) };
-    // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.get().ssl().
-    let version = unsafe { ffi::SSL_get_version(ssl_ptr) };
+    let version = ffi::SSL_get_version(boringssl::SSL::opaque_ref(ssl_ptr));
     if version.is_null() {
         return Ok(JSValue::NULL);
     }
@@ -264,8 +283,7 @@ pub fn set_max_send_fragment(this: &This, global: &JSGlobalObject, frame: &CallF
 
     let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::FALSE) };
     Ok(JSValue::from(
-        // SAFETY: ssl_ptr is a live *mut SSL; size is range-checked to [1, 16384] above.
-        unsafe { ffi::SSL_set_max_send_fragment(ssl_ptr, usize::try_from(size).expect("int cast")) } == 1,
+        ffi::SSL_set_max_send_fragment(boringssl::SSL::opaque_ref(ssl_ptr), usize::try_from(size).expect("int cast")) == 1,
     ))
 }
 
@@ -288,13 +306,11 @@ pub fn get_peer_certificate(this: &This, global: &JSGlobalObject, frame: &CallFr
         if this.is_server() {
             // SSL_get_peer_certificate returns a +1 reference; we must free it.
             // X509::to_js only borrows the pointer (X509View is non-owning).
-            // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.get().ssl().
-            let cert = unsafe { ffi::SSL_get_peer_certificate(ssl_ptr) };
+            let cert = ffi::SSL_get_peer_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
             if !cert.is_null() {
                 // SAFETY: `c` is the +1 X509 reference returned by SSL_get_peer_certificate; we own it.
                 let _guard = scopeguard::guard(cert, |c| unsafe { boringssl::X509_free(c) });
-                // SAFETY: cert is a non-null *mut X509 (null-checked above).
-                return X509::to_js(unsafe { &mut *cert }, global);
+                return X509::to_js(boringssl::X509::opaque_mut(cert), global);
             }
         }
 
@@ -308,15 +324,13 @@ pub fn get_peer_certificate(this: &This, global: &JSGlobalObject, frame: &CallFr
         if cert.is_null() {
             return Ok(JSValue::UNDEFINED);
         }
-        // SAFETY: cert is a non-null *mut X509 (null-checked above).
-        return X509::to_js(unsafe { &mut *cert }, global);
+        return X509::to_js(boringssl::X509::opaque_mut(cert), global);
     }
 
     let mut cert: *mut boringssl::X509 = core::ptr::null_mut();
     if this.is_server() {
         // SSL_get_peer_certificate returns a +1 reference; we must free it.
-        // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.get().ssl().
-        cert = unsafe { ffi::SSL_get_peer_certificate(ssl_ptr) };
+        cert = ffi::SSL_get_peer_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
     }
     let _guard = scopeguard::guard(cert, |c| {
         if !c.is_null() {
@@ -346,12 +360,10 @@ pub fn get_peer_certificate(this: &This, global: &JSGlobalObject, frame: &CallFr
 
 pub fn get_certificate(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
-    // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.get().ssl().
-    let cert = unsafe { ffi::SSL_get_certificate(ssl_ptr) };
+    let cert = ffi::SSL_get_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
 
     if !cert.is_null() {
-        // SAFETY: cert is a non-null *mut X509 (null-checked above).
-        return X509::to_js(unsafe { &mut *cert }, global);
+        return X509::to_js(boringssl::X509::opaque_mut(cert), global);
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -479,8 +491,7 @@ pub fn get_shared_sigalgs(this: &This, global: &JSGlobalObject, _frame: &CallFra
 
 pub fn get_cipher(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
-    // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.get().ssl().
-    let cipher = unsafe { ffi::SSL_get_current_cipher(ssl_ptr) };
+    let cipher = ffi::SSL_get_current_cipher(boringssl::SSL::opaque_ref(ssl_ptr));
     let result = JSValue::create_empty_object(global, 0);
 
     if cipher.is_null() {
@@ -489,9 +500,9 @@ pub fn get_cipher(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> J
         result.put(global, b"version", JSValue::NULL);
         return Ok(result);
     }
+    let cipher = ffi::SSL_CIPHER::opaque_ref(cipher);
 
-    // SAFETY: cipher is a non-null *const SSL_CIPHER (null-checked above).
-    let name = unsafe { ffi::SSL_CIPHER_get_name(cipher) };
+    let name = ffi::SSL_CIPHER_get_name(cipher);
     if name.is_null() {
         result.put(global, b"name", JSValue::NULL);
     } else {
@@ -500,8 +511,7 @@ pub fn get_cipher(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> J
         result.put(global, b"name", ZigString::from_utf8(s).to_js(global));
     }
 
-    // SAFETY: cipher is a non-null *const SSL_CIPHER (null-checked above).
-    let standard_name = unsafe { ffi::SSL_CIPHER_standard_name(cipher) };
+    let standard_name = ffi::SSL_CIPHER_standard_name(cipher);
     if standard_name.is_null() {
         result.put(global, b"standardName", JSValue::NULL);
     } else {
@@ -510,8 +520,7 @@ pub fn get_cipher(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> J
         result.put(global, b"standardName", ZigString::from_utf8(s).to_js(global));
     }
 
-    // SAFETY: cipher is a non-null *const SSL_CIPHER (null-checked above).
-    let version = unsafe { ffi::SSL_CIPHER_get_version(cipher) };
+    let version = ffi::SSL_CIPHER_get_version(cipher);
     if version.is_null() {
         result.put(global, b"version", JSValue::NULL);
     } else {
@@ -649,16 +658,14 @@ pub fn get_ephemeral_key_info(this: &This, global: &JSGlobalObject, _frame: &Cal
     // if unsafe { boringssl::SSL_get_server_tmp_key(ssl_ptr, &mut raw_key) } == 0 {
     //     return Ok(result);
     // }
-    // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.get().ssl().
-    let raw_key: *mut ffi::EVP_PKEY = unsafe { ffi::SSL_get_privatekey(ssl_ptr) };
+    let raw_key: *mut ffi::EVP_PKEY = ffi::SSL_get_privatekey(boringssl::SSL::opaque_ref(ssl_ptr));
     if raw_key.is_null() {
         return Ok(result);
     }
+    let pkey = ffi::EVP_PKEY::opaque_ref(raw_key);
 
-    // SAFETY: raw_key is a non-null *mut EVP_PKEY (null-checked above).
-    let kid = unsafe { ffi::EVP_PKEY_id(raw_key) };
-    // SAFETY: raw_key is a non-null *mut EVP_PKEY (null-checked above).
-    let bits = unsafe { ffi::EVP_PKEY_bits(raw_key) };
+    let kid = ffi::EVP_PKEY_id(pkey);
+    let bits = ffi::EVP_PKEY_bits(pkey);
 
     match kid {
         ffi::EVP_PKEY_DH => {
@@ -722,8 +729,7 @@ pub fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResult<JSVal
 
 pub fn get_session(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
-    // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.get().ssl().
-    let session = unsafe { ffi::SSL_get_session(ssl_ptr) };
+    let session = ffi::SSL_get_session(boringssl::SSL::opaque_ref(ssl_ptr));
     if session.is_null() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -784,8 +790,7 @@ pub fn set_session(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> J
 
 pub fn get_tls_ticket(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::UNDEFINED) };
-    // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.get().ssl().
-    let session = unsafe { ffi::SSL_get_session(ssl_ptr) };
+    let session = ffi::SSL_get_session(boringssl::SSL::opaque_ref(ssl_ptr));
     if session.is_null() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -823,8 +828,7 @@ pub fn disable_renegotiation(this: &This, _global: &JSGlobalObject, _frame: &Cal
 
 pub fn is_session_reused(this: &This, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::FALSE) };
-    // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.get().ssl().
-    Ok(JSValue::from(unsafe { ffi::SSL_session_reused(ssl_ptr) } == 1))
+    Ok(JSValue::from(ffi::SSL_session_reused(boringssl::SSL::opaque_ref(ssl_ptr)) == 1))
 }
 
 pub fn set_verify_mode(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {

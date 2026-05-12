@@ -41,6 +41,7 @@ pub trait WTFStringImplExt {
 }
 
 impl WTFStringImplExt for WTFStringImplStruct {
+    #[inline]
     fn to_latin1_slice(&self) -> ZigStringSlice {
         self.r#ref();
         let s = self.latin1_slice();
@@ -57,6 +58,7 @@ impl WTFStringImplExt for WTFStringImplStruct {
         }
     }
 
+    #[inline]
     fn to_utf8(&self) -> ZigStringSlice {
         if self.is_8bit() {
             if let Some(utf8) = strings::to_utf8_from_latin1(self.latin1_slice()) {
@@ -69,6 +71,7 @@ impl WTFStringImplExt for WTFStringImplStruct {
         ZigStringSlice::init_owned(strings::to_utf8_alloc(self.utf16_slice()))
     }
 
+    #[inline]
     fn to_utf8_without_ref(&self) -> ZigStringSlice {
         if self.is_8bit() {
             if let Some(utf8) = strings::to_utf8_from_latin1(self.latin1_slice()) {

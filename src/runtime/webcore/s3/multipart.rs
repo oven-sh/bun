@@ -246,18 +246,6 @@ impl UploadPart {
         self.allocated_size = 0;
     }
 
-    #[allow(dead_code)]
-    fn allocated_slice(&self) -> &[u8] {
-        if self.allocated_size > 0 {
-            // SAFETY: ptr is valid for allocated_size bytes (see free_allocated_slice invariant)
-            unsafe {
-                core::slice::from_raw_parts((*self.data).as_ptr(), self.allocated_size)
-            }
-        } else {
-            b""
-        }
-    }
-
     #[inline]
     fn data(&self) -> &[u8] {
         // SAFETY: data is either a static empty slice or a live heap slice owned by this part

@@ -279,29 +279,40 @@ impl Request {
         self.body_value_mut()
     }
 
+    /// Exclusive borrow of the pooled `HiveRef<BodyValue>` slot this request
+    /// holds a `+1` ref on. **Single centralised `unsafe` deref** for the
+    /// set-once `body: NonNull<BodyHiveRef>` field — [`body_value`],
+    /// [`body_value_mut`], `finalize()` and the construct-cleanup path all
+    /// route through here so the `NonNull::as_ptr()` deref is audited in one
+    /// place.
+    ///
+    /// R-2: takes `&self` and projects `&mut` through the raw `NonNull`
+    /// (the hive slot is a separate heap allocation; not covered by `&self`'s
+    /// `noalias`). Single-JS-thread invariant — keep the borrow short.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub(crate) fn body_hive(&self) -> &mut BodyHiveRef {
+        // SAFETY: `body` is a +1 ref into the VM-owned hive allocator; the
+        // slot is live until `finalize()` (or the JS wrapper's GC finalizer)
+        // calls `unref()`. `Request` is `!Sync` so no concurrent `&mut` exists.
+        // The slot is a separate hive allocation (not `*self`), so the returned
+        // `&mut` does not alias `&Request`. R-2: the aliasing
+        // `RequestContext.request_body` pointer is only dereferenced while no
+        // other `&mut BodyValue` is live (single-threaded event-loop sequencing).
+        unsafe { &mut *self.body.as_ptr() }
+    }
+
     /// Zig: `this.#body.value` (immutable view).
     #[inline]
     pub(crate) fn body_value(&self) -> &BodyValue {
-        // SAFETY: `body` is a +1 ref into the VM-owned hive allocator; the
-        // slot is live until `finalize()` (or the JS wrapper's GC finalizer)
-        // calls `unref()`. `Request` is `!Sync` so no concurrent &mut exists.
-        unsafe { &(*self.body.as_ptr()).value }
+        &self.body_hive().value
     }
 
-    /// Zig: `&this.#body.value`.
-    ///
-    /// R-2: takes `&self` and projects `&mut` through the raw `NonNull`
-    /// (the hive slot is heap-allocated; not covered by `&self`'s `noalias`).
-    /// Single-JS-thread invariant — keep the borrow short.
+    /// Zig: `&this.#body.value`. See [`body_hive`] for the R-2 invariant.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn body_value_mut(&self) -> &mut BodyValue {
-        // SAFETY: see `body_value`. `body` points into a separate hive-slot
-        // allocation (not `*self`), so the returned `&mut` does not alias
-        // `&Request`. R-2: the aliasing `RequestContext.request_body` pointer
-        // is only dereferenced while no other `&mut BodyValue` is live
-        // (single-threaded event-loop sequencing).
-        unsafe { &mut (*self.body.as_ptr()).value }
+        &mut self.body_hive().value
     }
 
     /// R-2: short-hand for `unsafe { self.headers.get_mut() }`. The
@@ -925,10 +936,11 @@ impl Request {
         let this = bun_core::heap::release(self);
         this.js_ref.with_mut(|r| r.finalize());
         this.finalize_without_deinit();
-        // SAFETY: `body` is a +1 ref handed out by `body::hive_alloc` /
-        // `HiveRef::ref_()`; release it. Slot returns to the pool when the
-        // count hits zero (drops the payload in place).
-        unsafe { (*this.body.as_ptr()).unref() };
+        // Release the +1 hive ref handed out by `body::hive_alloc` /
+        // `HiveRef::ref_()`; slot returns to the pool when the count hits
+        // zero (drops the payload in place). Deref is centralised in
+        // `body_hive()`.
+        this.body_hive().unref();
         if this.weak_ptr_data.on_finalize() {
             // SAFETY: `this` is the live Box-allocated payload; reclaim and drop.
             drop(unsafe { Box::from_raw(this) });
@@ -1180,8 +1192,9 @@ impl Request {
         let cleanup = |req: &mut Request, body: NonNull<BodyHiveRef>, success: bool| {
             if !success {
                 req.finalize_without_deinit();
-                // SAFETY: `req.body` is the +1 ref this fn allocated above.
-                unsafe { (*req.body.as_ptr()).unref() };
+                // `req.body` is the +1 ref this fn allocated above; deref is
+                // centralised in `body_hive()`.
+                req.body_hive().unref();
             }
             if req.body != body {
                 // SAFETY: `body` was allocated with ref_count=1 at fn entry; if

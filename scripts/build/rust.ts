@@ -747,10 +747,15 @@ export function emitStartupOrder(n: Ninja, cfg: Config, rustLibs: string[]): voi
   const out = startupOrderResolvedPath(cfg);
   const src = resolve(cfg.cwd, "src/startup.order");
   const script = resolve(cfg.cwd, "scripts/build/rewrite-startup-order.ts");
-  // llvm-nm lives next to llvm-ar in every LLVM install we resolve
-  // (tools.ts findLlvmTool). The script falls back to PATH `nm` if this
-  // path doesn't exist, so a non-standard layout still works.
-  const nm = join(dirname(cfg.ar), "llvm-nm");
+  // The staticlib contains LLVM bitcode when cross-language LTO is on, so the
+  // nm we run must speak the same bitcode major as rustc emitted — clang's
+  // llvm-nm may lag (e.g. LLVM 21 reading rustc-LLVM 22 yields "Unknown
+  // attribute kind" and exits non-zero). Prefer rustc's bundled llvm-nm
+  // (sibling of rust-lld in `${sysroot}/lib/rustlib/<host>/bin/`); fall back
+  // to clang's sibling-of-ar otherwise. The script itself further falls back
+  // to PATH `nm` if neither path exists.
+  const rustNm = cfg.rustLld ? join(dirname(dirname(cfg.rustLld)), "llvm-nm") : undefined;
+  const nm = rustNm && existsSync(rustNm) ? rustNm : join(dirname(cfg.ar), "llvm-nm");
 
   // Host is linux here (linux release never cross-builds from non-linux),
   // so no cmd.exe wrapping. Already-quoted jsRuntime is spliced directly.

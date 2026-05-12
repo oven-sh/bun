@@ -166,9 +166,7 @@ unsafe fn process_mut<'a>(p: *mut Process) -> &'a mut Process {
 
 #[inline]
 fn dispatch_process_exit_delivery(delivery: Option<bun_spawn::ProcessExitDelivery>) {
-    if let Some(delivery) = delivery {
-        crate::dispatch::__bun_dispatch_process_exit_delivery(delivery, core::ptr::null_mut());
-    }
+    crate::dispatch::dispatch_optional_process_exit_delivery(delivery, core::ptr::null_mut());
 }
 
 bun_output::declare_scope!(Subprocess, hidden);

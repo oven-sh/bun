@@ -1752,9 +1752,7 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
 
 #[inline]
 fn dispatch_process_exit_delivery(delivery: Option<bun_spawn::ProcessExitDelivery>) {
-    if let Some(delivery) = delivery {
-        crate::dispatch::__bun_dispatch_process_exit_delivery(delivery, core::ptr::null_mut());
-    }
+    crate::dispatch::dispatch_optional_process_exit_delivery(delivery, core::ptr::null_mut());
 }
 
 /// Trait abstracting over CronRegisterJobState/CronRemoveJobState for `spawn_cmd_generic`.

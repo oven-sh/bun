@@ -173,17 +173,19 @@ impl<'a> ProcessHandle<'a> {
         let context = core::ptr::from_mut(state).cast::<c_void>();
         match process.watch_or_reap() {
             Ok(result) => {
-                if let Some(delivery) = result.into_delivery() {
-                    crate::dispatch::__bun_dispatch_process_exit_delivery(delivery, context);
-                }
+                crate::dispatch::dispatch_optional_process_exit_delivery(
+                    result.into_delivery(),
+                    context,
+                );
             }
             Err(err) => {
                 if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (POD C struct)
                     let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    if let Some(delivery) = process.on_exit(Status::Err(err), &rusage) {
-                        crate::dispatch::__bun_dispatch_process_exit_delivery(delivery, context);
-                    }
+                    crate::dispatch::dispatch_optional_process_exit_delivery(
+                        process.on_exit(Status::Err(err), &rusage),
+                        context,
+                    );
                 }
             }
         }

@@ -631,21 +631,15 @@ impl Cmd {
             let process = subproc.proc();
             if process.has_exited() {
                 let status = process.status.clone();
-                if let Some(delivery) =
-                    process.on_exit(status, &crate::api::bun::process::rusage_zeroed())
-                {
-                    crate::dispatch::__bun_dispatch_process_exit_delivery(
-                        delivery,
-                        interp_ptr.cast(),
-                    );
-                }
+                crate::dispatch::dispatch_optional_process_exit_delivery(
+                    process.on_exit(status, &crate::api::bun::process::rusage_zeroed()),
+                    interp_ptr.cast(),
+                );
             } else {
-                if let Some(delivery) = process.wait(false) {
-                    crate::dispatch::__bun_dispatch_process_exit_delivery(
-                        delivery,
-                        interp_ptr.cast(),
-                    );
-                }
+                crate::dispatch::dispatch_optional_process_exit_delivery(
+                    process.wait(false),
+                    interp_ptr.cast(),
+                );
             }
         }
 

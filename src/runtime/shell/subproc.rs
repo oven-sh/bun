@@ -929,12 +929,10 @@ impl ShellSubprocess {
     }
 
     pub fn wait(&mut self, sync: bool) {
-        if let Some(delivery) = self.proc().wait(sync) {
-            crate::dispatch::__bun_dispatch_process_exit_delivery(
-                delivery,
-                self.cmd_parent.interp.cast(),
-            );
-        }
+        crate::dispatch::dispatch_optional_process_exit_delivery(
+            self.proc().wait(sync),
+            self.cmd_parent.interp.cast(),
+        );
     }
 
     pub fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {

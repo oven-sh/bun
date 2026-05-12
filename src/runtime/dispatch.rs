@@ -147,6 +147,13 @@ pub fn __bun_dispatch_process_exit_delivery(
     delivery: bun_spawn::ProcessExitDelivery,
     context: *mut core::ffi::c_void,
 ) {
+    dispatch_process_exit_delivery(delivery, context);
+}
+
+pub(crate) fn dispatch_process_exit_delivery(
+    delivery: bun_spawn::ProcessExitDelivery,
+    context: *mut core::ffi::c_void,
+) {
     match delivery {
         bun_spawn::ProcessExitDelivery::Install { event_loop, action } => match action {
             InstallProcessExitAction::LifecycleScript(
@@ -219,11 +226,11 @@ pub fn __bun_dispatch_process_exit_delivery(
                     )
                 };
             }
-              RuntimeProcessExitAction::ShellCommand {
-                  command,
-                  interpreter,
-                  process: _,
-                  status,
+            RuntimeProcessExitAction::ShellCommand {
+                command,
+                interpreter,
+                process: _,
+                status,
             } => {
                 let context = interpreter
                     .map(|interpreter| {
@@ -237,24 +244,29 @@ pub fn __bun_dispatch_process_exit_delivery(
                         context,
                         command,
                         status,
-                      )
-                  };
-              }
-              RuntimeProcessExitAction::CronRegister { state, action } => {
-                  crate::api::cron::on_register_process_exit(state, action);
-              }
-              RuntimeProcessExitAction::CronRemove { state, action } => {
-                  crate::api::cron::on_remove_process_exit(state, action);
-              }
-              RuntimeProcessExitAction::Subprocess { action } => {
-                  Subprocess::dispatch_process_exit(action);
-              }
-          },
+                    )
+                };
+            }
+            RuntimeProcessExitAction::CronRegister { state, action } => {
+                crate::api::cron::on_register_process_exit(state, action);
+            }
+            RuntimeProcessExitAction::CronRemove { state, action } => {
+                crate::api::cron::on_remove_process_exit(state, action);
+            }
+            RuntimeProcessExitAction::Subprocess { action } => {
+                Subprocess::dispatch_process_exit(action);
+            }
+        },
     }
 }
 
-fn dispatch_process_exit_delivery(delivery: bun_spawn::ProcessExitDelivery) {
-    __bun_dispatch_process_exit_delivery(delivery, core::ptr::null_mut());
+pub(crate) fn dispatch_optional_process_exit_delivery(
+    delivery: Option<bun_spawn::ProcessExitDelivery>,
+    context: *mut core::ffi::c_void,
+) {
+    if let Some(delivery) = delivery {
+        dispatch_process_exit_delivery(delivery, context);
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -824,7 +836,7 @@ pub fn run_task(
                 // SAFETY: tag identifies pointee; heap-allocated in WaiterThread.
                 let t = unsafe { bun_core::heap::take(cast_ptr!(ProcessWaiterThreadTask<Process>)) };
                 if let Some(delivery) = t.run_from_js_thread() {
-                    dispatch_process_exit_delivery(delivery);
+                    dispatch_process_exit_delivery(delivery, core::ptr::null_mut());
                 }
             }
             #[cfg(windows)]
@@ -987,7 +999,7 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             if let Some(delivery) =
                 bun_spawn::with_process_handle(process, Process::on_wait_pid_from_event_loop_task)
             {
-                dispatch_process_exit_delivery(delivery);
+                dispatch_process_exit_delivery(delivery, core::ptr::null_mut());
             }
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {

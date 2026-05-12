@@ -302,9 +302,10 @@ impl Worker {
         let context = coord_ptr.cast_mut().cast::<c_void>();
         match process.watch_or_reap() {
             Ok(result) => {
-                if let Some(delivery) = result.into_delivery() {
-                    crate::dispatch::__bun_dispatch_process_exit_delivery(delivery, context);
-                }
+                crate::dispatch::dispatch_optional_process_exit_delivery(
+                    result.into_delivery(),
+                    context,
+                );
             }
             Err(e) => {
                 // Surface to the caller (spawnWorker / onWorkerExit) instead of

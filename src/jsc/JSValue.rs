@@ -348,8 +348,9 @@ impl JSValue {
     /// `JSValue.isException(vm)` (JSValue.zig:1169) — true if this value is a
     /// `JSC::Exception` cell.
     #[inline] pub fn is_exception(self, vm: *mut crate::VM) -> bool {
-        // SAFETY: pure FFI predicate; `vm` is the live JSC VM.
-        unsafe { JSC__JSValue__isException(self, vm) }
+        // `VM` is an `opaque_ffi!` ZST handle; `opaque_ref` is the centralised
+        // zero-byte deref proof, so no `unsafe` is needed at this call site.
+        JSC__JSValue__isException(self, crate::VM::opaque_ref(vm))
     }
     /// `JSValue.asException(vm)` (JSValue.zig:1174) — cast to `*mut Exception`
     /// if `is_exception`, else null. The returned pointer borrows the GC cell;
@@ -1658,7 +1659,7 @@ unsafe extern "C" {
     safe fn JSC__JSValue__toZigString(this: JSValue, out: &mut bun_string::ZigString, global: &JSGlobalObject);
     fn JSC__JSValue__getIfPropertyExistsImpl(target: JSValue, global: *const JSGlobalObject, ptr: *const u8, len: usize) -> JSValue;
     safe fn JSC__JSValue__isTerminationException(this: JSValue) -> bool;
-    fn JSC__JSValue__isException(this: JSValue, vm: *mut crate::VM) -> bool;
+    safe fn JSC__JSValue__isException(this: JSValue, vm: &crate::VM) -> bool;
     fn Bun__JSValue__call(
         global: *const JSGlobalObject,
         function: JSValue,

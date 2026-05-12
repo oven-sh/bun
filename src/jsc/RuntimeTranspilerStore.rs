@@ -31,7 +31,7 @@ use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
 use bun_string::{strings, MutableString, String};
 use bun_sys::{self, Dir, Fd, FdExt as _, File, OpenDirOptions};
 use bun_threading::unbounded_queue::{self, UnboundedQueue};
-use bun_threading::Mutex;
+use bun_threading::Guarded;
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 use bun_watcher::{WatchItemColumns, Watcher};
 
@@ -77,14 +77,10 @@ pub fn dump_source_string(vm: *mut VirtualMachine, specifier: &[u8], written: &[
 }
 
 // Zig: local `struct { pub var dir; pub var lock; }` — module statics in Rust.
-struct BunDebugHolder {
-    dir: Option<Dir>,
-}
-static BUN_DEBUG_HOLDER_LOCK: Mutex = Mutex::new();
-// PORTING.md §Global mutable state: every access guarded by
-// `BUN_DEBUG_HOLDER_LOCK` → RacyCell (the mutex is the synchronization).
-static BUN_DEBUG_HOLDER: bun_core::RacyCell<BunDebugHolder> =
-    bun_core::RacyCell::new(BunDebugHolder { dir: None });
+// PORTING.md §Global mutable state: lazily-opened debug-dump dir, guarded by a
+// mutex. `Guarded` fuses the lock and the payload so the per-access body is
+// safe code (replaces the prior split `Mutex` + `RacyCell` pair).
+static BUN_DEBUG_HOLDER: Guarded<Option<Dir>> = Guarded::new(None);
 
 pub fn dump_source_string_failiable(
     vm: *mut VirtualMachine,
@@ -99,13 +95,11 @@ pub fn dump_source_string_failiable(
         return Ok(());
     }
 
-    let _lock = BUN_DEBUG_HOLDER_LOCK.lock_guard();
-    // SAFETY: every access to BUN_DEBUG_HOLDER is guarded by BUN_DEBUG_HOLDER_LOCK.
-    let holder = unsafe { &mut *BUN_DEBUG_HOLDER.get() };
+    let mut holder = BUN_DEBUG_HOLDER.lock();
 
     let mut path_buf = bun_paths::PathBuffer::default();
 
-    let dir = match holder.dir {
+    let dir = match *holder {
         Some(d) => d,
         None => {
             let base_name: &[u8] = if cfg!(windows) {
@@ -121,7 +115,7 @@ pub fn dump_source_string_failiable(
                 b"/tmp/bun-debug-src/"
             };
             let d = Dir::cwd().make_open_path(base_name, OpenDirOptions::default())?;
-            holder.dir = Some(d);
+            *holder = Some(d);
             d
         }
     };

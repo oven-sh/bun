@@ -814,8 +814,11 @@ mod private {
             input_function_ptr: *mut c_void, // ?*anyopaque
         ) -> JSValue;
 
-        pub fn Bun__FFIFunction_getDataPtr(value: JSValue) -> *mut c_void;
-        pub fn Bun__FFIFunction_setDataPtr(value: JSValue, data: *mut c_void);
+        // safe: `JSValue` is a by-value tagged i64; `data` is an opaque
+        // round-trip pointer the C++ side stores in the JSFunction's private
+        // slot without dereferencing it as Rust data.
+        pub safe fn Bun__FFIFunction_getDataPtr(value: JSValue) -> *mut c_void;
+        pub safe fn Bun__FFIFunction_setDataPtr(value: JSValue, data: *mut c_void);
     }
 }
 
@@ -847,18 +850,14 @@ pub fn new_runtime_function(
 #[track_caller]
 pub fn get_function_data(function: JSValue) -> Option<*mut c_void> {
     jsc::mark_binding();
-    // SAFETY: thin FFI wrapper.
-    let p = unsafe { private::Bun__FFIFunction_getDataPtr(function) };
+    let p = private::Bun__FFIFunction_getDataPtr(function);
     if p.is_null() { None } else { Some(p) }
 }
 
 #[track_caller]
 pub fn set_function_data(function: JSValue, value: Option<*mut c_void>) {
     jsc::mark_binding();
-    // SAFETY: thin FFI wrapper.
-    unsafe {
-        private::Bun__FFIFunction_setDataPtr(function, value.unwrap_or(core::ptr::null_mut()))
-    }
+    private::Bun__FFIFunction_setDataPtr(function, value.unwrap_or(core::ptr::null_mut()))
 }
 
 #[track_caller]

@@ -726,17 +726,25 @@ macro_rules! js_class_module {
             // `Blob`) the lint recurses through its fields and flags
             // non-`#[repr(C)]` interiors. The pointer is opaque to C++ — only
             // Rust dereferences it — so the lint is a false positive here.
+            // `safe fn`: `JSValue` is a by-value tagged i64 and `JSGlobalObject`
+            // is an opaque `UnsafeCell`-backed ZST handle (`&` is ABI-identical
+            // to a non-null `*mut`). `__from_js*` only type-check the encoded
+            // value and return the stored `m_ctx` pointer (or null) — the C++
+            // side never dereferences `Payload`, so there is no Rust-side
+            // precondition. `__create`/`__dangerously_set_ptr` keep `unsafe`
+            // because they install `ptr` into a GC cell whose finalizer will
+            // later free it (deferred deref → ownership precondition).
             #[cfg(all(windows, target_arch = "x86_64"))]
             #[allow(improper_ctypes)]
             unsafe extern "sysv64" {
                 #[link_name = concat!($TypeName, "__fromJS")]
-                fn __from_js(value: JSValue) -> *mut Payload;
+                safe fn __from_js(value: JSValue) -> *mut Payload;
                 #[link_name = concat!($TypeName, "__fromJSDirect")]
-                fn __from_js_direct(value: JSValue) -> *mut Payload;
+                safe fn __from_js_direct(value: JSValue) -> *mut Payload;
                 #[link_name = concat!($TypeName, "__create")]
                 fn __create(global: *mut JSGlobalObject, ptr: *mut Payload) -> JSValue;
                 #[link_name = concat!($TypeName, "__getConstructor")]
-                fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+                safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
                 #[link_name = concat!($TypeName, "__dangerouslySetPtr")]
                 fn __dangerously_set_ptr(value: JSValue, ptr: *mut Payload) -> bool;
             }
@@ -744,13 +752,13 @@ macro_rules! js_class_module {
             #[allow(improper_ctypes)]
             unsafe extern "C" {
                 #[link_name = concat!($TypeName, "__fromJS")]
-                fn __from_js(value: JSValue) -> *mut Payload;
+                safe fn __from_js(value: JSValue) -> *mut Payload;
                 #[link_name = concat!($TypeName, "__fromJSDirect")]
-                fn __from_js_direct(value: JSValue) -> *mut Payload;
+                safe fn __from_js_direct(value: JSValue) -> *mut Payload;
                 #[link_name = concat!($TypeName, "__create")]
                 fn __create(global: *mut JSGlobalObject, ptr: *mut Payload) -> JSValue;
                 #[link_name = concat!($TypeName, "__getConstructor")]
-                fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+                safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
                 #[link_name = concat!($TypeName, "__dangerouslySetPtr")]
                 fn __dangerously_set_ptr(value: JSValue, ptr: *mut Payload) -> bool;
             }
@@ -759,9 +767,7 @@ macro_rules! js_class_module {
             /// the JS wrapper type; `None` on type mismatch.
             #[inline]
             pub fn from_js(value: JSValue) -> ::core::option::Option<*mut Payload> {
-                // SAFETY: `value` is a valid encoded JSValue; the C++ side
-                // type-checks and returns the `m_ctx` pointer or null.
-                let ptr = unsafe { __from_js(value) };
+                let ptr = __from_js(value);
                 if ptr.is_null() { None } else { Some(ptr) }
             }
 
@@ -769,8 +775,7 @@ macro_rules! js_class_module {
             /// canonical structure (no subclass / no expando properties).
             #[inline]
             pub fn from_js_direct(value: JSValue) -> ::core::option::Option<*mut Payload> {
-                // SAFETY: see `from_js`.
-                let ptr = unsafe { __from_js_direct(value) };
+                let ptr = __from_js_direct(value);
                 if ptr.is_null() { None } else { Some(ptr) }
             }
 
@@ -798,11 +803,7 @@ macro_rules! js_class_module {
             /// Lazily fetch the constructor `JSFunction` from `globalObject`.
             #[inline]
             pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
-                // SAFETY: `global` is an opaque ZST FFI handle (see
-                // `JSGlobalObject::as_ptr`) — the `*mut` is passed across FFI
-                // only; the C++ side reads the cached structure/constructor
-                // from `Zig::GlobalObject`.
-                unsafe { __get_constructor(global.as_ptr()) }
+                __get_constructor(global)
             }
 
             /// Detach (`ptr = null`) or replace the wrapped native pointer on

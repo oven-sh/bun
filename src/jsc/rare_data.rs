@@ -875,8 +875,10 @@ impl RareData {
 
 impl RareData {
     #[inline]
-    unsafe fn stdio_ctor(fd: Fd, is_atty: bool, mode: Mode) -> *mut c_void {
-        // SAFETY: link-time extern; allocates a fresh Store.
+    fn stdio_ctor(fd: Fd, is_atty: bool, mode: Mode) -> *mut c_void {
+        // SAFETY: link-time extern defined in `bun_runtime::webcore::blob`;
+        // all args are by-value safe types and the call allocates a fresh
+        // Store — no caller obligation to forward.
         unsafe { __bun_stdio_blob_store_new(fd, is_atty, mode).cast() }
     }
 
@@ -890,8 +892,7 @@ impl RareData {
                 Err(_) => 0,
             };
             let is_atty = Output::stderr_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
-            // SAFETY: link-time extern; allocates a fresh Store.
-            let store = unsafe { Self::stdio_ctor(fd, is_atty, mode) };
+            let store = Self::stdio_ctor(fd, is_atty, mode);
             self.stderr_store = NonNull::new(store);
             self.stderr_mode = mode;
         }
@@ -908,8 +909,7 @@ impl RareData {
                 Err(_) => 0,
             };
             let is_atty = Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
-            // SAFETY: link-time extern; allocates a fresh Store.
-            let store = unsafe { Self::stdio_ctor(fd, is_atty, mode) };
+            let store = Self::stdio_ctor(fd, is_atty, mode);
             self.stdout_store = NonNull::new(store);
             self.stdout_mode = mode;
         }
@@ -928,8 +928,7 @@ impl RareData {
             // Zig: `if (fd.unwrapValid()) |valid| std.posix.isatty(valid.native()) else false`
             // — on Windows an invalid stdin handle must short-circuit to false.
             let is_atty = fd.unwrap_valid().map(syscall::isatty).unwrap_or(false);
-            // SAFETY: link-time extern; allocates a fresh Store.
-            let store = unsafe { Self::stdio_ctor(fd, is_atty, mode) };
+            let store = Self::stdio_ctor(fd, is_atty, mode);
             self.stdin_store = NonNull::new(store);
             self.stdin_mode = mode;
         }

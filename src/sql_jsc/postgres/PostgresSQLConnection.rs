@@ -315,6 +315,25 @@ impl PostgresSQLConnection {
         self.options.slice()
     }
 
+    /// Project `&mut SASL` from `authentication_state` if it is currently the
+    /// `Sasl` variant. One audited [`JsCell::get_mut`] here replaces the three
+    /// per-site unchecked `authentication_state.get_mut()` derefs in the SASL
+    /// handshake arms of [`on`](Self::on).
+    ///
+    /// SAFETY (encapsulated): single-JS-thread; callers hold the returned
+    /// `&mut SASL` only for the synchronous packet-handler body and drop it
+    /// before any call that touches `authentication_state` again
+    /// (`self.writer()` / `self.flush_data()` / `self.fail()` do not).
+    #[inline]
+    fn sasl_state_mut(&self) -> Option<&mut crate::postgres::sasl::SASL> {
+        // SAFETY: see doc comment — single-JS-thread, no re-entrant access to
+        // `authentication_state` for the borrow's lifetime.
+        match unsafe { self.authentication_state.get_mut() } {
+            AuthenticationState::Sasl(s) => Some(s),
+            _ => None,
+        }
+    }
+
     #[inline]
     fn socket_is_closed(&self) -> bool {
         match self.socket.get() {
@@ -2458,10 +2477,9 @@ impl PostgresSQLConnection {
                         }
 
                         let mut mechanism_buf = [0u8; 128];
-                        // SAFETY: single-JS-thread; `sasl` borrow ends before
-                        // `self.writer()`/`self.flush_data()` below (neither
-                        // touches `authentication_state`).
-                        let AuthenticationState::Sasl(sasl) = (unsafe { self.authentication_state.get_mut() }) else { unreachable!() };
+                        // `sasl` borrow ends before `self.writer()`/`self.flush_data()`
+                        // below (neither touches `authentication_state`).
+                        let Some(sasl) = self.sasl_state_mut() else { unreachable!() };
                         let mechanism = {
                             use std::io::Write as _;
                             let mut cursor = &mut mechanism_buf[..];
@@ -2481,10 +2499,9 @@ impl PostgresSQLConnection {
                     }
                     protocol::Authentication::SASLContinue(cont) => {
                         let password: &[u8] = self.password();
-                        // SAFETY: single-JS-thread; `sasl` borrow ends before
-                        // `self.writer()`/`self.flush_data()` below (neither
-                        // touches `authentication_state`).
-                        let AuthenticationState::Sasl(sasl) = (unsafe { self.authentication_state.get_mut() }) else {
+                        // `sasl` borrow ends before `self.writer()`/`self.flush_data()`
+                        // below (neither touches `authentication_state`).
+                        let Some(sasl) = self.sasl_state_mut() else {
                             debug!("Unexpected SASLContinue for authentication state");
                             return Err(AnyPostgresError::UnexpectedMessage);
                         };
@@ -2553,9 +2570,9 @@ impl PostgresSQLConnection {
                         self.flush_data();
                     }
                     protocol::Authentication::SASLFinal { data: final_data } => {
-                        // SAFETY: single-JS-thread; `sasl` borrow ends before
-                        // `self.fail()` / `self.authentication_state.with_mut()` below.
-                        let AuthenticationState::Sasl(sasl) = (unsafe { self.authentication_state.get_mut() }) else {
+                        // `sasl` borrow ends before `self.fail()` /
+                        // `self.authentication_state.with_mut()` below.
+                        let Some(sasl) = self.sasl_state_mut() else {
                             debug!("SASLFinal - Unexpected SASLContinue for authentication state");
                             return Err(AnyPostgresError::UnexpectedMessage);
                         };

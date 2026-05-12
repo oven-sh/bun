@@ -1066,11 +1066,14 @@ fn waitForModulePromise(this: *VirtualMachine, promise: *JSInternalPromise) void
 
         // After draining tasks + microtasks, if nothing could still wake the
         // loop the promise can never settle. Break instead of busy-spinning.
+        // `concurrent_tasks` closes a narrow race where another thread pushed
+        // to the queue after `tick()`'s `tickConcurrent()` ran.
         const loop = this.event_loop;
         const has_work = this.event_loop_handle.?.isActive() or
             this.active_tasks > 0 or
             loop.tasks.count > 0 or
             loop.hasPendingRefs() or
+            !loop.concurrent_tasks.isEmpty() or
             loop.immediate_tasks.items.len > 0 or
             loop.next_immediate_tasks.items.len > 0;
         if (!has_work) return;

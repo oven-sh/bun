@@ -800,15 +800,13 @@ impl StreamResult {
         // PORT NOTE: Zig holds `loop` and `promise` across re-entrant resolve/reject.
         // In Rust a long-lived `&mut EventLoop` / `&mut JSPromise` would alias any
         // `&mut` the re-entered JS path materializes through `vm.event_loop()` or the
-        // same promise. Keep the raw pointers and form a fresh temporary `&mut` per
-        // call so no two `&mut` are live at once.
-        let event_loop = vm.event_loop();
+        // same promise. `event_loop_ref()` is the audited safe accessor that forms a
+        // fresh temporary `&mut EventLoop` per call so no two `&mut` are live at once.
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
         // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
         let _unprotect = jsc::js_value::Protected::adopt(JSPromise::opaque_ref(promise).to_js());
 
-        // SAFETY: event_loop is the VM's singleton loop; sole `&mut` for this call.
-        unsafe { &mut *event_loop }.enter();
+        vm.event_loop_ref().enter();
         // PORT NOTE: cannot capture &mut event_loop in scopeguard while also using
         // `promise` (borrowck); call exit() explicitly on each path instead.
 
@@ -842,8 +840,7 @@ impl StreamResult {
                         // S008: see reject_with_async_stack above; fresh temp `&mut`.
                         let _ = JSPromise::opaque_mut(promise).reject(global_this, Err(err));
                         // TODO: properly propagate exception upwards
-                        // SAFETY: see enter() above; sole `&mut` for this call.
-                        unsafe { &mut *event_loop }.exit();
+                        vm.event_loop_ref().exit();
                         return;
                     }
                 };
@@ -855,8 +852,7 @@ impl StreamResult {
                 // TODO: properly propagate exception upwards
             }
         }
-        // SAFETY: see enter() above; sole `&mut` for this call.
-        unsafe { &mut *event_loop }.exit();
+        vm.event_loop_ref().exit();
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {

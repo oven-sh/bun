@@ -1949,12 +1949,14 @@ impl<'a> PackageInstaller<'a> {
                                     }
                                 };
 
-                                // SAFETY: getuid/getgid are infallible on POSIX.
+                                // `bun_sys::c::getuid`/`getgid` are local `safe fn`
+                                // redecls (zero args, read kernel process state —
+                                // no preconditions), so no `unsafe` needed.
                                 // `st_mode` is u16 on FreeBSD, u32 elsewhere; widen.
                                 let st_mode = stat.st_mode as u32;
-                                let is_writable = if stat.st_uid == unsafe { bun_sys::c::getuid() } {
+                                let is_writable = if stat.st_uid == bun_sys::c::getuid() {
                                     st_mode & bun_sys::S::IWUSR as u32 > 0
-                                } else if stat.st_gid == unsafe { bun_sys::c::getgid() } {
+                                } else if stat.st_gid == bun_sys::c::getgid() {
                                     st_mode & bun_sys::S::IWGRP as u32 > 0
                                 } else {
                                     st_mode & bun_sys::S::IWOTH as u32 > 0

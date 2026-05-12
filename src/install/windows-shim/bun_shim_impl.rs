@@ -879,12 +879,15 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     // The latter two yield a Flags value whose version_tag ≠ CURRENT, so `is_valid()`
     // rejects them — same observable behavior as the Zig source, without the uninit read.
     read_ptr = read_ptr.cast::<u8>().wrapping_add(read_len).wrapping_sub(size_of::<Flags>()).cast::<u16>();
-    // SAFETY: Flags is repr(transparent) over u16 (all bit patterns valid); per the case
-    // analysis above, read_ptr is within buf1 and the 2 bytes there are initialized.
-    let flags: Flags = unsafe { read_ptr.cast::<Flags>().read_unaligned() };
+    // SAFETY: per the case analysis above, read_ptr is within buf1 and the 2 bytes
+    // there are initialized. `Flags` is `#[repr(transparent)]` over `u16`, so the
+    // type-pun half is done via the safe `from_bits` accessor; only the raw read
+    // remains `unsafe`.
+    let flags: Flags = Flags::from_bits(unsafe { read_ptr.read_unaligned() });
 
     if DBG {
-        let flags_u16: u16 = unsafe { read_ptr.cast::<u16>().read_unaligned() };
+        // Same two bytes just read above — `bits()` is the safe inverse of `from_bits`.
+        let flags_u16: u16 = flags.bits();
         debug!("FlagsInt: {}", flags_u16);
         debug!("Flags:");
         // TODO(port): Zig used `inline for` over `std.meta.fieldNames(Flags)`. Replace with a

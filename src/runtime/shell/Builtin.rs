@@ -479,10 +479,7 @@ impl Builtin {
     pub fn arg_zstr<'a>(&self, idx: usize) -> &'a bun_core::ZStr {
         let p: *const c_char = self.args[idx];
         // SAFETY: see `arg_bytes` — valid NUL-terminated argv pointer.
-        let b = unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes();
-        // SAFETY: `b` is `CStr::to_bytes()` over a NUL-terminated buffer, so
-        // the byte at `b.as_ptr().add(b.len())` is the in-allocation NUL.
-        unsafe { bun_core::ZStr::from_raw(b.as_ptr(), b.len()) }
+        bun_core::ZStr::from_cstr(unsafe { core::ffi::CStr::from_ptr(p) })
     }
 
     /// Construct a `Builtin` for `kind`, install it into the owning Cmd's

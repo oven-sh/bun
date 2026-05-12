@@ -1988,16 +1988,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                         if written > 0 {
                             if remaining_in_buffered_len > 0 {
                                 self.buffered_data_for_node_net.with_mut(|b| {
-                                    let input_buffer = b.slice_mut();
-                                    // SAFETY: overlapping copy within the same buffer.
-                                    unsafe {
-                                        core::ptr::copy(
-                                            input_buffer.as_ptr().add(written),
-                                            input_buffer.as_mut_ptr(),
-                                            remaining_in_buffered_len,
-                                        );
-                                    }
-                                    unsafe { b.set_len(remaining_in_buffered_len) };
+                                    // `remaining_in_buffered_len > 0` ⇒ `written < b.len()`,
+                                    // so `written..` is in-bounds; safe overlapping memmove.
+                                    b.copy_within(written.., 0);
+                                    b.truncate(remaining_in_buffered_len);
                                 });
                             }
                         }
@@ -2034,15 +2028,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                         let len = b.len() as usize - wrote_u;
                         debug_assert!(len <= b.len() as usize);
                         debug_assert!(len <= b.capacity() as usize);
-                        // SAFETY: overlapping copy within the same buffer.
-                        unsafe {
-                            core::ptr::copy(
-                                b.as_mut_ptr().add(wrote_u),
-                                b.as_mut_ptr(),
-                                len,
-                            );
-                        }
-                        unsafe { b.set_len(len) };
+                        // `wrote_u < b.len()` (else branch) — safe overlapping memmove.
+                        b.copy_within(wrote_u.., 0);
+                        b.truncate(len);
                     }
                 });
             }
@@ -2304,15 +2292,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                 self.buffered_data_for_node_net.with_mut(|b| {
                     if b.len() as usize > written {
                         let remaining_len = b.len() as usize - written;
-                        // SAFETY: overlapping copy within the same buffer.
-                        unsafe {
-                            core::ptr::copy(
-                                b.as_mut_ptr().add(written),
-                                b.as_mut_ptr(),
-                                remaining_len,
-                            );
-                        }
-                        unsafe { b.set_len(remaining_len) };
+                        // `written < b.len()` — safe overlapping memmove.
+                        b.copy_within(written.., 0);
+                        b.truncate(remaining_len);
                     } else {
                         b.clear_and_free();
                     }

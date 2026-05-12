@@ -574,13 +574,11 @@ impl NetworkTask {
         // identical pattern in `s3/simple_request.rs`.
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
         let http_proxy = pm.http_proxy(&url);
-        // SAFETY: ptr is non-null on both branches above (allocate() or static buf).
-        let headers_buf: &'static [u8] = unsafe {
-            bun_core::ffi::slice(
-                header_builder.content.ptr.unwrap().as_ptr(),
-                header_builder.content.len,
-            )
-        };
+        // `written_slice()` is the safe (ptr,len) accessor; only the `'static`
+        // erasure remains unsafe — the buffer is leaked into the HTTP client
+        // below (`mem::forget`), so it genuinely outlives this frame.
+        let headers_buf: &'static [u8] =
+            unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
         // PORT NOTE: Zig has no destructors — `header_builder.content` is
         // intentionally leaked (ownership transfers to the HTTP client).
         // Forget it so `StringBuilder::drop` doesn't free the buffer that
@@ -747,13 +745,10 @@ impl NetworkTask {
                 append_auth(&mut header_builder, scope);
             }
 
-            // SAFETY: `allocate()` set `content.ptr` to a valid allocation of `len` bytes.
-            header_buf = unsafe {
-                bun_core::ffi::slice(
-                    header_builder.content.ptr.unwrap().as_ptr(),
-                    header_builder.content.len,
-                )
-            };
+            // `written_slice()` is the safe (ptr,len) accessor; only the
+            // `'static` erasure remains unsafe — buffer is leaked below.
+            header_buf =
+                unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
         }
         // PORT NOTE: Zig has no destructors — `header_builder.content` is
         // intentionally leaked (ownership transfers to the HTTP client).

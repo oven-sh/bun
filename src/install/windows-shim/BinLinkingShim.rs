@@ -497,28 +497,23 @@ pub fn loose_decode(input: &[u8]) -> Option<Decoded<'_>> {
     if input.len() < FLAGS_SIZE + 2 * size_of::<u32>() + 8 {
         return None;
     }
-    // SAFETY: bounds checked above; Zig read via `*align(1) const Flags`.
-    let flags = Flags::from_bits(unsafe {
-        input
-            .as_ptr()
-            .add(input.len() - FLAGS_SIZE)
-            .cast::<u16>()
-            .read_unaligned()
-    });
+    // Zig read via `*align(1) const Flags`; bounds checked above so the trailing
+    // 2-byte slice is in range. `pod_read_unaligned` is the safe equivalent of
+    // `ptr.cast::<u16>().read_unaligned()` over a `&[u8]`.
+    let flags = Flags::from_bits(bytemuck::pod_read_unaligned::<u16>(
+        &input[input.len() - FLAGS_SIZE..],
+    ));
     if !flags.is_valid() {
         return None;
     }
 
     let bin_path_u8: &[u8] = if flags.has_shebang() {
         'bin_path_u8: {
-            // SAFETY: bounds checked above; unaligned u32 read.
-            let bin_path_byte_len = unsafe {
-                input
-                    .as_ptr()
-                    .add(input.len() - FLAGS_SIZE - 2 * size_of::<u32>())
-                    .cast::<u32>()
-                    .read_unaligned()
-            } as usize;
+            // Bounds checked above; unaligned u32 read via safe `bytemuck`.
+            let off = input.len() - FLAGS_SIZE - 2 * size_of::<u32>();
+            let bin_path_byte_len = bytemuck::pod_read_unaligned::<u32>(
+                &input[off..off + size_of::<u32>()],
+            ) as usize;
             if bin_path_byte_len % 2 != 0 {
                 return None;
             }

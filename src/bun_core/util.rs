@@ -1997,19 +1997,30 @@ fn thread_id() -> u64 {
     // SAFETY: `gettid` has no preconditions.
     unsafe { libc::syscall(libc::SYS_gettid) as u64 }
     #[cfg(target_os = "macos")]
-    unsafe {
+    {
         // Darwin: pthread_threadid_np(NULL, &tid) — same call Zig std uses.
+        // `&mut u64` is ABI-identical to `uint64_t *`; an invalid `thread`
+        // returns ESRCH (no UB), so `safe fn` discharges the link-time proof.
+        unsafe extern "C" {
+            safe fn pthread_threadid_np(thread: libc::pthread_t, thread_id: &mut u64) -> core::ffi::c_int;
+        }
         let mut tid: u64 = 0;
-        libc::pthread_threadid_np(0, &mut tid);
+        pthread_threadid_np(0, &mut tid);
         tid
     }
     #[cfg(target_os = "freebsd")]
-    // SAFETY: pthread_getthreadid_np() is infallible and returns the kernel LWP id.
-    unsafe { libc::pthread_getthreadid_np() as u64 }
+    {
+        // No args; infallible; returns the kernel LWP id.
+        unsafe extern "C" { safe fn pthread_getthreadid_np() -> core::ffi::c_int; }
+        pthread_getthreadid_np() as u64
+    }
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))))]
-    // Fallback: pthread_self() handle as u64 (opaque but stable per-thread).
-    // On the BSDs `pthread_t` is a raw pointer, which must route through usize.
-    unsafe { libc::pthread_self() as usize as u64 }
+    {
+        // Fallback: pthread_self() handle as u64 (opaque but stable per-thread).
+        // On the BSDs `pthread_t` is a raw pointer, which must route through usize.
+        unsafe extern "C" { safe fn pthread_self() -> libc::pthread_t; }
+        pthread_self() as usize as u64
+    }
     #[cfg(windows)]
     {
         unsafe extern "system" { safe fn GetCurrentThreadId() -> u32; }

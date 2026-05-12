@@ -116,7 +116,6 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "tls"_s,
     "trace_events"_s,
     "tty"_s,
-    "undici"_s,
     "url"_s,
     "util"_s,
     "util/types"_s,

@@ -943,13 +943,13 @@ impl FileSink {
                 } else {
                     "slot reuse type unknown"
                 };
-                #[cfg(debug_assertions)]
+                #[cfg(windows)]
                 let freed_bt = FREED_AT
                     .lock()
                     .ok()
                     .and_then(|m| m.get(&(self as *const _ as usize)).cloned())
                     .unwrap_or_else(|| "<no deinit backtrace recorded>".into());
-                #[cfg(not(debug_assertions))]
+                #[cfg(not(windows))]
                 let freed_bt = String::from("<no FREED_AT entry — never reached deinit; m_sinkPtr was bogus from start OR deinit not called>");
                 panic!(
                     "FileSink::finalize: bad magic {m:#x} (LIVE={:#x} DEAD={:#x}) at self={:p}; \

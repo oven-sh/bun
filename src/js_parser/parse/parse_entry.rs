@@ -721,9 +721,9 @@ impl<'a> Parser<'a> {
         // double-free hazard.
         let Parser { options, lexer, log, source, define, bump } = self;
 
-        // `lexer.log` is `NonNull<Log>` aliasing `log`; reborrow at the use site.
-        // SAFETY: pointee outlives `'a` (enforced by `Parser::init`).
-        let orig_error_count = unsafe { (*log.as_ptr()).errors };
+        // `lexer.log` aliases `log`; route through the centralised
+        // `Lexer::log()` accessor so this site stays safe.
+        let orig_error_count = lexer.log().errors;
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
@@ -775,11 +775,7 @@ impl<'a> Parser<'a> {
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         #[cfg(not(target_arch = "wasm32"))]
         if true /* TODO(b2-blocked): feature_flag */ {
-            if let Some(cache_ptr) = p.options.features.runtime_transpiler_cache {
-                // SAFETY: `runtime_transpiler_cache` is `Option<*mut _>` (see
-                // parser.rs PORT NOTE) — the caller guarantees the pointer is
-                // unique and outlives the parse; Zig held `*RuntimeTranspilerCache`.
-                let cache = unsafe { &mut *cache_ptr };
+            if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                 // TODO(port): `Path::is_node_module`/`is_jsx_file` live on the
                 // resolver `fs::Path` (not the logger stub) — inline their
                 // bodies until the logger Path grows them.
@@ -1819,11 +1815,10 @@ impl<'a> Parser<'a> {
                     || item.path.text == b"@jest/globals"
                     || item.path.text == b"vitest"
                 {
-                    if let Some(cache_ptr) = p.options.features.runtime_transpiler_cache {
+                    if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                         // If we rewrote import paths, we need to disable the runtime transpiler cache
                         if item.path.text != b"bun:test" {
-                            // SAFETY: see PORT NOTE on `runtime_transpiler_cache` field.
-                            unsafe { &mut *cache_ptr }.input_hash = None;
+                            cache.input_hash = None;
                         }
                     }
 
@@ -1962,9 +1957,8 @@ impl<'a> Parser<'a> {
             }
 
             // If we injected jest globals, we need to disable the runtime transpiler cache
-            if let Some(cache_ptr) = p.options.features.runtime_transpiler_cache {
-                // SAFETY: see PORT NOTE on `runtime_transpiler_cache` field.
-                unsafe { &mut *cache_ptr }.input_hash = None;
+            if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
+                cache.input_hash = None;
             }
         }
 
@@ -2163,9 +2157,7 @@ impl<'a> Parser<'a> {
 
         #[cfg(not(target_arch = "wasm32"))]
         if true /* TODO(b2-blocked): feature_flag */ {
-            if let Some(cache_ptr) = p.options.features.runtime_transpiler_cache {
-                // SAFETY: see PORT NOTE on `runtime_transpiler_cache` field.
-                let cache = unsafe { &mut *cache_ptr };
+            if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                 if p.macro_call_count != 0 {
                     // disable this for:
                     // - macros

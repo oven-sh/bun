@@ -1303,15 +1303,15 @@ pub mod math {
 
     unsafe extern "C" {
         // Zig: `extern "c" fn Bun__JSC__operationMathPow(f64, f64) f64;`
-        fn Bun__JSC__operationMathPow(x: f64, y: f64) -> f64;
+        // Pure FFI (value-type args, no pointers, no errno) → no caller preconditions.
+        safe fn Bun__JSC__operationMathPow(x: f64, y: f64) -> f64;
     }
 
     /// JSC-compatible `Math.pow` (matches WebKit's `operationMathPow` corner-case
     /// handling for NaN/±∞/±0 — `std::powf` differs on a handful of inputs).
     #[inline]
     pub fn pow(x: f64, y: f64) -> f64 {
-        // SAFETY: pure FFI, no pointers, no errno.
-        unsafe { Bun__JSC__operationMathPow(x, y) }
+        Bun__JSC__operationMathPow(x, y)
     }
 }
 // ─── from bun_bundler::v2::MangledProps (src/bundler/bundle_v2.zig) ─────────

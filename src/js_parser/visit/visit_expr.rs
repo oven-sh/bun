@@ -723,11 +723,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             (record.path.text, record.range)
                         };
                         // We must visit it to convert inline_identifiers and record usage
-                        // Hoist the `Log` reborrow before the disjoint
-                        // `&mut p.options.macro_context` borrow so both can be
-                        // passed to one call (Zig held two raw `*Log`).
-                        // SAFETY: see `P::log()` — pointee outlives `'a`.
-                        let log = unsafe { &mut *p.log.as_ptr() };
+                        // Reborrow via the field-disjoint `Lexer::log()` accessor
+                        // so `&p.lexer` and `&mut p.options` split cleanly under
+                        // borrowck — Zig held two raw `*Log`.
+                        let log = p.lexer.log();
                         let source = p.source;
                         let Ok(macro_result) = p
                             .options
@@ -2042,11 +2041,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let copied = Expr { loc: expr.loc, data: expr.data };
                 let start_error_count = p.log().msgs.len();
                 p.macro_call_count += 1;
-                // Hoist the `Log` reborrow before the disjoint
-                // `&mut p.options.macro_context` borrow so both can be passed
-                // to one call (Zig held two raw `*Log`).
-                // SAFETY: see `P::log()` — pointee outlives `'a`.
-                let log = unsafe { &mut *p.log.as_ptr() };
+                // Reborrow via the field-disjoint `Lexer::log()` accessor
+                // so `&p.lexer` and `&mut p.options` split cleanly under
+                // borrowck — Zig held two raw `*Log`.
+                let log = p.lexer.log();
                 let source = p.source;
                 let macro_result = match p
                     .options

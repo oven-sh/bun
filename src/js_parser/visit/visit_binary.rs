@@ -450,16 +450,14 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data) {
                         // TODO(port): move to <area>_sys
                         unsafe extern "C" {
-                            fn fmod(x: f64, y: f64) -> f64;
+                            // libc fmod is pure (value-type args, no errno, no pointers) → no caller preconditions.
+                            safe fn fmod(x: f64, y: f64) -> f64;
                         }
                         return p.new_expr(
                             // Use libc fmod here to be consistent with what JavaScriptCore does
                             // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
                             // PORT NOTE: Zig had a non-native fallback to std.math.mod; Rust targets are always native.
-                            E::Number {
-                                // SAFETY: libc fmod is pure on finite/NaN inputs; matches JSC behavior.
-                                value: unsafe { fmod(vals[0], vals[1]) },
-                            },
+                            E::Number { value: fmod(vals[0], vals[1]) },
                             v.loc,
                         );
                     }

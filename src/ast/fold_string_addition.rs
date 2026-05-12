@@ -116,25 +116,25 @@ fn join_strings(left: &E::EString, right: &E::EString, has_inlined_enum_poison: 
     new
 }
 
-/// `std.mem.concat(arena, E.TemplatePart, &.{a, b})` — bitwise concat into
-/// the bump arena. `TemplatePart` is POD-shaped (no Drop) but not `Copy`
-/// because `EString` opted out, so we go through raw `copy_nonoverlapping`.
+/// `std.mem.concat(arena, E.TemplatePart, &.{a, b})` — concat into the bump
+/// arena. `TemplatePart` is POD-shaped (no Drop) but not `Copy` because
+/// `EString` opted out; mirror `Template::fold`'s field-wise copy via
+/// `shallow_clone` instead of raw `copy_nonoverlapping`.
 fn concat_parts(
     bump: &Arena,
     a: &[e::TemplatePart],
     b: &[e::TemplatePart],
 ) -> crate::StoreSlice<e::TemplatePart> {
-    let len = a.len() + b.len();
-    let layout = core::alloc::Layout::array::<e::TemplatePart>(len).expect("OOM");
-    // SAFETY: arena alloc + bitwise copy of POD-like elements. `alloc_layout`
-    // returns a fresh `NonNull<u8>` with mutable provenance; build the slice
-    // directly so writers downstream retain that provenance.
-    unsafe {
-        let ptr = bump.alloc_layout(layout).as_ptr().cast::<e::TemplatePart>();
-        core::ptr::copy_nonoverlapping(a.as_ptr(), ptr, a.len());
-        core::ptr::copy_nonoverlapping(b.as_ptr(), ptr.add(a.len()), b.len());
-        crate::StoreSlice::new_mut(core::slice::from_raw_parts_mut(ptr, len))
+    let mut v = bun_alloc::ArenaVec::<e::TemplatePart>::with_capacity_in(a.len() + b.len(), bump);
+    for p in a.iter().chain(b.iter()) {
+        // Zig `var part = part.*` — field-wise copy (all fields structurally `Copy`).
+        v.push(e::TemplatePart {
+            value: p.value,
+            tail_loc: p.tail_loc,
+            tail: p.tail.shallow_clone(),
+        });
     }
+    crate::StoreSlice::from_bump(v)
 }
 
 /// Transforming the left operand into a string is not safe if it comes from a

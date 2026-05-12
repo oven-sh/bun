@@ -1565,10 +1565,17 @@ impl FileSink {
         // JSValue bits back through this `void**`.
         let signal_ptr: *mut *mut c_void =
             unsafe { (&raw mut (*self.signal.as_ptr()).ptr).cast::<*mut c_void>() };
-        // Controller wrapper holds the same `m_sinkPtr`; its dtor calls
-        // `FileSink__finalize` too. Take a +1 for it (balanced by that
-        // finalize's `deref()`), separate from the transient `_guard` above.
-        self.ref_();
+        // Zig parity (FileSink.zig:801-802): only the transient `_guard` above
+        // — NO per-wrapper +1 for the controller. df4f2c44 added a `ref_()`
+        // here under the (false) premise that Zig refs per-wrapper; it does
+        // not. The JS builtins always call `controller.end()`/`.close()`
+        // (`${controller}__end/close` → `controller->detach()` → m_sinkPtr=null)
+        // before GC, so the controller's dtor never reaches `finalize` and
+        // that +1 was never balanced — pure leak on every `assign_to_stream`,
+        // plus an unconditional leak on the `to_error()` early-return below
+        // (the controller IS allocated before the throwing JS call). The
+        // 3-ladder #53265 audit (blob-writer / iowriter-callbacks /
+        // to_result-ref) found no over-deref this could be masking.
         let promise_result = JSSink::assign_to_stream(global_this, stream.value, self, signal_ptr);
 
         if let Some(err) = promise_result.to_error() {

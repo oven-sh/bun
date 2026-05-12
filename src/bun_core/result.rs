@@ -17,7 +17,7 @@
 
 use core::fmt;
 use core::num::NonZeroU16;
-use parking_lot::RwLock;
+use crate::RwLock;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

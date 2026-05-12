@@ -25,7 +25,14 @@ test("process.send() returns false under IPC backpressure", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stdout, stderr, exitCode }).toMatchObject({ stderr: "", exitCode: 0 });
+  // `bunEnv` enables ASAN in debug builds, which prints one-off warnings to
+  // stderr on some hosts. Strip those before asserting the child was silent.
+  const stderrLines = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderrLines).toBe("");
+
   expect(stdout).not.toContain("NEVER_BACKPRESSURED");
   // Child ran out of kernel buffer and process.send() returned false.
   const firstFalse = stdout.match(/firstFalseAt=(\d+)/);
@@ -41,4 +48,6 @@ test("process.send() returns false under IPC backpressure", async () => {
   const parent = stdout.match(/parent received=(\d+) exit=0/);
   expect(parent).not.toBeNull();
   expect(Number(parent[1])).toBe(Number(drained[1]));
+
+  expect(exitCode).toBe(0);
 });

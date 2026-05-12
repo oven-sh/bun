@@ -776,13 +776,12 @@ impl Value {
             if let Some(bytes) = wtf_impl(&str).to_utf8_if_needed() {
                 // Zig: `fromOwnedSlice(@constCast(bytes.slice()))` — the UTF-8 buffer is
                 // already heap-owned by the slice wrapper; transfer it (no copy).
+                // Zig's `defer str.deref()` is now handled by `Value::drop` on the
+                // overwritten `WTFStringImpl` variant — do NOT deref explicitly here.
                 *self = Value::InternalBlob(InternalBlob {
                     bytes: bytes.into_vec(),
                     was_string: true,
                 });
-                // Zig: `var str = this.WTFStringImpl; defer str.deref();` — release the
-                // +1 the body held now that we've replaced the variant.
-                wtf_impl(&str).deref();
             }
         }
 
@@ -1294,12 +1293,12 @@ impl Value {
         self.to_blob_if_possible();
 
         match self {
-            Value::Blob(_) => {
-                // PORT NOTE: reshaped for borrowck — replace self first, then extract.
-                let old = core::mem::replace(self, Value::Used);
-                let Value::Blob(new_blob) = old else {
-                    unreachable!()
-                };
+            Value::Blob(b) => {
+                // PORT NOTE: `Value` has `Drop`, so we cannot move the `Blob` out by
+                // value (E0509). `mem::take` leaves a default `Blob` whose `deinit()`
+                // (run by `Value::drop` on the assignment below) is a no-op.
+                let new_blob = core::mem::take(b);
+                *self = Value::Used;
                 debug_assert!(!new_blob.is_heap_allocated()); // owned by Body
                 new_blob
             }
@@ -1318,8 +1317,10 @@ impl Value {
             }
             Value::WTFStringImpl(wtf) => {
                 let wtf = *wtf;
-                *self = Value::Used;
-                // The body's +1 keeps it alive across `to_utf8_if_needed`/`latin1_slice`.
+                // Transfer the body's +1 to local `wtf`; suppress `Value::drop` (which
+                // would deref) so the StringImpl stays alive across
+                // `to_utf8_if_needed`/`latin1_slice` and is released exactly once below.
+                core::mem::forget(core::mem::replace(self, Value::Used));
                 let wtf_ref = wtf_impl(&wtf);
                 // SAFETY: VirtualMachine::get() returns the live per-thread VM.
                 let global = VirtualMachine::get().global();
@@ -1361,8 +1362,11 @@ impl Value {
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
             Value::WTFStringImpl(str) => {
                 if wtf_impl(str).can_use_as_utf8() {
-                    // Transfer the body's +1 to AnyBlob; `*self = Used` below drops nothing.
-                    AnyBlob::WTFStringImpl(*str)
+                    // Transfer the body's +1 to AnyBlob; suppress `Value::drop` so the
+                    // assignment below does not deref the StringImpl we just handed out.
+                    let s = *str;
+                    core::mem::forget(core::mem::replace(self, Value::Used));
+                    return Some(AnyBlob::WTFStringImpl(s));
                 } else {
                     return None;
                 }
@@ -1381,14 +1385,20 @@ impl Value {
 
     pub fn use_as_any_blob(&mut self) -> AnyBlob {
         let was_null = matches!(self, Value::Null);
-        let any_blob: AnyBlob = match core::mem::replace(self, Value::Used) {
-            Value::Blob(b) => AnyBlob::Blob(b),
-            Value::InternalBlob(b) => AnyBlob::InternalBlob(b),
+        // PORT NOTE: `Value` has `Drop`, so we cannot `mem::replace` then
+        // destructure by value (E0509). Match by `&mut` and `mem::take` the
+        // payload; the trailing `*self = Used/Null` runs `Value::drop` on the
+        // emptied/residual variant (no-op for taken Blob/InternalBlob, releases
+        // the +1 for the UTF-8-converted WTFStringImpl arm, deinit for Locked).
+        let any_blob: AnyBlob = match self {
+            Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
+            Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
             Value::WTFStringImpl(str) => 'brk: {
+                let str = *str;
                 let wtf_ref = wtf_impl(&str);
                 if let Some(utf8) = wtf_ref.to_utf8_if_needed() {
-                    // Zig: `defer str.deref()` — release the body's +1.
-                    wtf_ref.deref();
+                    // Zig: `defer str.deref()` — handled by `Value::drop` on the
+                    // assignment below (the variant is still `WTFStringImpl(str)`).
                     break 'brk AnyBlob::InternalBlob(InternalBlob {
                         // Zig: `fromOwnedSlice(@constCast(utf8.slice()))` — transfer
                         // ownership of the heap-allocated UTF-8 buffer (no copy).
@@ -1396,20 +1406,15 @@ impl Value {
                         was_string: true,
                     });
                 } else {
-                    // Transfer the body's +1 into AnyBlob.
+                    // Transfer the body's +1 into AnyBlob; suppress `Value::drop`.
+                    core::mem::forget(core::mem::replace(self, Value::Used));
                     break 'brk AnyBlob::WTFStringImpl(str);
                 }
             }
             // Value::InlineBlob(b) => AnyBlob::InlineBlob(b),
-            Value::Locked(mut l) => {
-                let result = l
-                    .to_any_blob_allow_promise()
-                    .unwrap_or(AnyBlob::Blob(Blob::default()));
-                // PORT NOTE: reshaped — Zig kept Locked in place via &this.Locked; here we
-                // moved it out via mem::replace. Put it back if we still need Locked state? No —
-                // Zig overwrites *self below regardless.
-                result
-            }
+            Value::Locked(l) => l
+                .to_any_blob_allow_promise()
+                .unwrap_or(AnyBlob::Blob(Blob::default())),
             _ => AnyBlob::Blob(Blob::default()),
         };
 
@@ -1421,12 +1426,18 @@ impl Value {
 
     pub fn use_as_any_blob_allow_non_utf8_string(&mut self) -> AnyBlob {
         let was_null = matches!(self, Value::Null);
-        let any_blob: AnyBlob = match core::mem::replace(self, Value::Used) {
-            Value::Blob(b) => AnyBlob::Blob(b),
-            Value::InternalBlob(b) => AnyBlob::InternalBlob(b),
-            Value::WTFStringImpl(s) => AnyBlob::WTFStringImpl(s),
+        // PORT NOTE: see `use_as_any_blob` — match by `&mut` to avoid E0509.
+        let any_blob: AnyBlob = match self {
+            Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
+            Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
+            Value::WTFStringImpl(s) => {
+                let s = *s;
+                // Transfer the body's +1 into AnyBlob; suppress `Value::drop`.
+                core::mem::forget(core::mem::replace(self, Value::Used));
+                AnyBlob::WTFStringImpl(s)
+            }
             // Value::InlineBlob(b) => AnyBlob::InlineBlob(b),
-            Value::Locked(mut l) => l
+            Value::Locked(l) => l
                 .to_any_blob_allow_promise()
                 .unwrap_or(AnyBlob::Blob(Blob::default())),
             _ => AnyBlob::Blob(Blob::default()),
@@ -1444,11 +1455,14 @@ impl Value {
         global: &JSGlobalObject,
     ) -> JsTerminated<()> {
         if let Value::Locked(_) = self {
-            // PORT NOTE: reshaped for borrowck — extract locked by value, then write Error.
-            let old = core::mem::replace(self, Value::Error(err));
-            let Value::Locked(mut locked) = old else {
-                unreachable!()
+            // PORT NOTE: reshaped for borrowck + E0509 (`Value` has `Drop`) — `mem::take`
+            // the `PendingValue` out (leaves `Locked(default)`, whose Drop is a no-op on
+            // an empty readable), then overwrite with `Error`.
+            let mut locked = match self {
+                Value::Locked(l) => core::mem::take(l),
+                _ => unreachable!(),
             };
+            *self = Value::Error(err);
             let Value::Error(err_ref) = self else {
                 unreachable!()
             };
@@ -1506,37 +1520,57 @@ impl Value {
         )
     }
 
-    // PORT NOTE: not a clean Drop — mutates self to Null and is called explicitly at specific
-    // protocol points. Renamed from `deinit` per PORTING.md (never expose `pub fn deinit(&mut self)`).
+    // PORT NOTE: mutates self to Null and is called explicitly at specific protocol points.
+    // Renamed from `deinit` per PORTING.md (never expose `pub fn deinit(&mut self)`). Now
+    // delegates the actual resource release to `Drop` (below) via assignment, so a later
+    // `HiveArray::put()` → `drop_in_place` on the resulting `Null` is a guaranteed no-op
+    // (idempotent — no double-free).
     pub fn reset(&mut self) {
+        if let Value::Locked(locked) = self {
+            // Locked stays Locked (callers may still inspect the variant after
+            // reset()); flip the `deinit` latch so Drop is a no-op afterwards.
+            if !locked.deinit {
+                locked.deinit = true;
+                locked.readable.deinit();
+                locked.readable = Default::default();
+            }
+            return;
+        }
+        // Assignment runs `Drop` on the old variant: deref WTFStringImpl, deinit
+        // Blob, free InternalBlob's Vec, reset Error. Null/Used/Empty are no-ops.
+        *self = Value::Null;
+    }
+}
+
+/// Spec: `Body.Value.deinit` (Body.zig). Runs when a `HiveRef<Value>` slot is
+/// recycled (`HiveArray::Fallback::put` → `drop_in_place`) — Zig's
+/// `if @hasDecl(T, "deinit") this.value.deinit()` in `HiveRef::unref` was
+/// mapped to `T::drop` in the Rust port (see `bun_collections::HiveRef::unref`),
+/// so without this impl `Request`/`Response` GC finalization leaked
+/// `WTFStringImpl` refs / `Blob` stores / `InternalBlob` buffers (H3 elysia rss).
+///
+/// Unlike `reset()` this never reassigns `*self` (it's already being torn
+/// down), so calling `reset()` first then dropping (or dropping a `Null`
+/// produced by `reset()`) is a no-op second pass — no double-free.
+impl Drop for Value {
+    fn drop(&mut self) {
         match self {
             Value::Locked(locked) => {
                 if !locked.deinit {
                     locked.deinit = true;
                     locked.readable.deinit();
-                    locked.readable = Default::default();
                 }
             }
-            Value::InternalBlob(_) => {
-                // Zig: `clearAndFree` — handled by dropping the Vec via assignment.
-                *self = Value::Null;
-            }
-            Value::WTFStringImpl(s) => {
-                // Zig: `this.WTFStringImpl.deref(); this.* = .Null;` — release the
-                // intrusive +1 the body holds. WTFStringImpl is a Copy raw ptr with no
-                // Drop, so we must deref explicitly.
-                wtf_impl(s).deref();
-                *self = Value::Null;
-            }
-            Value::Blob(b) => {
-                b.deinit();
-                *self = Value::Null;
-            }
+            Value::WTFStringImpl(s) => wtf_impl(s).deref(),
+            Value::Blob(b) => b.deinit(),
             Value::Error(e) => e.reset(),
-            Value::Used | Value::Empty | Value::Null => {}
+            // `InternalBlob`'s `Vec<u8>` is freed by the compiler's drop glue.
+            Value::InternalBlob(_) | Value::Used | Value::Empty | Value::Null => {}
         }
     }
+}
 
+impl Value {
     // TODO(b2-blocked): ByteStream::Source — see `to_readable_stream`. The
     // tail half of `tee()` constructs a `ByteStream::Source` to back a fresh
     // ReadableStream; un-gate once the real ByteStream port lands.

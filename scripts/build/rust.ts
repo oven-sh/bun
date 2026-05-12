@@ -435,6 +435,19 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (!cfg.debug) {
     rustflags.push("--cfg=bun_codegen_embed");
   }
+  // Drop `#[track_caller]` source-location capture in release. Every
+  // `Option::unwrap`/`slice[i]`/`RefCell::borrow` etc. otherwise emits a
+  // `&'static core::panic::Location` (file/line/col), and the file path is a
+  // separate `&'static str` — together ~180 KB of `.data.rel.ro` across the
+  // crate graph (plus the per-call-site `lea` to load it). Release ships
+  // `panic = "abort"` and the crash handler resolves backtraces from frame
+  // pointers, so the textual location is never printed anyway. Kept for
+  // debug and `release-assertions` where panic messages are read by humans.
+  // Nightly-only flag; the pinned toolchain in `rust-toolchain.toml` is
+  // nightly.
+  if (cfg.release && !cfg.assertions) {
+    rustflags.push("-Zlocation-detail=none");
+  }
   // Force lld for any link rustc itself performs (the cdylib/staticlib deps
   // like `lol_html_c_api`; the `bun_bin` staticlib has no link step). The
   // default `cc` driver picks BFD `/usr/bin/ld`, which doesn't match the
@@ -697,6 +710,65 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   n.blank();
 
   return [lib];
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// startup.order hash resolution
+// ───────────────────────────────────────────────────────────────────────────
+
+/** `${buildDir}/startup.order.resolved` — what `--symbol-ordering-file` points at. */
+export function startupOrderResolvedPath(cfg: Config): string {
+  return resolve(cfg.buildDir, "startup.order.resolved");
+}
+
+/**
+ * Emit the step that rewrites `src/startup.order`'s stale Rust v0-mangling
+ * crate hashes against the just-built `libbun_rust.a` and writes the result
+ * to `startup.order.resolved`. Runs between `cargo build` and `link`; the
+ * resolved file is what `flags.ts` passes to `-Wl,--symbol-ordering-file=`
+ * and what `linkDepends()` lists as an implicit link input.
+ *
+ * Linux release only — that's the sole config where the ordering flag is
+ * active (see flags.ts). Everywhere else this is a no-op and the link
+ * doesn't read the file.
+ *
+ * Why a build step instead of regenerating `src/startup.order` in-tree:
+ * the disambiguator hash is a function of the entire upstream crate graph
+ * (rustc version, Cargo.lock, feature set, source). A checked-in file with
+ * baked hashes is stale on the next merge; lld then silently drops 80%+ of
+ * the Rust entries (paired with `--no-warn-symbol-ordering`) and the hot
+ * path falls back to fat-LTO crate-alphabetical layout. Rewriting at link
+ * time keeps the human-authored ordering stable and immune to metadata
+ * drift. See scripts/build/rewrite-startup-order.ts for the algorithm.
+ */
+export function emitStartupOrder(n: Ninja, cfg: Config, rustLibs: string[]): void {
+  if (!(cfg.linux && cfg.release)) return;
+
+  const out = startupOrderResolvedPath(cfg);
+  const src = resolve(cfg.cwd, "src/startup.order");
+  const script = resolve(cfg.cwd, "scripts/build/rewrite-startup-order.ts");
+  // llvm-nm lives next to llvm-ar in every LLVM install we resolve
+  // (tools.ts findLlvmTool). The script falls back to PATH `nm` if this
+  // path doesn't exist, so a non-standard layout still works.
+  const nm = join(dirname(cfg.ar), "llvm-nm");
+
+  // Host is linux here (linux release never cross-builds from non-linux),
+  // so no cmd.exe wrapping. Already-quoted jsRuntime is spliced directly.
+  const q = (p: string) => quote(p, false);
+  n.rule("startup_order", {
+    command: `${cfg.jsRuntime} ${q(script)} --nm=${q(nm)} --in=${q(src)} --out=$out $in`,
+    description: "gen startup.order.resolved",
+    // rewrite-startup-order.ts uses writeIfChanged → output mtime stays put
+    // when no hash moved → ninja prunes the (30s+) relink.
+    restat: true,
+  });
+  n.build({
+    outputs: [out],
+    rule: "startup_order",
+    inputs: rustLibs,
+    implicitInputs: [src, script],
+  });
+  n.blank();
 }
 
 /**

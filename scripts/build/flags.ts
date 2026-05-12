@@ -1014,9 +1014,15 @@ export const linkerFlags: Flag[] = [
     desc: "Dynamic symbol list + version script",
   },
   {
-    flag: c => [`-Wl,--symbol-ordering-file=${c.cwd}/src/startup.order`, "-Wl,--no-warn-symbol-ordering"],
+    // Not src/startup.order directly: that file's Rust v0-mangled entries
+    // bake in per-crate disambiguator hashes that churn on every dep/rustc
+    // bump. emitStartupOrder() (rust.ts) rewrites them against the
+    // just-built libbun_rust.a into this resolved copy so lld actually
+    // matches them. --no-warn-symbol-ordering stays so genuinely-removed
+    // functions degrade silently instead of failing the link.
+    flag: c => [`-Wl,--symbol-ordering-file=${c.buildDir}/startup.order.resolved`, "-Wl,--no-warn-symbol-ordering"],
     when: c => c.linux && c.release,
-    desc: "Cluster hot startup .text (RSS/iTLB); see src/startup.order to regenerate",
+    desc: "Cluster hot startup .text (RSS/iTLB); resolved from src/startup.order at link time",
   },
 
   // ─── FreeBSD ───
@@ -1093,7 +1099,12 @@ export function linkDepends(cfg: Config): string[] {
   if (cfg.darwin) return [join(cfg.cwd, "src/symbols.txt")];
   // linux: ELF dynamic-list + version script + .text ordering
   const deps = [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
-  if (cfg.release) deps.push(join(cfg.cwd, "src/startup.order"));
+  if (cfg.release) {
+    // Resolved copy (ninja output of emitStartupOrder in rust.ts), not the
+    // checked-in template — src/startup.order is an input to that step, so
+    // edits to it still relink transitively.
+    deps.push(join(cfg.buildDir, "startup.order.resolved"));
+  }
   return deps;
 }
 

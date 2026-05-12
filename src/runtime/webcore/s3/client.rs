@@ -757,7 +757,7 @@ pub fn upload_stream(
         .to_js());
     }
 
-    match &readable_stream.ptr {
+    match readable_stream.ptr {
         ReadableStreamPtr::Invalid => {
             credentials.deref();
             return Ok(bun_jsc::JSPromise::rejected_promise(
@@ -769,10 +769,10 @@ pub fn upload_stream(
         // TODO(port): Zig used `inline .File, .Bytes => |stream|` — File/Bytes payload types
         // differ (`*FileReader` vs `*ByteStream`), so the inline-captured `stream` has different
         // types per arm. Manual unroll once both have a `.pending` accessor.
-        ReadableStreamPtr::Bytes(stream) => {
-            // SAFETY: stream is a live `*mut ByteStream` from a JS-owned readable stream.
-            // R-2: `&` — `pending` is `JsCell`-wrapped.
-            let stream = unsafe { &**stream };
+        ReadableStreamPtr::Bytes(_) => {
+            // BACKREF: see `Source::bytes()` — payload live while the
+            // ReadableStream JS wrapper is rooted. R-2: `pending` is `JsCell`.
+            let stream = readable_stream.ptr.bytes().expect("matched Bytes");
             if matches!(stream.pending.get().result, crate::webcore::streams::StreamResult::Err(_)) {
                 // we got an error, fail early
                 let err = match stream.pending.with_mut(|p| {
@@ -797,9 +797,10 @@ pub fn upload_stream(
                 return Ok(bun_jsc::JSPromise::rejected_promise(global_this, js_err).to_js());
             }
         }
-        ReadableStreamPtr::File(stream) => {
-            // SAFETY: stream is a live `*mut FileReader` from a JS-owned readable stream.
-            let stream = unsafe { &mut **stream };
+        ReadableStreamPtr::File(_) => {
+            // BACKREF: see `Source::file()` — payload live while the
+            // ReadableStream JS wrapper is rooted. R-2: `pending` is `JsCell`.
+            let stream = readable_stream.ptr.file().expect("matched File");
             if matches!(stream.pending.get().result, crate::webcore::streams::StreamResult::Err(_)) {
                 // we got an error, fail early
                 let err = match stream.pending.with_mut(|p| {
@@ -1112,10 +1113,9 @@ pub fn readable_stream(
             });
 
             if let Some(readable) = self_.readable_stream_ref.get(&self_.global) {
-                if let ReadableStreamPtr::Bytes(bytes) = readable.ptr {
-                    // SAFETY: `bytes` is a live `*mut ByteStream` owned by the readable stream.
-                    // R-2: `&` (not `&mut`) — `on_data` re-enters JS.
-                    let bytes = unsafe { &*bytes };
+                // BACKREF: see `Source::bytes()` — payload live while the
+                // readable stream is rooted. R-2: `&` — `on_data` re-enters JS.
+                if let Some(bytes) = readable.ptr.bytes() {
                     if let Some(err) = request_err {
                         bytes.on_data(crate::webcore::streams::StreamResult::Err(
                             crate::webcore::streams::StreamError::JSValue(
@@ -1146,10 +1146,10 @@ pub fn readable_stream(
         /// Must be called before releasing readable_stream_ref.
         fn clear_stream_cancel_handler(&mut self) {
             if let Some(readable) = self.readable_stream_ref.get(&self.global) {
-                if let ReadableStreamPtr::Bytes(bytes) = readable.ptr {
-                    // SAFETY: `bytes` is a live `*mut ByteStream` owned by the readable stream.
-                    // R-2: shared deref + `Cell::set`.
-                    let source = unsafe { (*bytes).parent_const() };
+                // BACKREF: see `Source::bytes()` — payload live while the
+                // readable stream is rooted. R-2: shared deref + `Cell::set`.
+                if let Some(bytes) = readable.ptr.bytes() {
+                    let source = bytes.parent_const();
                     source.cancel_handler.set(None);
                     source.cancel_ctx.set(None);
                 }

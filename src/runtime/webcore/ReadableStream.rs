@@ -181,9 +181,10 @@ impl ReadableStream {
                     return Some(blob);
                 }
             }
-            Source::File(blobby) => {
-                // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
-                let blobby = unsafe { &mut *blobby };
+            Source::File(_) => {
+                // BACKREF: see `Source::file()` — payload valid while stream alive.
+                // R-2: `lazy`/`started` are `JsCell`/`Cell`; shared borrow suffices.
+                let blobby = self.ptr.file().expect("matched File");
                 if let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() {
                     // `store.clone()` carries the +1 that Zig's explicit `blob.store.?.ref()`
                     // provided after the raw-pointer copy in `initWithStore`.
@@ -547,6 +548,23 @@ impl Source {
         match self {
             Source::Bytes(p) => Some(bun_ptr::BackRef::from(
                 NonNull::new(p).expect("Source::Bytes payload is non-null"),
+            )),
+            _ => None,
+        }
+    }
+
+    /// Shared borrow of the `File` payload as a [`BackRef`](bun_ptr::BackRef).
+    ///
+    /// Same invariant as [`bytes`](Self::bytes): the pointer is the JS
+    /// wrapper's `m_ctx` heap allocation, non-null and live while the owning
+    /// `ReadableStream` JSValue is rooted. R-2: every `FileReader` field
+    /// touched through this borrow is `Cell`/`JsCell`-backed, so re-entrant JS
+    /// that re-derives a fresh `&FileReader` from `m_ctx` aliases shared-only.
+    #[inline]
+    pub fn file(self) -> Option<bun_ptr::BackRef<FileReader>> {
+        match self {
+            Source::File(p) => Some(bun_ptr::BackRef::from(
+                NonNull::new(p).expect("Source::File payload is non-null"),
             )),
             _ => None,
         }

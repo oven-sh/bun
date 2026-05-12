@@ -1606,25 +1606,19 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
 /// `generate_compile_result_for_{js,css}_chunk` callbacks. Thin wrapper over
 /// [`bundle_generate_chunk_action`] + [`bun_crash_handler::scoped_action`].
 ///
-/// # Safety
-/// `c` / `chunk` must carry valid provenance (see
-/// [`pending_part_range_prologue`]); transient `&` refs are materialized only
-/// to hand erased `*const ()` to the crash-trace vtable and are not retained
-/// past this expression.
+/// Callers materialise the `&LinkerContext` / `&Chunk` from the worker-task
+/// raw pointers (see [`pending_part_range_prologue`]); the borrows are only
+/// used to derive erased `*const ()` for the crash-trace vtable and are not
+/// retained past the `scoped_action` expression.
 #[cfg(feature = "show_crash_trace")]
 #[inline]
 #[must_use]
-pub(crate) unsafe fn crash_guard_for_part_range(
-    c: *const LinkerContext,
-    chunk: *const Chunk,
+pub(crate) fn crash_guard_for_part_range(
+    c: &LinkerContext<'_>,
+    chunk: &Chunk,
     part_range: &PartRange,
 ) -> bun_crash_handler::ActionGuard {
-    // SAFETY: per fn contract.
-    bun_crash_handler::scoped_action(bundle_generate_chunk_action(
-        unsafe { &*c },
-        unsafe { &*chunk },
-        part_range,
-    ))
+    bun_crash_handler::scoped_action(bundle_generate_chunk_action(c, chunk, part_range))
 }
 
 struct SubstituteChunkFinalPathResult {

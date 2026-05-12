@@ -69,9 +69,11 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // provenance); recover the raw `*mut [Chunk]` for the HTML loader, which
     // still needs `&mut [Chunk]` for `get_{js,css}_chunk_for_html`.
     let chunks: *mut [Chunk] = ctx.chunks.as_ptr();
-    // SAFETY: `chunk` is this task's exclusively-owned HTML chunk for the
-    // duration of the compile step; the result slot was pre-allocated.
-    let result = unsafe { generate_compile_result_for_html_chunk_impl(&*c, &*chunk, chunks) };
+    // SAFETY: `c` / `chunk` carry valid provenance from `GenerateChunkCtx`;
+    // `chunk` is this task's exclusively-owned HTML chunk for the duration of
+    // the compile step.
+    let (c_ref, chunk_ref) = unsafe { (&*c, &*chunk) };
+    let result = generate_compile_result_for_html_chunk_impl(c_ref, chunk_ref, chunks);
     // SAFETY: HTML chunks have exactly one part-range (i == 0); see
     // `Chunk::write_compile_result_slot` for the disjoint-slot contract.
     unsafe { Chunk::write_compile_result_slot(chunk, i, result) };
@@ -393,10 +395,12 @@ impl<'a> HTMLLoader<'a> {
     }
 }
 
-/// SAFETY: `chunk` must be an element of `*chunks`, and `*chunks` must remain
-/// valid for the duration of this call. `chunk` is only read here (held as a
-/// `BackRef` inside `HTMLLoader`); the caller retains the sole writer.
-unsafe fn generate_compile_result_for_html_chunk_impl<'a>(
+/// `chunk` is the HTML chunk being compiled (held read-only via `BackRef`
+/// inside `HTMLLoader`). `chunks` is the raw `*mut [Chunk]` from
+/// `GenerateChunkCtx.chunks` (write provenance, valid for the link step) —
+/// stored as-is and only deref'd at the guarded `&mut *` sites in
+/// `HTMLLoader::{on_tag,get_head_tags}` and the standalone-HTML branch below.
+fn generate_compile_result_for_html_chunk_impl<'a>(
     c: &'a LinkerContext<'a>,
     chunk: &Chunk,
     chunks: *mut [Chunk],

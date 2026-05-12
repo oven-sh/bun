@@ -183,17 +183,17 @@ impl EventIterator {
         // properly-aligned record header.
         let info: &w::FILE_NOTIFY_INFORMATION =
             unsafe { &*(buf_ptr.add(self.offset).cast::<w::FILE_NOTIFY_INFORMATION>()) };
-        // SAFETY: the variable-length filename begins at the FileName field of
-        // the record; `FileNameLength` (kernel-set) bounds the trailing UTF-16
-        // bytes which lie wholly inside `buf`. Wrap in `RawSlice` so callers
+        // The variable-length filename begins at the `FileName` field of the
+        // record; `FileNameLength` (kernel-set) bounds the trailing UTF-16
+        // bytes which lie wholly inside `buf`. Safe bounds-checked sub-slice of
+        // the owned `[u8; 64K]` buffer, then a `bytemuck`-checked u8→u16 view
+        // (alignment holds: `buf` is DWORD-aligned per the static assert above,
+        // `self.offset` advances by kernel `NextEntryOffset` which is DWORD-
+        // aligned, and `name_offset` == 12). Wrap in `RawSlice` so callers
         // re-borrow without an open-coded raw deref.
-        let filename: RawSlice<u16> = unsafe {
-            let name_ptr = buf_ptr.add(self.offset + name_offset).cast::<u16>();
-            RawSlice::new(core::slice::from_raw_parts(
-                name_ptr,
-                (info.FileNameLength as usize) / size_of::<u16>(),
-            ))
-        };
+        let name_start = self.offset + name_offset;
+        let name_bytes = &self.watcher.buf[name_start..name_start + info.FileNameLength as usize];
+        let filename: RawSlice<u16> = RawSlice::new(bun_core::cast_slice::<u8, u16>(name_bytes));
 
         // PORT NOTE: Zig `@enumFromInt` is safety-checked in debug; Rust `transmute`
         // into an exhaustive #[repr(u32)] enum is immediate UB on an unlisted

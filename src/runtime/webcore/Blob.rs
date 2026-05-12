@@ -4022,22 +4022,15 @@ fn write_file_with_empty_source_to_destination(
                                 let mut buf = bun_paths::PathBuffer::uninit();
                                 let mode: bun_sys::Mode =
                                     options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION);
-                                loop {
-                                    let open_res = bun_sys::open(
-                                        file.pathlike.path().slice_z(&mut buf),
-                                        bun_sys::O::CREAT | bun_sys::O::TRUNC,
-                                        mode,
-                                    );
-                                    match open_res {
-                                        bun_sys::Result::Err(e) => {
-                                            if e.get_errno() == bun_sys::E::EINTR { continue; }
-                                            *err = e;
-                                            break 'err;
-                                        }
-                                        bun_sys::Result::Ok(fd) => {
-                                            fd.close();
-                                            return Ok(JSPromise::resolved_promise_value(ctx, JSValue::js_number(0.0)));
-                                        }
+                                match bun_sys::File::open(
+                                    file.pathlike.path().slice_z(&mut buf),
+                                    bun_sys::O::CREAT | bun_sys::O::TRUNC,
+                                    mode,
+                                ) {
+                                    bun_sys::Result::Err(e) => { *err = e; break 'err; }
+                                    bun_sys::Result::Ok(f) => {
+                                        f.close();
+                                        return Ok(JSPromise::resolved_promise_value(ctx, JSValue::js_number(0.0)));
                                     }
                                 }
                             }

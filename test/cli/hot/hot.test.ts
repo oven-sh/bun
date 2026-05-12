@@ -754,7 +754,6 @@ const s = require("bun:jsc").heapStats();
 console.error(JSON.stringify({
   i: globalThis.__i,
   umpcb: s.objectTypeCounts.UnlinkedModuleProgramCodeBlock || 0,
-  strings: s.objectTypeCounts.string || 0,
 }));
 `,
       );
@@ -774,8 +773,6 @@ console.error(JSON.stringify({
 
     const target = 50;
     let maxCodeBlocks = 0;
-    let firstStrings = 0;
-    let lastStrings = 0;
     let reached = 0;
     let buf = "";
     outer: for await (const chunk of runner.stderr!) {
@@ -786,11 +783,9 @@ console.error(JSON.stringify({
         const line = buf.slice(0, nl);
         buf = buf.slice(nl + 1);
         if (!line.startsWith("{")) continue;
-        const { i, umpcb, strings } = JSON.parse(line);
+        const { i, umpcb } = JSON.parse(line);
         reached = i;
         maxCodeBlocks = Math.max(maxCodeBlocks, umpcb);
-        if (i === 5) firstStrings = strings;
-        lastStrings = strings;
         progressed = true;
         if (i >= target) {
           runner.kill();
@@ -805,12 +800,11 @@ console.error(JSON.stringify({
     // With the CodeCache cleared on every reload only the current module
     // graph's blocks survive a sync GC (bun:main + this file = 2). Without
     // it, one entry is added per reload and none are evicted inside the
-    // first ~10s, so this climbs to ~target.
+    // first ~10s, so this climbs to ~target. The leaked code block pins
+    // its SourceProvider and source string, so this single count covers
+    // the whole chain; a heap-wide JSString delta would be noisier under
+    // conservative GC / JIT tier-up without adding coverage.
     expect(maxCodeBlocks).toBeLessThan(10);
-
-    // Each leaked code block also pins its SourceProvider's source string,
-    // so the live JS string count drifts up ~2/reload without the fix.
-    expect(lastStrings - firstStrings).toBeLessThan(30);
   },
   longTimeout,
 );

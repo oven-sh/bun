@@ -1,4 +1,4 @@
-use strum::IntoStaticStr;
+use strum::{FromRepr, IntoStaticStr};
 
 // TODO(port): Zig source is a non-exhaustive `enum(u8)` (trailing `_`), meaning it may
 // legally hold any u8 value not listed below. A Rust `#[repr(u8)] enum` makes that UB.
@@ -7,7 +7,7 @@ use strum::IntoStaticStr;
 // with associated consts.
 #[allow(non_camel_case_types)]
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, IntoStaticStr)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, IntoStaticStr, FromRepr)]
 pub enum CharacterSet {
     big5_chinese_ci = 1,
     latin2_czech_cs = 2,
@@ -239,20 +239,15 @@ impl CharacterSet {
 
     /// Safely construct from a raw protocol byte. Zig's `CharacterSet` is a
     /// NON-exhaustive `enum(u8)` so `@enumFromInt` is defined for any byte;
-    /// this Rust enum is exhaustive, so unknown discriminants would be UB via
-    /// `transmute`. Unknown bytes fall back to `DEFAULT`.
+    /// this Rust enum is exhaustive, so unknown discriminants fall back to
+    /// `DEFAULT` via the strum-generated `from_repr` exhaustive match (no
+    /// hand-maintained range list, no `transmute`).
     /// TODO(b2): switch to `#[repr(transparent)] struct(u8)` newtype to keep
     /// the unknown value (matching Zig semantics) instead of falling back.
     pub const fn from_raw(b: u8) -> Self {
-        // Valid discriminants: 1-16, 18-99, 101-124, 128-151, 159-183, 192-215, 223-250.
-        if matches!(
-            b,
-            1..=16 | 18..=99 | 101..=124 | 128..=151 | 159..=183 | 192..=215 | 223..=250
-        ) {
-            // SAFETY: byte is verified above to be a listed `#[repr(u8)]` discriminant.
-            unsafe { core::mem::transmute::<u8, CharacterSet>(b) }
-        } else {
-            Self::DEFAULT
+        match Self::from_repr(b) {
+            Some(cs) => cs,
+            None => Self::DEFAULT,
         }
     }
 

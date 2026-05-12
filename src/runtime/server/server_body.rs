@@ -3541,7 +3541,10 @@ unsafe extern "C" {
         req: *mut c_void,
     ) -> JSValue;
 
-    pub(super) fn Bun__ServerRouteList__create(
+    // `global` is the live VM global; `callbacks`/`paths` are the ptr/len of
+    // local scratch `Vec`s that C++ reads (and copies) synchronously.
+    // Module-private — sole caller (`on_listen` in mod.rs) passes live slices.
+    pub(super) safe fn Bun__ServerRouteList__create(
         global: *const JSGlobalObject,
         callbacks: *mut JSValue,
         paths: *mut ZigString,

@@ -118,12 +118,6 @@ unsafe extern "C" {
     );
     safe fn ReadableStream__abort(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__detach(stream: JSValue, global: &JSGlobalObject);
-    fn ReadableStream__fromBlob(
-        global: *const JSGlobalObject,
-        store: *mut c_void,
-        offset: usize,
-        length: usize,
-    ) -> JSValue;
     safe fn ZigGlobalObject__createNativeReadableStream(
         global: &JSGlobalObject,
         native_ptr: JSValue,

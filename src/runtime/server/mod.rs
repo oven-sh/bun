@@ -1851,17 +1851,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     route: core::mem::take(&mut builder.route),
                 });
             }
-            // SAFETY: FFI — `global_this` is the live VM global; scratch slices
-            // are valid for `len` elements; C++ copies paths/callbacks into the
-            // returned JS object so the borrows end at return.
-            route_list_value = unsafe {
-                Bun__ServerRouteList__create(
-                    self.global_this,
-                    callbacks.as_mut_ptr(),
-                    paths.as_mut_ptr(),
-                    len,
-                )
-            };
+            // `global_this` is the live VM global; scratch slices are valid for
+            // `len` elements; C++ copies paths/callbacks into the returned JS
+            // object so the borrows end at return.
+            route_list_value = Bun__ServerRouteList__create(
+                self.global_this,
+                callbacks.as_mut_ptr(),
+                paths.as_mut_ptr(),
+                len,
+            );
             // `to_build` (and its `Strong` callbacks) drops here — AFTER the
             // C++ factory has re-rooted them inside the RouteList object,
             // matching server.zig's `for (..) builder.deinit()` ordering.

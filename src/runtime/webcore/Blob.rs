@@ -814,17 +814,20 @@ impl BlobExt for Blob {
             ctx.on_entry(unsafe { *name_ }, entry);
         }
         unsafe extern "C" {
-            fn DOMFormData__forEach(
+            // `this` is the `&mut DOMFormData` param (coerced); `ctx`/`cb` are
+            // stored opaquely and only used synchronously. Module-private with
+            // one call site below — no caller-side precondition remains. Kept
+            // `*mut` (not `&mut`) to match the `bun_jsc` decl and avoid
+            // `clashing_extern_declarations`.
+            safe fn DOMFormData__forEach(
                 this: *mut jsc::DOMFormData,
                 ctx: *mut c_void,
                 cb: unsafe extern "C" fn(*mut c_void, *mut ZigString, *mut c_void, *mut ZigString, u8),
             );
         }
-        // SAFETY: C++ invokes the callback synchronously and does not retain
-        // `ctx`/`cb` past this call.
-        unsafe {
-            DOMFormData__forEach(form_data, (&raw mut context).cast::<c_void>(), for_each_thunk);
-        }
+        // C++ invokes the callback synchronously and does not retain `ctx`/`cb`
+        // past this call.
+        DOMFormData__forEach(form_data, (&raw mut context).cast::<c_void>(), for_each_thunk);
         if context.failed {
             // The joiner's Node structs are owned by the (former) arena, but each
             // node's data carries its own owner allocator — heap for non-ASCII

@@ -24,6 +24,19 @@ pub struct Stream {
 }
 
 impl Stream {
+    /// Mutable access to the JS-side `ThreadSafeStreamBuffer` while attached.
+    ///
+    /// INVARIANT: while `buffer` is `Some`, this `Stream` holds an intrusive
+    /// ref on the `ThreadSafeStreamBuffer` (taken on attach, released in
+    /// `detach`); the buffer is a separate heap allocation that outlives the
+    /// returned borrow. HTTP-thread-only at the call sites, so the `&mut` is
+    /// the sole live borrow on this side of the lock.
+    #[inline]
+    pub fn buffer_mut(&mut self) -> Option<&mut ThreadSafeStreamBuffer> {
+        // SAFETY: see INVARIANT above.
+        self.buffer.map(|mut b| unsafe { b.as_mut() })
+    }
+
     pub fn detach(&mut self) {
         if let Some(buffer) = self.buffer.take() {
             // matches Zig `buffer.deref()` — intrusive refcount decrement.

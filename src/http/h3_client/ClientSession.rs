@@ -187,15 +187,17 @@ impl ClientSession {
         let Some(client_ptr) = st.client else {
             return self.fail(stream, err);
         };
-        // SAFETY: stream.client is a live backref while the stream is attached.
-        if unsafe { (*client_ptr.as_ptr()).flags.h3_retried } || st.is_streaming_body {
+        // `Stream.client` is a live backref while attached; `ParentRef::from`
+        // (NonNull → shared deref) reads the Copy `flags` field without
+        // forming `&mut HTTPClient` across the `detach()` below.
+        if bun_ptr::ParentRef::from(client_ptr).flags.h3_retried || st.is_streaming_body {
             return self.fail(stream, err);
         }
         let Some(ctx) = ClientContext::get() else {
             return self.fail(stream, err);
         };
-        // SAFETY: same backref as above; short-lived write before detach().
-        unsafe { (*client_ptr.as_ptr()).flags.h3_retried = true };
+        // Same backref as above; short-lived write before detach().
+        client_mut(client_ptr).flags.h3_retried = true;
         // The old session is dead from our perspective; make sure connect()
         // can't pick it again.
         self.closed = true;
@@ -230,8 +232,9 @@ impl ClientSession {
             // SAFETY: pending entries are live until detach(); read-only raw
             // field access — no `&mut Stream` materialized.
             let Some(cl) = (unsafe { (*stream_ptr).client }) else { continue };
-            // SAFETY: stream.client is a live backref while attached.
-            if unsafe { (*cl.as_ptr()).async_http_id } == async_http_id {
+            // `Stream.client` is a live backref while attached; `ParentRef`
+            // reads the Copy `async_http_id` field via shared deref.
+            if bun_ptr::ParentRef::from(cl).async_http_id == async_http_id {
                 found = stream_ptr;
                 break;
             }
@@ -358,9 +361,10 @@ impl ClientSession {
 /// Stacked-Borrows notes in `deliver`/`retry_or_fail`, callers re-derive a
 /// fresh `&mut` here after each `detach()` (which writes `client.h3 = None`
 /// through this same raw backref) rather than holding one across it.
-/// Centralises the `unsafe { .as_mut() }` upgrade repeated at every callback.
+/// Centralises the `unsafe { .as_mut() }` upgrade repeated at every callback
+/// (also used by `encode.rs` / `PendingConnect.rs` for the same backref).
 #[inline]
-fn client_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPClient<'static> {
+pub(super) fn client_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPClient<'static> {
     // SAFETY: see fn doc.
     unsafe { &mut *p.as_ptr() }
 }

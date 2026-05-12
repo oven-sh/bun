@@ -109,13 +109,10 @@ const fn noop_callback() -> HTTPClientResultCallback {
 unsafe fn free_owned_href(href: &'static [u8]) {
     if !href.is_empty() {
         // SAFETY: caller guarantees `href` is the sole reference to a
-        // global-allocator `Box<[u8]>` allocation.
-        drop(unsafe {
-            Box::<[u8]>::from_raw(core::ptr::slice_from_raw_parts_mut(
-                href.as_ptr().cast_mut(),
-                href.len(),
-            ))
-        });
+        // global-allocator `Box<[u8]>` allocation. The fat `*mut [u8]` is
+        // obtained directly from the borrowed slice — no need to round-trip
+        // through `(ptr, len)` + `from_raw_parts`.
+        unsafe { bun_core::heap::destroy(core::ptr::from_ref(href).cast_mut()) };
     }
 }
 

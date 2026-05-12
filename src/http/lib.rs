@@ -138,13 +138,10 @@ impl Drop for HTTPResponseMetadata {
         let list = self.response.headers.list;
         if !list.is_empty() {
             // SAFETY: the only non-empty producer is `clone_metadata`, which
-            // `Box::leak`s exactly this slice; we are its sole owner.
-            unsafe {
-                drop(bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(
-                    list.as_ptr().cast_mut(),
-                    list.len(),
-                )));
-            }
+            // `Box::leak`s exactly this slice; we are its sole owner. The fat
+            // `*mut [Header]` is obtained directly from the borrowed slice — no
+            // need to round-trip through `(ptr, len)` + `from_raw_parts`.
+            unsafe { bun_core::heap::destroy(core::ptr::from_ref(list).cast_mut()) };
         }
         self.response.headers = bun_picohttp::HeaderList::default();
         self.response.status = b"";
@@ -3263,16 +3260,7 @@ impl<'a> HTTPClient<'a> {
             let href = bun_ptr::RawSlice::new(unsafe { builder.append_raw(self.url.href) });
             // Transfer the single backing allocation out of the builder
             // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
-            let cap = builder.cap;
-            let owned_buf: Box<[u8]> = match builder.ptr.take() {
-                // SAFETY: reconstitutes the `Box<[u8]>` forgotten in
-                // `picohttp::StringBuilder::allocate()`; `cap` is the exact
-                // length it was allocated with.
-                Some(p) => unsafe {
-                    bun_core::heap::take(core::slice::from_raw_parts_mut(p.as_ptr(), cap))
-                },
-                None => Box::default(),
-            };
+            let owned_buf = builder.move_to_slice();
             self.state.cloned_metadata = Some(HTTPResponseMetadata {
                 owned_buf,
                 response: cloned_response,

@@ -62,7 +62,7 @@ pub fn register(qctx: &mut quic::Context) {
     qctx.on_stream_close(on_stream_close);
 }
 
-unsafe extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
+extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
     // SAFETY: lsquic passes a live socket for the duration of the callback.
     let qs = unsafe { &mut *qs };
     let Some(session) = session_of(qs) else { return };
@@ -82,7 +82,7 @@ unsafe extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
 /// one instead of waiting for `on_conn_close`, which only fires after lsquic's
 /// draining period. Stay in the registry so abort/body-chunk lookups still
 /// reach in-flight streams; `on_conn_close` does the actual unregister/deref.
-unsafe extern "C" fn on_goaway(qs: *mut quic::Socket) {
+extern "C" fn on_goaway(qs: *mut quic::Socket) {
     // SAFETY: lsquic passes a live socket for the duration of the callback.
     let qs = unsafe { &mut *qs };
     let Some(session) = session_of(qs) else { return };
@@ -95,7 +95,7 @@ unsafe extern "C" fn on_goaway(qs: *mut quic::Socket) {
     session.closed = true;
 }
 
-unsafe extern "C" fn on_conn_close(qs: *mut quic::Socket) {
+extern "C" fn on_conn_close(qs: *mut quic::Socket) {
     // SAFETY: lsquic passes a live socket for the duration of the callback.
     let qs = unsafe { &mut *qs };
     let Some(session) = session_of(qs) else { return };
@@ -132,7 +132,7 @@ unsafe extern "C" fn on_conn_close(qs: *mut quic::Socket) {
     unsafe { ClientSession::deref(session) };
 }
 
-unsafe extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
+extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
     *s.ext::<Stream>() = None;
@@ -170,7 +170,7 @@ unsafe extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
     }
 }
 
-unsafe extern "C" fn on_stream_headers(s: *mut quic::Stream) {
+extern "C" fn on_stream_headers(s: *mut quic::Stream) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
     let Some(stream) = stream_of(s) else { return };
@@ -222,7 +222,7 @@ unsafe extern "C" fn on_stream_headers(s: *mut quic::Stream) {
     session.deliver(stream, false);
 }
 
-unsafe extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint, fin: c_int) {
+extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint, fin: c_int) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
     let Some(stream) = stream_of(s) else { return };
@@ -234,14 +234,14 @@ unsafe extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: 
     unsafe { sess.get_mut() }.deliver(stream, fin != 0);
 }
 
-unsafe extern "C" fn on_stream_writable(s: *mut quic::Stream) {
+extern "C" fn on_stream_writable(s: *mut quic::Stream) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
     let Some(stream) = stream_of(s) else { return };
     encode::drain_send_body(stream, s);
 }
 
-unsafe extern "C" fn on_stream_close(s: *mut quic::Stream) {
+extern "C" fn on_stream_close(s: *mut quic::Stream) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
     let Some(stream) = stream_of(s) else { return };

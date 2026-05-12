@@ -5,7 +5,7 @@ import { join } from "path";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
 // `protocol: "http3"` so a regression that silently falls back to TCP
-// surfaces as a connect failure (the fixtures bind UDP via `h3: true`).
+// surfaces as a connect failure (the fixtures bind UDP via `http3: true`).
 const fetchH3 = (port: number, path: string, init: RequestInit & { signal?: AbortSignal } = {}) =>
   fetch(`https://127.0.0.1:${port}${path}`, {
     ...init,
@@ -21,8 +21,8 @@ const big = Buffer.alloc(512 * 1024, "abcdefghijklmnop");
 const server = serve({
   port: 0,
   tls: ${JSON.stringify(tls)},
-  h3: true,
-  h1: process.env.H3_ONLY !== "1",
+  http3: true,
+  http1: process.env.H3_ONLY !== "1",
   routes: {
     "/api/:id": req => new Response("id=" + req.params.id, { headers: { "x-route": "api" } }),
     "/route-only": { POST: () => new Response("posted") },
@@ -270,7 +270,7 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  test("h1: false rejects HTTP/1.1 but accepts HTTP/3", async () => {
+  test("http1: false rejects HTTP/1.1 but accepts HTTP/3", async () => {
     await withServer(
       async port => {
         const h3 = await fetchH3(port, "/hello");
@@ -284,13 +284,13 @@ describe("Bun.serve HTTP/3", () => {
     );
   });
 
-  // With h1:false the TCP listen socket is never created, so server.url /
+  // With http1:false the TCP listen socket is never created, so server.url /
   // server.address / server.stop() must consult the QUIC listener.
-  test("h1: false — url/address/stop see the QUIC listener", async () => {
+  test("http1: false — url/address/stop see the QUIC listener", async () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       const server = Bun.serve({
-        port: 0, tls, h3: true, h1: false,
+        port: 0, tls, http3: true, http1: false,
         fetch: () => new Response("ok"),
       });
       console.error("PORT=" + server.port);
@@ -323,7 +323,7 @@ describe("Bun.serve HTTP/3", () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       const server = Bun.serve({
-        port: 0, tls, h3: true,
+        port: 0, tls, http3: true,
         maxRequestBodySize: 64 * 1024,
         async fetch(req) {
           try { await req.arrayBuffer(); return new Response("read"); }
@@ -384,7 +384,7 @@ describe("Bun.serve HTTP/3", () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       const server = Bun.serve({
-        port: 0, tls, h3: true,
+        port: 0, tls, http3: true,
         routes: { "/*": { GET: () => new Response("from-route") } },
         fetch: req => new Response("from-fetch:" + req.method),
       });
@@ -413,9 +413,9 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  test("validation: h3 without tls throws", async () => {
+  test("validation: http3 without tls throws", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", "Bun.serve({ port: 0, h3: true, fetch: () => new Response('x') })"],
+      cmd: [bunExe(), "-e", "Bun.serve({ port: 0, http3: true, fetch: () => new Response('x') })"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -449,15 +449,15 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  test("validation: h1:false without h3 throws", async () => {
+  test("validation: http1:false without http3 throws", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", "Bun.serve({ port: 0, h1: false, fetch: () => new Response('x') })"],
+      cmd: [bunExe(), "-e", "Bun.serve({ port: 0, http1: false, fetch: () => new Response('x') })"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr.toLowerCase()).toContain("h1");
+    expect(stderr.toLowerCase()).toContain("http1");
     expect(exitCode).not.toBe(0);
   });
 });
@@ -824,7 +824,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       let server = Bun.serve({
-        port: 0, tls, h3: true,
+        port: 0, tls, http3: true,
         routes: { "/old": new Response("old-route") },
         fetch: () => new Response("fallback", { status: 404 }),
       });
@@ -858,7 +858,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       const server = Bun.serve({
-        port: 0, tls, h3: true,
+        port: 0, tls, http3: true,
         fetch: () => new Response("alive"),
       });
       console.error("PORT=" + server.port);
@@ -891,7 +891,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       const tls = ${JSON.stringify(tls)};
       let stopping = false, inflight = 0;
       const server = Bun.serve({
-        port: 0, tls, h3: true, idleTimeout: 30,
+        port: 0, tls, http3: true, idleTimeout: 30,
         async fetch(req) {
           const url = new URL(req.url);
           if (url.pathname === "/slow") {
@@ -936,7 +936,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     using dir = tempDir("serve-http3-exit", {
       "server.mjs": `
         const server = Bun.serve({
-          port: 0, tls: ${JSON.stringify(tls)}, h3: true, h1: false,
+          port: 0, tls: ${JSON.stringify(tls)}, http3: true, http1: false,
           fetch: () => new Response("ok"),
         });
         console.error("PORT=" + server.port);
@@ -974,7 +974,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       const tls = ${JSON.stringify(tls)};
       let aborted = 0;
       const server = Bun.serve({
-        port: 0, tls, h3: true,
+        port: 0, tls, http3: true,
         async fetch(req) {
           const url = new URL(req.url);
           if (url.pathname === "/hang") {
@@ -1013,7 +1013,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
 
 describe("Bun.serve HTTP/3 production", () => {
   // E: H1 responses advertise the H3 endpoint so browsers can discover it.
-  test("Alt-Svc emitted on HTTP/1.1 responses when h3 is enabled", async () => {
+  test("Alt-Svc emitted on HTTP/1.1 responses when http3 is enabled", async () => {
     await withServer(async port => {
       // The fetch()/static-route/file-route response paths each write
       // headers from a different place; all three must advertise h3.
@@ -1037,7 +1037,7 @@ describe("Bun.serve HTTP/3 production", () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       const server = Bun.serve({
-        port: 0, tls, h3: true,
+        port: 0, tls, http3: true,
         websocket: { message() {} },
         fetch(req, srv) {
           const ok = srv.upgrade(req);

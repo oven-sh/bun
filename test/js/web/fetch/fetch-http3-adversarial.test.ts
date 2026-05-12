@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { tls } from "harness";
 
 // Adversarial fuzzer-style coverage for the HTTP/3 large-body path. The server
-// binds UDP only (`h1: false`) so a fetch that silently fell back to HTTP/1.1
+// binds UDP only (`http1: false`) so a fetch that silently fell back to HTTP/1.1
 // would ECONNREFUSED — every pass here proves the QUIC path carried the bytes.
 let server: Server;
 let base: string;
@@ -12,8 +12,8 @@ beforeAll(() => {
   server = Bun.serve({
     port: 0,
     tls,
-    h3: true,
-    h1: false,
+    http3: true,
+    http1: false,
     routes: {
       "/echo": async req => {
         const body = await req.bytes();

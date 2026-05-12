@@ -76,18 +76,28 @@ impl FallbackEntryPoint {
         // overflow the Source owns the bytes via `Cow::Owned` (Zig allocated
         // from `transpiler.arena`; here the Source owns it directly so Drop
         // frees it).
+        // PORT NOTE: assemble bytes directly (not `write!`+`BStr`) so a
+        // non-UTF-8 byte in `input_path` is emitted verbatim like Zig `{s}`,
+        // not lossily replaced with U+FFFD by `BStr as Display`.
         macro_rules! render_into_entry {
-            ($fmt:literal) => {{
-                let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[..]);
+            ($prefix:expr, $suffix:expr) => {{
+                let prefix: &[u8] = $prefix;
+                let suffix: &[u8] = $suffix;
                 // PERF(port): was std.fmt.count + bufPrint/allocPrint stack-fallback — profile in Phase B
-                if write!(&mut cursor, $fmt, BStr::new(input_path)).is_ok() {
-                    let n = cursor.position() as usize;
+                let count = prefix.len() + input_path.len() + suffix.len();
+                if count < entry.code_buffer.len() {
+                    let buf = &mut entry.code_buffer;
+                    buf[..prefix.len()].copy_from_slice(prefix);
+                    buf[prefix.len()..prefix.len() + input_path.len()]
+                        .copy_from_slice(input_path);
+                    buf[prefix.len() + input_path.len()..count].copy_from_slice(suffix);
                     entry.source =
-                        bun_ast::Source::init_path_string(input_path, &entry.code_buffer[..n]);
+                        bun_ast::Source::init_path_string(input_path, &entry.code_buffer[..count]);
                 } else {
-                    let mut v: Vec<u8> = Vec::new();
-                    write!(&mut v, $fmt, BStr::new(input_path))
-                        .map_err(|_| bun_core::err!("FormatError"))?;
+                    let mut v: Vec<u8> = Vec::with_capacity(count);
+                    v.extend_from_slice(prefix);
+                    v.extend_from_slice(input_path);
+                    v.extend_from_slice(suffix);
                     entry.source = bun_ast::Source::init_path_string_owned(input_path, v);
                 }
             }};
@@ -95,15 +105,11 @@ impl FallbackEntryPoint {
 
         if disable_css_imports {
             render_into_entry!(
-                "globalThis.Bun_disableCSSImports = true;\n\
-                 import boot from '{}';\n\
-                 boot(globalThis.__BUN_DATA__);"
+                b"globalThis.Bun_disableCSSImports = true;\nimport boot from '",
+                b"';\nboot(globalThis.__BUN_DATA__);"
             );
         } else {
-            render_into_entry!(
-                "import boot from '{}';\n\
-                 boot(globalThis.__BUN_DATA__);"
-            );
+            render_into_entry!(b"import boot from '", b"';\nboot(globalThis.__BUN_DATA__);");
         }
 
         entry.source.path.namespace = b"fallback-entry";

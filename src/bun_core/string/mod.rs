@@ -1382,7 +1382,7 @@ impl core::fmt::Display for ZigString {
     // ZigString.zig `format()` — encoding-aware `{f}` formatter.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if self.is_utf8() {
-            return write!(f, "{}", bstr::BStr::new(self.slice()));
+            return write!(f, "{}", crate::fmt::s(self.slice()));
         }
         if self.is_16bit() {
             return crate::fmt::format_utf16_type(self.utf16_slice_aligned(), f);
@@ -2270,7 +2270,7 @@ impl core::fmt::Display for SliceWithUnderlyingString {
         if self.utf8.length() == 0 {
             return self.underlying.fmt(f);
         }
-        f.write_str(&std::string::String::from_utf8_lossy(self.utf8.slice()))
+        write!(f, "{}", crate::fmt::s(self.utf8.slice()))
     }
 }
 

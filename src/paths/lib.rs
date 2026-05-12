@@ -628,7 +628,7 @@ pub mod fs {
                 ".{:016x}-{:08X}.{}",
                 hex_value,
                 TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
-                bstr::BStr::new(extname),
+                bun_core::fmt::s(extname),
             )
             .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
             let written = len - cursor.len();

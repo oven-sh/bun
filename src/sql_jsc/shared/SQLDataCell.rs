@@ -225,11 +225,13 @@ impl SQLDataCell {
                 }
                 let p = bytea[0] as *mut u8;
                 let len = bytea[1];
+                // Build the fat pointer with the safe `ptr::slice_from_raw_parts_mut`
+                // (no `&mut` reference materialized); only `Box::from_raw` is unsafe.
                 // SAFETY: bytea[0]/bytea[1] are ptr/len of a buffer allocated
                 // via the global allocator (Zig: bun.default_allocator).
                 // TODO(port): verify allocation size == len (Zig free() uses slice.len).
                 unsafe {
-                    drop(Box::<[u8]>::from_raw(slice::from_raw_parts_mut(p, len)))
+                    drop(Box::<[u8]>::from_raw(ptr::slice_from_raw_parts_mut(p, len)))
                 };
             }
             Tag::Array => {

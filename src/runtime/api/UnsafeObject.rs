@@ -60,11 +60,9 @@ pub fn array_buffer_to_string(
     let array_buffer = jsc::ArrayBuffer::from_typed_array(global, args[0]);
     match array_buffer.typed_array_type {
         JSType::Uint16Array | JSType::Int16Array => {
-            // SAFETY: array_buffer.ptr points to a valid buffer of array_buffer.len u16
-            // elements (the typed-array view); ZigString stores it tagged as UTF-16.
-            let utf16 = unsafe {
-                core::slice::from_raw_parts(array_buffer.ptr.cast::<u16>(), array_buffer.len)
-            };
+            // Uint16Array/Int16Array storage is u16-aligned with even byte length;
+            // bytemuck checks both at runtime.
+            let utf16: &[u16] = bytemuck::cast_slice(array_buffer.byte_slice());
             let zig_str = ZigString::init_utf16(utf16);
             Ok(zig_str.to_js(global))
         }

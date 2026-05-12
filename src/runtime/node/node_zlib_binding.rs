@@ -220,7 +220,10 @@ pub trait CompressionStreamImpl: Sized + Taskable + 'static {
     type Stream: CompressionContext;
 
     // Field accessors (interior-mutability cells; all `&self`).
-    fn global_this(&self) -> *mut JSGlobalObject;
+    /// JSC_BORROW backref — the global outlives this m_ctx payload.
+    /// Implementations store a `BackRef<JSGlobalObject>`; the single unsafe
+    /// deref lives in `BackRef::get`, so callers and impls are safe.
+    fn global_this(&self) -> &JSGlobalObject;
     fn stream(&self) -> &JsCell<Self::Stream>;
     fn write_result_ptr(&self) -> Option<*mut u32>;
     fn poll_ref(&self) -> &JsCell<CountedKeepAlive>;
@@ -412,9 +415,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // `ref_()` in `write()`); deref shared (`&*`) — bodies use the `&self`
         // accessor surface (R-2).
         let this_ref: &T = unsafe { &*this };
-        // SAFETY: `global_this` is the JSC_BORROW backref stored at construct
-        // time; the global outlives this m_ctx payload.
-        let global_this: &JSGlobalObject = unsafe { &*this_ref.global_this() };
+        let global_this: &JSGlobalObject = this_ref.global_this();
         // Zig: `bunVMConcurrently()` — thread-safe accessor (skips the
         // JS-thread debug assert; same backing pointer as `bun_vm()`).
         // SAFETY: `bun_vm_concurrently()` never returns null for a Bun-owned global.
@@ -449,8 +450,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     pub unsafe fn run_from_js_thread(this_ptr: *mut T) {
         // SAFETY: see fn-level contract.
         let this: &T = unsafe { &*this_ptr };
-        // SAFETY: JSC_BORROW backref; global outlives this m_ctx payload.
-        let global: &JSGlobalObject = unsafe { &*this.global_this() };
+        let global: &JSGlobalObject = this.global_this();
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
         let vm = global.bun_vm();
         // PORT NOTE: reshaped — Zig used `defer this.deref(); defer
@@ -935,7 +935,7 @@ macro_rules! __impl_compression_stream {
         impl $crate::node::node_zlib_binding::CompressionStreamImpl for $native {
             type Stream = $ctx;
 
-            #[inline] fn global_this(&self) -> *mut ::bun_jsc::JSGlobalObject { self.global_this.cast::<::bun_jsc::JSGlobalObject>() }
+            #[inline] fn global_this(&self) -> &::bun_jsc::JSGlobalObject { self.global_this.get() }
             #[inline] fn stream(&self) -> &::bun_jsc::JsCell<Self::Stream> { &self.stream }
             #[inline] fn write_result_ptr(&self) -> Option<*mut u32> { self.write_result.get().map(|p| p.cast::<u32>()) }
             #[inline] fn poll_ref(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> { &self.poll_ref }

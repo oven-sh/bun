@@ -3034,10 +3034,8 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                 if let Some(r) = bun_sys::windows::getenv_w(key_w) {
                     if T::IS_U16 {
                         buf_size = r.len();
-                        // SAFETY: T == u16; same layout as &mut [u16].
-                        let dst = unsafe {
-                            core::slice::from_raw_parts_mut(buf2.as_mut_ptr().cast::<u16>(), buf_size)
-                        };
+                        // T == u16 when IS_U16; bytemuck checks the layout at runtime.
+                        let dst: &mut [u16] = bytemuck::cast_slice_mut::<T, u16>(&mut buf2[..buf_size]);
                         memmove(dst, &r);
                     } else {
                         // Reuse buf2 because it's used for path.

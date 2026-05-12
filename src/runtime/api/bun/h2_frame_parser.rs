@@ -1330,24 +1330,24 @@ impl H2FrameParser {
 /// guarantee the call sites actually rely on (flush / emit-to-all / detach).
 pub struct StreamResumableIterator {
     // PORT NOTE: Zig's `parser: *H2FrameParser` freely aliases. R-2: `streams`
-    // is now `JsCell`-backed, so a shared `*const` suffices and the in-loop
+    // is now `JsCell`-backed, so a shared backref suffices and the in-loop
     // body can keep its own `&H2FrameParser` without provenance gymnastics.
-    parser: *const H2FrameParser,
+    // `ParentRef` encapsulates the back-pointer invariant (parser outlives the
+    // iterator — every call site constructs the iterator from a live `&Self`
+    // and drains it in the same scope) so `next()` derefs through safe `Deref`.
+    parser: bun_ptr::ParentRef<H2FrameParser>,
     ids: Vec<u32>,
     index: usize,
 }
 impl StreamResumableIterator {
-    pub fn init(parser: *const H2FrameParser) -> Self {
-        // SAFETY: `parser` is derived from a live `&H2FrameParser` at every call site and
-        // outlives this iterator; we only read the key set here.
-        let ids = unsafe { (*parser).streams.get().keys().copied().collect() };
-        Self { parser, ids, index: 0 }
+    pub fn init(parser: &H2FrameParser) -> Self {
+        let ids = parser.streams.get().keys().copied().collect();
+        Self { parser: bun_ptr::ParentRef::new(parser), ids, index: 0 }
     }
     pub fn next(&mut self) -> Option<*mut Stream> {
-        // SAFETY: `parser` was derived from a live `&H2FrameParser` at `init` time and the
-        // parser outlives this iterator. R-2: `streams` is `JsCell`-backed (UnsafeCell), so
-        // shared-ref reads here coexist soundly with the loop body's own `&self` accesses.
-        let streams = unsafe { (*self.parser).streams.get() };
+        // R-2: `streams` is `JsCell`-backed (UnsafeCell), so the shared backref
+        // read here coexists soundly with the loop body's own `&self` accesses.
+        let streams = self.parser.streams.get();
         while let Some(&id) = self.ids.get(self.index) {
             self.index += 1;
             if let Some(&stream) = streams.get(&id) {
@@ -1417,10 +1417,12 @@ pub struct SignalRef {
     // LIFETIMES.tsv: SHARED — H2FrameParser carries an intrusive RefCount and is
     // recovered via `from_field_ptr!` from the auto-flusher. It uses a hand-rolled
     // `Cell<u32>` ref count (not `bun_ptr::RefCount<Self>`), so `IntrusiveRc`'s
-    // `RefCounted` bound is unsatisfiable. Store the raw pointer and call
-    // `ref_()/deref()` explicitly in `attach_signal` / `Drop` (mirrors Zig
+    // `RefCounted` bound is unsatisfiable. `ParentRef` captures the backref
+    // invariant (parser is `ref_()`'d in `attach_signal` and outlives the
+    // `SignalRef` until `Drop` calls `deref()`), so reads go through safe
+    // `Deref`; the explicit `ref_()/deref()` balancing stays (mirrors Zig
     // `*H2FrameParser`).
-    parser: *mut H2FrameParser,
+    parser: bun_ptr::ParentRef<H2FrameParser>,
     stream_id: u32,
 }
 
@@ -1435,9 +1437,9 @@ impl SignalRef {
         reason.ensure_still_alive();
         // SAFETY: this is a stable heap allocation owned by Stream.signal
         let this = unsafe { &mut *this };
-        // SAFETY: parser is IntrusiveRc-held; ref()'d in attach_signal, valid until detach/deinit.
-        // R-2: deref as shared (`&*const`) — `abort_stream` takes `&self`.
-        let parser = unsafe { &*this.parser.cast_const() };
+        // ParentRef backref — ref()'d in `attach_signal`, valid until detach/deinit.
+        // R-2: shared deref — `abort_stream` takes `&self`.
+        let parser = this.parser.get();
         let Some(stream) = parser.streams.get().get(&this.stream_id).copied() else { return };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
@@ -1450,11 +1452,12 @@ impl SignalRef {
 
 impl Drop for SignalRef {
     fn drop(&mut self) {
-        // SAFETY: signal/parser are valid until detach
-        unsafe {
-            (*self.signal).detach(std::ptr::from_mut(self).cast::<c_void>());
-            (*self.parser.cast_const()).deref();
-        }
+        // SAFETY: `signal` is the C++-refcounted AbortSignal we ref()'d in
+        // `attach_signal`; valid until this `detach` releases our listener.
+        unsafe { (*self.signal).detach(std::ptr::from_mut(self).cast::<c_void>()) };
+        // ParentRef backref — parser outlives every SignalRef (ref()'d in
+        // `attach_signal`); release that ref now via the inherent `deref()`.
+        H2FrameParser::deref(self.parser.get());
         // bun.destroy(this) handled by Box drop
     }
 }
@@ -1950,7 +1953,7 @@ impl Stream {
         // we need a stable pointer to know what signal points to what stream_id + parser
         let mut signal_ref = Box::new(SignalRef {
             signal: std::ptr::from_mut(signal),
-            parser: parser.as_ctx_ptr(),
+            parser: bun_ptr::ParentRef::new(parser),
             stream_id: self.id,
         });
         // SAFETY: ref_() bumps the C++ intrusive refcount and returns the same live
@@ -5030,7 +5033,7 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn emit_abort_to_all_streams(this: &Self, _global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
-        // R-2: StreamResumableIterator stores a `*const`; `streams` is `JsCell`-backed,
+        // R-2: StreamResumableIterator stores a `ParentRef`; `streams` is `JsCell`-backed,
         // so the loop body can keep using `this` (`&Self`) directly.
         let mut it = StreamResumableIterator::init(this);
         while let Some(stream_ptr) = it.next() {
@@ -5063,7 +5066,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected error argument")));
         }
 
-        // R-2: StreamResumableIterator stores a `*const`; `streams` is `JsCell`-backed,
+        // R-2: StreamResumableIterator stores a `ParentRef`; `streams` is `JsCell`-backed,
         // so the loop body can keep using `this` (`&Self`) directly.
         let mut it = StreamResumableIterator::init(this);
         while let Some(stream_ptr) = it.next() {
@@ -5878,7 +5881,7 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn detach_from_js(this: &Self, _global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
-        // R-2: StreamResumableIterator stores a `*const`; `streams` is `JsCell`-backed,
+        // R-2: StreamResumableIterator stores a `ParentRef`; `streams` is `JsCell`-backed,
         // so the loop body can keep using `this` (`&Self`) directly.
         let mut it = StreamResumableIterator::init(this);
         while let Some(stream) = it.next() {

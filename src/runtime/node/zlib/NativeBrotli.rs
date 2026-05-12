@@ -78,9 +78,9 @@ use crate::node::util::validators;
 #[ref_count(destroy = Self::destroy_on_zero)]
 pub struct NativeBrotli {
     pub ref_count: Cell<u32>,
-    // TODO(port): lifetime — JSC_BORROW backref; global outlives this m_ctx payload.
-    // Read-only after construction — stays bare.
-    pub global_this: *mut JSGlobalObject,
+    // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
+    // centralises the single unsafe deref so the trait impl is safe.
+    pub global_this: bun_ptr::BackRef<JSGlobalObject>,
     pub stream: JsCell<Context>,
     /// Points into a JS `Uint32Array` (`this._writeState`). Kept alive because
     /// the JS object is tied to the native handle as `_handle[owner_symbol]`.
@@ -134,10 +134,8 @@ impl NativeBrotli {
         stream.mode = bun_zlib::NodeMode::from_int(mode_int as u8);
         Ok(Box::new(Self {
             ref_count: Cell::new(1),
-            // SAFETY: JSGlobalObject is an opaque FFI handle; `as_ptr()` derives `*mut`
-            // via UnsafeCell so the stored pointer carries write provenance. The global
-            // outlives this m_ctx payload (JSC_BORROW backref).
-            global_this: global_this.as_ptr(),
+            // JSC_BORROW backref — the global outlives this m_ctx payload.
+            global_this: bun_ptr::BackRef::new(global_this),
             stream: JsCell::new(stream),
             write_result: Cell::new(None),
             poll_ref: JsCell::new(CountedKeepAlive::default()),
@@ -520,8 +518,8 @@ impl CompressionStreamImpl for NativeBrotli {
     type Stream = Context;
 
     #[inline]
-    fn global_this(&self) -> *mut JSGlobalObject {
-        self.global_this
+    fn global_this(&self) -> &JSGlobalObject {
+        self.global_this.get()
     }
     #[inline]
     fn stream(&self) -> &JsCell<Self::Stream> {

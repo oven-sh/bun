@@ -748,13 +748,12 @@ impl<'a> JSON5Parser<'a> {
             }
             b'x' => {
                 // \xHH hex escape
-                let Some(hi) = self.read_hex_digit() else {
-                    return Err(ParseError::InvalidHexEscape);
-                };
-                let Some(lo) = self.read_hex_digit() else {
-                    return Err(ParseError::InvalidHexEscape);
-                };
-                let value: u8 = (hi << 4) | lo;
+                let value = self
+                    .source
+                    .get(self.pos..self.pos + 2)
+                    .and_then(|s| bun_core::fmt::hex_pair_value(s[0], s[1]))
+                    .ok_or(ParseError::InvalidHexEscape)?;
+                self.pos += 2;
                 append_codepoint_to_utf8(buf, i32::from(value))?;
             }
             b'u' => {
@@ -1058,25 +1057,11 @@ impl<'a> JSON5Parser<'a> {
 
     // ── Helper Functions ──
 
-    fn read_hex_digit(&mut self) -> Option<u8> {
-        if self.pos >= self.source.len() {
-            return None;
-        }
-        let result = bun_core::fmt::hex_digit_value(self.source[self.pos])?;
-        self.pos += 1;
-        Some(result)
-    }
-
     fn read_hex4(&mut self) -> Result<i32, ParseError> {
-        let mut value: i32 = 0;
-        // PERF(port): was `inline while` (comptime unrolled) — profile
-        for _ in 0..4 {
-            let Some(digit) = self.read_hex_digit() else {
-                return Err(ParseError::InvalidUnicodeEscape);
-            };
-            value = (value << 4) | i32::from(digit);
-        }
-        Ok(value)
+        let v = bun_core::fmt::parse_hex4(&self.source[self.pos..])
+            .ok_or(ParseError::InvalidUnicodeEscape)?;
+        self.pos += 4;
+        Ok(i32::from(v))
     }
 
     fn read_codepoint(&self) -> Option<Codepoint> {

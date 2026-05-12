@@ -877,7 +877,7 @@ impl UnresolvedColor {
 
     pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         fn conv(c: f32) -> i32 {
-            (c * 255.0).round().clamp(0.0, 255.0) as i32
+            css_values::color::clamp_unit_f32(c) as i32
         }
 
         match self {
@@ -960,10 +960,9 @@ impl UnresolvedColor {
         use css_values::color::{
             ComponentParser, HSL, SRGB, parse_hsl_hwb_components, parse_rgb_components,
         };
-        // css.todo_stuff.match_ignore_ascii_case
         let mut parser = ComponentParser::new(false);
-        if strings::eql_case_insensitive_ascii_check_length(f, b"rgb") {
-            return input.parse_nested_block(|input2| {
+        crate::match_ignore_ascii_case! { f, {
+            b"rgb" => return input.parse_nested_block(|input2| {
                 parser.parse_relative::<SRGB, UnresolvedColor, _>(input2, |i, p| {
                     let (r, g, b, is_legacy) = parse_rgb_components(i, p)?;
                     if is_legacy {
@@ -973,9 +972,8 @@ impl UnresolvedColor {
                     let alpha = TokenListFns::parse(i, options, 0)?;
                     Ok(UnresolvedColor::RGB { r, g, b, alpha })
                 })
-            });
-        } else if strings::eql_case_insensitive_ascii_check_length(f, b"hsl") {
-            return input.parse_nested_block(|input2| {
+            }),
+            b"hsl" => return input.parse_nested_block(|input2| {
                 parser.parse_relative::<HSL, UnresolvedColor, _>(input2, |i, p| {
                     let (h, s, l, is_legacy) = parse_hsl_hwb_components::<HSL>(i, p, false)?;
                     if is_legacy {
@@ -985,9 +983,8 @@ impl UnresolvedColor {
                     let alpha = TokenListFns::parse(i, options, 0)?;
                     Ok(UnresolvedColor::HSL { h, s, l, alpha })
                 })
-            });
-        } else if strings::eql_case_insensitive_ascii_check_length(f, b"light-dark") {
-            return input.parse_nested_block(|input2| {
+            }),
+            b"light-dark" => return input.parse_nested_block(|input2| {
                 // errdefer doesn't fire on `return .{ .err = ... }` in Zig — but in Rust,
                 // `?` drops `light` automatically on the error path.
                 let light = input2.parse_until_before(Delimiters::COMMA, |i| {
@@ -996,8 +993,9 @@ impl UnresolvedColor {
                 input2.expect_comma()?;
                 let dark = TokenListFns::parse(input2, options, 0)?;
                 Ok(UnresolvedColor::LightDark { light, dark })
-            });
-        }
+            }),
+            _ => {},
+        }}
         Err(input.new_custom_error(ParserError::invalid_value))
     }
 
@@ -1193,7 +1191,7 @@ impl EnvironmentVariableName {
 // PORT NOTE: Zig `css.DefineEnumProperty(@This())` provides eql/hash/parse/
 // to_css/deep_clone via comptime reflection over @tagName. Replaced by an
 // `EnumProperty` impl below (kebab-case match) — same protocol surface.
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, CssHash)]
 pub enum UAEnvironmentVariable {
     /// The safe area inset from the top of the viewport.
     #[strum(serialize = "safe-area-inset-top")]
@@ -1227,19 +1225,11 @@ pub enum UAEnvironmentVariable {
     ViewportSegmentRight,
 }
 
-// PORT NOTE: inherent (not `#[derive(CssEql/CssHash/DeepClone)]`) so the
-// `EnvironmentVariableName` derive's method-syntax `__f0.hash(hasher)` /
-// `__f0.deep_clone(bump)` resolve unambiguously — `EnumProperty` provides
-// trait-default `eql(lhs,rhs)` / `deep_clone(&self)` / `hash(&self)` with
-// different shapes that would otherwise collide.
+// hash — via `#[derive(CssHash)]` (the derive emits UFCS, so no inherent shim needed).
 impl UAEnvironmentVariable {
     #[inline]
     pub fn eql(&self, other: &Self) -> bool {
         *self == *other
-    }
-    #[inline]
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        hasher.update(&(*self as u32).to_ne_bytes());
     }
     #[inline]
     pub fn deep_clone(&self, _bump: &Arena) -> Self {

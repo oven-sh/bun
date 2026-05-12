@@ -37,13 +37,14 @@ impl ZigStackFrameCode {
     }
 
     pub fn ansi_color(self) -> &'static [u8] {
+        use bun_core::output::ansi_b;
         match self {
-            Self::EVAL => b"\x1b[31m",
-            Self::MODULE => b"\x1b[36m",
-            Self::FUNCTION => b"\x1b[32m",
-            Self::GLOBAL => b"\x1b[35m",
-            Self::WASM => b"\x1b[37m",
-            Self::CONSTRUCTOR => b"\x1b[33m",
+            Self::EVAL => ansi_b::RED,
+            Self::MODULE => ansi_b::CYAN,
+            Self::FUNCTION => ansi_b::GREEN,
+            Self::GLOBAL => ansi_b::MAGENTA,
+            Self::WASM => ansi_b::WHITE,
+            Self::CONSTRUCTOR => ansi_b::YELLOW,
             _ => b"",
         }
     }

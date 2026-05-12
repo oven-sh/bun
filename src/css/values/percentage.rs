@@ -602,11 +602,6 @@ impl NumberOrPercentage {
         self.clone()
     }
 
-    pub fn eql(&self, other: &NumberOrPercentage) -> bool {
-        // PORT NOTE: Zig used css.implementEql (reflection) → #[derive(PartialEq)].
-        self == other
-    }
-
     pub fn into_f32(&self) -> f32 {
         match self {
             Self::Number(n) => *n,
@@ -620,5 +615,7 @@ impl PartialEq for Percentage {
         self.v == other.v
     }
 }
+
+crate::css_eql_partialeq!(NumberOrPercentage);
 
 // ported from: src/css/values/percentage.zig

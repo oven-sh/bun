@@ -11,15 +11,11 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: `defer this.postMatch(globalThis)` — reshaped for borrowck: scopeguard owns
-        // the &mut Expect and runs post_match on drop; body re-borrows through DerefMut.
-        let this = scopeguard::guard(self, |t| t.post_match(global));
-        let this: &Expect = *this;
+        let (this, value, not) =
+            self.matcher_prelude(global, frame.this(), "toStrictEqual", "<green>expected<r>")?;
 
-        let this_value = frame.this();
         let _arguments = frame.arguments_old::<1>();
-        // TODO(port): arguments_old returns a {ptr,len} struct in Zig; Phase B exposes a slice accessor.
-        let arguments: &[JSValue] = &_arguments.ptr[0.._arguments.len];
+        let arguments: &[JSValue] = _arguments.slice();
 
         if arguments.len() < 1 {
             return Err(global.throw_invalid_arguments(
@@ -27,13 +23,7 @@ impl Expect {
             ));
         }
 
-        this.increment_expect_call_counter();
-
         let expected = arguments[0];
-        let value: JSValue =
-            this.get_value(global, this_value, "toStrictEqual", "<green>expected<r>")?;
-
-        let not = this.flags.get().not();
         let mut pass = value.jest_strict_deep_equals(expected, global)?;
 
         if not {

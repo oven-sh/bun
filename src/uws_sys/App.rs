@@ -57,6 +57,33 @@ pub struct App<const SSL: bool> {
 /// Zig name compatibility (`uws.NewApp(ssl)`).
 pub type NewApp<const SSL: bool> = App<SSL>;
 
+/// Stamps one `pub fn $name(&mut self, pattern, handler, user_data)` per HTTP
+/// verb. Bodies are byte-identical modulo the C symbol — see `uws_app_get` &co
+/// in capi.rs. uWS copies `pattern` internally, so the slice need only live for
+/// the call.
+macro_rules! uws_app_route_methods {
+    ($($name:ident => $cfn:ident),* $(,)?) => {$(
+        pub fn $name(
+            &mut self,
+            pattern: &[u8],
+            handler: c::uws_method_handler,
+            user_data: *mut c_void,
+        ) {
+            // SAFETY: self is a valid app; pattern outlives the call (uWS copies it).
+            unsafe {
+                c::$cfn(
+                    Self::SSL_FLAG,
+                    std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
+                    pattern.as_ptr(),
+                    pattern.len(),
+                    handler,
+                    user_data,
+                )
+            }
+        }
+    )*};
+}
+
 impl<const SSL: bool> App<SSL> {
     pub const IS_SSL: bool = SSL;
     const SSL_FLAG: i32 = SSL as i32;
@@ -162,70 +189,17 @@ impl<const SSL: bool> App<SSL> {
     // PERF(port): was @call(.always_inline) on the user handler — profile in Phase B.
     // ─────────────────────────────────────────────────────────────────────
 
-    pub fn get(&mut self, pattern: &[u8], handler: c::uws_method_handler, user_data: *mut c_void) {
-        // SAFETY: self is a valid app; pattern outlives the call (uWS copies it).
-        unsafe {
-            c::uws_app_get(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                pattern.as_ptr(),
-                pattern.len(),
-                handler,
-                user_data,
-            )
-        }
-    }
-
-    pub fn post(&mut self, pattern: &[u8], handler: c::uws_method_handler, user_data: *mut c_void) {
-        // SAFETY: see get().
-        unsafe {
-            c::uws_app_post(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                pattern.as_ptr(),
-                pattern.len(),
-                handler,
-                user_data,
-            )
-        }
-    }
-
-    pub fn options(
-        &mut self,
-        pattern: &[u8],
-        handler: c::uws_method_handler,
-        user_data: *mut c_void,
-    ) {
-        // SAFETY: see get().
-        unsafe {
-            c::uws_app_options(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                pattern.as_ptr(),
-                pattern.len(),
-                handler,
-                user_data,
-            )
-        }
-    }
-
-    pub fn delete(
-        &mut self,
-        pattern: &[u8],
-        handler: c::uws_method_handler,
-        user_data: *mut c_void,
-    ) {
-        // SAFETY: see get().
-        unsafe {
-            c::uws_app_delete(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                pattern.as_ptr(),
-                pattern.len(),
-                handler,
-                user_data,
-            )
-        }
+    uws_app_route_methods! {
+        get     => uws_app_get,
+        post    => uws_app_post,
+        options => uws_app_options,
+        delete  => uws_app_delete,
+        patch   => uws_app_patch,
+        put     => uws_app_put,
+        head    => uws_app_head,
+        connect => uws_app_connect,
+        trace   => uws_app_trace,
+        any     => uws_app_any,
     }
 
     /// Alias matching uWS C++ `del()` naming (Rust `delete` is not reserved, but callers
@@ -233,91 +207,6 @@ impl<const SSL: bool> App<SSL> {
     #[inline]
     pub fn del(&mut self, pattern: &[u8], handler: c::uws_method_handler, user_data: *mut c_void) {
         self.delete(pattern, handler, user_data)
-    }
-
-    pub fn patch(
-        &mut self,
-        pattern: &[u8],
-        handler: c::uws_method_handler,
-        user_data: *mut c_void,
-    ) {
-        // SAFETY: see get().
-        unsafe {
-            c::uws_app_patch(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                pattern.as_ptr(),
-                pattern.len(),
-                handler,
-                user_data,
-            )
-        }
-    }
-
-    pub fn put(&mut self, pattern: &[u8], handler: c::uws_method_handler, user_data: *mut c_void) {
-        // SAFETY: see get().
-        unsafe {
-            c::uws_app_put(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                pattern.as_ptr(),
-                pattern.len(),
-                handler,
-                user_data,
-            )
-        }
-    }
-
-    pub fn head(&mut self, pattern: &[u8], handler: c::uws_method_handler, user_data: *mut c_void) {
-        // SAFETY: see get().
-        unsafe {
-            c::uws_app_head(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                pattern.as_ptr(),
-                pattern.len(),
-                handler,
-                user_data,
-            )
-        }
-    }
-
-    pub fn connect(
-        &mut self,
-        pattern: &[u8],
-        handler: c::uws_method_handler,
-        user_data: *mut c_void,
-    ) {
-        // SAFETY: see get().
-        unsafe {
-            c::uws_app_connect(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                pattern.as_ptr(),
-                pattern.len(),
-                handler,
-                user_data,
-            )
-        }
-    }
-
-    pub fn trace(
-        &mut self,
-        pattern: &[u8],
-        handler: c::uws_method_handler,
-        user_data: *mut c_void,
-    ) {
-        // SAFETY: see get().
-        unsafe {
-            c::uws_app_trace(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                pattern.as_ptr(),
-                pattern.len(),
-                handler,
-                user_data,
-            )
-        }
     }
 
     pub fn method(
@@ -338,20 +227,6 @@ impl<const SSL: bool> App<SSL> {
             Method::CONNECT => self.connect(pattern, handler, user_data),
             Method::TRACE => self.trace(pattern, handler, user_data),
             _ => {}
-        }
-    }
-
-    pub fn any(&mut self, pattern: &[u8], handler: c::uws_method_handler, user_data: *mut c_void) {
-        // SAFETY: see get().
-        unsafe {
-            c::uws_app_any(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                pattern.as_ptr(),
-                pattern.len(),
-                handler,
-                user_data,
-            )
         }
     }
 
@@ -612,7 +487,7 @@ impl<const SSL: bool> ListenSocket<SSL> {
             .get_local_port()
     }
 
-    pub fn socket(&mut self) -> crate::socket::NewSocketHandler<'static, SSL> {
+    pub fn socket(&mut self) -> crate::socket::NewSocketHandler<SSL> {
         // SAFETY: ListenSocket<SSL> is layout-identical to us_socket_t on the C side
         // (a listen socket IS a us_socket_t); Zig does `.from(@ptrCast(this))`.
         crate::socket::NewSocketHandler::<SSL>::from(std::ptr::from_mut::<Self>(self).cast())
@@ -625,11 +500,7 @@ pub enum AddServerNameError {
 }
 bun_core::impl_tag_error!(AddServerNameError);
 
-impl From<AddServerNameError> for bun_core::Error {
-    fn from(e: AddServerNameError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-    }
-}
+bun_core::named_error_set!(AddServerNameError);
 
 bun_opaque::opaque_ffi! { pub struct uws_app_s; }
 pub type uws_app_t = uws_app_s;

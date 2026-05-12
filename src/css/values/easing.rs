@@ -1,7 +1,6 @@
 use crate::css_parser as css;
 use crate::css_parser::{CssResult as Result, PrintErr, Printer, Token};
 use crate::values::number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns};
-use bun_core::strings;
 
 /// A CSS [easing function](https://www.w3.org/TR/css-easing-1/#easing-functions).
 #[derive(Clone, PartialEq)]
@@ -130,27 +129,29 @@ impl EasingFunction {
             return Err(location.new_unexpected_token_error(tok));
         };
         input.parse_nested_block(move |i| {
-            if strings::eql_case_insensitive_ascii_check_length(function, b"cubic-bezier") {
-                let x1 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let y1 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let x2 = CSSNumberFns::parse(i)?;
-                i.expect_comma()?;
-                let y2 = CSSNumberFns::parse(i)?;
-                Ok(EasingFunction::CubicBezier(CubicBezier { x1, y1, x2, y2 }))
-            } else if strings::eql_case_insensitive_ascii_check_length(function, b"steps") {
-                let count = CSSIntegerFns::parse(i)?;
-                let position = i
-                    .try_parse(|p| {
-                        p.expect_comma()?;
-                        StepPosition::parse(p)
-                    })
-                    .unwrap_or(StepPosition::default());
-                Ok(EasingFunction::Steps(Steps { count, position }))
-            } else {
-                Err(location.new_unexpected_token_error(Token::Ident(function)))
-            }
+            crate::match_ignore_ascii_case! { function, {
+                b"cubic-bezier" => {
+                    let x1 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let y1 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let x2 = CSSNumberFns::parse(i)?;
+                    i.expect_comma()?;
+                    let y2 = CSSNumberFns::parse(i)?;
+                    Ok(EasingFunction::CubicBezier(CubicBezier { x1, y1, x2, y2 }))
+                },
+                b"steps" => {
+                    let count = CSSIntegerFns::parse(i)?;
+                    let position = i
+                        .try_parse(|p| {
+                            p.expect_comma()?;
+                            StepPosition::parse(p)
+                        })
+                        .unwrap_or(StepPosition::default());
+                    Ok(EasingFunction::Steps(Steps { count, position }))
+                },
+                _ => Err(location.new_unexpected_token_error(Token::Ident(function))),
+            }}
         })
     }
 

@@ -2,6 +2,7 @@ use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
 use crate::parser::{ExportClauseResult, ImportClause, JsxT, is_eval_or_arguments};
 use bun_alloc::ArenaVecExt as _;
+use bun_ast::LexerLog as _;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::op::Level;
 use bun_ast::{ClauseItem, E, Expr, LocRef};
@@ -460,7 +461,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     "Expected identifier but found \"{}\"",
                     bstr::BStr::new(p.source.text_for_range(r))
                 ),
-                true,
             )?;
             return Err(bun_core::err!("SyntaxError"));
         }

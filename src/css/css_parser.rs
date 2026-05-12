@@ -161,7 +161,6 @@ pub fn oom(_e: bun_core::Error) -> ! {
 pub mod todo_stuff {
     pub const THINK_MEM_MGMT: &str = "TODO: think about memory management";
     pub const DEPTH: &str = "TODO: we need to go deeper";
-    pub const MATCH_IGNORE_ASCII_CASE: &str = "TODO: implement match_ignore_ascii_case";
     pub const ENUM_PROPERTY: &str = "TODO: implement enum_property!";
     pub const MATCH_BYTE: &str = "TODO: implement match_byte!";
     pub const WARN: &str = "TODO: implement warning";
@@ -1687,25 +1686,11 @@ mod rule_parsers {
                     b"font-palette-values" => break 'brk AtRulePrelude::FontPaletteValues(DashedIdentFns::parse(input)?),
                     b"counter-style" => break 'brk AtRulePrelude::CounterStyle(CustomIdentFns::parse(input)?),
                     b"viewport" | b"-ms-viewport" => {
-                        let prefix = if strings::starts_with_case_insensitive_ascii(name, b"-ms") {
-                            VendorPrefix::MS
-                        } else {
-                            VendorPrefix::NONE
-                        };
+                        let prefix = VendorPrefix::strip_from(name).0;
                         break 'brk AtRulePrelude::Viewport(prefix);
                     },
                     b"keyframes" | b"-webkit-keyframes" | b"-moz-keyframes" | b"-o-keyframes" | b"-ms-keyframes" => {
-                        let prefix = if strings::starts_with_case_insensitive_ascii(name, b"-webkit") {
-                            VendorPrefix::WEBKIT
-                        } else if strings::starts_with_case_insensitive_ascii(name, b"-moz") {
-                            VendorPrefix::MOZ
-                        } else if strings::starts_with_case_insensitive_ascii(name, b"-o-") {
-                            VendorPrefix::O
-                        } else if strings::starts_with_case_insensitive_ascii(name, b"-ms") {
-                            VendorPrefix::MS
-                        } else {
-                            VendorPrefix::NONE
-                        };
+                        let prefix = VendorPrefix::strip_from(name).0;
                         let keyframes_name =
                             input.try_parse(css_rules::keyframes::KeyframesName::parse)?;
                         break 'brk AtRulePrelude::Keyframes { name: keyframes_name, prefix };
@@ -4600,7 +4585,9 @@ impl<'a> Tokenizer<'a> {
     pub fn see_function(&mut self, name: &[u8]) {
         if self.var_or_env_functions == SeenStatus::LookingForThem {
             // PORT NOTE: Zig had `and` here (always false); preserved.
-            if name.eq_ignore_ascii_case(b"var") && name.eq_ignore_ascii_case(b"env") {
+            if strings::eql_case_insensitive_ascii_check_length(name, b"var")
+                && strings::eql_case_insensitive_ascii_check_length(name, b"env")
+            {
                 self.var_or_env_functions = SeenStatus::SeenAtLeastOne;
             }
         }
@@ -4983,7 +4970,7 @@ impl<'a> Tokenizer<'a> {
         let value = self.consume_name();
         if !self.is_eof() && self.next_byte_unchecked() == b'(' {
             self.advance(1);
-            if value.eq_ignore_ascii_case(b"url") {
+            if strings::eql_case_insensitive_ascii_check_length(value, b"url") {
                 if let Some(tok) = self.consume_unquoted_url() {
                     return tok;
                 }
@@ -5373,18 +5360,9 @@ impl<'a> Tokenizer<'a> {
     }
 
     pub fn consume_hex_digits(&mut self) -> (u32, u32) {
-        let mut value: u32 = 0;
-        let mut digits: u32 = 0;
-        while digits < 6 && !self.is_eof() {
-            if let Some(digit) = byte_to_hex_digit(self.next_byte_unchecked()) {
-                value = value * 16 + digit;
-                digits += 1;
-                self.advance(1);
-            } else {
-                break;
-            }
-        }
-        (value, digits)
+        let (value, n) = bun_core::fmt::parse_hex_prefix(&self.src[self.position..], 6);
+        self.advance(n);
+        (value, n as u32)
     }
 
     pub fn consume_char(&mut self) -> u32 {
@@ -5582,11 +5560,6 @@ fn len_utf8(code: u32) -> usize {
 
 fn len_utf16(ch: u32) -> usize {
     if (ch & 0xFFFF) == ch { 1 } else { 2 }
-}
-
-#[inline]
-fn byte_to_hex_digit(b: u8) -> Option<u32> {
-    bun_core::fmt::hex_digit_value(b).map(u32::from)
 }
 
 fn byte_to_decimal_digit(b: u8) -> Option<u32> {
@@ -6221,19 +6194,12 @@ pub mod color {
     }
 
     pub fn parse_hash_color_impl(value: &[u8]) -> Result<(u8, u8, u8, f32), ColorError> {
+        let pair = |i: usize| {
+            bun_core::fmt::hex_pair_value(value[i], value[i + 1]).ok_or(ColorError::Parse)
+        };
         match value.len() {
-            8 => Ok((
-                from_hex(value[0])? * 16 + from_hex(value[1])?,
-                from_hex(value[2])? * 16 + from_hex(value[3])?,
-                from_hex(value[4])? * 16 + from_hex(value[5])?,
-                (from_hex(value[6])? * 16 + from_hex(value[7])?) as f32 / 255.0,
-            )),
-            6 => {
-                let r = from_hex(value[0])? * 16 + from_hex(value[1])?;
-                let g = from_hex(value[2])? * 16 + from_hex(value[3])?;
-                let b = from_hex(value[4])? * 16 + from_hex(value[5])?;
-                Ok((r, g, b, OPAQUE))
-            }
+            8 => Ok((pair(0)?, pair(2)?, pair(4)?, pair(6)? as f32 / 255.0)),
+            6 => Ok((pair(0)?, pair(2)?, pair(4)?, OPAQUE)),
             4 => Ok((
                 from_hex(value[0])? * 17,
                 from_hex(value[1])? * 17,

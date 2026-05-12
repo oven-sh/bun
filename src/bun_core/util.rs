@@ -2202,6 +2202,55 @@ pub struct Version {
     pub patch: u32,
 }
 
+impl Version {
+    pub const ZERO: Self = Self { major: 0, minor: 0, patch: 0 };
+
+    /// Parse leading `"MAJOR.MINOR.PATCH"` from a byte slice. Per field:
+    /// accumulate ASCII digits (wrapping on overflow), stop at the first
+    /// non-digit, then advance past a single `'.'` to the next field; missing
+    /// or empty fields default to 0. Tolerates trailing junk (e.g. uname's
+    /// `"5.10.16-microsoft-standard"` → {5,10,16}). `const fn` so it can
+    /// populate `static`/`const` initializers.
+    pub const fn parse_dotted(bytes: &[u8]) -> Self {
+        let mut nums = [0u32; 3];
+        let mut idx = 0usize;
+        let mut i = 0usize;
+        while idx < 3 {
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                nums[idx] = nums[idx]
+                    .wrapping_mul(10)
+                    .wrapping_add((bytes[i] - b'0') as u32);
+                i += 1;
+            }
+            if i == start {
+                break;
+            }
+            idx += 1;
+            if i < bytes.len() && bytes[i] == b'.' {
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        Self { major: nums[0], minor: nums[1], patch: nums[2] }
+    }
+}
+
+/// `const`-context decimal `u32` parse of an ASCII byte slice. No sign, no
+/// whitespace, wrapping on overflow; non-digits are accumulated as garbage so
+/// only feed it digit-only build-time literals (e.g. `env!` version components).
+/// `str::parse` isn't `const`, hence this.
+pub const fn const_parse_u32(bytes: &[u8]) -> u32 {
+    let mut i = 0usize;
+    let mut n: u32 = 0;
+    while i < bytes.len() {
+        n = n.wrapping_mul(10).wrapping_add((bytes[i] - b'0') as u32);
+        i += 1;
+    }
+    n
+}
+
 // ─── RacyCell ─────────────────────────────────────────────────────────────
 /// Stable equivalent of `core::cell::SyncUnsafeCell<T>` (nightly-only as of
 /// 1.79). A `static`-safe interior-mutability cell with **no** synchronization.
@@ -2420,60 +2469,13 @@ impl Drop for ThreadLockGuard {
 #[doc(hidden)]
 #[inline]
 pub(crate) fn debug_thread_id() -> u64 {
-    thread_id()
+    crate::thread_id::current() as u64
 }
 
 #[cfg(debug_assertions)]
 #[inline]
 fn thread_id() -> u64 {
-    // Use the OS tid; matches Zig `Thread.getCurrentId()` semantics per-platform.
-    #[cfg(target_os = "linux")]
-    // SAFETY: `gettid` has no preconditions.
-    unsafe {
-        libc::syscall(libc::SYS_gettid) as u64
-    }
-    #[cfg(target_os = "macos")]
-    {
-        // Darwin: pthread_threadid_np(NULL, &tid) — same call Zig std uses.
-        // `&mut u64` is ABI-identical to `uint64_t *`; an invalid `thread`
-        // returns ESRCH (no UB), so `safe fn` discharges the link-time proof.
-        unsafe extern "C" {
-            safe fn pthread_threadid_np(
-                thread: libc::pthread_t,
-                thread_id: &mut u64,
-            ) -> core::ffi::c_int;
-        }
-        let mut tid: u64 = 0;
-        pthread_threadid_np(0, &mut tid);
-        tid
-    }
-    #[cfg(target_os = "freebsd")]
-    {
-        // No args; infallible; returns the kernel LWP id.
-        unsafe extern "C" {
-            safe fn pthread_getthreadid_np() -> core::ffi::c_int;
-        }
-        pthread_getthreadid_np() as u64
-    }
-    #[cfg(all(
-        unix,
-        not(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))
-    ))]
-    {
-        // Fallback: pthread_self() handle as u64 (opaque but stable per-thread).
-        // On the BSDs `pthread_t` is a raw pointer, which must route through usize.
-        unsafe extern "C" {
-            safe fn pthread_self() -> libc::pthread_t;
-        }
-        pthread_self() as usize as u64
-    }
-    #[cfg(windows)]
-    {
-        unsafe extern "system" {
-            safe fn GetCurrentThreadId() -> u32;
-        }
-        GetCurrentThreadId() as u64
-    }
+    crate::thread_id::current() as u64
 }
 
 // ─── StackCheck (from bun.zig) ───────────────────────────────────────────
@@ -3181,18 +3183,29 @@ pub fn errno_to_zig_err(errno: i32) -> crate::Error {
 }
 
 // ── time ──────────────────────────────────────────────────────────────────
-// Ports of `std.time.{nanoTimestamp,milliTimestamp,timestamp}` plus the
-// constants the install/http crates reference. Using libc clock_gettime keeps
-// this consistent with the Zig stdlib (which does the same on POSIX).
+// Port of `std.time` (vendor/zig/lib/std/time.zig:80-107) — the full
+// `comptime_int` constant ladder plus `{nano,milli,}timestamp()`. Zig's
+// `comptime_int` coerces to any numeric type; Rust callers `as`-cast at the
+// use-site (`NS_PER_S as i128`, `MS_PER_S as f64`, …). Every value fits in
+// `u64` (and the ≤per-second constants in `i32`), so all such casts —
+// including to `f64` — are lossless.
 pub mod time {
-    pub use crate::time::NS_PER_MS;
-    pub const NS_PER_S: i128 = 1_000_000_000;
+    // ns
     pub const NS_PER_US: u64 = 1_000;
+    pub const NS_PER_MS: u64 = 1_000_000;
+    pub const NS_PER_S: u64 = 1_000_000_000;
+    pub const NS_PER_MIN: u64 = 60 * NS_PER_S;
+    pub const NS_PER_HOUR: u64 = 60 * NS_PER_MIN;
+    pub const NS_PER_DAY: u64 = 24 * NS_PER_HOUR;
+    pub const NS_PER_WEEK: u64 = 7 * NS_PER_DAY;
+    // us
     pub const US_PER_MS: u64 = 1_000;
     pub const US_PER_S: u64 = 1_000_000;
-    pub const MS_PER_S: i64 = 1_000;
-    pub const S_PER_DAY: u32 = 86_400;
+    // ms
+    pub const MS_PER_S: u64 = 1_000;
     pub const MS_PER_DAY: u64 = 86_400_000;
+    // s
+    pub const S_PER_DAY: u32 = 86_400;
 
     /// `std.time.nanoTimestamp()` — wall-clock nanoseconds since the Unix epoch.
     #[inline]
@@ -3204,7 +3217,7 @@ pub mod time {
                 tv_nsec: 0,
             };
             super::clock_gettime(libc::CLOCK_REALTIME, &mut ts);
-            (ts.tv_sec as i128) * NS_PER_S + (ts.tv_nsec as i128)
+            (ts.tv_sec as i128) * NS_PER_S as i128 + (ts.tv_nsec as i128)
         }
         #[cfg(not(unix))]
         {
@@ -3223,7 +3236,7 @@ pub mod time {
     /// `std.time.timestamp()` — wall-clock seconds since the Unix epoch.
     #[inline]
     pub fn timestamp() -> i64 {
-        (nano_timestamp() / NS_PER_S) as i64
+        (nano_timestamp() / NS_PER_S as i128) as i64
     }
 
     /// `std.time.Timer` — monotonic stopwatch.
@@ -4622,21 +4635,6 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
     }
     // If `bin` contains a separator, resolve relative to cwd only.
     let has_sep = bin.iter().copied().any(crate::path_sep::is_sep_native);
-    #[inline]
-    fn is_absolute(p: &[u8]) -> bool {
-        if p.first() == Some(&b'/') {
-            return true;
-        }
-        if cfg!(windows) {
-            if p.first() == Some(&b'\\') {
-                return true;
-            }
-            if p.len() >= 2 && p[1] == b':' && p[0].is_ascii_alphabetic() {
-                return true;
-            }
-        }
-        false
-    }
     let check = |buf: &mut PathBuffer, dir: &[u8], bin: &[u8]| -> Option<usize> {
         let mut n = 0usize;
         if !dir.is_empty() {
@@ -4669,7 +4667,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         None
     };
     // Absolute `bin` → probe it directly without joining `cwd` (which.zig:35-42).
-    if is_absolute(bin) {
+    if crate::path_sep::is_absolute_native(bin) {
         return check(buf, b"", bin).map(|n| ZStr::from_buf(&buf.0, n));
     }
     if has_sep {
@@ -5223,7 +5221,7 @@ pub type timespec = Timespec;
 
 impl Timespec {
     pub const EPOCH: Timespec = Timespec { sec: 0, nsec: 0 };
-    const NS_PER_S: i64 = 1_000_000_000;
+    const NS_PER_S: i64 = crate::time::NS_PER_S as i64;
     const NS_PER_MS: i64 = crate::time::NS_PER_MS as i64;
 
     #[inline]

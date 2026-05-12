@@ -99,28 +99,9 @@ impl Version {
         Some(self.tag[b"bun-v".len()..].to_vec())
     }
 
-    pub const PLATFORM_LABEL: &'static str = {
-        #[cfg(target_os = "macos")]
-        {
-            "darwin"
-        }
-        // Android folds under "linux" — `SUFFIX_ABI` below adds "-android",
-        // matching `bun-linux-aarch64-android.zip` on the release page (and the
-        // Zig original where `Environment.os == .linux` for Android).
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            "linux"
-        }
-        #[cfg(target_os = "windows")]
-        {
-            "windows"
-        }
-        #[cfg(target_os = "freebsd")]
-        {
-            "freebsd"
-        }
-        // wasm: compile error in Zig — leave unconfigured
-    };
+    // "windows" not "win32"; Android folds to "linux" (`SUFFIX_ABI` below adds
+    // "-android", matching `bun-linux-aarch64-android.zip` on the release page).
+    pub const PLATFORM_LABEL: &'static str = bun_core::env::OS_NAME_NPM;
 
     pub const ARCH_LABEL: &'static str = if cfg!(target_arch = "aarch64") {
         "aarch64"

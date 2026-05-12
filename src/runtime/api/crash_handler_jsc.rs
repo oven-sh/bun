@@ -142,14 +142,9 @@ pub mod js_bindings {
     pub fn js_get_feature_data(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         let obj = JSValue::create_empty_object(global, 5);
         let list = analytics::PACKED_FEATURES_LIST;
-        let array = JSValue::create_empty_array(global, list.len())?;
-        for (i, feature) in list.iter().enumerate() {
-            array.put_index(
-                global,
-                u32::try_from(i).expect("int cast"),
-                BunString::static_(feature).to_js(global)?,
-            )?;
-        }
+        let array = JSValue::create_array_from_iter(global, list.iter(), |feature| {
+            BunString::static_(feature).to_js(global)
+        })?;
         obj.put(global, "features", array);
         obj.put(
             global,

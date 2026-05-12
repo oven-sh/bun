@@ -49,21 +49,6 @@ fn json_get_string_cloned<'b>(
     }
 }
 
-/// `strings.indexOfAnyT(bun.OSPathChar, _, "/\\")` — `OSPathChar` is `u16` on
-/// Windows, `u8` elsewhere; the literal needs widening.
-#[inline]
-fn sep_chars() -> &'static [OSPathChar] {
-    #[cfg(windows)]
-    {
-        const SEPS: [u16; 2] = [b'/' as u16, b'\\' as u16];
-        &SEPS
-    }
-    #[cfg(not(windows))]
-    {
-        b"/\\"
-    }
-}
-
 use crate::Command;
 use crate::cli::pack_command::{self as pack, PackCommand as Pack};
 
@@ -234,7 +219,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             total_files += usize::from(next.kind == FileKind::File);
 
             // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
-            if let Some(slash) = bun_core::index_of_any_t(pathname, sep_chars()) {
+            if let Some(slash) = pathname.iter().position(|&c| bun_paths::is_sep_any_t(c)) {
                 let stripped = &pathname[slash + 1..];
                 if stripped.is_empty() {
                     continue;
@@ -255,7 +240,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     continue;
                 }
 
-                if bun_core::index_of_any_t(stripped, sep_chars()).is_none() {
+                if !stripped.iter().any(|&c| bun_paths::is_sep_any_t(c)) {
                     // check for package.json, readme.md, ...
                     let filename = &pathname[slash + 1..];
 

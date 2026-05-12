@@ -384,6 +384,10 @@ pub mod web_socket;
 
 #[path = "socket.rs"]
 pub mod socket;
+pub use socket::{
+    AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,
+    SocketTcp, SocketTls,
+};
 
 // ───────────────────────────── re-exports ────────────────────────────────────
 
@@ -413,4 +417,3 @@ pub type NewApp<const SSL: bool> = app::App<SSL>;
 pub type NewAppResponse<const SSL: bool> = response::Response<SSL>;
 pub type Socket = us_socket::us_socket_t;
 pub type SocketContext = us_socket_context_t;
-pub type SocketHandler = socket_group::VTable;

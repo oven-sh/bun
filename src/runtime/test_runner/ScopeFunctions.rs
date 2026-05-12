@@ -90,14 +90,6 @@ pub mod strings {
 }
 
 impl ScopeFunctions {
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen requires
-    // a `constructor` (jest.classes.ts has no `construct: true`, but the macro
-    // still wires the slot). ScopeFunctions instances are minted via
-    // `create_unbound`/`create_bound`, never `new ScopeFunctions()`.
-    pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut ScopeFunctions> {
-        Err(global.throw(format_args!("ScopeFunctions cannot be constructed directly")))
-    }
-
     #[bun_jsc::host_fn(getter)]
     pub fn get_skip(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"get .skip", strings::SKIP())

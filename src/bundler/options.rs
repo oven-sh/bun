@@ -2449,9 +2449,10 @@ impl EntryPoint {
         }
 
         // if it *was* a node_module path, we don't do any allocation, we just keep it as a package path
-        let needle: &[u8] = const_format::concatcp!("node_modules", bun_paths::SEP_STR).as_bytes();
-        if let Some(node_module_i) = strings::index_of(str, needle) {
-            Ok(Box::from(&str[node_module_i + b"node_modules".len() + 1..]))
+        if let Some(node_module_i) = strings::index_of(str, bun_paths::NODE_MODULES_TRAILING) {
+            Ok(Box::from(
+                &str[node_module_i + bun_paths::NODE_MODULES_TRAILING.len()..],
+            ))
             // otherwise, we allocate a new string and copy the path into it with a leading "./"
         } else {
             let mut out = vec![0u8; str.len() + 2];

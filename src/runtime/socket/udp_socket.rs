@@ -10,7 +10,7 @@ use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsRef, JsResult, MarkedArgumentBuffer,
     Ref as JscRef, StringJsc, SysErrorJsc, SystemError,
 };
-use bun_ptr::BackRef;
+use bun_ptr::{AsCtxPtr, BackRef};
 
 use crate::node::validators;
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -652,15 +652,6 @@ impl UDPSocket {
             global_this,
             this_value,
         ))
-    }
-
-    /// `self`'s address as `*mut Self` for the uws user-data slot. Callbacks
-    /// deref it as `&*const` (shared) — see `on_close`/`on_data` above — so no
-    /// write provenance is required; the `*mut` spelling is purely to match
-    /// the C signature.
-    #[inline]
-    pub fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
     }
 
     pub fn call_error_handler(&self, this_value_: JSValue, err: JSValue) {

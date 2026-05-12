@@ -17,6 +17,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
+use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{Environment, Output, env_var, fmt, tty};
 use bun_jsc::js_promise::Status as PromiseStatus;
@@ -462,12 +463,8 @@ impl LineEditor {
     }
 
     pub fn delete_to_start(&mut self) {
-        if self.cursor > 0 {
-            self.buffer.copy_within(self.cursor.., 0);
-            let new_len = self.buffer.len() - self.cursor;
-            self.buffer.truncate(new_len);
-            self.cursor = 0;
-        }
+        self.buffer.drain_front(self.cursor);
+        self.cursor = 0;
     }
 
     pub fn move_left(&mut self) {

@@ -13,7 +13,7 @@ use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsCell,
     JsRef, JsResult,
 };
-use bun_ptr::BackRef;
+use bun_ptr::{AsCtxPtr, BackRef};
 use bun_uws as uws;
 
 use super::js_valkey_functions as fns;
@@ -89,10 +89,7 @@ fn deref_guard(
     scopeguard::guard(this, drop_fn as fn(*const JSValkeyClient))
 }
 
-bun_output::declare_scope!(RedisJS, visible);
-macro_rules! debug {
-    ($($args:tt)*) => { bun_output::scoped_log!(RedisJS, $($args)*) };
-}
+bun_output::define_scoped_log!(debug, RedisJS, visible);
 
 type Socket = uws::AnySocket;
 
@@ -479,14 +476,6 @@ impl JSValkeyClient {
         // `&mut` is fresh per call site; reentrancy through
         // `ValkeyClient::parent()` forms a shared `&JSValkeyClient` only.
         unsafe { self.client.get_mut() }
-    }
-
-    /// `self`'s address as `*const Self` for scopeguard / task ctx slots.
-    /// Closures deref it as shared (`&*p`) — every method they reach is
-    /// `&self` post-R-2, so no write provenance is required.
-    #[inline]
-    fn as_ctx_ptr(&self) -> *const Self {
-        std::ptr::from_ref::<Self>(self)
     }
 
     // Factory function to create a new Valkey client from JS
@@ -1430,7 +1419,7 @@ impl JSValkeyClient {
         let _defer = scopeguard::guard(self_ptr, |p| unsafe {
             // Update poll reference to allow garbage collection of disconnected clients
             (*p).update_poll_ref();
-            JSValkeyClient::deref(p.cast_mut());
+            JSValkeyClient::deref(p);
         });
 
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
@@ -1641,7 +1630,7 @@ impl JSValkeyClient {
         // only knows to clean up its own state, not the keep-alive ref.
         let self_ptr = self.as_ctx_ptr();
         let errdefer_deref =
-            scopeguard::guard(self_ptr, |p| unsafe { JSValkeyClient::deref(p.cast_mut()) });
+            scopeguard::guard(self_ptr, |p| unsafe { JSValkeyClient::deref(p) });
         self.client_mut().status = valkey::Status::Connecting;
         self.update_poll_ref();
         let errdefer_status = scopeguard::guard(self_ptr, |p| unsafe {
@@ -2029,7 +2018,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let _defer = scopeguard::guard(this_ptr, |p| unsafe {
             (*p).client_mut().status = valkey::Status::Disconnected;
             (*p).update_poll_ref();
-            JSValkeyClient::deref(p.cast_mut());
+            JSValkeyClient::deref(p);
         });
 
         let _ = this.client_mut().on_close(); // TODO: properly propagate exception upwards
@@ -2056,7 +2045,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let _defer = scopeguard::guard(this_ptr, |p| unsafe {
             (*p).client_mut().status = valkey::Status::Disconnected;
             (*p).update_poll_ref();
-            JSValkeyClient::deref(p.cast_mut());
+            JSValkeyClient::deref(p);
         });
 
         narrow_terminated(this.client_mut().on_close())

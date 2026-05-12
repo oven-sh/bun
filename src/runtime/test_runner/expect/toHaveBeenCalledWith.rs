@@ -61,10 +61,7 @@ pub fn to_have_been_called_with(
     // handle failure
     let mut formatter = super::make_formatter(global);
 
-    let expected_args_js_array = JSValue::create_empty_array(global, arguments.len())?;
-    for (i, arg) in arguments.iter().enumerate() {
-        expected_args_js_array.put_index(global, u32::try_from(i).unwrap(), *arg)?;
-    }
+    let expected_args_js_array = JSValue::create_array_from_slice(global, arguments)?;
     expected_args_js_array.ensure_still_alive();
 
     if this.flags.get().not() {

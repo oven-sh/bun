@@ -536,11 +536,6 @@ impl Listener {
         Ok(this_value)
     }
 
-    // PORT NOTE: no #[bun_jsc::host_fn] — JsClass codegen emits the constructor shim.
-    pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Listener> {
-        Err(global.throw(format_args!("Cannot construct Listener")))
-    }
-
     pub fn on_name_pipe_created<const SSL: bool>(listener: &Listener) -> *mut NewSocket<SSL> {
         debug_assert!(SSL == listener.ssl);
 

@@ -56,13 +56,10 @@ impl<const SSL: bool> BodyResponse for Response<SSL> {
 ///
 /// In Zig this was a `fn(...) type` taking a comptime `field` name and two
 /// comptime fn pointers (`onBody`, `onError`). In Rust those are expressed as
-/// a trait the wrapper type implements, plus an associated `MIXIN_OFFSET`
-/// const replacing the comptime `field` name used by `@fieldParentPtr`.
-pub trait BodyReaderHandler: Sized + 'static {
-    /// Byte offset of the `BodyReaderMixin<Self>` field within `Self`.
-    /// Implementors should set this to `core::mem::offset_of!(Self, <field>)`.
-    const MIXIN_OFFSET: usize;
-
+/// a trait the wrapper type implements; the comptime `field` name used by
+/// `@fieldParentPtr` is the [`bun_core::IntrusiveField`] supertrait (implement
+/// via `bun_core::intrusive_field!`).
+pub trait BodyReaderHandler: bun_core::IntrusiveField<BodyReaderMixin<Self>> + 'static {
     /// `body` is freed after this function returns.
     ///
     /// Receives the original `heap::alloc`'d pointer (full-allocation
@@ -104,7 +101,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
     /// Takes `*mut Wrap` (not `&mut self`) so the registered C user_data carries
     /// provenance for the *entire* enclosing `Wrap`, not just the mixin field.
     /// Zig used `@fieldParentPtr(field, ctx)` which has no provenance/aliasing
-    /// restriction; in Rust, deriving the parent by `.sub(MIXIN_OFFSET)` from a
+    /// restriction; in Rust, deriving the parent by `.byte_sub(OFFSET)` from a
     /// `&mut self`-sourced pointer is out-of-provenance under Stacked Borrows
     /// and the resulting `&mut Wrap` would overlap a live `&mut Self`. Callers
     /// pass the `heap::alloc`'d wrapper pointer directly; trampolines below
@@ -131,10 +128,10 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
     /// Crate-private — collapses the per-call-site proof into this one block.
     #[inline]
     fn mixin_of<'a>(wrap: *mut Wrap) -> &'a mut Self {
-        // SAFETY: type invariant — see doc comment above. `MIXIN_OFFSET` is
-        // `offset_of!(Wrap, <field>)`, so the result is in-bounds and inherits
+        // SAFETY: type invariant — see doc comment above. `IntrusiveField::OFFSET`
+        // is `offset_of!(Wrap, <field>)`, so the result is in-bounds and inherits
         // `wrap`'s provenance over the whole allocation.
-        unsafe { &mut *wrap.byte_add(Wrap::MIXIN_OFFSET).cast::<Self>() }
+        unsafe { &mut *Wrap::field_of(wrap) }
     }
 
     fn on_data_generic<R: BodyResponse>(wrap: *mut Wrap, r: &mut R, chunk: &[u8], last: bool) {

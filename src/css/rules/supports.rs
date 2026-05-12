@@ -258,7 +258,6 @@ impl css::generic::ToCss for SupportsCondition {
 impl SupportsCondition {
     pub fn parse(input: &mut css::Parser) -> css::Result<SupportsCondition> {
         use bun_collections::ArrayHashMap;
-        use bun_core::strings;
 
         if input.try_parse(|i| i.expect_ident_matching(b"not")).is_ok() {
             let in_parens = SupportsCondition::parse_in_parens(input)?;
@@ -281,16 +280,11 @@ impl SupportsCondition {
                 input.try_parse(|i: &mut css::Parser| -> css::Result<SupportsCondition> {
                     let location = i.current_source_location();
                     let s = i.expect_ident_cloned()?;
-                    let found_type: i32 = 'found_type: {
-                        // todo_stuff.match_ignore_ascii_case
-                        if strings::eql_case_insensitive_ascii_check_length(b"and", s) {
-                            break 'found_type 1;
-                        }
-                        if strings::eql_case_insensitive_ascii_check_length(b"or", s) {
-                            break 'found_type 2;
-                        }
-                        return Err(location.new_unexpected_token_error(css::Token::Ident(s)));
-                    };
+                    let found_type: i32 = crate::match_ignore_ascii_case! { s, {
+                        b"and" => 1,
+                        b"or" => 2,
+                        _ => return Err(location.new_unexpected_token_error(css::Token::Ident(s))),
+                    }};
 
                     if let Some(expected) = expected_type {
                         if found_type != expected {

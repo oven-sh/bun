@@ -1070,13 +1070,8 @@ impl Data {
             };
         }
 
-        // Zig: `comptime Output.color_map.get("...")` — inline the ANSI
-        // sequences as `const` so the `else` arm can concat at compile time.
-        // Kept in lockstep with `bun_output_tags::COLOR_TABLE`.
-        const B: &str = "\x1b[1m"; // bold
-        const D: &str = "\x1b[2m"; // dim
-        const RED: &str = "\x1b[31m";
-        const BLUE: &str = "\x1b[34m";
+        // `pub const &'static str` — accepted by `const_format::concatcp!` below.
+        use bun_core::output::ansi::{BLUE, BOLD as B, DIM as D, RED};
 
         let message_color: &'static str = match kind {
             Kind::Err => B,
@@ -1109,7 +1104,7 @@ impl Data {
                         }
 
                         line_offset_for_second_line +=
-                            bun_core::fmt::count(format_args!("{} | ", location.line));
+                            bun_core::fmt::digit_count(location.line) + " | ".len();
                     }
 
                     write!(
@@ -3014,7 +3009,7 @@ pub fn source_from_file_at(
     };
     if opts.convert_bom {
         if let Some(bom) = bun_core::immutable::BOM::detect(&bytes) {
-            bytes = bun_core::handle_oom(bom.remove_and_convert_to_utf8_and_free(bytes));
+            bytes = bom.remove_and_convert_to_utf8_and_free(bytes);
         }
     }
     // `path` is caller-owned; goes through the Phase-A `IntoStr` borrow shim
@@ -3063,6 +3058,8 @@ pub mod symbol;
 pub mod ts;
 pub mod use_directive;
 
+pub mod lexer_log;
+pub use lexer_log::LexerLog;
 pub mod lexer_tables;
 pub mod nodes;
 pub mod runtime;

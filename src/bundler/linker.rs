@@ -145,17 +145,6 @@ mod hardcoded_module {
     }
 }
 
-#[inline]
-fn without_leading_slash(s: &[u8]) -> &[u8] {
-    // PORT NOTE: `strings.withoutLeadingSlash` is not yet ported into
-    // `bun_core::immutable`; trivial enough to inline.
-    if !s.is_empty() && (s[0] == b'/' || (cfg!(windows) && s[0] == b'\\')) {
-        &s[1..]
-    } else {
-        s
-    }
-}
-
 /// Intern a byte buffer into the process-lifetime `relative_paths_list`
 /// `BSSStringList` singleton.
 ///
@@ -713,7 +702,7 @@ impl Linker {
                         &mut buf,
                         "{}/{}",
                         bstr::BStr::new(strings::without_trailing_slash(origin.href)),
-                        bstr::BStr::new(without_leading_slash(source_path)),
+                        bstr::BStr::new(bun_paths::strings::without_leading_slash(source_path)),
                     )
                     .map_err(|_| bun_core::err!("OutOfMemory"))?;
                     Ok(PFs::Path::init(intern(buf)))

@@ -24,7 +24,8 @@
 use bun_alloc::Arena as Bump;
 
 use bun_ast as js_ast;
-use bun_ast::Indentation;
+use bun_ast::{Indentation, LexerLog};
+use bun_core::fmt::hex_digit_value_u32;
 use bun_core::strings;
 use bun_core::strings::CodePoint;
 
@@ -202,6 +203,34 @@ pub struct Lexer<'a, 'bump> {
 
 type LexResult<T = ()> = Result<T, bun_core::Error>;
 
+impl<'a, 'bump> LexerLog<'a> for Lexer<'a, 'bump> {
+    type Err = bun_core::Error;
+    #[inline]
+    fn log_mut(&mut self) -> &mut bun_ast::Log {
+        unsafe { &mut *self.log }
+    }
+    #[inline]
+    fn source(&self) -> &'a bun_ast::Source {
+        self.source
+    }
+    #[inline]
+    fn prev_error_loc_mut(&mut self) -> &mut bun_ast::Loc {
+        &mut self.prev_error_loc
+    }
+    #[inline]
+    fn start(&self) -> usize {
+        self.start
+    }
+    #[inline]
+    fn is_log_disabled(&self) -> bool {
+        self.is_log_disabled
+    }
+    #[inline]
+    fn syntax_err() -> bun_core::Error {
+        bun_core::err!("SyntaxError")
+    }
+}
+
 impl<'a, 'bump> Lexer<'a, 'bump>
 where
     // `identifier` may point into `source.contents` (`'a`) *or* a bump-alloc'd
@@ -313,58 +342,8 @@ where
     }
 
     #[cold]
-    fn add_error(&mut self, loc: usize, args: core::fmt::Arguments<'_>) {
-        if self.is_log_disabled {
-            return;
-        }
-        let l = bun_ast::usize2loc(loc);
-        if l == self.prev_error_loc {
-            return;
-        }
-        let _ = self.log_mut().add_error_fmt(Some(self.source), l, args);
-        self.prev_error_loc = l;
-    }
-
-    #[cold]
-    fn add_range_error(&mut self, r: bun_ast::Range, args: core::fmt::Arguments<'_>) -> LexResult {
-        if self.is_log_disabled {
-            return Ok(());
-        }
-        if self.prev_error_loc == r.loc {
-            return Ok(());
-        }
-        let _ = self
-            .log_mut()
-            .add_range_error_fmt(Some(self.source), r, args);
-        self.prev_error_loc = r.loc;
-        Ok(())
-    }
-
-    #[cold]
-    fn syntax_error(&mut self) -> LexResult {
-        // Only add this if there is not already an error — a more descriptive
-        // one may already have been emitted.
-        if !self.log_mut().has_errors() {
-            self.add_error(self.start, format_args!("Syntax Error"));
-        }
-        Err(bun_core::err!("SyntaxError"))
-    }
-
-    #[cold]
-    fn add_default_error(&mut self, msg: &str) -> LexResult {
-        self.add_error(self.start, format_args!("{}", msg));
-        Err(bun_core::err!("SyntaxError"))
-    }
-
-    #[cold]
     fn add_unsupported_syntax_error(&mut self, msg: &str) -> LexResult {
         self.add_error(self.end, format_args!("Unsupported syntax: {}", msg));
-        Err(bun_core::err!("SyntaxError"))
-    }
-
-    #[cold]
-    fn add_syntax_error(&mut self, loc: usize, args: core::fmt::Arguments<'_>) -> LexResult {
-        self.add_error(loc, args);
         Err(bun_core::err!("SyntaxError"))
     }
 
@@ -372,43 +351,7 @@ where
 
     #[inline(always)]
     fn next_codepoint(&mut self) -> CodePoint {
-        if self.current >= self.source.contents.len() {
-            self.end = self.source.contents.len();
-            return -1;
-        }
-        let cp_len =
-            strings::wtf8_byte_sequence_length_with_invalid(self.source.contents[self.current])
-                as usize;
-        let slice: &[u8] = if !(cp_len + self.current > self.source.contents.len()) {
-            &self.source.contents[self.current..cp_len + self.current]
-        } else {
-            b""
-        };
-
-        let code_point: CodePoint = match slice.len() {
-            0 => -1,
-            1 => slice[0] as CodePoint,
-            _ => {
-                // Zig over-reads `slice.ptr[0..4]`; pad into a stack buffer to
-                // avoid UB on a <4-byte tail.
-                let mut buf = [0u8; 4];
-                buf[..slice.len()].copy_from_slice(slice);
-                strings::decode_wtf8_rune_t_multibyte(
-                    &buf,
-                    slice.len() as u8,
-                    strings::UNICODE_REPLACEMENT as CodePoint,
-                )
-            }
-        };
-
-        self.end = self.current;
-        self.current += if code_point != strings::UNICODE_REPLACEMENT as CodePoint {
-            cp_len
-        } else {
-            1
-        };
-
-        code_point
+        strings::lexer_step::next_codepoint(&self.source.contents, &mut self.current, &mut self.end)
     }
 
     #[inline]
@@ -541,19 +484,19 @@ where
                 }
                 -1 => {
                     if QUOTE != 0 {
-                        self.add_default_error("Unterminated string literal")?;
+                        self.add_default_error(b"Unterminated string literal")?;
                     }
                     break;
                 }
                 0x0D /* \r */ => {
-                    self.add_default_error("Unterminated string literal")?;
+                    self.add_default_error(b"Unterminated string literal")?;
                 }
                 0x0A /* \n */ => {
                     // Implicitly-quoted strings end at newline OR EOF (.env only).
                     if QUOTE == 0 {
                         break;
                     }
-                    self.add_default_error("Unterminated string literal")?;
+                    self.add_default_error(b"Unterminated string literal")?;
                 }
                 cp => {
                     if cp == QUOTE as CodePoint {
@@ -719,17 +662,9 @@ where
                                     return self.syntax_error();
                                 }
                                 let c3 = iter.c;
-                                value = match c3 {
-                                    d if (d >= '0' as CodePoint && d <= '9' as CodePoint) => {
-                                        value * 16 | (d - '0' as CodePoint)
-                                    }
-                                    d if (d >= 'a' as CodePoint && d <= 'f' as CodePoint) => {
-                                        value * 16 | (d + 10 - 'a' as CodePoint)
-                                    }
-                                    d if (d >= 'A' as CodePoint && d <= 'F' as CodePoint) => {
-                                        value * 16 | (d + 10 - 'A' as CodePoint)
-                                    }
-                                    _ => return self.syntax_error(),
+                                value = match hex_digit_value_u32(c3 as u32) {
+                                    Some(d) => value * 16 | d as CodePoint,
+                                    None => return self.syntax_error(),
                                 };
                             }
                             push_codepoint(buf, value);
@@ -749,17 +684,9 @@ where
                                     return self.syntax_error();
                                 }
                                 let h = iter.c;
-                                let digit = match h {
-                                    d if (d >= '0' as CodePoint && d <= '9' as CodePoint) => {
-                                        (d - '0' as CodePoint) as u32
-                                    }
-                                    d if (d >= 'a' as CodePoint && d <= 'f' as CodePoint) => {
-                                        (d + 10 - 'a' as CodePoint) as u32
-                                    }
-                                    d if (d >= 'A' as CodePoint && d <= 'F' as CodePoint) => {
-                                        (d + 10 - 'A' as CodePoint) as u32
-                                    }
-                                    _ => return self.syntax_error(),
+                                let digit = match hex_digit_value_u32(h as u32) {
+                                    Some(d) => d as u32,
+                                    None => return self.syntax_error(),
                                 };
                                 value = value * 16 + digit;
                             }

@@ -195,7 +195,6 @@ pub enum BasePalette {
 impl BasePalette {
     pub fn parse(input: &mut css::Parser) -> css::Result<BasePalette> {
         use crate::css_values::number::CSSIntegerFns;
-        use bun_core::strings;
         if let Ok(i) = input.try_parse(CSSIntegerFns::parse) {
             if i < 0 {
                 return Err(input.new_custom_error(css::ParserError::invalid_value));
@@ -205,13 +204,11 @@ impl BasePalette {
 
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
-        if strings::eql_case_insensitive_ascii_check_length(b"light", ident) {
-            Ok(BasePalette::Light)
-        } else if strings::eql_case_insensitive_ascii_check_length(b"dark", ident) {
-            Ok(BasePalette::Dark)
-        } else {
-            Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
-        }
+        crate::match_ignore_ascii_case! { ident, {
+            b"light" => Ok(BasePalette::Light),
+            b"dark" => Ok(BasePalette::Dark),
+            _ => Err(location.new_unexpected_token_error(css::Token::Ident(ident))),
+        }}
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -241,7 +238,6 @@ pub struct FontPaletteValuesDeclarationParser {}
 const _: () = {
     use crate::css_properties::custom::{CustomProperty, CustomPropertyName};
     use crate::css_properties::font::FontFamily;
-    use bun_core::strings;
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };
@@ -258,28 +254,30 @@ const _: () = {
             input: &mut Parser,
         ) -> Result<Self::Declaration> {
             let state = input.state();
-            // todo_stuff.match_ignore_ascii_case
-            if strings::eql_case_insensitive_ascii_check_length(b"font-family", name) {
-                // https://drafts.csswg.org/css-fonts-4/#font-family-2-desc
-                if let Ok(font_family) = FontFamily::parse(input) {
-                    if matches!(font_family, FontFamily::Generic(_)) {
-                        return Err(input.new_custom_error(ParserError::invalid_declaration));
+            crate::match_ignore_ascii_case! { name, {
+                b"font-family" => {
+                    // https://drafts.csswg.org/css-fonts-4/#font-family-2-desc
+                    if let Ok(font_family) = FontFamily::parse(input) {
+                        if matches!(font_family, FontFamily::Generic(_)) {
+                            return Err(input.new_custom_error(ParserError::invalid_declaration));
+                        }
+                        return Ok(FontPaletteValuesProperty::FontFamily(font_family));
                     }
-                    return Ok(FontPaletteValuesProperty::FontFamily(font_family));
-                }
-            } else if strings::eql_case_insensitive_ascii_check_length(b"base-palette", name) {
-                // https://drafts.csswg.org/css-fonts-4/#base-palette-desc
-                if let Ok(base_palette) = BasePalette::parse(input) {
-                    return Ok(FontPaletteValuesProperty::BasePalette(base_palette));
-                }
-            } else if strings::eql_case_insensitive_ascii_check_length(b"override-colors", name) {
-                // https://drafts.csswg.org/css-fonts-4/#override-color
-                if let Ok(override_colors) = input.parse_comma_separated(OverrideColors::parse) {
-                    return Ok(FontPaletteValuesProperty::OverrideColors(override_colors));
-                }
-            } else {
-                return Err(input.new_custom_error(ParserError::invalid_declaration));
-            }
+                },
+                b"base-palette" => {
+                    // https://drafts.csswg.org/css-fonts-4/#base-palette-desc
+                    if let Ok(base_palette) = BasePalette::parse(input) {
+                        return Ok(FontPaletteValuesProperty::BasePalette(base_palette));
+                    }
+                },
+                b"override-colors" => {
+                    // https://drafts.csswg.org/css-fonts-4/#override-color
+                    if let Ok(override_colors) = input.parse_comma_separated(OverrideColors::parse) {
+                        return Ok(FontPaletteValuesProperty::OverrideColors(override_colors));
+                    }
+                },
+                _ => return Err(input.new_custom_error(ParserError::invalid_declaration)),
+            }}
 
             input.reset(&state);
             // PERF(port): Zig passed `input.arena()` + `null` here.

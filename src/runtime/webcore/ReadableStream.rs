@@ -226,7 +226,7 @@ impl ReadableStream {
         // this will resolve any pending promises to done: true
         match self.ptr {
             // SAFETY: ptrs came from ReadableStreamTag__tagged; valid while stream alive.
-            Source::Blob(source) => unsafe { (*source).parent().cancel() },
+            Source::Blob(source) => unsafe { (*(*source).parent()).cancel() },
             Source::File(source) => unsafe { (*(*source).parent()).cancel() },
             Source::Bytes(source) => unsafe { (*(*source).parent()).cancel() },
             _ => {}

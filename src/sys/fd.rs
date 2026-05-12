@@ -32,11 +32,7 @@ pub enum MakeLibUvOwnedError {
     #[error("SystemFdQuotaExceeded")]
     SystemFdQuotaExceeded,
 }
-impl From<MakeLibUvOwnedError> for bun_core::Error {
-    fn from(e: MakeLibUvOwnedError) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(&e))
-    }
-}
+bun_core::named_error_set!(MakeLibUvOwnedError);
 
 // ──────────────────────────────────────────────────────────────────────────
 // FdExt — syscall-touching methods on `bun_core::Fd`.

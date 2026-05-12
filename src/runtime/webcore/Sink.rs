@@ -853,15 +853,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         bun_core::mark_binding!();
 
         if !T::HAS_CONSTRUCT {
-            let err = bun_jsc::SystemError {
-                message: bun_core::String::create_format(format_args!(
-                    "{} is not constructable",
-                    T::NAME
-                )),
-                code: bun_core::String::static_("ERR_ILLEGAL_CONSTRUCTOR"),
-                ..Default::default()
-            };
-            return Err(global.throw_value(err.to_error_instance(global)));
+            return Err(global.throw_illegal_constructor(T::NAME));
         }
 
         // Zig: `bun.new(SinkType, undefined)` then `this.construct(allocator)`.

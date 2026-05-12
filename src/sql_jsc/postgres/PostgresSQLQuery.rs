@@ -6,6 +6,7 @@ use crate::jsc::{
 };
 use bun_core::String as BunString;
 use bun_jsc::JsCell;
+use bun_ptr::AsCtxPtr;
 use bun_wyhash::hash;
 
 use super::PostgresSQLConnection;
@@ -145,16 +146,6 @@ impl PostgresSQLQuery {
         let mut v = self.flags.get();
         f(&mut v);
         self.flags.set(v);
-    }
-
-    /// `self`'s address as `*mut Self` for `ScopedRef` and the connection's
-    /// request FIFO. The bodies that consume it deref as `&*const` (shared) —
-    /// every mutated field is `Cell`/`JsCell`-backed — so no write provenance
-    /// is required; the `*mut` spelling is purely to match existing C-shaped
-    /// signatures.
-    #[inline]
-    pub fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
     }
 
     /// RAII `ref()`/`deref()` bracket around `self`. One audited

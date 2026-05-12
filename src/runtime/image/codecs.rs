@@ -244,11 +244,7 @@ pub enum Error {
     OutOfMemory,
 }
 
-impl From<Error> for bun_core::Error {
-    fn from(e: Error) -> Self {
-        bun_core::Error::from_name(<&'static str>::from(e))
-    }
-}
+bun_core::named_error_set!(Error);
 
 bun_core::oom_from_alloc!(Error);
 

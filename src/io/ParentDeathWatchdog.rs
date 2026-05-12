@@ -590,7 +590,7 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
     #[cfg(target_os = "linux")]
     {
         let mut path_buf = [0u8; 64];
-        let Some(path) = buf_print_z(&mut path_buf, format_args!("/proc/{}/stat", pid)) else {
+        let Ok(path) = bun_core::fmt::buf_print_z(&mut path_buf, format_args!("/proc/{}/stat", pid)) else {
             return 0;
         };
         let mut read_buf = [0u8; 512];
@@ -697,7 +697,7 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
         let Some(tid) = bun_core::fmt::parse_decimal::<libc::pid_t>(entry.name.slice()) else {
             continue;
         };
-        let Some(children_path) = buf_print_z(
+        let Ok(children_path) = bun_core::fmt::buf_print_z(
             &mut path_buf,
             format_args!("/proc/{}/task/{}/children", parent, tid),
         ) else {
@@ -748,17 +748,6 @@ fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
         }
     }
     Some(&buf[..written])
-}
-
-// ─── port-local helpers ──────────────────────────────────────────────────────
-
-/// Format `args` into `buf`, NUL-terminate, return a `&ZStr` borrowing `buf`.
-/// Returns None if the formatted output (plus NUL) doesn't fit.
-/// Port helper for `std.fmt.bufPrintZ`.
-#[cfg(unix)]
-#[inline]
-fn buf_print_z<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> Option<&'a ZStr> {
-    bun_core::fmt::buf_print_z(buf, args).ok()
 }
 
 // ported from: src/aio/ParentDeathWatchdog.zig

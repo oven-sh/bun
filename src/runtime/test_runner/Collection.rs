@@ -111,13 +111,6 @@ impl Collection {
         unsafe { self.active_scope.as_mut() }
     }
 
-    fn bun_test(&mut self) -> &mut BunTest {
-        // SAFETY: self points to BunTest.collection (Collection is only ever embedded there).
-        unsafe {
-            &mut *bun_core::from_field_ptr!(BunTest, collection, std::ptr::from_mut::<Self>(self))
-        }
-    }
-
     pub fn enqueue_describe_callback(
         &mut self,
         new_scope: &mut DescribeScope,
@@ -126,8 +119,7 @@ impl Collection {
         let _g = group::begin();
 
         debug_assert!(!self.locked);
-        let _buntest = self.bun_test();
-        // PORT NOTE: reshaped for borrowck — Zig used `buntest.gpa` for Strong.init; allocator param dropped.
+        // PORT NOTE: Zig used `bunTest().gpa` for Strong.init; allocator param dropped.
 
         if let Some(cb) = callback {
             group::log(format_args!(

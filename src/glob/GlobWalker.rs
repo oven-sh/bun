@@ -29,17 +29,14 @@ use bun_core::Error;
 use bun_core::env::IS_WINDOWS;
 use bun_core::strings::{self, UnsignedCodepointIterator as CodepointIterator};
 use bun_core::{String as BunString, ZStr};
-use bun_core::{declare_scope, scoped_log};
+use bun_core::define_scoped_log;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, resolve_path};
 use bun_sys::dir_iterator as DirIterator;
 use bun_sys::{self as Syscall, E, Error as SysError, Fd, FdExt, O, Result as Maybe, S, Stat};
 
 // const Codepoint = u32;
 
-declare_scope!(Glob, visible);
-macro_rules! log {
-    ($($arg:tt)*) => { scoped_log!(Glob, $($arg)*) };
-}
+define_scoped_log!(log, Glob, visible);
 
 type Cursor = strings::Cursor;
 // PORT NOTE: Zig's `CodepointIterator.Cursor.CodePointType` is `u32` (UnsignedCodepointIterator).
@@ -2029,8 +2026,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         if !self.absolute {
             // If relative paths enabled, stdlib join is preferred over
             // ResolvePath.joinBuf because it doesn't try to normalize the path
-            // TODO(port): std.fs.path.join / joinZ — bun_paths needs a non-normalizing join.
-            return Ok(std_join::<SENTINEL>(subdir_parts));
+            return Ok(bun_paths::join_sep_maybe_z::<SENTINEL>(subdir_parts));
         }
 
         // For SENTINEL, bun_join already included trailing NUL in the slice it returned.
@@ -2196,8 +2192,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             width = u32::from(strings::wtf8_byte_sequence_length(c));
 
             // PORT NOTE: GlobWalker.zig duplicates this block across the '\\' (Windows) and '/'
-            // arms because Zig has no or-pattern with a comptime guard; merged here via cfg!().
-            if c == b'/' || (cfg!(windows) && c == b'\\') {
+            // arms because Zig has no or-pattern with a comptime guard; merged here.
+            if bun_core::path_sep::is_sep_native(c) {
                 let mut end_byte = i;
                 // is last char
                 if (i + width) as usize == pattern.len() {
@@ -2379,40 +2375,6 @@ fn work_item_logical_path(path: &[u8]) -> &[u8] {
     } else {
         path
     }
-}
-
-// const stdJoin = if (!sentinel) std.fs.path.join else std.fs.path.joinZ;
-// Port of Zig's `std.fs.path.joinSepMaybeZ`: naively concatenates parts with the
-// native separator WITHOUT normalizing, but — critically — does NOT insert a
-// separator when the previous part already ends with one (or this part starts
-// with one), and collapses a single duplicate sep at the seam if both sides
-// have one. Matches vendor/zig/lib/std/fs/path.zig joinSepMaybeZ.
-fn std_join<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
-    use bun_paths::is_sep_native as is_sep;
-    let mut out: Vec<u8> = Vec::new();
-    let mut prev_last: Option<u8> = None;
-    for p in parts {
-        if p.is_empty() {
-            continue;
-        }
-        let this = match prev_last {
-            None => *p,
-            Some(prev) => {
-                let prev_sep = is_sep(prev);
-                let this_sep = is_sep(p[0]);
-                if !prev_sep && !this_sep {
-                    out.push(bun_paths::SEP);
-                }
-                if prev_sep && this_sep { &p[1..] } else { *p }
-            }
-        };
-        out.extend_from_slice(this);
-        prev_last = Some(p[p.len() - 1]);
-    }
-    if SENTINEL {
-        out.push(0);
-    }
-    out.into_boxed_slice()
 }
 
 // const bunJoin = if (!sentinel) ResolvePath.join else ResolvePath.joinZ;

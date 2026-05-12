@@ -19,6 +19,7 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::mem::offset_of;
 
+use bun_collections::VecExt;
 use bun_core::Output;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::{Fd, FdExt as _};
@@ -35,13 +36,10 @@ use super::frame;
 
 /// The Zig version is `fn Channel(comptime Owner: type, comptime owner_field:
 /// []const u8) type`. Rust cannot take a field-name string as a const generic,
-/// so the owner instead implements [`ChannelOwner`] supplying the byte offset
-/// of the embedded `Channel` (via `core::mem::offset_of!`) plus the two
-/// callbacks the Zig called as `owner().onChannelFrame` / `onChannelDone`.
-pub trait ChannelOwner: Sized {
-    /// `offset_of!(Self, <channel field>)` — used to recover `&mut Self` from
-    /// `&mut Channel<Self>` in platform callbacks.
-    const CHANNEL_OFFSET: usize;
+/// so the owner instead implements [`bun_core::IntrusiveField<Channel<Self>>`]
+/// (via `bun_core::intrusive_field!`) plus the two callbacks the Zig called
+/// as `owner().onChannelFrame` / `onChannelDone`.
+pub trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>);
     fn on_channel_done(&mut self);
 }
@@ -49,8 +47,8 @@ pub trait ChannelOwner: Sized {
 // PORT NOTE: the struct itself carries no `ChannelOwner` bound so that owners
 // (Worker, WorkerCommands) can embed `Channel<Self>` as a field before their
 // `impl ChannelOwner` is in scope. Method impls that recover the owner via
-// `CHANNEL_OFFSET` keep the bound. (Rust also forbids a stricter bound on
-// `Drop` than on the struct, so Drop/Default below are unbounded too.)
+// `IntrusiveField::OFFSET` keep the bound. (Rust also forbids a stricter bound
+// on `Drop` than on the struct, so Drop/Default below are unbounded too.)
 pub struct Channel<Owner> {
     /// Incoming bytes that don't yet form a complete frame.
     // PORT NOTE: Zig field name is `in`, a Rust keyword — kept via raw ident
@@ -85,12 +83,10 @@ impl<Owner> Default for Channel<Owner> {
 impl<Owner: ChannelOwner> Channel<Owner> {
     #[inline]
     fn owner(&mut self) -> &mut Owner {
-        // SAFETY: `self` is always embedded at `CHANNEL_OFFSET` inside an
+        // SAFETY: `self` is always embedded at `Owner::OFFSET` inside an
         // `Owner` that outlives all callbacks (see module doc). Mirrors Zig
         // `@alignCast(@fieldParentPtr(owner_field, self))`.
-        unsafe {
-            &mut *bun_ptr::container_of::<Owner, _>(std::ptr::from_mut(self), Owner::CHANNEL_OFFSET)
-        }
+        unsafe { &mut *Owner::from_field_ptr(std::ptr::from_mut(self)) }
     }
 }
 
@@ -235,29 +231,14 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         #[cfg(not(windows))]
         {
             let g = Self::ensure_posix_group(vm);
-            // PORT NOTE: Zig `Socket.fromFd(g, .dynamic, fd, Self, self, null, true)`
-            // wraps `g.fromFd(...)` and stashes `*Self` into the ext slot.
-            // `bun_uws::NewSocketHandler` has no `from_fd` yet, so inline the
-            // shim against `SocketGroup::from_fd` here.
-            let raw = g.from_fd(
-                uws::SocketKind::Dynamic,
-                None,
-                core::mem::size_of::<*mut Self>() as core::ffi::c_int,
-                fd.native(),
-                true,
-            );
-            if raw.is_null() {
+            let Some(sock) =
+                Socket::from_fd(g, uws::SocketKind::Dynamic, fd, std::ptr::from_mut(self), true)
+            else {
                 // us_socket_from_fd does NOT take ownership on failure; leaving
                 // the inherited IPC endpoint open keeps the peer process alive.
                 fd.close();
                 return false;
-            }
-            // SAFETY: `raw` is a freshly-created live us_socket_t; ext was
-            // sized for `*mut Self` above.
-            unsafe {
-                *(*raw).ext::<*mut Self>() = std::ptr::from_mut::<Self>(self);
-            }
-            let sock = Socket::from(raw);
+            };
             self.backend.socket = sock;
             sock.set_timeout(0);
             true
@@ -443,10 +424,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                     return;
                 }
                 let w: usize = usize::try_from(wrote).unwrap();
-                // PORT NOTE: reshaped for borrowck — capture len before copy_within.
-                let len = self.out.len();
-                self.out.copy_within(w.., 0);
-                self.out.truncate(len - w);
+                self.out.drain_front(w);
             }
         }
     }
@@ -507,24 +485,17 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             // `container_of` arithmetic as `owner()`. The callback never
             // touches `self.r#in` (it only reads `rd` and may write other
             // channel fields / call `send()`), so the aliasing is sound.
-            let owner_ptr: *mut Owner = std::ptr::from_mut::<Self>(self)
-                .cast::<u8>()
-                .wrapping_sub(Owner::CHANNEL_OFFSET)
-                .cast::<Owner>();
+            let owner_ptr: *mut Owner = unsafe { Owner::from_field_ptr(std::ptr::from_mut(self)) };
             let mut rd = frame::Reader {
                 p: &self.r#in[head + 5..][..len as usize],
             };
             // SAFETY: see `Channel::owner()` — `self` is embedded at
-            // `CHANNEL_OFFSET` inside an `Owner` that outlives all callbacks.
+            // `Owner::OFFSET` inside an `Owner` that outlives all callbacks.
             let owner: &mut Owner = unsafe { &mut *owner_ptr };
             owner.on_channel_frame(kind, &mut rd);
             head += 5usize + len as usize;
         }
-        if head > 0 {
-            let rest = self.r#in.len() - head;
-            self.r#in.copy_within(head.., 0);
-            self.r#in.truncate(rest);
-        }
+        self.r#in.drain_front(head);
     }
 
     fn mark_done(&mut self) {

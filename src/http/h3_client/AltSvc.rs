@@ -13,7 +13,7 @@
 //! (RFC 7838 §2.1) that are out of scope here.
 
 use bun_collections::StringHashMap;
-use bun_core::strings;
+use bun_core::{strings, time::timestamp};
 
 use crate::h3_client::h3_client;
 
@@ -253,15 +253,5 @@ pub fn lookup(origin_host: &[u8], origin_port: u16) -> Option<u16> {
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────
-
-#[inline]
-fn timestamp() -> i64 {
-    // TODO(port): Zig used `std.time.timestamp()`. Swap for a bun_core time
-    // source if one exists; SystemTime is not in the banned std modules.
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_secs()).expect("int cast"))
-        .unwrap_or(0)
-}
 
 // ported from: src/http/h3_client/AltSvc.zig

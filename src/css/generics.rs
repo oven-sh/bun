@@ -307,6 +307,32 @@ macro_rules! eql_simple {
 // `u8` omitted to avoid `[T]`/`[u8]` overlap — see deep_clone_copy! note.
 eql_simple!(f32, f64, i32, u32, i64, u64, usize, isize, u16, bool);
 
+/// Stamp `impl CssEql for $T` forwarding to `PartialEq::eq`.
+///
+/// Exported sibling of `eql_simple!` for crate-defined types whose Phase-A
+/// inherent `pub fn eql(&self, other) { self == other }` was a pure `PartialEq`
+/// forwarder (Zig `css.implementEql(@This())` leakage).
+///
+/// Unlike `#[derive(CssEql)]` (field-wise `.eql()` walk), this does **not**
+/// require every field type to itself impl `CssEql`; it bridges
+/// `PartialEq` → `CssEql` wholesale. Prefer `#[derive(CssEql)]` only when a
+/// field's `CssEql` is intentionally *different* from its `PartialEq` (e.g.
+/// `Ident`, `Url`).
+///
+/// REJECTED alternative: `impl<T: PartialEq> CssEql for T {}` blanket — would
+/// overlap the existing `Option<T>`/`Vec<T>`/`[T]`/`Box<T>` blanket impls
+/// above (coherence).
+#[macro_export]
+macro_rules! css_eql_partialeq {
+    ($($t:ty),+ $(,)?) => {$(
+        impl $crate::generics::CssEql for $t {
+            #[inline]
+            fn eql(&self, other: &Self) -> bool { self == other }
+        }
+    )+};
+}
+pub use css_eql_partialeq;
+
 impl CssEql for [u8] {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
@@ -436,7 +462,6 @@ mod inherent_bridge {
     bridge_deep_clone!(CustomIdent, DashedIdent, Ident, DashedIdentReference);
 
     use crate::values::color::CssColor;
-    bridge_eql!(CssColor);
     bridge_hash!(CssColor);
     bridge_deep_clone!(CssColor);
 
@@ -452,13 +477,14 @@ mod inherent_bridge {
 
     use crate::properties::custom::UAEnvironmentVariable;
     bridge_eql!(UAEnvironmentVariable);
-    bridge_hash!(UAEnvironmentVariable);
+    // CssHash — via #[derive(CssHash)] on the enum (properties/custom.rs).
     bridge_deep_clone!(UAEnvironmentVariable);
 
     // `Direction` is re-exported from `properties::text` — bridged below as `TextDirection`.
     use crate::selectors::parser::{ViewTransitionPartName, WebKitScrollbarPseudoElement};
     bridge_eql!(WebKitScrollbarPseudoElement, ViewTransitionPartName);
-    bridge_hash!(WebKitScrollbarPseudoElement, ViewTransitionPartName);
+    // CssHash for WebKitScrollbarPseudoElement — via #[derive(CssHash)] on the enum.
+    bridge_hash!(ViewTransitionPartName);
     bridge_deep_clone_copy!(WebKitScrollbarPseudoElement, ViewTransitionPartName);
 
     // ───────────────────────────────────────────────────────────────────────
@@ -579,7 +605,6 @@ mod inherent_bridge {
         BorderInlineStyle, BorderInlineWidth, BorderSideWidth, BorderStyle, BorderWidth,
         GenericBorder, LineStyle,
     };
-    bridge_eql!(BorderSideWidth);
     bridge_eql_partialeq!(LineStyle);
     bridge_deep_clone!(BorderSideWidth);
     bridge_deep_clone_copy!(LineStyle);
@@ -624,7 +649,7 @@ mod inherent_bridge {
     // `deep_clone(&self, &Arena)` / `eql(&self, &Self)` (no `Clone`/`PartialEq`
     // derives — see border_image.rs), so route through bridge_deep_clone/eql.
     bridge_deep_clone!(BorderImageRepeat, BorderImageSideWidth, BorderImageSlice);
-    bridge_eql!(BorderImageRepeat, BorderImageSideWidth, BorderImageSlice);
+    bridge_eql!(BorderImageRepeat, BorderImageSlice);
     bridge_deep_clone!(BorderImage);
     bridge_eql!(BorderImage);
 
@@ -639,12 +664,7 @@ mod inherent_bridge {
         Background, BackgroundAttachment, BackgroundClip, BackgroundOrigin, BackgroundPosition,
         BackgroundRepeat, BackgroundSize,
     };
-    bridge_eql!(
-        Background,
-        BackgroundSize,
-        BackgroundPosition,
-        BackgroundRepeat
-    );
+    bridge_eql!(Background);
     bridge_deep_clone!(
         Background,
         BackgroundSize,
@@ -741,14 +761,7 @@ mod inherent_bridge {
     // ── properties/text ──
     use crate::properties::text::{Direction as TextDirection, TextShadow};
     bridge_clone_partialeq!(TextDirection);
-    // `Direction` is also the `:dir()` pseudo-class payload (re-exported from
-    // `selectors::parser`), so `#[derive(CssHash)]` on `PseudoClass` needs it.
-    impl CssHash for TextDirection {
-        #[inline]
-        fn hash(&self, hasher: &mut Wyhash) {
-            hasher.update(&(*self as u32).to_ne_bytes());
-        }
-    }
+    // CssHash for TextDirection — via #[derive(CssHash)] on the enum (properties/text.rs).
     bridge_deep_clone!(TextShadow);
     bridge_eql_partialeq!(TextShadow);
 
@@ -758,7 +771,6 @@ mod inherent_bridge {
         TransformStyle, Translate,
     };
     bridge_deep_clone!(TransformList, Translate, Rotate, Scale, Perspective);
-    bridge_eql!(TransformList, Translate, Rotate, Scale, Perspective);
     // Unit enums via DefineEnumProperty — no inherent eql/deep_clone, route through Copy/PartialEq.
     bridge_clone_partialeq!(TransformStyle, TransformBox, BackfaceVisibility);
 

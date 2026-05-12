@@ -77,7 +77,10 @@ pub use weak_ptr::WeakPtr;
 // Intrusive parent-from-field recovery — canonical helpers live in `bun_core`
 // (lowest tier, every crate can reach them); re-exported here so callers can
 // spell `bun_ptr::container_of` / `bun_ptr::from_field_ptr!`.
-pub use bun_core::{container_of, container_of_const, from_field_ptr, impl_field_parent};
+pub use bun_core::{
+    IntrusiveField, container_of, container_of_const, from_field_ptr, impl_field_parent,
+    intrusive_field,
+};
 
 // C-callback `void *user_data` → `&mut T` recovery — same tiering rationale
 // as `container_of`; canonical impl lives in `bun_core`, re-exported here so
@@ -271,6 +274,40 @@ pub unsafe fn detach_lifetime_ref<'a, T: ?Sized>(r: &T) -> &'a T {
 pub unsafe fn detach_lifetime_mut<'a, T: ?Sized>(r: &mut T) -> &'a mut T {
     // SAFETY: caller contract — `r` is live and exclusively held for `'a`.
     unsafe { &mut *core::ptr::from_mut::<T>(r) }
+}
+
+/// Marker trait for types whose `&mut self` methods launder `self` through
+/// `core::hint::black_box` (PORT_NOTES_PLAN **R-2**) before dispatching a
+/// re-entrant parent/user callback, then reborrow via [`LaunderedSelf::r`].
+///
+/// Zig has no `noalias` on `*Self`, so the original `.zig` just writes
+/// `this.*` directly; this trait is the Rust-port-only artifact that makes the
+/// equivalent reborrow sound without scattering `unsafe { &mut *this }` at
+/// every field access.
+///
+/// # Safety (impl contract)
+/// For every method on `Self` that calls [`r`](Self::r):
+/// - `Self` is an inline/intrusive field of a heap object that is **never
+///   freed** during the re-entrant callback (the laundered raw pointer aliases
+///   a `&mut self` whose stack frame is still live);
+/// - re-entry runs on the **single JS thread** (no concurrent `&mut Self`);
+/// - each `&mut Self` produced by [`r`](Self::r) is short-lived and is the
+///   sole live borrow at the point of use — never held across the next
+///   parent/user dispatch.
+pub unsafe trait LaunderedSelf: Sized {
+    /// Reborrow a PORT_NOTES_PLAN R-2 laundered self-pointer.
+    ///
+    /// `this` is the `black_box`-laundered address of an outer `&mut self`;
+    /// the laundered raw pointer carries no `noalias`, so the compiler may not
+    /// cache fields across re-entry. See the trait-level safety contract for
+    /// the encapsulated invariant.
+    #[inline(always)]
+    fn r<'a>(this: *mut Self) -> &'a mut Self {
+        debug_assert!(!this.is_null());
+        // SAFETY: `LaunderedSelf` impl contract — `this` aliases a live
+        // `&mut self` on the single JS thread; sole borrow at point of use.
+        unsafe { &mut *this }
+    }
 }
 
 /// Shorter alias for [`detach_lifetime_ref`] — two workstreams converged on
@@ -589,3 +626,43 @@ where
 // `T: Send` at the call site (no different from `NonNull<T>` today).
 unsafe impl<T: ?Sized + Sync> Send for BackRef<T> {}
 unsafe impl<T: ?Sized + Sync> Sync for BackRef<T> {}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AsCtxPtr — `&self` → `*mut Self` for FFI / C-callback ctx slots.
+//
+// Dual of [`callback_ctx`]: this is the *producer* side that stuffs `self`
+// into a `void *user_data` / `*mut T` ctx parameter; `callback_ctx` (or a
+// plain `unsafe { &*p }`) is the *consumer* side that recovers it inside the
+// trampoline.
+//
+// The returned pointer carries **shared (read-only) provenance** — it is
+// derived from `&self`, so writing through it directly is UB. The `*mut`
+// spelling exists purely to match C-shaped signatures (`void *`, uSockets
+// ext slots, `ScopedRef` / `DerefOnDrop` ctx, vtable thunks, intrusive
+// `RefCount::deref`). Consumers must deref as `&*p` and route mutation
+// through `Cell` / `JsCell` / `UnsafeCell` interior-mutability fields.
+//
+// Blanket-implemented for all `T`: bring the trait into scope with
+// `use bun_ptr::AsCtxPtr;` and the inherent-looking `self.as_ctx_ptr()`
+// resolves on any type. Replaces 19 identical hand-rolled
+// `fn as_ctx_ptr(&self) -> *mut Self { (self as *const Self).cast_mut() }`
+// inherent methods scattered across runtime JS-class wrappers.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `&self` → `*mut Self` with shared provenance, for C-callback / scopeguard
+/// ctx slots. See module-level comment above for the safety contract.
+pub trait AsCtxPtr {
+    /// `self`'s address as `*mut Self` for deferred-task / scopeguard /
+    /// `ref_guard` ctx slots. The closures/trampolines deref it as shared
+    /// (`&*p`) — every method they reach is `&self` post-R-2, so no write
+    /// provenance is required; the `*mut` spelling is purely to match the
+    /// existing `DerefOnDrop` / `HasAutoFlush` / `RefCount` ABI.
+    #[inline(always)]
+    fn as_ctx_ptr(&self) -> *mut Self
+    where
+        Self: Sized,
+    {
+        core::ptr::from_ref::<Self>(self).cast_mut()
+    }
+}
+impl<T: ?Sized> AsCtxPtr for T {}

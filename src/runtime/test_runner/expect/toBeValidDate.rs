@@ -10,17 +10,8 @@ pub fn to_be_valid_date(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: `defer this.postMatch(global)` — guard owns the `&mut Expect` and runs
-    // post_match on drop; the body re-borrows `this` through the guard's DerefMut so every
-    // exit path is covered without a raw-pointer alias.
-    let this = scopeguard::guard(this, |t| t.post_match(global));
-
     let this_value = frame.this();
-    let value: JSValue = this.get_value(global, this_value, "toBeValidDate", "")?;
-
-    this.increment_expect_call_counter();
-
-    let not = this.flags.get().not();
+    let (this, value, not) = this.matcher_prelude(global, this_value, "toBeValidDate", "")?;
     let mut pass = value.is_date() && !value.get_unix_timestamp().is_nan();
     if not {
         pass = !pass;

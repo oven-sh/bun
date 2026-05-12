@@ -33,10 +33,6 @@ impl TransformList {
         // lands crate-wide in Phase B.
         self.clone()
     }
-
-    pub fn eql(&self, other: &Self) -> bool {
-        self == other
-    }
 }
 
 impl TransformList {
@@ -584,10 +580,6 @@ impl Transform {
         // TODO(port): css.implementDeepClone reflection — payload types may need bump-aware clone
         self.clone()
     }
-
-    pub fn eql(&self, other: &Self) -> bool {
-        self == other
-    }
 }
 
 /// A 2D matrix.
@@ -691,10 +683,6 @@ pub enum Perspective {
 }
 
 impl Perspective {
-    pub fn eql(&self, other: &Self) -> bool {
-        self == other
-    }
-
     pub fn deep_clone(&self, _bump: &Bump) -> Self {
         self.clone()
     }
@@ -777,10 +765,6 @@ impl Translate {
                 z: z.clone(),
             },
         }
-    }
-
-    pub fn eql(&self, other: &Self) -> bool {
-        self == other
     }
 
     pub fn deep_clone(&self, _bump: &Bump) -> Self {
@@ -898,10 +882,6 @@ impl Rotate {
         }
     }
 
-    pub fn eql(&self, other: &Self) -> bool {
-        self == other
-    }
-
     pub fn deep_clone(&self, _bump: &Bump) -> Self {
         self.clone()
     }
@@ -991,14 +971,12 @@ impl Scale {
         }
     }
 
-    pub fn eql(&self, other: &Self) -> bool {
-        self == other
-    }
-
     pub fn deep_clone(&self, _bump: &Bump) -> Self {
         self.clone()
     }
 }
+
+crate::css_eql_partialeq!(TransformList, Transform, Perspective, Translate, Rotate, Scale);
 
 // PORT NOTE: was `TransformHandler<'bump>` holding `TransformList<'bump>`; the
 // `Property` enum is lifetime-free (see TransformList above), so the handler

@@ -16,30 +16,14 @@ use crate::string::immutable::CodePoint; // i32
 fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
     WStr::from_buf(wbuf, len)
 }
-use crate::string::lexer as js_lexer;
 #[allow(unused_imports)]
 use crate::strings::{is_all_ascii, latin1_to_codepoint_bytes_assume_not_ascii};
 use bun_simdutf_sys::simdutf;
 
 crate::declare_scope!(strings, hidden);
 
-/// Mirrors Zig `ArrayList.allocatedSlice()` — the full backing buffer
-/// `[0..capacity)`, ignoring `len()`. Used where Zig writes simdutf output to
-/// `list.allocatedSlice()` then sets `list.items.len = result.count`.
-///
-/// SAFETY: callers MUST NOT read the returned slice and MUST `set_len()` to
-/// no more than the bytes actually written by the FFI call.
-#[inline]
-unsafe fn allocated_slice_mut(v: &mut Vec<u8>) -> &mut [u8] {
-    let cap = v.capacity();
-    // SAFETY: `cap` bytes are allocated at `as_mut_ptr()`; u8 has no validity
-    // invariant beyond initialization, and the caller contract forbids reading
-    // before write.
-    unsafe { core::slice::from_raw_parts_mut(v.as_mut_ptr(), cap) }
-}
-
 /// simdutf UTF-16LE→UTF-8 into `list[0..capacity)`, then commit the written
-/// length on success. Wraps the `allocated_slice_mut` + `set_len` pair shared
+/// length on success. Wraps the `allocated_bytes_mut` + `set_len` pair shared
 /// by `convert_utf16_to_utf8{,_without_invalid_surrogate_pairs}`. On
 /// `SURROGATE`, `list.len()` is left untouched for the caller's slow path.
 #[inline]
@@ -47,8 +31,10 @@ fn simdutf_utf16le_into_allocated(list: &mut Vec<u8>, utf16: &[u16]) -> simdutf:
     // SAFETY: simdutf only writes into the allocated output buffer; on
     // non-SURROGATE it wrote `result.count` bytes starting at offset 0.
     unsafe {
-        let result =
-            simdutf::convert::utf16::to::utf8::with_errors::le(utf16, allocated_slice_mut(list));
+        let result = simdutf::convert::utf16::to::utf8::with_errors::le(
+            utf16,
+            crate::vec::allocated_bytes_mut(list),
+        );
         if result.status != simdutf::Status::SURROGATE {
             list.set_len(result.count);
         }
@@ -80,15 +66,23 @@ fn append_u16_as_u8(dst: &mut Vec<u8>, src: &[u16]) {
     copy_u16_into_u8(unsafe { crate::vec::writable_slice(dst, src.len()) }, src);
 }
 
-// ───────────────────────────── NewCodePointIterator ─────────────────────────────
+// ───── canonical WTF-8 single-rune decode (Zig: unicode.zig decodeWTF8RuneT) ─────
+// Lives in `bun_core::string::immutable::unicode_draft` (this file), re-exported
+// through the inline `pub mod unicode` in immutable.rs and onward as
+// `bun_core::strings::{decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte, codepoint_size}`.
+//
+// Visibility promoted pub(super) → pub so the inline shim mod can re-export
+// instead of carrying a second body, and so md/glob/parsers can call directly.
 
-/// Trait providing the per-instantiation `ZERO_VALUE` that Zig threaded as a
-/// `comptime_int` parameter alongside the codepoint type.
+/// Integer types usable as the codepoint result of [`decode_wtf8_rune_t`].
+/// Sealed to the two instantiations Zig uses (`i32` aka `CodePoint`, and `u32`);
+/// every caller in-tree is one of these. `ZERO_VALUE` is the per-type sentinel
+/// Zig threaded as a `comptime_int` (`-1` for i32, `0` for u32).
 ///
 /// PORT NOTE: bounds widened from `From<u8>` to include the bit-ops needed by
 /// `decode_wtf8_rune_t_multibyte` plus a `from_u32` constructor (folds in the
 /// previously separate `FromU32`/`FromU32Const` helper traits).
-pub(super) trait CodePointZero:
+pub trait CodePointZero:
     Copy
     + Eq
     + PartialOrd
@@ -437,44 +431,10 @@ pub(super) type UnsignedCodepointIterator<'a> = NewCodePointIterator<'a, u32>;
 
 // ───────────────────────────── helpers ─────────────────────────────
 
-pub(super) fn contains_non_bmp_code_point(text: &[u8]) -> bool {
-    let iter = CodepointIterator::init(text);
-    let mut curs = Cursor::<CodePoint>::default();
-
-    while CodepointIterator::next(&iter, &mut curs) {
-        if curs.c > 0xFFFF {
-            return true;
-        }
-    }
-
-    false
-}
-
-pub(super) fn contains_non_bmp_code_point_or_is_invalid_identifier(text: &[u8]) -> bool {
-    let iter = CodepointIterator::init(text);
-    let mut curs = Cursor::<CodePoint>::default();
-
-    if !CodepointIterator::next(&iter, &mut curs) {
-        return true;
-    }
-
-    if curs.c > 0xFFFF || !js_lexer::is_identifier_start(curs.c as u32) {
-        return true;
-    }
-
-    while CodepointIterator::next(&iter, &mut curs) {
-        if curs.c > 0xFFFF || !js_lexer::is_identifier_continue(curs.c as u32) {
-            return true;
-        }
-    }
-
-    false
-}
-
 /// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
 /// - Invalid codepoints are replaced with `zero` parameter
 /// - Null bytes return 0
-pub(super) fn decode_wtf8_rune_t<T: CodePointZero>(p: &[u8; 4], len: U3Fast, zero: T) -> T {
+pub fn decode_wtf8_rune_t<T: CodePointZero>(p: &[u8; 4], len: U3Fast, zero: T) -> T {
     if len == 0 {
         return zero;
     }
@@ -485,18 +445,7 @@ pub(super) fn decode_wtf8_rune_t<T: CodePointZero>(p: &[u8; 4], len: U3Fast, zer
     decode_wtf8_rune_t_multibyte::<T>(p, len, zero)
 }
 
-pub(super) fn codepoint_size<R>(r: R) -> U3Fast
-where
-    R: Into<u32> + Copy,
-{
-    match r.into() {
-        0b0000_0000..=0b0111_1111 => 1,
-        0b1100_0000..=0b1101_1111 => 2,
-        0b1110_0000..=0b1110_1111 => 3,
-        0b1111_0000..=0b1111_0111 => 4,
-        _ => 0,
-    }
-}
+pub use crate::strings::codepoint_size;
 
 // ───────────────────────────── UTF16 → UTF8 ─────────────────────────────
 //
@@ -1000,7 +949,7 @@ pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {
 /// determine the encoding.
 ///
 /// https://en.wikipedia.org/wiki/Byte_order_mark
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BOM {
     Utf8,
     Utf16Le,
@@ -1055,19 +1004,23 @@ impl BOM {
         self.get_header().len()
     }
 
+    pub fn tag_name(self) -> &'static str {
+        match self {
+            BOM::Utf8 => "utf8",
+            BOM::Utf16Le => "utf16_le",
+            BOM::Utf16Be => "utf16_be",
+            BOM::Utf32Le => "utf32_le",
+            BOM::Utf32Be => "utf32_be",
+        }
+    }
+
     /// If an allocation is needed, free the input and the caller will
     /// replace it with the new return
-    pub fn remove_and_convert_to_utf8_and_free(
-        self,
-        bytes: Vec<u8>,
-    ) -> Result<Vec<u8>, AllocError> {
+    pub fn remove_and_convert_to_utf8_and_free(self, mut bytes: Vec<u8>) -> Vec<u8> {
         match self {
             BOM::Utf8 => {
-                let mut bytes = bytes;
-                let n = Self::UTF8_BYTES.len();
-                bytes.copy_within(n.., 0);
-                bytes.truncate(bytes.len() - n);
-                Ok(bytes)
+                crate::vec::drain_front(&mut bytes, Self::UTF8_BYTES.len());
+                bytes
             }
             BOM::Utf16Le => {
                 // `trimmed_bytes` is `&[u8]` at offset 2 of a `Vec<u8>`; alignment is
@@ -1077,15 +1030,12 @@ impl BOM {
                 let trimmed_bytes = &bytes[Self::UTF16_LE_BYTES.len()..];
                 let out = crate::strings::to_utf8_alloc_from_le_bytes(trimmed_bytes);
                 drop(bytes);
-                Ok(out)
+                out
             }
             _ => {
                 // TODO: this needs to re-encode, for now we just remove the BOM
-                let mut bytes = bytes;
-                let n = self.get_header().len();
-                bytes.copy_within(n.., 0);
-                bytes.truncate(bytes.len() - n);
-                Ok(bytes)
+                crate::vec::drain_front(&mut bytes, self.get_header().len());
+                bytes
             }
         }
     }
@@ -1094,17 +1044,14 @@ impl BOM {
     /// The returned slice will always point to the base of the input.
     ///
     /// Requires an arraylist in case it must be grown.
-    pub fn remove_and_convert_to_utf8_without_dealloc<'a>(
-        self,
-        list: &'a mut Vec<u8>,
-    ) -> Result<&'a [u8], AllocError> {
+    pub fn remove_and_convert_to_utf8_without_dealloc<'a>(self, list: &'a mut Vec<u8>) -> &'a [u8] {
         match self {
             BOM::Utf8 => {
                 let n = Self::UTF8_BYTES.len();
                 let len = list.len();
                 list.copy_within(n.., 0);
                 // PORT NOTE: Zig returned a subslice without truncating; we mirror by returning a slice.
-                Ok(&list[..len - n])
+                &list[..len - n]
             }
             BOM::Utf16Le => {
                 // See `remove_and_convert_to_utf8_and_free` — `&list[2..]` has no
@@ -1116,14 +1063,14 @@ impl BOM {
                 list.extend_from_slice(&out);
                 // TODO(port): Zig returned `out` (the new alloc); returning list slice instead to honor
                 // "always points to the base of the input" doc comment.
-                Ok(&list[..])
+                &list[..]
             }
             _ => {
                 // TODO: this needs to re-encode, for now we just remove the BOM
                 let n = self.get_header().len();
                 let len = list.len();
                 list.copy_within(n.., 0);
-                Ok(&list[..len - n])
+                &list[..len - n]
             }
         }
     }
@@ -1596,16 +1543,7 @@ pub use crate::strings::{
     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
 };
 
-#[inline]
-pub(super) fn utf8_byte_sequence_length(first_byte: u8) -> U3Fast {
-    match first_byte {
-        0b0000_0000..=0b0111_1111 => 1,
-        0b1100_0000..=0b1101_1111 => 2,
-        0b1110_0000..=0b1110_1111 => 3,
-        0b1111_0000..=0b1111_0111 => 4,
-        _ => 0,
-    }
-}
+pub(super) use crate::strings_impl::utf8_byte_sequence_length;
 
 /// Same as `utf8_byte_sequence_length`, but assumes the byte is valid UTF-8.
 ///
@@ -1619,26 +1557,6 @@ pub(super) fn utf8_byte_sequence_length_unsafe(first_byte: u8) -> U3Fast {
         0b1111_0000..=0b1111_0111 => 4,
         _ => unreachable!(),
     }
-}
-
-/// This will simply ignore invalid UTF-8 and just do it
-pub(super) fn convert_utf8_to_utf16_in_buffer<'a>(
-    buf: &'a mut [u16],
-    input: &[u8],
-) -> &'a mut [u16] {
-    // TODO(@paperclover): implement error handling here.
-    // for now this will cause invalid utf-8 to be ignored and become empty.
-    // this is lame because of https://github.com/oven-sh/bun/issues/8197
-    // it will cause process.env.whatever to be len=0 instead of the data
-    // but it's better than failing the run entirely
-    //
-    // the reason i didn't implement the fallback is purely because our
-    // code in this file is too chaotic. it is left as a TODO
-    if input.is_empty() {
-        return &mut buf[..0];
-    }
-    let result = simdutf::convert::utf8::to::utf16::le(input, buf);
-    &mut buf[..result]
 }
 
 pub fn convert_utf8_to_utf16_in_buffer_z<'a>(buf: &'a mut [u16], input: &[u8]) -> &'a WStr {
@@ -2003,26 +1921,7 @@ pub fn wtf8_sequence(code_point: u32) -> [u8; 4] {
     }
 }
 
-pub(super) use super::wtf8_byte_sequence_length;
-
-/// 0 == invalid
-#[inline]
-pub(super) fn wtf8_byte_sequence_length_with_invalid(first_byte: u8) -> u8 {
-    match first_byte {
-        0..=0x7f => 1,
-        _ => {
-            if (first_byte & 0xE0) == 0xC0 {
-                2
-            } else if (first_byte & 0xF0) == 0xE0 {
-                3
-            } else if (first_byte & 0xF8) == 0xF0 {
-                4
-            } else {
-                1
-            }
-        }
-    }
-}
+pub(super) use super::{wtf8_byte_sequence_length, wtf8_byte_sequence_length_with_invalid};
 
 /// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
 /// Invalid codepoints are replaced with `zero` parameter
@@ -2030,12 +1929,7 @@ pub(super) fn wtf8_byte_sequence_length_with_invalid(first_byte: u8) -> u8 {
 /// which was a clone of golang's "utf8.DecodeRune" that was modified to decode using WTF-8 instead.
 /// Asserts a multi-byte codepoint
 #[inline]
-pub(super) fn decode_wtf8_rune_t_multibyte<T>(p: &[u8; 4], len: U3Fast, zero: T) -> T
-where
-    T: CodePointZero,
-{
-    // TODO(port): trait bounds above are an approximation of "integer-ish T"; Phase B can specialize
-    // to i32/u32 with a small sealed trait instead.
+pub fn decode_wtf8_rune_t_multibyte<T: CodePointZero>(p: &[u8; 4], len: U3Fast, zero: T) -> T {
     debug_assert!(len > 1);
 
     let s1 = p[1];

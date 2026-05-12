@@ -51,32 +51,6 @@ pub fn z<'a>(input: &[u8], output: &'a mut PathBuffer) -> &'a ZStr {
     ZStr::from_buf(output, input.len())
 }
 
-#[inline]
-fn nql_at_index<const STRING_COUNT: usize>(index: usize, input: &[&[u8]]) -> bool {
-    // PERF(port): was comptime-unrolled `inline while` — profile in Phase B
-    let mut string_index = 1;
-    while string_index < STRING_COUNT {
-        if input[0][index] != input[string_index][index] {
-            return true;
-        }
-        string_index += 1;
-    }
-    false
-}
-
-#[inline]
-fn nql_at_index_case_insensitive<const STRING_COUNT: usize>(index: usize, input: &[&[u8]]) -> bool {
-    // PERF(port): was comptime-unrolled `inline while` — profile in Phase B
-    let mut string_index = 1;
-    while string_index < STRING_COUNT {
-        if input[0][index].to_ascii_lowercase() != input[string_index][index].to_ascii_lowercase() {
-            return true;
-        }
-        string_index += 1;
-    }
-    false
-}
-
 /// The given string contains separators that match the platform's path separator style.
 pub fn has_platform_path_separators(input_path: &[u8]) -> bool {
     #[cfg(windows)]
@@ -186,9 +160,7 @@ pub fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
             while string_index < input.len() {
                 while index < min_length {
                     if P::P == Platform::Windows {
-                        if input[0][index].to_ascii_lowercase()
-                            != input[string_index][index].to_ascii_lowercase()
-                        {
+                        if !input[0][index].eq_ignore_ascii_case(&input[string_index][index]) {
                             if last_common_separator.is_none() {
                                 return None;
                             }
@@ -257,7 +229,7 @@ fn nql_at_index_dyn(string_count: usize, index: usize, input: &[&[u8]]) -> bool 
 #[inline]
 fn nql_at_index_case_insensitive_dyn(string_count: usize, index: usize, input: &[&[u8]]) -> bool {
     for s in 1..string_count {
-        if input[0][index].to_ascii_lowercase() != input[s][index].to_ascii_lowercase() {
+        if !input[0][index].eq_ignore_ascii_case(&input[s][index]) {
             return true;
         }
     }
@@ -330,9 +302,7 @@ pub fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a 
             while string_index < input.len() {
                 while index < min_length {
                     if P::P == Platform::Windows {
-                        if input[0][index].to_ascii_lowercase()
-                            != input[string_index][index].to_ascii_lowercase()
-                        {
+                        if !input[0][index].eq_ignore_ascii_case(&input[string_index][index]) {
                             break;
                         }
                     } else {
@@ -2083,43 +2053,18 @@ fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
     &buf[0..result_len]
 }
 
+// Separator predicates live in T0 `bun_core::path_sep`; re-export the full set
+// so existing `bun_paths::is_sep_*` callers are unchanged.
+pub use bun_core::path_sep::{
+    is_sep_any, is_sep_any_t, is_sep_native, is_sep_native_t, is_sep_posix_t, is_sep_win32_t,
+};
 #[inline(always)]
-pub fn is_sep_posix(char: u8) -> bool {
-    is_sep_posix_t::<u8>(char)
+pub fn is_sep_posix(c: u8) -> bool {
+    is_sep_posix_t::<u8>(c)
 }
-
 #[inline(always)]
-pub fn is_sep_posix_t<T: PathChar>(char: T) -> bool {
-    char == T::from_u8(SEP_POSIX)
-}
-
-#[inline(always)]
-pub fn is_sep_win32(char: u8) -> bool {
-    is_sep_win32_t::<u8>(char)
-}
-
-#[inline(always)]
-pub fn is_sep_win32_t<T: PathChar>(char: T) -> bool {
-    char == T::from_u8(SEP_WINDOWS)
-}
-
-// u8-only predicates are sunk to tier-0 `bun_core::path_sep` so `bun_core::util`
-// (dirname, which) can use them without an upward dep; re-exported here as the
-// canonical `bun_paths::is_sep_any` / `is_sep_native`. Generic `_t` set below.
-pub use bun_core::path_sep::{is_sep_any, is_sep_native};
-
-#[inline(always)]
-pub fn is_sep_any_t<T: PathChar>(char: T) -> bool {
-    is_sep_posix_t::<T>(char) || is_sep_win32_t::<T>(char)
-}
-
-#[inline(always)]
-pub fn is_sep_native_t<T: PathChar>(char: T) -> bool {
-    if cfg!(windows) {
-        is_sep_any_t::<T>(char)
-    } else {
-        is_sep_posix_t::<T>(char)
-    }
+pub fn is_sep_win32(c: u8) -> bool {
+    is_sep_win32_t::<u8>(c)
 }
 
 pub fn last_index_of_separator_windows(slice: &[u8]) -> Option<usize> {

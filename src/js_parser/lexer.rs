@@ -6,7 +6,8 @@ use core::fmt;
 
 use bun_ast as js_ast;
 use bun_ast::lexer_tables as tables;
-use bun_ast::{Loc, Log, Range, Source};
+use bun_ast::{LexerLog, Loc, Log, Range, Source};
+use bun_core::fmt::hex_digit_value_u32;
 use bun_core::strings;
 use bun_core::strings::CodepointIterator;
 use bun_core::{Environment, feature_flags as FeatureFlags};
@@ -410,6 +411,56 @@ macro_rules! lexer_impl_header {
     };
 }
 
+impl<
+    'a,
+    const IS_JSON: bool,
+    const ALLOW_COMMENTS: bool,
+    const ALLOW_TRAILING_COMMAS: bool,
+    const IGNORE_LEADING_ESCAPE_SEQUENCES: bool,
+    const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool,
+    const JSON_WARN_DUPLICATE_KEYS: bool,
+    const WAS_ORIGINALLY_MACRO: bool,
+    const GUESS_INDENTATION: bool,
+> LexerLog<'a>
+    for LexerType<
+        'a,
+        IS_JSON,
+        ALLOW_COMMENTS,
+        ALLOW_TRAILING_COMMAS,
+        IGNORE_LEADING_ESCAPE_SEQUENCES,
+        IGNORE_TRAILING_ESCAPE_SEQUENCES,
+        JSON_WARN_DUPLICATE_KEYS,
+        WAS_ORIGINALLY_MACRO,
+        GUESS_INDENTATION,
+    >
+{
+    type Err = Error;
+    #[inline]
+    fn log_mut(&mut self) -> &mut Log {
+        unsafe { self.log.as_mut() }
+    }
+    #[inline]
+    fn source(&self) -> &'a Source {
+        self.source
+    }
+    #[inline]
+    fn prev_error_loc_mut(&mut self) -> &mut Loc {
+        &mut self.prev_error_loc
+    }
+    #[inline]
+    fn start(&self) -> usize {
+        self.start
+    }
+    #[inline]
+    fn is_log_disabled(&self) -> bool {
+        self.is_log_disabled
+    }
+    #[inline]
+    fn syntax_err() -> Error {
+        Error::SyntaxError
+    }
+}
+
 lexer_impl_header! {
     #[allow(dead_code)]
     const JSON: JSONOptions = JSONOptions {
@@ -439,67 +490,6 @@ lexer_impl_header! {
     #[inline]
     pub fn loc(&self) -> Loc {
         bun_ast::usize2loc(self.start)
-    }
-
-    #[cold]
-    pub fn syntax_error(&mut self) -> Result<(), Error> {
-        // Only add this if there is not already an error.
-        // It is possible that there is a more descriptive error already emitted.
-        if !self.log().has_errors() {
-            self.add_error(self.start, format_args!("Syntax Error"), true);
-        }
-        Err(Error::SyntaxError)
-    }
-
-    #[cold]
-    pub fn add_default_error(&mut self, msg: &[u8]) -> Result<(), Error> {
-        self.add_error(self.start, format_args!("{}", bstr::BStr::new(msg)), true);
-        Err(Error::SyntaxError)
-    }
-
-    #[cold]
-    pub fn add_syntax_error(&mut self, loc: usize, args: fmt::Arguments<'_>) -> Result<(), Error> {
-        self.add_error(loc, args, false);
-        Err(Error::SyntaxError)
-    }
-
-    #[cold]
-    pub fn add_error(&mut self, loc: usize, args: fmt::Arguments<'_>, _panic: bool) {
-        if self.is_log_disabled {
-            return;
-        }
-        let __loc = bun_ast::usize2loc(loc);
-        if __loc.eql(self.prev_error_loc) {
-            return;
-        }
-
-        self.log()
-            .add_error_fmt(Some(self.source), __loc, args);
-        self.prev_error_loc = __loc;
-    }
-
-    #[cold]
-    pub fn add_range_error(
-        &mut self,
-        r: Range,
-        args: fmt::Arguments<'_>,
-        _panic: bool,
-    ) -> Result<(), Error> {
-        if self.is_log_disabled {
-            return Ok(());
-        }
-        if self.prev_error_loc.eql(r.loc) {
-            return Ok(());
-        }
-
-        // TODO(port): arena routing — Zig uses `std.fmt.allocPrint(self.arena, ..)`.
-        self.log().add_range_error_fmt(Some(self.source), r, args);
-        self.prev_error_loc = r.loc;
-
-        // if (panic) {
-        //     return Error.ParserError;
-        // }
-        Ok(())
     }
 
     #[cold]
@@ -620,23 +610,9 @@ lexer_impl_header! {
 
     /// Look ahead at the next n codepoints without advancing the iterator.
     /// If fewer than n codepoints are available, then return the remainder of the string.
-    fn peek(&mut self, n: usize) -> &'a [u8] {
-        let original_i = self.current;
-
-        let mut end_ix = original_i;
-        for _ in 0..n {
-            let next_codepoint = self.next_codepoint_slice();
-            if next_codepoint.is_empty() {
-                break;
-            }
-            end_ix += next_codepoint.len();
-            // Advance current to mimic the Zig loop (defer restores below).
-            self.current = end_ix;
-        }
-
-        self.current = original_i;
-        // SAFETY: indices come from source.contents bounds.
-        &self.contents[original_i..end_ix]
+    #[inline]
+    fn peek(&self, n: usize) -> &'a [u8] {
+        strings::peek_n_codepoints_wtf8(self.contents, self.current, n)
     }
 
     #[inline]
@@ -795,7 +771,6 @@ lexer_impl_header! {
                                         .unwrap(),
                                     },
                                     format_args!("Invalid legacy octal literal"),
-                                    false,
                                 )
                                 .expect("unreachable");
                             }
@@ -814,17 +789,9 @@ lexer_impl_header! {
                             }
                             c3 = iter.c;
                             width3 = iter.width;
-                            match c3 {
-                                0x30..=0x39 => {
-                                    value = value * 16 | (c3 - 0x30);
-                                }
-                                0x61..=0x66 => {
-                                    value = value * 16 | (c3 + 10 - 0x61);
-                                }
-                                0x41..=0x46 => {
-                                    value = value * 16 | (c3 + 10 - 0x41);
-                                }
-                                _ => {
+                            match hex_digit_value_u32(c3 as u32) {
+                                Some(d) => value = value * 16 | d as CodePoint,
+                                None => {
                                     self.end =
                                         start + iter.i as usize - width3 as usize;
                                     return self.syntax_error();
@@ -836,17 +803,9 @@ lexer_impl_header! {
                             }
                             c3 = iter.c;
                             width3 = iter.width;
-                            match c3 {
-                                0x30..=0x39 => {
-                                    value = value * 16 | (c3 - 0x30);
-                                }
-                                0x61..=0x66 => {
-                                    value = value * 16 | (c3 + 10 - 0x61);
-                                }
-                                0x41..=0x46 => {
-                                    value = value * 16 | (c3 + 10 - 0x41);
-                                }
-                                _ => {
+                            match hex_digit_value_u32(c3 as u32) {
+                                Some(d) => value = value * 16 | d as CodePoint,
+                                None => {
                                     self.end =
                                         start + iter.i as usize - width3 as usize;
                                     return self.syntax_error();
@@ -886,28 +845,17 @@ lexer_impl_header! {
                                     }
                                     c3 = iter.c;
 
-                                    match c3 {
-                                        0x30..=0x39 => {
-                                            value =
-                                                value * 16 | (c3 - 0x30) as i64;
+                                    if c3 == 0x7D {
+                                        if is_first {
+                                            self.end = (start + iter.i as usize)
+                                                .saturating_sub(width3 as usize);
+                                            return self.syntax_error();
                                         }
-                                        0x61..=0x66 => {
-                                            value = value * 16
-                                                | (c3 + 10 - 0x61) as i64;
-                                        }
-                                        0x41..=0x46 => {
-                                            value = value * 16
-                                                | (c3 + 10 - 0x41) as i64;
-                                        }
-                                        0x7D => {
-                                            if is_first {
-                                                self.end = (start + iter.i as usize)
-                                                    .saturating_sub(width3 as usize);
-                                                return self.syntax_error();
-                                            }
-                                            break 'variable_length;
-                                        }
-                                        _ => {
+                                        break 'variable_length;
+                                    }
+                                    match hex_digit_value_u32(c3 as u32) {
+                                        Some(d) => value = value * 16 | d as i64,
+                                        None => {
                                             self.end = (start + iter.i as usize)
                                                 .saturating_sub(width3 as usize);
                                             return self.syntax_error();
@@ -937,7 +885,6 @@ lexer_impl_header! {
                                         format_args!(
                                             "Unicode escape sequence is out of range"
                                         ),
-                                        true,
                                     )?;
 
                                     return Ok(());
@@ -949,20 +896,9 @@ lexer_impl_header! {
                                 // comptime var j: usize = 0;
                                 let mut j: usize = 0;
                                 while j < 4 {
-                                    match c3 {
-                                        0x30..=0x39 => {
-                                            value =
-                                                value * 16 | (c3 - 0x30) as i64;
-                                        }
-                                        0x61..=0x66 => {
-                                            value = value * 16
-                                                | (c3 + 10 - 0x61) as i64;
-                                        }
-                                        0x41..=0x46 => {
-                                            value = value * 16
-                                                | (c3 + 10 - 0x41) as i64;
-                                        }
-                                        _ => {
+                                    match hex_digit_value_u32(c3 as u32) {
+                                        Some(d) => value = value * 16 | d as i64,
+                                        None => {
                                             self.end = start + iter.i as usize
                                                 - width3 as usize;
                                             return self.syntax_error();
@@ -1210,26 +1146,10 @@ lexer_impl_header! {
                 self.add_range_error(
                     self.range(),
                     format_args!("JSON strings must use double quotes"),
-                    true,
                 )?;
             }
         }
         Ok(())
-    }
-
-    #[inline]
-    fn next_codepoint_slice(&self) -> &[u8] {
-        let contents = self.contents;
-        if self.current >= contents.len() {
-            return b"";
-        }
-        let cp_len =
-            strings::wtf8_byte_sequence_length_with_invalid(contents[self.current]);
-        if !(cp_len as usize + self.current > contents.len()) {
-            &contents[self.current..cp_len as usize + self.current]
-        } else {
-            b""
-        }
     }
 
     fn remaining(&self) -> &[u8] {
@@ -1264,66 +1184,7 @@ lexer_impl_header! {
             return first as CodePoint;
         }
 
-        self.next_codepoint_multibyte(first)
-    }
-
-    /// Non-ASCII tail of [`next_codepoint`]. Kept out-of-line so the hot
-    /// ASCII path stays small enough to inline into every `step()` site.
-    ///
-    /// `#[cold]` is required: with fat LTO + `codegen-units = 1`, LLVM's
-    /// single-caller heuristic merges an `#[inline(never)]`-only callee back
-    /// into its sole caller, which then makes `next_codepoint` too large to
-    /// inline into `next()` (perf showed it as a separate ~2.6% symbol with
-    /// the multibyte decode folded in). `cold` parks this in `.text.unlikely`
-    /// and survives LTO's IPO inliner. The register-allocation concern from
-    /// the previous note is outweighed: non-ASCII bytes are <0.1% of the
-    /// three.js stream, and the alternative is a function call per byte.
-    #[cold]
-    #[inline(never)]
-    fn next_codepoint_multibyte(&mut self, first: u8) -> CodePoint {
-        let contents: &[u8] = self.contents;
-        let len = contents.len();
-        let cp_len = strings::wtf8_byte_sequence_length_with_invalid(first) as usize;
-        let avail = len - self.current;
-
-        // Zig spec (lexer.zig nextCodepoint): `switch (slice.len) { 0 => -1, 1 => slice[0], else => decode }`
-        // where `slice` is empty when `cp_len + current > len` and `cp_len` bytes otherwise.
-        // The ASCII fast path above handled `first < 0x80`; here `first >= 0x80` but `cp_len`
-        // may still be 1 for invalid lead bytes (0x80-0xBF, 0xF8-0xFF) — those must yield the
-        // raw byte, NOT the EOF sentinel, so the main lex loop falls through to its syntax-error
-        // arm instead of silently emitting TEndOfFile mid-stream.
-        let code_point: CodePoint = if cp_len == 1 {
-            first as CodePoint
-        } else if avail < cp_len {
-            // truncated multibyte at EOF → Zig's empty-slice arm
-            -1
-        } else {
-            // SAFETY: `self.current < len` (checked above), `cp_len ∈ 2..=4`, and
-            // `avail >= cp_len`, so `contents[current..current + cp_len]` is in-bounds.
-            // `decode_wtf8_rune_t_multibyte` only dereferences `p[0..len]`; pad bytes are
-            // never read.
-            let mut quad = [0u8; 4];
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    contents.as_ptr().add(self.current),
-                    quad.as_mut_ptr(),
-                    cp_len,
-                );
-            }
-            strings::decode_wtf8_rune_t_multibyte(
-                &quad,
-                cp_len as u8,
-                strings::UNICODE_REPLACEMENT as CodePoint,
-            )
-        };
-
-        self.current += if code_point != strings::UNICODE_REPLACEMENT as CodePoint {
-            cp_len
-        } else {
-            1
-        };
-
-        code_point
+        strings::lexer_step::next_codepoint_multibyte(self.contents, &mut self.current, first)
     }
 
     #[inline]
@@ -1364,7 +1225,6 @@ lexer_impl_header! {
         self.add_error(
             self.end,
             format_args!("Unsupported syntax: {}", bstr::BStr::new(msg)),
-            true,
         );
         Err(Error::SyntaxError)
     }
@@ -1470,7 +1330,6 @@ lexer_impl_header! {
                     "Invalid identifier: \"{}\"",
                     bstr::BStr::new(result.contents)
                 ),
-                true,
             )?;
         }
 
@@ -1508,7 +1367,6 @@ lexer_impl_header! {
                         bstr::BStr::new(self.raw()),
                         <&'static str>::from(self.token),
                     ),
-                    true,
                 );
             } else {
                 self.add_error(
@@ -1518,7 +1376,6 @@ lexer_impl_header! {
                         bstr::BStr::new(keyword),
                         bstr::BStr::new(self.raw()),
                     ),
-                    true,
                 );
             }
             return Err(Error::UnexpectedSyntax);
@@ -2075,7 +1932,6 @@ lexer_impl_header! {
                                     self.add_range_error(
                                         self.range(),
                                         format_args!("JSON does not support comments"),
-                                        true,
                                     )?;
                                     return Ok(());
                                 }
@@ -2140,7 +1996,6 @@ lexer_impl_header! {
                                     self.add_range_error(
                                         self.range(),
                                         format_args!("JSON does not support comments"),
-                                        true,
                                     )?;
                                     return Ok(());
                                 }
@@ -2428,7 +2283,6 @@ lexer_impl_header! {
         self.add_range_error(
             self.range(),
             format_args!("Unexpected {}", bstr::BStr::new(found)),
-            true,
         )
     }
 
@@ -2473,7 +2327,6 @@ lexer_impl_header! {
                     bstr::BStr::new(text),
                     bstr::BStr::new(self.raw())
                 ),
-                true,
             )
         } else {
             self.add_range_error(
@@ -2482,7 +2335,6 @@ lexer_impl_header! {
                     "Expected {} but found end of file",
                     bstr::BStr::new(text)
                 ),
-                true,
             )
         }
     }
@@ -2905,7 +2757,6 @@ lexer_impl_header! {
                                             char::from_u32(self.code_point as u32)
                                                 .unwrap_or('\u{FFFD}')
                                         ),
-                                        false,
                                     );
                                 }
                                 flags.set(flag);
@@ -2920,7 +2771,6 @@ lexer_impl_header! {
                                         char::from_u32(self.code_point as u32)
                                             .unwrap_or('\u{FFFD}')
                                     ),
-                                    false,
                                 );
 
                                 self.step();
@@ -3406,7 +3256,6 @@ lexer_impl_header! {
                                         "Invalid JSX entity escape: {}",
                                         bstr::BStr::new(entity)
                                     ),
-                                    false,
                                 );
                             }
                             strings::ParseIntError::Overflow => {
@@ -3416,7 +3265,6 @@ lexer_impl_header! {
                                         "JSX entity escape is too big: {}",
                                         bstr::BStr::new(entity)
                                     ),
-                                    false,
                                 );
                             }
                         }

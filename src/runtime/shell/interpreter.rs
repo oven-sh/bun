@@ -33,6 +33,7 @@
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::WTFStringImplExt as _;
 use bun_jsc::JsCell;
+use bun_ptr::AsCtxPtr;
 use core::cell::Cell;
 use core::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -633,7 +634,7 @@ impl Interpreter {
         });
         // Wire the interpreter backref into root stdin so async poll
         // callbacks can drive `Yield::run`.
-        let interp_ptr: *mut Interpreter = interpreter.as_ctx_ptr();
+        let interp_ptr: *mut Interpreter = Interpreter::as_ctx_ptr(&interpreter);
         if let crate::shell::io::InKind::Fd(ref r) = interpreter.root_io.get().stdin {
             r.set_interp(interp_ptr);
         }
@@ -884,10 +885,10 @@ macro_rules! shell_state_dispatch {
 impl Interpreter {
     // ─── R-2 interior-mutability helpers ─────────────────────────────────────
 
-    /// `self`'s address as `*mut Self` for IOReader/IOWriter/ShellTask ctx
-    /// slots. Consumers deref it as `&*const` (shared) — `Yield::run` and the
-    /// dispatch trampolines take `&Interpreter` — so no write provenance is
-    /// required; the `*mut` spelling is purely to match existing field types.
+    /// `&self` → `*mut Self` for ctx slots. Kept inherent (NOT via the
+    /// `bun_ptr::AsCtxPtr` blanket trait) so `Box<Interpreter>` callers
+    /// auto-deref to `&Interpreter` and get `*mut Interpreter`, not
+    /// `*mut Box<Interpreter>`.
     #[inline]
     pub fn as_ctx_ptr(&self) -> *mut Self {
         (self as *const Self).cast_mut()
@@ -2871,7 +2872,77 @@ pub trait ShellTaskCtx: Sized + bun_event_loop::Taskable {
     /// `run_from_main_thread`).
     fn run_from_thread_pool(this: &mut Self);
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter);
+
+    /// Recover `*mut Self` from the intrusive `*mut WorkPoolTask` that the
+    /// thread pool hands the callback. `WorkPoolTask` is the first
+    /// `#[repr(C)]` field of [`ShellTask`], so the `WorkPoolTask*` and
+    /// `ShellTask*` coincide; one `byte_sub(TASK_OFFSET)` walks back to the
+    /// outer `Self` (Zig: the two-hop `@fieldParentPtr` chain in
+    /// `InnerShellTask.runFromThreadPool`).
+    ///
+    /// Provided so the two opt-out builtins (`cp`/`rm`, which install a
+    /// custom `work_pool_callback` and bypass [`shell_task_trampoline`]) can
+    /// reuse the exact recovery the generic trampoline performs, instead of
+    /// each open-coding the `byte_sub` walk.
+    ///
+    /// # Safety
+    /// `task` must point at the [`WorkPoolTask`] node embedded in a live
+    /// `Self` allocation at `Self::TASK_OFFSET` (i.e. the `task.task` field
+    /// of the `ShellTask` field), with provenance covering the whole `Self`.
+    #[inline(always)]
+    unsafe fn from_work_task(task: *mut WorkPoolTask) -> *mut Self {
+        // SAFETY: caller contract — `task` is the first `#[repr(C)]` field of
+        // `ShellTask`, embedded in `Self` at `TASK_OFFSET`.
+        unsafe { bun_core::container_of::<Self, _>(task, Self::TASK_OFFSET) }
+    }
 }
+
+/// Stamps the boilerplate `impl ShellTaskCtx for $ty` that every per-builtin
+/// task struct repeats verbatim: `TASK_OFFSET = offset_of!(Self, task)` and
+/// the two trait fns forwarding to the inherent `Self::run_from_thread_pool`
+/// / `Self::run_from_main_thread`. The `; no_thread_pool` arm is for the two
+/// opt-out builtins (`cp`/`rm`) that install a custom `work_pool_callback`
+/// and so must NOT be scheduled via the generic [`ShellTask::schedule`] —
+/// the trait fn becomes a `debug_assert!(false)` trap.
+macro_rules! shell_task_ctx {
+    ($ty:ty) => {
+        impl $crate::shell::interpreter::ShellTaskCtx for $ty {
+            const TASK_OFFSET: usize = ::core::mem::offset_of!(Self, task);
+            fn run_from_thread_pool(this: &mut Self) {
+                Self::run_from_thread_pool(this)
+            }
+            fn run_from_main_thread(
+                this: *mut Self,
+                interp: &$crate::shell::interpreter::Interpreter,
+            ) {
+                Self::run_from_main_thread(this, interp)
+            }
+        }
+    };
+    ($ty:ty; no_thread_pool) => {
+        impl $crate::shell::interpreter::ShellTaskCtx for $ty {
+            const TASK_OFFSET: usize = ::core::mem::offset_of!(Self, task);
+            fn run_from_thread_pool(_this: &mut Self) {
+                debug_assert!(
+                    false,
+                    concat!(
+                        stringify!($ty),
+                        " scheduled via ShellTask::schedule; use ",
+                        stringify!($ty),
+                        "::schedule"
+                    )
+                );
+            }
+            fn run_from_main_thread(
+                this: *mut Self,
+                interp: &$crate::shell::interpreter::Interpreter,
+            ) {
+                Self::run_from_main_thread(this, interp)
+            }
+        }
+    };
+}
+pub(crate) use shell_task_ctx;
 
 pub type WorkPoolTask = bun_threading::work_pool::Task;
 
@@ -3023,7 +3094,7 @@ unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
     // embedded in `C` at `TASK_OFFSET` (Zig: two `container_of` hops). `ctx`
     // remains the live heap allocation handed to `schedule`.
     unsafe {
-        let ctx = bun_core::container_of::<C, _>(task, C::TASK_OFFSET);
+        let ctx = C::from_work_task(task);
         // The worker thread is the sole accessor until `on_finish` publishes
         // the task back; the `&mut` ends before that call.
         C::run_from_thread_pool(&mut *ctx);

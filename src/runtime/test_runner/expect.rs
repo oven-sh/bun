@@ -1750,6 +1750,34 @@ impl Expect {
         PostMatchGuard { expect: self, global }
     }
 
+    /// Shared front-matter for `expect(received).toX(...)` matchers.
+    ///
+    /// Composes the four lines every hand-ported matcher repeats — currently
+    /// stamped out in **four** different shapes (scopeguard-rebind,
+    /// scopeguard-side-binding, inner-closure-then-`post_match`, and *missing
+    /// entirely* in `toContainAllValues` / `toBeArrayOfSize`). Third member of
+    /// the matcher-scaffold family alongside [`Self::run_unary_predicate`] and
+    /// [`Self::mock_prologue`], for matchers that need the received value but
+    /// are NOT a pure unary predicate and NOT a mock-function matcher.
+    ///
+    /// Returns `(guard, received_value, not)`. The guard derefs to `&Expect`
+    /// and runs `post_match` on drop; `not` is `flags.not()` snapshotted once.
+    /// Callers that don't need `not` until later destructure as `(this, v, _)`.
+    #[inline]
+    pub fn matcher_prelude<'a>(
+        &'a self,
+        global: &'a JSGlobalObject,
+        this_value: JSValue,
+        matcher_name: &str,
+        matcher_params: &'static str,
+    ) -> JsResult<(PostMatchGuard<'a>, JSValue, bool)> {
+        let this = self.post_match_guard(global);
+        let value = this.get_value(global, this_value, matcher_name, matcher_params)?;
+        this.increment_expect_call_counter();
+        let not = this.flags.get().not();
+        Ok((this, value, not))
+    }
+
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn do_unreachable(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arg = callframe.arguments_old::<1>().ptr[0];
@@ -2018,10 +2046,7 @@ impl Expect {
         matcher_name: &'static str,
         pred: impl FnOnce(JSValue) -> bool,
     ) -> JsResult<JSValue> {
-        let this = self.post_match_guard(global);
-        let value = this.get_value(global, frame.this(), matcher_name, "")?;
-        this.increment_expect_call_counter();
-        let not = this.flags.get().not();
+        let (this, value, not) = self.matcher_prelude(global, frame.this(), matcher_name, "")?;
         if pred(value) != not {
             return Ok(JSValue::UNDEFINED);
         }
@@ -2032,6 +2057,216 @@ impl Expect {
             signature,
             format_args!("\n\nReceived: <red>{}<r>\n", value.to_fmt(&mut formatter)),
         )
+    }
+
+    /// Shared scaffold for one-arg `expect(v).toStartWith/toEndWith/toInclude(expected)`
+    /// matchers: received and expected must both be strings, pass/fail is a pure
+    /// `&[u8]`×`&[u8]` predicate (with empty `expected` always passing), and the
+    /// failure message is the stock two-liner
+    /// `"Expected to [not ]{verb}: <green>{expected}<r>\nReceived: <red>{value}<r>\n"`.
+    ///
+    /// Replaces ~100 LOC of byte-identical boilerplate per matcher: post_match
+    /// guard, 1-arg check, expected-is-string check, `get_value`,
+    /// `increment_expect_call_counter`, UTF-8 slice + predicate, `not`-xor, dual
+    /// formatter, `get_signature`, `throw`.
+    ///
+    /// Normalizes the inherited Zig inconsistency where `toInclude` passed `""`
+    /// to `get_value`'s `matcher_params` while the other two passed
+    /// `"<green>expected<r>"` — all three now use the latter (matches the
+    /// signature already used in their failure messages).
+    pub fn run_string_affix_matcher(
+        &self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+        matcher_name: &'static str,
+        verb: &'static str,
+        pred: fn(&[u8], &[u8]) -> bool,
+    ) -> JsResult<JSValue> {
+        let this = self.post_match_guard(global);
+
+        let arguments_ = frame.arguments_old::<1>();
+        let arguments = arguments_.slice();
+        if arguments.len() < 1 {
+            return Err(global.throw_invalid_arguments(format_args!("{matcher_name}() requires 1 argument")));
+        }
+        let expected = arguments[0];
+        expected.ensure_still_alive();
+        if !expected.is_string() {
+            return Err(global.throw(format_args!(
+                "{matcher_name}() requires the first argument to be a string"
+            )));
+        }
+
+        let value = this.get_value(global, frame.this(), matcher_name, "<green>expected<r>")?;
+        this.increment_expect_call_counter();
+
+        let mut pass = value.is_string();
+        if pass {
+            let value_string = value.to_slice_or_null(global)?;
+            let expected_string = expected.to_slice_or_null(global)?;
+            pass = expected_string.slice().is_empty()
+                || pred(value_string.slice(), expected_string.slice());
+        }
+
+        let not = this.flags.get().not();
+        if not {
+            pass = !pass;
+        }
+        if pass {
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        let mut f1 = make_formatter(global);
+        let mut f2 = make_formatter(global);
+        let signature = Self::get_signature(matcher_name, "<green>expected<r>", not);
+        if not {
+            this.throw(
+                global,
+                signature,
+                format_args!(
+                    "\n\nExpected to not {verb}: <green>{}<r>\nReceived: <red>{}<r>\n",
+                    expected.to_fmt(&mut f1),
+                    value.to_fmt(&mut f2),
+                ),
+            )
+        } else {
+            this.throw(
+                global,
+                signature,
+                format_args!(
+                    "\n\nExpected to {verb}: <green>{}<r>\nReceived: <red>{}<r>\n",
+                    expected.to_fmt(&mut f1),
+                    value.to_fmt(&mut f2),
+                ),
+            )
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Shared skeleton for the 8 jest-extended `toContain{Key,Keys,AllKeys,AnyKeys,
+// Value,Values,AllValues,AnyValues}` matchers. ~70% of each Zig body was the
+// same boilerplate (post_match defer, arg-count check, expect-counter,
+// get_value, `.not` flip, dual-formatter failure throw); only the pass-loop
+// differs. Sibling to `run_unary_predicate` / `run_string_affix_matcher`.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Where `expected.is_array()` runs relative to `get_value` — observable when
+/// both would throw (Keys-family Zig validates *after*, Values-family *before*).
+pub enum ExpectedArray {
+    /// `toContainKey` / `toContainValue`: scalar `expected`, no array check.
+    None,
+    /// `toContain*Values`: array check happens before `get_value`.
+    BeforeValue,
+    /// `toContain*Keys`: array check happens after `get_value`.
+    AfterValue,
+}
+
+/// Failure-message verb pair for [`Expect::contain_matcher`]. The `not` arm
+/// reads `"Expected to not {not_verb}: …"`, the plain arm `"Expected to
+/// {verb}: …"`. For most matchers both are `"contain"`; the All/Any variants
+/// override to `"contain all keys"` etc.
+pub struct ContainMsgs {
+    pub verb: &'static str,
+    pub not_verb: &'static str,
+}
+impl ContainMsgs {
+    /// `"Expected to [not ]contain: …"` — toContainKey(s)/AnyKeys/Value(s).
+    pub const CONTAIN: Self = Self { verb: "contain", not_verb: "contain" };
+}
+
+/// Result of a [`Expect::contain_matcher`] body closure: the pass/fail bit and
+/// an optional override for the `Received:` value printed on failure
+/// (`toContainAllKeys` prints `keys(value)` instead of `value`).
+pub struct ContainOutcome {
+    pub pass: bool,
+    pub received_override: Option<JSValue>,
+}
+impl ContainOutcome {
+    #[inline]
+    pub fn pass(pass: bool) -> Self {
+        Self { pass, received_override: None }
+    }
+}
+
+impl Expect {
+    /// Shared body for the eight `toContain{Key,Keys,AllKeys,AnyKeys,Value,
+    /// Values,AllValues,AnyValues}` matchers. Handles the common envelope —
+    /// `post_match` guard, 1-arg check, counter bump, `get_value`,
+    /// optional `expected.is_array()` validation (positioned per
+    /// [`ExpectedArray`]), `.not` flip, and the dual-formatter failure throw —
+    /// and delegates only the per-matcher pass-loop to `body`.
+    ///
+    /// On pass, returns `frame.this()` (the original Zig matchers all returned
+    /// `thisValue`, not `undefined`).
+    pub fn contain_matcher(
+        &self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+        matcher_name: &'static str,
+        expected_array: ExpectedArray,
+        msgs: ContainMsgs,
+        body: impl FnOnce(&JSGlobalObject, JSValue, JSValue) -> JsResult<ContainOutcome>,
+    ) -> JsResult<JSValue> {
+        let this = self.post_match_guard(global);
+        let this_value = frame.this();
+
+        let arguments_ = frame.arguments_old::<1>();
+        let arguments = arguments_.slice();
+        if arguments.len() < 1 {
+            return Err(global.throw_invalid_arguments(format_args!("{matcher_name}() takes 1 argument")));
+        }
+
+        this.increment_expect_call_counter();
+
+        let expected = arguments[0];
+        if matches!(expected_array, ExpectedArray::BeforeValue) && !expected.js_type().is_array() {
+            return Err(global.throw_invalid_argument_type(matcher_name, "expected", "array"));
+        }
+        expected.ensure_still_alive();
+
+        let value = this.get_value(global, this_value, matcher_name, "<green>expected<r>")?;
+        if matches!(expected_array, ExpectedArray::AfterValue) && !expected.js_type().is_array() {
+            return Err(global.throw_invalid_argument_type(matcher_name, "expected", "array"));
+        }
+
+        let not = this.flags.get().not();
+        let outcome = body(global, value, expected)?;
+        let mut pass = outcome.pass;
+        if not {
+            pass = !pass;
+        }
+        if pass {
+            return Ok(this_value);
+        }
+
+        let received = outcome.received_override.unwrap_or(value);
+        let mut f1 = make_formatter(global);
+        let mut f2 = make_formatter(global);
+        let signature = Self::get_signature(matcher_name, "<green>expected<r>", not);
+        if not {
+            this.throw(
+                global,
+                signature,
+                format_args!(
+                    "\n\nExpected to not {}: <green>{}<r>\nReceived: <red>{}<r>\n",
+                    msgs.not_verb,
+                    expected.to_fmt(&mut f1),
+                    received.to_fmt(&mut f2),
+                ),
+            )
+        } else {
+            this.throw(
+                global,
+                signature,
+                format_args!(
+                    "\n\nExpected to {}: <green>{}<r>\nReceived: <red>{}<r>\n",
+                    msgs.verb,
+                    expected.to_fmt(&mut f1),
+                    received.to_fmt(&mut f2),
+                ),
+            )
+        }
     }
 }
 
@@ -2074,12 +2309,7 @@ __forward_matcher! {
     to_be_one_of                             => to_be_one_of::to_be_one_of,
     to_be_type_of                            => to_be_type_of::to_be_type_of,
     to_be_valid_date                         => to_be_valid_date::to_be_valid_date,
-    to_contain_all_keys                      => to_contain_all_keys::to_contain_all_keys,
-    to_contain_all_values                    => to_contain_all_values::to_contain_all_values,
-    to_contain_any_keys                      => to_contain_any_keys::to_contain_any_keys,
-    to_contain_any_values                    => to_contain_any_values::to_contain_any_values,
     to_contain_equal                         => to_contain_equal::to_contain_equal,
-    to_contain_keys                          => to_contain_keys::to_contain_keys,
     to_end_with                              => to_end_with::to_end_with,
     to_equal_ignoring_whitespace             => to_equal_ignoring_whitespace::to_equal_ignoring_whitespace,
     to_have_been_called                      => to_have_been_called::to_have_been_called,
@@ -2387,10 +2617,7 @@ impl ExpectCustomAsymmetricMatcher {
 
         // capture the args as a JS array saved in the instance, so the matcher can be executed later on with them
         let args = call_frame.arguments();
-        let array = JSValue::create_empty_array(global_this, args.len())?;
-        for (i, arg) in args.iter().enumerate() {
-            array.put_index(global_this, i as u32, *arg)?;
-        }
+        let array = JSValue::create_array_from_slice(global_this, args)?;
         expect_custom_asymmetric_matcher_js::captured_args_set_cached(instance_jsvalue, global_this, array);
         array.ensure_still_alive();
 
@@ -2871,9 +3098,7 @@ pub mod mock {
             matcher_params: &'static str,
             kind: MockKind,
         ) -> JsResult<(PostMatchGuard<'a>, JSValue, JSValue)> {
-            let this = self.post_match_guard(global);
-            let value = this.get_value(global, this_value, matcher_name, matcher_params)?;
-            this.increment_expect_call_counter();
+            let (this, value, _) = self.matcher_prelude(global, this_value, matcher_name, matcher_params)?;
             let arr = match kind {
                 MockKind::Calls | MockKind::CallsWithSig => JSMockFunction__getCalls(global, value)?,
                 MockKind::Returns => JSMockFunction__getReturns(global, value)?,

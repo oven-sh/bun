@@ -5,6 +5,7 @@ use bun_collections::{ByteVecExt, VecExt};
 use bun_io as aio;
 use bun_io::{BufferedReader, FileType, ReadState};
 use bun_jsc::JsCell;
+use bun_ptr::AsCtxPtr;
 use bun_sys::{self as sys, Fd, FdExt};
 
 use crate::webcore::blob::{self, Blob};
@@ -319,16 +320,6 @@ impl FileReader {
         self.event_loop.get()
     }
 
-    /// `self`'s address as `*mut Self` for the `BufferedReader` vtable ctx
-    /// slot. The vtable trampolines deref it as shared (`&*this`) — see
-    /// `BufferedReaderParent` impl above — so no write provenance is
-    /// required; the `*mut` spelling is purely to match the C-shaped
-    /// `set_parent(*mut c_void)` signature.
-    #[inline]
-    fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
-    }
-
     /// Returns the platform's `bun.Async.Loop` (`uv_loop_t*` on Windows,
     /// `us_loop_t*` on POSIX). See `aio/{posix,windows}_event_loop.rs`.
     pub fn loop_(&self) -> *mut bun_io::Loop {
@@ -504,25 +495,6 @@ impl FileReader {
         }
 
         streams::Start::Ready
-    }
-
-    pub fn parent(&self) -> *mut Source {
-        // SAFETY: self is always the `context` field of a heap-allocated `Source`;
-        // matches Zig `@fieldParentPtr("context", this)`.
-        // Returns a raw `*mut Source` (NOT `&mut Source`) because `self` IS the
-        // `context` field of `Source` — materializing `&mut Source` here would
-        // alias the live `&self` borrow at every call site (forbidden
-        // aliased-&mut, PORTING.md §Forbidden patterns). Callers must deref in
-        // a tight `unsafe { (*ptr).method() }` scope and never hold the
-        // resulting `&mut Source` across other `self.*` accesses.
-        //
-        // R-2: accepts `&self`. The `*mut` spelling matches the (not-yet-
-        // migrated) `NewSource` API which still takes `&mut self` for
-        // `increment_count`/`decrement_count`/`on_close`; once `NewSource` is
-        // celled (separate R-2 task) the cast becomes purely nominal. The
-        // `container_of` provenance is identical to the previous `&mut self`
-        // version (offset 0 → same allocation pointer).
-        unsafe { bun_core::from_field_ptr!(Source, context, self as *const Self) }
     }
 
     /// Safe accessor for the parent `NewSource.global_this` back-reference.
@@ -1080,6 +1052,14 @@ impl FileReader {
 // vtable-backed Source struct embedding `context: FileReader`. In Rust this becomes a
 // generic `NewSource<C>` + a `SourceContext` trait impl.
 pub type Source = readable_stream::NewSource<FileReader>;
+
+// Intrusive backref: `self` is always the `context` field of a heap-allocated
+// `Source` (Zig `@fieldParentPtr("context", this)`). Returns `*mut Source`
+// (NOT `&mut Source`) because `self` IS the `context` field — materializing
+// `&mut Source` would alias the live `&self` borrow. Callers deref in a tight
+// `unsafe { (*ptr).method() }` scope and never hold `&mut Source` across other
+// `self.*` accesses.
+bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; }
 
 impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";

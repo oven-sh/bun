@@ -93,19 +93,6 @@ pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
 // REAL: now provided by bun_runtime (src/runtime/api/bun/SSLContextCache.rs).
 // bun_ssl_ctx_cache_on_free
 
-// PHASE-C: C++ callback — `highway_index_of_newline_or_non_ascii_or_ansi` is
-// declared in `bun_highway` but has no backing C++ impl in
-// `highway_strings.cpp` (the `_or_ansi` variant was removed upstream). The
-// only Rust caller is gated; export a stub so the rlib's extern ref resolves.
-#[unsafe(no_mangle)]
-pub extern "C" fn highway_index_of_newline_or_non_ascii_or_ansi(
-    haystack: *const u8,
-    haystack_len: usize,
-) -> usize {
-    let _ = haystack;
-    haystack_len // "not found" sentinel
-}
-
 // ════════════════════════════════════════════════════════════════════════════
 // Resolved stubs — real `#[no_mangle]` bodies live in bun_jsc / bun_runtime /
 // bun_http_jsc / bun_bundler_jsc. Stub deleted; linker resolves to the crate

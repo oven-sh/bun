@@ -312,6 +312,15 @@ pub trait ConsoleFormatter {
     fn indent_inc(&mut self);
     /// `formatter.indent -|= 1` — saturating decrement (Zig spelling).
     fn indent_dec(&mut self);
+    /// Zig: `formatter.indent += 1; defer formatter.indent -|= 1;`.
+    ///
+    /// Shorthand for [`IndentScope::new`]. Shadow the binding for the indented
+    /// block; the guard `Deref`s to `&mut Self` so method calls auto-deref, and
+    /// `Drop` restores the indent on every exit path (including `?`).
+    #[inline]
+    fn indented(&mut self) -> IndentScope<'_, Self> {
+        IndentScope::new(self)
+    }
     /// `Formatter.writeIndent(Writer, writer)` — emit `2 * indent` spaces.
     fn write_indent<W: core::fmt::Write>(&self, writer: &mut W) -> core::fmt::Result;
     /// `Formatter.resetLine()` — reset `estimated_line_length` to current
@@ -2050,12 +2059,6 @@ pub trait SysErrorJsc {
 }
 impl SysErrorJsc for bun_sys::Error {
     /// `bun.sys.Error.toSystemError()` (src/sys/Error.zig:toSystemError).
-    ///
-    /// The full errno→code/message/path/syscall/dest/fd mapping is implemented
-    /// once in `bun_sys::Error::to_system_error()` (returning the lower-tier
-    /// `bun_sys::SystemError`, which has the same field set but is not
-    /// `#[repr(C)]`). This impl re-packs that result into the FFI-layout
-    /// [`SystemError`] expected by `SystemError__toErrorInstance`.
     fn to_system_error(&self) -> SystemError {
         SystemError::from(bun_sys::Error::to_system_error(self))
     }
@@ -2100,16 +2103,7 @@ impl LogJsc for bun_ast::Log {
         }
     }
     fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let msgs = &self.msgs;
-        let arr = JSValue::create_empty_array(global, msgs.len())?;
-        for (i, msg) in msgs.iter().enumerate() {
-            arr.put_index(
-                global,
-                u32::try_from(i).expect("int cast"),
-                msg_to_js(msg, global)?,
-            )?;
-        }
-        Ok(arr)
+        JSValue::create_array_from_iter(global, self.msgs.iter(), |msg| msg_to_js(msg, global))
     }
 }
 
@@ -2259,7 +2253,7 @@ pub type JSTimeType = u64;
 /// `sec * 1000` widening cannot overflow `isize`, then cast to `u64` (matching
 /// `@intCast` for non-negative inputs) before masking to 52 bits (`@truncate`).
 pub fn to_js_time(sec: isize, nsec: isize) -> JSTimeType {
-    const MS_PER_S: i128 = 1_000;
+    const MS_PER_S: i128 = bun_core::time::MS_PER_S as i128;
     let millisec = (nsec as i128) / bun_core::time::NS_PER_MS as i128;
     let total = (sec as i128) * MS_PER_S + millisec;
     (total as u64) & ((1u64 << 52) - 1)

@@ -12,9 +12,9 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: `defer this.postMatch(global)` — reshaped as a scopeguard owning the
-        // `&mut Expect` so post_match runs on every exit; the body re-borrows `this` via DerefMut.
-        let this = scopeguard::guard(self, |t| t.post_match(global));
+        // toIncludeRepeated bypasses get_value (reads `captured_value_get_cached` directly,
+        // no `.resolves`/`.rejects` handling), so cannot use the full `matcher_prelude`.
+        let this = self.post_match_guard(global);
 
         let this_value = frame.this();
         let arguments_ = frame.arguments_old::<2>();

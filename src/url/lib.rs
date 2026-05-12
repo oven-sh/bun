@@ -108,9 +108,16 @@ pub mod whatwg {
         let mut input = *str;
         URL__pathFromFileURL(&mut input)
     }
+    /// Returns the origin (`scheme://host[:port]`) prefix of `slice` as a borrowed
+    /// subslice, or `None` if `slice` does not parse as a valid WHATWG URL.
+    ///
+    /// Backed by `WTF::URL::pathStart()` via `URL__originLength` (BunString.cpp).
+    #[inline]
     pub fn origin_from_slice(slice: &[u8]) -> Option<&[u8]> {
-        // a valid URL will not have non-ascii in the origin.
+        // A valid URL will not have non-ASCII bytes in its origin, so it suffices
+        // to hand C++ only the leading ASCII prefix (latin1-safe).
         let first_non_ascii = strings::first_non_ascii(slice).map_or(slice.len(), |i| i as usize);
+        // SAFETY: ptr/len derived from a valid slice prefix; C++ only reads.
         let len = unsafe { URL__originLength(slice.as_ptr(), first_non_ascii) };
         if len == 0 {
             return None;

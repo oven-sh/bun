@@ -116,16 +116,6 @@ pub(crate) fn arena_erase<T: ?Sized>(r: &T) -> &'static T {
     unsafe { bun_ptr::detach_ref(r) }
 }
 
-/// `bun.getcwdAlloc(arena)` — write cwd into a stack `PathBuffer`, then dupe
-/// into the arena as a NUL-terminated slice.
-fn getcwd_alloc(arena: &Arena) -> Result<&'static ZStr, bun_core::Error> {
-    // PORT NOTE: `bun_core::getcwd` takes `bun_core::PathBuffer` (distinct
-    // nominal type from `bun_paths::PathBuffer`); use the right one here.
-    let mut buf = bun_core::PathBuffer([0u8; bun_core::MAX_PATH_BYTES]);
-    let z = bun_core::getcwd(&mut buf)?;
-    Ok(arena_dupe_z(arena, z.as_bytes()))
-}
-
 /// `arena.dupeZ(u8, bytes)` — copy `bytes` + trailing NUL into the bump arena.
 /// Returns `&'static ZStr` per the file-level Phase-A `'static` convention
 /// (arena-backed; lifetime erased — see TODO(port) at top of file).
@@ -191,12 +181,13 @@ impl UserOptions {
                 let utf8_string = bunstr.to_utf8();
 
                 if strings::eql(utf8_string.slice(), b"react") {
-                    let root = match getcwd_alloc(&arena) {
-                        Ok(r) => r,
+                    let root = match bun_sys::getcwd_alloc() {
+                        Ok(z) => arena_dupe_z(&arena, z.as_bytes()),
                         Err(e) => {
-                            return Err(
-                                global.throw_error(e, "while querying current working directory")
-                            );
+                            return Err(global.throw_error(
+                                e.to_zig_err(),
+                                "while querying current working directory",
+                            ));
                         }
                     };
 
@@ -249,10 +240,11 @@ impl UserOptions {
         let root: &[u8] = if let Some(slice) = get_optional_slice(config, global, b"root")? {
             allocations.track(slice)
         } else {
-            match getcwd_alloc(&arena) {
-                Ok(r) => r.as_bytes(),
+            match bun_sys::getcwd_alloc() {
+                Ok(z) => arena_dupe_z(&arena, z.as_bytes()).as_bytes(),
                 Err(e) => {
-                    return Err(global.throw_error(e, "while querying current working directory"));
+                    return Err(global
+                        .throw_error(e.to_zig_err(), "while querying current working directory"));
                 }
             }
         };

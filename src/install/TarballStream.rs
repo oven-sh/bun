@@ -22,6 +22,7 @@ use core::ffi::{c_int, c_void};
 use core::mem::{ManuallyDrop, offset_of};
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_libarchive::lib;
@@ -457,9 +458,7 @@ impl TarballStream {
                 // (single drain at a time) and will be re-primed with the new
                 // base on its next invocation.
                 let read_pos = (*this).read_pos;
-                let remaining = (*this).reading.len() - read_pos;
-                (*this).reading.copy_within(read_pos.., 0);
-                (*this).reading.truncate(remaining);
+                (*this).reading.drain_front(read_pos);
                 (*this).read_pos = 0;
                 (*this).reading.extend_from_slice(&(*this).pending);
                 (*this).pending.clear();

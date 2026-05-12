@@ -9,9 +9,9 @@ pub type TimeLike = libc::timespec;
 // TODO(port): Zig's `std.posix.timespec` uses field names `sec`/`nsec`; libc::timespec
 // uses `tv_sec`/`tv_nsec`. Confirm bun_sys exposes a wrapper or stick with libc.
 
-const NS_PER_S: f64 = 1_000_000_000.0;
-const MS_PER_S: f64 = 1_000.0;
-const NS_PER_MS: f64 = 1_000_000.0;
+const NS_PER_S: f64 = bun_core::time::NS_PER_S as f64;
+const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
+const NS_PER_MS: f64 = bun_core::time::NS_PER_MS as f64;
 
 // Equivalent to `toUnixTimestamp`
 //

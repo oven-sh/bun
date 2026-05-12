@@ -140,13 +140,8 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         unsafe { (*ctx).write_end_request(err) }
     }
 
-    // NB: no `#[bun_jsc::host_fn]` here — that macro's free-fn arm emits a bare
-    // `constructor(__g, __f)` call which cannot resolve to an associated fn
-    // inside an `impl` block. The per-monomorphization `#[bun_jsc::JsClass]`
-    // derive emits the `${T}Class__construct` shim that calls
-    // `<Self>::constructor` directly.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
-        Err(global.throw_invalid_arguments(format_args!("ResumableSink is not constructable")))
+        Err(global.throw_illegal_constructor("ResumableSink"))
     }
 
     pub fn init(

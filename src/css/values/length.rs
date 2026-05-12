@@ -8,7 +8,6 @@ use crate::values::number::{CSSNumber, CSSNumberFns};
 use crate::values::percentage::DimensionPercentage;
 use crate::values::protocol;
 
-use bun_core::strings;
 use core::cmp::Ordering;
 
 /// Either a [`<length>`](https://www.w3.org/TR/css-values-4/#lengths) or a [`<number>`](https://www.w3.org/TR/css-values-4/#numbers).
@@ -117,12 +116,10 @@ macro_rules! define_length_units {
             /// Case-insensitive ASCII unit lookup (mirrors `eqlCaseInsensitiveASCIIICheckLength`).
             #[inline]
             fn from_unit_ci(unit: &[u8], value: CSSNumber) -> Option<Self> {
-                $(
-                    if strings::eql_case_insensitive_ascii_check_length($unit, unit) {
-                        return Some(Self::$variant(value));
-                    }
-                )*
-                None
+                crate::match_ignore_ascii_case! { unit, {
+                    $( $unit => Some(Self::$variant(value)), )*
+                    _ => None,
+                }}
             }
 
             /// Apply `f` to the inner value, preserving the variant.
@@ -281,7 +278,6 @@ impl LengthValue {
         let token = input.next()?.clone();
         match &token {
             Token::Dimension(dim) => {
-                // todo_stuff.match_ignore_ascii_case
                 if let Some(v) = Self::from_unit_ci(dim.unit, dim.num.value) {
                     return Ok(v);
                 }
@@ -483,15 +479,6 @@ impl Length {
     pub fn deep_clone(&self) -> Length {
         // derive(Clone) on Box<Calc<Length>> already deep-clones.
         self.clone()
-    }
-
-    /// Zig: `Length.eql` — structural equality. `derive(PartialEq)` already
-    /// recurses through `Box<Calc<Length>>`, so this is a thin forwarder kept
-    /// so call sites ported verbatim from Zig (`.eql(&other)`) resolve without
-    /// pulling `CalcValue` into scope.
-    #[inline]
-    pub fn eql(&self, other: &Self) -> bool {
-        self == other
     }
 
     // Zig `deinit` → Drop on Box<Calc<Length>> handles this.

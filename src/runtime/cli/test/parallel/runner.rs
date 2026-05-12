@@ -543,9 +543,8 @@ impl WorkerCommands {
     }
 }
 
+bun_core::intrusive_field!(WorkerCommands, channel: Channel<WorkerCommands>);
 impl ChannelOwner for WorkerCommands {
-    const CHANNEL_OFFSET: usize = core::mem::offset_of!(WorkerCommands, channel);
-
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         match kind {
             frame::Kind::Run => {

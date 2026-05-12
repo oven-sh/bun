@@ -9,16 +9,8 @@ pub fn to_be_empty_object(
     global: &JSGlobalObject,
     call_frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: reshaped for borrowck — Zig `defer this.postMatch(globalThis)` becomes a
-    // scopeguard that owns the &mut and DerefMut's it for the body.
-    let this = scopeguard::guard(this, |this| this.post_match(global));
-
     let this_value = call_frame.this();
-    let value: JSValue = this.get_value(global, this_value, "toBeEmptyObject", "")?;
-
-    this.increment_expect_call_counter();
-
-    let not = this.flags.get().not();
+    let (this, value, not) = this.matcher_prelude(global, this_value, "toBeEmptyObject", "")?;
     let mut pass = value.is_object_empty(global)?;
 
     if not {

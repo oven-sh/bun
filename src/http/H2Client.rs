@@ -85,12 +85,6 @@ pub(crate) mod bridge {
     use crate::{HTTPClient, NewHTTPContext};
     use bun_picohttp as picohttp;
 
-    /// Socket helper missing from `bun_uws::NewSocketHandler`.
-    #[inline]
-    pub(crate) fn socket_is_closed_or_has_error(socket: &HTTPSocket<true>) -> bool {
-        socket.is_closed() || socket.is_shutdown() || socket.get_error() != 0
-    }
-
     impl HTTPClient<'_> {
         #[inline]
         pub fn h2_register_abort_tracker(&mut self, socket: HTTPSocket<true>) {

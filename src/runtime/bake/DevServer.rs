@@ -185,31 +185,9 @@ bun_output::declare_scope!(DevServer, visible);
 bun_output::declare_scope!(IncrementalGraph, visible);
 bun_output::declare_scope!(SourceMapStore, visible);
 
-// TODO(port): `debug` was a Scoped struct (capital S); the macro form differs.
-// NOTE: `scoped_log!` takes an `ident`, so we alias the static via a local `use` in a
-// block — this lets call sites use `debug_log!` even when `DevServer`/`IncrementalGraph`/
-// `SourceMapStore` is shadowed by a module/type alias at the call site (e.g. IncrementalGraph.rs).
-macro_rules! debug_log {
-    ($($t:tt)*) => {{
-        #[allow(unused_imports)]
-        use $crate::bake::dev_server_body::DevServer as __DevServerScope;
-        bun_output::scoped_log!(__DevServerScope, $($t)*)
-    }};
-}
-macro_rules! ig_log {
-    ($($t:tt)*) => {{
-        #[allow(unused_imports)]
-        use $crate::bake::dev_server_body::IncrementalGraph as __IgScope;
-        bun_output::scoped_log!(__IgScope, $($t)*)
-    }};
-}
-macro_rules! map_log {
-    ($($t:tt)*) => {{
-        #[allow(unused_imports)]
-        use $crate::bake::dev_server_body::SourceMapStore as __SmsScope;
-        bun_output::scoped_log!(__SmsScope, $($t)*)
-    }};
-}
+bun_output::define_scoped_log!(debug_log, crate::bake::dev_server_body::DevServer);
+bun_output::define_scoped_log!(ig_log, crate::bake::dev_server_body::IncrementalGraph);
+bun_output::define_scoped_log!(map_log, crate::bake::dev_server_body::SourceMapStore);
 pub(crate) use {debug_log, ig_log, map_log};
 
 pub struct Options<'a> {
@@ -1609,9 +1587,6 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return not_found(resp);
     }
     let hex = &route_id[route_id.len() - min_len..][..::core::mem::size_of::<u64>() * 2];
-    if hex.len() != ::core::mem::size_of::<u64>() * 2 {
-        return not_found(resp);
-    }
     let Some(id) = parse_hex_to_int::<u64>(hex) else {
         return not_found(resp);
     };
@@ -1681,12 +1656,9 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return not_found(resp);
     }
     let hex = &param[..::core::mem::size_of::<u64>() * 2];
-    let mut out = [0u8; ::core::mem::size_of::<u64>()];
-    let Ok(decoded) = strings::decode_hex_to_bytes(&mut out, hex) else {
+    let Some(hash) = parse_hex_to_int::<u64>(hex) else {
         return not_found(resp);
     };
-    debug_assert!(decoded == ::core::mem::size_of::<u64>());
-    let hash: u64 = u64::from_ne_bytes(out);
     debug_log!("onAssetRequest {} {}", hash, bstr::BStr::new(param));
     let Some(asset) = dev.assets.get(hash) else {
         return not_found(resp);
@@ -1696,17 +1668,7 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     unsafe { StaticRoute::on(asset, resp) };
 }
 
-// TODO(port): Zig was generic over `T` via `@bitCast([@sizeOf(T)]u8)`. Stable
-// Rust can't size a stack array by a generic `T` without `generic_const_exprs`,
-// so cap the buffer at 16 bytes (enough for u128) and bound on `Pod`.
-pub fn parse_hex_to_int<T: bytemuck::Pod>(slice: &[u8]) -> Option<T> {
-    let size = ::core::mem::size_of::<T>();
-    debug_assert!(size <= 16);
-    let mut out = [0u8; 16];
-    let decoded = strings::decode_hex_to_bytes(&mut out[..size], slice).ok()?;
-    debug_assert!(decoded == size);
-    Some(bytemuck::pod_read_unaligned::<T>(&out[..size]))
-}
+pub use bun_core::fmt::parse_hex_to_int;
 
 fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     if req.header(b"open-in-editor").is_none() {
@@ -2954,8 +2916,7 @@ pub mod deferred_request {
     pub type List = bun_collections::pool::SinglyLinkedList<DeferredRequest>;
     pub type Node = bun_collections::pool::Node<DeferredRequest>;
 
-    bun_output::declare_scope!(DlogeferredRequest, hidden);
-    macro_rules! debug_log_dr { ($($t:tt)*) => { bun_output::scoped_log!(DlogeferredRequest, $($t)*) }; }
+    bun_output::define_scoped_log!(debug_log_dr, DlogeferredRequest, hidden);
     pub(super) use debug_log_dr;
 
     /// Sometimes we will call `await bundleNewRoute()` and this will either
@@ -6504,8 +6465,8 @@ struct UnrefSourceMapRequest {
     body: uws::BodyReaderMixin<Self>, // TODO(port): BodyReaderMixin(@This(), "body", runWithBody, finalize)
 }
 
+bun_core::intrusive_field!(UnrefSourceMapRequest, body: uws::BodyReaderMixin<UnrefSourceMapRequest>);
 impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest {
-    const MIXIN_OFFSET: usize = offset_of!(UnrefSourceMapRequest, body);
     unsafe fn on_body(
         this: *mut Self,
         body: &[u8],

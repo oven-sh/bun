@@ -36,11 +36,9 @@ pub fn to_contain_equal(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // defer this.postMatch(globalThis);
-    // PORT NOTE: wrap `this` in a scopeguard so post_match runs on every exit path; `this`
-    // remains usable below via DerefMut on the guard (matches toBeWithin/toBeNumber pattern).
-    let this = scopeguard::guard(this, |t| t.post_match(global));
     let this_value = frame.this();
+    let (this, value, not) =
+        this.matcher_prelude(global, this_value, "toContainEqual", "<green>expected<r>")?;
     let arguments_ = frame.arguments_old::<1>();
     let arguments = arguments_.slice();
 
@@ -48,13 +46,8 @@ pub fn to_contain_equal(
         return Err(global.throw_invalid_arguments(format_args!("toContainEqual() takes 1 argument")));
     }
 
-    this.increment_expect_call_counter();
-
     let expected = arguments[0];
     expected.ensure_still_alive();
-    let value: JSValue = this.get_value(global, this_value, "toContainEqual", "<green>expected<r>")?;
-
-    let not = this.flags.get().not();
     let mut pass = false;
 
     let value_type = value.js_type();

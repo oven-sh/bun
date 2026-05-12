@@ -76,9 +76,8 @@ impl PercentEncoding {
                 }
 
                 // charToDigit can't fail because the chars are validated earlier
-                let mut new = bun_core::fmt::hex_digit_value(path[i + 1]).unwrap() << 4;
-                new |= bun_core::fmt::hex_digit_value(path[i + 2]).unwrap();
-                ret.as_mut().unwrap()[ret_index] = new;
+                ret.as_mut().unwrap()[ret_index] =
+                    bun_core::fmt::hex_pair_value(path[i + 1], path[i + 2]).unwrap();
                 ret_index += 1;
                 i += 2;
             } else if path[i] != b'/' && !Self::is_pchar(&path[i..]) && strict {

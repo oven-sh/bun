@@ -5,9 +5,6 @@
 //! watcher thread reaches — they forward to the inherent
 //! `DevServer::{on_file_update, on_watch_error}` bodies in `../DevServer.rs`
 //! (ported from `DevServer.zig:4093`/`4153`).
-//!
-//! Also provides `parse_hex_to_u64`, the asset-hash decoder used by the
-//! request handlers.
 
 // `feature = "bake_debugging_features"` is not yet a declared cargo feature; the
 // struct field gate must mirror `mod.rs` so the initializer below stays in sync.
@@ -59,23 +56,3 @@ impl WatcherAtomics {
         }
     }
 }
-
-/// Parse a 16-char hex slice into a `u64` via native-endian byte
-/// reinterpretation. Mirrors DevServer.zig:961-965 exactly:
-/// `std.fmt.hexToBytes(&out, slice)` then `@bitCast([8]u8 → u64)` — i.e.
-/// pairwise hex-decode into `[u8;8]` then `from_ne_bytes`, NOT a big-endian
-/// numeric accumulator. Input `"0100000000000000"` → 1 on little-endian.
-pub fn parse_hex_to_u64(slice: &[u8]) -> Option<u64> {
-    if slice.len() != 16 {
-        return None;
-    }
-    let mut out = [0u8; 8];
-    for i in 0..8 {
-        let hi = hex_nibble(slice[i * 2])?;
-        let lo = hex_nibble(slice[i * 2 + 1])?;
-        out[i] = (hi << 4) | lo;
-    }
-    Some(u64::from_ne_bytes(out))
-}
-
-use bun_core::fmt::hex_digit_value as hex_nibble;

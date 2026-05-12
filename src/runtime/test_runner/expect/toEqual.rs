@@ -11,12 +11,9 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: reshaped for borrowck — Zig `defer this.postMatch(globalThis)` becomes a
-        // scopeguard owning the `&mut Expect` borrow so post_match runs on every exit path;
-        // method calls below go through DerefMut.
-        let this = scopeguard::guard(self, |this| this.post_match(global));
+        let (this, value, not) =
+            self.matcher_prelude(global, frame.this(), "toEqual", "<green>expected<r>")?;
 
-        let this_value = frame.this();
         let _arguments = frame.arguments_old::<1>();
         let arguments: &[JSValue] = _arguments.slice();
 
@@ -24,12 +21,7 @@ impl Expect {
             return Err(global.throw_invalid_arguments(format_args!("toEqual() requires 1 argument")));
         }
 
-        this.increment_expect_call_counter();
-
         let expected = arguments[0];
-        let value: JSValue = this.get_value(global, this_value, "toEqual", "<green>expected<r>")?;
-
-        let not = this.flags.get().not();
         let mut pass = value.jest_deep_equals(expected, global)?;
 
         if not {

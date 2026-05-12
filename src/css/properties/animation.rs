@@ -1,7 +1,7 @@
 use crate as css;
 use crate::CSSString;
 use crate::css_values::easing::EasingFunction;
-use crate::css_values::ident::{CustomIdent, DashedIdent};
+use crate::css_values::ident::{CustomIdent, DashedIdent, is_reserved_custom_ident};
 use crate::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
 use crate::css_values::number::{CSSNumber, CSSNumberFns};
 use crate::css_values::size::Size2D;
@@ -339,13 +339,8 @@ impl AnimationName {
                 }
 
                 // CSS-wide keywords and `none` cannot remove quotes
-                if strings::eql_case_insensitive_ascii(name, b"none", true)
-                    || strings::eql_case_insensitive_ascii(name, b"initial", true)
-                    || strings::eql_case_insensitive_ascii(name, b"inherit", true)
-                    || strings::eql_case_insensitive_ascii(name, b"unset", true)
-                    || strings::eql_case_insensitive_ascii(name, b"default", true)
-                    || strings::eql_case_insensitive_ascii(name, b"revert", true)
-                    || strings::eql_case_insensitive_ascii(name, b"revert-layer", true)
+                if strings::eql_case_insensitive_ascii_check_length(name, b"none")
+                    || is_reserved_custom_ident(name)
                 {
                     return dest.serialize_string(name);
                 }
@@ -500,10 +495,10 @@ impl AnimationTimeline {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         let state = input.state();
         if let Ok(ident) = input.expect_ident() {
-            if ident.eq_ignore_ascii_case(b"auto") {
+            if strings::eql_case_insensitive_ascii_check_length(ident, b"auto") {
                 return Ok(AnimationTimeline::Auto);
             }
-            if ident.eq_ignore_ascii_case(b"none") {
+            if strings::eql_case_insensitive_ascii_check_length(ident, b"none") {
                 return Ok(AnimationTimeline::None);
             }
             input.reset(&state);

@@ -6,8 +6,7 @@
 //! behind `` — they need `bun_jsc`, `bun_bun_js`, transpiler,
 //! and the not-yet-un-gated sibling `*_command.rs` modules.
 //!
-//! The full Phase-A draft is preserved verbatim in `cli_body.rs` (still
-//! ``-gated as a reference for the next un-gate round).
+//! (Phase-A draft `cli_body.rs` has been folded in and deleted.)
 
 use core::cell::Cell;
 
@@ -15,10 +14,7 @@ use bun_core::strings;
 use bun_core::{self as bun, Global, Output};
 use bun_core::{pretty, pretty_error, pretty_errorln};
 
-// ─── gated Phase-A drafts (preserved, not compiled) ──────────────────────────
-
-#[path = "cli_body.rs"]
-mod cli_body;
+// (Phase-A draft `cli_body.rs` removed — mod.rs is canonical.)
 
 // ─── compiling submodules ────────────────────────────────────────────────────
 #[path = "ci_info.rs"]
@@ -287,8 +283,7 @@ pub mod package_manager_command;
 
 // ─── B-2 round 2: newly un-gated (thin surface, heavy bodies re-gated inside) ─
 // phase-d: surfaced for `crate::test_runner::{bun_test,jest,Execution}` which
-// need `CommandLineReporter`. `cli_body`'s private `mod test_command;` is
-// ``-gated, so this is the sole live mount of the file.
+// need `CommandLineReporter`. This is the sole live mount of the file.
 #[path = "test_command.rs"]
 pub mod test_command;
 /// `bun test` support modules (Scanner / ChangedFilesFilter / ParallelRunner).
@@ -551,7 +546,7 @@ pub mod cli {
         // SAFETY: single-threaded process startup
         unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
 
-        // TODO(b2-blocked): MainPanicHandler wiring. Full body in cli_body.rs.
+        // TODO(b2-blocked): MainPanicHandler wiring.
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
         let log = unsafe { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
@@ -830,6 +825,20 @@ pub mod command {
         unsafe { &mut *bun_options_types::context::global_ptr() }
     }
 
+    // ──────────────────────────────────────────────────────────────────────────
+    // Canonical home: src/runtime/cli/mod.rs, inside `pub mod command { ... }`
+    // (crate path `bun_runtime::cli::command::{is_bun_x, is_node, which}`).
+    //
+    // These ARE the live impls already invoked from `command::start()` at
+    // mod.rs:1139 and read via `IS_BUNX_EXE` at mod.rs:1421. The Phase-A draft
+    // copies in cli_body.rs are dead (private `mod cli_body;`, zero external
+    // refs) and are removed wholesale by this dedup.
+    //
+    // One semantic back-port from the dead copy / Zig spec (cli.zig:411):
+    // the `is_node` branch of `which()` must clear
+    // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
+    // stays silent on unknown flags. The live mod.rs copy had dropped this line.
+    // ──────────────────
     pub fn is_bun_x(argv0: &[u8]) -> bool {
         #[cfg(windows)]
         {
@@ -881,6 +890,9 @@ pub mod command {
         }
 
         if is_node(argv0) {
+            // Zig cli.zig:411 — node-mode must not warn on flags Bun doesn't know.
+            bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG
+                .store(false, core::sync::atomic::Ordering::Relaxed);
             // SAFETY: single-threaded startup
             PRETEND_TO_BE_NODE.store(true, core::sync::atomic::Ordering::Relaxed);
             return Tag::RunAsNodeCommand;
@@ -1867,7 +1879,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
         // PORT NOTE: every help block here must pass its template as a *string
         // literal* to `pretty!()` so the `pretty_fmt!` proc-macro can rewrite
         // the `<tag>` markers at compile time. Passing a `const &str` through
-        // `{}` (as the Phase-A draft in cli_body.rs did) prints the raw markup.
+        // `{}` (as the original Phase-A draft did) prints the raw markup.
         match cmd {
             Tag::AutoCommand | Tag::HelpCommand => {
                 HelpCommand::print_with_reason(HelpCommand::Reason::Explicit, show_all_flags);

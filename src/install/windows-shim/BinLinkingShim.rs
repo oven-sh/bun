@@ -233,51 +233,9 @@ mod host {
             })
         }
 
-        /// std.fs.path.basename but utf16.
-        ///
-        /// Intentional local copy of `bun_paths::basename_windows::<u16>`.
-        /// `bun_shim_impl` is freestanding `#![no_std]` and may depend only on
-        /// `bun_windows_sys`; see Cargo.toml header. Zig has the same local copy
-        /// (BinLinkingShim.zig:115).
-        fn basename_w(path: &[u16]) -> &[u16] {
-            if path.is_empty() {
-                return &[];
-            }
-
-            let mut end_index: usize = path.len() - 1;
-            loop {
-                let byte = path[end_index];
-                if byte == b'/' as u16 || byte == b'\\' as u16 {
-                    if end_index == 0 {
-                        return &[];
-                    }
-                    end_index -= 1;
-                    continue;
-                }
-                if byte == b':' as u16 && end_index == 1 {
-                    return &[];
-                }
-                break;
-            }
-
-            let mut start_index: usize = end_index;
-            end_index += 1;
-            while path[start_index] != b'/' as u16
-                && path[start_index] != b'\\' as u16
-                && !(path[start_index] == b':' as u16 && start_index == 1)
-            {
-                if start_index == 0 {
-                    return &path[0..end_index];
-                }
-                start_index -= 1;
-            }
-
-            &path[start_index + 1..end_index]
-        }
-
         /// std.fs.path.extension but utf16
         pub fn extension_w(path: &[u16]) -> &[u16] {
-            let filename = Self::basename_w(path);
+            let filename = strings::basename_windows(path);
             let Some(index) = filename.iter().rposition(|&c| c == b'.' as u16) else {
                 return &path[path.len()..];
             };

@@ -59,81 +59,11 @@ impl<'a> Default for AnyEventLoop<'a> {
 }
 
 impl<'a> AnyEventLoop<'a> {
-    /// Alias for [`r#loop`](Self::r#loop) so callers that already spell
-    /// `event_loop.loop_()` (Zig: `eventLoop().loop()`) compile without the
-    /// raw-identifier escape. Returns the underlying uws/libuv loop pointer.
-    #[inline]
-    pub fn loop_(&mut self) -> *mut UwsLoop {
-        self.r#loop()
-    }
-
-    /// Platform-native loop pointer (`us_loop_t*` on POSIX, `uv_loop_t*` on
-    /// Windows). See [`bun_io::uws_to_native`].
-    #[inline]
-    pub fn native_loop(&mut self) -> *mut bun_io::Loop {
-        bun_io::uws_to_native(self.r#loop())
-    }
-
     pub fn iteration_number(&self) -> u64 {
         match self {
             AnyEventLoop::Js { owner } => owner.iteration_number(),
             // SAFETY: see `MiniEventLoop::loop_ptr()` invariant.
             AnyEventLoop::Mini(mini) => unsafe { (*mini.loop_ptr()).iteration_number() },
-        }
-    }
-
-    pub fn wakeup(&mut self) {
-        // SAFETY: `r#loop()` returns a valid live loop pointer.
-        unsafe { (*self.r#loop()).wakeup() };
-    }
-
-    /// Returns the FilePoll store as a raw pointer (mirrors Zig `*FilePoll.Store`).
-    /// The `Js` arm reaches VM-owned storage via an erased `*mut ()`; multiple
-    /// `AnyEventLoop::Js` (and `EventLoopHandle::Js`) may name the same VM, so
-    /// promoting to `&mut` here would assert uniqueness we can't prove. Callers
-    /// deref locally for the brief region they need `&mut` — same contract as
-    /// [`EventLoopHandle::file_polls`].
-    pub fn file_polls(&mut self) -> *mut bun_io::file_poll::Store {
-        match self {
-            AnyEventLoop::Js { owner } => owner.file_polls(),
-            AnyEventLoop::Mini(mini) => std::ptr::from_mut(mini.file_polls()),
-        }
-    }
-
-    pub fn put_file_poll(&mut self, poll: &mut FilePoll) {
-        let was_ever_registered = poll
-            .flags
-            .contains(bun_io::file_poll::Flags::WasEverRegistered);
-        match self {
-            AnyEventLoop::Js { owner } => owner.put_file_poll(poll, was_ever_registered),
-            AnyEventLoop::Mini(mini) => {
-                // PORT NOTE: reshaped for borrowck — Zig passed `&this.mini`
-                // while also holding `this.mini.filePolls()` mutably. Erase
-                // `mini` to a raw `EventLoopCtx` (Copy, no borrow) before
-                // taking the `&mut Store` borrow; `Store::put` only touches
-                // `mini.after_event_loop_callback{,_ctx}` through the ctx,
-                // which is field-disjoint from `file_polls_`.
-                let ctx = MiniEventLoop::as_event_loop_ctx(std::ptr::from_mut(mini));
-                mini.file_polls().put(poll, ctx, was_ever_registered);
-            }
-        }
-    }
-
-    // PORT NOTE: renamed via raw identifier — `loop` is a Rust keyword.
-    pub fn r#loop(&mut self) -> *mut UwsLoop {
-        match self {
-            AnyEventLoop::Js { owner } => owner.uws_loop(),
-            AnyEventLoop::Mini(mini) => mini.loop_ptr(),
-        }
-    }
-
-    /// Returns the shared pipe-read scratch buffer as a raw fat ptr (mirrors
-    /// Zig `[]u8`). Same VM-shared-storage aliasing concern as [`file_polls`] —
-    /// the `Js` arm cannot prove exclusive access, so callers deref locally.
-    pub fn pipe_read_buffer(&mut self) -> *mut [u8] {
-        match self {
-            AnyEventLoop::Js { owner } => owner.pipe_read_buffer(),
-            AnyEventLoop::Mini(mini) => std::ptr::from_mut::<[u8]>(mini.pipe_read_buffer()),
         }
     }
 
@@ -278,6 +208,61 @@ impl<'a> AnyEventLoop<'a> {
                 );
             }
         }
+    }
+}
+
+// ─── AnyEventLoop → EventLoopHandle forwarders ──────────────────────────────
+// `EventLoopHandle` (below, same file) is the canonical Js/Mini dispatcher for
+// these four methods. `AnyEventLoop` forwards through `from_any` instead of
+// duplicating each `match`. Bound to `'static` because `from_any` stores
+// `BackRef<MiniEventLoop<'static>>`; every concrete `AnyEventLoop`
+// instantiation in the tree is already `'static` (verified: install, patch,
+// build_command, ChangedFilesFilter, `js()`/`js_current()`).
+impl AnyEventLoop<'static> {
+    // PORT NOTE: renamed via raw identifier — `loop` is a Rust keyword.
+    #[inline]
+    pub fn r#loop(&mut self) -> *mut UwsLoop {
+        EventLoopHandle::from_any(self).r#loop()
+    }
+
+    /// Alias for [`r#loop`](Self::r#loop) so callers spell `event_loop.loop_()`
+    /// (Zig: `eventLoop().loop()`) without the raw-identifier escape.
+    #[inline]
+    pub fn loop_(&mut self) -> *mut UwsLoop {
+        self.r#loop()
+    }
+
+    /// Platform-native loop pointer (`us_loop_t*` on POSIX, `uv_loop_t*` on
+    /// Windows). See [`bun_io::uws_to_native`].
+    #[inline]
+    pub fn native_loop(&mut self) -> *mut bun_io::Loop {
+        bun_io::uws_to_native(self.r#loop())
+    }
+
+    #[inline]
+    pub fn wakeup(&mut self) {
+        // SAFETY: `r#loop()` returns a valid live loop pointer.
+        unsafe { (*self.r#loop()).wakeup() };
+    }
+
+    /// Returns the FilePoll store as a raw pointer (mirrors Zig
+    /// `*FilePoll.Store`). See [`EventLoopHandle::file_polls`] for the aliasing
+    /// contract — callers deref locally for the brief region they need `&mut`.
+    #[inline]
+    pub fn file_polls(&mut self) -> *mut bun_io::file_poll::Store {
+        EventLoopHandle::from_any(self).file_polls()
+    }
+
+    #[inline]
+    pub fn put_file_poll(&mut self, poll: &mut FilePoll) {
+        EventLoopHandle::from_any(self).put_file_poll(poll)
+    }
+
+    /// Returns the shared pipe-read scratch buffer as a raw fat ptr (mirrors
+    /// Zig `[]u8`). See [`EventLoopHandle::pipe_read_buffer`].
+    #[inline]
+    pub fn pipe_read_buffer(&mut self) -> *mut [u8] {
+        EventLoopHandle::from_any(self).pipe_read_buffer()
     }
 }
 
@@ -563,9 +548,8 @@ impl EventLoopHandle {
             .contains(bun_io::file_poll::Flags::WasEverRegistered);
         match self {
             EventLoopHandle::Js { owner } => owner.put_file_poll(poll, was_ever_registered),
-            // Same disjoint-field reasoning as `AnyEventLoop::put_file_poll` —
-            // the ctx only touches `after_event_loop_callback{,_ctx}`, not
-            // `file_polls_`.
+            // ctx only touches `after_event_loop_callback{,_ctx}`, field-disjoint
+            // from `file_polls_` — safe to hold both across `Store::put`.
             EventLoopHandle::Mini(mini) => {
                 let ctx = MiniEventLoop::as_event_loop_ctx(mini.as_ptr());
                 mini_mut(mini)

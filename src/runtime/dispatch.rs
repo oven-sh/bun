@@ -45,6 +45,34 @@ use bun_jsc::event_loop::{EventLoop, JsTerminated};
 use bun_jsc::task::report_error_or_terminate;
 use bun_jsc::virtual_machine::VirtualMachine;
 
+/// X-macro: the 42 `node:fs` async ops dispatched via `run_from_js_thread`.
+///
+/// Row shape: `$tag $ty;` — `$tag` is the `bun_event_loop::task_tag::*` const,
+/// `$ty` is the `fs_async::*` alias. They differ in exactly three rows
+/// (`FTruncate`/`Ftruncate`, `FChown`/`Fchown`, `StatFS`/`Statfs`), so the
+/// macro carries both idents. `ReaddirRecursive` is the bespoke
+/// `AsyncReaddirRecursiveTask` (not an `AsyncFSTask<_,_,F>`); `Cp` and
+/// `AsyncMkdirp` are intentionally absent — they have bespoke dispatch paths.
+macro_rules! for_each_fs_async_op {
+    ($m:ident) => { $m! {
+        Stat Stat; Lstat Lstat; Fstat Fstat; Open Open; ReadFile ReadFile;
+        WriteFile WriteFile; CopyFile CopyFile; Read Read; Write Write;
+        Truncate Truncate; Writev Writev; Readv Readv; Rename Rename;
+        FTruncate Ftruncate; Readdir Readdir; ReaddirRecursive ReaddirRecursive;
+        Close Close; Rm Rm; Rmdir Rmdir; Chown Chown; FChown Fchown;
+        Utimes Utimes; Lutimes Lutimes; Chmod Chmod; Fchmod Fchmod; Link Link;
+        Symlink Symlink; Readlink Readlink; Realpath Realpath;
+        RealpathNonNative RealpathNonNative; Mkdir Mkdir; Fsync Fsync;
+        Fdatasync Fdatasync; Access Access; AppendFile AppendFile;
+        Mkdtemp Mkdtemp; Exists Exists; Futimes Futimes; Lchmod Lchmod;
+        Lchown Lchown; Unlink Unlink; StatFS Statfs;
+    }};
+}
+/// Expand the fs-op table to an or-pattern over `task_tag::*` (pattern position).
+macro_rules! __fs_pat {
+    ($($tag:ident $ty:ident;)*) => { $(task_tag::$tag)|* };
+}
+
 // ── per-variant payload types ────────────────────────────────────────────────
 // (high-tier owns them all; grouped by source module)
 
@@ -182,6 +210,37 @@ pub fn run_task(
             task.ptr.cast::<$ty>()
         };
     }
+    /// `CompressionStream::<T>::run_from_js_thread` takes `*mut T` (full
+    /// allocation provenance — R-2) so its trailing `T::deref()` may free the box.
+    macro_rules! compression_arm {
+        ($T:ty) => {{
+            // SAFETY: §Dispatch — tag identifies pointee; live m_ctx payload.
+            unsafe {
+                node_zlib_binding::CompressionStream::<$T>::run_from_js_thread(cast_ptr!($T))
+            };
+        }};
+    }
+    /// Zig: `var t = task.get(T).?; defer t.deinit(); try t.runFromJS();`.
+    /// `defer` runs after `try` whether it errored or not, so destroy
+    /// unconditionally then propagate. `JsTerminated` tears down the VM,
+    /// so the destroy ordering is observably equivalent.
+    macro_rules! run_then_destroy {
+        ($ty:ty) => {{
+            let t = cast_ptr!($ty);
+            // SAFETY: tag identifies pointee; heap-allocated at schedule time.
+            let r = unsafe { (*t).run_from_js() };
+            // SAFETY: paired with `create_on_js_thread` heap::alloc.
+            unsafe { <$ty>::destroy(t) };
+            r?;
+        }};
+        (work $ty:ty) => {{
+            let t = cast_ptr!($ty);
+            let r = bun_jsc::work_task::WorkTask::run_from_js(t);
+            // SAFETY: paired with `create_on_js_thread` heap::alloc.
+            unsafe { bun_jsc::work_task::WorkTask::destroy(t) };
+            r?;
+        }};
+    }
 
     // NB: `TaskTag` is `#[derive(PartialEq, Eq)]` over `u8` → structural-match
     // eligible, so const patterns work directly.
@@ -253,60 +312,14 @@ pub fn run_task(
         }
 
         // ── glob / image / transpiler ────────────────────────────────────
-        // Zig: `defer t.deinit(); try t.runFromJS();` — `defer` runs after
-        // `try` whether it errored or not, so destroy unconditionally then
-        // propagate. `JsTerminated` tears down the VM, so the destroy ordering
-        // is observably equivalent.
-        task_tag::AsyncGlobWalkTask => {
-            let t = cast_ptr!(AsyncGlobWalkTask<'_>);
-            // SAFETY: tag identifies pointee; heap-allocated at schedule time.
-            let r = unsafe { (*t).run_from_js() };
-            // SAFETY: paired with `create_on_js_thread` heap::alloc.
-            unsafe { AsyncGlobWalkTask::destroy(t) };
-            r?;
-        }
-        task_tag::AsyncImageTask => {
-            let t = cast_ptr!(AsyncImageTask<'_>);
-            // SAFETY: tag identifies pointee; heap-allocated at schedule time.
-            let r = unsafe { (*t).run_from_js() };
-            // SAFETY: paired with `create_on_js_thread` heap::alloc.
-            unsafe { AsyncImageTask::destroy(t) };
-            r?;
-        }
-        task_tag::AsyncTransformTask => {
-            let t = cast_ptr!(AsyncTransformTask<'_>);
-            // SAFETY: tag identifies pointee; heap-allocated at schedule time.
-            let r = unsafe { (*t).run_from_js() };
-            // SAFETY: paired with `create_on_js_thread` heap::alloc.
-            unsafe { AsyncTransformTask::destroy(t) };
-            r?;
-        }
+        task_tag::AsyncGlobWalkTask => run_then_destroy!(AsyncGlobWalkTask<'_>),
+        task_tag::AsyncImageTask => run_then_destroy!(AsyncImageTask<'_>),
+        task_tag::AsyncTransformTask => run_then_destroy!(AsyncTransformTask<'_>),
 
         // ── blob copy/read/write promise tasks ───────────────────────────
-        task_tag::CopyFilePromiseTask => {
-            let t = cast_ptr!(CopyFilePromiseTask<'_>);
-            // SAFETY: tag identifies pointee; heap-allocated at schedule time.
-            let r = unsafe { (*t).run_from_js() };
-            // SAFETY: paired with `create_on_js_thread` heap::alloc.
-            unsafe { CopyFilePromiseTask::destroy(t) };
-            r?;
-        }
-        task_tag::ReadFileTask => {
-            let t = cast_ptr!(ReadFileTask);
-            // SAFETY: tag identifies pointee; heap-allocated in WorkTask::create.
-            let r = bun_jsc::work_task::WorkTask::run_from_js(t);
-            // SAFETY: paired with `create_on_js_thread` heap::alloc.
-            unsafe { bun_jsc::work_task::WorkTask::destroy(t) };
-            r?;
-        }
-        task_tag::WriteFileTask => {
-            let t = cast_ptr!(WriteFileTask);
-            // SAFETY: tag identifies pointee; heap-allocated in WorkTask::create.
-            let r = bun_jsc::work_task::WorkTask::run_from_js(t);
-            // SAFETY: paired with `create_on_js_thread` heap::alloc.
-            unsafe { bun_jsc::work_task::WorkTask::destroy(t) };
-            r?;
-        }
+        task_tag::CopyFilePromiseTask => run_then_destroy!(CopyFilePromiseTask<'_>),
+        task_tag::ReadFileTask => run_then_destroy!(work ReadFileTask),
+        task_tag::WriteFileTask => run_then_destroy!(work WriteFileTask),
 
         // ── napi ─────────────────────────────────────────────────────────
         task_tag::NapiAsyncWork => {
@@ -363,87 +376,28 @@ pub fn run_task(
             #[cfg(windows)]
             panic!("This should not be reachable on Windows");
             #[cfg(not(windows))]
-            {
-                let t = cast_ptr!(get_addr_info_request::Task);
-                // SAFETY: tag identifies pointee; heap-allocated in WorkTask::create.
-                let r = bun_jsc::work_task::WorkTask::run_from_js(t);
-                // SAFETY: paired with `create_on_js_thread` heap::alloc.
-                unsafe { bun_jsc::work_task::WorkTask::destroy(t) };
-                r?;
-            }
+            run_then_destroy!(work get_addr_info_request::Task);
         }
 
         // ── node:fs async ops (`runFromJSThread`) ────────────────────────
-        task_tag::Stat => cast!(fs_async::Stat).run_from_js_thread()?,
-        task_tag::Lstat => cast!(fs_async::Lstat).run_from_js_thread()?,
-        task_tag::Fstat => cast!(fs_async::Fstat).run_from_js_thread()?,
-        task_tag::Open => cast!(fs_async::Open).run_from_js_thread()?,
-        task_tag::ReadFile => cast!(fs_async::ReadFile).run_from_js_thread()?,
-        task_tag::WriteFile => cast!(fs_async::WriteFile).run_from_js_thread()?,
-        task_tag::CopyFile => cast!(fs_async::CopyFile).run_from_js_thread()?,
-        task_tag::Read => cast!(fs_async::Read).run_from_js_thread()?,
-        task_tag::Write => cast!(fs_async::Write).run_from_js_thread()?,
-        task_tag::Truncate => cast!(fs_async::Truncate).run_from_js_thread()?,
-        task_tag::Writev => cast!(fs_async::Writev).run_from_js_thread()?,
-        task_tag::Readv => cast!(fs_async::Readv).run_from_js_thread()?,
-        task_tag::Rename => cast!(fs_async::Rename).run_from_js_thread()?,
-        task_tag::FTruncate => cast!(fs_async::Ftruncate).run_from_js_thread()?,
-        task_tag::Readdir => cast!(fs_async::Readdir).run_from_js_thread()?,
-        task_tag::ReaddirRecursive => cast!(fs_async::ReaddirRecursive).run_from_js_thread()?,
-        task_tag::Close => cast!(fs_async::Close).run_from_js_thread()?,
-        task_tag::Rm => cast!(fs_async::Rm).run_from_js_thread()?,
-        task_tag::Rmdir => cast!(fs_async::Rmdir).run_from_js_thread()?,
-        task_tag::Chown => cast!(fs_async::Chown).run_from_js_thread()?,
-        task_tag::FChown => cast!(fs_async::Fchown).run_from_js_thread()?,
-        task_tag::Utimes => cast!(fs_async::Utimes).run_from_js_thread()?,
-        task_tag::Lutimes => cast!(fs_async::Lutimes).run_from_js_thread()?,
-        task_tag::Chmod => cast!(fs_async::Chmod).run_from_js_thread()?,
-        task_tag::Fchmod => cast!(fs_async::Fchmod).run_from_js_thread()?,
-        task_tag::Link => cast!(fs_async::Link).run_from_js_thread()?,
-        task_tag::Symlink => cast!(fs_async::Symlink).run_from_js_thread()?,
-        task_tag::Readlink => cast!(fs_async::Readlink).run_from_js_thread()?,
-        task_tag::Realpath => cast!(fs_async::Realpath).run_from_js_thread()?,
-        task_tag::RealpathNonNative => cast!(fs_async::RealpathNonNative).run_from_js_thread()?,
-        task_tag::Mkdir => cast!(fs_async::Mkdir).run_from_js_thread()?,
-        task_tag::Fsync => cast!(fs_async::Fsync).run_from_js_thread()?,
-        task_tag::Fdatasync => cast!(fs_async::Fdatasync).run_from_js_thread()?,
-        task_tag::Access => cast!(fs_async::Access).run_from_js_thread()?,
-        task_tag::AppendFile => cast!(fs_async::AppendFile).run_from_js_thread()?,
-        task_tag::Mkdtemp => cast!(fs_async::Mkdtemp).run_from_js_thread()?,
-        task_tag::Exists => cast!(fs_async::Exists).run_from_js_thread()?,
-        task_tag::Futimes => cast!(fs_async::Futimes).run_from_js_thread()?,
-        task_tag::Lchmod => cast!(fs_async::Lchmod).run_from_js_thread()?,
-        task_tag::Lchown => cast!(fs_async::Lchown).run_from_js_thread()?,
-        task_tag::Unlink => cast!(fs_async::Unlink).run_from_js_thread()?,
-        task_tag::StatFS => cast!(fs_async::Statfs).run_from_js_thread()?,
+        // 42 arms stamped from `for_each_fs_async_op!` (module scope). The
+        // outer or-pattern proves the inner re-match is exhaustive over the
+        // table, so the trailing wildcard is genuinely unreachable.
+        for_each_fs_async_op!(__fs_pat) => {
+            macro_rules! __fs_run {
+                ($($tag:ident $ty:ident;)*) => { match task.tag {
+                    $(task_tag::$tag => cast!(fs_async::$ty).run_from_js_thread()?,)*
+                    // SAFETY: outer arm guard proves one of the 42 tags matched.
+                    _ => unsafe { core::hint::unreachable_unchecked() },
+                }};
+            }
+            for_each_fs_async_op!(__fs_run);
+        }
 
         // ── compression streams ──────────────────────────────────────────
-        // R-2: `run_from_js_thread` takes `*mut T` (full allocation
-        // provenance) so its trailing `T::deref()` may free the box.
-        task_tag::NativeZlib => {
-            // SAFETY: §Dispatch — tag identifies pointee; live m_ctx payload.
-            unsafe {
-                node_zlib_binding::CompressionStream::<NativeZlib>::run_from_js_thread(cast_ptr!(
-                    NativeZlib
-                ))
-            };
-        }
-        task_tag::NativeBrotli => {
-            // SAFETY: see NativeZlib above.
-            unsafe {
-                node_zlib_binding::CompressionStream::<NativeBrotli>::run_from_js_thread(cast_ptr!(
-                    NativeBrotli
-                ))
-            };
-        }
-        task_tag::NativeZstd => {
-            // SAFETY: see NativeZlib above.
-            unsafe {
-                node_zlib_binding::CompressionStream::<NativeZstd>::run_from_js_thread(cast_ptr!(
-                    NativeZstd
-                ))
-            };
-        }
+        task_tag::NativeZlib => compression_arm!(NativeZlib),
+        task_tag::NativeBrotli => compression_arm!(NativeBrotli),
+        task_tag::NativeZstd => compression_arm!(NativeZstd),
 
         // ── process / signals ────────────────────────────────────────────
         task_tag::ProcessWaiterThreadTask => {
@@ -716,12 +670,26 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             unsafe { &mut *owner.ptr.cast::<$ty>() }
         }};
     }
+    /// One match-arm body of the poll-tag dispatch. Recovers the typed owner as
+    /// a RAW `*mut $Ty` (never `&mut` — re-entrant callees like `DNSResolver`
+    /// pick their own deref mode without aliasing UB) then runs `$body`. The
+    /// 1-arg form is the Zig `ptr.as(T).onPoll(size_or_offset, hup)` shape that
+    /// covers most tags.
+    macro_rules! poll_arm {
+        ($Ty:ty) => {
+            poll_arm!($Ty, |h| unsafe { (*h).on_poll(size_or_offset as isize, hup) })
+        };
+        ($Ty:ty, |$h:ident| $body:expr) => {{
+            // SAFETY: tag was set together with this pointee type at `FilePoll::init`.
+            let $h: *mut $Ty = owner.ptr.cast::<$Ty>();
+            $body;
+        }};
+    }
 
     match owner.tag() {
-        poll_tag::BUFFERED_READER => {
-            let reader = owner_as!(bun_io::BufferedReader);
-            bun_io::BufferedReader::on_poll(reader, size_or_offset as isize, hup);
-        }
+        poll_tag::BUFFERED_READER => poll_arm!(bun_io::BufferedReader, |h| unsafe {
+            bun_io::BufferedReader::on_poll(&mut *h, size_or_offset as isize, hup)
+        }),
         poll_tag::PROCESS => {
             // Bypass `owner_as!` (which yields `&mut`) — `Process` may be freed
             // by the trailing `deref`, so keep raw provenance end-to-end.
@@ -742,27 +710,18 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             }
         }
 
-        poll_tag::FILE_SINK => {
-            let h = owner_as!(FileSinkPoll);
-            h.on_poll(size_or_offset as isize, hup);
-        }
-        poll_tag::STATIC_PIPE_WRITER => {
-            let h = owner_as!(StaticPipeWriterPoll<Subprocess<'_>>);
-            h.on_poll(size_or_offset as isize, hup);
-        }
+        poll_tag::FILE_SINK => poll_arm!(FileSinkPoll),
+        poll_tag::STATIC_PIPE_WRITER => poll_arm!(StaticPipeWriterPoll<Subprocess<'_>>),
         poll_tag::SHELL_STATIC_PIPE_WRITER => {
-            let h = owner_as!(StaticPipeWriterPoll<crate::shell::subproc::ShellSubprocess>);
-            h.on_poll(size_or_offset as isize, hup);
+            poll_arm!(StaticPipeWriterPoll<crate::shell::subproc::ShellSubprocess>)
         }
         poll_tag::SECURITY_SCAN_STATIC_PIPE_WRITER => {
-            let h = owner_as!(StaticPipeWriterPoll<bun_install::SecurityScanSubprocess<'_>>);
-            h.on_poll(size_or_offset as isize, hup);
+            poll_arm!(StaticPipeWriterPoll<bun_install::SecurityScanSubprocess<'_>>)
         }
-        poll_tag::SHELL_BUFFERED_WRITER => {
-            // `bun.shell.Interpreter.IOWriter.Poll`
-            let h = owner_as!(ShellBufferedWriterPoll);
-            crate::shell::io_writer::on_poll(h, size_or_offset as isize, hup);
-        }
+        // `bun.shell.Interpreter.IOWriter.Poll`
+        poll_tag::SHELL_BUFFERED_WRITER => poll_arm!(ShellBufferedWriterPoll, |h| unsafe {
+            crate::shell::io_writer::on_poll(&mut *h, size_or_offset as isize, hup)
+        }),
         poll_tag::DNS_RESOLVER => {
             // R-2: deref as shared (`&*const`) — `on_dns_poll` takes `&self` and
             // `Channel::process` re-enters the resolver via c-ares callbacks.
@@ -793,18 +752,12 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
                 debug_assert!(false, "InternalDNSRequest poll on non-mac");
             }
         }
-        poll_tag::TERMINAL_POLL => {
-            let h = owner_as!(TerminalPoll);
-            h.on_poll(size_or_offset as isize, hup);
-        }
+        poll_tag::TERMINAL_POLL => poll_arm!(TerminalPoll),
+        // `OutputReader = BufferedReader` in install crate — separate tag for ownership.
         poll_tag::LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER => {
-            // `OutputReader = BufferedReader` in the install crate — same
-            // entry point as `BUFFERED_READER`, separate tag for ownership.
-            // The real `bun_install::lifecycle_script_runner` is gated; the
-            // active stub re-exports only `LifecycleScriptSubprocess`, so name
-            // the underlying type directly (spec lifecycle_script_runner.zig:48).
-            let h = owner_as!(bun_io::BufferedReader);
-            bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup);
+            poll_arm!(bun_io::BufferedReader, |h| unsafe {
+                bun_io::BufferedReader::on_poll(&mut *h, size_or_offset as isize, hup)
+            })
         }
 
         poll_tag::NULL | _ => {
@@ -956,10 +909,25 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             unsafe { bun_core::from_field_ptr!($ty, $field, t) }
         }};
     }
-
     // SAFETY: per fn contract — `t` is live for the dispatch read.
     let tag = unsafe { (*t).tag };
     let vm = vm.cast::<VirtualMachine>();
+
+    /// One match-arm body: recover the container as RAW `*mut $Ty` (never
+    /// `&mut` — the handler may free it or re-enter), bind `now`/`vm`, and run
+    /// `$body` under one `unsafe` covering the per-fn-contract dereferences.
+    /// Defined *after* the `vm` cast so the def-site `vm` ident resolves to
+    /// the typed `*mut VirtualMachine`, not the erased `*mut ()` param.
+    macro_rules! timer_arm {
+        ($Ty:ty, $field:ident, |$c:ident, $now:ident, $vm:ident| $body:expr) => {{
+            let $c: *mut $Ty = owner!($Ty, $field);
+            #[allow(unused_variables)]
+            let ($now, $vm) = (now, vm);
+            // SAFETY: per fn contract; container derived from a live `$Ty`.
+            #[allow(unused_unsafe)]
+            unsafe { $body };
+        }};
+    }
     match tag {
         // ── JS-exposed timers (TimerObjectInternals::fire) ───────────────
         EventLoopTimerTag::TimeoutObject => {
@@ -979,55 +947,36 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             // SAFETY: see TimeoutObject arm.
             unsafe { TimerObjectInternals::fire(internals, &*now, vm) };
         }
+        // Spec `inline else` fallthrough: `container.callback(container)`.
         EventLoopTimerTag::TimerCallback => {
-            let container = owner!(TimerCallback, event_loop_timer);
-            // SAFETY: container derived from a live `TimerCallback`; the
-            // callback fn-ptr was set together with the tag at construction.
-            // Spec `inline else` fallthrough: `container.callback(container)`.
-            unsafe { ((*container).callback)(container) };
+            timer_arm!(TimerCallback, event_loop_timer, |c, _now, _vm| ((*c).callback)(c))
         }
         EventLoopTimerTag::WTFTimer => {
-            let container = owner!(WTFTimer, event_loop_timer);
-            // SAFETY: container derived from a live `WTFTimer`; `now` is the
-            // snapshot from `All::next`; `vm` is the per-thread VM. `fire` may
-            // re-enter `(*runtime_state()).timer` — no `&mut` held here.
-            unsafe { WTFTimer::fire(container, &*now, vm) };
+            timer_arm!(WTFTimer, event_loop_timer, |c, now, vm| WTFTimer::fire(c, &*now, vm))
         }
         EventLoopTimerTag::AbortSignalTimeout => {
-            let container = owner!(AbortSignalTimeout, event_loop_timer);
-            // SAFETY: per fn contract; `run` may free `container` (re-entrant
-            // `signal` → `~AbortSignal` → `Timeout::deinit`).
-            unsafe { AbortSignalTimeout::run(container, vm) };
+            timer_arm!(AbortSignalTimeout, event_loop_timer, |c, _now, vm| {
+                AbortSignalTimeout::run(c, vm)
+            })
         }
         EventLoopTimerTag::DateHeaderTimer => {
-            let container = owner!(DateHeaderTimer, event_loop_timer);
-            // SAFETY: per fn contract.
-            unsafe { (*container).run(&mut *vm) };
+            timer_arm!(DateHeaderTimer, event_loop_timer, |c, _now, vm| (*c).run(&mut *vm))
         }
         EventLoopTimerTag::EventLoopDelayMonitor => {
-            let container = owner!(EventLoopDelayMonitor, event_loop_timer);
-            // SAFETY: per fn contract.
-            unsafe { (*container).on_fire(&mut *vm, &*now) };
+            timer_arm!(EventLoopDelayMonitor, event_loop_timer, |c, now, vm| {
+                (*c).on_fire(&mut *vm, &*now)
+            })
         }
         EventLoopTimerTag::StatWatcherScheduler => {
-            let container = owner!(StatWatcherScheduler, event_loop_timer);
-            // SAFETY: per fn contract.
-            unsafe { (*container).timer_callback() };
+            timer_arm!(StatWatcherScheduler, event_loop_timer, |c, _now, _vm| (*c).timer_callback())
         }
         EventLoopTimerTag::UpgradedDuplex => {
-            let container = owner!(UpgradedDuplex, event_loop_timer);
-            // SAFETY: per fn contract.
-            unsafe { (*container).on_timeout() };
+            timer_arm!(UpgradedDuplex, event_loop_timer, |c, _now, _vm| (*c).on_timeout())
         }
-        EventLoopTimerTag::DNSResolver => {
-            // R-2: `event_loop_timer` is `JsCell<EventLoopTimer>` (repr(transparent),
-            // so `t` addresses the field directly); deref the container as shared
-            // (`&*const`) since `check_timeouts` takes `&self` and re-enters via
-            // `ares_process_fd`.
-            let container = owner!(DNSResolver, event_loop_timer);
-            // SAFETY: per fn contract.
-            unsafe { (&*container.cast_const()).check_timeouts(&*now, &*vm) };
-        }
+        // R-2: shared deref — `check_timeouts` re-enters via `ares_process_fd`.
+        EventLoopTimerTag::DNSResolver => timer_arm!(DNSResolver, event_loop_timer, |c, now, vm| {
+            (&*c.cast_const()).check_timeouts(&*now, &*vm)
+        }),
         EventLoopTimerTag::WindowsNamedPipe => {
             #[cfg(windows)]
             {
@@ -1069,19 +1018,13 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             unsafe { (*container).on_max_lifetime_timeout() };
         }
         EventLoopTimerTag::ValkeyConnectionTimeout => {
-            let container = owner!(Valkey, timer);
-            // SAFETY: per fn contract.
-            unsafe { (*container).on_connection_timeout() };
+            timer_arm!(Valkey, timer, |c, _now, _vm| (*c).on_connection_timeout())
         }
         EventLoopTimerTag::ValkeyConnectionReconnect => {
-            let container = owner!(Valkey, reconnect_timer);
-            // SAFETY: per fn contract.
-            unsafe { (*container).on_reconnect_timer() };
+            timer_arm!(Valkey, reconnect_timer, |c, _now, _vm| (*c).on_reconnect_timer())
         }
         EventLoopTimerTag::SubprocessTimeout => {
-            let container = owner!(Subprocess<'_>, event_loop_timer);
-            // SAFETY: per fn contract.
-            unsafe { (*container).timeout_callback() };
+            timer_arm!(Subprocess<'_>, event_loop_timer, |c, _now, _vm| (*c).timeout_callback())
         }
         EventLoopTimerTag::DevServerSweepSourceMaps => {
             // Spec: `bun.bake.DevServer.SourceMapStore.sweepWeakRefs(self, now)`
@@ -1124,10 +1067,9 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             };
             BunTest::bun_test_timeout_callback(strong, &now_core, VirtualMachine::get());
         }
-        EventLoopTimerTag::CronJob => {
-            let container = owner!(CronJob, event_loop_timer);
-            CronJob::on_timer_fire(container, VirtualMachine::get());
-        }
+        EventLoopTimerTag::CronJob => timer_arm!(CronJob, event_loop_timer, |c, _now, _vm| {
+            CronJob::on_timer_fire(c, VirtualMachine::get())
+        }),
     }
 }
 

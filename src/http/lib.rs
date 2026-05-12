@@ -31,8 +31,7 @@ pub mod certificate_info;
 pub mod decompressor;
 #[path = "H2Client.rs"]
 pub mod h2_client;
-#[path = "H2FrameParser.rs"]
-pub mod h2_frame_parser;
+pub use bun_http_types::h2 as h2_frame_parser;
 #[path = "H3Client.rs"]
 pub mod h3_client;
 #[path = "HeaderBuilder.rs"]
@@ -951,12 +950,6 @@ pub fn configure_http_client_with_alpn(
 
 // ── EntryList column accessors ──────────────────────────────────────────
 use bun_http_types::ETag::HeaderEntryColumns;
-
-// ── socket helpers ──────────────────────────────────────────────────────
-#[inline]
-fn socket_is_closed_or_has_error<const SSL: bool>(socket: &HttpSocket<SSL>) -> bool {
-    socket.is_closed() || socket.is_shutdown() || socket.get_error() != 0
-}
 
 impl<const SSL: bool> SocketTimeout for HttpSocket<SSL> {
     fn timeout(&self, seconds: c_uint) {
@@ -2071,9 +2064,15 @@ impl<'a> HTTPClient<'a> {
                     if will_append {
                         override_connection_header = true;
                         let connection_value = self.header_str(header_values[i]);
-                        if connection_value.eq_ignore_ascii_case(b"close") {
+                        if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                            connection_value,
+                            b"close",
+                        ) {
                             self.flags.disable_keepalive = true;
-                        } else if connection_value.eq_ignore_ascii_case(b"keep-alive") {
+                        } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                            connection_value,
+                            b"keep-alive",
+                        ) {
                             self.flags.disable_keepalive = false;
                         }
                     }
@@ -2111,7 +2110,7 @@ impl<'a> HTTPClient<'a> {
                 h if h == hash_header_const(b"Upgrade") => {
                     if will_append {
                         let value = self.header_str(header_values[i]);
-                        if !value.eq_ignore_ascii_case(b"h2") && !value.eq_ignore_ascii_case(b"h2c")
+                        if !bun_core::strings::eql_any_case_insensitive_ascii(value, &[b"h2", b"h2c"])
                         {
                             self.flags.upgrade_state = HTTPUpgradeState::Pending;
                         }
@@ -2281,7 +2280,7 @@ impl<'a> HTTPClient<'a> {
             GenHttpContext::<IS_SSL>::close_socket(socket);
         } else if self.state.request_stage == RequestStage::Done
             && self.is_keep_alive_possible()
-            && !socket_is_closed_or_has_error(&socket)
+            && !socket.is_closed_or_has_error()
         {
             // request_stage == .done: a 303 to a streaming POST can arrive before
             // the chunked upload's terminating 0\r\n\r\n is written. Pooling that
@@ -3548,7 +3547,7 @@ impl<'a> HTTPClient<'a> {
             };
 
             if self.is_keep_alive_possible()
-                && !socket_is_closed_or_has_error(&socket)
+                && !socket.is_closed_or_has_error()
                 && tunnel_poolable
                 && request_side_drained
             {
@@ -4254,9 +4253,15 @@ impl<'a> HTTPClient<'a> {
                 h if h == hash_header_const(b"Connection") => {
                     if response.status_code >= 200 && response.status_code <= 299 {
                         // HTTP headers are case-insensitive (RFC 7230)
-                        if header.value().eq_ignore_ascii_case(b"close") {
+                        if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                            header.value(),
+                            b"close",
+                        ) {
                             self.state.flags.allow_keepalive = false;
-                        } else if header.value().eq_ignore_ascii_case(b"keep-alive") {
+                        } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                            header.value(),
+                            b"keep-alive",
+                        ) {
                             self.state.flags.allow_keepalive = true;
                         }
                     }

@@ -42,7 +42,7 @@ pub fn write_preface(session: &mut ClientSession) {
 
 #[inline]
 fn encode_setting(dst: &mut [u8], setting: wire::SettingsType, value: u32) {
-    dst[0..2].copy_from_slice(&(setting as u16).to_be_bytes());
+    dst[0..2].copy_from_slice(&setting.0.to_be_bytes());
     dst[2..6].copy_from_slice(&value.to_be_bytes());
 }
 
@@ -406,10 +406,11 @@ pub fn encode_header(
     // offset; mirror with the raw buffer and set_len after.
     // SAFETY: `hpack.encode` writes only into `[len..len+written]`, which is
     // within the just-reserved capacity; bytes in `[0..len]` are initialized.
-    let buf = unsafe { bun_core::ffi::slice_mut(encoded.as_mut_ptr(), encoded.capacity()) };
+    let len = encoded.len();
+    let buf = unsafe { bun_core::vec::allocated_bytes_mut(encoded) };
     let written = session
         .hpack
-        .encode(name, value, never_index, buf, encoded.len())
+        .encode(name, value, never_index, buf, len)
         .map_err(|e| bun_core::err!(from e))?;
     // SAFETY: hpack wrote `written` bytes at offset `len`; new_len <= capacity.
     unsafe { bun_core::vec::commit_spare(encoded, written) };

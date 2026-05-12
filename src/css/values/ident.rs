@@ -466,6 +466,21 @@ impl core::fmt::Display for IdentOrRef {
 
 pub use CustomIdent as CustomIdentFns;
 
+/// ASCII-case-insensitive check for the words reserved from the
+/// [`<custom-ident>`](https://www.w3.org/TR/css-values-4/#custom-idents)
+/// production: the CSS-wide keywords + `default`.
+///
+/// `default` is *not* a CSS-wide keyword (cf. [`CSSWideKeyword`]); it is
+/// reserved separately by css-values-4. `none` is *not* in this set —
+/// `<keyframes-name>` / `<single-animation-name>` callers check it themselves.
+#[inline]
+pub fn is_reserved_custom_ident(s: &[u8]) -> bool {
+    strings::eql_any_case_insensitive_ascii(
+        s,
+        &[b"initial", b"inherit", b"unset", b"default", b"revert", b"revert-layer"],
+    )
+}
+
 arena_slice_newtype! {
     /// A CSS [`<custom-ident>`](https://www.w3.org/TR/css-values-4/#custom-idents).
     CustomIdent
@@ -475,10 +490,7 @@ impl CustomIdent {
     pub fn parse(input: &mut Parser) -> CssResult<CustomIdent> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
-        let valid = crate::match_ignore_ascii_case! { ident, {
-            b"initial" | b"inherit" | b"unset" | b"default" | b"revert" | b"revert-layer" => false,
-            _ => true,
-        }};
+        let valid = !is_reserved_custom_ident(ident);
 
         if !valid {
             return Err(location.new_unexpected_token_error(Token::Ident(ident)));

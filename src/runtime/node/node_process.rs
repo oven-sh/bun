@@ -189,15 +189,9 @@ mod _impl {
         if let Some(worker) = vm.worker_ref() {
             // was explicitly overridden for the worker?
             if let Some(exec_argv) = worker.exec_argv() {
-                let array = JSValue::create_empty_array(global_object, exec_argv.len())?;
-                for (i, &wtf) in exec_argv.iter().enumerate() {
-                    array.put_index(
-                        global_object,
-                        u32::try_from(i).expect("int cast"),
-                        BunString::init(wtf).to_js(global_object)?,
-                    )?;
-                }
-                return Ok(array);
+                return JSValue::create_array_from_iter(global_object, exec_argv.iter(), |&wtf| {
+                    BunString::init(wtf).to_js(global_object)
+                });
             }
         }
 

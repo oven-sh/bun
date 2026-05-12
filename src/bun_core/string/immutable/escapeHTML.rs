@@ -23,17 +23,49 @@ pub enum Escaped<T> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Scalar lookup table (shared by both Latin-1 and UTF-16 paths)
+// Shared byte → entity lookup
 // ──────────────────────────────────────────────────────────────────────────
+//
+// These are *lookup only*. Callers keep their own needle set / scan loop and
+// only call here for bytes they have already decided to escape. That way the
+// 3-char SSR attribute path, the 4-char markdown path and the 5-char
+// Bun.escapeHTML path all share one mapping table without changing their
+// output bytes.
 
+/// HTML entity for one byte. `'` → `&#x27;` (numeric — `&apos;` is not in HTML4).
+#[inline(always)]
+pub const fn html_escape_entity(c: u8) -> Option<&'static [u8]> {
+    match c {
+        b'&' => Some(b"&amp;"),
+        b'<' => Some(b"&lt;"),
+        b'>' => Some(b"&gt;"),
+        b'"' => Some(b"&quot;"),
+        b'\'' => Some(b"&#x27;"),
+        _ => None,
+    }
+}
+
+/// XML entity for one byte. Differs from [`html_escape_entity`] only in `'` → `&apos;`.
+#[inline(always)]
+pub const fn xml_escape_entity(c: u8) -> Option<&'static [u8]> {
+    match c {
+        b'\'' => Some(b"&apos;"),
+        _ => html_escape_entity(c),
+    }
+}
+
+/// Per-byte output length for the 5-char Bun.escapeHTML set; non-escaped bytes
+/// map to 1. Derived from [`html_escape_entity`] so the table stays in sync.
 // Zig used `u4`; Rust has no `u4`, so widen to `u8`. Values are all ≤ 6.
-const SCALAR_LENGTHS: [u8; 256] = {
+pub const SCALAR_LENGTHS: [u8; 256] = {
     let mut values = [1u8; 256];
-    values[b'"' as usize] = b"&quot;".len() as u8;
-    values[b'&' as usize] = b"&amp;".len() as u8;
-    values[b'\'' as usize] = b"&#x27;".len() as u8;
-    values[b'<' as usize] = b"&lt;".len() as u8;
-    values[b'>' as usize] = b"&gt;".len() as u8;
+    let mut i = 0u16;
+    while i < 256 {
+        if let Some(ent) = html_escape_entity(i as u8) {
+            values[i as usize] = ent.len() as u8;
+        }
+        i += 1;
+    }
     values
 };
 
@@ -52,14 +84,7 @@ fn scalar_append(buf: *mut u8, ch: u8) -> usize {
         return 1;
     }
 
-    match ch {
-        b'"' => scalar_append_string(buf, b"&quot;"),
-        b'&' => scalar_append_string(buf, b"&amp;"),
-        b'\'' => scalar_append_string(buf, b"&#x27;"),
-        b'<' => scalar_append_string(buf, b"&lt;"),
-        b'>' => scalar_append_string(buf, b"&gt;"),
-        _ => unreachable!(),
-    }
+    scalar_append_string(buf, html_escape_entity(ch).unwrap())
 }
 
 #[inline(always)]

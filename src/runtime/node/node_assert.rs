@@ -126,15 +126,9 @@ fn diff_list_to_js<T>(
 where
     T: FromAny + Copy,
 {
-    let array = JSValue::create_empty_array(global, diff_list.len())?;
-    for (i, line) in diff_list.iter().enumerate() {
-        array.put_index(
-            global,
-            i as u32,
-            JSObject::create_null_proto(line, global)?.to_js(),
-        )?;
-    }
-    Ok(array)
+    JSValue::create_array_from_iter(global, diff_list.iter(), |line| {
+        Ok(JSObject::create_null_proto(line, global)?.to_js())
+    })
 }
 
 /// Field reflection for `Diff<T>` so [`JSObject::create_null_proto`] can

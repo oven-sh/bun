@@ -118,7 +118,7 @@ impl<'a> Coordinator<'a> {
                 && !self.bailed
             {
                 // Bound the wait so we wake to scale up even if no I/O arrives.
-                const MS_PER_S: i64 = 1000;
+                const MS_PER_S: i64 = bun_core::time::MS_PER_S as i64;
                 let ts = bun_core::Timespec {
                     sec: self.scale_up_after_ms / MS_PER_S,
                     nsec: (self.scale_up_after_ms % MS_PER_S) * bun_core::time::NS_PER_MS as i64,

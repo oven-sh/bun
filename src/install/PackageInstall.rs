@@ -1323,7 +1323,7 @@ impl<'a> PackageInstall<'a> {
                 let e = windows::Win32Error::get();
                 let err = if dest_path_length == 0 {
                     e.to_system_errno()
-                        .map(|s| s.to_error().into())
+                        .map(|s| s.to_error())
                         .unwrap_or(bun_core::err!("Unexpected"))
                 } else {
                     bun_core::err!("NameTooLong")
@@ -1362,7 +1362,7 @@ impl<'a> PackageInstall<'a> {
                 let e = windows::Win32Error::get();
                 let err = if cache_path_length == 0 {
                     e.to_system_errno()
-                        .map(|s| s.to_error().into())
+                        .map(|s| s.to_error())
                         .unwrap_or(bun_core::err!("Unexpected"))
                 } else {
                     bun_core::err!("NameTooLong")
@@ -2028,14 +2028,11 @@ impl<'a> PackageInstall<'a> {
     pub fn uninstall_before_install(&self, destination_dir: Dir) {
         let mut rand_path_buf = [0u8; 48];
         let rand_bytes = bun_core::fast_random().to_ne_bytes();
-        // TODO(port): bufPrintZ with {X} hex formatting of bytes.
         let temp_path = {
             use std::io::Write;
             let mut cursor = &mut rand_path_buf[..];
-            write!(cursor, ".old-").expect("infallible: in-memory write");
-            for b in rand_bytes {
-                write!(cursor, "{:02X}", b).expect("infallible: in-memory write");
-            }
+            write!(cursor, ".old-{}", bun_core::fmt::hex_upper(&rand_bytes))
+                .expect("infallible: in-memory write");
             let written = 48 - cursor.len();
             rand_path_buf[written] = 0;
             // SAFETY: NUL written at [written].
@@ -2263,7 +2260,7 @@ impl<'a> PackageInstall<'a> {
                 let e = windows::Win32Error::get();
                 let err = if dest_path_length == 0 {
                     e.to_system_errno()
-                        .map(|s| s.to_error().into())
+                        .map(|s| s.to_error())
                         .unwrap_or(bun_core::err!("Unexpected"))
                 } else {
                     bun_core::err!("NameTooLong")

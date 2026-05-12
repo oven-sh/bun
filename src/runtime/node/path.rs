@@ -1053,15 +1053,10 @@ pub fn extname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
     &path[_start_dot.._end]
 }
 
-#[inline]
-pub fn is_sep_posix_t<T: PathCharCwd>(byte: T) -> bool {
-    byte == T::from_u8(CHAR_FORWARD_SLASH)
-}
-
-#[inline]
-pub fn is_sep_windows_t<T: PathCharCwd>(byte: T) -> bool {
-    byte == T::from_u8(CHAR_FORWARD_SLASH) || byte == T::from_u8(CHAR_BACKWARD_SLASH)
-}
+pub use bun_paths::is_sep_posix_t;
+// Node `path.win32.isPathSeparator` accepts BOTH `/` and `\` — semantically
+// `is_sep_any_t`, NOT `is_sep_win32_t` (which is `\`-only). Keep the Node name.
+pub use bun_paths::is_sep_any_t as is_sep_windows_t;
 
 /// `'A' <= byte <= 'Z' || 'a' <= byte <= 'z'`
 #[inline]

@@ -2,7 +2,6 @@ use core::ffi::c_void;
 use core::ptr;
 
 use bun_collections::HiveArray;
-use bun_core::Output;
 use bun_sys::Fd;
 use bun_sys::windows::libuv as uv;
 use bun_uws_sys::WindowsLoop;
@@ -446,57 +445,8 @@ mod waker_c {
     }
 }
 
-#[repr(C)]
-pub struct Closer {
-    io_request: uv::fs_t,
-}
-
-impl Closer {
-    pub fn close(fd: Fd, loop_: *mut uv::Loop) {
-        let io_request: uv::fs_t = bun_core::ffi::zeroed();
-        let closer = bun_core::heap::into_raw(Box::new(Closer { io_request }));
-        // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
-        // SAFETY: closer is a freshly-boxed valid pointer.
-        unsafe {
-            (*closer).io_request.data = closer.cast::<c_void>();
-            if let Some(err) = uv::uv_fs_close(
-                loop_,
-                &mut (*closer).io_request,
-                fd.uv(),
-                Some(Self::on_close),
-            )
-            .err_enum()
-            {
-                Output::debug_warn(format_args!("libuv close() failed = {}", err));
-                drop(bun_core::heap::take(closer));
-            }
-        }
-    }
-
-    extern "C" fn on_close(req: *mut uv::fs_t) {
-        // SAFETY: req points to Closer.io_request (set in `close` above).
-        let closer: *mut Closer = unsafe { bun_core::from_field_ptr!(Closer, io_request, req) };
-        // SAFETY: req.data was set to `closer` in `close`; both are valid for the callback's duration.
-        unsafe {
-            debug_assert!(closer == (*req).data.cast::<Closer>());
-            bun_sys::syslog!(
-                "uv_fs_close({}) = {}",
-                // SAFETY: `uv_fs_close` populated the `fd` arm of the union.
-                Fd::from_uv((*req).file_fd()),
-                (*req).result
-            );
-
-            #[cfg(debug_assertions)]
-            {
-                if let Some(err) = (*closer).io_request.result.err_enum() {
-                    Output::debug_warn(format_args!("libuv close() failed = {}", err));
-                }
-            }
-
-            (*req).deinit();
-            drop(bun_core::heap::take(closer));
-        }
-    }
-}
+// `Closer` (struct + close/on_close) was duplicated here and in
+// `crate::closer` (lib.rs); the canonical one is re-exported as
+// `bun_io::Closer`. No callers referenced `windows_event_loop::Closer`.
 
 // ported from: src/aio/windows_event_loop.zig

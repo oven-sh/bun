@@ -10,24 +10,15 @@ pub fn to_match(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // jsc.markBinding(@src()) — debug-only source marker; no-op in Rust.
+    let (this, value, not) =
+        this.matcher_prelude(global, frame.this(), "toMatch", "<green>expected<r>")?;
 
-    // Zig: `defer this.postMatch(globalThis);`
-    // PORT NOTE: borrowck — wrap `this` in a scopeguard that owns the &mut Expect
-    // and runs post_match on drop; the body accesses `this` via the guard's DerefMut.
-    let this = scopeguard::guard(this, |t| t.post_match(global));
-
-    let this_value = frame.this();
     let arguments: &[JSValue] = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!("toMatch() requires 1 argument")));
     }
 
-    this.increment_expect_call_counter();
-
-    // Zig: `var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };`
-    //      `defer formatter.deinit();` — handled by Drop.
     let mut formatter = super::make_formatter(global);
 
     let expected_value = arguments[0];
@@ -39,8 +30,6 @@ pub fn to_match(
     }
     expected_value.ensure_still_alive();
 
-    let value: JSValue = this.get_value(global, this_value, "toMatch", "<green>expected<r>")?;
-
     if !value.is_string() {
         return Err(global.throw(format_args!(
             "Received value must be a string: {}",
@@ -48,7 +37,6 @@ pub fn to_match(
         )));
     }
 
-    let not = this.flags.get().not();
     let mut pass: bool = 'brk: {
         if expected_value.is_string() {
             break 'brk value.string_includes(global, expected_value)?;

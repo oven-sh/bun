@@ -600,12 +600,8 @@ impl<'a> BufferedWriter<'a> {
             if let Some(j) = strings::index_of_any(items, b"\"<>") {
                 let j = j as usize;
                 let _ = self.write_all(&items[0..j])?;
-                let _ = match items[j] {
-                    b'"' => self.write_all(b"&quot;")?,
-                    b'<' => self.write_all(b"&lt;")?,
-                    b'>' => self.write_all(b"&gt;")?,
-                    _ => unreachable!(),
-                };
+                // needle b"\"<>" ⇒ Some, &/' never reached
+                let _ = self.write_all(strings::html_escape_entity(items[j]).unwrap())?;
 
                 items = &items[j + 1..];
                 continue;
@@ -626,12 +622,8 @@ impl<'a> BufferedWriter<'a> {
                 // that's fine though, 4 GB of SSR'd HTML is quite a lot...
                 let j = j as usize;
                 let _ = self.write_all16(&items[0..j])?;
-                let _ = match items[j] {
-                    c if c == '"' as u16 => self.write_all(b"&quot;")?,
-                    c if c == '<' as u16 => self.write_all(b"&lt;")?,
-                    c if c == '>' as u16 => self.write_all(b"&gt;")?,
-                    _ => unreachable!(),
-                };
+                // needle ∈ {0x22,0x3C,0x3E} so `as u8` is lossless
+                let _ = self.write_all(strings::html_escape_entity(items[j] as u8).unwrap())?;
 
                 items = &items[j + 1..];
                 continue;

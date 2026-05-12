@@ -26,6 +26,8 @@ use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_core::strings;
 use bun_core::{Error, err};
 
+use bun_ast::LexerLog as _;
+
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
 use crate::parser::{
@@ -1418,7 +1420,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 p.lexer.add_range_error(
                                     r,
                                     format_args!("'bunBakeGraph' can only be set to 'ssr'"),
-                                    true,
                                 )?;
                             }
                         }

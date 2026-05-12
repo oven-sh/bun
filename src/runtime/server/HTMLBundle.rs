@@ -15,7 +15,7 @@ use bun_core::strings;
 use bun_http::Headers;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
-use bun_ptr::{IntrusiveRc, RefCount, RefCounted};
+use bun_ptr::{AsCtxPtr, IntrusiveRc, RefCount, RefCounted};
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::api::js_bundle_completion_task::{
@@ -238,17 +238,6 @@ impl State {
 }
 
 impl Route {
-    /// `self`'s address as `*mut Self` for uws / completion-task ctx slots.
-    /// All callbacks deref it as `&*const` (shared) — see `on_any_request` /
-    /// `on_aborted` / `JSBundleCompletionTask::on_complete` — so no write
-    /// provenance is required; the `*mut` spelling is purely to match the
-    /// existing `*mut Route` field/signature shapes. Mutation goes through
-    /// `Cell`/`JsCell` (UnsafeCell-backed) and `RefCount` (Cell-backed).
-    #[inline]
-    fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
-    }
-
     pub fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
         cost += mem::size_of::<Route>();

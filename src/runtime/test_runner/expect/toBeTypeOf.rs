@@ -21,19 +21,13 @@ pub fn to_be_type_of(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: `defer this.postMatch(globalThis)` — reshaped for borrowck: scopeguard owns the
-    // `&mut Expect` borrow and DerefMut's it for the body so post_match runs on every exit path.
-    let this = scopeguard::guard(this, |t| t.post_match(global));
-
-    let this_value = frame.this();
+    let (this, value, not) = this.matcher_prelude(global, frame.this(), "toBeTypeOf", "")?;
     let _arguments = frame.arguments_old::<1>();
-    let arguments = &_arguments.ptr[0.._arguments.len];
+    let arguments = _arguments.slice();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!("toBeTypeOf() requires 1 argument")));
     }
-
-    let value: JSValue = this.get_value(global, this_value, "toBeTypeOf", "")?;
 
     let expected = arguments[0];
     expected.ensure_still_alive();
@@ -44,7 +38,6 @@ pub fn to_be_type_of(
 
     let expected_type = expected.to_bun_string(global)?;
     // `defer expected_type.deref()` — handled by Drop on bun_core::String.
-    this.increment_expect_call_counter();
 
     let expected_utf8 = expected_type.to_utf8();
     let Some(typeof_) = JS_TYPE_OF_MAP.get(expected_utf8.slice()).copied() else {
@@ -53,7 +46,6 @@ pub fn to_be_type_of(
         )));
     };
 
-    let not = this.flags.get().not();
     let mut pass = false;
     let mut what_is_the_type: &'static [u8] = b"";
 

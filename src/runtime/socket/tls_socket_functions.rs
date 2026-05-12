@@ -10,24 +10,6 @@ use bun_jsc::{
 use crate::api::bun_x509 as X509;
 use crate::webcore::blob::ZigStringBlobExt as _;
 
-// ──────────────────────────────────────────────────────────────────────────
-// `JSValue::createBufferFromLength` lives upstream in `bun_jsc` (Zig) but the
-// Rust port currently exposes it only via the private
-// `crate::napi::napi_body::JSValueNapiExt`. Per port rules we shim the FFI
-// locally rather than touching the napi crate; migrate once `bun_jsc::JSValue`
-// grows the inherent method.
-// ──────────────────────────────────────────────────────────────────────────
-unsafe extern "C" {
-    // No precondition beyond a live `&JSGlobalObject` (UnsafeCell-backed; FFI may
-    // mutate VM state) and a by-value `i64`; may throw OOM (handled by
-    // `call_zero_is_throw!`).
-    safe fn JSBuffer__bufferFromLength(global: &JSGlobalObject, len: i64) -> JSValue;
-}
-#[inline]
-fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> JsResult<JSValue> {
-    // Zig: `fromJSHostCall` → zero_is_throw.
-    bun_jsc::call_zero_is_throw!(global, || JSBuffer__bufferFromLength(global, len as i64))
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local BoringSSL FFI surface not yet in bun_boringssl_sys.
@@ -516,7 +498,7 @@ pub fn get_tls_finished_message(
     }
 
     let buffer_size = usize::try_from(size).expect("int cast");
-    let buffer = create_buffer_from_length(global, buffer_size)?;
+    let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 
     // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr points to a buffer_size-byte JS ArrayBuffer kept alive on the stack.
@@ -704,7 +686,7 @@ pub fn get_tls_peer_finished_message(
     }
 
     let buffer_size = usize::try_from(size).expect("int cast");
-    let buffer = create_buffer_from_length(global, buffer_size)?;
+    let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 
     // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr points to a buffer_size-byte JS ArrayBuffer kept alive on the stack.
@@ -755,7 +737,7 @@ pub fn export_keying_material(
             let context_slice = sb.slice();
 
             let buffer_size = usize::try_from(length).expect("int cast");
-            let buffer = create_buffer_from_length(global, buffer_size)?;
+            let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
             let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
 
             // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice/context_slice are valid for the lengths passed.
@@ -785,7 +767,7 @@ pub fn export_keying_material(
         }
     } else {
         let buffer_size = usize::try_from(length).expect("int cast");
-        let buffer = create_buffer_from_length(global, buffer_size)?;
+        let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
         let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
 
         // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice are valid for the lengths passed; context is null with use_context=0.
@@ -928,7 +910,7 @@ pub fn get_session(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> 
     }
 
     let buffer_size = usize::try_from(size).expect("int cast");
-    let buffer = create_buffer_from_length(global, buffer_size)?;
+    let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
     let mut buffer_ptr: *mut u8 = buffer.as_array_buffer(global).unwrap().ptr;
 
     // SAFETY: session is a non-null *mut SSL_SESSION; buffer_ptr points to a buffer_size-byte JS ArrayBuffer kept alive on the stack.

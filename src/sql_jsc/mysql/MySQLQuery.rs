@@ -24,11 +24,7 @@ use crate::shared::query_binding_iterator::QueryBindingIterator;
 use super::js_mysql_connection::MySQLConnection;
 use super::my_sql_statement::{self as my_sql_statement, ExecutionFlags, MySQLStatement};
 
-bun_core::declare_scope!(MySQLQuery, visible);
-
-macro_rules! debug {
-    ($($arg:tt)*) => { bun_core::scoped_log!(MySQLQuery, $($arg)*) };
-}
+bun_core::define_scoped_log!(debug, MySQLQuery, visible);
 
 pub struct MySQLQuery {
     // Intrusive refcount (`MySQLStatement::ref_` / `::deref`). Null = none.

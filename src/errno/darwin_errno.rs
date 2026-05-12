@@ -123,83 +123,16 @@ impl SystemErrno {
 
 #[allow(non_upper_case_globals)]
 pub mod uv_e {
-    use super::SystemErrno;
-    // Zig name was @"2BIG" — Rust identifiers cannot start with a digit → `_2BIG`.
-    crate::__decl_uv_e! {
-        _2BIG          = SystemErrno::E2BIG as i32           => "E2BIG",
-        ACCES          = SystemErrno::EACCES as i32          => "EACCES",
-        ADDRINUSE      = SystemErrno::EADDRINUSE as i32      => "EADDRINUSE",
-        ADDRNOTAVAIL   = SystemErrno::EADDRNOTAVAIL as i32   => "EADDRNOTAVAIL",
-        AFNOSUPPORT    = SystemErrno::EAFNOSUPPORT as i32    => "EAFNOSUPPORT",
-        AGAIN          = SystemErrno::EAGAIN as i32          => "EAGAIN",
-        ALREADY        = SystemErrno::EALREADY as i32        => "EALREADY",
-        BADF           = SystemErrno::EBADF as i32           => "EBADF",
-        BUSY           = SystemErrno::EBUSY as i32           => "EBUSY",
-        CANCELED       = SystemErrno::ECANCELED as i32       => "ECANCELED",
-        // Darwin lacks ECHARSET; libuv uses synthetic UV__ECHARSET = -4080.
-        CHARSET        = -bun_libuv_sys::UV_ECHARSET         => "ECHARSET",
-        CONNABORTED    = SystemErrno::ECONNABORTED as i32    => "ECONNABORTED",
-        CONNREFUSED    = SystemErrno::ECONNREFUSED as i32    => "ECONNREFUSED",
-        CONNRESET      = SystemErrno::ECONNRESET as i32      => "ECONNRESET",
-        DESTADDRREQ    = SystemErrno::EDESTADDRREQ as i32    => "EDESTADDRREQ",
-        EXIST          = SystemErrno::EEXIST as i32          => "EEXIST",
-        FAULT          = SystemErrno::EFAULT as i32          => "EFAULT",
-        HOSTUNREACH    = SystemErrno::EHOSTUNREACH as i32    => "EHOSTUNREACH",
-        INTR           = SystemErrno::EINTR as i32           => "EINTR",
-        INVAL          = SystemErrno::EINVAL as i32          => "EINVAL",
-        IO             = SystemErrno::EIO as i32             => "EIO",
-        ISCONN         = SystemErrno::EISCONN as i32         => "EISCONN",
-        ISDIR          = SystemErrno::EISDIR as i32          => "EISDIR",
-        LOOP           = SystemErrno::ELOOP as i32           => "ELOOP",
-        MFILE          = SystemErrno::EMFILE as i32          => "EMFILE",
-        MSGSIZE        = SystemErrno::EMSGSIZE as i32        => "EMSGSIZE",
-        NAMETOOLONG    = SystemErrno::ENAMETOOLONG as i32    => "ENAMETOOLONG",
-        NETDOWN        = SystemErrno::ENETDOWN as i32        => "ENETDOWN",
-        NETUNREACH     = SystemErrno::ENETUNREACH as i32     => "ENETUNREACH",
-        NFILE          = SystemErrno::ENFILE as i32          => "ENFILE",
-        NOBUFS         = SystemErrno::ENOBUFS as i32         => "ENOBUFS",
-        NODEV          = SystemErrno::ENODEV as i32          => "ENODEV",
-        NOENT          = SystemErrno::ENOENT as i32          => "ENOENT",
-        NOMEM          = SystemErrno::ENOMEM as i32          => "ENOMEM",
-        // Darwin lacks ENONET; libuv uses synthetic UV__ENONET = -4056.
-        NONET          = -bun_libuv_sys::UV_ENONET           => "ENONET",
-        NOSPC          = SystemErrno::ENOSPC as i32          => "ENOSPC",
-        NOSYS          = SystemErrno::ENOSYS as i32          => "ENOSYS",
-        NOTCONN        = SystemErrno::ENOTCONN as i32        => "ENOTCONN",
-        NOTDIR         = SystemErrno::ENOTDIR as i32         => "ENOTDIR",
-        NOTEMPTY       = SystemErrno::ENOTEMPTY as i32       => "ENOTEMPTY",
-        NOTSOCK        = SystemErrno::ENOTSOCK as i32        => "ENOTSOCK",
-        NOTSUP         = SystemErrno::ENOTSUP as i32         => "ENOTSUP",
-        PERM           = SystemErrno::EPERM as i32           => "EPERM",
-        PIPE           = SystemErrno::EPIPE as i32           => "EPIPE",
-        PROTO          = SystemErrno::EPROTO as i32          => "EPROTO",
-        PROTONOSUPPORT = SystemErrno::EPROTONOSUPPORT as i32 => "EPROTONOSUPPORT",
-        PROTOTYPE      = SystemErrno::EPROTOTYPE as i32      => "EPROTOTYPE",
-        ROFS           = SystemErrno::EROFS as i32           => "EROFS",
-        SHUTDOWN       = SystemErrno::ESHUTDOWN as i32       => "ESHUTDOWN",
-        SPIPE          = SystemErrno::ESPIPE as i32          => "ESPIPE",
-        SRCH           = SystemErrno::ESRCH as i32           => "ESRCH",
-        TIMEDOUT       = SystemErrno::ETIMEDOUT as i32       => "ETIMEDOUT",
-        TXTBSY         = SystemErrno::ETXTBSY as i32         => "ETXTBSY",
-        XDEV           = SystemErrno::EXDEV as i32           => "EXDEV",
-        FBIG           = SystemErrno::EFBIG as i32           => "EFBIG",
-        NOPROTOOPT     = SystemErrno::ENOPROTOOPT as i32     => "ENOPROTOOPT",
-        RANGE          = SystemErrno::ERANGE as i32          => "ERANGE",
-        NXIO           = SystemErrno::ENXIO as i32           => "ENXIO",
-        MLINK          = SystemErrno::EMLINK as i32          => "EMLINK",
-        HOSTDOWN       = SystemErrno::EHOSTDOWN as i32       => "EHOSTDOWN",
-        // Darwin lacks EREMOTEIO; libuv uses synthetic UV__EREMOTEIO = -4030.
-        REMOTEIO       = -bun_libuv_sys::UV_EREMOTEIO        => "EREMOTEIO",
-        NOTTY          = SystemErrno::ENOTTY as i32          => "ENOTTY",
-        FTYPE          = SystemErrno::EFTYPE as i32          => "EFTYPE",
-        ILSEQ          = SystemErrno::EILSEQ as i32          => "EILSEQ",
-        OVERFLOW       = SystemErrno::EOVERFLOW as i32       => "EOVERFLOW",
-        SOCKTNOSUPPORT = SystemErrno::ESOCKTNOSUPPORT as i32 => "ESOCKTNOSUPPORT",
-        NODATA         = SystemErrno::ENODATA as i32         => "ENODATA",
-        // Darwin lacks EUNATCH; libuv uses synthetic UV__EUNATCH = -4023.
-        UNATCH         = -bun_libuv_sys::UV_EUNATCH          => "EUNATCH",
-        NOEXEC         = SystemErrno::ENOEXEC as i32         => "ENOEXEC",
+    // Native `SystemErrno::$e as i32`; libuv-synthetic fallback for codes
+    // Darwin lacks (ECHARSET / ENONET / EREMOTEIO / EUNATCH).
+    macro_rules! __v {
+        (CHARSET,  $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv };
+        (NONET,    $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv };
+        (REMOTEIO, $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv };
+        (UNATCH,   $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv };
+        ($i:tt,    $e:tt, $uv:tt) => { super::SystemErrno::$e as i32 };
     }
+    crate::__uv_e_rows!(__v);
 }
 
 // Darwin has no raw-syscall `-errno`-in-retval convention (unlike Linux); every

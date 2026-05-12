@@ -932,7 +932,7 @@ impl BuildCommand {
                 let compiled_elapsed = ((bun_core::time::nano_timestamp() - bundled_end) as i64)
                     / (bun_core::time::NS_PER_MS as i64);
                 let compiled_elapsed_digit_count =
-                    4usize.saturating_sub(bun_fmt::count_int(compiled_elapsed.max(0)));
+                    4usize.saturating_sub(bun_fmt::digit_count(compiled_elapsed.max(0)));
                 let padding_buf = [b' '; 16];
                 let padding_ = &padding_buf[0..compiled_elapsed_digit_count];
                 Output::pretty(format_args!("{}", bstr::BStr::new(padding_)));
@@ -1114,7 +1114,7 @@ fn print_summary(
     };
 
     let minified_digit_count: usize =
-        4usize.saturating_sub(bun_fmt::count_int(minify_duration as i64));
+        4usize.saturating_sub(bun_fmt::digit_count(minify_duration));
     if minified {
         Output::pretty(format_args!(
             "{}",
@@ -1155,7 +1155,7 @@ fn print_summary(
     }
 
     let bundle_elapsed_digit_count: usize =
-        4usize.saturating_sub(bun_fmt::count_int(bundle_elapsed.max(0)));
+        4usize.saturating_sub(bun_fmt::digit_count(bundle_elapsed.max(0)));
 
     Output::pretty(format_args!(
         "{}",

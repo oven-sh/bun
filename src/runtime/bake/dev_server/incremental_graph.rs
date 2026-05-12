@@ -1786,9 +1786,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 end_list.extend_from_slice(b"\"");
                 end_list.extend_from_slice(b",\n  generation: \"");
                 let generation: u32 = (options.script_id.get() >> 32) as u32;
-                for b in &generation.to_ne_bytes() {
-                    let _ = write!(end_list, "{:02x}", b);
-                }
+                let _ = write!(end_list, "{}", bun_core::fmt::hex_lower(&generation.to_ne_bytes()));
                 end_list.extend_from_slice(b"\",\n  version: \"");
                 // SAFETY: sibling-field read.
                 end_list.extend_from_slice(unsafe { &(*dev).configuration_hash_key });
@@ -1812,9 +1810,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
             ChunkKind::HmrChunk => {
                 end_list.extend_from_slice(b"}, \"");
-                for b in &options.script_id.get().to_ne_bytes() {
-                    let _ = write!(end_list, "{:02x}", b);
-                }
+                let _ = write!(
+                    end_list,
+                    "{}",
+                    bun_core::fmt::hex_lower(&options.script_id.get().to_ne_bytes())
+                );
                 end_list.extend_from_slice(b"\")");
             }
         }
@@ -1822,9 +1822,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         end_list.extend_from_slice(b"\n//# sourceMappingURL=");
         end_list.extend_from_slice(CLIENT_PREFIX.as_bytes());
         end_list.push(b'/');
-        for b in &options.script_id.get().to_ne_bytes() {
-            let _ = write!(end_list, "{:02x}", b);
-        }
+        let _ = write!(
+            end_list,
+            "{}",
+            bun_core::fmt::hex_lower(&options.script_id.get().to_ne_bytes())
+        );
         end_list.extend_from_slice(b".js.map\n");
 
         let runtime_code = runtime.code.as_bytes();

@@ -1,11 +1,12 @@
 //  zig translate-c -I${VCPKG_ROOT}/installed/x64-windows/include/  ${VCPKG_ROOT}/current/installed/x64-windows/include/zlib.h -target x86_64-windows-msvc -lc > src/zlib_sys/win32.zig
 #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 
-use core::ffi::{c_char, c_int, c_long, c_longlong, c_uint, c_ulong, c_ushort, c_void};
+use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ushort, c_void};
 
 pub use crate::shared::{
-    DataType, FlushValue, ReturnCode, alloc_func, free_func, internal_state, struct_internal_state,
-    struct_z_stream_s, z_alloc_func, z_free_func, z_stream, z_stream_s, z_streamp, zStream_struct,
+    Bytef, DataType, FlushValue, ReturnCode, alloc_func, free_func, gzFile, gzFile_s,
+    internal_state, struct_gzFile_s, struct_internal_state, struct_z_stream_s, uInt, uLong, uLongf,
+    voidpf, z_alloc_func, z_free_func, z_stream, z_stream_s, z_streamp, zStream_struct,
 };
 
 pub type rsize_t = usize;
@@ -15,19 +16,7 @@ pub type _dev_t = c_uint;
 pub type dev_t = _dev_t;
 pub type _off_t = c_long;
 pub type off_t = _off_t;
-type voidpf = *mut c_void;
-// PORT NOTE: Zig had `Bytef = [*]u8` (a translate-c artifact); the C header is
-// `typedef unsigned char Bytef;`. Using `u8` so `*const Bytef` / `*mut Bytef`
-// match the real C ABI (`const unsigned char *` / `unsigned char *`).
-type Bytef = u8;
-type uInt = c_uint;
-// zlib-ng compat (and stock zlib) typedef uLong as `unsigned long` — 4 bytes on
-// Windows LLP64. cloudflare/zlib used uint64_t, which is why this was u64. With
-// the wrong width, sizeof(z_stream) mismatches and inflateInit_/deflateInit_
-// return Z_VERSION_ERROR.
-type uLong = c_ulong;
 type z_size_t = usize;
-type uLongf = uLong;
 type voidpc = *const c_void;
 type voidp = *mut c_void;
 
@@ -52,14 +41,6 @@ pub type gz_headerp = *mut gz_header;
 
 pub type in_func = Option<unsafe extern "C" fn(*mut c_void, *mut *mut u8) -> c_uint>;
 pub type out_func = Option<unsafe extern "C" fn(*mut c_void, *mut u8, c_uint) -> ReturnCode>;
-
-#[repr(C)]
-pub struct struct_gzFile_s {
-    pub have: c_uint,
-    pub next: *mut u8,
-    pub pos: c_longlong,
-}
-pub type gzFile = *mut struct_gzFile_s;
 
 unsafe extern "C" {
     pub safe fn zlibVersion() -> *const c_char;
@@ -328,6 +309,5 @@ pub unsafe fn inflate_back_init(
 }
 
 pub type gz_header_s = struct_gz_header_s;
-pub type gzFile_s = struct_gzFile_s;
 
 // ported from: src/zlib_sys/win32.zig

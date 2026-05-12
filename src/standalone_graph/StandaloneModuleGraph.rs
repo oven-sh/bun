@@ -1712,29 +1712,9 @@ pub fn download_to_path(
                 refresher.start(b"Extracting", 0);
                 // defer node.end() — see explicit calls below
 
-                // Inlined `bun.fs.FileSystem.tmpname` (lives in bun_resolver).
-                // Produces `.{hex(hash|nano)}-{hex(counter)}.tmp\0`.
                 let mut tmpname_buf = [0u8; 1024];
-                let tempdir_name: &ZStr = {
-                    use core::sync::atomic::{AtomicU32, Ordering};
-                    static TMPNAME_ID: AtomicU32 = AtomicU32::new(0);
-                    let hash = bun_core::fast_random();
-                    let hex_value: u64 = (u128::from(hash)
-                        | u128::try_from(bun_core::time::nano_timestamp()).unwrap_or(0))
-                        as u64;
-                    let mut cursor = std::io::Cursor::new(&mut tmpname_buf[..]);
-                    write!(
-                        &mut cursor,
-                        ".{:x}-{:X}.tmp",
-                        hex_value,
-                        TMPNAME_ID.fetch_add(1, Ordering::Relaxed),
-                    )
-                    .map_err(|_| err!("NoSpaceLeft"))?;
-                    let written = cursor.position() as usize;
-                    tmpname_buf[written] = 0;
-                    // SAFETY: tmpname_buf[written] == 0 written above
-                    ZStr::from_buf(&tmpname_buf[..], written)
-                };
+                let tempdir_name: &ZStr =
+                    bun_fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
                 let tmpdir = bun_sys::Dir::cwd()
                     .make_open_path(tempdir_name.as_bytes(), Default::default())?;
                 scopeguard::defer! {

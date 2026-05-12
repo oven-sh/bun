@@ -108,12 +108,9 @@ pub fn resp_value_to_js_with_options(
             }
         }
         RESPValue::Array(array) => {
-            let js_array = JSValue::create_empty_array(global, array.len())?;
-            for (i, item) in array.iter_mut().enumerate() {
-                let js_item = resp_value_to_js_with_options(item, global, options)?;
-                js_array.put_index(global, u32::try_from(i).expect("int cast"), js_item)?;
-            }
-            Ok(js_array)
+            JSValue::create_array_from_iter(global, array.iter_mut(), |item| {
+                resp_value_to_js_with_options(item, global, options)
+            })
         }
         RESPValue::Null => Ok(JSValue::NULL),
         RESPValue::Double(d) => Ok(JSValue::js_number(*d)),
@@ -141,14 +138,9 @@ pub fn resp_value_to_js_with_options(
             }
             Ok(js_obj)
         }
-        RESPValue::Set(set) => {
-            let js_array = JSValue::create_empty_array(global, set.len())?;
-            for (i, item) in set.iter_mut().enumerate() {
-                let js_item = resp_value_to_js_with_options(item, global, options)?;
-                js_array.put_index(global, u32::try_from(i).expect("int cast"), js_item)?;
-            }
-            Ok(js_array)
-        }
+        RESPValue::Set(set) => JSValue::create_array_from_iter(global, set.iter_mut(), |item| {
+            resp_value_to_js_with_options(item, global, options)
+        }),
         RESPValue::Attribute(attribute) => {
             // For now, we just return the value and ignore attributes
             // In the future, we could attach the attributes as a hidden property
@@ -162,11 +154,10 @@ pub fn resp_value_to_js_with_options(
             js_obj.put(global, b"type", kind_str);
 
             // Add the data as an array
-            let data_array = JSValue::create_empty_array(global, push.data.len())?;
-            for (i, item) in push.data.iter_mut().enumerate() {
-                let js_item = resp_value_to_js_with_options(item, global, options)?;
-                data_array.put_index(global, u32::try_from(i).expect("int cast"), js_item)?;
-            }
+            let data_array =
+                JSValue::create_array_from_iter(global, push.data.iter_mut(), |item| {
+                    resp_value_to_js_with_options(item, global, options)
+                })?;
             js_obj.put(global, b"data", data_array);
 
             Ok(js_obj)

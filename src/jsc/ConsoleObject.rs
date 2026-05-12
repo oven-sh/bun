@@ -738,7 +738,7 @@ impl<'a> TablePrinter<'a> {
             RowKey::Str(value) => {
                 u32::try_from(value.visible_width_exclude_ansi_colors(false)).expect("int cast")
             }
-            RowKey::Num(value) => bun_core::fmt::fast_digit_count(u64::from(*value)) as u32,
+            RowKey::Num(value) => bun_core::fmt::digit_count(*value) as u32,
         };
         columns[0].width = columns[0].width.max(row_key_len);
 
@@ -843,7 +843,7 @@ impl<'a> TablePrinter<'a> {
         {
             let len: u32 = match &row_key {
                 RowKey::Str(value) => value.visible_width_exclude_ansi_colors(false) as u32,
-                RowKey::Num(value) => bun_core::fmt::fast_digit_count(u64::from(*value)) as u32,
+                RowKey::Num(value) => bun_core::fmt::digit_count(*value) as u32,
             };
             let needed = columns[0].width.saturating_sub(len);
 
@@ -2702,18 +2702,11 @@ pub mod formatter {
                                     continue 'outer;
                                 };
 
-                                if int < i64::from(u32::MAX) {
-                                    let is_negative = int < 0;
-                                    let digits = if i != 0 {
-                                        bun_core::fmt::fast_digit_count(int.unsigned_abs())
-                                            + (is_negative as u64)
-                                    } else {
-                                        1
-                                    };
-                                    writer.add_for_new_line(digits as usize);
+                                writer.add_for_new_line(if i != 0 {
+                                    bun_core::fmt::digit_count(int)
                                 } else {
-                                    writer.add_for_new_line(bun_core::fmt::count_int(int));
-                                }
+                                    1
+                                });
                                 writer.print(format_args!("{int}"));
                             }
 
@@ -2724,15 +2717,11 @@ pub mod formatter {
                                 let converted: f64 = 'brk: {
                                     if next_value.is_int32() {
                                         let int = next_value.as_int32();
-                                        let is_negative = int < 0;
-                                        let digits = if i != 0 {
-                                            bun_core::fmt::fast_digit_count(u64::from(
-                                                int.unsigned_abs(),
-                                            )) + (is_negative as u64)
+                                        writer.add_for_new_line(if i != 0 {
+                                            bun_core::fmt::digit_count(int)
                                         } else {
                                             1
-                                        };
-                                        writer.add_for_new_line(digits as usize);
+                                        });
                                         writer.print(format_args!("{int}"));
                                         i += 1;
                                         continue 'outer;
@@ -3925,22 +3914,7 @@ pub mod formatter {
                 estimated_line_length: &mut self.estimated_line_length,
             };
             let int = value.coerce_to_int64(self.global_this)?;
-            if int < i64::from(u32::MAX) {
-                let mut i = int;
-                let is_negative = i < 0;
-                if is_negative {
-                    i = -i;
-                }
-                let digits = if i != 0 {
-                    bun_core::fmt::fast_digit_count(u64::try_from(i).expect("int cast"))
-                        + (is_negative as u64)
-                } else {
-                    1
-                };
-                writer.add_for_new_line(digits as usize);
-            } else {
-                writer.add_for_new_line(bun_core::fmt::count_int(int));
-            }
+            writer.add_for_new_line(bun_core::fmt::digit_count(int));
             writer.print(format_args!(
                 "{}{}{}",
                 pfmt!("<r><yellow>", C),
@@ -4666,9 +4640,7 @@ pub mod formatter {
                                 format_args!("{}empty item{}", pf!("<r><d>"), pf!("<r>")),
                             );
                         } else {
-                            writer.add_for_new_line(bun_core::fmt::fast_digit_count(u64::from(
-                                empty_count,
-                            )) as usize);
+                            writer.add_for_new_line(bun_core::fmt::digit_count(empty_count));
                             writer.pretty::<C>(
                                 " x empty items".len(),
                                 format_args!(
@@ -4731,9 +4703,7 @@ pub mod formatter {
                             format_args!("{}empty item{}", pf!("<r><d>"), pf!("<r>")),
                         );
                     } else {
-                        writer.add_for_new_line(
-                            bun_core::fmt::fast_digit_count(empty_count) as usize,
-                        );
+                        writer.add_for_new_line(bun_core::fmt::digit_count(empty_count));
                         writer.pretty::<C>(
                             " x empty items".len(),
                             format_args!(
@@ -6170,25 +6140,43 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     let _ = bun_io::Write::flush(&mut writer);
 }
 
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__profile(
-    _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
-    _chars: *const u8,
-    _len: usize,
-) {
+/// Stamp out the empty `Bun__ConsoleObject__*` C-ABI hooks that JSC's
+/// `ConsoleClient` vtable requires but Bun leaves unimplemented
+/// (zig:ConsoleObject.zig:3728-3793 hand-writes six identical
+/// `callconv(jsc.conv) void {}` stubs and `@export`s each). Two arms cover
+/// the two trailing-arg shapes the C++ side declares in
+/// `bindings/headers.h:686-694`: `(…, *const u8, usize)` for the title-string
+/// hooks and `(…, *mut ScriptArguments)` for the inspector-args hooks.
+///
+/// Ident concat via `${concat()}` is unstable (`macro_metavar_expr_concat`)
+/// and `paste` is not a `bun_jsc` dep, so the full `Bun__ConsoleObject__<name>`
+/// export symbol is passed verbatim — same pattern as `export_callbacks!` in
+/// `runtime/api/BunObject.rs`.
+macro_rules! console_noop_hooks {
+    (str: $($name:ident),+ $(,)?) => {$(
+        #[unsafe(no_mangle)]
+        #[crate::host_call]
+        pub extern "C" fn $name(
+            _console: *mut ConsoleObject,
+            _global: &JSGlobalObject,
+            _chars: *const u8,
+            _len: usize,
+        ) {
+        }
+    )+};
+    (args: $($name:ident),+ $(,)?) => {$(
+        #[unsafe(no_mangle)]
+        #[crate::host_call]
+        pub extern "C" fn $name(
+            _console: *mut ConsoleObject,
+            _global: &JSGlobalObject,
+            _args: *mut ScriptArguments,
+        ) {
+        }
+    )+};
 }
 
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__profileEnd(
-    _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
-    _chars: *const u8,
-    _len: usize,
-) {
-}
+console_noop_hooks!(str: Bun__ConsoleObject__profile, Bun__ConsoleObject__profileEnd);
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
@@ -6213,41 +6201,13 @@ pub extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     }
 }
 
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__timeStamp(
-    _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
-    _args: *mut ScriptArguments,
-) {
-}
-
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__record(
-    _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
-    _args: *mut ScriptArguments,
-) {
-}
-
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__recordEnd(
-    _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
-    _args: *mut ScriptArguments,
-) {
-}
-
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub extern "C" fn Bun__ConsoleObject__screenshot(
-    _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
-    _args: *mut ScriptArguments,
-) {
-}
+console_noop_hooks!(
+    args:
+    Bun__ConsoleObject__timeStamp,
+    Bun__ConsoleObject__record,
+    Bun__ConsoleObject__recordEnd,
+    Bun__ConsoleObject__screenshot,
+);
 
 #[unsafe(no_mangle)]
 #[crate::host_call]

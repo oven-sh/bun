@@ -1102,17 +1102,10 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
             YamlString::Range(range) => {
                 let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + n);
                 list.extend_from_slice(range.slice(input));
-                for _ in 0..n {
-                    list.push(unit);
-                }
-                // PERF(port): was appendNTimesAssumeCapacity
+                bun_core::vec::push_n(&mut list, unit, n);
                 self.str = YamlString::List(list);
             }
-            YamlString::List(list) => {
-                for _ in 0..n {
-                    list.push(unit);
-                }
-            }
+            YamlString::List(list) => bun_core::vec::push_n(list, unit, n),
         }
         Ok(())
     }

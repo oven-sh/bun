@@ -49,10 +49,7 @@ pub use bun_sql::mysql::connection_state::ConnectionState as Status;
 // TODO(port): jsc.API.ServerConfig.SSLConfig — confirm crate path in Phase B
 use crate::jsc::api::server_config::SSLConfig;
 
-bun_core::declare_scope!(MySQLConnection, visible);
-macro_rules! debug {
-    ($($arg:tt)*) => { bun_core::scoped_log!(MySQLConnection, $($arg)*) };
-}
+bun_core::define_scoped_log!(debug, MySQLConnection, visible);
 
 pub struct MySQLConnection {
     socket: Socket,

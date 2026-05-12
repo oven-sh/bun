@@ -11,12 +11,9 @@ pub fn to_have_length(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: Zig `defer this.postMatch(globalThis)` — scopeguard owns the `&mut Expect`
-    // borrow and DerefMut's back to it, so post_match runs on every exit path without an
-    // overlapping borrow.
-    let this = scopeguard::guard(this, |this| this.post_match(global));
+    let (this, value, not) =
+        this.matcher_prelude(global, frame.this(), "toHaveLength", "<green>expected<r>")?;
 
-    let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>();
     let arguments = arguments_.slice();
 
@@ -24,10 +21,7 @@ pub fn to_have_length(
         return Err(global.throw_invalid_arguments(format_args!("toHaveLength() takes 1 argument")));
     }
 
-    this.increment_expect_call_counter();
-
     let expected: JSValue = arguments[0];
-    let value: JSValue = this.get_value(global, this_value, "toHaveLength", "<green>expected<r>")?;
 
     if !value.is_object() && !value.is_string() {
         let mut fmt = super::make_formatter(global);
@@ -58,7 +52,6 @@ pub fn to_have_length(
         )));
     }
 
-    let not = this.flags.get().not();
     let mut pass = false;
 
     let actual_length = value.get_length_if_property_exists_internal(global)?;

@@ -871,12 +871,7 @@ fn get_fd_path_via_cwd(fd: bun_sys::RawFd, buf: &mut PathBuffer) -> Result<&mut 
 }
 
 pub use bun_sys::getcwd;
-
-pub fn getcwd_alloc() -> Result<Box<bun_core::ZStr>, bun_core::Error> {
-    let mut temp = PathBuffer::uninit();
-    let temp_slice = getcwd(&mut temp)?;
-    Ok(bun_core::ZStr::from_bytes(temp_slice))
-}
+pub use bun_sys::getcwd_alloc;
 
 /// TODO: move to bun.sys and add a method onto FD
 /// Get the absolute path to a file descriptor.
@@ -1102,37 +1097,6 @@ pub fn todo<T>(src: &core::panic::Location<'_>, value: T) -> T {
 pub const HOST_NAME_MAX: usize = 256;
 #[cfg(not(windows))]
 pub const HOST_NAME_MAX: usize = bun_sys::HOST_NAME_MAX;
-
-#[repr(C)]
-pub struct WindowsStat {
-    pub dev: u32,
-    pub ino: u32,
-    pub nlink: usize,
-    pub mode: Mode,
-    pub uid: u32,
-    pub gid: u32,
-    pub rdev: u32,
-    pub size: u32,
-    pub blksize: isize,
-    pub blocks: i64,
-    pub atim: bun_sys::timespec_c,
-    pub mtim: bun_sys::timespec_c,
-    pub ctim: bun_sys::timespec_c,
-}
-impl WindowsStat {
-    pub fn birthtime(&self) -> bun_sys::timespec_c {
-        bun_sys::timespec_c { tv_nsec: 0, tv_sec: 0 }
-    }
-    pub fn mtime(&self) -> bun_sys::timespec_c {
-        self.mtim
-    }
-    pub fn ctime(&self) -> bun_sys::timespec_c {
-        self.ctim
-    }
-    pub fn atime(&self) -> bun_sys::timespec_c {
-        self.atim
-    }
-}
 
 #[cfg(windows)]
 pub type Stat = bun_sys::windows::libuv::uv_stat_t;

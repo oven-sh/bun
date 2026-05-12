@@ -853,14 +853,9 @@ impl OperatingSystem {
     #[cfg(target_os = "freebsd")]
     pub const CURRENT: Self = Self(Self::FREEBSD);
 
-    #[cfg(target_os = "linux")]
-    pub const CURRENT_NAME: &'static str = "linux";
-    #[cfg(target_os = "macos")]
-    pub const CURRENT_NAME: &'static str = "darwin";
-    #[cfg(windows)]
-    pub const CURRENT_NAME: &'static str = "win32";
-    #[cfg(target_os = "freebsd")]
-    pub const CURRENT_NAME: &'static str = "freebsd";
+    // NB: NODE not NPM — package.json `os` field uses process.platform values
+    // ("win32"). Also fixes missing Android arm (now "linux", matching Zig).
+    pub const CURRENT_NAME: &'static str = bun_core::env::OS_NAME_NODE;
 
     #[inline]
     pub const fn none() -> Self {

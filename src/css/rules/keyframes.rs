@@ -2,7 +2,7 @@ use core::hash::{Hash, Hasher};
 
 use crate as css;
 use crate::css_rules::Location;
-use crate::css_values::ident::CustomIdent;
+use crate::css_values::ident::{CustomIdent, is_reserved_custom_ident};
 use crate::css_values::percentage::Percentage;
 use crate::{DeclarationBlock, PrintErr, Printer, VendorPrefix};
 
@@ -77,15 +77,9 @@ impl KeyframesName {
                 )?;
             }
             KeyframesName::Custom(s) => {
-                // todo_stuff.match_ignore_ascii_case
                 // CSS-wide keywords and `none` cannot remove quotes.
                 if strings::eql_case_insensitive_ascii_check_length(s, b"none")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"initial")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"inherit")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"unset")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"default")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"revert")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"revert-layer")
+                    || is_reserved_custom_ident(s)
                 {
                     dest.serialize_string(s)?;
                 } else {
@@ -118,15 +112,9 @@ impl KeyframesName {
         };
         match tok {
             css::Token::Ident(s) => {
-                // todo_stuff.match_ignore_ascii_case
                 // CSS-wide keywords without quotes throws an error.
                 if strings::eql_case_insensitive_ascii_check_length(s, b"none")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"initial")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"inherit")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"unset")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"default")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"revert")
-                    || strings::eql_case_insensitive_ascii_check_length(s, b"revert-layer")
+                    || is_reserved_custom_ident(s)
                 {
                     Err(input.new_unexpected_token_error(css::Token::Ident(s)))
                 } else {

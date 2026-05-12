@@ -2216,59 +2216,11 @@ impl<'a> Parser<'a> {
         }
 
         if !before.is_empty() || !after.is_empty() {
-            let before_len = before.len();
-            let after_len = after.len();
-            let parts_len = parts.len();
-            parts.reserve(before_len + after_len);
-            // PORT NOTE: do NOT `parts.set_len(new_len)` before the raw copies. Doing so
-            // would (a) make `parts` claim uninitialized slots and (b) create a window
-            // where both `parts` and `before`/`after` own the same `Part` values — a
-            // double-free if anything unwinds. We operate on the raw spare capacity via
-            // `as_mut_ptr()` and only commit the new length after ownership has been
-            // fully transferred (source vecs emptied) below.
-            let base = parts.as_mut_ptr();
-
-            if before_len > 0 {
-                if parts_len > 0 {
-                    // first copy parts to the middle if before exists
-                    // PORT NOTE: src/dst overlap → use ptr::copy (memmove semantics)
-                    unsafe {
-                        // SAFETY: `reserve` guarantees capacity for `parts_len + before_len
-                        // + after_len`; both ranges lie within that allocation and
-                        // ptr::copy handles overlap.
-                        core::ptr::copy(base, base.add(before_len), parts_len);
-                    }
-                }
-                unsafe {
-                    // SAFETY: non-overlapping; `before` is a separate buffer and
-                    // `[0, before_len)` is within `parts`' reserved capacity.
-                    core::ptr::copy_nonoverlapping(before.as_ptr(), base, before_len);
-                }
-            }
-            if after_len > 0 {
-                unsafe {
-                    // SAFETY: non-overlapping; `after` is a separate buffer and
-                    // `[parts_len + before_len, ..)` is within `parts`' reserved capacity.
-                    core::ptr::copy_nonoverlapping(
-                        after.as_ptr(),
-                        base.add(parts_len + before_len),
-                        after_len,
-                    );
-                }
-            }
-            // SAFETY: ownership of the `Part` elements has been bitwise-moved into
-            // `parts`' buffer above. `bumpalo::collections::Vec::drop` runs element
-            // destructors, so we must logically empty the source vecs *before*
-            // committing the new `parts` length to avoid any double-free window on
-            // `Part`'s heap-owning fields (Vec / ArrayHashMap). The backing
-            // storage itself is bump-allocated.
-            unsafe {
-                before.set_len(0);
-                after.set_len(0);
-                // SAFETY: capacity reserved above; the full `[0, new_len)` range is now
-                // initialized (memmove + two copy_nonoverlapping) and uniquely owned.
-                parts.set_len(parts_len + before_len + after_len);
-            }
+            // Single up-front reserve preserves the Zig fused-growth; the inner
+            // reserve() calls in prepend_from / append become no-ops.
+            parts.reserve(before.len() + after.len());
+            bun_collections::prepend_from(&mut parts, &mut before);
+            parts.append(&mut after); // std Vec::append: bitwise-move tail, same allocator
         }
 
         // Pop the module scope to apply the "ContainsDirectEval" rules

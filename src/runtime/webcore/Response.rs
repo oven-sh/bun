@@ -725,14 +725,7 @@ impl Response {
         )?;
 
         {
-            formatter.indent_inc();
-            // Zig: `defer formatter.indent -|= 1;` — must run on every exit incl. `?` error paths.
-            // SAFETY: `formatter` outlives `_indent_guard` (same scope, guard dropped first);
-            // the raw pointer is only dereferenced in the closure at scope exit, at which point
-            // no other borrow of `formatter` is live.
-            let _indent_guard = scopeguard::guard(std::ptr::from_mut::<F>(formatter), |p| unsafe {
-                (*p).indent_dec()
-            });
+            let mut formatter = formatter.indented();
 
             formatter.write_indent(writer)?;
             write!(
@@ -840,8 +833,7 @@ impl Response {
             // SAFETY: R-2 `JsCell` escape hatch — `Body::write_format` takes
             // `&mut self`; single-JS-thread invariant.
             unsafe { self.body.get_mut() }
-                .write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
-            // indent restored by `_indent_guard` on scope exit (incl. error returns)
+                .write_format::<F, W, ENABLE_ANSI_COLORS>(&mut *formatter, writer)?;
         }
         writer.write_str("\n")?;
         formatter.write_indent(writer)?;

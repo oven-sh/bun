@@ -8,9 +8,9 @@ use super::get_signature;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // Zig: `defer this.postMatch(globalThis)` — `&Expect` is `Copy`, so a plain
-    // scopeguard can hold a second shared borrow without conflicting with the body.
-    let _post_match = scopeguard::guard(this, |t| t.post_match(global));
+    // toSatisfy bypasses get_value (no .resolves/.rejects handling), so it cannot use
+    // the full `matcher_prelude`; only the post_match guard mechanism unifies.
+    let _guard = this.post_match_guard(global);
 
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>();

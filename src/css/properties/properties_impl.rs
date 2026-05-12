@@ -8,8 +8,6 @@ use css::VendorPrefix;
 use css::css_properties::CustomPropertyName;
 use css::css_properties::{Property, PropertyId, PropertyIdTag};
 
-use bun_core::strings;
-
 impl Property {
     /// Returns the *raw* enum discriminant of this `Property` as a
     /// [`PropertyIdTag`].
@@ -78,28 +76,7 @@ pub mod property_id_mixin {
     }
 
     pub fn from_string(name_: &[u8]) -> PropertyId {
-        let name_ref = name_;
-        let prefix: VendorPrefix;
-        let trimmed_name: &[u8];
-
-        // TODO: todo_stuff.match_ignore_ascii_case
-        if strings::starts_with_case_insensitive_ascii(name_ref, b"-webkit-") {
-            prefix = VendorPrefix::WEBKIT;
-            trimmed_name = &name_ref[8..];
-        } else if strings::starts_with_case_insensitive_ascii(name_ref, b"-moz-") {
-            prefix = VendorPrefix::MOZ;
-            trimmed_name = &name_ref[5..];
-        } else if strings::starts_with_case_insensitive_ascii(name_ref, b"-o-") {
-            prefix = VendorPrefix::O;
-            trimmed_name = &name_ref[3..];
-        } else if strings::starts_with_case_insensitive_ascii(name_ref, b"-ms-") {
-            prefix = VendorPrefix::MS;
-            trimmed_name = &name_ref[4..];
-        } else {
-            prefix = VendorPrefix::NONE;
-            trimmed_name = name_ref;
-        }
-
+        let (prefix, trimmed_name) = VendorPrefix::strip_from(name_);
         PropertyId::from_name_and_prefix(trimmed_name, prefix)
             .unwrap_or_else(|| PropertyId::Custom(CustomPropertyName::from_str(name_)))
     }

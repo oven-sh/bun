@@ -541,14 +541,8 @@ impl<'src> HtmlRenderer<'src> {
             if pos > i {
                 self.write(&txt[i..pos]);
             }
-            let c = txt[pos];
-            match c {
-                b'&' => self.write(b"&amp;"),
-                b'<' => self.write(b"&lt;"),
-                b'>' => self.write(b"&gt;"),
-                b'"' => self.write(b"&quot;"),
-                _ => unreachable!(),
-            }
+            // needle b"&<>\"" guarantees Some
+            self.write(strings::html_escape_entity(txt[pos]).unwrap());
             i = pos + 1;
         }
     }
@@ -561,8 +555,7 @@ impl<'src> HtmlRenderer<'src> {
 
     fn write_url_byte(&mut self, byte: u8) {
         match byte {
-            b'&' => self.write(b"&amp;"),
-            b'\'' => self.write(b"&#x27;"),
+            b'&' | b'\'' => self.write(strings::html_escape_entity(byte).unwrap()),
             b'A'..=b'Z'
             | b'a'..=b'z'
             | b'0'..=b'9'

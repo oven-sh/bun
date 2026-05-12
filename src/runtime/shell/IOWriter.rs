@@ -669,16 +669,8 @@ impl IOWriter {
             s.writers.clear();
             s.total_bytes_written = 0;
         } else if s.total_bytes_written >= SHRINK_THRESHOLD {
-            let start = s.total_bytes_written;
-            let remaining_len = s.buf.len() - start;
-            if remaining_len == 0 {
-                s.buf.clear();
-                s.total_bytes_written = 0;
-            } else {
-                s.buf.copy_within(start.., 0);
-                s.buf.truncate(remaining_len);
-                s.total_bytes_written = 0;
-            }
+            s.buf.drain_front(s.total_bytes_written);
+            s.total_bytes_written = 0;
             // Spec: `this.writers.truncate(this.writer_idx)` — drops the
             // *prefix* (Zig SmolList.truncate shifts down). Vec::drain(..idx).
             s.writers.drain(..s.writer_idx);

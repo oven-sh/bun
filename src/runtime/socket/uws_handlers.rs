@@ -429,211 +429,92 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
 // no-ops; each consumer type opts in with an `impl` that overrides only the
 // events it actually handles. `api::NewSocket`'s real impl lives in
 // `socket/mod.rs` (bridges to inherent methods).
-impl<const SSL: bool> NsSocketEvents<postgres::PostgresSQLConnection, SSL>
-    for postgres::postgres_sql_connection::SocketHandler<SSL>
-{
-    fn on_open(
-        this: &mut postgres::PostgresSQLConnection,
-        s: NewSocketHandler<SSL>,
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_open(this, s);
-        Ok(())
-    }
-    fn on_data(
-        this: &mut postgres::PostgresSQLConnection,
-        s: NewSocketHandler<SSL>,
-        data: &[u8],
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_data(this, s, data);
-        Ok(())
-    }
-    fn on_writable(
-        this: &mut postgres::PostgresSQLConnection,
-        s: NewSocketHandler<SSL>,
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_writable(this, s);
-        Ok(())
-    }
-    fn on_close(
-        this: &mut postgres::PostgresSQLConnection,
-        s: NewSocketHandler<SSL>,
-        code: i32,
-        reason: Option<*mut c_void>,
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_close(this, s, code, reason);
-        Ok(())
-    }
-    fn on_timeout(
-        this: &mut postgres::PostgresSQLConnection,
-        s: NewSocketHandler<SSL>,
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_timeout(this, s);
-        Ok(())
-    }
-    fn on_end(
-        this: &mut postgres::PostgresSQLConnection,
-        s: NewSocketHandler<SSL>,
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_end(this, s);
-        Ok(())
-    }
-    fn on_connect_error(
-        this: &mut postgres::PostgresSQLConnection,
-        s: NewSocketHandler<SSL>,
-        code: i32,
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_connect_error(this, s, code);
-        Ok(())
-    }
-    fn on_handshake(
-        this: &mut postgres::PostgresSQLConnection,
-        s: NewSocketHandler<SSL>,
-        ok: i32,
-        err: us_bun_verify_error_t,
-    ) -> bun_jsc::JsResult<()> {
-        if let Some(f) = Self::ON_HANDSHAKE {
-            f(this, s, ok, err);
+
+/// Forwards `NsSocketEvents` to the inherent `on_*` methods on a driver's
+/// `SocketHandler<SSL>` namespace type. Mirrors Zig's single
+/// `NsHandler(Owner, H, ssl)` generic (uws_handlers.zig:154), which used
+/// `@hasDecl` + a comptime `swallow` to absorb both `void` and `!void`
+/// returns; here `swallow()` (specialised on `()` and `Result<(), E>` above)
+/// does the same, so one expansion covers drivers whose inherent fns are
+/// infallible (postgres, mysql) and those returning `JsTerminatedResult<()>`
+/// (valkey). The dispatcher (`NsHandler: VHandler`) `swallow`s the trait
+/// result anyway, so swallowing one frame earlier is behaviour-preserving.
+///
+/// `on_long_timeout` is intentionally NOT forwarded — no driver defines it,
+/// so the trait default fires (matches Zig's `@hasDecl` short-circuit).
+///
+/// `on_handshake` reads the inherent `ON_HANDSHAKE: Option<fn(..)>` const —
+/// Zig's `pub const onHandshake = if (ssl) onHandshake_ else null;` pattern,
+/// where the `null` arm meant "leave the slot unbound" so the dispatcher's
+/// no-op default fires for plain TCP.
+macro_rules! impl_ns_socket_events_forward {
+    ($Owner:ty, $Handler:ty) => {
+        impl<const SSL: bool> NsSocketEvents<$Owner, SSL> for $Handler {
+            fn on_open(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+                swallow(Self::on_open(this, s));
+                Ok(())
+            }
+            fn on_data(
+                this: &mut $Owner,
+                s: NewSocketHandler<SSL>,
+                data: &[u8],
+            ) -> bun_jsc::JsResult<()> {
+                swallow(Self::on_data(this, s, data));
+                Ok(())
+            }
+            fn on_writable(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+                swallow(Self::on_writable(this, s));
+                Ok(())
+            }
+            fn on_close(
+                this: &mut $Owner,
+                s: NewSocketHandler<SSL>,
+                code: i32,
+                reason: Option<*mut c_void>,
+            ) -> bun_jsc::JsResult<()> {
+                swallow(Self::on_close(this, s, code, reason));
+                Ok(())
+            }
+            fn on_timeout(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+                swallow(Self::on_timeout(this, s));
+                Ok(())
+            }
+            fn on_end(this: &mut $Owner, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+                swallow(Self::on_end(this, s));
+                Ok(())
+            }
+            fn on_connect_error(
+                this: &mut $Owner,
+                s: NewSocketHandler<SSL>,
+                code: i32,
+            ) -> bun_jsc::JsResult<()> {
+                swallow(Self::on_connect_error(this, s, code));
+                Ok(())
+            }
+            fn on_handshake(
+                this: &mut $Owner,
+                s: NewSocketHandler<SSL>,
+                ok: i32,
+                err: us_bun_verify_error_t,
+            ) -> bun_jsc::JsResult<()> {
+                if let Some(f) = Self::ON_HANDSHAKE {
+                    swallow(f(this, s, ok, err));
+                }
+                Ok(())
+            }
         }
-        Ok(())
-    }
+    };
 }
-impl<const SSL: bool> NsSocketEvents<mysql::js_my_sql_connection::JSMySQLConnection, SSL>
-    for mysql::js_my_sql_connection::SocketHandler<SSL>
-{
-    fn on_open(
-        this: &mut mysql::js_my_sql_connection::JSMySQLConnection,
-        s: NewSocketHandler<SSL>,
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_open(this, s);
-        Ok(())
-    }
-    fn on_data(
-        this: &mut mysql::js_my_sql_connection::JSMySQLConnection,
-        s: NewSocketHandler<SSL>,
-        data: &[u8],
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_data(this, s, data);
-        Ok(())
-    }
-    fn on_writable(
-        this: &mut mysql::js_my_sql_connection::JSMySQLConnection,
-        s: NewSocketHandler<SSL>,
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_writable(this, s);
-        Ok(())
-    }
-    fn on_close(
-        this: &mut mysql::js_my_sql_connection::JSMySQLConnection,
-        s: NewSocketHandler<SSL>,
-        code: i32,
-        reason: Option<*mut c_void>,
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_close(this, s, code, reason);
-        Ok(())
-    }
-    fn on_timeout(
-        this: &mut mysql::js_my_sql_connection::JSMySQLConnection,
-        s: NewSocketHandler<SSL>,
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_timeout(this, s);
-        Ok(())
-    }
-    fn on_end(
-        this: &mut mysql::js_my_sql_connection::JSMySQLConnection,
-        s: NewSocketHandler<SSL>,
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_end(this, s);
-        Ok(())
-    }
-    fn on_connect_error(
-        this: &mut mysql::js_my_sql_connection::JSMySQLConnection,
-        s: NewSocketHandler<SSL>,
-        code: i32,
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_connect_error(this, s, code);
-        Ok(())
-    }
-    fn on_handshake(
-        this: &mut mysql::js_my_sql_connection::JSMySQLConnection,
-        s: NewSocketHandler<SSL>,
-        ok: i32,
-        err: us_bun_verify_error_t,
-    ) -> bun_jsc::JsResult<()> {
-        if let Some(f) = Self::ON_HANDSHAKE {
-            f(this, s, ok, err);
-        }
-        Ok(())
-    }
-}
-impl<const SSL: bool> NsSocketEvents<js_valkey::JSValkeyClient, SSL>
-    for js_valkey::SocketHandler<SSL>
-{
-    fn on_open(
-        this: &mut js_valkey::JSValkeyClient,
-        s: NewSocketHandler<SSL>,
-    ) -> bun_jsc::JsResult<()> {
-        Ok(Self::on_open(this, s)?)
-    }
-    fn on_data(
-        this: &mut js_valkey::JSValkeyClient,
-        s: NewSocketHandler<SSL>,
-        data: &[u8],
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_data(this, s, data);
-        Ok(())
-    }
-    fn on_writable(
-        this: &mut js_valkey::JSValkeyClient,
-        s: NewSocketHandler<SSL>,
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_writable(this, s);
-        Ok(())
-    }
-    fn on_close(
-        this: &mut js_valkey::JSValkeyClient,
-        s: NewSocketHandler<SSL>,
-        code: i32,
-        reason: Option<*mut c_void>,
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_close(this, s, code, reason);
-        Ok(())
-    }
-    fn on_timeout(
-        this: &mut js_valkey::JSValkeyClient,
-        s: NewSocketHandler<SSL>,
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_timeout(this, s);
-        Ok(())
-    }
-    fn on_end(
-        this: &mut js_valkey::JSValkeyClient,
-        s: NewSocketHandler<SSL>,
-    ) -> bun_jsc::JsResult<()> {
-        Self::on_end(this, s);
-        Ok(())
-    }
-    fn on_connect_error(
-        this: &mut js_valkey::JSValkeyClient,
-        s: NewSocketHandler<SSL>,
-        code: i32,
-    ) -> bun_jsc::JsResult<()> {
-        Ok(Self::on_connect_error(this, s, code)?)
-    }
-    fn on_handshake(
-        this: &mut js_valkey::JSValkeyClient,
-        s: NewSocketHandler<SSL>,
-        ok: i32,
-        err: us_bun_verify_error_t,
-    ) -> bun_jsc::JsResult<()> {
-        // Zig: `pub const onHandshake = if (ssl) onHandshake_ else null;` — the
-        // `null` arm meant "leave the slot unbound" so the dispatcher's no-op
-        // default fires for plain TCP.
-        match Self::ON_HANDSHAKE {
-            Some(f) => Ok(f(this, s, ok, err)?),
-            None => Ok(()),
-        }
-    }
-}
+
+impl_ns_socket_events_forward!(
+    postgres::PostgresSQLConnection,
+    postgres::postgres_sql_connection::SocketHandler<SSL>
+);
+impl_ns_socket_events_forward!(
+    mysql::js_my_sql_connection::JSMySQLConnection,
+    mysql::js_my_sql_connection::SocketHandler<SSL>
+);
+impl_ns_socket_events_forward!(js_valkey::JSValkeyClient, js_valkey::SocketHandler<SSL>);
 
 // ── Bun.connect / Bun.listen ────────────────────────────────────────────────
 // PORT NOTE (noalias re-entrancy): routed through `RawPtrHandler`, not

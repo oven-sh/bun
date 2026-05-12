@@ -300,7 +300,7 @@ fn parse_field<T: BitInt>(field: &[u8], min: u8, max: u8, kind: NameKind) -> Res
             if s.is_empty() {
                 return Err(CronError::InvalidStep);
             }
-            parse_u8_decimal(s).ok_or(CronError::InvalidStep)?
+            bun_core::parse_decimal::<u8>(s).ok_or(CronError::InvalidStep)?
         } else {
             1
         };
@@ -378,7 +378,7 @@ fn parse_value(str: &[u8], min: u8, max: u8, kind: NameKind) -> Result<u8, CronE
         NameKind::None => {}
     }
 
-    let val = parse_u8_decimal(str).ok_or(CronError::InvalidNumber)?;
+    let val = bun_core::parse_decimal::<u8>(str).ok_or(CronError::InvalidNumber)?;
     if val < min || val > max {
         return Err(CronError::InvalidNumber);
     }
@@ -410,12 +410,6 @@ fn format_bitfield<T: BitInt>(w: &mut impl std::io::Write, bits: T, min: u8, max
             first = false;
         }
     }
-}
-
-/// Parse an unsigned decimal from ASCII bytes (`std.fmt.parseInt(u8, s, 10)`).
-#[inline]
-fn parse_u8_decimal(s: &[u8]) -> Option<u8> {
-    bun_core::parse_int::<u8>(s, 10).ok()
 }
 
 /// Trait bundling the integer ops needed for cron bitset fields (u8/u16/u32/u64).

@@ -13,10 +13,7 @@ use crate::mysql::js_mysql_query::JSMySQLQuery;
 // `is_able_to_write` which forwards to the inner protocol struct).
 use crate::mysql::js_mysql_connection::JSMySQLConnection as MySQLConnection;
 
-bun_core::declare_scope!(MySQLRequestQueue, visible);
-macro_rules! debug {
-    ($($arg:tt)*) => { bun_core::scoped_log!(MySQLRequestQueue, $($arg)*) };
-}
+bun_core::define_scoped_log!(debug, MySQLRequestQueue, visible);
 
 // `bun.LinearFifo(*JSMySQLQuery, .Dynamic)` — elements are intrusively
 // ref-counted raw pointers (ref/deref managed manually below).

@@ -1947,18 +1947,14 @@ impl JSFrameworkRouter {
         }
 
         if !jsfr.stored_parse_errors.is_empty() {
-            let arr = JSValue::create_empty_array(global, jsfr.stored_parse_errors.len())?;
-            for (i, item) in jsfr.stored_parse_errors.iter().enumerate() {
-                arr.put_index(
-                    global,
-                    u32::try_from(i).expect("int cast"),
-                    global.create_error_instance(format_args!(
+            let arr =
+                JSValue::create_array_from_iter(global, jsfr.stored_parse_errors.iter(), |item| {
+                    Ok(global.create_error_instance(format_args!(
                         "Invalid route {}: {}",
                         bun_core::fmt::quote(&item.rel_path),
                         bstr::BStr::new(item.log.msg.const_slice()),
-                    )),
-                )?;
-            }
+                    )))
+                })?;
             return Err(global.throw_value(global.create_aggregate_error_with_array(
                 bun_core::String::static_str("Errors scanning routes"),
                 arr,

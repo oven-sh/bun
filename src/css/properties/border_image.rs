@@ -343,10 +343,6 @@ impl BorderImageSideWidth {
         self.clone()
     }
 
-    pub fn eql(&self, other: &BorderImageSideWidth) -> bool {
-        self == other
-    }
-
     pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
         match self {
             BorderImageSideWidth::LengthPercentage(l) => l.is_compatible(browsers),
@@ -751,5 +747,7 @@ pub fn is_border_image_property(property_id: PropertyIdTag) -> bool {
             | PropertyIdTag::BorderImage
     )
 }
+
+crate::css_eql_partialeq!(BorderImageSideWidth);
 
 // ported from: src/css/properties/border_image.zig

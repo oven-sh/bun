@@ -4,6 +4,7 @@
 //! `&Interpreter`.
 
 use bun_collections::{ByteVecExt, VecExt};
+use bun_ptr::AsCtxPtr;
 use core::ffi::c_char;
 use std::sync::Arc;
 

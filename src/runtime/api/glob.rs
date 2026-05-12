@@ -291,12 +291,9 @@ fn glob_walk_result_to_js(
     // PORT NOTE: Zig keyed `MatchedMap` on `bun.String` so it could call
     // `BunString.toJSArray(keys)` directly. The Rust `MatchedMap` is
     // `StringArrayHashMap<()>` (Box<[u8]> keys), so rebuild the JS array here.
-    let arr = JSValue::create_empty_array(global_this, keys.len())?;
-    for (i, key) in keys.iter().enumerate() {
-        let s = bun_string_jsc::create_utf8_for_js(global_this, key)?;
-        arr.put_index(global_this, i as u32, s)?;
-    }
-    Ok(arr)
+    JSValue::create_array_from_iter(global_this, keys.iter(), |key| {
+        bun_string_jsc::create_utf8_for_js(global_this, key)
+    })
 }
 
 impl Glob {

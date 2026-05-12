@@ -1113,7 +1113,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                 );
                 Global::crash();
             }
-            const MS_PER_S: f64 = 1000.0;
+            const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
             cli.minimum_release_age_ms = Some(secs * MS_PER_S);
         }
 

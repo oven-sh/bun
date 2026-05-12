@@ -9,23 +9,10 @@ pub fn to_match_object(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // jsc.markBinding(@src()) — debug-only binding marker; no-op in Rust port.
-
-    // PORT NOTE: reshaped for borrowck — Zig `defer this.postMatch(globalThis)` becomes a
-    // scopeguard wrapping `this`; the guard DerefMut's to `&mut Expect` for the body and
-    // calls `post_match` on scope exit (success or error).
-    let this = scopeguard::guard(this, |t| t.post_match(global));
-
-    let this_value = frame.this();
+    let (this, received_object, not) =
+        this.matcher_prelude(global, frame.this(), "toMatchObject", "<green>expected<r>")?;
     let args_buf = frame.arguments_old::<1>();
     let args = args_buf.slice();
-
-    this.increment_expect_call_counter();
-
-    let not = this.flags.get().not();
-
-    let received_object: JSValue =
-        this.get_value(global, this_value, "toMatchObject", "<green>expected<r>")?;
 
     if !received_object.is_object() {
         let matcher_error =

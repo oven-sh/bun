@@ -1443,13 +1443,6 @@ use bun_ptr::BackRef;
 pub(crate) fn slice_of<'a, T>(p: js_ast::StoreSlice<T>) -> &'a [T] {
     p.slice()
 }
-#[inline(always)]
-pub(crate) fn slice_of_const<'a, T>(p: *const [T]) -> &'a [T] {
-    if p.is_null() { return &[]; }
-    // SAFETY: arena-owned; never freed until arena reset post-print.
-    unsafe { &*p }
-}
-
 /// `EnumSet<T>` field-style mutation as used by the Zig (`flags.x = true`).
 #[inline(always)]
 pub(crate) fn set_flag<T: enumset::EnumSetType>(set: &mut enumset::EnumSet<T>, flag: T, on: bool) {
@@ -2470,7 +2463,7 @@ where
     /// either the AST arena (`Symbol::original_name: *const [u8]`) or the
     /// `Source::contents` buffer — both are kept alive for `'a` by the
     /// caller of `Printer::init`. Detach the borrow to a raw ptr per the
-    /// Phase-A ARENA convention (matching `slice_of_const` for AST fields).
+    /// Phase-A ARENA convention (matching `slice_of` for AST fields).
     /// // PORT NOTE: reshaped for borrowck — Phase B threads `'bump` through Renamer.
     #[inline]
     fn name_for_symbol(&mut self, ref_: Ref) -> &'a [u8] {

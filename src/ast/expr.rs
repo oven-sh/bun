@@ -206,13 +206,13 @@ impl Expr {
         self.as_property(name).and_then(|q| q.expr.is_object().then_some(q.expr))
     }
 
-    pub fn as_array(&self) -> Option<ArrayIterator<'_>> {
+    pub fn as_array(&self) -> Option<ArrayIterator> {
         match &self.data {
             Data::EArray(array) => {
                 if array.items.len_u32() == 0 {
                     return None;
                 }
-                Some(ArrayIterator { array: array.get(), index: 0 })
+                Some(ArrayIterator { array: *array, index: 0 })
             }
             _ => None,
         }
@@ -557,21 +557,17 @@ impl Expr {
         }
     }
 
-    // PORT NOTE: `Query` holds `expr` by value (Copy), so we can't borrow into
-    // the underlying `E::Array` from it (it'd be borrowing a temporary). The
-    // returned iterator instead borrows the arena slot directly via
-    // `StoreRef::get()` (which yields a `'static`-ish ref into the AST arena),
-    // so the lifetime is decoupled from `expr`.
-    pub fn get_array(&self, name: &[u8]) -> Option<ArrayIterator<'static>> {
+    // PORT NOTE: `Query` holds `expr` by value (Copy). The iterator stores the
+    // `StoreRef<E::Array>` directly (Copy, arena-backed) so no lifetime is tied
+    // to a local temporary — `StoreRef::Deref` re-borrows the arena slot on use.
+    pub fn get_array(&self, name: &[u8]) -> Option<ArrayIterator> {
         let q = self.as_property(name)?;
         match q.expr.data {
             Data::EArray(array) => {
                 if array.items.len_u32() == 0 {
                     return None;
                 }
-                // SAFETY: StoreRef points into the AST arena; deref to an unbounded
-                // ('static) borrow so the iterator is decoupled from the local.
-                Some(ArrayIterator { array: unsafe { &*array.as_ptr() }, index: 0 })
+                Some(ArrayIterator { array, index: 0 })
             }
             _ => None,
         }
@@ -652,12 +648,14 @@ impl Expr {
 // ArrayIterator
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct ArrayIterator<'a> {
-    pub array: &'a E::Array,
+pub struct ArrayIterator {
+    /// Arena-backed handle (`StoreRef` invariant: pointee lives until arena
+    /// reset). Stored by value so the iterator carries no borrowed lifetime.
+    pub array: StoreRef<E::Array>,
     pub index: u32,
 }
 
-impl ArrayIterator<'_> {
+impl ArrayIterator {
     pub fn next(&mut self) -> Option<Expr> {
         if self.index >= self.array.items.len_u32() {
             return None;

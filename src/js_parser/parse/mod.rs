@@ -1444,10 +1444,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             if str_.eql_comptime(b"use strict") {
                                 skip = true;
                                 // Track "use strict" directives
-                                unsafe {
-                                    (*p.current_scope).strict_mode =
-                                        StrictModeKind::ExplicitStrictMode;
-                                }
+                                p.current_scope_mut().strict_mode =
+                                    StrictModeKind::ExplicitStrictMode;
                                 if core::ptr::eq(p.current_scope, p.module_scope) {
                                     p.module_scope_directive_loc = stmt.loc;
                                 }

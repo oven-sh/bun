@@ -316,6 +316,56 @@ it("jsx with fragment", () => {
   expect(input).toBe(output);
 });
 
+it("jsx with circular reference in props", () => {
+  const el = {
+    $$typeof: Symbol.for("react.element"),
+    type: "div",
+    props: {},
+  };
+  el.props.foo = el;
+  expect(Bun.inspect(el)).toBe("<div foo=[Circular] />");
+});
+
+it("jsx with circular reference as props object", () => {
+  const el = {
+    $$typeof: Symbol.for("react.transitional.element"),
+    type: "div",
+    key: null,
+    ref: null,
+    props: {},
+  };
+  el.props = el;
+  expect(Bun.inspect(el)).toContain("[Circular]");
+});
+
+it("jsx with circular reference in key", () => {
+  const el = {
+    $$typeof: Symbol.for("react.element"),
+    type: "div",
+  };
+  el.key = el;
+  expect(Bun.inspect(el)).toBe("<div key=[Circular] />");
+});
+
+it("jsx with circular reference in children", () => {
+  const el = {
+    $$typeof: Symbol.for("react.element"),
+    type: "div",
+    props: { children: null },
+  };
+  el.props.children = el;
+  expect(Bun.inspect(el)).toBe("<div>\n  [Circular]\n</div>");
+});
+
+it("jsx with non-object props", () => {
+  const el = {
+    $$typeof: Symbol.for("react.element"),
+    type: "div",
+    props: 123,
+  };
+  expect(Bun.inspect(el)).toBe("<div />");
+});
+
 it("inspect", () => {
   expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(true);
   expect(Bun.inspect("hi")).toBe('"hi"');

@@ -148,16 +148,13 @@ impl Drop for DerefOnDrop {
 impl JSMySQLConnection {
     /// RAII pair for `ref_()` / `deref()`: bumps the intrusive refcount now and
     /// releases it on drop. Replaces the Zig `this.ref(); defer this.deref();`
-    /// idiom. The guard holds a raw pointer (not `&mut Self`) so no Rust
-    /// reference is live across the potential free in `deref()`.
-    ///
-    /// SAFETY: `this` must satisfy the contract of [`Self::deref`] for the
-    /// guard's entire lifetime.
+    /// idiom. The guard stashes a raw pointer (not `&Self`) so no Rust
+    /// reference is held across the potential free in `deref()`; the `&self`
+    /// receiver here is only borrowed for the bump itself.
     #[inline]
-    unsafe fn ref_guard(this: *mut Self) -> DerefOnDrop {
-        // SAFETY: caller contract — `this` is live.
-        unsafe { (*this).ref_() };
-        DerefOnDrop(this)
+    fn ref_guard(&self) -> DerefOnDrop {
+        self.ref_();
+        DerefOnDrop(self.as_ctx_ptr())
     }
 
     /// Shared borrow of the JS-thread `VirtualMachine` singleton stored in this
@@ -420,8 +417,7 @@ impl JSMySQLConnection {
         // free in `deref()`. Guard drop order is LIFO: `_ref` (deref) drops
         // last, after `update_reference_type()` has run.
         let p: *mut Self = self.as_ctx_ptr();
-        // SAFETY: `p` is derived from a live `&self`.
-        let _ref = unsafe { Self::ref_guard(p) };
+        let _ref = self.ref_guard();
         scopeguard::defer! {
             // SAFETY: `_ref` has not yet dropped, so `*p` is still live.
             unsafe { (*p).update_reference_type() };
@@ -443,8 +439,7 @@ impl JSMySQLConnection {
         }
         // Zig `this.ref(); defer this.deref();` — raw-pointer RAII guard so no
         // reference is live across the potential free.
-        // SAFETY: `&self` is live.
-        let _ref = unsafe { Self::ref_guard(self.as_ctx_ptr()) };
+        let _ref = self.ref_guard();
         let _loop_guard = unsafe { self.vm().event_loop_mut() }.entered();
         self.ensure_js_value_is_alive();
         if let Err(my_sql_connection::FlushQueueError::AuthenticationFailed) = self.connection_mut().flush_queue() {
@@ -891,8 +886,7 @@ impl JSMySQLConnection {
         // order: the `defer!` body runs first, then `_ref` releases the count
         // — matches Zig.
         let p: *mut Self = self.as_ctx_ptr();
-        // SAFETY: `p` is derived from a live `&self`.
-        let _ref = unsafe { Self::ref_guard(p) };
+        let _ref = self.ref_guard();
         scopeguard::defer! {
             // SAFETY: `_ref` has not yet dropped, so `*p` is still live.
             unsafe {
@@ -1187,8 +1181,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // the potential free. Guard drop order is LIFO, so `_ref` (deref) runs
         // last — matches Zig.
         let p: *mut JSMySQLConnection = this.as_ctx_ptr();
-        // SAFETY: `p` from live `&this`.
-        let _ref = unsafe { JSMySQLConnection::ref_guard(p) };
+        let _ref = this.ref_guard();
         let vm = this.vm();
 
         scopeguard::defer! {

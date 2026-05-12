@@ -1,12 +1,13 @@
-// Thin C wrapper around the one WIC interaction whose ABI is too fiddly to
-// hand-roll from Zig: IPropertyBag2::Write with a VARIANT. The rest of the
-// WIC backend (vtable-shaped COM calls) lives in src/image/backend_wic.zig
-// because those are plain function-pointer tables and have been stable; this
-// file exists so the SDK's own <oaidl.h> definition of VARIANT (with its
-// union/BRECORD/DECIMAL padding) is the source of truth instead of an extern
-// struct guess.
+// Thin C wrapper around the WIC interactions whose ABI is too fiddly to
+// hand-roll from Zig: IPropertyBag2::Write with a VARIANT, and
+// IWICMetadataQueryReader::GetMetadataByName with a PROPVARIANT. The rest of
+// the WIC backend (vtable-shaped COM calls) lives in
+// src/runtime/image/backend_wic.zig because those are plain function-pointer
+// tables and have been stable; this file exists so the SDK's own <oaidl.h>/
+// <propidl.h> definitions of VARIANT/PROPVARIANT (with their union/BRECORD/
+// DECIMAL padding) are the source of truth instead of an extern-struct guess.
 //
-// Kept header-light: only the option name + a float go in, so if we later
+// Kept header-light: only the option name + a scalar go in, so if we later
 // need more knobs (CompressionQuality, HeifCompressionMethod) they're one
 // branch each rather than a Zig-side VARIANT for every type.
 
@@ -14,6 +15,7 @@
 
 #include <windows.h>
 #include <ocidl.h> // IPropertyBag2, PROPBAG2
+#include <wincodec.h> // IWICBitmapFrameDecode, IWICMetadataQueryReader
 
 static int32_t write1(void* props, const wchar_t* name, VARTYPE vt, void (*set)(VARIANT&))
 {
@@ -53,9 +55,42 @@ extern "C" int32_t bun_wic_propbag_write_u8(void* props, const wchar_t* name, ui
     return write1(props, name, VT_UI1, [](VARIANT& var) { var.bVal = v; });
 }
 
+// EXIF/TIFF Orientation (tag 0x0112) for the frame. Returns 1..8 per the EXIF
+// spec; 1 (identity) for missing/out-of-range/any-failure to match Sharp's
+// "advisory, never fail decode" treatment. PROPVARIANT lives here for the same
+// reason VARIANT does — the SDK's own union layout is the source of truth.
+//
+// Query path is container-specific in WIC's metadata language, so we try in
+// order: `/ifd/{ushort=274}` covers TIFF (orientation lives in IFD0) and the
+// HEIF decoder's EXIF item (iPhone HEIC writes one); `System.Photo.Orientation`
+// is the WIC photo-metadata-policy name that the platform maps to whichever
+// container path applies — it's the documented container-agnostic fallback.
+// First successful read wins. (#30235)
+extern "C" int32_t bun_wic_read_orientation(void* frame)
+{
+    if (!frame) return 1;
+    IWICMetadataQueryReader* reader = nullptr;
+    if (FAILED(static_cast<IWICBitmapFrameDecode*>(frame)->GetMetadataQueryReader(&reader)) || !reader)
+        return 1;
+    int32_t result = 1;
+    static const wchar_t* const paths[] = { L"/ifd/{ushort=274}", L"System.Photo.Orientation" };
+    for (auto path : paths) {
+        PROPVARIANT pv;
+        PropVariantInit(&pv);
+        if (SUCCEEDED(reader->GetMetadataByName(path, &pv))) {
+            if (pv.vt == VT_UI2 && pv.uiVal >= 1 && pv.uiVal <= 8) result = pv.uiVal;
+            PropVariantClear(&pv);
+            break;
+        }
+    }
+    reader->Release();
+    return result;
+}
+
 #else
 // Stubs so the symbols exist everywhere; backend_wic.zig is Windows-only so
 // these are never called, but the linker wants them.
 extern "C" int bun_wic_propbag_write_f32(void*, const void*, float) { return 0; }
 extern "C" int bun_wic_propbag_write_u8(void*, const void*, unsigned char) { return 0; }
+extern "C" int bun_wic_read_orientation(void*) { return 1; }
 #endif

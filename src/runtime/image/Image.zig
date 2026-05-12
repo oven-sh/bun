@@ -980,10 +980,15 @@ pub const PipelineTask = struct {
             }
         }
 
-        // Sniff once up front — every orientation query below needs the
-        // format, and the sniffer is already looking at the same bytes the
-        // decoder will.
+        // Sniff format and read orientation once up front. JPEG orientation is
+        // a cheap byte walk; HEIC/TIFF/AVIF go through the system backend
+        // (ImageIO / WIC), which builds a fresh image-source per call — so
+        // resolving it once and reusing across the decode-hint, metadata-
+        // fallthrough, and applyOrientation gates below keeps the resize path
+        // (the #30235 repro) at one backend round-trip instead of two.
         const src_format = codecs.Format.sniff(input) orelse .png;
+        const orient: exif.Orientation = if (this.auto_orient) readOrientation(input, src_format) else .normal;
+        const orient_swaps_axes = orient.transform().rotate == 90 or orient.transform().rotate == 270;
 
         // Decode-time downscale hint. The IDCT picker constrains in *stored*
         // axes, so any 90/270 rotate that runs before resize — explicit OR
@@ -996,11 +1001,7 @@ pub const PipelineTask = struct {
             // r.h==0 means "preserve aspect" — constrain on width only.
             var th = if (r.h != 0) r.h else r.w;
             const swap_explicit = this.pipeline.rotate == 90 or this.pipeline.rotate == 270;
-            const swap_exif = this.auto_orient and blk2: {
-                const t = readOrientation(input, src_format).transform();
-                break :blk2 t.rotate == 90 or t.rotate == 270;
-            };
-            if (swap_explicit != swap_exif) std.mem.swap(u32, &tw, &th);
+            if (swap_explicit != orient_swaps_axes) std.mem.swap(u32, &tw, &th);
             break :blk .{ .target_w = tw, .target_h = th };
         } else .{};
 
@@ -1020,10 +1021,7 @@ pub const PipelineTask = struct {
         if (this.kind == .metadata) {
             var w = decoded.width;
             var h = decoded.height;
-            if (this.auto_orient) {
-                const t = readOrientation(input, src_format).transform();
-                if (t.rotate == 90 or t.rotate == 270) std.mem.swap(u32, &w, &h);
-            }
+            if (orient_swaps_axes) std.mem.swap(u32, &w, &h);
             this.result = .{ .meta = .{ .w = w, .h = h, .format = src_format } };
             return;
         }
@@ -1031,15 +1029,12 @@ pub const PipelineTask = struct {
         // EXIF auto-orient: applied BEFORE any user op so resize targets and
         // metadata report the visually-upright dimensions, the way Sharp does.
         // Covers JPEG via the Zig APP1 walker and HEIC/TIFF/AVIF via the
-        // system backend (ImageIO/WIC), whose decoders hand back pixels in
-        // their *stored* orientation. (#30235)
-        if (this.auto_orient) {
-            const orient = readOrientation(input, src_format);
-            if (orient != .normal) applyOrientation(&decoded, orient) catch |e| {
-                this.result = .{ .err = e };
-                return;
-            };
-        }
+        // system backend (ImageIO on macOS, WIC on Windows), whose decoders
+        // hand back pixels in their *stored* orientation. (#30235)
+        if (orient != .normal) applyOrientation(&decoded, orient) catch |e| {
+            this.result = .{ .err = e };
+            return;
+        };
 
         if (this.kind == .placeholder) {
             this.result = makePlaceholder(decoded.rgba, decoded.width, decoded.height) catch |e| .{ .err = e };

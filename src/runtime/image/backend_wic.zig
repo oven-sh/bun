@@ -86,6 +86,40 @@ pub fn decode(bytes: []const u8, max_pixels: u64) BackendError!codecs.Decoded {
     return .{ .rgba = out, .width = w, .height = h };
 }
 
+// EXIF/TIFF Orientation (tag 0x0112) for the first frame. 1..8 per EXIF spec;
+// 1 (identity) on any failure. The PROPVARIANT marshalling lives in the C++
+// shim for the same reason the IPropertyBag2 writes do — see image_wic_shim.cpp.
+// Called from Image.zig's auto-orient gate for HEIC/TIFF/AVIF, whose containers
+// don't share enough with JPEG markers for exif.zig's APP1 walker to handle
+// (HEIC's Exif item is reached via an ISOBMFF `iloc`/`iinf` walk). (#30235)
+extern fn bun_wic_read_orientation(frame: ?*anyopaque) i32;
+
+pub fn orientation(bytes: []const u8) u8 {
+    const f = factory() catch return 1;
+    if (bytes.len > std.math.maxInt(u32)) return 1;
+
+    var stream: ?*IWICStream = null;
+    if (f.vt.CreateStream(f, &stream) < 0 or stream == null) return 1;
+    defer release(stream);
+    if (stream.?.vt.InitializeFromMemory(stream.?, bytes.ptr, @intCast(bytes.len)) < 0) return 1;
+
+    var dec: ?*IWICBitmapDecoder = null;
+    // WICDecodeMetadataCacheOnLoad = 1 — eager-read so the metadata block is
+    // populated before we ask for the query reader.
+    if (f.vt.CreateDecoderFromStream(f, @ptrCast(stream), null, 1, &dec) < 0 or dec == null) return 1;
+    defer release(dec);
+
+    var frame: ?*IWICBitmapSource = null;
+    if (dec.?.vt.GetFrame(dec.?, 0, &frame) < 0 or frame == null) return 1;
+    defer release(frame);
+
+    // GetFrame really returns IWICBitmapFrameDecode*; we type it as the
+    // IWICBitmapSource prefix elsewhere, but the shim casts it back to reach
+    // GetMetadataQueryReader (slot after the IWICBitmapSource block).
+    const raw = bun_wic_read_orientation(frame);
+    return if (raw >= 1 and raw <= 8) @intCast(raw) else 1;
+}
+
 pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOptions) BackendError![]u8 {
     // Punt to the static codecs for everything WIC can't express the same way:
     //   • palette PNG — WIC's PNG encoder won't quantise for us;

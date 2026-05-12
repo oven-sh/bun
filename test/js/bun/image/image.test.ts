@@ -843,7 +843,7 @@ describe("Bun.Image", () => {
     // backend on macOS/Windows, and (b) it's the only orientation-carrying
     // format simple enough to hand-craft without a codec. A bug in the system
     // backend shows up identically for HEIC.
-    test.skipIf(!isMacOS)("TIFF Orientation=6 auto-rotates via system backend", async () => {
+    test.skipIf(!isMacOS && !isWindows)("TIFF Orientation=6 auto-rotates via system backend", async () => {
       // Hand-roll a 4×2 uncompressed RGB TIFF with Orientation=6. Little-
       // endian ("II"), 10 IFD entries, BitsPerSample stored inline at byte
       // 134 (count=3 * sizeof(SHORT) > 4 → offset), pixels at byte 140.
@@ -906,8 +906,8 @@ describe("Bun.Image", () => {
       ];
       for (let i = 0; i < pixels.length; i++) tiff[140 + i] = pixels[i];
 
-      // Without my fix: reports stored dims 4×2. With the fix: orientation
-      // swaps the axes so dims come back as 2×4.
+      // Without the fix: reports stored dims 4×2. With it: orientation swaps
+      // the axes so dims come back as 2×4.
       const oriented = await new Bun.Image(tiff).metadata();
       expect(oriented).toEqual({ width: 2, height: 4, format: "tiff" });
 

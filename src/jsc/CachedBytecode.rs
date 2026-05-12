@@ -27,7 +27,10 @@ unsafe extern "C" {
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
     ) -> bool;
 
-    fn CachedBytecode__deref(this: *mut CachedBytecode);
+    // safe: `CachedBytecode` is an `opaque_ffi!` ZST handle (`!Freeze` via
+    // `UnsafeCell`); `&mut` is ABI-identical to a non-null `*mut` and the C++
+    // refcount decrement is interior to the cell.
+    safe fn CachedBytecode__deref(this: &mut CachedBytecode);
 }
 
 impl CachedBytecode {
@@ -97,8 +100,7 @@ impl CachedBytecode {
     }
 
     pub fn deref(&mut self) {
-        // SAFETY: self is a valid CachedBytecode handle from C++.
-        unsafe { CachedBytecode__deref(self) }
+        CachedBytecode__deref(self)
     }
 
     pub fn generate(
@@ -158,8 +160,10 @@ pub fn __bun_jsc_generate_cached_bytecode(
     crate::initialize(false);
     let (bytes, handle) = CachedBytecode::generate(format, source, source_provider_url)?;
     let owned = Box::<[u8]>::from(bytes);
-    // SAFETY: `handle` was just produced by C++ and is valid until deref.
-    unsafe { CachedBytecode__deref(handle.as_ptr()) };
+    // `handle` was just produced by C++ and is valid until deref;
+    // `CachedBytecode` is an opaque ZST handle so `opaque_mut` is the
+    // centralised zero-byte deref proof.
+    CachedBytecode__deref(CachedBytecode::opaque_mut(handle.as_ptr()));
     Some(owned)
 }
 

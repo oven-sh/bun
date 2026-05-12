@@ -2398,11 +2398,13 @@ pub mod ffi {
     /// `bun_sys::c::errno_location`, `bun_platform::linux` — instead of each
     /// re-deriving the same target_os→symbol mapping.
     ///
-    /// # Safety
-    /// The returned pointer is valid for the calling thread's lifetime; reads
-    /// and writes are sound but the caller must not send it across threads.
+    /// Obtaining the pointer has no preconditions (the per-libc TLS accessor
+    /// takes no args and never returns null); the deref obligation lives at
+    /// the call site. The returned pointer is valid for the calling thread's
+    /// lifetime — `*mut c_int` is `!Send`, so the cross-thread hazard is
+    /// already type-enforced.
     #[inline(always)]
-    pub unsafe fn errno_ptr() -> *mut core::ffi::c_int {
+    pub fn errno_ptr() -> *mut core::ffi::c_int {
         // Per-libc TLS errno accessor: no args, never null, no preconditions.
         // `safe fn` discharges the link-time proof so the body is a plain
         // call; only the per-platform symbol *name* varies, expressed via

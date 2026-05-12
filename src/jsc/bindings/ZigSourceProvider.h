@@ -59,6 +59,13 @@ public:
     int readCache(JSC::VM& vm, const JSC::SourceCode& sourceCode);
     void freeSourceCode();
 
+    // Process-wide live-instance counter. Read by Bun.unsafe.heapStats() so the
+    // require-cache leak fixture can prove the per-iteration SourceProvider is
+    // actually destroyed after `delete require.cache[k]` + GC (i.e. that the
+    // JSModuleRecord/ModuleProgramExecutable refs to it really drop) — which
+    // separates a true bmalloc leak from libpas page-retention on darwin.
+    static std::atomic<size_t> s_liveCount;
+
 private:
     SourceProvider(void* bunVM, ResolvedSource resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
         JSC::SourceTaintedOrigin taintedness,
@@ -69,6 +76,7 @@ private:
         , m_source(sourceImpl)
     {
         m_resolvedSource = resolvedSource;
+        s_liveCount.fetch_add(1, std::memory_order_relaxed);
     }
 
     // Stored directly (not via the creating global) so the destructor stays

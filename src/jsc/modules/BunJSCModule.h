@@ -35,6 +35,7 @@
 #include <cstddef>
 #include <wtf/FileSystem.h>
 #include <wtf/MemoryFootprint.h>
+#include <wtf/text/AtomStringTable.h>
 #include <wtf/text/WTFString.h>
 
 #include "BunProcess.h"
@@ -295,6 +296,33 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     object->putDirect(vm,
         Identifier::fromString(vm, "protectedGlobalObjectCount"_s),
         jsNumber(vm.heap.protectedGlobalObjectCount()));
+
+    // -------------------------------------------------------------------------
+    // StringImpl / AtomString instrumentation (require-cache leak investigation).
+    // -------------------------------------------------------------------------
+    // AtomStringTable: per-VM interning table for Identifiers (export names,
+    // property keys). Growth here across cache-clear cycles means identifier
+    // strings are accumulating outside the GC heap (bmalloc / fastMalloc).
+    // Always available; cheap to compute.
+    {
+        size_t atomCount = 0;
+        size_t atomBytes = 0;
+        if (auto* table = vm.atomStringTable()) {
+            auto& impl = table->table();
+            atomCount = impl.size();
+            for (auto& entry : impl) {
+                if (auto* s = entry.get()) {
+                    // Approximate retained bytes: header + character buffer.
+                    atomBytes += sizeof(StringImpl);
+                    atomBytes += static_cast<size_t>(s->length()) * (s->is8Bit() ? 1 : 2);
+                }
+            }
+        }
+        object->putDirect(vm, Identifier::fromString(vm, "atomStringTableSize"_s),
+            jsNumber(static_cast<double>(atomCount)));
+        object->putDirect(vm, Identifier::fromString(vm, "atomStringTableBytes"_s),
+            jsNumber(static_cast<double>(atomBytes)));
+    }
 
 #if IS_MALLOC_DEBUGGING_ENABLED
 #if OS(DARWIN)

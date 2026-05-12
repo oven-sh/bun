@@ -66,6 +66,22 @@ JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
     return ByteRangeMapping__getSourceID(mappings, Bun::toString(sourceURL));
 }
 
+std::atomic<size_t> SourceProvider::s_liveCount { 0 };
+
+// Exposed for Bun.unsafe.heapStats(): per-iteration delta of this is the
+// ground-truth "did `delete require.cache[k]` + GC actually drop the provider"
+// signal (vs the bmalloc/libpas page retention that drives darwin RSS without
+// a real leak). One steady-state survivor is expected — the very first
+// iteration's provider is pinned forever by the SourceCodeKey stored in
+// vm.codeCache()'s map; subsequent iterations hit that key (BUN_JSC_ADDITIONS
+// SourceCodeKey::operator== compares hash+length only) so no per-iter growth
+// here means the SourceProvider/m_exportEntries/m_lexicalVariables chain IS
+// being freed and the 31KB/iter darwin RSS is allocator behaviour, not a ref.
+extern "C" size_t Bun__ZigSourceProvider_liveCount()
+{
+    return SourceProvider::s_liveCount.load(std::memory_order_relaxed);
+}
+
 extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
 extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
 extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
@@ -167,6 +183,7 @@ StringView SourceProvider::source() const
 
 SourceProvider::~SourceProvider()
 {
+    s_liveCount.fetch_sub(1, std::memory_order_relaxed);
     if (m_resolvedSource.already_bundled) {
         BunString str = Bun::toString(sourceURL());
         Bun__removeSourceProviderSourceMap(m_bunVM, this, &str);

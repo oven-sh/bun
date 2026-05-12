@@ -382,8 +382,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut lazy = false;
     let mut on_exit_callback = JSValue::ZERO;
     let mut on_disconnect_callback = JSValue::ZERO;
-    // SAFETY: `transpiler.env` is the per-VM DotEnv loader, valid for VM lifetime.
-    let mut path: &[u8] = unsafe { (*jsc_vm.transpiler.env).get(b"PATH") }.unwrap_or(b"");
+    // `env_loader()` is the audited safe accessor for the per-VM DotEnv loader
+    // (process-lifetime; centralised non-null deref in `VirtualMachine`).
+    let mut path: &[u8] = jsc_vm.env_loader().get(b"PATH").unwrap_or(b"");
     let mut argv: Vec<CStrPtr> = Vec::new();
     let mut cmd_value = JSValue::ZERO;
     let mut detached = false;
@@ -414,8 +415,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             &mut Option<TerminalCreateResult>,
         )| {
             if let Some(signal) = abort_signal.take() {
-                // SAFETY: signal was ref()'d when stored; unref releases that ref.
-                unsafe { (*signal).unref() };
+                // signal was ref()'d when stored; unref releases that ref.
+                // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref` is
+                // the centralised non-null deref proof.
+                WebCore::AbortSignal::opaque_ref(signal).unref();
             }
             // If we created a new terminal but spawn failed, close it. The
             // writer/reader/finalize deref paths release the remaining refs.
@@ -520,8 +523,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
             if let Some(signal_val) = args.get_truthy(global_this, "signal")? {
                 if let Some(signal) = WebCore::AbortSignal::from_js(signal_val) {
-                    // SAFETY: `from_js` returns a live FFI handle owned by JS.
-                    **abort_signal = Some(unsafe { (*signal).ref_() });
+                    // `from_js` returns a live FFI handle owned by JS.
+                    // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref`
+                    // is the centralised non-null deref proof.
+                    **abort_signal = Some(WebCore::AbortSignal::opaque_ref(signal).ref_());
                 } else {
                     return Err(global_this.throw_invalid_argument_type_value(
                         b"signal",
@@ -568,10 +573,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 override_env = true;
                 // If the env object does not include a $PATH, it must disable path lookup for argv[0]
                 let mut new_path: &[u8] = b"";
-                // SAFETY: get_object() returns a non-null *mut JSObject when Some.
+                // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
+                // centralised non-null-ZST deref proof.
                 append_envp_from_js(
                     global_this,
-                    unsafe { &*object },
+                    JSObject::opaque_ref(object),
                     &mut env_array,
                     &mut new_path,
                     &mut cstr_storage,
@@ -956,8 +962,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         && !stdio[2].is_piped()
         && extra_fds.is_empty()
         && !jsc_vm.auto_killer.enabled
-        // SAFETY: `jsc_vm.jsc_vm` is the live JSC::VM* set in `VirtualMachine::init`.
-        && !unsafe { (*jsc_vm.jsc_vm).has_execution_time_limit() }
+        // `jsc_vm()` is the audited safe `&VM` accessor (centralised opaque-ZST
+        // deref proof in `VirtualMachine`).
+        && !jsc_vm.jsc_vm().has_execution_time_limit()
         && !jsc_vm.is_inspector_enabled()
         && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH
             .get()

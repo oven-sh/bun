@@ -112,11 +112,13 @@ impl BlobOrStringOrBuffer {
         let str = match StringOrBuffer::from_js_maybe_async(global, value, is_async, true)? {
             Some(s) => s,
             None => {
-                let Some(blob_ptr) = value.as_::<Blob>() else {
+                // `as_class_ref` is the safe shared-borrow downcast (centralised
+                // deref proof in `JSValue`); the JS wrapper roots the payload
+                // while `value` is on the stack. All `Blob` accessors below
+                // take `&self`.
+                let Some(blob) = value.as_class_ref::<Blob>() else {
                     return Ok(None);
                 };
-                // SAFETY: `as_::<Blob>` returns a live JSC-owned `*mut Blob`.
-                let blob = unsafe { &mut *blob_ptr };
                 if allow_file && blob.needs_to_read_file() {
                     return Err(global.throw_invalid_arguments(format_args!("File blob cannot be used here")));
                 }
@@ -171,15 +173,14 @@ impl BlobOrStringOrBuffer {
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
         match value.js_type() {
             jsc::JSType::DOMWrapper => {
-                if let Some(blob_ptr) = value.as_::<Blob>() {
-                    // SAFETY: `as_::<Blob>` returns a live JSC-owned `*mut Blob`.
-                    let blob = unsafe { &mut *blob_ptr };
+                // `as_class_ref` is the safe shared-borrow downcast (centralised
+                // deref proof in `JSValue`); the JS wrapper roots the payload
+                // while `value` is on the stack.
+                if let Some(blob) = value.as_class_ref::<Blob>() {
                     return Ok(Some(Self::Blob(blob.dupe())));
                 }
                 if allow_request_response {
-                    if let Some(request_ptr) = value.as_::<Request>() {
-                        // SAFETY: `as_::<Request>` returns a live JSC-owned `*mut Request`.
-                        let request = unsafe { &mut *request_ptr };
+                    if let Some(request) = value.as_class_ref::<Request>() {
                         let body_value = request.get_body_value();
                         body_value.to_blob_if_possible();
 
@@ -194,9 +195,7 @@ impl BlobOrStringOrBuffer {
                         )));
                     }
 
-                    if let Some(response_ptr) = value.as_::<Response>() {
-                        // SAFETY: `as_::<Response>` returns a live JSC-owned `*mut Response`.
-                        let response = unsafe { &mut *response_ptr };
+                    if let Some(response) = value.as_class_ref::<Response>() {
                         let body_value = response.get_body_value();
                         body_value.to_blob_if_possible();
 
@@ -1738,14 +1737,15 @@ impl PathOrBlob {
                 JSValue::UNDEFINED,
             ));
         };
-        if let Some(blob) = arg.as_::<Blob>() {
-            // SAFETY: `as_::<Blob>()` returns a non-null `*mut Blob` owned by the
-            // live JS wrapper; valid for the duration of this call. Zig: `blob.*`
-            // — a raw bitwise copy with no ref bumps that callers never `deinit()`.
-            // `borrowed_view()` is the sound Rust spelling: it clones only the
-            // `StoreRef` (whose `Drop` balances the +1) and aliases `name`/
-            // `content_type`; `dupe()` would leak both since `Blob` has no `Drop`.
-            return Ok(PathOrBlob::Blob(unsafe { (*blob).borrowed_view() }));
+        if let Some(blob) = arg.as_class_ref::<Blob>() {
+            // Zig: `blob.*` — a raw bitwise copy with no ref bumps that callers
+            // never `deinit()`. `borrowed_view()` is the sound Rust spelling: it
+            // clones only the `StoreRef` (whose `Drop` balances the +1) and
+            // aliases `name`/`content_type`; `dupe()` would leak both since
+            // `Blob` has no `Drop`. `as_class_ref` is the safe shared-borrow
+            // downcast — the JS wrapper roots the payload while `arg` is on the
+            // stack.
+            return Ok(PathOrBlob::Blob(blob.borrowed_view()));
         }
         Err(ctx.throw_invalid_argument_type_value(
             b"destination",

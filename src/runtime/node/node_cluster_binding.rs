@@ -154,9 +154,9 @@ pub fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     bun_output::scoped_log!(IPC, "sendHelperPrimary");
 
     let arguments = frame.arguments_old::<4>().ptr;
-    let subprocess = arguments[0].as_::<Subprocess<'_>>().unwrap();
-    // SAFETY: `as_` returns a live wrapped pointer; sole &mut on JS thread.
-    let subprocess = unsafe { &mut *subprocess };
+    // `as_class_ref` is the safe shared-borrow downcast (centralised deref
+    // proof in `JSValue`); `Subprocess::ipc(&self)` projects the `JsCell`.
+    let subprocess = arguments[0].as_class_ref::<Subprocess<'_>>().unwrap();
     let message = arguments[1];
     let handle = arguments[2];
     let callback = arguments[3];
@@ -209,9 +209,8 @@ pub fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 #[bun_jsc::host_fn]
 pub fn on_internal_message_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<3>().ptr;
-    let subprocess = arguments[0].as_::<Subprocess<'_>>().unwrap();
-    // SAFETY: `as_` returns a live wrapped pointer; sole &mut on JS thread.
-    let subprocess = unsafe { &mut *subprocess };
+    // `as_class_ref` is the safe shared-borrow downcast; `ipc()` takes `&self`.
+    let subprocess = arguments[0].as_class_ref::<Subprocess<'_>>().unwrap();
     let Some(ipc_data) = subprocess.ipc() else {
         return Ok(JSValue::UNDEFINED);
     };

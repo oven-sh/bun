@@ -719,9 +719,11 @@ impl Scrypt {
 
         if let Some(options_value) = maybe_options_value {
             if let Some(options) = options_value.get_object() {
-                // SAFETY: `get_object` returned non-null; the JSObject is rooted by
+                // `get_object` returned non-null; the JSObject is rooted by
                 // `options_value` (kept alive on the stack for this scope).
-                let options = unsafe { &*options };
+                // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
+                // centralised non-null-ZST deref proof.
+                let options = bun_jsc::JSObject::opaque_ref(options);
                 if let Some(n_value) = options.get(global, "N")? {
                     n = Some(validators::validate_uint32(global, n_value, format_args!("N"), false)?);
                 }

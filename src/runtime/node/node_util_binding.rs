@@ -161,9 +161,10 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B.
     // Non-AST crate: arena dropped; Map/Loader use global allocator and Drop.
 
-    // SAFETY: `validate_string` above guarantees `content.is_string()`, so
-    // `as_string()` returns a non-null live JSString*.
-    let str = unsafe { &*content.as_string() }.to_slice(global);
+    // `validate_string` above guarantees `content.is_string()`, so
+    // `as_string()` returns a non-null live JSString*. `JSString` is an
+    // `opaque_ffi!` ZST handle; `opaque_ref` is the centralised deref proof.
+    let str = bun_jsc::JSString::opaque_ref(content.as_string()).to_slice(global);
 
     let mut map = envloader::Map::init();
     let mut p = envloader::Loader::init(&mut map);

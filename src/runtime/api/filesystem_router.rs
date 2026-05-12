@@ -557,15 +557,16 @@ impl FileSystemRouter {
             }
 
             if argument.is_cell() {
-                if let Some(req) = argument.as_::<Request>() {
-                    // SAFETY: `as_` returns a live `*mut Request` for `argument`'s lifetime.
-                    unsafe { (*req).ensure_url().expect("unreachable") };
-                    break 'brk unsafe { (*req).url.get().to_utf8() };
+                // `as_class_ref` is the safe shared-borrow downcast (centralised
+                // deref proof in `JSValue`); the JS wrapper roots the payload
+                // while `argument` is on the stack.
+                if let Some(req) = argument.as_class_ref::<Request>() {
+                    req.ensure_url().expect("unreachable");
+                    break 'brk req.url.get().to_utf8();
                 }
 
-                if let Some(resp) = argument.as_::<Response>() {
-                    // SAFETY: `as_` returns a live `*mut Response` for `argument`'s lifetime.
-                    break 'brk unsafe { (*resp).get_utf8_url() };
+                if let Some(resp) = argument.as_class_ref::<Response>() {
+                    break 'brk resp.get_utf8_url();
                 }
             }
 

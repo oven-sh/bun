@@ -663,11 +663,12 @@ impl<'a> Arguments<'a> {
                     if let Some(signal_obj) = AbortSignal::from_js(signal_) {
                         // Keep it alive
                         signal_.ensure_still_alive();
-                        // SAFETY: `signal_obj` is the live C++ AbortSignal owned
-                        // by `signal_` (a JS AbortSignal kept reachable for the
-                        // duration of the call by `ensure_still_alive`). Borrow
-                        // is bounded by `'a` (the global / arguments lifetime).
-                        signal = Some(unsafe { &*signal_obj });
+                        // `signal_obj` is the live C++ AbortSignal owned by
+                        // `signal_` (kept reachable for the duration of the call
+                        // by `ensure_still_alive`). `AbortSignal` is an
+                        // `opaque_ffi!` ZST handle; `opaque_ref` is the
+                        // centralised deref proof.
+                        signal = Some(AbortSignal::opaque_ref(signal_obj));
                     } else {
                         return Err(ctx.throw_invalid_arguments(format_args!(
                             "signal is not of type AbortSignal"

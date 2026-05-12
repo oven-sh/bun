@@ -469,16 +469,15 @@ impl Stdio {
 
             *out_stdio = Stdio::Fd(fd);
             return Ok(());
-        } else if let Some(blob) = value.as_::<webcore::Blob>() {
-            // SAFETY: `as_` returns a live JSC-owned `*mut Blob` (the wrapper's
-            // m_ctx); deref to call `dupe()`, which only bumps the store refcount.
-            return out_stdio.extract_blob(global, webcore::blob::Any::Blob(unsafe { (*blob).dupe() }), i);
-        } else if let Some(req) = value.as_::<webcore::Request>() {
-            // SAFETY: `as_` returns a live `*mut Request` owned by the JS wrapper.
-            return Self::extract_body_value(out_stdio, global, i, unsafe { (*req).get_body_value() }, is_sync);
-        } else if let Some(res) = value.as_::<webcore::Response>() {
-            // SAFETY: `as_` returns a live `*mut Response` owned by the JS wrapper.
-            return Self::extract_body_value(out_stdio, global, i, unsafe { (*res).get_body_value() }, is_sync);
+        } else if let Some(blob) = value.as_class_ref::<webcore::Blob>() {
+            // `as_class_ref` is the safe shared-borrow downcast (centralised
+            // deref proof in `JSValue`); the JS wrapper roots the payload while
+            // `value` is on the stack. `dupe()` only bumps the store refcount.
+            return out_stdio.extract_blob(global, webcore::blob::Any::Blob(blob.dupe()), i);
+        } else if let Some(req) = value.as_class_ref::<webcore::Request>() {
+            return Self::extract_body_value(out_stdio, global, i, req.get_body_value(), is_sync);
+        } else if let Some(res) = value.as_class_ref::<webcore::Response>() {
+            return Self::extract_body_value(out_stdio, global, i, res.get_body_value(), is_sync);
         }
 
         if let Some(stream_) = webcore::ReadableStream::from_js(value, global)? {

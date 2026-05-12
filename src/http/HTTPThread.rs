@@ -31,6 +31,22 @@ struct SslContextCacheEntry {
     /// Strong ref held by the cache entry (released on eviction).
     config_ref: ssl_config::SharedPtr,
 }
+
+impl SslContextCacheEntry {
+    /// Mutable access to the cached `NewHttpContext`.
+    ///
+    /// INVARIANT: `ctx` is set once at insert (in `connect`) to a fresh
+    /// `heap::release`-boxed `NewHttpContext` on which the cache holds one
+    /// strong intrusive ref; it stays live until eviction's `deref` drops it.
+    /// The map and all callers are HTTP-thread-only, so the returned `&mut`
+    /// is the sole live borrow. Centralises the `Option<NonNull>`-style
+    /// `(*entry.ctx.as_ptr()).…` raw deref repeated at every lookup.
+    #[inline]
+    fn ctx_mut<'a>(&self) -> &'a mut NewHttpContext<true> {
+        // SAFETY: see INVARIANT above.
+        unsafe { &mut *self.ctx.as_ptr() }
+    }
+}
 const SSL_CONTEXT_CACHE_MAX_SIZE: usize = 60;
 const SSL_CONTEXT_CACHE_TTL_NS: u64 = 30 * (60 * 1_000_000_000); // 30 * std.time.ns_per_min
 
@@ -402,16 +418,13 @@ impl HttpThread {
                     // Cache hit - reuse existing SSL context
                     entry.last_used_ns = self.timer_read();
                     client.set_custom_ssl_ctx(entry.ctx);
-                    let ctx = entry.ctx.as_ptr();
+                    let ctx = entry.ctx_mut();
                     // Keepalive is now supported for custom SSL contexts
-                    // SAFETY: cache holds a strong ref; ctx alive until eviction.
-                    return unsafe {
-                        if let Some(url) = client.http_proxy.clone() {
-                            (*ctx).connect(client, url.hostname, url.get_port_auto())
-                        } else {
-                            let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
-                            (*ctx).connect(client, hn, pt)
-                        }
+                    return if let Some(url) = client.http_proxy.clone() {
+                        ctx.connect(client, url.hostname, url.get_port_auto())
+                    } else {
+                        let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
+                        ctx.connect(client, hn, pt)
                     }
                     // PORT NOTE: NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
                     .map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
@@ -519,8 +532,7 @@ impl HttpThread {
             return true;
         }
         for entry in custom_ssl_context_map().values_mut() {
-            // SAFETY: cache holds a strong ref; ctx alive.
-            if unsafe { (*entry.ctx.as_ptr()).abort_pending_h2_waiter(async_http_id) } {
+            if entry.ctx_mut().abort_pending_h2_waiter(async_http_id) {
                 return true;
             }
         }

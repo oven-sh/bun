@@ -260,7 +260,7 @@ impl Crypto {
 
         let slice = array_buffer.byte_slice_mut();
 
-        random_data(global, slice.as_mut_ptr(), slice.len());
+        random_data(global, slice);
 
         Ok(arguments[0])
     }
@@ -273,7 +273,9 @@ impl Crypto {
     ) -> JSValue {
         // Zig `array.slice()` yields `[]u8` (mutable). `JSUint8Array::slice()` takes
         // `&mut self`; use ptr()/len() (which take `&self`) to avoid the &mut requirement.
-        random_data(global, array.ptr(), array.len());
+        // SAFETY: JSC guarantees `ptr()` is valid for `len()` writable bytes while the
+        // typed-array cell is alive; `ffi::slice_mut` tolerates `(null, 0)` for detached.
+        random_data(global, unsafe { bun_core::ffi::slice_mut(array.ptr(), array.len()) });
         // Zig: @enumFromInt(@as(i64, @bitCast(@intFromPtr(array)))) — encode the cell
         // pointer back into a JSValue.
         JSValue::from_encoded(std::ptr::from_ref::<JSUint8Array>(array) as usize)
@@ -319,10 +321,7 @@ impl Crypto {
     }
 }
 
-fn random_data(global: &JSGlobalObject, ptr: *mut u8, len: usize) {
-    // SAFETY: caller guarantees `ptr` is valid for `len` writable bytes.
-    let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
-
+fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
     const ENTROPY_CACHE_FAST_PATH_MAX: usize = bun_jsc::RareData::EntropyCache::SIZE / 8;
     match slice.len() {
         0 => {}

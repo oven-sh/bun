@@ -937,8 +937,11 @@ impl EventLoop {
     }
     #[inline(always)]
     pub fn global_ref(&self) -> &JSGlobalObject {
-        // SAFETY: global is set during VM init and outlives EventLoop
-        unsafe { self.global.unwrap_unchecked().as_ref() }
+        // `self.global` is always assigned `vm.global` at every write site
+        // (`__bun_spawn_sync_*`, `init_runtime_state`, `reload_global`), so go
+        // through the existing safe `vm_ref().global()` accessor instead of a
+        // second `unsafe { NonNull::as_ref }`.
+        self.vm_ref().global()
     }
 }
 

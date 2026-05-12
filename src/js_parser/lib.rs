@@ -105,7 +105,13 @@ pub mod Macro {
         /// Defined `#[no_mangle]` in `bun_js_parser_jsc::Macro`. `transpiler`
         /// is `*mut bun_bundler::Transpiler<'_>` — erased because this crate
         /// cannot name it (dep-cycle).
+        // NOT `safe fn`: callee derefs `transpiler` as `&mut Transpiler<'_>` —
+        // caller must guarantee it is non-null, exclusively borrowed, and of
+        // that exact concrete type.
         fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> MacroContext;
+        // NOT `safe fn`: when non-null, `data` must be the exact `Box::into_raw`
+        // value produced by `__bun_macro_context_init` and uniquely owned
+        // (callee `Box::from_raw`s it → double-free / aliasing UB otherwise).
         fn __bun_macro_context_deinit(data: *mut core::ffi::c_void);
         // All args are safe Rust-ABI types (refs/slices/by-value); the only
         // raw pointer involved is `ctx.data`, which is a struct invariant
@@ -121,6 +127,10 @@ pub mod Macro {
             caller: bun_ast::Expr,
             function_name: &[u8],
         ) -> Result<bun_ast::Expr, bun_core::Error>;
+        // NOT `safe fn`: callee derefs `data` unconditionally as
+        // `&MacroContext` — caller must guarantee non-null + produced by
+        // `__bun_macro_context_init` + the backing `Transpiler.options` table
+        // outlives the returned `'static` borrow.
         fn __bun_macro_context_get_remap(
             data: *mut core::ffi::c_void,
             path: &[u8],

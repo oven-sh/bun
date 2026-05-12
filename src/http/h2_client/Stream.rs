@@ -87,8 +87,11 @@ impl Stream {
     /// See [`Self::client_mut`] for the lifetime invariant.
     #[inline]
     pub fn client_ref(&self) -> Option<&HTTPClient<'static>> {
-        // SAFETY: see [`Self::client_mut`] INVARIANT.
-        self.client.map(|c| unsafe { c.as_ref() })
+        // Same INVARIANT as `client_mut`; route through the shared
+        // `stream_client_mut` accessor (one centralised unsafe) and reborrow
+        // shared.
+        self.client
+            .map(|c| &*super::client_session::stream_client_mut(c))
     }
 }
 

@@ -58,15 +58,13 @@ impl Request {
     }
     pub fn url(&mut self) -> &[u8] {
         let mut p: *const u8 = ptr::null();
-        // SAFETY: self is a live FFI handle; out-ptr is a valid local
-        let n = unsafe { c::uws_h3_req_get_url(self, &raw mut p) };
+        let n = c::uws_h3_req_get_url(self, &mut p);
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { bun_core::ffi::slice(p, n) }
     }
     pub fn method(&mut self) -> &[u8] {
         let mut p: *const u8 = ptr::null();
-        // SAFETY: self is a live FFI handle; out-ptr is a valid local
-        let n = unsafe { c::uws_h3_req_get_method(self, &raw mut p) };
+        let n = c::uws_h3_req_get_method(self, &mut p);
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { bun_core::ffi::slice(p, n) }
     }
@@ -90,8 +88,7 @@ impl Request {
     }
     pub fn parameter(&mut self, idx: u16) -> &[u8] {
         let mut p: *const u8 = ptr::null();
-        // SAFETY: self is a live FFI handle; out-ptr is a valid local
-        let n = unsafe { c::uws_h3_req_get_parameter(self, idx, &raw mut p) };
+        let n = c::uws_h3_req_get_parameter(self, idx, &mut p);
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { bun_core::ffi::slice(p, n) }
     }
@@ -233,10 +230,7 @@ impl Response {
         let mut port: i32 = 0;
         let mut is_ipv6: bool = false;
         let mut ip_ptr: *const u8 = ptr::null();
-        // SAFETY: self is a live FFI handle; out-ptrs are valid locals
-        let len = unsafe {
-            c::uws_h3_res_get_remote_address_info(self, &raw mut ip_ptr, &raw mut port, &raw mut is_ipv6)
-        };
+        let len = c::uws_h3_res_get_remote_address_info(self, &mut ip_ptr, &mut port, &mut is_ipv6);
         if len == 0 {
             return None;
         }
@@ -679,17 +673,22 @@ mod c {
             ud: *mut c_void,
             cb: unsafe extern "C" fn(*mut c_void),
         );
-        pub fn uws_h3_res_get_remote_address_info(
-            res: *mut Response,
-            ip: *mut *const u8,
-            port: *mut i32,
-            is_ipv6: *mut bool,
+        // Out-params are `&mut` (non-null, valid for write); the C shim only
+        // stores into them and returns a length — no read-through precondition.
+        pub safe fn uws_h3_res_get_remote_address_info(
+            res: &mut Response,
+            ip: &mut *const u8,
+            port: &mut i32,
+            is_ipv6: &mut bool,
         ) -> usize;
 
         pub safe fn uws_h3_req_get_yield(req: &mut Request) -> bool;
         pub safe fn uws_h3_req_set_yield(req: &mut Request, y: bool);
-        pub fn uws_h3_req_get_url(req: *mut Request, out: *mut *const u8) -> usize;
-        pub fn uws_h3_req_get_method(req: *mut Request, out: *mut *const u8) -> usize;
+        // Out-param `out` is `&mut *const u8` (non-null, valid for write); the C
+        // shim only stores a pointer into request-owned storage and returns its
+        // length — no read-through precondition, so `safe fn`.
+        pub safe fn uws_h3_req_get_url(req: &mut Request, out: &mut *const u8) -> usize;
+        pub safe fn uws_h3_req_get_method(req: &mut Request, out: &mut *const u8) -> usize;
         pub fn uws_h3_req_get_header(
             req: *mut Request,
             name: *const u8,
@@ -702,7 +701,7 @@ mod c {
             len: usize,
             out: *mut *const u8,
         ) -> usize;
-        pub fn uws_h3_req_get_parameter(req: *mut Request, idx: u16, out: *mut *const u8) -> usize;
+        pub safe fn uws_h3_req_get_parameter(req: &mut Request, idx: u16, out: &mut *const u8) -> usize;
         pub fn uws_h3_req_for_each_header(req: *mut Request, cb: HeaderCb, ud: *mut c_void);
     }
 }

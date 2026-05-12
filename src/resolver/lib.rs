@@ -3018,6 +3018,10 @@ pub use ::bun_install_types::resolver_hooks::AutoInstaller as PackageManagerTrai
 // type-erased `*DotEnv.Loader` (lifetime-erased — the install crate stores it
 // as a raw `NonNull<Loader<'static>>`).
 unsafe extern "Rust" {
+    /// SAFETY (genuine FFI precondition — NOT a `safe fn` candidate): impl
+    /// reborrows `&mut *log` / `&mut *env` and reads `*install` if non-null.
+    /// All three must point at process-lifetime Transpiler-owned storage; the
+    /// returned `NonNull` names the `'static` `PackageManager` singleton.
     fn __bun_resolver_init_package_manager(
         log: *mut bun_ast::Log,
         install: *const (),
@@ -3111,7 +3115,7 @@ mod bun_paths {
         // across `&mut self` calls.
         let s = dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join_abs::<P>(cwd, part));
         // SAFETY: see PORT NOTE — slice borrows threadlocal storage, valid 'static per-thread.
-        unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
+        unsafe { bun_ptr::detach_lifetime(s) }
     }
     pub(super) fn join(parts: &[&[u8]], platform: Platform) -> &'static [u8] {
         dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join::<P>(parts))

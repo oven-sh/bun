@@ -189,15 +189,15 @@ pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject
         return;
     }
 
-    jsc_vm.plugin_runner = Some(PluginRunner {
+    // `Option::insert` returns `&mut PluginRunner` into the VM-owned slot;
+    // `plugin_runner` and `transpiler` are disjoint fields so the split borrow
+    // is fine. The slot is embedded in `*jsc_vm` and stable for the VM's
+    // lifetime, so taking a raw pointer into it for the linker BACKREF is sound.
+    let runner = jsc_vm.plugin_runner.insert(PluginRunner {
         global_object: bun_ptr::BackRef::new(global),
     });
-    // SAFETY: `plugin_runner` was just set to `Some` above; the `Option` slot
-    // is embedded in `*jsc_vm` and stable for the VM's lifetime, so taking a
-    // raw pointer into it for the linker BACKREF is sound.
-    jsc_vm.transpiler.linker.plugin_runner = Some(
-        std::ptr::from_mut::<dyn PluginResolver>(unsafe { jsc_vm.plugin_runner.as_mut().unwrap_unchecked() }),
-    );
+    jsc_vm.transpiler.linker.plugin_runner =
+        Some(std::ptr::from_mut::<dyn PluginResolver>(runner));
 }
 
 #[cfg(windows)]

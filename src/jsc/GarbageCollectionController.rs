@@ -115,10 +115,7 @@ impl GarbageCollectionController {
         // knobs (BUN_GC_TIMER_INTERVAL / BUN_GC_TIMER_DISABLE /
         // BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS) and the dot_env loader would
         // just be reading process env anyway.
-        // SAFETY: when non-null, `transpiler.env` is the process-global env
-        // loader allocated during VM construction; it outlives this controller
-        // and is read-only here.
-        let env = unsafe { vm.transpiler.env.as_ref() };
+        let env = vm.env_loader_opt();
 
         let mut gc_timer_interval: i32 = 1000;
         if let Some(timer) = env.and_then(|e| e.get(b"BUN_GC_TIMER_INTERVAL")) {

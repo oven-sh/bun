@@ -69,10 +69,14 @@ pub static _fltused: i32 = 0;
 ///
 /// MS x64 contract: bytes-to-probe in `rax`; must preserve all registers
 /// except `rax`/`r10`/`r11`; does NOT adjust `rsp` (caller subtracts after).
+///
+/// Safe fn: a naked function need not be marked otherwise — the single
+/// `naked_asm!` body is permitted in a safe naked fn, and the only caller is
+/// the compiler-inserted prologue probe (no Rust call sites to discharge).
 #[cfg(all(windows, target_arch = "x86_64"))]
 #[unsafe(no_mangle)]
 #[unsafe(naked)]
-pub unsafe extern "C" fn __chkstk() {
+pub extern "C" fn __chkstk() {
     // Verbatim: compiler_builtins `src/x86_64.rs` `___chkstk_ms` (the MS-x64
     // probe-only variant — same contract as MSVC `__chkstk`).
     core::arch::naked_asm!(
@@ -101,7 +105,7 @@ pub unsafe extern "C" fn __chkstk() {
 #[cfg(all(windows, target_arch = "aarch64"))]
 #[unsafe(no_mangle)]
 #[unsafe(naked)]
-pub unsafe extern "C" fn __chkstk() {
+pub extern "C" fn __chkstk() {
     // Verbatim: compiler_builtins `src/aarch64.rs` `__chkstk`.
     core::arch::naked_asm!(
         ".p2align 2",
@@ -134,8 +138,14 @@ pub extern "C" fn shim_main() -> ! {
 #[cfg(windows)]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
-    // SAFETY: RtlExitUserProcess never returns.
-    unsafe { bun_windows_sys::ntdll::RtlExitUserProcess(255) }
+    // Declared locally as `safe fn` (the `bun_windows_sys::ntdll` re-export
+    // is not yet `safe`-qualified): no memory-safety preconditions — by-value
+    // `u32`, diverges. Matches `ExitProcess`, already `safe fn` upstream.
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        safe fn RtlExitUserProcess(ExitStatus: u32) -> !;
+    }
+    RtlExitUserProcess(255)
 }
 
 // Non-Windows: the build system only ever builds this crate for

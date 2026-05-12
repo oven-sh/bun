@@ -13,8 +13,12 @@ pub fn fix_dead_code_elimination() {
 // C++ side declares `extern JSC_CALLCONV` (= SYSV_ABI on win-x64).
 bun_jsc::jsc_abi_extern! {
     #[allow(improper_ctypes)]
-    fn BakeResponse__createForSSR(
-        global_object: *mut JSGlobalObject,
+    // `&JSGlobalObject` discharges the only deref'd-param precondition;
+    // `this` is stored opaquely in the JS wrapper (module-private — sole
+    // caller is `to_js_for_ssr`, whose own signature carries the
+    // ownership-transfer contract).
+    safe fn BakeResponse__createForSSR(
+        global_object: &JSGlobalObject,
         this: *mut Response,
         kind: u8,
     ) -> JSValue;
@@ -42,9 +46,7 @@ pub enum SSRKind {
 pub unsafe fn to_js_for_ssr(this: *mut Response, global_object: &JSGlobalObject, kind: SSRKind) -> JSValue {
     // SAFETY: caller contract — `this` is a valid exclusive heap allocation.
     unsafe { &mut *this }.calculate_estimated_byte_size();
-    // SAFETY: `global_object` wraps `UnsafeCell`, so `as_mut_ptr()` yields a
-    // `*mut` with write provenance from `&self`; FFI adopts `this`.
-    unsafe { BakeResponse__createForSSR(global_object.as_mut_ptr(), this, kind as u8) }
+    BakeResponse__createForSSR(global_object, this, kind as u8)
 }
 
 // C++ side declares `extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES` (SYSV_ABI on win-x64).

@@ -1007,9 +1007,7 @@ impl PackageJSON {
         // and frees normally (Zig: `allocator.free(entry.contents)`), after
         // `json_source` is already dead. `Box<[u8]>` heap address is stable
         // across the move.
-        let contents_static: &'static [u8] = unsafe {
-            core::slice::from_raw_parts(entry_contents.as_ptr(), entry_contents.len())
-        };
+        let contents_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&entry_contents) };
         let json_source = bun_ast::Source::init_path_string(package_json_path, contents_static);
 
         let json: js_ast::Expr = match r.caches.json.parse_package_json(r_log, &json_source, true) {
@@ -1515,7 +1513,7 @@ impl PackageJSON {
                     if key.is_empty() { continue }
                     // SAFETY: `key`/`value` borrow `contents_static`; see SAFETY note
                     // on `contents_static` above (owned by the returned PackageJSON).
-                    let value: &'static [u8] = unsafe { core::slice::from_raw_parts(value.as_ptr(), value.len()) };
+                    let value: &'static [u8] = unsafe { bun_ptr::detach_lifetime(value) };
                     map.put_assume_capacity(key, value);
                 }
                 Some(Box::new(map))

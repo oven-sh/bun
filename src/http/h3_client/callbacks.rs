@@ -14,13 +14,35 @@ use bun_core::err;
 use bun_uws::quic;
 
 use super::client_context::ClientContext;
-use super::client_session::{stream_mut, stream_ref, ClientSession};
+use super::client_session::{session_mut, stream_mut, stream_ref, ClientSession};
 use super::encode;
 use super::stream::Stream;
 use crate::h3_client as H3;
 use bun_picohttp as picohttp;
 
 use crate::h3_client::h3_client;
+
+/// Upgrade an lsquic-supplied `*mut quic::Socket` callback argument to `&mut`.
+///
+/// INVARIANT (single point of unsafe): every `extern "C"` callback in this
+/// module receives a non-null `quic::Socket` pointer that lsquic guarantees
+/// live for the callback's duration; all callbacks run on the HTTP thread, so
+/// the `&mut` is the sole live borrow. Centralises the raw `&mut *qs`
+/// upgrade repeated at every callback entry.
+#[inline(always)]
+fn qsocket_arg<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket {
+    // SAFETY: see INVARIANT above.
+    unsafe { &mut *qs }
+}
+
+/// Upgrade an lsquic-supplied `*mut quic::Stream` callback argument to `&mut`.
+/// Same INVARIANT as [`qsocket_arg`] (lsquic-owned, live for the callback,
+/// HTTP-thread-only).
+#[inline(always)]
+fn qstream_arg<'a>(s: *mut quic::Stream) -> &'a mut quic::Stream {
+    // SAFETY: see [`qsocket_arg`] INVARIANT.
+    unsafe { &mut *s }
+}
 
 /// Recover the `ClientSession` from a `quic::Socket`'s ext slot.
 ///
@@ -32,9 +54,10 @@ use crate::h3_client::h3_client;
 /// the `&mut quic::Socket` the caller still holds.
 #[inline]
 fn session_of<'a>(qs: &mut quic::Socket) -> Option<&'a mut ClientSession> {
-    let nn = *qs.ext::<ClientSession>();
-    // SAFETY: see fn doc.
-    nn.map(|p| unsafe { &mut *p.as_ptr() })
+    // Route through `client_session::session_mut` (one centralised unsafe);
+    // the ext slot is `Option<NonNull<ClientSession>>` — exactly the
+    // backref-upgrade that accessor encapsulates.
+    (*qs.ext::<ClientSession>()).map(|p| session_mut(p.as_ptr()))
 }
 
 /// Recover the h3 `Stream` from a `quic::Stream`'s ext slot.
@@ -46,9 +69,9 @@ fn session_of<'a>(qs: &mut quic::Socket) -> Option<&'a mut ClientSession> {
 /// `&mut quic::Stream` nor any other live borrow.
 #[inline]
 fn stream_of<'a>(s: &mut quic::Stream) -> Option<&'a mut Stream> {
-    let nn = *s.ext::<Stream>();
-    // SAFETY: see fn doc.
-    nn.map(|p| unsafe { &mut *p.as_ptr() })
+    // Route through `client_session::stream_mut` (one centralised unsafe);
+    // the ext slot is `Option<NonNull<Stream>>` — same backref invariant.
+    (*s.ext::<Stream>()).map(|p| stream_mut(p.as_ptr()))
 }
 
 pub fn register(qctx: &mut quic::Context) {
@@ -63,8 +86,7 @@ pub fn register(qctx: &mut quic::Context) {
 }
 
 extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
-    // SAFETY: lsquic passes a live socket for the duration of the callback.
-    let qs = unsafe { &mut *qs };
+    let qs = qsocket_arg(qs);
     let Some(session) = session_of(qs) else { return };
     bun_core::scoped_log!(h3_client, "hsk_done ok={} pending={}", ok, session.pending.len());
     if ok == 0 {
@@ -83,8 +105,7 @@ extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
 /// draining period. Stay in the registry so abort/body-chunk lookups still
 /// reach in-flight streams; `on_conn_close` does the actual unregister/deref.
 extern "C" fn on_goaway(qs: *mut quic::Socket) {
-    // SAFETY: lsquic passes a live socket for the duration of the callback.
-    let qs = unsafe { &mut *qs };
+    let qs = qsocket_arg(qs);
     let Some(session) = session_of(qs) else { return };
     bun_core::scoped_log!(
         h3_client,
@@ -96,8 +117,7 @@ extern "C" fn on_goaway(qs: *mut quic::Socket) {
 }
 
 extern "C" fn on_conn_close(qs: *mut quic::Socket) {
-    // SAFETY: lsquic passes a live socket for the duration of the callback.
-    let qs = unsafe { &mut *qs };
+    let qs = qsocket_arg(qs);
     let Some(session) = session_of(qs) else { return };
     session.closed = true;
     session.qsocket = None;
@@ -132,16 +152,16 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
 }
 
 extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
-    // SAFETY: lsquic passes a live stream for the duration of the callback.
-    let s = unsafe { &mut *s };
+    let s = qstream_arg(s);
     *s.ext::<Stream>() = None;
     if is_client == 0 {
         return;
     }
-    let Some(mut qs) = s.socket() else { return };
-    // SAFETY: parent connection outlives this stream callback; single-threaded
-    // event loop, no other &mut Socket live across this reborrow.
-    let qs = unsafe { qs.as_mut() };
+    let Some(qs) = s.socket() else { return };
+    // Parent connection outlives this stream callback; single-threaded event
+    // loop, no other `&mut Socket` live across this reborrow — same invariant
+    // `qsocket_arg` encapsulates.
+    let qs = qsocket_arg(qs.as_ptr());
     let Some(session) = session_of(qs) else {
         s.close();
         return;
@@ -168,8 +188,7 @@ extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
 }
 
 extern "C" fn on_stream_headers(s: *mut quic::Stream) {
-    // SAFETY: lsquic passes a live stream for the duration of the callback.
-    let s = unsafe { &mut *s };
+    let s = qstream_arg(s);
     let Some(stream) = stream_of(s) else { return };
     let session = stream.session_mut();
     let n = s.header_count();
@@ -217,8 +236,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
 }
 
 extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint, fin: c_int) {
-    // SAFETY: lsquic passes a live stream for the duration of the callback.
-    let s = unsafe { &mut *s };
+    let s = qstream_arg(s);
     let Some(stream) = stream_of(s) else { return };
     // SAFETY: lsquic guarantees `data` points to `len` valid bytes (or `(null,0)`).
     let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
@@ -227,15 +245,13 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
 }
 
 extern "C" fn on_stream_writable(s: *mut quic::Stream) {
-    // SAFETY: lsquic passes a live stream for the duration of the callback.
-    let s = unsafe { &mut *s };
+    let s = qstream_arg(s);
     let Some(stream) = stream_of(s) else { return };
     encode::drain_send_body(stream, s);
 }
 
 extern "C" fn on_stream_close(s: *mut quic::Stream) {
-    // SAFETY: lsquic passes a live stream for the duration of the callback.
-    let s = unsafe { &mut *s };
+    let s = qstream_arg(s);
     let Some(stream) = stream_of(s) else { return };
     *s.ext::<Stream>() = None;
     stream.qstream = None;

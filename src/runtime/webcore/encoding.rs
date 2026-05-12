@@ -507,24 +507,24 @@ pub fn write_u8<const ENCODING: u8>(
                 return Ok(0);
             }
 
-            if (to_ptr as usize) % core::mem::align_of::<u16>() == 0 {
-                let buf = input_slice;
-
-                // SAFETY: alignment checked above; to_ptr[..to_len] valid.
-                let output =
-                    unsafe { slice::from_raw_parts_mut(to_ptr.cast::<u16>(), to_len / 2) };
+            let buf = input_slice;
+            let out_units = to_len / 2;
+            // `to_slice` already covers `to_ptr[..to_len]`; for the aligned fast
+            // path, `bytemuck` gives a safe `&mut [u8] → &mut [u16]` view (it
+            // re-checks alignment + even length, both proven here).
+            if (to_slice.as_ptr() as usize) % core::mem::align_of::<u16>() == 0 {
+                let output: &mut [u16] =
+                    bytemuck::cast_slice_mut(&mut to_slice[..out_units * 2]);
                 let written = strings::copy_latin1_into_utf16(output, buf).written as usize;
                 Ok(written * 2)
             } else {
-                let buf = input_slice;
                 // PORT NOTE: Zig used `[]align(1) u16` and a generic Buffer type. Rust
                 // `&mut [u16]` requires natural alignment, so inline the (trivial) widen
                 // loop with `write_unaligned` for the misaligned-dest case — matches
                 // `copyLatin1IntoUTF16` body 1:1 (each Latin-1 byte → one u16).
-                let out_units = to_len / 2;
                 let written = buf.len().min(out_units);
-                let output_ptr = to_ptr.cast::<u16>();
-                // SAFETY: to_ptr[..to_len] valid for `written * 2` bytes; unaligned stores.
+                let output_ptr = to_slice.as_mut_ptr().cast::<u16>();
+                // SAFETY: `to_slice` is valid for `written * 2` bytes; unaligned stores.
                 for i in 0..written {
                     unsafe { output_ptr.add(i).write_unaligned(buf[i] as u16) };
                 }

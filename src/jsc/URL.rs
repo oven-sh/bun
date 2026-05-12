@@ -2,7 +2,6 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use bun_core::String;
-use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
 
 // PORT NOTE: `jsc.markBinding(@src())` calls were dropped — debug-only binding-trace
@@ -20,8 +19,7 @@ bun_opaque::opaque_ffi! {
 // Getters take `&URL` (non-null `*const URL` at the C ABI; BunString.cpp never
 // mutates the WTF::URL on read). `&mut String` for the in/out params is
 // ABI-identical to non-null `*mut String`. `URL__deinit` consumes the C++
-// allocation and `URL__originLength` takes a (ptr,len) pair, so those keep
-// raw pointers and stay `unsafe fn`.
+// allocation, so it keeps a raw pointer and stays `unsafe fn`.
 unsafe extern "C" {
     safe fn URL__fromJS(value: JSValue, global: &JSGlobalObject) -> *mut URL;
     safe fn URL__fromString(input: &mut String) -> *mut URL;
@@ -42,8 +40,6 @@ unsafe extern "C" {
     safe fn URL__pathFromFileURL(input: &mut String) -> String;
     safe fn URL__hash(url: &URL) -> String;
     safe fn URL__fragmentIdentifier(url: &URL) -> String;
-
-    fn URL__originLength(latin1_slice: *const u8, len: usize) -> u32;
 }
 
 impl URL {
@@ -162,19 +158,6 @@ impl URL {
 
     pub fn pathname(&self) -> String {
         URL__pathname(self)
-    }
-
-    pub fn origin_from_slice(slice: &[u8]) -> Option<&[u8]> {
-        // a valid URL will not have ascii in the origin.
-        let first_non_ascii = strings::first_non_ascii(slice)
-            .map(|i| i as usize)
-            .unwrap_or(slice.len());
-        // SAFETY: ptr/len derived from a valid slice prefix
-        let len = unsafe { URL__originLength(slice[..first_non_ascii].as_ptr(), first_non_ascii) };
-        if len == 0 {
-            return None;
-        }
-        Some(&slice[..len as usize])
     }
 }
 

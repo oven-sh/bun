@@ -17,8 +17,7 @@
 use core::ffi::{c_int, c_ulong, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
 
-const NS_PER_S: u64 = 1_000_000_000;
-const NS_PER_US: u64 = 1_000;
+use bun_core::time::{NS_PER_S, NS_PER_US};
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum TimeoutError {

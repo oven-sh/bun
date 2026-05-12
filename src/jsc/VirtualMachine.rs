@@ -2699,22 +2699,17 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         {
             // Zig wrote into `buffer.list.items.ptr[len..capacity]` then bumped
             // `items.len`. `MutableString::list` is a `Vec<u8>`; mirror that with
-            // a spare-capacity write + `set_len`.
+            // a spare-capacity write + `commit_spare`.
             let buf = &mut printer.ctx.buffer.list;
-            let old_len = buf.len();
-            debug_assert!(buf.capacity() - old_len >= encode_len);
-            // SAFETY: capacity reserved by `grow_if_needed` above; `encode`
-            // writes exactly `wrote <= encode_len` initialized bytes into the
-            // spare region, and `set_len` only exposes the initialized prefix.
+            // SAFETY: `grow_if_needed` reserved ≥encode_len spare; encode writes
+            // `wrote<=encode_len` bytes.
             let wrote = unsafe {
-                let spare = bun_core::ffi::slice_mut(buf.as_mut_ptr().add(old_len), encode_len);
-                bun_base64::encode(spare, temp_json_buffer.list.as_slice())
+                bun_base64::encode(
+                    &mut bun_core::vec::spare_bytes_mut(buf)[..encode_len],
+                    temp_json_buffer.list.as_slice(),
+                )
             };
-            // PORT NOTE: Zig added `encode_len` unconditionally; the simdutf
-            // encoder returns the exact bytes written, so use that — same value
-            // for the standard alphabet (`encode_len` is the calc-size upper
-            // bound which equals the output for non-URL base64).
-            unsafe { buf.set_len(old_len + wrote) };
+            unsafe { bun_core::vec::commit_spare(buf, wrote) };
         }
         printer
             .ctx
@@ -5599,7 +5594,7 @@ impl VirtualMachine {
         }
         #[inline]
         fn count_digits(n: i32) -> u64 {
-            bun_core::fmt::count_int(i64::from(n)) as u64
+            bun_core::fmt::digit_count(n) as u64
         }
 
         // This is a longer number than necessary because we don't handle this

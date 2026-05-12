@@ -3,6 +3,7 @@ use core::mem;
 
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::OOM;
+use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for all 4 writers
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
@@ -342,6 +343,10 @@ impl<Parent: PosixBufferedWriterParent> PosixPipeWriter for PosixBufferedWriter<
     }
 }
 
+// SAFETY: writer is an intrusive field of `Parent`; `Parent::on_write`
+// re-entry writes `is_done`/`handle` but never frees it; single JS thread.
+unsafe impl<Parent: PosixBufferedWriterParent> bun_ptr::LaunderedSelf for PosixBufferedWriter<Parent> {}
+
 impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     /// Raw backref to the owning `Parent`. Returned as `*mut` (never `&mut`)
     /// because this writer is an intrusive field of `Parent` and a `&mut Parent`
@@ -374,25 +379,6 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     fn parent_on_error(&self, err: sys::Error) {
         // SAFETY: type invariant — set-once parent backref outlives writer.
         unsafe { Parent::on_error(self.parent(), err) }
-    }
-
-    /// Reborrow a PORT_NOTES_PLAN R-2 laundered self-pointer.
-    ///
-    /// `_on_write` launders `&mut self` through `black_box` because
-    /// `Parent::on_write` re-enters via a fresh `&mut Self` and writes
-    /// `is_done` / `handle`. Every such site previously open-coded
-    /// `unsafe { (*this).field }`. This accessor centralises that proof:
-    /// `this` always aliases a `&mut self` whose stack frame is still live;
-    /// the writer is an intrusive field of `Parent` and is never freed during
-    /// re-entry; single JS thread. Each short-lived `&mut Self` materialised
-    /// here is the sole live borrow at the point of use (the laundered raw
-    /// pointer carries no `noalias`, so the compiler may not cache across
-    /// re-entry). Mirrors [`SSLWrapper::r`](crate) in `bun_uws`.
-    #[inline(always)]
-    fn r<'a>(this: *mut Self) -> &'a mut Self {
-        debug_assert!(!this.is_null());
-        // SAFETY: see doc comment — R-2 laundered self-pointer invariant.
-        unsafe { &mut *this }
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -698,6 +684,9 @@ impl<Parent: PosixStreamingWriterParent> PosixPipeWriter for PosixStreamingWrite
     }
 }
 
+// SAFETY: see `PosixBufferedWriter`'s `LaunderedSelf` impl — identical shape.
+unsafe impl<Parent: PosixStreamingWriterParent> bun_ptr::LaunderedSelf for PosixStreamingWriter<Parent> {}
+
 impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     // TODO: configurable?
     // TODO(port): std.heap.page_size_min — pick correct const for target.
@@ -728,16 +717,6 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     fn parent_on_write(&self, amount: usize, status: WriteStatus) {
         // SAFETY: type invariant — set-once parent backref outlives writer.
         unsafe { Parent::on_write(self.parent(), amount, status) }
-    }
-
-    /// Reborrow a PORT_NOTES_PLAN R-2 laundered self-pointer. See
-    /// [`PosixBufferedWriter::r`] for the encapsulated invariant.
-    #[inline(always)]
-    fn r<'a>(this: *mut Self) -> &'a mut Self {
-        debug_assert!(!this.is_null());
-        // SAFETY: R-2 laundered self-pointer invariant — see
-        // `PosixBufferedWriter::r` doc comment.
-        unsafe { &mut *this }
     }
 
     pub fn get_force_sync(&self) -> bool {
@@ -1531,6 +1510,12 @@ impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBuffe
 }
 
 #[cfg(windows)]
+// SAFETY: libuv write-complete callbacks re-enter via `FileSink::on_write` →
+// JS → `writer.with_mut(|w| w.end())`; writer is intrusive in `Parent`, never
+// freed during the callback; single JS thread.
+unsafe impl<Parent: WindowsBufferedWriterParent> bun_ptr::LaunderedSelf for WindowsBufferedWriter<Parent> {}
+
+#[cfg(windows)]
 impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     /// Raw backref to the owning `Parent`. Returned as `*mut` (never `&mut`)
     /// because this writer is an intrusive field of `Parent` and a `&mut Parent`
@@ -1569,18 +1554,6 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         let parent = Self::r(this).parent;
         // SAFETY: type invariant — set-once parent backref outlives writer.
         unsafe { Parent::on_error(parent, err) }
-    }
-
-    /// Reborrow a PORT_NOTES_PLAN R-2 laundered self-pointer. See
-    /// [`PosixBufferedWriter::r`] for the encapsulated invariant; the Windows
-    /// libuv callbacks have the identical re-entry shape (`FileSink::on_write`
-    /// → JS → `writer.with_mut(|w| w.end())`).
-    #[inline(always)]
-    fn r<'a>(this: *mut Self) -> &'a mut Self {
-        debug_assert!(!this.is_null());
-        // SAFETY: R-2 laundered self-pointer invariant — see
-        // `PosixBufferedWriter::r` doc comment.
-        unsafe { &mut *this }
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -2044,6 +2017,10 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter
 }
 
 #[cfg(windows)]
+// SAFETY: see `WindowsBufferedWriter`'s `LaunderedSelf` impl — identical shape.
+unsafe impl<Parent: WindowsStreamingWriterParent> bun_ptr::LaunderedSelf for WindowsStreamingWriter<Parent> {}
+
+#[cfg(windows)]
 impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     /// Raw backref to the owning `Parent`. Returned as `*mut` (never `&mut`)
     /// because this writer is an intrusive field of `Parent` and a `&mut Parent`
@@ -2052,20 +2029,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     #[inline]
     fn parent(&self) -> *mut Parent {
         self.parent
-    }
-
-    /// Reborrow a PORT_NOTES_PLAN R-2 laundered self-pointer. See
-    /// [`PosixBufferedWriter::r`] for the encapsulated invariant; the Windows
-    /// streaming path has the identical re-entry shape (`FileSink::on_write` →
-    /// JS → `writer.with_mut(|w| w.end()/write(..))`). Each call yields a
-    /// fresh short-lived `&mut Self` that is the sole live borrow at the point
-    /// of use; do **not** hold the result across a `Parent::*` dispatch.
-    #[inline(always)]
-    fn r<'a>(this: *mut Self) -> &'a mut Self {
-        debug_assert!(!this.is_null());
-        // SAFETY: R-2 laundered self-pointer invariant — see
-        // `PosixBufferedWriter::r` doc comment.
-        unsafe { &mut *this }
     }
 
     /// Single nonnull-asref dispatch for the set-once `parent` backref,

@@ -29,30 +29,21 @@ impl Default for BuildMessage {
 impl BuildMessage {
     // `#[JsClass]` emits `BuildMessageClass__construct` calling this.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut BuildMessage> {
-        Err(global.throw(format_args!("BuildMessage is not constructable")))
+        Err(global.throw_illegal_constructor("BuildMessage"))
     }
 
     #[crate::host_fn(getter)]
     pub fn get_notes(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let notes = &self.msg.notes;
-        let array = JSValue::create_empty_array(global, notes.len())?;
-        for (i, note) in notes.iter().enumerate() {
-            let cloned = note.clone();
-            array.put_index(
+        JSValue::create_array_from_iter(global, self.msg.notes.iter(), |note| {
+            BuildMessage::create(
                 global,
-                u32::try_from(i).expect("int cast"),
-                BuildMessage::create(
-                    global,
-                    bun_ast::Msg {
-                        data: cloned,
-                        kind: bun_ast::Kind::Note,
-                        ..Default::default()
-                    },
-                )?,
-            )?;
-        }
-
-        Ok(array)
+                bun_ast::Msg {
+                    data: note.clone(),
+                    kind: bun_ast::Kind::Note,
+                    ..Default::default()
+                },
+            )
+        })
     }
 
     pub fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {

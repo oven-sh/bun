@@ -2019,15 +2019,8 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                 let result = match decode_ipc_message(Mode::Advanced, slice, &global_this, None) {
                     Ok(r) => r,
                     Err(IPCDecodeError::NotEnoughBytes) => {
-                        let slice_len = slice.len();
                         // copy the remaining bytes to the start of the buffer
-                        // SAFETY: src/dst may overlap; use ptr::copy (memmove).
-                        unsafe {
-                            let base = adv_buf.as_mut_ptr();
-                            core::ptr::copy(base.add(slice_start), base, slice_len);
-                        }
-                        debug_assert!(slice_len <= u32::MAX as usize);
-                        unsafe { adv_buf.set_len(slice_len) };
+                        adv_buf.drain_front(slice_start);
                         log!("hit NotEnoughBytes2");
                         return;
                     }
@@ -2257,16 +2250,10 @@ pub mod IPCHandlers {
                             match decode_ipc_message(Mode::Advanced, slice, &global_this, None) {
                                 Ok(r) => r,
                                 Err(IPCDecodeError::NotEnoughBytes) => {
-                                    let slice_len = slice.len();
                                     // copy the remaining bytes to the start of the buffer
-                                    // SAFETY: src/dst may overlap; ptr::copy is memmove.
-                                    unsafe {
-                                        let base = adv_buf.as_mut_ptr();
-                                        core::ptr::copy(base.add(slice_start), base, slice_len);
-                                    }
-                                    // slice.len is guaranteed <= adv_buf.len (u32) since it's derived from adv_buf.slice()
-                                    debug_assert!(slice_len <= u32::MAX as usize);
-                                    unsafe { adv_buf.set_len(slice_len) };
+                                    // `total_len == adv_buf.len()` (captured post-uv_commit, never
+                                    // grown in this loop) ⇒ exact `len - slice_start` truncate.
+                                    adv_buf.drain_front(slice_start);
                                     log!("hit NotEnoughBytes3");
                                     return;
                                 }

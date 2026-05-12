@@ -16,30 +16,26 @@ pub struct WorkPool;
 /// contract so call sites need only assert "scheduled via this field".
 ///
 /// # Safety
-/// `TASK_OFFSET` MUST equal `core::mem::offset_of!(Self, <task field>)` and
-/// [`task_mut`](IntrusiveWorkTask::task_mut) MUST return a borrow of that
-/// same field. [`from_task_ptr`](IntrusiveWorkTask::from_task_ptr) casts
-/// through the offset; a mismatch is UB.
-pub unsafe trait IntrusiveWorkTask: Sized {
-    /// `core::mem::offset_of!(Self, task)`.
-    const TASK_OFFSET: usize;
-
+/// Inherited from [`bun_core::IntrusiveField<Task>`]: `OFFSET` MUST equal
+/// `core::mem::offset_of!(Self, <task field>)`.
+pub unsafe trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
     /// Safe accessor for the intrusive `task: Task` field
     /// (`&mut self.task`); [`WorkPool::schedule_owned`] uses this to install
     /// the callback without raw byte-offset arithmetic.
-    fn task_mut(&mut self) -> &mut Task;
+    #[inline]
+    fn task_mut(&mut self) -> &mut Task {
+        self.field_mut()
+    }
 
-    /// Recover `*mut Self` from a `*mut Task` pointing at `self.task` — the
-    /// single canonical `container_of` for every work-pool trampoline.
+    /// Back-compat alias for [`bun_core::IntrusiveField::from_field_ptr`].
     ///
     /// # Safety
-    /// `task` must point to the [`Task`] field at `Self::TASK_OFFSET` inside a
-    /// live `Self` allocation that was scheduled via that field, and the
-    /// pointer's provenance must cover the whole allocation.
+    /// `task` must point to the [`Task`] field embedded in a live `Self`
+    /// allocation, with provenance covering the whole allocation.
     #[inline(always)]
     unsafe fn from_task_ptr(task: *mut Task) -> *mut Self {
         // SAFETY: caller upholds the trait safety contract above.
-        unsafe { bun_core::container_of::<Self, _>(task, Self::TASK_OFFSET) }
+        unsafe { Self::from_field_ptr(task) }
     }
 }
 
@@ -73,9 +69,9 @@ pub unsafe trait OwnedTask: IntrusiveWorkTask + Send + 'static {
 }
 
 /// Implements [`IntrusiveWorkTask`] for a struct that embeds an intrusive
-/// `task: Task` field. Expands to the `TASK_OFFSET` constant and the
-/// `task_mut` accessor; brings [`IntrusiveWorkTask::from_task_ptr`] into
-/// scope for the type's `fn(*mut Task)` trampolines.
+/// `task: Task` field. Expands to [`bun_core::intrusive_field!`] + a marker
+/// impl; brings [`IntrusiveWorkTask::from_task_ptr`] into scope for the
+/// type's `fn(*mut Task)` trampolines.
 ///
 /// ```ignore
 /// intrusive_work_task!(ReadFile, task);
@@ -88,20 +84,14 @@ macro_rules! intrusive_work_task {
     // plain-type arm so the `:ty` fragment below never sees a `<const ..>`
     // and hard-errors.
     ([$($gen:tt)*] $ty:ty, $field:ident) => {
-        // SAFETY: `TASK_OFFSET`/`task_mut` agree — `$field` is the intrusive `Task`.
-        unsafe impl<$($gen)*> $crate::work_pool::IntrusiveWorkTask for $ty {
-            const TASK_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
-            #[inline]
-            fn task_mut(&mut self) -> &mut $crate::work_pool::Task { &mut self.$field }
-        }
+        ::bun_core::intrusive_field!([$($gen)*] $ty, $field: $crate::work_pool::Task);
+        // SAFETY: `IntrusiveField<Task>` impl above supplies the offset/field.
+        unsafe impl<$($gen)*> $crate::work_pool::IntrusiveWorkTask for $ty {}
     };
     ($ty:ty, $field:ident) => {
-        // SAFETY: `TASK_OFFSET`/`task_mut` agree — `$field` is the intrusive `Task`.
-        unsafe impl $crate::work_pool::IntrusiveWorkTask for $ty {
-            const TASK_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
-            #[inline]
-            fn task_mut(&mut self) -> &mut $crate::work_pool::Task { &mut self.$field }
-        }
+        ::bun_core::intrusive_field!($ty, $field: $crate::work_pool::Task);
+        // SAFETY: `IntrusiveField<Task>` impl above supplies the offset/field.
+        unsafe impl $crate::work_pool::IntrusiveWorkTask for $ty {}
     };
 }
 
@@ -183,8 +173,8 @@ impl WorkPool {
         // allocation and there is exactly one raw-pointer derivation.
         let raw = Box::into_raw(task);
         // SAFETY: `raw` is a live heap allocation now owned by the pool;
-        // `TASK_OFFSET` is the trait-contract offset of a `Task` field.
-        Self::schedule(unsafe { raw.cast::<u8>().add(T::TASK_OFFSET).cast::<Task>() });
+        // `IntrusiveField::field_of` projects to the embedded `Task`.
+        Self::schedule(unsafe { T::field_of(raw) });
     }
 
     /// `Box::new` + [`schedule_owned`](Self::schedule_owned). Convenience for

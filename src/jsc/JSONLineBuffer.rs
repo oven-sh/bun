@@ -65,11 +65,7 @@ impl JSONLineBuffer {
         if self.head == 0 {
             return;
         }
-        let head = self.head as usize;
-        let active_len = self.data.len() - head;
-        self.data.copy_within(head.., 0);
-        debug_assert!((active_len as u64) <= u32::MAX as u64);
-        self.data.truncate(active_len);
+        self.data.drain_front(self.head as usize);
         self.head = 0;
     }
 

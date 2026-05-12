@@ -1169,6 +1169,94 @@ impl Request {
     }
 }
 
+// ─── Intrusive io_request → parent recovery ──────────────────────────────────
+// Mirrors `bun_threading::IntrusiveWorkTask`/`intrusive_work_task!`
+// (work_pool.rs:23) — same const-offset + provided `container_of` shape — so
+// `ReadFile`/`WriteFile` use one idiom for BOTH their intrusive fields (`task`
+// and `io_request`).
+
+/// A type that embeds an intrusive `io_request: `[`Request`] field. Declares the
+/// byte offset once and provides the canonical container-of recovery used by
+/// every `fn(&mut Request) -> Action` io-loop trampoline (the Rust equivalent of
+/// Zig's per-site `@fieldParentPtr("io_request", req)`).
+///
+/// Implement via [`intrusive_io_request!`].
+///
+/// # Safety
+/// `IO_REQUEST_OFFSET` MUST equal `core::mem::offset_of!(Self, <io_request
+/// field>)`. [`from_io_request`](IntrusiveIoRequest::from_io_request) casts
+/// through the offset; a mismatch is UB.
+pub unsafe trait IntrusiveIoRequest: Sized {
+    /// `core::mem::offset_of!(Self, io_request)`.
+    const IO_REQUEST_OFFSET: usize;
+
+    /// Recover `*mut Self` from a `*mut Request` pointing at `self.io_request`
+    /// — the single canonical `container_of` for every io-loop trampoline.
+    ///
+    /// # Safety
+    /// `req` must point to the [`Request`] field at `Self::IO_REQUEST_OFFSET`
+    /// inside a live `Self` allocation that was scheduled via that field, and
+    /// the pointer's provenance must cover the whole allocation.
+    #[inline(always)]
+    unsafe fn from_io_request(req: *mut Request) -> *mut Self {
+        // SAFETY: caller upholds the trait safety contract above.
+        unsafe { bun_core::container_of::<Self, _>(req, Self::IO_REQUEST_OFFSET) }
+    }
+}
+
+/// Implements [`IntrusiveIoRequest`] for a struct that embeds an intrusive
+/// `io_request: `[`Request`] field. Brings
+/// [`IntrusiveIoRequest::from_io_request`] into scope for the type's
+/// `fn(&mut Request) -> Action` trampolines.
+#[macro_export]
+macro_rules! intrusive_io_request {
+    ($ty:ty, $field:ident) => {
+        // SAFETY: `IO_REQUEST_OFFSET` is `offset_of!($ty, $field)`.
+        unsafe impl $crate::IntrusiveIoRequest for $ty {
+            const IO_REQUEST_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
+        }
+    };
+}
+
+/// Windows analogue of [`IntrusiveIoRequest`] for types that embed an
+/// intrusive `io_request: uv::fs_t` and recover the parent in
+/// `extern "C" fn(*mut uv::fs_t)` libuv callbacks.
+///
+/// Implement via [`intrusive_uv_fs!`].
+///
+/// # Safety
+/// `UV_FS_OFFSET` MUST equal `core::mem::offset_of!(Self, <io_request field>)`.
+#[cfg(windows)]
+pub unsafe trait IntrusiveUvFs: Sized {
+    /// `core::mem::offset_of!(Self, io_request)`.
+    const UV_FS_OFFSET: usize;
+
+    /// Recover `*mut Self` from the `*mut uv::fs_t` libuv passes back.
+    ///
+    /// # Safety
+    /// `req` must point to the `fs_t` field at `Self::UV_FS_OFFSET` inside a
+    /// live `Self` allocation, and the pointer's provenance must cover the
+    /// whole allocation.
+    #[inline(always)]
+    unsafe fn from_uv_fs(req: *mut bun_sys::windows::libuv::fs_t) -> *mut Self {
+        // SAFETY: caller upholds the trait safety contract above.
+        unsafe { bun_core::container_of::<Self, _>(req, Self::UV_FS_OFFSET) }
+    }
+}
+
+/// Implements [`IntrusiveUvFs`] for a struct that embeds an intrusive
+/// `io_request: uv::fs_t` field.
+#[cfg(windows)]
+#[macro_export]
+macro_rules! intrusive_uv_fs {
+    ($ty:ty, $field:ident) => {
+        // SAFETY: `UV_FS_OFFSET` is `offset_of!($ty, $field)`.
+        unsafe impl $crate::IntrusiveUvFs for $ty {
+            const UV_FS_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
+        }
+    };
+}
+
 impl Default for Request {
     fn default() -> Self {
         // TODO(port): Zig had `next: ?*Request = null, scheduled: bool = false` defaults
@@ -2214,12 +2302,16 @@ pub mod closer {
     use bun_sys::windows::libuv as uv;
     #[cfg(windows)]
     use core::ffi::c_void;
+    #[cfg(windows)]
+    use crate::IntrusiveUvFs as _;
 
     #[cfg(windows)]
     #[repr(C)]
     pub struct Closer {
         io_request: uv::fs_t,
     }
+    #[cfg(windows)]
+    crate::intrusive_uv_fs!(Closer, io_request);
 
     #[cfg(windows)]
     impl Closer {
@@ -2245,9 +2337,8 @@ pub mod closer {
         }
 
         extern "C" fn on_close(req: *mut uv::fs_t) {
-            // SAFETY: req points to Closer.io_request (set in `close` above);
-            // recover the parent via offset_of.
-            let closer: *mut Closer = unsafe { bun_core::from_field_ptr!(Closer, io_request, req) };
+            // SAFETY: req points to Closer.io_request (set in `close` above).
+            let closer: *mut Closer = unsafe { Closer::from_uv_fs(req) };
             // SAFETY: req.data was set to `closer` in `close`; both valid for the callback.
             unsafe {
                 debug_assert!(closer == (*req).data.cast::<Closer>());

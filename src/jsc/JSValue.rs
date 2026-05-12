@@ -545,6 +545,35 @@ impl JSValue {
         // Zig: `fromJSHostCall` (== `call_zero_is_throw`).
         crate::call_zero_is_throw(global, || JSC__JSValue__createEmptyArray(global, len))
     }
+    /// Replaces the hand-stamped `create_empty_array` + `enumerate` +
+    /// `put_index` loop. `iter` must be `ExactSizeIterator` so the array is
+    /// pre-sized; `f` maps each item to a `JsResult<JSValue>` (early-returns on
+    /// throw, leaving the partially-filled array unreferenced for GC). Index is
+    /// truncated to `u32` — `JSArray` indices are 32-bit and
+    /// `create_empty_array` would already have thrown for `len > u32::MAX`,
+    /// so the cast is a no-op for every reachable caller.
+    #[track_caller]
+    pub fn create_array_from_iter<I, T, F>(
+        global: &JSGlobalObject,
+        iter: I,
+        mut f: F,
+    ) -> JsResult<JSValue>
+    where
+        I: ExactSizeIterator<Item = T>,
+        F: FnMut(T) -> JsResult<JSValue>,
+    {
+        let array = Self::create_empty_array(global, iter.len())?;
+        for (i, item) in iter.enumerate() {
+            array.put_index(global, i as u32, f(item)?)?;
+        }
+        Ok(array)
+    }
+    /// [`create_array_from_iter`](Self::create_array_from_iter) specialised
+    /// for an already-materialised `&[JSValue]` (no per-element map).
+    #[track_caller]
+    pub fn create_array_from_slice(global: &JSGlobalObject, items: &[JSValue]) -> JsResult<JSValue> {
+        Self::create_array_from_iter(global, items.iter().copied(), Ok)
+    }
     /// `JSValue.createBufferFromLength` (JSValue.zig:557) — allocates a Node.js
     /// `Buffer` (the `JSBufferSubclassStructure` Uint8Array subclass) of `len`
     /// zeroed bytes via `JSBuffer__bufferFromLength`. May throw OOM.

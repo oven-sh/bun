@@ -59,12 +59,8 @@ impl UUID {
 
         // PERF(port): was `inline for` (comptime unroll) — profile in Phase B
         for (j, &i) in ENCODED_POS.iter().enumerate() {
-            let hi = HEX_TO_NIBBLE[buf[i as usize + 0] as usize];
-            let lo = HEX_TO_NIBBLE[buf[i as usize + 1] as usize];
-            if hi == 0xff || lo == 0xff {
-                return Err(UuidError::InvalidUUID);
-            }
-            uuid.bytes[j] = (hi << 4) | lo;
+            uuid.bytes[j] = bun_core::fmt::hex_pair_value(buf[i as usize], buf[i as usize + 1])
+                .ok_or(UuidError::InvalidUUID)?;
         }
 
         Ok(uuid)
@@ -81,8 +77,6 @@ impl UUID {
 
 // Indices in the UUID string representation for each byte.
 const ENCODED_POS: [u8; 16] = [0, 2, 4, 6, 9, 11, 14, 16, 19, 21, 24, 26, 28, 30, 32, 34];
-
-use bun_core::fmt::HEX_DECODE_TABLE as HEX_TO_NIBBLE;
 
 impl fmt::Display for UUID {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

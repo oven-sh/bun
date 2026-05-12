@@ -41,10 +41,8 @@ expect.extend({
   },
 });
 
-beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
-  dummyBeforeAll();
-});
+setDefaultTimeout(1000 * 60 * 5);
+beforeAll(dummyBeforeAll);
 
 afterAll(dummyAfterAll);
 

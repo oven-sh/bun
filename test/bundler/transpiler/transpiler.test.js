@@ -3206,9 +3206,9 @@ console.log(foo, array);
 
   it("raw template literal preserves non-ASCII bytes verbatim", () => {
     // `TemplateStringsArray.raw` is spec-required to surface the source
-    // bytes verbatim. The printer previously escaped codepoints > 0x7F to
-    // `\uXXXX`, which silently changed the runtime string value that
-    // `String.raw` reads. See #30563.
+    // bytes verbatim. The printer previously replaced codepoints > 0x7F
+    // with unicode escape sequences, which silently changed the runtime
+    // string value that `String.raw` reads. See #30563.
     expectPrinted("String.raw`╭─╮`", "String.raw`╭─╮`");
     expectPrinted("String.raw`你好世界`", "String.raw`你好世界`");
     expectPrinted("String.raw`Redémarrage`", "String.raw`Redémarrage`");

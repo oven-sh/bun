@@ -1992,8 +1992,9 @@ fn NewPrinter(
         fn printRawTemplateLiteral(p: *Printer, bytes: []const u8) void {
             // The `.raw` portion of a tagged template literal (surfaced as
             // `TemplateStringsArray.raw`, which `String.raw` reads) must
-            // round-trip the source bytes verbatim. Escaping codepoints > 0x7F
-            // to `\uXXXX` would silently change the runtime string value.
+            // round-trip the source bytes verbatim. Replacing codepoints
+            // > 0x7F with unicode escape sequences would silently change
+            // the runtime string value.
             p.print(bytes);
         }
 
@@ -3202,8 +3203,8 @@ fn NewPrinter(
             }
 
             // `RegExp.prototype.source` must round-trip the source bytes
-            // verbatim. Escaping codepoints > 0x7F to `\uXXXX` would change
-            // what `.source` returns at runtime.
+            // verbatim. Replacing codepoints > 0x7F with unicode escape
+            // sequences would change what `.source` returns at runtime.
             p.print(e.value);
 
             // Need a space before the next identifier to avoid it turning into flags

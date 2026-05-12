@@ -3,9 +3,9 @@ import { bunEnv, bunExe, tempDir } from "harness";
 
 // The `.raw` portion of a tagged template literal and `RegExp.prototype.source`
 // must surface the source bytes verbatim. Bun's printer previously escaped
-// codepoints > 0x7F to `\uXXXX` and the module loader cloned the resulting
-// bytes as Latin-1 — between them, non-ASCII input became mojibake at
-// runtime. See #30563.
+// codepoints > 0x7F as unicode escape sequences and the module loader cloned
+// the resulting bytes as Latin-1 — between them, non-ASCII input became
+// mojibake at runtime. See #30563.
 
 describe("issue #30563 — String.raw and RegExp.source preserve non-ASCII", () => {
   test("String.raw returns the exact source bytes of `╭─╮`", async () => {

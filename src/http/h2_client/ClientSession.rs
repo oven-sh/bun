@@ -593,19 +593,18 @@ impl ClientSession {
     }
 
     pub fn flush(&mut self) -> Result<bool, Error> {
-        let pending = self.write_buffer.slice();
+        // PORT NOTE: reshaped for borrowck — capture as `bun_ptr::RawSlice`
+        // (encapsulated outlives-holder invariant) so the loop can borrow
+        // `self.socket` while still subslicing `write_buffer`. The buffer is
+        // not reallocated until `wrote()` after the loop.
+        let pending = bun_ptr::RawSlice::new(self.write_buffer.slice());
         if pending.is_empty() {
             return Ok(false);
         }
-        // PORT NOTE: reshaped for borrowck — write to socket via raw ptr/len so
-        // we can mutate write_buffer cursor afterward.
-        let base = pending.as_ptr();
         let len = pending.len();
         let mut total: usize = 0;
         while total < len {
-            // SAFETY: base[total..len] is a subslice of write_buffer.slice().
-            let chunk = unsafe { bun_core::ffi::slice(base.add(total), len - total) };
-            let wrote = self.socket.write(chunk);
+            let wrote = self.socket.write(&pending.slice()[total..]);
             if wrote < 0 {
                 return Err(err!(WriteFailed));
             }
@@ -637,12 +636,13 @@ impl ClientSession {
             }
         } else {
             self.read_buffer.extend_from_slice(incoming);
-            // PORT NOTE: reshaped for borrowck — pass raw slice; parse_frames must not retain it.
-            // SAFETY: read_buffer is not reallocated during parse_frames (only consumed).
-            let buf = unsafe {
-                bun_core::ffi::slice(self.read_buffer.as_ptr(), self.read_buffer.len())
-            };
-            let consumed = dispatch::parse_frames(self, buf);
+            // PORT NOTE: reshaped for borrowck — `parse_frames` takes
+            // `&mut self` plus a view into `self.read_buffer`. Capture as
+            // `bun_ptr::RawSlice`: read_buffer is not reallocated during
+            // parse_frames (only consumed), so the outlives-holder invariant
+            // holds for the call.
+            let buf = bun_ptr::RawSlice::new(self.read_buffer.as_slice());
+            let consumed = dispatch::parse_frames(self, buf.slice());
             let tail = self.read_buffer.len() - consumed;
             if tail > 0 && consumed > 0 {
                 self.read_buffer.copy_within(consumed.., 0);
@@ -740,11 +740,10 @@ impl ClientSession {
     /// PING/SETTINGS, records GOAWAY, discards anything stream-addressed.
     pub fn on_idle_data(&mut self, incoming: &[u8]) {
         self.read_buffer.extend_from_slice(incoming);
-        // SAFETY: see on_data note.
-        let buf = unsafe {
-            bun_core::ffi::slice(self.read_buffer.as_ptr(), self.read_buffer.len())
-        };
-        let consumed = dispatch::parse_frames(self, buf);
+        // See on_data note — `RawSlice` carries the outlives-holder invariant
+        // (read_buffer is not reallocated during parse_frames).
+        let buf = bun_ptr::RawSlice::new(self.read_buffer.as_slice());
+        let consumed = dispatch::parse_frames(self, buf.slice());
         let tail = self.read_buffer.len() - consumed;
         if tail > 0 && consumed > 0 {
             self.read_buffer.copy_within(consumed.., 0);

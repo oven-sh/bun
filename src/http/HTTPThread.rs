@@ -374,14 +374,14 @@ impl HttpThread {
     ) -> Result<Option<crate::HTTPSocket<IS_SSL>>, bun_core::Error>
     // TODO(port): narrow error set
     {
-        let unix_path = client.unix_socket_path.slice();
+        // PORT NOTE: borrowck — `slice()` borrows `client`; capture into a
+        // `bun_ptr::RawSlice` (encapsulated outlives-holder invariant) so the
+        // borrow of `client` ends before we hand `&mut client` to
+        // `connect_socket`. Backing storage is `client.unix_socket_path`, which
+        // `connect_socket` does not touch.
+        let unix_path = bun_ptr::RawSlice::new(client.unix_socket_path.slice());
         if !unix_path.is_empty() {
-            // PORT NOTE: borrowck — slice() borrows `client`; copy out the
-            // pointer/len before passing &mut client.
-            // SAFETY: unix_socket_path borrows storage that outlives this call.
-            let path: &[u8] =
-                unsafe { bun_core::ffi::slice(unix_path.as_ptr(), unix_path.len()) };
-            return self.context::<IS_SSL>().connect_socket(client, path);
+            return self.context::<IS_SSL>().connect_socket(client, unix_path.slice());
         }
 
         if IS_SSL {

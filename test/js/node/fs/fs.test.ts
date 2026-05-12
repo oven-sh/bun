@@ -1652,6 +1652,34 @@ it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => 
   expect(realpathSync(linkPath)).toBe(self);
 });
 
+// src/sys/sys.zig getFdPath has an exhaustive per-OS switch: .windows
+// (GetFinalPathNameByHandle), .mac (F_GETPATH), .linux (/proc/self/fd, also
+// covers Android), .freebsd (fcntl F_KINFO + struct_kinfo_file). On every
+// non-Windows target Bun ships, fd→path resolution is implemented — there is
+// no platform that falls through to ENOSYS. realpathSync on POSIX is
+// open() → getFdPath(fd), so an ENOSYS here means the per-OS arm is missing.
+it.skipIf(isWindows)("realpathSync (getFdPath) is implemented on every POSIX target — never ENOSYS", () => {
+  using dir = tempDir("fs-getfdpath-platform-arm", { "probe.txt": "x" });
+  const probe = join(String(dir), "probe.txt");
+
+  let resolved: string;
+  try {
+    resolved = realpathSync(probe);
+  } catch (e: any) {
+    // The Zig spec never returns ENOSYS from getFdPath: every Environment.os
+    // value has a real implementation. If this fires, a target (FreeBSD's
+    // F_KINFO arm, or Android via the .linux /proc/self/fd arm) was dropped.
+    expect(e?.code).not.toBe("ENOSYS");
+    expect(e?.errno).not.toBe(-os.constants.errno.ENOSYS);
+    throw e;
+  }
+
+  expect(resolved).toStartWith("/");
+  expect(readFileSync(resolved, "utf8")).toBe("x");
+  // Idempotent: resolving the canonical path returns itself.
+  expect(realpathSync(resolved)).toBe(resolved);
+});
+
 it("readlink", () => {
   const actual = join(tmpdirSync(), "fs-readlink.txt");
   try {

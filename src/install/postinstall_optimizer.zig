@@ -4,6 +4,7 @@ pub const PostinstallOptimizer = enum {
 
     const default_native_binlinks_name_hashes = &[_]PackageNameHash{
         Semver.String.Builder.stringHash("esbuild"),
+        Semver.String.Builder.stringHash("@anthropic-ai/claude-code"),
     };
 
     const DefaultIgnore = struct {

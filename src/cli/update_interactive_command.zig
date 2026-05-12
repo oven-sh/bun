@@ -1068,7 +1068,7 @@ pub const UpdateInteractiveCommand = struct {
             }) catch null;
 
         if (Environment.isPosix)
-            _ = Bun__ttySetMode(0, 1);
+            _ = bun.tty.setMode(0, .raw);
 
         defer {
             if (comptime Environment.isWindows) {
@@ -1080,7 +1080,7 @@ pub const UpdateInteractiveCommand = struct {
                 }
             }
             if (Environment.isPosix) {
-                _ = Bun__ttySetMode(0, 0);
+                _ = bun.tty.setMode(0, .normal);
             }
         }
 
@@ -1662,6 +1662,13 @@ pub const UpdateInteractiveCommand = struct {
                 },
                 'a', 'A' => {
                     @memset(state.selected, true);
+                    // For packages where current == update version, auto-set use_latest
+                    // so they get updated to the latest version (matching spacebar behavior)
+                    for (state.packages) |*pkg| {
+                        if (strings.eql(pkg.current_version, pkg.update_version)) {
+                            pkg.use_latest = true;
+                        }
+                    }
                     state.toggle_all = true; // Mark that 'a' was used
                 },
                 'n', 'N' => {
@@ -1810,9 +1817,6 @@ pub const UpdateInteractiveCommand = struct {
         }
     }
 };
-
-extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
-
 const string = []const u8;
 
 pub const CatalogUpdateRequest = struct {

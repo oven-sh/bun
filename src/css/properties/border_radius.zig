@@ -236,8 +236,8 @@ pub const BorderRadiusHandler = struct {
                     .unparsed => |unparsed| {
                         ctx.addLogicalRule(
                             ctx.allocator,
-                            Property{ .unparsed = unparsed.withPropertyId(ctx.allocator, .{ .@"border-top-left-radius" = prefix }) },
-                            Property{ .unparsed = unparsed.withPropertyId(ctx.allocator, .{ .@"border-top-right-radius" = prefix }) },
+                            Property{ .unparsed = unparsed.withPropertyId(ctx.allocator, @unionInit(css.PropertyId, ltr, prefix)) },
+                            Property{ .unparsed = unparsed.withPropertyId(ctx.allocator, @unionInit(css.PropertyId, rtl, prefix)) },
                         );
                     },
                     else => {},

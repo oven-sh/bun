@@ -4,6 +4,8 @@ import { decodeFrames, encodeCloseFrame, encodeTextFrame, upgradeHeaders } from 
 describe("fetch upgrade", () => {
   test("should upgrade to websocket", async () => {
     const serverMessages: string[] = [];
+    const serverClosed = Promise.withResolvers<void>();
+
     using server = Bun.serve({
       port: 0,
       fetch(req) {
@@ -19,6 +21,7 @@ describe("fetch upgrade", () => {
         },
         close(ws) {
           serverMessages.push("close");
+          serverClosed.resolve();
         },
       },
     });
@@ -38,25 +41,30 @@ describe("fetch upgrade", () => {
     expect(res.headers.get("connection")).toBe("Upgrade");
 
     const clientMessages: string[] = [];
-    const { promise, resolve } = Promise.withResolvers<void>();
     const reader = res.body!.getReader();
+    let buffered = Buffer.alloc(0);
+    let gotClose = false;
 
-    while (true) {
+    while (!gotClose) {
       const { value, done } = await reader.read();
       if (done) break;
-      for (const msg of decodeFrames(Buffer.from(value))) {
+      buffered = Buffer.concat([buffered, Buffer.from(value)]);
+      const { messages, remaining } = decodeFrames(buffered);
+      buffered = remaining;
+      for (const msg of messages) {
         if (typeof msg === "string") {
           clientMessages.push(msg);
         } else {
           clientMessages.push(msg.type);
-        }
-
-        if (msg.type === "close") {
-          resolve();
+          if (msg.type === "close") {
+            gotClose = true;
+          }
         }
       }
     }
-    await promise;
+
+    await serverClosed.promise;
+
     expect(serverMessages).toEqual(["hello", "world", "bye", "close"]);
     expect(clientMessages).toEqual(["Hello World", "close"]);
   });

@@ -5922,7 +5922,7 @@ const TokenKind = enum {
 
     whitespace,
 
-    /// `<!---`
+    /// `<!--`
     cdo,
 
     /// `-->`
@@ -6070,7 +6070,7 @@ pub const Token = union(TokenKind) {
 
     whitespace: []const u8,
 
-    /// `<!---`
+    /// `<!--`
     cdo,
 
     /// `-->`

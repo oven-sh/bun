@@ -504,6 +504,11 @@ namespace uWS
             return ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) || c == '-';
         }
 
+        /* RFC 9110 Section 5.5: optional whitespace (OWS) is SP or HTAB */
+        static inline bool isHTTPHeaderValueWhitespace(unsigned char c) {
+            return c == ' ' || c == '\t';
+        }
+
         static inline int isHTTPorHTTPSPrefixForProxies(char *data, char *end) {
             // We can check 8 because:
             // 1. If it's "http://" that's 7 bytes, and it's supposed to at least have a trailing slash.
@@ -721,7 +726,8 @@ namespace uWS
 
             /* Check for empty headers (no headers, just \r\n) */
             if (postPaddedBuffer[0] == '\r' && postPaddedBuffer[1] == '\n') {
-                /* Valid request with no headers */
+                /* Valid request with no headers - write null terminator like the normal path */
+                headers[1].key = std::string_view(nullptr, 0);
                 return HttpParserResult::success((unsigned int) ((postPaddedBuffer + 2) - start));
             }
 
@@ -774,13 +780,13 @@ namespace uWS
                     /* Store this header, it is valid */
                     headers->value = std::string_view(preliminaryValue, (size_t) (postPaddedBuffer - preliminaryValue));
                     postPaddedBuffer += 2;
-                    /* Trim trailing whitespace (SP, HTAB) */
-                    while (headers->value.length() && headers->value.back() < 33) {
+                    /* Trim trailing whitespace (SP, HTAB) per RFC 9110 Section 5.5 */
+                    while (headers->value.length() && isHTTPHeaderValueWhitespace(headers->value.back())) {
                         headers->value.remove_suffix(1);
                     }
 
-                    /* Trim initial whitespace (SP, HTAB) */
-                    while (headers->value.length() && headers->value.front() < 33) {
+                    /* Trim initial whitespace (SP, HTAB) per RFC 9110 Section 5.5 */
+                    while (headers->value.length() && isHTTPHeaderValueWhitespace(headers->value.front())) {
                         headers->value.remove_prefix(1);
                     }
 
@@ -864,7 +870,27 @@ namespace uWS
             * the Transfer-Encoding overrides the Content-Length. Such a message might indicate an attempt
             * to perform request smuggling (Section 11.2) or response splitting (Section 11.1) and
             * ought to be handled as an error. */
-            const std::string_view contentLengthString = req->getHeader("content-length");
+            /* RFC 9110 8.6 + RFC 9112 6.3: locate the Content-Length header and, in the
+             * same pass, verify every Content-Length header carries the same non-empty
+             * value. A single empty value or multiple differing values are ambiguous and
+             * must be rejected to prevent request smuggling. The bloom filter short-circuits
+             * the common "no Content-Length" case. */
+            std::string_view contentLengthString;
+            if (req->bf.mightHave("content-length")) {
+                for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
+                    if (h->key.length() == 14 && !strncmp(h->key.data(), "content-length", 14)) {
+                        if (contentLengthString.data() == nullptr) {
+                            if (h->value.length() == 0) {
+                                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH);
+                            }
+                            contentLengthString = h->value;
+                        } else if (h->value.length() != contentLengthString.length() ||
+                                   strncmp(h->value.data(), contentLengthString.data(), contentLengthString.length())) {
+                            return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH);
+                        }
+                    }
+                }
+            }
             const auto contentLengthStringLen = contentLengthString.length();
 
             /* Check Transfer-Encoding header validity and conflicts */
@@ -884,8 +910,12 @@ namespace uWS
             // lets check if content len is valid before calling requestHandler
             if(contentLengthStringLen) {
                 remainingStreamingBytes = toUnsignedInteger(contentLengthString);
-                if (remainingStreamingBytes == UINT64_MAX) [[unlikely]] {
-                    /* Parser error */
+                /* remainingStreamingBytes is overloaded: for Content-Length it holds the raw byte
+                 * count, for Transfer-Encoding: chunked it holds the ChunkedEncoding state word.
+                 * isParsingChunkedEncoding() distinguishes the two by testing the flag bits, so a
+                 * Content-Length value must never reach a flag bit. UINT64_MAX (parse error) is
+                 * also caught by this since UINT64_MAX > STATE_SIZE_MASK. */
+                if (remainingStreamingBytes > STATE_SIZE_MASK) [[unlikely]] {
                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH);
                 }
             }

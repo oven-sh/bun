@@ -105,8 +105,7 @@ describe("lex shell", () => {
       { "Delimit": {} },
       { "Text": "dev" },
       { "Delimit": {} },
-      { "Text": "hello how is it going" },
-      { "Delimit": {} },
+      { "SingleQuotedText": "hello how is it going" },
       { "Eof": {} },
     ];
     const result = JSON.parse(lex`next dev 'hello how is it going'`);

@@ -553,7 +553,7 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
 
       queryFoundLines.add(lineInfo.get(zigExportAttr.from).line);
 
-      // disabled because lezer parses (extern "C") seperately to the function definition / block
+      // disabled because lezer parses (extern "C") separately to the function definition / block
       /* const linkage = closest(fnNode, "LinkageSpecification");
       const linkageString = linkage?.getChild("String");
       if (!linkage || !linkageString || text(linkageString, ctx) !== '"C"') {
@@ -751,14 +751,23 @@ async function main() {
       |_|   |_|
 `.slice(1),
     );
-    console.error("Usage: bun src/codegen/cppbind src build/debug/codegen");
+    console.error("Usage: bun src/codegen/cppbind src build/debug/codegen [cxx-sources.txt]");
     process.exit(1);
   }
   await mkdir(dstDir, { recursive: true });
 
   const parser = cppParser;
 
-  const allCppFiles = (await Bun.file("cmake/sources/CxxSources.txt").text())
+  // Source list: build system globs and passes the path (see
+  // scripts/build/codegen.ts emitCppBind). For ad-hoc runs:
+  //   bun scripts/glob-sources.ts cxx > /tmp/cxx.txt
+  //   bun src/codegen/cppbind.ts <codegen> <out> /tmp/cxx.txt
+  const cxxSourcesPath = args[2];
+  if (!cxxSourcesPath) {
+    console.error("usage: cppbind.ts <codegen-dir> <output> <cxx-sources-file>");
+    process.exit(1);
+  }
+  const allCppFiles = (await Bun.file(cxxSourcesPath).text())
     .trim()
     .split("\n")
     .map(q => q.trim())

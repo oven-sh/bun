@@ -37,26 +37,32 @@ pub fn printSourceMapContents(
     include_sources_contents: bool,
     comptime ascii_only: bool,
 ) !void {
-    try printSourceMapContentsAtOffset(
-        chunk,
-        source,
-        mutable,
-        include_sources_contents,
-        0,
-        ascii_only,
-    );
+    try printSourceMapContentsJSON(source, mutable, include_sources_contents, chunk.buffer.list.items, ascii_only);
 }
 
-pub fn printSourceMapContentsAtOffset(
+/// `chunk.buffer` holds an InternalSourceMap blob (the runtime path). Re-encode
+/// to a standard VLQ "mappings" string before emitting JSON.
+pub fn printSourceMapContentsFromInternal(
     chunk: Chunk,
     source: *const Logger.Source,
     mutable: *MutableString,
     include_sources_contents: bool,
-    offset: usize,
     comptime ascii_only: bool,
 ) !void {
-    // attempt to pre-allocate
+    const ism: InternalSourceMap = .{ .data = chunk.buffer.list.items.ptr };
+    var vlq = MutableString.initEmpty(bun.default_allocator);
+    defer vlq.deinit();
+    ism.appendVLQTo(&vlq);
+    try printSourceMapContentsJSON(source, mutable, include_sources_contents, vlq.list.items, ascii_only);
+}
 
+fn printSourceMapContentsJSON(
+    source: *const Logger.Source,
+    mutable: *MutableString,
+    include_sources_contents: bool,
+    mappings: []const u8,
+    comptime ascii_only: bool,
+) !void {
     var filename_buf: bun.PathBuffer = undefined;
     var filename = source.path.text;
     if (strings.hasPrefix(source.path.text, FileSystem.instance.top_level_dir)) {
@@ -68,7 +74,7 @@ pub fn printSourceMapContentsAtOffset(
     }
 
     mutable.growIfNeeded(
-        filename.len + 2 + (source.contents.len * @as(usize, @intFromBool(include_sources_contents))) + (chunk.buffer.list.items.len - offset) + 32 + 39 + 29 + 22 + 20,
+        filename.len + 2 + (source.contents.len * @as(usize, @intFromBool(include_sources_contents))) + mappings.len + 32 + 39 + 29 + 22 + 20,
     ) catch unreachable;
     try mutable.append("{\n  \"version\":3,\n  \"sources\": [");
 
@@ -80,7 +86,7 @@ pub fn printSourceMapContentsAtOffset(
     }
 
     try mutable.append("],\n  \"mappings\": ");
-    try JSPrinter.quoteForJSON(chunk.buffer.list.items[offset..], mutable, ascii_only);
+    try JSPrinter.quoteForJSON(mappings, mutable, ascii_only);
     try mutable.append(", \"names\": []\n}");
 }
 
@@ -106,7 +112,7 @@ pub fn SourceMapFormat(comptime Type: type) type {
             return this.ctx.shouldIgnore();
         }
 
-        pub inline fn getBuffer(this: Format) MutableString {
+        pub inline fn getBuffer(this: *Format) MutableString {
             return this.ctx.getBuffer();
         }
 
@@ -122,29 +128,39 @@ pub fn SourceMapFormat(comptime Type: type) type {
 
 pub const VLQSourceMap = struct {
     data: MutableString,
+    internal: ?InternalSourceMap.Builder = null,
     count: usize = 0,
     offset: usize = 0,
     approximate_input_line_count: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator, prepend_count: bool) VLQSourceMap {
-        var map = VLQSourceMap{
-            .data = MutableString.initEmpty(allocator),
-        };
-
-        // For bun.js, we store the number of mappings and how many bytes the final list is at the beginning of the array
         if (prepend_count) {
-            map.offset = 24;
-            map.data.append(&([_]u8{0} ** 24)) catch unreachable;
+            return .{
+                .data = MutableString.initEmpty(allocator),
+                .internal = InternalSourceMap.Builder.init(allocator),
+            };
         }
 
-        return map;
+        return .{
+            .data = MutableString.initEmpty(allocator),
+        };
     }
 
     pub fn appendLineSeparator(this: *VLQSourceMap) anyerror!void {
+        if (this.internal) |*b| {
+            b.appendLineSeparator();
+            return;
+        }
         try this.data.appendChar(';');
     }
 
     pub fn append(this: *VLQSourceMap, current_state: SourceMapState, prev_state: SourceMapState) anyerror!void {
+        if (this.internal) |*b| {
+            b.appendMapping(current_state);
+            this.count += 1;
+            return;
+        }
+
         const last_byte: u8 = if (this.data.list.items.len > this.offset)
             this.data.list.items[this.data.list.items.len - 1]
         else
@@ -158,11 +174,21 @@ pub const VLQSourceMap = struct {
         return this.count == 0;
     }
 
-    pub fn getBuffer(this: VLQSourceMap) MutableString {
+    pub fn getBuffer(this: *VLQSourceMap) MutableString {
+        if (this.internal) |*b| {
+            this.data = b.finalize().*;
+            b.finalized = null;
+            this.internal = null;
+        }
         return this.data;
     }
 
     pub fn takeBuffer(this: *VLQSourceMap) MutableString {
+        if (this.internal) |*b| {
+            this.data = b.finalize().*;
+            b.finalized = null;
+            this.internal = null;
+        }
         defer this.data = .initEmpty(this.data.allocator);
         return this.data;
     }
@@ -361,6 +387,7 @@ pub const Builder = NewBuilder(VLQSourceMap);
 const std = @import("std");
 
 const SourceMap = @import("./sourcemap.zig");
+const InternalSourceMap = SourceMap.InternalSourceMap;
 const LineOffsetTable = SourceMap.LineOffsetTable;
 const SourceMapState = SourceMap.SourceMapState;
 const appendMappingToBuffer = SourceMap.appendMappingToBuffer;

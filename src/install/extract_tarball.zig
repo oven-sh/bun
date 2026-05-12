@@ -122,16 +122,21 @@ pub fn buildURLWithPrinter(
     }
 }
 
-threadlocal var final_path_buf: bun.PathBuffer = undefined;
-threadlocal var folder_name_buf: bun.PathBuffer = undefined;
-threadlocal var json_path_buf: bun.PathBuffer = undefined;
+const tl_bufs = bun.ThreadlocalBuffers(struct {
+    final_path_buf: bun.PathBuffer = undefined,
+    folder_name_buf: bun.PathBuffer = undefined,
+    json_path_buf: bun.PathBuffer = undefined,
+});
 
-fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8) !Install.ExtractData {
-    const tracer = bun.perf.trace("ExtractTarball.extract");
-    defer tracer.end();
+pub fn usesStreamingExtraction() bool {
+    return !bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL.get();
+}
 
-    const tmpdir = this.temp_dir;
-    var tmpname_buf: if (Environment.isWindows) bun.WPathBuffer else bun.PathBuffer = undefined;
+/// Derive the display name and a filesystem-safe basename for this
+/// package. Shared by the buffered `extract()` path below and the
+/// streaming extractor in `TarballStream.zig` so both pick identical
+/// temp-dir and cache-folder names.
+pub fn nameAndBasename(this: *const ExtractTarball) struct { []const u8, []const u8 } {
     const name = if (this.name.slice().len > 0) this.name.slice() else brk: {
         // Not sure where this case hits yet.
         // BUN-2WQ
@@ -141,11 +146,8 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
     };
     const basename = brk: {
         var tmp = name;
-
-        // Handle URLs - extract just the filename from the URL
         if (strings.hasPrefixComptime(tmp, "https://") or strings.hasPrefixComptime(tmp, "http://")) {
             tmp = std.fs.path.basename(tmp);
-            // Remove .tgz or .tar.gz extension if present
             if (strings.endsWithComptime(tmp, ".tgz")) {
                 tmp = tmp[0 .. tmp.len - 4];
             } else if (strings.endsWithComptime(tmp, ".tar.gz")) {
@@ -165,6 +167,16 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
         break :brk tmp;
     };
+    return .{ name, basename };
+}
+
+fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8) !Install.ExtractData {
+    const tracer = bun.perf.trace("ExtractTarball.extract");
+    defer tracer.end();
+
+    const tmpdir = this.temp_dir;
+    var tmpname_buf: if (Environment.isWindows) bun.WPathBuffer else bun.PathBuffer = undefined;
+    const name, const basename = this.nameAndBasename();
 
     var resolved: string = "";
     const tmpname = try FileSystem.tmpname(basename[0..@min(basename.len, 32)], std.mem.asBytes(&tmpname_buf), bun.fastRandom());
@@ -183,7 +195,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         defer extract_destination.close();
 
         const Archiver = bun.libarchive.Archiver;
-        const Zlib = @import("../zlib.zig");
+        const Zlib = @import("../zlib/zlib.zig");
         var zlib_pool = Npm.Registry.BodyPool.get(default_allocator);
         zlib_pool.data.reset();
         defer Npm.Registry.BodyPool.release(zlib_pool);
@@ -309,10 +321,27 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
             Output.flush();
         }
     }
+
+    return this.moveToCacheDirectory(log, tmpname, name, basename, resolved);
+}
+
+/// Rename the freshly-extracted temp directory into the cache, read
+/// `package.json` if required, and build the `ExtractData` result. Shared
+/// between the buffered and streaming extraction paths.
+pub fn moveToCacheDirectory(
+    this: *const ExtractTarball,
+    log: *logger.Log,
+    tmpname: [:0]const u8,
+    name: []const u8,
+    basename: []const u8,
+    resolved: []const u8,
+) !Install.ExtractData {
+    const tmpdir = this.temp_dir;
+    const bufs = tl_bufs.get();
     const folder_name = switch (this.resolution.tag) {
-        .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&folder_name_buf, name, this.resolution.value.npm.version, null),
-        .github => PackageManager.cachedGitHubFolderNamePrint(&folder_name_buf, resolved, null),
-        .local_tarball, .remote_tarball => PackageManager.cachedTarballFolderNamePrint(&folder_name_buf, this.url.slice(), null),
+        .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&bufs.folder_name_buf, name, this.resolution.value.npm.version, null),
+        .github => PackageManager.cachedGitHubFolderNamePrint(&bufs.folder_name_buf, resolved, null),
+        .local_tarball, .remote_tarball => PackageManager.cachedTarballFolderNamePrint(&bufs.folder_name_buf, this.url.slice(), null),
         else => unreachable,
     };
     if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
@@ -367,11 +396,10 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                                 // we rename it back into the temp dir
                                 // and then delete that temp dir
                                 // The goal is to make it more difficult for an application to reach this folder
-                                var tmpname_bytes = std.mem.asBytes(&tmpname_buf);
-                                const tmpname_len = tmpname.len;
-
-                                tmpname_bytes[tmpname_len..][0..4].* = .{ 't', 'm', 'p', 0 };
-                                const tempdest = tmpname_bytes[0 .. tmpname_len + 3 :0];
+                                var tempdest_buf: bun.PathBuffer = undefined;
+                                @memcpy(tempdest_buf[0..tmpname.len], tmpname);
+                                tempdest_buf[tmpname.len..][0..4].* = .{ 't', 'm', 'p', 0 };
+                                const tempdest = tempdest_buf[0 .. tmpname.len + 3 :0];
                                 switch (bun.sys.renameat(
                                     .fromStdDir(cache_dir),
                                     folder_name,
@@ -383,7 +411,6 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                                         tmpdir.deleteTree(tempdest) catch {};
                                     },
                                 }
-                                tmpname_bytes[tmpname_len] = 0;
                                 did_retry = true;
                                 continue;
                             },
@@ -457,7 +484,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
     // and get the fd path
     const final_path = bun.getFdPathZ(
         .fromStdDir(final_dir),
-        &final_path_buf,
+        &bufs.final_path_buf,
     ) catch |err| {
         log.addErrorFmt(
             null,
@@ -481,7 +508,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
     }) {
         const json_file, json_buf = bun.sys.File.readFileFrom(
             bun.FD.fromStdDir(cache_dir),
-            bun.path.joinZBuf(&json_path_buf, &[_]string{ folder_name, "package.json" }, .auto),
+            bun.path.joinZBuf(&bufs.json_path_buf, &[_]string{ folder_name, "package.json" }, .auto),
             bun.default_allocator,
         ).unwrap() catch |err| {
             if (this.resolution.tag == .github and err == error.ENOENT) {
@@ -503,7 +530,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         };
         defer json_file.close();
         json_path = json_file.getPath(
-            &json_path_buf,
+            &bufs.json_path_buf,
         ).unwrap() catch |err| {
             log.addErrorFmt(
                 null,
@@ -568,7 +595,7 @@ const string = []const u8;
 
 const Npm = @import("./npm.zig");
 const std = @import("std");
-const FileSystem = @import("../fs.zig").FileSystem;
+const FileSystem = @import("../resolver/fs.zig").FileSystem;
 const Integrity = @import("./integrity.zig").Integrity;
 const Resolution = @import("./resolution.zig").Resolution;
 

@@ -1,6 +1,6 @@
 import { LoaderKeys } from "../api/schema";
-import NodeErrors from "../bun.js/bindings/ErrorCode.ts";
-import jsclasses from "./../bun.js/bindings/js_classes";
+import NodeErrors from "../jsc/bindings/ErrorCode.ts";
+import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { registerNativeCall } from "./generate-js2native";
 

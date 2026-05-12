@@ -20,7 +20,7 @@ export_env: *EnvMap,
 cmd_local_env: *EnvMap,
 
 arena: *bun.ArenaAllocator,
-cwd: bun.FileDescriptor,
+cwd: bun.FD,
 
 /// TODO: It would be nice to make this mutable so that certain commands (e.g.
 /// `export`) don't have to duplicate arguments. However, it is tricky because
@@ -57,7 +57,7 @@ pub const Impl = union(Kind) {
     cp: Cp,
 };
 
-pub const Result = @import("../result.zig").Result;
+pub const Result = @import("../bun_core/result.zig").Result;
 
 // Note: this enum uses @tagName, choose wisely!
 pub const Kind = enum {
@@ -341,7 +341,7 @@ pub fn init(
     args: *const std.array_list.Managed(?[*:0]const u8),
     export_env: *EnvMap,
     cmd_local_env: *EnvMap,
-    cwd: bun.FileDescriptor,
+    cwd: bun.FD,
     io: *IO,
 ) ?Yield {
     const stdin: BuiltinIO.Input = switch (io.stdin) {
@@ -440,7 +440,9 @@ fn initRedirections(
                     if (node.redirect.stdin) {
                         break :redirfd switch (ShellSyscall.openat(cmd.base.shell.cwd_fd, path, node.redirect.toFlags(), perm)) {
                             .err => |e| {
-                                return cmd.writeFailingError("bun: {f}: {s}", .{ e.toShellSystemError().message, path });
+                                const sys_err = e.toShellSystemError();
+                                defer sys_err.deref();
+                                return cmd.writeFailingError("bun: {f}: {s}", .{ sys_err.message, path });
                             },
                             .result => |f| f,
                         };
@@ -466,13 +468,17 @@ fn initRedirections(
 
                     break :redirfd switch (result) {
                         .err => |e| {
-                            return cmd.writeFailingError("bun: {f}: {s}", .{ e.toShellSystemError().message, path });
+                            const sys_err = e.toShellSystemError();
+                            defer sys_err.deref();
+                            return cmd.writeFailingError("bun: {f}: {s}", .{ sys_err.message, path });
                         },
                         .result => |f| {
                             if (bun.Environment.isWindows) {
                                 switch (f.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
                                     .err => |e| {
-                                        return cmd.writeFailingError("bun: {f}: {s}", .{ e.toShellSystemError().message, path });
+                                        const sys_err = e.toShellSystemError();
+                                        defer sys_err.deref();
+                                        return cmd.writeFailingError("bun: {f}: {s}", .{ sys_err.message, path });
                                     },
                                     .result => |f2| break :redirfd f2,
                                 }
@@ -510,25 +516,37 @@ fn initRedirections(
             },
             .jsbuf => |val| {
                 const globalObject = interpreter.event_loop.js.global;
-                if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(globalObject)) |buf| {
-                    const arraybuf: BuiltinIO.ArrayBuf = .{ .buf = jsc.ArrayBuffer.Strong{
-                        .array_buffer = buf,
-                        .held = .create(buf.value, globalObject),
-                    }, .i = 0 };
 
+                if (file.jsbuf.idx >= interpreter.jsobjs.len) {
+                    globalObject.throw("Invalid JS object reference in shell", .{}) catch {};
+                    return .failed;
+                }
+
+                if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(globalObject)) |buf| {
+                    // Each slot gets its own Strong; sharing one across stdin/stdout/stderr
+                    // would double-free the heap *Impl in Builtin.deinit().
                     if (node.redirect.stdin) {
                         cmd.exec.bltn.stdin.deref();
-                        cmd.exec.bltn.stdin = .{ .arraybuf = arraybuf };
+                        cmd.exec.bltn.stdin = .{ .arraybuf = .{ .buf = .{
+                            .array_buffer = buf,
+                            .held = .create(buf.value, globalObject),
+                        }, .i = 0 } };
                     }
 
                     if (node.redirect.stdout) {
                         cmd.exec.bltn.stdout.deref();
-                        cmd.exec.bltn.stdout = .{ .arraybuf = arraybuf };
+                        cmd.exec.bltn.stdout = .{ .arraybuf = .{ .buf = .{
+                            .array_buffer = buf,
+                            .held = .create(buf.value, globalObject),
+                        }, .i = 0 } };
                     }
 
                     if (node.redirect.stderr) {
                         cmd.exec.bltn.stderr.deref();
-                        cmd.exec.bltn.stderr = .{ .arraybuf = arraybuf };
+                        cmd.exec.bltn.stderr = .{ .arraybuf = .{ .buf = .{
+                            .array_buffer = buf,
+                            .held = .create(buf.value, globalObject),
+                        }, .i = 0 } };
                     }
                 } else if (interpreter.jsobjs[file.jsbuf.idx].as(jsc.WebCore.Body.Value)) |body| {
                     if ((node.redirect.stdout or node.redirect.stderr) and !(body.* == .Blob and !body.Blob.needsToReadFile())) {
@@ -786,8 +804,8 @@ pub const Echo = @import("./builtin/echo.zig");
 pub const Which = @import("./builtin/which.zig");
 pub const Rm = @import("./builtin/rm.zig");
 pub const Exit = @import("./builtin/exit.zig");
-pub const True = @import("./builtin/true.zig");
-pub const False = @import("./builtin/false.zig");
+pub const True = @import("./builtin/true_.zig");
+pub const False = @import("./builtin/false_.zig");
 pub const Yes = @import("./builtin/yes.zig");
 pub const Seq = @import("./builtin/seq.zig");
 pub const Dirname = @import("./builtin/dirname.zig");

@@ -144,7 +144,8 @@ pub fn deinit(this: *Async) void {
 
 pub fn actuallyDeinit(this: *Async) void {
     this.io.deref();
-    bun.destroy(this);
+    this.base.endScope();
+    this.parent.destroy(this);
 }
 
 pub fn runFromMainThread(this: *Async) void {

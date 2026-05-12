@@ -76,6 +76,7 @@ pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: 
         return globalThis.throw("$`...`.cwd(): expected a string argument", .{});
     };
     const str = try bun.String.fromJS(str_js, globalThis);
+    if (this.cwd) |*prev| prev.deref();
     this.cwd = str;
     return .js_undefined;
 }
@@ -98,16 +99,18 @@ pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: 
     defer object_iter.deinit();
 
     var env: EnvMap = EnvMap.init(bun.default_allocator);
+    errdefer env.deinit();
     env.ensureTotalCapacity(object_iter.len);
 
     // If the env object does not include a $PATH, it must disable path lookup for argv[0]
     // PATH = "";
 
     while (try object_iter.next()) |key| {
-        const keyslice = bun.handleOom(key.toOwnedSlice(bun.default_allocator));
         var value = object_iter.value;
         if (value.isUndefined()) continue;
 
+        const keyslice = bun.handleOom(key.toOwnedSlice(bun.default_allocator));
+        errdefer bun.default_allocator.free(keyslice);
         const value_str = try value.getZigString(globalThis);
         const slice = bun.handleOom(value_str.toOwnedSlice(bun.default_allocator));
         const keyref = EnvStr.initRefCounted(keyslice);

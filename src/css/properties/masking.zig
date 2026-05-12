@@ -270,14 +270,14 @@ pub const Mask = struct {
 
         while (true) {
             if (image == null) {
-                if (@call(.auto, @field(Image, "parse"), .{input}).asValue()) |value| {
+                if (input.tryParse(Image.parse, .{}).asValue()) |value| {
                     image = value;
                     continue;
                 }
             }
 
             if (position == null) {
-                if (Position.parse(input).asValue()) |value| {
+                if (input.tryParse(Position.parse, .{}).asValue()) |value| {
                     position = value;
                     size = input.tryParse(struct {
                         pub inline fn parseFn(i: *css.Parser) css.Result(BackgroundSize) {
@@ -290,35 +290,35 @@ pub const Mask = struct {
             }
 
             if (repeat == null) {
-                if (BackgroundRepeat.parse(input).asValue()) |value| {
+                if (input.tryParse(BackgroundRepeat.parse, .{}).asValue()) |value| {
                     repeat = value;
                     continue;
                 }
             }
 
             if (origin == null) {
-                if (GeometryBox.parse(input).asValue()) |value| {
+                if (input.tryParse(GeometryBox.parse, .{}).asValue()) |value| {
                     origin = value;
                     continue;
                 }
             }
 
             if (clip == null) {
-                if (MaskClip.parse(input).asValue()) |value| {
+                if (input.tryParse(MaskClip.parse, .{}).asValue()) |value| {
                     clip = value;
                     continue;
                 }
             }
 
             if (composite == null) {
-                if (MaskComposite.parse(input).asValue()) |value| {
+                if (input.tryParse(MaskComposite.parse, .{}).asValue()) |value| {
                     composite = value;
                     continue;
                 }
             }
 
             if (mode == null) {
-                if (MaskMode.parse(input).asValue()) |value| {
+                if (input.tryParse(MaskMode.parse, .{}).asValue()) |value| {
                     mode = value;
                     continue;
                 }

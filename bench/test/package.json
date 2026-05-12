@@ -1,0 +1,8 @@
+{
+  "name": "bench-test",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "vitest": "^4.1.4"
+  }
+}

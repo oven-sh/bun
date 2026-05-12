@@ -202,6 +202,10 @@ export const GuidesList = () => {
             href: "/guides/http/stream-iterator",
           },
           {
+            title: "Server-Sent Events (SSE)",
+            href: "/guides/http/sse",
+          },
+          {
             title: "Streaming HTTP Server with Node.js Streams",
             href: "/guides/http/stream-node-streams-in-bun",
           },

@@ -191,8 +191,13 @@ describe("bun:jsc", () => {
       return fib(n - 1) + fib(n - 2);
     }
 
+    // After the JIT warms up fib() can finish within the default 1ms sample
+    // interval, yielding zero traces. Use a short interval so every call is
+    // sampled regardless of how fast the optimized code runs.
+    const sampleInterval = 50;
+
     // First profile call
-    const result1 = profile(() => fib(30));
+    const result1 = profile(() => fib(30), sampleInterval);
     expect(result1).toBeDefined();
     expect(result1.functions).toBeDefined();
     expect(result1.stackTraces).toBeDefined();
@@ -200,14 +205,14 @@ describe("bun:jsc", () => {
 
     // Second profile call - should work after first one completed
     // This verifies that shutdown() -> pause() fix works
-    const result2 = profile(() => fib(30));
+    const result2 = profile(() => fib(30), sampleInterval);
     expect(result2).toBeDefined();
     expect(result2.functions).toBeDefined();
     expect(result2.stackTraces).toBeDefined();
     expect(result2.stackTraces.traces.length).toBeGreaterThan(0);
 
     // Third profile call - verify profiler can be reused multiple times
-    const result3 = profile(() => fib(30));
+    const result3 = profile(() => fib(30), sampleInterval);
     expect(result3).toBeDefined();
     expect(result3.functions).toBeDefined();
     expect(result3.stackTraces).toBeDefined();

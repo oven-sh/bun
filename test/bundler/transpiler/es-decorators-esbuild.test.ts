@@ -184,7 +184,7 @@ describe("ES Decorators (esbuild test suite)", () => {
     if (shouldTodo(name)) {
       test.todo(name);
     } else {
-      test(name, async () => {
+      test.concurrent(name, async () => {
         const { stdout, stderr, exitCode } = await runDecoratorTest(testCode);
         if (exitCode !== 0) {
           throw new Error(

@@ -18,6 +18,9 @@ const BarrelExportResolution = struct {
     import_record_index: u32,
     /// The original alias in the source module (e.g. "d" for `export { d as c }`)
     original_alias: ?[]const u8,
+    /// True when the underlying import is `import * as ns` — propagation
+    /// through this export must treat the target as needing all exports.
+    alias_is_star: bool,
 };
 
 /// Look up an export name → import_record_index by chasing
@@ -26,7 +29,7 @@ const BarrelExportResolution = struct {
 fn resolveBarrelExport(alias: []const u8, named_exports: JSAst.NamedExports, named_imports: JSAst.NamedImports) ?BarrelExportResolution {
     const export_entry = named_exports.get(alias) orelse return null;
     const import_entry = named_imports.get(export_entry.ref) orelse return null;
-    return .{ .import_record_index = import_entry.import_record_index, .original_alias = import_entry.alias };
+    return .{ .import_record_index = import_entry.import_record_index, .original_alias = import_entry.alias, .alias_is_star = import_entry.alias_is_star };
 }
 
 /// Analyze a parsed file to determine if it's a barrel and mark unneeded
@@ -259,6 +262,26 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
     else
         null;
 
+    // In HMR, ConvertESMExportsForHmr deduplicates import records by path:
+    // two `import { X } from 'mod'` statements become one, and the second
+    // record is marked is_unused=true. resolveImportRecords then skips those
+    // records, so their path.text stays as the raw specifier while the
+    // surviving record's path.text becomes the resolved absolute path.
+    // named_imports entries created for the dedup'd record still point at
+    // its index, so the direct path lookup below fails for those entries.
+    // Build a fallback: raw specifier → surviving record's resolved path
+    // text, using non-unused records in this file. See #28886.
+    var dedup_fallback = bun.StringArrayHashMapUnmanaged([]const u8){};
+    defer dedup_fallback.deinit(this.allocator());
+    if (this.transpiler.options.dev_server != null) {
+        for (file_import_records.slice()) |ir_probe| {
+            if (ir_probe.flags.is_unused or ir_probe.flags.is_internal) continue;
+            if (ir_probe.original_path.len == 0) continue;
+            if (bun.strings.eql(ir_probe.original_path, ir_probe.path.text)) continue;
+            try dedup_fallback.put(this.allocator(), ir_probe.original_path, ir_probe.path.text);
+        }
+    }
+
     var ni_iter = result.ast.named_imports.iterator();
     while (ni_iter.next()) |ni_entry| {
         const ni = ni_entry.value_ptr;
@@ -269,10 +292,17 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
         // path map as a read-only fallback. Do NOT write back to the import
         // record — the dev server intentionally leaves source_indices unset
         // and other code (IncrementalGraph, printer) depends on that.
+        // For dedup'd HMR records (is_unused), fall back to a sibling's
+        // resolved path text since the record itself still has the raw
+        // specifier in path.text.
+        const resolved_path_text = if (ir.flags.is_unused)
+            (dedup_fallback.get(ir.path.text) orelse ir.path.text)
+        else
+            ir.path.text;
         const target = if (ir.source_index.isValid())
             ir.source_index.get()
         else if (path_to_source_index_map) |map|
-            map.getPath(&ir.path) orelse continue
+            map.get(resolved_path_text) orelse continue
         else
             continue;
 
@@ -291,7 +321,7 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
             }
             // Persist the export request on DevServer so it survives across builds.
             if (this.transpiler.options.dev_server) |dev| {
-                persistBarrelExport(dev, ir.path.text, alias);
+                persistBarrelExport(dev, resolved_path_text, alias);
             }
         } else if (!gop.found_existing) {
             gop.value_ptr.* = .{ .partial = .{} };
@@ -301,10 +331,9 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
     // Handle import records without named bindings (not in named_imports).
     // - `import "x"` (bare statement): tree-shakeable with sideEffects: false — skip.
     // - `require("x")`: synchronous, needs full module — always mark as .all.
-    // - `import("x")`: mark as .all ONLY if the barrel has no prior requests,
-    //   meaning this is the sole reference. If the barrel already has a .partial
-    //   entry from a static import, the dynamic import is likely a secondary
-    //   (possibly circular) reference and should not escalate requirements.
+    // - `import("x")`: returns the full module namespace at runtime — consumer
+    //   can destructure or access any export. Must mark as .all. We cannot
+    //   safely assume which exports will be used.
     for (file_import_records.slice(), 0..) |ir, idx| {
         const target = if (ir.source_index.isValid())
             ir.source_index.get()
@@ -319,10 +348,9 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
             const gop = try this.requested_exports.getOrPut(this.allocator(), target);
             gop.value_ptr.* = .all;
         } else if (ir.kind == .dynamic) {
-            // Only escalate to .all if no prior requests exist for this target.
-            if (!this.requested_exports.contains(target)) {
-                try this.requested_exports.put(this.allocator(), target, .all);
-            }
+            // import() returns the full module namespace — must preserve all exports.
+            const gop = try this.requested_exports.getOrPut(this.allocator(), target);
+            gop.value_ptr.* = .all;
         }
     }
 
@@ -340,10 +368,14 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
         const ni = ni_entry.value_ptr;
         if (ni.import_record_index >= file_import_records.len) continue;
         const ir = file_import_records.slice()[ni.import_record_index];
+        const resolved_path_text = if (ir.flags.is_unused)
+            (dedup_fallback.get(ir.path.text) orelse ir.path.text)
+        else
+            ir.path.text;
         const ir_target = if (ir.source_index.isValid())
             ir.source_index.get()
         else if (path_to_source_index_map) |map|
-            map.getPath(&ir.path) orelse continue
+            map.get(resolved_path_text) orelse continue
         else
             continue;
 
@@ -354,8 +386,8 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
         }
     }
 
-    // Add bare require/dynamic-import targets to BFS as star imports (matching
-    // the seeding logic above — require always, dynamic only when sole reference).
+    // Add bare require/dynamic-import targets to BFS as star imports — both
+    // always need the full namespace.
     for (file_import_records.slice(), 0..) |ir, idx| {
         const target = if (ir.source_index.isValid())
             ir.source_index.get()
@@ -366,8 +398,7 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
         if (ir.flags.is_internal) continue;
         if (named_ir_indices.contains(@intCast(idx))) continue;
         if (ir.flags.was_originally_bare_import) continue;
-        const is_all = if (this.requested_exports.get(target)) |re| re == .all else false;
-        const should_add = ir.kind == .require or (ir.kind == .dynamic and is_all);
+        const should_add = ir.kind == .require or ir.kind == .dynamic;
         if (should_add) {
             try queue.append(queue_alloc, .{ .barrel_source_index = target, .alias = "", .is_star = true });
         }
@@ -486,7 +517,9 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
                 rec = barrel_ir.slice()[resolution.import_record_index];
             }
             if (rec.source_index.isValid()) {
-                try queue.append(queue_alloc, .{ .barrel_source_index = rec.source_index.get(), .alias = propagate_alias, .is_star = false });
+                // When the barrel re-exports a namespace import (`import * as X; export { X }`),
+                // propagate as a star import so the target barrel loads all exports.
+                try queue.append(queue_alloc, .{ .barrel_source_index = rec.source_index.get(), .alias = propagate_alias, .is_star = resolution.alias_is_star });
             }
         }
     }

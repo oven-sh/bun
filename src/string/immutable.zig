@@ -1365,8 +1365,8 @@ pub fn indexOfNotChar(slice: []const u8, char: u8) ?u32 {
 }
 
 const invalid_char: u8 = 0xff;
-const hex_table: [255]u8 = brk: {
-    var values: [255]u8 = [_]u8{invalid_char} ** 255;
+const hex_table: [256]u8 = brk: {
+    var values: [256]u8 = [_]u8{invalid_char} ** 256;
     values['0'] = 0;
     values['1'] = 1;
     values['2'] = 2;
@@ -2386,6 +2386,36 @@ pub const grapheme = @import("./immutable/grapheme.zig");
 pub const CodePoint = i32;
 
 const string = []const u8;
+
+/// SIMD-accelerated iterator that yields slices of text between ANSI escape sequences.
+/// The C++ side uses ANSI::findEscapeCharacter (SIMD) and ANSI::consumeANSI.
+pub const ANSIIterator = extern struct {
+    input: [*]const u8,
+    input_len: usize,
+    cursor: usize,
+    slice_ptr: ?[*]const u8,
+    slice_len: usize,
+
+    pub fn init(input: []const u8) ANSIIterator {
+        return .{
+            .input = input.ptr,
+            .input_len = input.len,
+            .cursor = 0,
+            .slice_ptr = null,
+            .slice_len = 0,
+        };
+    }
+
+    /// Returns the next slice of non-ANSI text, or null when done.
+    pub fn next(self: *ANSIIterator) ?[]const u8 {
+        if (Bun__ANSI__next(self)) {
+            return (self.slice_ptr orelse return null)[0..self.slice_len];
+        }
+        return null;
+    }
+
+    extern fn Bun__ANSI__next(it: *ANSIIterator) bool;
+};
 
 const escapeHTML_ = @import("./immutable/escapeHTML.zig");
 const escapeRegExp_ = @import("./escapeRegExp.zig");

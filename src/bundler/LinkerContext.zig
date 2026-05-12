@@ -187,7 +187,7 @@ pub const LinkerContext = struct {
     pub fn shouldIncludePart(c: *LinkerContext, source_index: Index.Int, part: Part) bool {
         // As an optimization, ignore parts containing a single import statement to
         // an internal non-wrapped file. These will be ignored anyway and it's a
-        // performance hit to spin up a goroutine only to discover this later.
+        // performance hit to include the part only to discover it's unnecessary later.
         if (part.stmts.len == 1) {
             if (part.stmts[0].data == .s_import) {
                 const record = c.graph.ast.items(.import_records)[source_index].at(part.stmts[0].data.s_import.import_record_index);
@@ -1241,7 +1241,7 @@ pub const LinkerContext = struct {
         switch (other_flags.wrap) {
             .none => {},
             .cjs => {
-                // Replace the statement with a call to "require()" if this module is not wrapped
+                // Replace the statement with a call to "require()" since the other module is CJS-wrapped
                 try stmts.inside_wrapper_prefix.appendNonDependency(
                     Stmt.alloc(S.Local, .{
                         .decls = try G.Decl.List.fromSlice(
@@ -1505,10 +1505,13 @@ pub const LinkerContext = struct {
             );
         }
 
-        // Mix in hashes for referenced asset paths (i.e. the "file" loader)
+        // Mix in hashes for content referenced via output pieces. JS chunks
+        // express cross-chunk dependencies via `cross_chunk_imports` above, but
+        // HTML (and CSS) chunks only reference other chunks through pieces, so
+        // recurse on those too.
         switch (chunk.intermediate_output) {
-            .pieces => |pieces| for (pieces.slice()) |piece| {
-                if (piece.query.kind == .asset) {
+            .pieces => |pieces| for (pieces.slice()) |piece| switch (piece.query.kind) {
+                .asset => {
                     var from_chunk_dir = std.fs.path.dirnamePosix(chunk.final_rel_path) orelse "";
                     if (strings.eqlComptime(from_chunk_dir, "."))
                         from_chunk_dir = "";
@@ -1523,7 +1526,15 @@ pub const LinkerContext = struct {
                         },
                         .source_index => {},
                     }
-                }
+                },
+                .chunk => c.appendIsolatedHashesForImportedChunks(hash, chunks, piece.query.index, chunk_visit_map),
+                .scb => c.appendIsolatedHashesForImportedChunks(
+                    hash,
+                    chunks,
+                    c.graph.files.items(.entry_point_chunk_index)[piece.query.index],
+                    chunk_visit_map,
+                ),
+                .none, .html_import => {},
             },
             else => {},
         }
@@ -1687,6 +1698,25 @@ pub const LinkerContext = struct {
                 if (record.source_index.isValid()) {
                     c.markFileLiveForTreeShaking(
                         other_source_index,
+                        side_effects,
+                        parts,
+                        import_records,
+                        entry_point_kinds,
+                        css_reprs,
+                    );
+                }
+            }
+            return;
+        }
+
+        // HTML files can reference non-JS/CSS assets (favicons, images, etc.)
+        // via .url kind import records. Follow all import records for HTML files
+        // so these assets are marked live and included in the manifest.
+        if (c.parse_graph.input_files.items(.loader)[source_index] == .html) {
+            for (import_records[source_index].slice()) |*record| {
+                if (record.source_index.isValid()) {
+                    c.markFileLiveForTreeShaking(
+                        record.source_index.get(),
                         side_effects,
                         parts,
                         import_records,
@@ -2353,9 +2383,9 @@ pub const LinkerContext = struct {
         if (!named_import.alias_is_star and
             flags.has_lazy_export and
 
-            // CommonJS exports
-            !flags.uses_export_keyword and !strings.eqlComptime(named_import.alias orelse "", "default") and
             // ESM exports
+            !flags.uses_export_keyword and !strings.eqlComptime(named_import.alias orelse "", "default") and
+            // CommonJS exports
             !flags.uses_exports_ref and !flags.uses_module_ref)
         {
             // Just warn about it and replace the import with "undefined"
@@ -2669,7 +2699,7 @@ pub const LinkerContext = struct {
 
 pub const Ref = bun.ast.Ref;
 pub const ThreadPoolLib = bun.ThreadPool;
-pub const Fs = @import("../fs.zig");
+pub const Fs = @import("../resolver/fs.zig");
 
 pub const Index = bun.ast.Index;
 const debugTreeShake = Output.scoped(.TreeShake, .hidden);
@@ -2680,21 +2710,21 @@ pub const ParseTask = bun.bundle_v2.ParseTask;
 
 const string = []const u8;
 
-const NodeFallbackModules = @import("../node_fallbacks.zig");
-const js_printer = @import("../js_printer.zig");
-const lex = @import("../js_lexer.zig");
-const linker = @import("../linker.zig");
-const runtime = @import("../runtime.zig");
+const NodeFallbackModules = @import("../resolver/node_fallbacks.zig");
+const js_printer = @import("../js_printer/js_printer.zig");
+const lex = @import("../js_parser/lexer.zig");
+const linker = @import("./linker.zig");
+const runtime = @import("../js_parser/runtime.zig");
 const std = @import("std");
 
-const Logger = @import("../logger.zig");
+const Logger = @import("../logger/logger.zig");
 const Loc = Logger.Loc;
-
-const options = @import("../options.zig");
-const Loader = options.Loader;
 
 const _resolver = @import("../resolver/resolver.zig");
 const Resolver = _resolver.Resolver;
+
+const options = @import("./options.zig");
+const Loader = options.Loader;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

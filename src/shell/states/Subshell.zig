@@ -69,6 +69,9 @@ pub fn initDupeShellState(
     subshell.base.shell = switch (shell_state.dupeForSubshell(subshell.base.allocScope(), subshell.base.allocator(), io, .subshell)) {
         .result => |s| s,
         .err => |e| {
+            // Callee-consumes-on-failure: we own the io refs the caller passed in.
+            subshell.io.deref();
+            subshell.base.endScope();
             parent.destroy(subshell);
             return .{ .err = e };
         },

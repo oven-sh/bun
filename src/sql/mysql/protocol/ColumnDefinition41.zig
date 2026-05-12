@@ -48,6 +48,7 @@ pub fn deinit(this: *ColumnDefinition41) void {
     this.org_table.deinit();
     this.name.deinit();
     this.org_name.deinit();
+    this.name_or_index.deinit();
 }
 
 pub fn decodeInternal(this: *ColumnDefinition41, comptime Context: type, reader: NewReader(Context)) !void {
@@ -77,6 +78,7 @@ pub fn decodeInternal(this: *ColumnDefinition41, comptime Context: type, reader:
     this.flags = ColumnFlags.fromInt(try reader.int(u16));
     this.decimals = try reader.int(u8);
 
+    this.name_or_index.deinit();
     this.name_or_index = try ColumnIdentifier.init(this.name);
 
     // https://mariadb.com/kb/en/result-set-packets/#column-definition-packet

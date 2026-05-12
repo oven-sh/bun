@@ -400,7 +400,7 @@ pub fn VersionType(comptime IntType: type) type {
             if (!validPreOrBuildTagCharacter(d) or std.ascii.isWhitespace(d)) return .major;
             i += 1;
 
-            // at this point the semver is valid so we can return true if it ends
+            // at this point the semver is valid so we can return pinned if it ends
             if (i >= version.len) return pinned;
             d = version[i];
             while (validPreOrBuildTagCharacter(d) and !std.ascii.isWhitespace(d)) {

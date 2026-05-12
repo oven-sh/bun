@@ -91,6 +91,59 @@ mock.module("./external-api", () => ({
 }));
 ```
 
+### Path Ignore Patterns
+
+Exclude files and directories from test discovery entirely using glob patterns. Unlike `coveragePathIgnorePatterns` which only affects coverage reports, `pathIgnorePatterns` prevents matching paths from being discovered and run as tests.
+
+This is useful when your project contains submodules, vendored code, or other directories with `*.test.ts` files that you don't want `bun test` to pick up.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# Single pattern
+pathIgnorePatterns = "vendor/**"
+
+# Multiple patterns
+pathIgnorePatterns = [
+  "vendor/**",
+  "submodules/**",
+  "fixtures/**"
+]
+```
+
+This is equivalent to using `--path-ignore-patterns` on the command line:
+
+```bash terminal icon="terminal"
+bun test --path-ignore-patterns 'vendor/**' --path-ignore-patterns 'fixtures/**'
+```
+
+Directories matching a pattern are pruned during scanning, so their contents are never traversed. This means ignoring a large directory tree is efficient -- Bun won't spend time reading files inside it.
+
+#### Common Use Cases
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+pathIgnorePatterns = [
+  # Git submodules with their own test suites
+  "submodules/**",
+
+  # Vendored dependencies
+  "vendor/**",
+  "third-party/**",
+
+  # Test fixtures that look like tests but aren't
+  "fixtures/**",
+  "**/test-data/**",
+
+  # Integration / E2E tests you want to run separately
+  "**/integration/**",
+  "e2e/**"
+]
+```
+
+<Note>
+  Command-line `--path-ignore-patterns` flags override the `bunfig.toml` value entirely -- the two are not merged.
+</Note>
+
 ## Timeouts
 
 ### Default Timeout
@@ -415,6 +468,7 @@ exact = true
 # Test discovery
 root = "src"
 preload = ["./test-setup.ts", "./global-mocks.ts"]
+pathIgnorePatterns = ["vendor/**", "submodules/**"]
 
 # Execution settings
 timeout = 10000

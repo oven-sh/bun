@@ -538,10 +538,10 @@ pub const InstallCompletionsCommand = struct {
 const string = []const u8;
 
 const ShellCompletions = @import("./shell_completions.zig");
-const fs = @import("../fs.zig");
-const resolve_path = @import("../resolver/resolve_path.zig");
+const fs = @import("../resolver/fs.zig");
+const resolve_path = @import("../paths/resolve_path.zig");
 const std = @import("std");
-const which = @import("../which.zig").which;
+const which = @import("../which/which.zig").which;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

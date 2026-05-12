@@ -31,12 +31,12 @@ declare -a FILES_TO_FORMAT
 echo "Finding header files..."
 while IFS= read -r -d '' file; do
     # Additional filtering for specific files and patterns
-    if [[ "$file" =~ src/bun\.js/api/ffi- ]] || \
+    if [[ "$file" =~ src/runtime/ffi/ffi- ]] || \
        [[ "$file" =~ src/napi/ ]] || \
-       [[ "$file" =~ src/bun\.js/bindings/libuv/ ]] || \
-       [[ "$file" =~ src/bun\.js/bindings/sqlite/ ]] || \
+       [[ "$file" =~ src/jsc/bindings/libuv/ ]] || \
+       [[ "$file" =~ src/jsc/bindings/sqlite/ ]] || \
        [[ "$file" =~ packages/bun-usockets/.*libuv ]] || \
-       [[ "$file" =~ src/deps/ ]]; then
+       [[ "$file" =~ vendor/ ]]; then
         continue
     fi
     FILES_TO_FORMAT+=("$file")
@@ -47,21 +47,13 @@ done < <(find src packages -type f \( -name "*.h" -o -name "*.hpp" \) \
     -not -path "*/generated/*" \
     -print0 2>/dev/null || true)
 
-# Read C++ source files from CxxSources.txt
-echo "Reading C++ source files from CxxSources.txt..."
-if [ -f "cmake/sources/CxxSources.txt" ]; then
-    while IFS= read -r file; do
-        # Skip empty lines and comments
-        if [[ -n "$file" && ! "$file" =~ ^[[:space:]]*# ]]; then
-            # Check if file exists
-            if [ -f "$file" ]; then
-                FILES_TO_FORMAT+=("$file")
-            fi
-        fi
-    done < "cmake/sources/CxxSources.txt"
-else
-    echo "Warning: cmake/sources/CxxSources.txt not found" >&2
-fi
+# Glob C++ source files — patterns are defined in scripts/build/sources.ts
+echo "Globbing C++ source files..."
+while IFS= read -r file; do
+    if [[ -n "$file" && -f "$file" ]]; then
+        FILES_TO_FORMAT+=("$file")
+    fi
+done < <(bun scripts/glob-sources.ts cxx)
 
 # Remove duplicates while preserving order
 declare -a UNIQUE_FILES

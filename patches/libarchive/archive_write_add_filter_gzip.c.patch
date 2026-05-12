@@ -1,5 +1,5 @@
---- a/libarchive/archive_write_add_filter_gzip.c	2025-07-21 06:29:58.505101515 +0000
-+++ b/libarchive/archive_write_add_filter_gzip.c	2025-07-21 06:44:09.023676935 +0000
+--- a/libarchive/archive_write_add_filter_gzip.c
++++ b/libarchive/archive_write_add_filter_gzip.c
 @@ -59,12 +59,13 @@
  	int		 compression_level;
  	int		 timestamp;
@@ -23,10 +23,13 @@
  	f->open = &archive_compressor_gzip_open;
  	f->options = &archive_compressor_gzip_options;
  	f->close = &archive_compressor_gzip_close;
-@@ -177,6 +179,30 @@
- 		return (ARCHIVE_OK);
- 	}
- 
+@@ -180,6 +182,30 @@
+ 			if (data->original_filename == NULL)
+ 				return (ARCHIVE_WARN);
+ 		}
++		return (ARCHIVE_OK);
++	}
++
 +	if (strcmp(key, "os") == 0) {
 +		if (value == NULL) 
 +			return (ARCHIVE_WARN);
@@ -48,16 +51,13 @@
 +		else if (strcmp(value, "Unknown") == 0) data->os = 255;
 +		else return (ARCHIVE_WARN);
 +
-+		return (ARCHIVE_OK);
-+	}
-+
- 	/* Note: The "warn" return is just to inform the options
- 	 * supervisor that we didn't handle it.  It will generate
- 	 * a suitable error if no one used this option. */
-@@ -236,7 +262,7 @@
- 	    data->compressed[8] = 4;
-     else
- 	    data->compressed[8] = 0;
+ 		return (ARCHIVE_OK);
+ 	}
+ 
+@@ -245,7 +271,7 @@
+ 	} else {
+ 		data->compressed[8] = 0;
+ 	}
 -	data->compressed[9] = 3; /* OS=Unix */
 +	data->compressed[9] = data->os;
  	data->stream.next_out += 10;

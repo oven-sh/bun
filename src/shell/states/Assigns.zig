@@ -31,8 +31,10 @@ pub const ChildPtr = StatePtrUnion(.{
 });
 
 pub inline fn deinit(this: *Assigns) void {
-    if (this.state == .expanding) {
-        this.state.expanding.current_expansion_result.deinit();
+    switch (this.state) {
+        .expanding => |*e| e.current_expansion_result.deinit(),
+        .err => |*e| e.deinit(bun.default_allocator),
+        .idle, .done => {},
     }
     this.io.deinit();
     this.base.endScope();
@@ -127,11 +129,12 @@ pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) Yield {
         bun.assert(this.state == .expanding);
         const expansion = child.ptr.as(Expansion);
         if (exit_code != 0) {
+            // `expansion` points into `this.state.expanding.expansion`; capture the error
+            // and deinit it before switching the union variant or we operate on garbage.
+            const err = expansion.state.err;
             this.state.expanding.current_expansion_result.clearAndFree();
-            this.state = .{
-                .err = expansion.state.err,
-            };
             expansion.deinit();
+            this.state = .{ .err = err };
             return .failed;
         }
         var expanding = &this.state.expanding;

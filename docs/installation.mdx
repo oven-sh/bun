@@ -21,7 +21,7 @@ Bun ships as a single, dependency-free executable. You can install it via script
 
     </CodeGroup>
     <Note>
-      **Linux users**  The `unzip` package is required to install Bun. Use `sudo apt install unzip` to install the unzip package. Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1. Use `uname -r` to check Kernel version.
+      **Linux users**  The `unzip` package is required to install Bun. Use `sudo apt install unzip` to install the unzip package. Kernel version 5.6 or higher is recommended; Bun runs on kernels as old as 3.10 (RHEL 7) with graceful degradation of newer syscalls. Use `uname -r` to check your kernel version.
       </Note>
 
   </Tab>
@@ -261,6 +261,13 @@ To download Bun binaries directly, visit the [releases page on GitHub](https://g
     For older CPUs without AVX2
   </Card>
   <Card
+    icon="/icons/windows.svg"
+    title="Windows ARM64"
+    href="https://github.com/oven-sh/bun/releases/latest/download/bun-windows-aarch64.zip"
+  >
+    Windows on ARM (Snapdragon, etc.)
+  </Card>
+  <Card
     icon="/icons/apple.svg"
     title="macOS ARM64"
     href="https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-aarch64.zip"
@@ -292,8 +299,9 @@ For distributions without `glibc` (Alpine Linux, Void Linux):
 - [Linux ARM64 musl](https://github.com/oven-sh/bun/releases/latest/download/bun-linux-aarch64-musl.zip)
 
 <Note>
-  If you encounter an error like `bun: /lib/x86_64-linux-gnu/libm.so.6: version GLIBC_2.29 not found`, try using the
-  musl binary. Bun's install script automatically chooses the correct binary for your system.
+  Bun's glibc binaries require glibc 2.17 or newer. If you encounter an error like `bun:
+  /lib/x86_64-linux-gnu/libc.so.6: version GLIBC_... not found`, try using the musl binary. Bun's install script
+  automatically chooses the correct binary for your system.
 </Note>
 
 ---

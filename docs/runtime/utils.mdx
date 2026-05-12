@@ -172,7 +172,7 @@ const result = peek(promise);
 console.log(result); // "hi"
 ```
 
-This is important when attempting to reduce number of extraneous microticks in performance-sensitive code. It's an advanced API and you probably shouldn't use it unless you know what you're doing.
+This is important when attempting to reduce the number of extraneous microticks in performance-sensitive code. It's an advanced API — review the examples below before using it in production.
 
 ```ts
 import { peek } from "bun";
@@ -250,7 +250,7 @@ Bun.openInEditor(import.meta.url, {
 
 ## `Bun.deepEquals()`
 
-Recursively checks if two objects are equivalent. This is used internally by `expect().toEqual()` in `bun:test`.
+Recursively checks if two objects are equivalent. `expect().toEqual()` in `bun:test` uses this internally.
 
 ```ts
 const foo = { a: 1, b: 2, c: { d: 3 } };
@@ -262,7 +262,7 @@ Bun.deepEquals(foo, { a: 1, b: 2, c: { d: 3 } });
 Bun.deepEquals(foo, { a: 1, b: 2, c: { d: 4 } });
 ```
 
-A third boolean parameter can be used to enable "strict" mode. This is used by `expect().toStrictEqual()` in the test runner.
+Pass a third boolean parameter to enable "strict" mode. `expect().toStrictEqual()` in the test runner uses this.
 
 ```ts
 const a = { entries: [1, 2] };
@@ -329,7 +329,7 @@ This is useful for:
 - Measuring the width of a string in a terminal
 
 This API is designed to match the popular "string-width" package, so that
-existing code can be easily ported to Bun and vice versa.
+existing code can be ported to Bun and vice versa.
 
 [In this benchmark](https://github.com/oven-sh/bun/blob/5147c0ba7379d85d4d1ed0714b84d6544af917eb/bench/snippets/string-width.mjs#L13), `Bun.stringWidth` is a ~6,756x faster than the `string-width` npm package for input larger than about 500 characters. Big thanks to [sindresorhus](https://github.com/sindresorhus) for their work on `string-width`!
 
@@ -353,7 +353,7 @@ To make `Bun.stringWidth` fast, we've implemented it in Zig using optimized SIMD
 
 <Accordion title="View full benchmark">
 
-As a reminder, 1 nanosecond (ns) is 1 billionth of a second. Here's a quick reference for converting between units:
+As a reminder, 1 nanosecond (ns) is 1 billionth of a second. Here's a reference for converting between units:
 
 | Unit | 1 Millisecond |
 | ---- | ------------- |

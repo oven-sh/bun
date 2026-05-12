@@ -8,9 +8,9 @@
 const File = @This();
 
 // "handle" matches std.fs.File
-handle: bun.FileDescriptor,
+handle: bun.FD,
 
-pub fn openat(dir: bun.FileDescriptor, path: [:0]const u8, flags: i32, mode: bun.Mode) Maybe(File) {
+pub fn openat(dir: bun.FD, path: [:0]const u8, flags: i32, mode: bun.Mode) Maybe(File) {
     return switch (sys.openat(dir, path, flags, mode)) {
         .result => |fd| .{ .result = .{ .handle = fd } },
         .err => |err| .{ .err = err },
@@ -62,7 +62,7 @@ pub fn from(other: anytype) File {
         return .{ .handle = .fromNative(other) };
     }
 
-    if (T == bun.FileDescriptor) {
+    if (T == bun.FD) {
         return .{ .handle = other };
     }
 

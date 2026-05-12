@@ -300,6 +300,25 @@ declare module "bun" {
     contentDisposition?: string | undefined;
 
     /**
+     * The Content-Encoding header value.
+     * Specifies what content encodings have been applied to the object,
+     * for example to indicate that it has been compressed.
+     *
+     * @example
+     *    // Setting gzip encoding
+     *     const file = s3.file("data.json.gz", {
+     *       contentEncoding: "gzip"
+     *     });
+     *
+     * @example
+     *    // Setting encoding when writing
+     *     await s3.write("data.json.gz", compressedData, {
+     *       contentEncoding: "gzip"
+     *     });
+     */
+    contentEncoding?: string | undefined;
+
+    /**
      * By default, Amazon S3 uses the STANDARD Storage Class to store newly created objects.
      *
      * @example

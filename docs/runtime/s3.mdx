@@ -11,7 +11,7 @@ Production servers often read, upload, and write files to S3-compatible object s
   <img src="/images/bun-s3-node.gif" alt="Bun's S3 API is fast" />
 </Frame>
 
-Bun provides fast, native bindings for interacting with S3-compatible object storage services. Bun's S3 API is designed to be simple and feel similar to fetch's `Response` and `Blob` APIs (like Bun's local filesystem APIs).
+Bun provides fast, native bindings for interacting with S3-compatible object storage services. Its S3 API is designed to feel similar to fetch's `Response` and `Blob` APIs (like Bun's local filesystem APIs).
 
 ```ts s3.ts icon="/icons/typescript.svg"
 import { s3, write, S3Client } from "bun";
@@ -118,7 +118,7 @@ These helper methods not only simplify the API, they also make it faster.
 
 ### Writing & uploading files to S3
 
-Writing to S3 is just as simple.
+Writing to S3 works the same way.
 
 ```ts s3.ts icon="/icons/typescript.svg"
 // Write a string (replacing the file)
@@ -275,7 +275,7 @@ const url = s3file.presign({
 
 ### `new Response(S3File)`
 
-To quickly redirect users to a presigned URL for an S3 file, pass an `S3File` instance to a `Response` object as the body.
+To redirect users to a presigned URL for an S3 file, pass an `S3File` instance to a `Response` object as the body.
 
 This will automatically redirect the user to the presigned URL for the S3 file, saving you the memory, time, and bandwidth cost of downloading the file to your server and sending it back to the user.
 
@@ -447,7 +447,7 @@ const r2WithEndpoint = new S3Client({
 
 ## Credentials
 
-Credentials are one of the hardest parts of using S3, and we've tried to make it as easy as possible. By default, Bun reads the following environment variables for credentials.
+Credentials are one of the hardest parts of using S3. By default, Bun reads the following environment variables for credentials.
 
 | Option name       | Environment variable   |
 | ----------------- | ---------------------- |
@@ -601,7 +601,7 @@ Like `Bun.file()`, `S3File` extends [`Blob`](https://developer.mozilla.org/en-US
 | `await s3File.stream()`      | `ReadableStream` |
 | `await s3File.arrayBuffer()` | `ArrayBuffer`    |
 
-That means using `S3File` instances with `fetch()`, `Response`, and other web APIs that accept `Blob` instances just works.
+That means using `S3File` instances with `fetch()`, `Response`, and other web APIs that accept `Blob` instances works out of the box.
 
 ### Partial reads with `slice`
 
@@ -779,7 +779,7 @@ const exists = await s3file.exists();
 
 ### `S3Client.size` (static)
 
-To quickly check the size of S3 file without downloading it, you can use the `S3Client.size` static method.
+To check the size of an S3 file without downloading it, you can use the `S3Client.size` static method.
 
 ```ts s3.ts icon="/icons/typescript.svg" highlight={11}
 import { S3Client } from "bun";

@@ -832,6 +832,19 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(Buffer.from("Abx", "hex")).toEqual(Buffer.from("Ab", "hex"));
       });
 
+      it("hex input containing byte 0xFF is treated as invalid", () => {
+        // hex_table is indexed by the full u8 range; 0xFF must not read out of bounds.
+        // latin1 (8-bit) string path
+        expect(Buffer.from("\xff\xff", "hex")).toEqual(Buffer.alloc(0));
+        expect(Buffer.from("ab\xff\xffcd", "hex")).toEqual(Buffer.from([0xab]));
+        // 16-bit string path (U+0100 forces two-byte storage, U+00FF still <= 0xFF)
+        expect(Buffer.from("ab\xff\xff\u0100", "hex")).toEqual(Buffer.from([0xab]));
+
+        const buf = Buffer.alloc(4);
+        expect(buf.write("ab\xff\xffcd", "hex")).toBe(1);
+        expect(buf).toEqual(Buffer.from([0xab, 0, 0, 0]));
+      });
+
       it("single base64 char encodes as 0", () => {
         expect(Buffer.from("A", "base64").length).toBe(0);
       });
@@ -3245,4 +3258,42 @@ describe("*Write methods with NaN/invalid offset and length", () => {
       );
     });
   }
+});
+
+describe("Buffer.copyBytesFrom", () => {
+  it("copies the correct bytes from a Uint8Array view with a non-zero byteOffset", () => {
+    const ab = new ArrayBuffer(10);
+    const full = new Uint8Array(ab);
+    for (let i = 0; i < 10; i++) full[i] = i;
+
+    // byteOffset (2) < byteLength (6)
+    const view = new Uint8Array(ab, 2, 6);
+    const buf = Buffer.copyBytesFrom(view);
+    expect([...buf]).toEqual([2, 3, 4, 5, 6, 7]);
+
+    // ensure it's an independent copy
+    full[2] = 0xff;
+    expect(buf[0]).toBe(2);
+  });
+
+  it("handles a view where byteOffset > byteLength without underflowing", () => {
+    const ab = new ArrayBuffer(10);
+    const full = new Uint8Array(ab);
+    for (let i = 0; i < 10; i++) full[i] = i;
+
+    // byteOffset (6) > byteLength (4) -> previously underflowed to ~SIZE_MAX and threw OOM
+    const view = new Uint8Array(ab, 6, 4);
+    const buf = Buffer.copyBytesFrom(view);
+    expect([...buf]).toEqual([6, 7, 8, 9]);
+  });
+
+  it("copies the correct bytes from a multi-byte TypedArray view with a non-zero byteOffset", () => {
+    const ab = new ArrayBuffer(16);
+    const full = new Uint8Array(ab);
+    for (let i = 0; i < 16; i++) full[i] = i;
+
+    const view = new Uint16Array(ab, 8, 4); // bytes 8..15
+    const buf = Buffer.copyBytesFrom(view);
+    expect([...buf]).toEqual([8, 9, 10, 11, 12, 13, 14, 15]);
+  });
 });

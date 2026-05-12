@@ -1,7 +1,11 @@
 // Hardcoded module "node:_http_server"
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Duplex, Stream } = require("node:stream");
-const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
+const {
+  _checkInvalidHeaderChar: checkInvalidHeaderChar,
+  validateHeaderName,
+  validateHeaderValue,
+} = require("node:_http_common");
 const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger } = require("internal/validators");
 const { ConnResetException } = require("internal/shared");
 
@@ -193,6 +197,19 @@ function emitListeningNextTick(self, hostname, port) {
   }
 }
 
+// Node.js only requests a client certificate when `requestCert: true`.
+// The uSockets SSL context treats `ca` alone as "verify peer", so without
+// these two flags an `https.Server({ ca })` would reject every client that
+// doesn't present a cert. Mirror tls.Server (net.ts): default `requestCert`
+// to false and, when not requesting, force `rejectUnauthorized` to false so
+// the CA is loaded into the trust store without requiring a client cert.
+function normalizeServerTls(tls) {
+  const requestCert = !!tls.requestCert;
+  tls.requestCert = requestCert;
+  tls.rejectUnauthorized = requestCert ? tls.rejectUnauthorized !== false : false;
+  return tls;
+}
+
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
@@ -247,14 +264,16 @@ function Server(options, callback): void {
     }
 
     if (this[isTlsSymbol]) {
-      this[tlsSymbol] = {
+      this[tlsSymbol] = normalizeServerTls({
         serverName,
         key,
         cert,
         ca,
         passphrase,
         secureOptions,
-      };
+        requestCert: options.requestCert,
+        rejectUnauthorized: options.rejectUnauthorized,
+      });
     } else {
       this[tlsSymbol] = null;
     }
@@ -381,7 +400,7 @@ Server.prototype.listen = function () {
 
       const otherTLS = arguments[0].tls;
       if (otherTLS && $isObject(otherTLS)) {
-        tls = otherTLS;
+        tls = normalizeServerTls({ ...otherTLS });
       }
     } else if (typeof arguments[0] === "string" && !(Number(arguments[0]) >= 0)) {
       // (path[...][, cb])
@@ -1284,7 +1303,10 @@ ServerResponse.prototype.writeEarlyHints = function (hints, cb) {
 
   for (const key of ObjectKeys(hints)) {
     if (key !== "link") {
-      head += key + ": " + hints[key] + "\r\n";
+      const value = hints[key];
+      validateHeaderName(key);
+      validateHeaderValue(key, value);
+      head += key + ": " + value + "\r\n";
     }
   }
 

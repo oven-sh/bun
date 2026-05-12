@@ -23,7 +23,7 @@ await $`cat < ${response} | wc -c`; // 1256
 - **Cross-platform**: works on Windows, Linux & macOS. Instead of `rimraf` or `cross-env`', you can use Bun Shell without installing extra dependencies. Common shell commands like `ls`, `cd`, `rm` are implemented natively.
 - **Familiar**: Bun Shell is a bash-like shell, supporting redirection, pipes, environment variables and more.
 - **Globs**: Glob patterns are supported natively, including `**`, `*`, `{expansion}`, and more.
-- **Template literals**: Template literals are used to execute shell commands. This allows for easy interpolation of variables and expressions.
+- **Template literals**: Template literals execute shell commands, allowing interpolation of variables and expressions.
 - **Safety**: Bun Shell escapes all strings by default, preventing shell injection attacks.
 - **JavaScript interop**: Use `Response`, `ArrayBuffer`, `Blob`, `Bun.file(path)` and other JavaScript objects as stdin, stdout, and stderr.
 - **Shell scripting**: Bun Shell can be used to run shell scripts (`.bun.sh` files).
@@ -531,7 +531,7 @@ await $`echo ${{ raw: '$(foo) `bar` "baz"' }}`;
 
 For simple shell scripts, instead of `/bin/sh`, you can use Bun Shell to run shell scripts.
 
-To do so, just run the script with `bun` on a file with the `.sh` extension.
+To do so, run the script with `bun` on a file with the `.sh` extension.
 
 ```sh script.sh icon="file-code"
 echo "Hello World! pwd=$(pwd)"

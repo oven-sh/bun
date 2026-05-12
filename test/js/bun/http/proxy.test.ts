@@ -113,33 +113,36 @@ afterAll(() => {
 for (const proxy_tls of [false, true]) {
   for (const target_tls of [false, true]) {
     for (const body of [undefined, "Hello, World"]) {
-      test(`${body === undefined ? "GET" : "POST"} ${proxy_tls ? "TLS" : "non-TLS"} proxy -> ${target_tls ? "TLS" : "non-TLS"} body type ${typeof body}`, async () => {
-        const response = await fetch(target_tls ? httpsServer.url : httpServer.url, {
-          method: body === undefined ? "GET" : "POST",
-          proxy: proxy_tls ? httpsProxyServer.url : httpProxyServer.url,
-          headers: {
-            "Content-Type": "plain/text",
-          },
-          keepalive: false,
-          body: body,
-          tls: {
-            ca: tlsCert.cert,
-            rejectUnauthorized: false,
-          },
-        });
-        expect(response.ok).toBe(true);
-        expect(response.status).toBe(200);
-        expect(response.statusText).toBe("OK");
-        const result = await response.text();
+      test.concurrent(
+        `${body === undefined ? "GET" : "POST"} ${proxy_tls ? "TLS" : "non-TLS"} proxy -> ${target_tls ? "TLS" : "non-TLS"} body type ${typeof body}`,
+        async () => {
+          const response = await fetch(target_tls ? httpsServer.url : httpServer.url, {
+            method: body === undefined ? "GET" : "POST",
+            proxy: proxy_tls ? httpsProxyServer.url : httpProxyServer.url,
+            headers: {
+              "Content-Type": "plain/text",
+            },
+            keepalive: false,
+            body: body,
+            tls: {
+              ca: tlsCert.cert,
+              rejectUnauthorized: false,
+            },
+          });
+          expect(response.ok).toBe(true);
+          expect(response.status).toBe(200);
+          expect(response.statusText).toBe("OK");
+          const result = await response.text();
 
-        expect(result).toBe(body || "");
-      });
+          expect(result).toBe(body || "");
+        },
+      );
     }
   }
 }
 
 for (const server_tls of [false, true]) {
-  describe(`proxy can handle redirects with ${server_tls ? "TLS" : "non-TLS"} server`, () => {
+  describe.concurrent(`proxy can handle redirects with ${server_tls ? "TLS" : "non-TLS"} server`, () => {
     test("with empty body #12007", async () => {
       using server = Bun.serve({
         tls: server_tls ? tlsCert : undefined,
@@ -400,6 +403,91 @@ test("axios with https-proxy-agent", async () => {
   expect(httpProxyServer.log).toEqual([`CONNECT localhost:${httpsServer.port}`]);
 });
 
+test("HTTPS proxy tunnel keep-alive reuses CONNECT across sequential requests", async () => {
+  httpProxyServer.log.length = 0;
+
+  for (let i = 0; i < 3; i++) {
+    const result = await fetch(httpsServer.url, {
+      proxy: httpProxyServer.url,
+      tls: { rejectUnauthorized: false },
+    });
+    expect(result.status).toBe(200);
+    await result.text();
+  }
+
+  const connects = httpProxyServer.log.filter(l => l.startsWith("CONNECT"));
+  expect(connects).toEqual([`CONNECT localhost:${httpsServer.port}`]);
+});
+
+test("HTTPS proxy tunnel keep-alive does not share tunnel across different targets", async () => {
+  // Fresh servers so prior tests' pooled tunnels can't interfere.
+  using serverA = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("a") });
+  using serverB = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("b") });
+
+  httpProxyServer.log.length = 0;
+
+  // Same proxy, two different targets — each must get its own tunnel.
+  const opts = { proxy: httpProxyServer.url, tls: { rejectUnauthorized: false } } as const;
+  await (await fetch(serverA.url, opts)).text();
+  await (await fetch(serverB.url, opts)).text();
+  await (await fetch(serverA.url, opts)).text();
+  await (await fetch(serverB.url, opts)).text();
+
+  const connects = httpProxyServer.log.filter(l => l.startsWith("CONNECT"));
+  expect(connects.sort()).toEqual([`CONNECT localhost:${serverA.port}`, `CONNECT localhost:${serverB.port}`].sort());
+});
+
+test("HTTPS proxy tunnel keep-alive does not share tunnel across different credentials", async () => {
+  using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("ok") });
+
+  let connectCount = 0;
+  const authPerConnect: string[] = [];
+  const sockets = new Set<net.Socket>();
+  const upstreamSockets = new Set<net.Socket>();
+  const proxy = net.createServer(clientSocket => {
+    sockets.add(clientSocket);
+    clientSocket.once("data", data => {
+      const req = data.toString();
+      if (!req.startsWith("CONNECT")) return clientSocket.end();
+      connectCount++;
+      const authMatch = req.match(/Proxy-Authorization: (.+)\r\n/i);
+      authPerConnect.push(authMatch ? authMatch[1] : "<none>");
+      const serverSocket = net.connect(target.port, "localhost", () => {
+        clientSocket.write("HTTP/1.1 200 OK\r\n\r\n");
+        clientSocket.pipe(serverSocket);
+        serverSocket.pipe(clientSocket);
+      });
+      upstreamSockets.add(serverSocket);
+      serverSocket.on("close", () => upstreamSockets.delete(serverSocket));
+      serverSocket.on("error", () => clientSocket.end());
+      clientSocket.on("error", () => {});
+    });
+    clientSocket.on("close", () => sockets.delete(clientSocket));
+  });
+  proxy.listen(0);
+  await once(proxy, "listening");
+  const proxyPort = (proxy.address() as net.AddressInfo).port;
+
+  try {
+    const opts = { tls: { rejectUnauthorized: false } } as const;
+
+    // Same target, same proxy, different credentials — must NOT share.
+    await (await fetch(target.url, { ...opts, proxy: `http://user1:pass1@localhost:${proxyPort}` })).text();
+    await (await fetch(target.url, { ...opts, proxy: `http://user2:pass2@localhost:${proxyPort}` })).text();
+    // Same creds as first — SHOULD reuse tunnel from request 1.
+    await (await fetch(target.url, { ...opts, proxy: `http://user1:pass1@localhost:${proxyPort}` })).text();
+
+    expect(connectCount).toBe(2);
+    expect(authPerConnect.length).toBe(2);
+    expect(authPerConnect[0]).not.toBe(authPerConnect[1]);
+  } finally {
+    for (const s of sockets) s.destroy();
+    for (const s of upstreamSockets) s.destroy();
+    proxy.close();
+    await once(proxy, "close");
+  }
+});
+
 test("HTTPS over HTTP proxy preserves TLS record order with large bodies", async () => {
   // Create a custom HTTPS server that returns body size for this test
   using customServer = Bun.serve({
@@ -476,7 +564,7 @@ test("HTTPS origin close-delimited body via HTTP proxy does not ECONNRESET", asy
   }
 });
 
-describe("proxy object format with headers", () => {
+describe.concurrent("proxy object format with headers", () => {
   test("proxy object with url string works same as string proxy", async () => {
     const response = await fetch(httpServer.url, {
       method: "GET",
@@ -937,6 +1025,150 @@ describe.concurrent("NO_PROXY with explicit proxy option", () => {
 
     const exitCode = await proc.exited;
     // exit(0) means fetch threw (proxy connection failed), proving proxy was used
+    expect(exitCode).toBe(0);
+  });
+
+  test("NO_PROXY set at runtime via process.env is observed by fetch", async () => {
+    // Subprocess so we control the initial env and can mutate process.env
+    // mid-script without polluting the test runner's process.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          // Dead proxy — if fetch uses it, connection fails.
+          const deadProxy = "http://127.0.0.1:${deadProxyPort}";
+          const target = "http://localhost:${httpServer.port}";
+
+          // No NO_PROXY yet — fetch with explicit proxy should fail.
+          let threw = false;
+          try { await fetch(target, { proxy: deadProxy }); } catch { threw = true; }
+          if (!threw) { console.error("expected first fetch to fail"); process.exit(1); }
+
+          // Set NO_PROXY at runtime — subsequent fetch should bypass proxy.
+          process.env.NO_PROXY = "localhost";
+          const resp = await fetch(target, { proxy: deadProxy });
+          console.log(resp.status);
+
+          // Unset via empty string — should use proxy again (and fail).
+          process.env.NO_PROXY = "";
+          // Node.js semantics: read-back is "", not undefined.
+          if (process.env.NO_PROXY !== "") {
+            console.error("expected NO_PROXY to read back as '', got", JSON.stringify(process.env.NO_PROXY));
+            process.exit(1);
+          }
+          threw = false;
+          try { await fetch(target, { proxy: deadProxy }); } catch { threw = true; }
+          if (!threw) { console.error("expected third fetch to fail"); process.exit(1); }
+
+          process.exit(0);
+        `,
+      ],
+      // Strip inherited NO_PROXY/no_proxy so the first fetch reliably
+      // hits the dead proxy. Setting to "" wouldn't work — isNoProxy
+      // checks lowercase first and an empty no_proxy would mask the
+      // runtime-set uppercase NO_PROXY.
+      env: (() => {
+        const e = { ...bunEnv };
+        delete e.NO_PROXY;
+        delete e.no_proxy;
+        return e;
+      })(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(stdout.trim()).toBe("200");
+    expect(exitCode).toBe(0);
+  });
+
+  test("S3 ops use runtime process.env.HTTP_PROXY and survive overwrite while in flight", async () => {
+    // Covers two things this PR introduced:
+    //  1) S3's getHttpProxy() observes a runtime process.env.HTTP_PROXY write.
+    //  2) executeSimpleS3Request dupes the env-derived proxy slice — thrashing
+    //     HTTP_PROXY mid-request must not UAF the bytes the HTTP thread reads.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import net from "node:net";
+
+          // Mock S3 endpoint — only the proxy is supposed to reach this.
+          let endpointHits = 0;
+          using endpoint = Bun.serve({
+            port: 0,
+            fetch(req) {
+              endpointHits++;
+              return new Response("", {
+                headers: { "content-length": "5", "etag": "abc" },
+              });
+            },
+          });
+
+          // Minimal forwarding HTTP proxy. For plain-HTTP proxying the
+          // client sends an absolute-URI request line; we strip it to
+          // origin-form and forward to the endpoint.
+          let proxyHits = 0;
+          const proxy = net.createServer(client => {
+            client.once("data", data => {
+              proxyHits++;
+              const text = data.toString();
+              const firstLine = text.slice(0, text.indexOf("\\r\\n"));
+              const [method, absUrl, ver] = firstLine.split(" ");
+              const u = new URL(absUrl);
+              const upstream = net.connect(+u.port, u.hostname, () => {
+                upstream.write(method + " " + u.pathname + (u.search || "") + " " + ver + "\\r\\n");
+                upstream.write(text.slice(text.indexOf("\\r\\n") + 2));
+                client.pipe(upstream);
+                upstream.pipe(client);
+              });
+              upstream.on("error", () => client.destroy());
+            });
+          });
+          await new Promise(r => proxy.listen(0, "127.0.0.1", r));
+          const proxyUrl = "http://127.0.0.1:" + proxy.address().port;
+
+          process.env.HTTP_PROXY = proxyUrl;
+
+          const stat = Bun.S3Client.stat("key", {
+            accessKeyId: "x",
+            secretAccessKey: "y",
+            bucket: "b",
+            endpoint: endpoint.url.href,
+          });
+
+          // Thrash HTTP_PROXY so the original RefCountedEnvValue is freed
+          // and its bytes reallocated before the HTTP thread reads them.
+          for (let i = 0; i < 64; i++) {
+            process.env.HTTP_PROXY = "http://" + Buffer.alloc(32 + i, "z").toString() + ".invalid:1/";
+          }
+
+          const r = await stat;
+          proxy.close();
+          if (proxyHits === 0) { console.error("proxy never saw the request"); process.exit(1); }
+          if (endpointHits === 0) { console.error("endpoint never saw the request"); process.exit(1); }
+          console.log(r.size);
+          process.exit(0);
+        `,
+      ],
+      env: (() => {
+        const e = { ...bunEnv };
+        delete e.HTTP_PROXY;
+        delete e.http_proxy;
+        delete e.NO_PROXY;
+        delete e.no_proxy;
+        return e;
+      })(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(stdout.trim()).toBe("5");
     expect(exitCode).toBe(0);
   });
 });

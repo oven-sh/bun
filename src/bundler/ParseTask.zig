@@ -1,7 +1,7 @@
 pub const ContentsOrFd = union(enum) {
     fd: struct {
-        dir: StoredFileDescriptorType,
-        file: StoredFileDescriptorType,
+        dir: FD,
+        file: FD,
     },
     contents: string,
 
@@ -62,8 +62,8 @@ pub const Result = struct {
     };
 
     const WatcherData = struct {
-        fd: bun.StoredFileDescriptorType,
-        dir_fd: bun.StoredFileDescriptorType,
+        fd: bun.FD,
+        dir_fd: bun.FD,
 
         /// When no files to watch, this encoding is used.
         pub const none: WatcherData = .{
@@ -177,7 +177,12 @@ fn getRuntimeSourceComptime(comptime target: options.Target) RuntimeSource {
         \\
     };
     const runtime_using_symbols = switch (target) {
-        // bun's webkit has Symbol.asyncDispose, Symbol.dispose, and SuppressedError, but not the syntax support
+        // JavaScriptCore supports `using` / `await using` natively (see
+        // `lower_using = !target.isBun()` below), so these helpers are unused
+        // when bundling for Bun and will be tree-shaken. They are still defined
+        // here so the runtime module exports a consistent shape across targets.
+        // Bun's WebKit also has Symbol.asyncDispose, Symbol.dispose, and
+        // SuppressedError, so no polyfills are needed.
         .bun =>
         \\export var __using = (stack, value, async) => {
         \\  if (value != null) {
@@ -278,8 +283,6 @@ pub fn getRuntimeSource(target: options.Target) RuntimeSource {
         inline else => |t| comptime getRuntimeSourceComptime(t),
     };
 }
-
-threadlocal var override_file_path_buf: bun.PathBuffer = undefined;
 
 fn getEmptyCSSAST(
     log: *Logger.Log,
@@ -907,7 +910,7 @@ const OnBeforeParsePlugin = struct {
     const OnBeforeParseResultWrapper = extern struct {
         original_source: ?[*]const u8 = null,
         original_source_len: usize = 0,
-        original_source_fd: bun.FileDescriptor = bun.invalid_fd,
+        original_source_fd: bun.FD = bun.invalid_fd,
         loader: Loader,
         check: if (bun.Environment.isDebug) u32 else u0 = if (bun.Environment.isDebug) 42069 else 0, // Value to ensure OnBeforeParseResult is wrapped in this struct
         result: OnBeforeParseResult,
@@ -1204,6 +1207,7 @@ fn runWithSourceCode(
     var opts = js_parser.Parser.Options.init(task.jsx, loader);
     opts.bundle = true;
     opts.warn_about_unbundled_modules = false;
+    opts.allow_unresolved = &transpiler.options.allow_unresolved;
     opts.macro_context = &transpiler.macro_context.?;
     opts.package_version = task.package_version;
 
@@ -1219,9 +1223,15 @@ fn runWithSourceCode(
     opts.features.minify_keep_names = transpiler.options.keep_names;
     opts.features.minify_whitespace = transpiler.options.minify_whitespace;
     opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
-    opts.features.standard_decorators = !loader.isTypeScript() or !task.experimental_decorators;
+    // emitDecoratorMetadata implies legacy/experimental decorators, as it only
+    // makes sense with TypeScript's legacy decorator system (reflect-metadata).
+    // TC39 standard decorators have their own metadata mechanism.
+    opts.features.standard_decorators = !loader.isTypeScript() or !(task.experimental_decorators or task.emit_decorator_metadata);
     opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
     opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
+    // JavaScriptCore implements `using` / `await using` natively, so when
+    // targeting Bun there is no need to lower them.
+    opts.features.lower_using = !target.isBun();
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
     opts.features.auto_polyfill_require = output_format == .esm and !opts.features.hot_module_reloading;
     opts.features.react_fast_refresh = transpiler.options.react_fast_refresh and
@@ -1432,30 +1442,30 @@ pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
 const string = []const u8;
 
-const Fs = @import("../fs.zig");
-const HTMLScanner = @import("../HTMLScanner.zig");
-const NodeFallbackModules = @import("../node_fallbacks.zig");
-const linker = @import("../linker.zig");
-const runtime = @import("../runtime.zig");
+const Fs = @import("../resolver/fs.zig");
+const HTMLScanner = @import("./HTMLScanner.zig");
+const NodeFallbackModules = @import("../resolver/node_fallbacks.zig");
+const linker = @import("./linker.zig");
+const runtime = @import("../js_parser/runtime.zig");
 const std = @import("std");
-const URL = @import("../url.zig").URL;
-const CacheEntry = @import("../cache.zig").Fs.Entry;
+const URL = @import("../url/url.zig").URL;
+const CacheEntry = @import("./cache.zig").Fs.Entry;
 
-const Logger = @import("../logger.zig");
+const Logger = @import("../logger/logger.zig");
 const Loc = Logger.Loc;
-
-const options = @import("../options.zig");
-const Loader = options.Loader;
 
 const _resolver = @import("../resolver/resolver.zig");
 const Resolver = _resolver.Resolver;
 
+const options = @import("./options.zig");
+const Loader = options.Loader;
+
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const FeatureFlags = bun.FeatureFlags;
 const ImportRecord = bun.ImportRecord;
 const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const ThreadPoolLib = bun.ThreadPool;
 const Transpiler = bun.Transpiler;
 const bake = bun.bake;

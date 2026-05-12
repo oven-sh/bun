@@ -104,6 +104,107 @@ describe("Web Crypto", () => {
     const isSigValid = await verifySignature(msg, signature, SECRET);
     expect(isSigValid).toBe(true);
   });
+
+  describe("unwrapKey JWK error handling", () => {
+    // Setup: AES-GCM key that can encrypt arbitrary bytes and also unwrap keys.
+    // We encrypt payloads that decrypt to invalid JWK data so the JWK parse path
+    // inside SubtleCrypto::unwrapKey fails.
+    async function setup(payload: Uint8Array) {
+      const keyData = new Uint8Array(32).fill(1);
+      const iv = new Uint8Array(12).fill(2);
+      const key = await crypto.subtle.importKey("raw", keyData, { name: "AES-GCM" }, false, [
+        "encrypt",
+        "decrypt",
+        "wrapKey",
+        "unwrapKey",
+      ]);
+      const wrapped = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, payload);
+      return { key, iv, wrapped };
+    }
+
+    it("rejects when wrapped bytes are not valid JSON", async () => {
+      const { key, iv, wrapped } = await setup(new TextEncoder().encode("not json {{{"));
+      const err = await crypto.subtle
+        .unwrapKey("jwk", wrapped, key, { name: "AES-GCM", iv }, { name: "AES-GCM" }, true, ["encrypt", "decrypt"])
+        .then(
+          () => null,
+          e => e,
+        );
+      expect(err).toBeInstanceOf(DOMException);
+      expect(err.name).toBe("DataError");
+    });
+
+    // Previously this promise never settled: the TypeError from JsonWebKey
+    // dictionary conversion escaped as an uncaught exception and the
+    // DeferredPromise was left in m_pendingPromises forever.
+    it("rejects when wrapped bytes are valid JSON but not a valid JWK", async () => {
+      const { key, iv, wrapped } = await setup(new TextEncoder().encode(JSON.stringify({ foo: "bar" })));
+      const err = await crypto.subtle
+        .unwrapKey("jwk", wrapped, key, { name: "AES-GCM", iv }, { name: "AES-GCM" }, true, ["encrypt", "decrypt"])
+        .then(
+          () => null,
+          e => e,
+        );
+      expect(err).toBeInstanceOf(TypeError);
+      expect(err.message).toContain("kty");
+    });
+
+    it("does not leak DeferredPromise in m_pendingPromises on JWK parse errors", async () => {
+      // Each leaked entry in m_pendingPromises holds a Ref<DeferredPromise>. On
+      // the dictionary-conversion error path the promise was never rejected, so
+      // DeferredPromise never removed itself from JSDOMGlobalObject's
+      // guardedObjects set and the JSPromise stayed alive. Count live Promise
+      // cells in the JSC heap to detect the leak.
+      const fixture = /* js */ `
+        const { heapStats } = require("bun:jsc");
+        const keyData = new Uint8Array(32).fill(1);
+        const iv = new Uint8Array(12).fill(2);
+        const key = await crypto.subtle.importKey("raw", keyData, { name: "AES-GCM" }, false, [
+          "encrypt", "decrypt", "wrapKey", "unwrapKey",
+        ]);
+        const wrapped = await crypto.subtle.encrypt(
+          { name: "AES-GCM", iv },
+          key,
+          new TextEncoder().encode(JSON.stringify({ foo: "bar" })),
+        );
+        async function once() {
+          await crypto.subtle
+            .unwrapKey("jwk", wrapped, key, { name: "AES-GCM", iv }, { name: "AES-GCM" }, true, ["encrypt", "decrypt"])
+            .catch(() => {});
+        }
+        const batch = () => Promise.all(Array.from({ length: 50 }, once));
+        for (let i = 0; i < 4; i++) await batch();
+        Bun.gc(true);
+        await Bun.sleep(1);
+        Bun.gc(true);
+        const before = heapStats().objectTypeCounts.Promise ?? 0;
+        for (let i = 0; i < 40; i++) await batch();
+        Bun.gc(true);
+        await Bun.sleep(1);
+        Bun.gc(true);
+        await Bun.sleep(1);
+        Bun.gc(true);
+        const after = heapStats().objectTypeCounts.Promise ?? 0;
+        console.log(JSON.stringify({ before, after, growth: after - before }));
+        process.exit(0);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--smol", "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const { before, after, growth } = JSON.parse(stdout.trim());
+      // 2000 failing calls; previously each leaked ~3 Promise cells that were
+      // kept alive via guardedObjects, so growth was in the thousands.
+      expect(growth).toBeLessThan(200);
+      expect(exitCode).toBe(0);
+      void before;
+      void after;
+    }, 60_000);
+  });
 });
 
 describe("Ed25519", () => {

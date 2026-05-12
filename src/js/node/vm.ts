@@ -209,6 +209,11 @@ class Module {
     }
 
     await this[kLink](linker);
+    // FIXME(module-loader): [kLink] flips the native wrapper to Linked before
+    // instantiate() runs JSC's record->link(). If instantiate() throws, the
+    // wrapper stays Linked so a retry hits ERR_VM_MODULE_ALREADY_LINKED and
+    // evaluate() walks an uninitialized environment. Reset native status to
+    // Unlinked on failure once NodeVMSourceTextModule exposes a status setter.
     this[kNative].instantiate();
   }
 

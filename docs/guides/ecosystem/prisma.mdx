@@ -37,7 +37,7 @@ mode: center
     	bunx --bun prisma init --datasource-provider sqlite
     	```
 
-    	This creates a basic schema. We need to update it to use the new Rust-free client with Bun optimization. Open `prisma/schema.prisma` and modify the generator block, then add a simple `User` model.
+    	This creates a basic schema. We need to update it to use the new Rust-free client with Bun optimization. Open `prisma/schema.prisma` and modify the generator block, then add a `User` model.
 
     	```prisma prisma/schema.prisma icon="/icons/ecosystem/prisma.svg"
     	  generator client {
@@ -110,7 +110,7 @@ mode: center
     </Step>
 
     <Step title="Create a test script">
-    	Let's write a simple script to create a new user, then count the number of users in the database.
+    	Let's write a script to create a new user, then count the number of users in the database.
 
     	```ts index.ts icon="/icons/typescript.svg"
     	import { prisma } from "./prisma/db";

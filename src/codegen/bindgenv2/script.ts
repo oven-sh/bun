@@ -11,7 +11,7 @@ Options (all required):
   --codegen-path=<path>  Path to build/*/codegen
 
 Commands:
-  list-outputs  List files that will be generated, separated by semicolons (for CMake)
+  list-outputs  List files that will be generated, separated by semicolons
   generate      Generate all files
 `;
 

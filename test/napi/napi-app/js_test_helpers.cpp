@@ -236,6 +236,13 @@ static napi_value make_empty_array(const Napi::CallbackInfo &info) {
   return array;
 }
 
+static napi_value make_empty_object(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value object;
+  NODE_API_CALL(env, napi_create_object(env, &object));
+  return object;
+}
+
 // add_tag(object, lower, upper)
 static napi_value add_tag(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
@@ -424,6 +431,7 @@ void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, throw_error);
   REGISTER_FUNCTION(env, exports, create_and_throw_error);
   REGISTER_FUNCTION(env, exports, make_empty_array);
+  REGISTER_FUNCTION(env, exports, make_empty_object);
   REGISTER_FUNCTION(env, exports, add_tag);
   REGISTER_FUNCTION(env, exports, try_add_tag);
   REGISTER_FUNCTION(env, exports, check_tag);

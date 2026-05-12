@@ -70,8 +70,6 @@ pub const DeclarationBlock = struct {
             .declarations = &declarations,
             .options = options,
         };
-        errdefer decl_parser.deinit();
-
         var parser = css.RuleBodyParser(PropertyDeclarationParser).new(input, &decl_parser);
 
         while (parser.next()) |res| {
@@ -80,6 +78,10 @@ pub const DeclarationBlock = struct {
                     options.warn(e);
                     continue;
                 }
+                // errdefer doesn't fire on `return .{ .err = ... }` — Result(T) is a tagged
+                // union, not an error union. Free any declarations accumulated so far.
+                css.deepDeinit(css.Property, input.allocator(), &declarations);
+                css.deepDeinit(css.Property, input.allocator(), &important_declarations);
                 return .{ .err = e };
             }
         }

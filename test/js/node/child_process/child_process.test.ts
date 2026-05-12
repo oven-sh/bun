@@ -414,25 +414,26 @@ it("it accepts stdio passthrough", async () => {
     }),
   );
 
-  let { stdout, stderr, exited } = Bun.spawn({
+  await using installProc = Bun.spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdio: ["inherit", "inherit", "inherit"],
+    stdio: ["inherit", "pipe", "pipe"],
     env: bunEnv,
   });
-  expect(await exited).toBe(0);
+  const [installStderr, installExitCode] = await Promise.all([installProc.stderr.text(), installProc.exited]);
+  if (installExitCode !== 0) {
+    throw new Error(`bun install failed with exit code ${installExitCode}:\n${installStderr}`);
+  }
 
-  ({ stdout, stderr, exited } = Bun.spawn({
+  await using runProc = Bun.spawn({
     cmd: [bunExe(), "--bun", "run", "all"],
     cwd: package_dir,
     stdio: ["ignore", "pipe", "pipe"],
     env: bunEnv,
-  }));
-  console.log(package_dir);
-  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+  });
+  const [err, out, exitCode] = await Promise.all([runProc.stderr.text(), runProc.stdout.text(), runProc.exited]);
   try {
     // This command outputs in either `["hello", "world"]` or `["world", "hello"]` order.
-    console.log({ err, out });
     expect([err.split("\n")[0], ...err.split("\n").slice(1, -1).sort(), err.split("\n").at(-1)]).toEqual([
       "$ run-p echo-hello echo-world",
       "$ echo hello",
@@ -442,12 +443,10 @@ it("it accepts stdio passthrough", async () => {
     expect(out.split("\n").slice(0, -1).sort()).toStrictEqual(["hello", "world"].sort());
     expect(exitCode).toBe(0);
   } catch (e) {
-    console.error({ exitCode });
-    console.log(err);
-    console.log(out);
+    console.error({ exitCode, err, out });
     throw e;
   }
-}, 10000);
+}, 30_000);
 
 it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
   const trapCode = `

@@ -814,6 +814,87 @@ describe("close handling", () => {
       }
     }
   }
+
+  it.skipIf(isWindows)("does not close caller-owned fds passed as extra stdio", async () => {
+    const fd = openSync(import.meta.path, "r");
+    try {
+      await (async function () {
+        const procs = Array.from({ length: 8 }, () =>
+          spawn({
+            cmd: [bunExe(), "-e", ""],
+            env: bunEnv,
+            stdio: ["ignore", "ignore", "ignore", fd],
+          }),
+        );
+        // The caller-supplied fd should be exposed on stdio[N] (not null) while
+        // still not being closed by the subprocess.
+        expect(procs[0].stdio).toEqual([null, null, null, fd]);
+        await Promise.all(procs.map(p => p.exited));
+      })();
+
+      Bun.gc(true);
+      await Bun.sleep(0);
+      Bun.gc(true);
+
+      expect(() => fstatSync(fd)).not.toThrow();
+
+      const { exited } = spawn({
+        cmd: [bunExe(), "-e", `require("fs").fstatSync(3)`],
+        env: bunEnv,
+        stdio: ["ignore", "ignore", "inherit", fd],
+      });
+      expect(await exited).toBe(0);
+    } finally {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  });
+
+  it.skipIf(isWindows)("stdio[N] for non-fd extra slots is null", async () => {
+    const fd = openSync(import.meta.path, "r");
+    try {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", ""],
+        env: bunEnv,
+        stdio: ["ignore", "ignore", "ignore", "ignore", fd],
+      });
+      expect(proc.stdio).toEqual([null, null, null, null, fd]);
+      await proc.exited;
+    } finally {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  });
+
+  for (const [label, makeStdio] of [
+    ["undefined", () => ["ignore", "pipe", "inherit", undefined, undefined]],
+    // eslint-disable-next-line no-sparse-arrays
+    ["a hole", () => ["ignore", "pipe", "inherit", , "ignore"]],
+  ] as const) {
+    it(`stdio[N>=3] = ${label} is treated as ignore`, async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
+        env: bunEnv,
+        stdio: makeStdio() as any,
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("ok");
+      expect(proc.stdio).toEqual([null, null, null, null, null]);
+      expect(exitCode).toBe(0);
+    });
+
+    it(`spawnSync stdio[N>=3] = ${label} is treated as ignore`, () => {
+      const { stdout, exitCode } = spawnSync({
+        cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
+        env: bunEnv,
+        stdio: makeStdio() as any,
+      });
+      expect(stdout.toString()).toBe("ok");
+      expect(exitCode).toBe(0);
+    });
+  }
 });
 
 it("dispose keyword works", async () => {

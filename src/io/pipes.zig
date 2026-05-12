@@ -2,7 +2,7 @@ pub const PollOrFd = union(enum) {
     /// When it's a pipe/fifo
     poll: *Async.FilePoll,
 
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     closed: void,
 
     pub fn setOwner(this: *const PollOrFd, owner: anytype) void {
@@ -11,7 +11,7 @@ pub const PollOrFd = union(enum) {
         }
     }
 
-    pub fn getFd(this: *const PollOrFd) bun.FileDescriptor {
+    pub fn getFd(this: *const PollOrFd) bun.FD {
         return switch (this.*) {
             .closed => bun.invalid_fd,
             .fd => this.fd,
@@ -53,7 +53,7 @@ pub const PollOrFd = union(enum) {
         if (fd != bun.invalid_fd) {
             this.* = .{ .closed = {} };
 
-            //TODO: We should make this call compatible using bun.FileDescriptor
+            //TODO: We should make this call compatible using bun.FD
             if (Environment.isWindows) {
                 bun.Async.Closer.close(fd, bun.windows.libuv.Loop.get());
             } else if (close_async and close_fd) {

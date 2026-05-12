@@ -1,5 +1,5 @@
 pub fn openForWriting(
-    dir: bun.FileDescriptor,
+    dir: bun.FD,
     input_path: anytype,
     input_flags: i32,
     mode: bun.Mode,
@@ -11,7 +11,7 @@ pub fn openForWriting(
     ctx: Ctx,
     comptime onForceSyncOrIsaTTY: *const fn (Ctx) void,
     comptime isPollable: *const fn (mode: bun.Mode) bool,
-) bun.sys.Maybe(bun.FileDescriptor) {
+) bun.sys.Maybe(bun.FD) {
     return openForWritingImpl(
         dir,
         input_path,
@@ -30,7 +30,7 @@ pub fn openForWriting(
 }
 
 pub fn openForWritingImpl(
-    dir: bun.FileDescriptor,
+    dir: bun.FD,
     input_path: anytype,
     input_flags: i32,
     mode: bun.Mode,
@@ -42,8 +42,8 @@ pub fn openForWritingImpl(
     ctx: Ctx,
     comptime onForceSyncOrIsaTTY: *const fn (Ctx) void,
     comptime isPollable: *const fn (mode: bun.Mode) bool,
-    comptime openat: *const fn (dir: bun.FileDescriptor, path: [:0]const u8, flags: i32, mode: bun.Mode) bun.sys.Maybe(bun.FileDescriptor),
-) bun.sys.Maybe(bun.FileDescriptor) {
+    comptime openat: *const fn (dir: bun.FD, path: [:0]const u8, flags: i32, mode: bun.Mode) bun.sys.Maybe(bun.FD),
+) bun.sys.Maybe(bun.FD) {
     const PathT = @TypeOf(input_path);
     if (PathT != bun.webcore.PathOrFileDescriptor and PathT != [:0]const u8 and PathT != [:0]u8) {
         @compileError("Only string or PathOrFileDescriptor is supported but got: " ++ @typeName(PathT));

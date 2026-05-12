@@ -1917,6 +1917,19 @@ if (isDockerEnabled()) {
       expect(result[1][0].x).toEqual(2);
     });
 
+    test("simple query with multiple statements and different column names", async () => {
+      // Each result set has its own RowDescription; the statement's cached
+      // structure must be rebuilt for the second one instead of reusing the
+      // first (which would surface as {x: 2} below).
+      const result = await sql`select 1 as x;select 2 as y`.simple();
+      expect(result).toEqual([[{ x: 1 }], [{ y: 2 }]]);
+    });
+
+    test("simple query with multiple statements and different column counts", async () => {
+      const result = await sql.unsafe("select 1 as one; select 1 as a, 2 as b, 3 as c; select 'hi' as greeting");
+      expect(result).toEqual([[{ one: 1 }], [{ a: 1, b: 2, c: 3 }], [{ greeting: "hi" }]]);
+    });
+
     // t('listen and notify', async() => {
     //   const sql = postgres(options)
     //   const channel = 'hello'
@@ -12361,6 +12374,28 @@ CREATE TABLE ${table_name} (
       const result2 = await db`SELECT * FROM ${db(tableName)}`;
       expect(result2).toBeArray();
       expect(Array.from(result2[0].numbers)).toEqual([]);
+    });
+    test("throws clear error when query exceeds 65535 parameter limit", async () => {
+      await using db = postgres(options);
+      const tableName = `test_${randomUUIDv7("hex").replaceAll("-", "")}`;
+
+      await db`CREATE TEMPORARY TABLE ${db(tableName)} (a INT, b INT, c INT)`;
+
+      // 3 columns * 21845 rows = 65535 parameters, exactly at the limit - should succeed
+      const maxRows = Array.from({ length: 21845 }, (_, i) => ({ a: i, b: i, c: i }));
+      await db`INSERT INTO ${db(tableName)} ${db(maxRows)}`;
+      const [{ count }] = await db`SELECT count(*)::int as count FROM ${db(tableName)}`;
+      expect(count).toBe(21845);
+
+      // 3 columns * 21846 rows = 65538 parameters, just over the limit - should throw
+      const overLimitRows = Array.from({ length: 21846 }, (_, i) => ({ a: i, b: i, c: i }));
+      try {
+        await db`INSERT INTO ${db(tableName)} ${db(overLimitRows)}`;
+        expect.unreachable("should have thrown");
+      } catch (e: any) {
+        expect(e.code).toBe("ERR_POSTGRES_TOO_MANY_PARAMETERS");
+        expect(e.message).toContain("65535");
+      }
     });
   }); // Close "PostgreSQL tests" describe
 } // Close if (isDockerEnabled())

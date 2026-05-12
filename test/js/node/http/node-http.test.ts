@@ -8,7 +8,7 @@
 import { bunEnv, bunExe, exampleSite, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
-import nodefs, { unlinkSync } from "node:fs";
+import nodefs from "node:fs";
 import http, {
   Agent,
   createServer,
@@ -1253,7 +1253,6 @@ describe("server.address should be valid IP", () => {
         done(err);
       } finally {
         server.close();
-        unlinkSync(socketPath);
       }
     });
   });

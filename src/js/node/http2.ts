@@ -39,6 +39,7 @@ const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
 const kProxySocket = Symbol("proxySocket");
 const kSessions = Symbol("sessions");
+const kOptions = Symbol("options");
 const kQuotedString = /^[\x09\x20-\x5b\x5d-\x7e\x80-\xff]*$/;
 const MAX_ADDITIONAL_SETTINGS = 10;
 const Stream = require("node:stream");
@@ -70,10 +71,243 @@ const DatePrototypeToUTCString = Date.prototype.toUTCString;
 const DatePrototypeGetMilliseconds = Date.prototype.getMilliseconds;
 
 const H2FrameParser = $zig("h2_frame_parser.zig", "H2FrameParserConstructor");
-const assertSettings = $newZigFunction("h2_frame_parser.zig", "jsAssertSettings", 1);
-const getPackedSettings = $newZigFunction("h2_frame_parser.zig", "jsGetPackedSettings", 1);
-const getUnpackedSettings = $newZigFunction("h2_frame_parser.zig", "jsGetUnpackedSettings", 1);
+const _nativeAssertSettings = $newZigFunction("h2_frame_parser.zig", "jsAssertSettings", 1);
 const { upgradeRawSocketToH2 } = require("node:_http2_upgrade");
+
+const kSettingNames = {
+  headerTableSize: 0x1,
+  enablePush: 0x2,
+  maxConcurrentStreams: 0x3,
+  initialWindowSize: 0x4,
+  maxFrameSize: 0x5,
+  maxHeaderListSize: 0x6,
+  enableConnectProtocol: 0x8,
+};
+
+const kSettingIds: Record<number, string> = {
+  0x1: "headerTableSize",
+  0x2: "enablePush",
+  0x3: "maxConcurrentStreams",
+  0x4: "initialWindowSize",
+  0x5: "maxFrameSize",
+  0x6: "maxHeaderListSize",
+  0x8: "enableConnectProtocol",
+};
+
+const kDefaultSettings = {
+  headerTableSize: 4096,
+  enablePush: true,
+  maxConcurrentStreams: 2 ** 32 - 1,
+  initialWindowSize: 65535,
+  maxFrameSize: 16384,
+  maxHeaderListSize: 65535,
+  maxHeaderSize: 65535,
+  enableConnectProtocol: false,
+};
+
+function throwSettingRangeError(name: string, value: any) {
+  const err = new RangeError(`Invalid value for setting "${name}": ${value}`);
+  (err as any).code = "ERR_HTTP2_INVALID_SETTING_VALUE";
+  throw err;
+}
+
+function throwSettingTypeError(name: string, value: any) {
+  const err = new TypeError(`Invalid value for setting "${name}": ${value}`);
+  (err as any).code = "ERR_HTTP2_INVALID_SETTING_VALUE";
+  throw err;
+}
+
+function validateSettings(settings: any) {
+  if (typeof settings !== "object" || settings === null || $isArray(settings)) {
+    throw $ERR_INVALID_ARG_TYPE("settings", "object", settings);
+  }
+
+  if (settings.headerTableSize !== undefined) {
+    const v = settings.headerTableSize;
+    if (typeof v !== "number" || v < 0 || v > kMaxInt || Number.isNaN(v)) {
+      throwSettingRangeError("headerTableSize", v);
+    }
+  }
+
+  if (settings.enablePush !== undefined) {
+    const v = settings.enablePush;
+    if (typeof v !== "boolean") {
+      throwSettingTypeError("enablePush", v);
+    }
+  }
+
+  if (settings.initialWindowSize !== undefined) {
+    const v = settings.initialWindowSize;
+    if (typeof v !== "number" || v < 0 || v > kMaxInt || Number.isNaN(v)) {
+      throwSettingRangeError("initialWindowSize", v);
+    }
+  }
+
+  if (settings.maxFrameSize !== undefined) {
+    const v = settings.maxFrameSize;
+    if (typeof v !== "number" || v < 16384 || v > 16777215 || Number.isNaN(v)) {
+      throwSettingRangeError("maxFrameSize", v);
+    }
+  }
+
+  if (settings.maxConcurrentStreams !== undefined) {
+    const v = settings.maxConcurrentStreams;
+    if (typeof v !== "number" || v < 0 || v > kMaxInt || Number.isNaN(v)) {
+      throwSettingRangeError("maxConcurrentStreams", v);
+    }
+  }
+
+  if (settings.maxHeaderListSize !== undefined) {
+    const v = settings.maxHeaderListSize;
+    if (typeof v !== "number" || v < 0 || v > kMaxInt || Number.isNaN(v)) {
+      throwSettingRangeError("maxHeaderListSize", v);
+    }
+  }
+
+  if (settings.maxHeaderSize !== undefined) {
+    const v = settings.maxHeaderSize;
+    if (typeof v !== "number" || v < 0 || v > kMaxInt || Number.isNaN(v)) {
+      throwSettingRangeError("maxHeaderSize", v);
+    }
+  }
+
+  if (settings.enableConnectProtocol !== undefined) {
+    const v = settings.enableConnectProtocol;
+    if (typeof v !== "boolean") {
+      throwSettingTypeError("enableConnectProtocol", v);
+    }
+  }
+
+  if (settings.customSettings !== undefined) {
+    const cs = settings.customSettings;
+    if (typeof cs !== "object" || cs === null) {
+      throwSettingRangeError("customSettings", cs);
+    }
+    const keys = ObjectKeys(cs);
+    if (keys.length > MAX_ADDITIONAL_SETTINGS) {
+      const err = new Error("Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS");
+      (err as any).code = "ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS";
+      throw err;
+    }
+    for (const key of keys) {
+      const id = Number(key);
+      if (!Number.isInteger(id) || id < 0 || id > 0xffff) {
+        throwSettingRangeError(key, cs[key]);
+      }
+      const val = cs[key];
+      if (typeof val !== "number" || val < 0 || val > kMaxInt || !Number.isFinite(val)) {
+        throwSettingRangeError(key, val);
+      }
+    }
+  }
+}
+
+function assertSettings(settings: any) {
+  validateSettings(settings);
+}
+
+function getPackedSettings(settings?: any): Buffer {
+  if (settings === undefined) return Buffer.alloc(0);
+  validateSettings(settings);
+
+  const entries: Array<[number, number]> = [];
+
+  if (settings.headerTableSize !== undefined) {
+    entries.push([0x1, settings.headerTableSize]);
+  }
+  if (settings.enablePush !== undefined) {
+    entries.push([0x2, settings.enablePush ? 1 : 0]);
+  }
+  if (settings.maxConcurrentStreams !== undefined) {
+    entries.push([0x3, settings.maxConcurrentStreams]);
+  }
+  if (settings.initialWindowSize !== undefined) {
+    entries.push([0x4, settings.initialWindowSize]);
+  }
+  if (settings.maxFrameSize !== undefined) {
+    entries.push([0x5, settings.maxFrameSize]);
+  }
+  if (settings.maxHeaderListSize !== undefined) {
+    entries.push([0x6, settings.maxHeaderListSize]);
+  } else if (settings.maxHeaderSize !== undefined) {
+    entries.push([0x6, settings.maxHeaderSize]);
+  }
+  if (settings.enableConnectProtocol !== undefined) {
+    entries.push([0x8, settings.enableConnectProtocol ? 1 : 0]);
+  }
+  if (settings.customSettings) {
+    const cs = settings.customSettings;
+    const keys = ObjectKeys(cs);
+    // Sort custom settings by ID for consistent output
+    keys.sort((a, b) => Number(a) - Number(b));
+    for (const key of keys) {
+      entries.push([Number(key), cs[key]]);
+    }
+  }
+
+  const buf = Buffer.alloc(entries.length * 6);
+  for (let i = 0; i < entries.length; i++) {
+    const offset = i * 6;
+    buf.writeUInt16BE(entries[i][0], offset);
+    buf.writeUInt32BE(entries[i][1], offset + 2);
+  }
+  return buf;
+}
+
+function getUnpackedSettings(buf?: any, options?: any): any {
+  if (buf === undefined) {
+    return { ...kDefaultSettings };
+  }
+
+  if (!Buffer.isBuffer(buf) && !isTypedArray(buf)) {
+    throw $ERR_INVALID_ARG_TYPE("buf", ["Buffer", "TypedArray"], buf);
+  }
+
+  if (buf.length % 6 !== 0) {
+    const err = new RangeError("Packed settings length must be a multiple of six");
+    (err as any).code = "ERR_HTTP2_INVALID_PACKED_SETTINGS_LENGTH";
+    throw err;
+  }
+
+  const settings: any = {};
+  const customSettings: Record<string, number> = {};
+  let hasCustom = false;
+
+  // Use element-by-element access so it works for both Buffer and TypedArrays.
+  // For Buffer, buf[i] returns a byte. For Uint16Array etc., buf[i] returns
+  // the i-th element. Node.js reads settings this way too.
+  for (let i = 0; i < buf.length; i += 6) {
+    const type = buf[i] * 256 + buf[i + 1];
+    const value = ((buf[i + 2] << 24) | (buf[i + 3] << 16) | (buf[i + 4] << 8) | buf[i + 5]) >>> 0;
+
+    const name = kSettingIds[type];
+    if (name) {
+      if (name === "enablePush") {
+        settings[name] = value !== 0;
+      } else if (name === "enableConnectProtocol") {
+        settings[name] = value !== 0;
+      } else {
+        settings[name] = value;
+      }
+      if (name === "maxHeaderListSize") {
+        settings.maxHeaderSize = value;
+      }
+    } else {
+      customSettings[String(type)] = value;
+      hasCustom = true;
+    }
+  }
+
+  if (hasCustom) {
+    settings.customSettings = customSettings;
+  }
+
+  if (options && options.validate) {
+    validateSettings(settings);
+  }
+
+  return settings;
+}
 
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");
@@ -81,6 +315,7 @@ const bunHTTP2Native = Symbol.for("::bunhttp2native::");
 const bunHTTP2Socket = Symbol.for("::bunhttp2socket::");
 const bunHTTP2OriginSet = Symbol("::bunhttp2originset::");
 const bunHTTP2StreamFinal = Symbol.for("::bunHTTP2StreamFinal::");
+const bunHTTP2WaitForTrailers = Symbol("::bunhttp2waitfortrailers::");
 
 const bunHTTP2StreamStatus = Symbol.for("::bunhttp2StreamStatus::");
 
@@ -1816,7 +2051,17 @@ class Http2Stream extends Duplex {
         sensitiveNames[sensitives[i]] = true;
       }
     }
-    session[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames);
+    // RFC 9113 §8.1 doesn't explicitly forbid an empty trailer HEADERS frame,
+    // but strict peer implementations (nghttp2, used by curl and Node) reject
+    // a zero-length HPACK block as a callback failure. When the user passes an
+    // empty trailer object (which the compat Http2ServerResponse does
+    // unconditionally from onStreamTrailersReady), emit an empty DATA frame
+    // with END_STREAM instead — this matches Node's wire output.
+    if (ObjectKeys(headers).length === 0) {
+      session[bunHTTP2Native]?.noTrailers(this.#id);
+    } else {
+      session[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames);
+    }
     this.#sentTrailers = headers;
   }
 
@@ -1964,6 +2209,34 @@ class Http2Stream extends Duplex {
       const native = session[bunHTTP2Native];
       if (native) {
         this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
+        // When waitForTrailers is active, writing an empty DATA frame with
+        // close=true emits a bare empty DATA frame (flags=0) to the wire
+        // before the trailer/noTrailers path runs, which then emits ANOTHER
+        // empty DATA (with END_STREAM). Two consecutive empty DATA frames
+        // confuse strict peers (nghttp2 callback failure). Skip the empty
+        // writeStream and drive the wantTrailers path directly — the
+        // eventual `sendTrailers({})` → `noTrailers` call terminates the
+        // stream with a single empty DATA END_STREAM frame, matching Node.
+        if (this[bunHTTP2WaitForTrailers]) {
+          this[bunHTTP2WaitForTrailers] = false;
+          if ((this[bunHTTP2StreamStatus] & StreamState.WantTrailer) === 0) {
+            this[bunHTTP2StreamStatus] |= StreamState.WantTrailer;
+            if (this.listenerCount("wantTrailers") === 0) {
+              native.noTrailers(this.#id);
+              // Mark trailers as "sent" so a later stream.sendTrailers()
+              // call hits the ERR_HTTP2_TRAILERS_ALREADY_SENT guard instead
+              // of invoking native noTrailers() a second time on an
+              // already-half-closed stream. The emit("wantTrailers") path
+              // below reaches the same result via sendTrailers({}) which
+              // assigns #sentTrailers itself.
+              this.#sentTrailers = {};
+            } else {
+              this.emit("wantTrailers");
+            }
+          }
+          callback();
+          return;
+        }
         native.writeStream(this.#id, "", "ascii", true, callback);
         return;
       }
@@ -2394,7 +2667,16 @@ class ServerHttp2Stream extends Http2Stream {
       statusCode === HTTP_STATUS_NOT_MODIFIED ||
       this.headRequest === true
     ) {
-      options = { ...options, endStream: true };
+      // When endStream is true the HEADERS frame itself carries END_STREAM
+      // and the stream moves to HALF_CLOSED_LOCAL inside native request().
+      // If waitForTrailers is ALSO true the native layer dispatches
+      // onWantTrailers immediately after, whose JS handler calls
+      // noTrailers → sendData("", true) and emits a spurious DATA frame on
+      // the already-half-closed stream (RFC 9113 §5.1 violation). Strip
+      // waitForTrailers here so the native never fires that path; the JS
+      // guard further down (`options?.waitForTrailers && !endStream`) only
+      // covers the `_final` side and runs AFTER the native call.
+      options = { ...options, endStream: true, waitForTrailers: false };
       endStream = true;
     }
     const sendDate = options?.sendDate;
@@ -2409,6 +2691,17 @@ class ServerHttp2Stream extends Http2Stream {
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
     } else {
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames, options);
+      // Only track waitForTrailers when the HEADERS frame above did NOT end
+      // the stream. Status codes 204/205/304 and HEAD requests force
+      // endStream=true earlier in this method, which means the native
+      // request() already wrote END_STREAM on the HEADERS frame — driving
+      // the wantTrailers path from `_final` on such a stream would call
+      // `noTrailers`/`emit("wantTrailers")` on an already-half-closed
+      // stream and corrupt state. Use optional chaining: `options` may be
+      // `null` here (typeof null === "object" enters this else branch).
+      if (options?.waitForTrailers && !endStream) {
+        this[bunHTTP2WaitForTrailers] = true;
+      }
     }
     this.headersSent = true;
     this[bunHTTP2Headers] = headers;
@@ -2566,7 +2859,11 @@ class ServerHttp2Session extends Http2Session {
   #alpnProtocol: string | undefined = undefined;
   #localSettings: Settings | null = {
     headerTableSize: 4096,
-    enablePush: true,
+    // RFC 9113 §6.5.2: servers MUST NOT advertise ENABLE_PUSH != 0. The
+    // initial SETTINGS frame forces this to 0 in the constructor — keep the
+    // default here in sync so `session.localSettings.enablePush` agrees with
+    // the wire before the peer's SETTINGS ACK arrives.
+    enablePush: false,
     maxConcurrentStreams: 100,
     initialWindowSize: 65535,
     maxFrameSize: 16384,
@@ -2657,9 +2954,15 @@ class ServerHttp2Session extends Http2Session {
       if ((status & StreamState.StreamResponded) !== 0) {
         stream.emit("trailers", headers, flags, rawheaders);
       } else {
+        // Set the StreamResponded bit BEFORE dispatching the 'stream' event
+        // synchronously to user code. The user handler may call
+        // stream.respond()/stream.end() which set other bits (WantTrailer,
+        // FinalCalled, EndedCalled, WritableClosed). If we captured `status`
+        // and wrote it back AFTER the emit, we'd clobber any bits set by the
+        // user handler — in particular, losing WantTrailer/FinalCalled breaks
+        // any later `sendTrailers()` with ERR_HTTP2_TRAILERS_NOT_READY.
+        stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
         self[kServer].emit("stream", stream, headers, flags, rawheaders);
-
-        stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
         self.emit("stream", stream, headers, flags, rawheaders);
       }
     },
@@ -2835,7 +3138,13 @@ class ServerHttp2Session extends Http2Session {
     this.#parser = new H2FrameParser({
       native: nativeSocket,
       context: this,
-      settings: { ...options, ...options?.settings },
+      // RFC 9113 §6.5.2: a server MUST NOT send SETTINGS_ENABLE_PUSH with a
+      // value other than 0 — any non-zero value is treated by a client as a
+      // PROTOCOL_ERROR (nghttp2 reports this as callback failure). This is
+      // unconditional at the protocol level, so `enablePush: false` is
+      // spread LAST to override any user-supplied setting and keep the
+      // server compliant regardless of caller configuration.
+      settings: { ...options, ...options?.settings, enablePush: false },
       type: 0, // server type
       handlers: ServerHttp2Session.#Handlers,
     });
@@ -2972,6 +3281,16 @@ class ServerHttp2Session extends Http2Session {
     if (callback !== undefined && typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    // Validate the caller-supplied object FIRST so null / arrays / primitives
+    // still throw ERR_INVALID_ARG_TYPE — spreading ({ ...null }) would hide
+    // these from the type guard in validateSettings.
+    validateSettings(settings);
+    // RFC 9113 §6.5.2: a server MUST NOT advertise SETTINGS_ENABLE_PUSH != 0.
+    // Force-override whatever the caller passes so a mid-connection SETTINGS
+    // frame stays compliant (the initial SETTINGS frame already clamps this
+    // in ServerHttp2Session's constructor). Clients still accept `enablePush`
+    // via their own `settings()` method.
+    settings = { ...settings, enablePush: false };
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
     if (typeof callback === "function") {
@@ -3145,7 +3464,11 @@ class ClientHttp2Session extends Http2Session {
         if (header_status >= 100 && header_status < 200) {
           stream.emit("headers", headers, flags, rawheaders);
         } else {
-          stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
+          // Set the bit BEFORE dispatching synchronously to user code — a
+          // 'response' handler that mutates stream state would otherwise be
+          // clobbered by a stale read-modify-write (see the server-side note
+          // at the stream handler above).
+          stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
           if (header_status === 421) {
             // 421 Misdirected Request
             removeOriginFromSet(self, stream);
@@ -3414,6 +3737,7 @@ class ClientHttp2Session extends Http2Session {
     if (callback !== undefined && typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    validateSettings(settings);
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
     if (typeof callback === "function") {
@@ -3808,6 +4132,7 @@ class Http2Server extends net.Server {
     options = initializeOptions(options);
     super(options);
     this[kSessions] = new SafeSet();
+    this[kOptions] = { settings: options.settings || {} };
 
     this.setMaxListeners(0);
 
@@ -3819,8 +4144,6 @@ class Http2Server extends net.Server {
 
   emit(event: string, ...args: any[]) {
     if (event === "connection") {
-      // TODO: implement this at net/tls level to allow to inject socket in the server
-      // this works for now for Http2Server
       super.prependOnceListener("connection", connectionListener);
     }
     return super.emit(event, ...args);
@@ -3838,6 +4161,7 @@ class Http2Server extends net.Server {
     if (options) {
       options.settings = { ...options.settings, ...settings };
     }
+    this[kOptions].settings = { ...this[kOptions].settings, ...settings };
   }
 
   close(callback?: Function) {
@@ -3913,6 +4237,7 @@ class Http2SecureServer extends tls.Server {
     }
     super(options, connectionListener);
     this[kSessions] = new SafeSet();
+    this[kOptions] = { settings: settings || {} };
     this.setMaxListeners(0);
     this.on("newListener", setupCompat);
     if (typeof onRequestHandler === "function") {
@@ -3942,6 +4267,7 @@ class Http2SecureServer extends tls.Server {
     if (options) {
       options.settings = { ...options.settings, ...settings };
     }
+    this[kOptions].settings = { ...this[kOptions].settings, ...settings };
   }
   close(callback?: Function) {
     super.close(callback);

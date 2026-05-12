@@ -287,7 +287,7 @@ pub const UnicodeRange = struct {
         if (digit < 10) return digit;
         // Force the 6th bit to be set to ensure ascii is lower case.
         // digit = (@as(u32, b) | 0b10_0000).wrapping_sub('a' as u32).saturating_add(10);
-        digit = (@as(u32, b) | 0b10_0000) -% (@as(u32, 'a') +% 10);
+        digit = ((@as(u32, b) | 0b10_0000) -% @as(u32, 'a')) +| 10;
         return if (digit < 16) digit else null;
     }
 };
@@ -696,7 +696,7 @@ pub const FontFaceDeclarationParser = struct {
                         return .{ .result = .{ .font_stretch = c } };
                     }
                 }
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "unicode-renage")) {
+            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "unicode-range")) {
                 if (input.parseList(UnicodeRange, UnicodeRange.parse).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .unicode_range = c } };

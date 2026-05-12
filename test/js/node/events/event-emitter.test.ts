@@ -472,7 +472,7 @@ describe("EventEmitter.on", () => {
     emitter.emit("hey", 2);
     emitter.emit("hey", 3);
 
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 1));
 
     expect((await asyncIterator.next()).value).toEqual([1]);
     expect((await asyncIterator.next()).value).toEqual([2]);
@@ -517,7 +517,7 @@ describe("EventEmitter.on", () => {
 
     setTimeout(() => {
       ee.emit("error", "DONE");
-    }, 1_000);
+    }, 1);
 
     try {
       for await (const event of on(ee, "foo")) {

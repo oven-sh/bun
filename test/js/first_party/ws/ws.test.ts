@@ -806,3 +806,103 @@ it("Server should be able to send empty pings", async () => {
     expect(pingMessage).not.toBe(pingPayload);
   }
 });
+
+// Verify ws.ping() / ws.pong() without arguments send empty control frames,
+// not the literal string "undefined" (9 bytes).
+describe("ping/pong no-arg payload", () => {
+  it("ws.ping() sends empty payload", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+
+    wss.on("connection", serverWs => {
+      serverWs.on("ping", (data: Buffer) => {
+        try {
+          expect(data).toBeInstanceOf(Buffer);
+          expect(data.length).toBe(0);
+          resolve();
+        } catch (e) {
+          reject(e);
+        } finally {
+          serverWs.close();
+          wss.close();
+        }
+      });
+    });
+
+    const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+    ws.on("open", () => ws.ping());
+    await promise;
+  });
+
+  it("ws.pong() sends empty payload", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+
+    wss.on("connection", serverWs => {
+      serverWs.on("pong", (data: Buffer) => {
+        try {
+          expect(data).toBeInstanceOf(Buffer);
+          expect(data.length).toBe(0);
+          resolve();
+        } catch (e) {
+          reject(e);
+        } finally {
+          serverWs.close();
+          wss.close();
+        }
+      });
+    });
+
+    const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+    ws.on("open", () => ws.pong());
+    await promise;
+  });
+
+  it("ws.ping(data) sends correct payload", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+
+    wss.on("connection", serverWs => {
+      serverWs.on("ping", (data: Buffer) => {
+        try {
+          expect(data).toBeInstanceOf(Buffer);
+          expect(data.toString()).toBe("hello");
+          resolve();
+        } catch (e) {
+          reject(e);
+        } finally {
+          serverWs.close();
+          wss.close();
+        }
+      });
+    });
+
+    const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+    ws.on("open", () => ws.ping(Buffer.from("hello")));
+    await promise;
+  });
+
+  it("ws.pong(data) sends correct payload", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+
+    wss.on("connection", serverWs => {
+      serverWs.on("pong", (data: Buffer) => {
+        try {
+          expect(data).toBeInstanceOf(Buffer);
+          expect(data.toString()).toBe("hello");
+          resolve();
+        } catch (e) {
+          reject(e);
+        } finally {
+          serverWs.close();
+          wss.close();
+        }
+      });
+    });
+
+    const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+    ws.on("open", () => ws.pong(Buffer.from("hello")));
+    await promise;
+  });
+});

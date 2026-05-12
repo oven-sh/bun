@@ -1,12 +1,35 @@
 const HTTPThread = @This();
 
-var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
+/// SSL context cache keyed by interned SSLConfig pointer.
+/// Since configs are interned via SSLConfig.GlobalRegistry, pointer equality
+/// is sufficient for lookup. Each entry holds a ref on its SSLConfig.
+const SslContextCacheEntry = struct {
+    ctx: *NewHTTPContext(true),
+    last_used_ns: u64,
+    /// Strong ref held by the cache entry (released on eviction).
+    config_ref: SSLConfig.SharedPtr,
+};
+const ssl_context_cache_max_size = 60;
+const ssl_context_cache_ttl_ns = 30 * std.time.ns_per_min;
+var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, SslContextCacheEntry).init(bun.default_allocator);
 
 loop: *jsc.MiniEventLoop,
 http_context: NewHTTPContext(false),
 https_context: NewHTTPContext(true),
 
 queued_tasks: Queue = Queue{},
+/// Tasks popped from `queued_tasks` that couldn't start because
+/// `active_requests_count >= max_simultaneous_requests`. Kept in FIFO order
+/// and processed before `queued_tasks` on the next `drainEvents`. Owned by
+/// the HTTP thread; never accessed concurrently.
+deferred_tasks: std.ArrayListUnmanaged(*AsyncHTTP) = .{},
+/// Set by `drainQueuedShutdowns` when a shutdown's `async_http_id` wasn't in
+/// `socket_async_http_abort_tracker` — the request is either not yet started
+/// (still in `queued_tasks`/`deferred_tasks`) or already done. `drainEvents`
+/// uses this to decide whether it must scan the queued/deferred lists for
+/// aborted tasks when `active >= max`; without it the common at-capacity
+/// path stays O(1). Owned by the HTTP thread.
+has_pending_queued_abort: bool = false,
 
 queued_shutdowns: std.ArrayListUnmanaged(ShutdownMessage) = std.ArrayListUnmanaged(ShutdownMessage){},
 queued_writes: std.ArrayListUnmanaged(WriteMessage) = std.ArrayListUnmanaged(WriteMessage){},
@@ -40,10 +63,10 @@ pub const HeapRequestBodyBuffer = struct {
 
     pub fn put(this: *@This()) void {
         if (bun.http.http_thread.lazy_request_body_buffer == null) {
-            // This case hypothetically should never happen
             this.fixed_buffer_allocator.reset();
             bun.http.http_thread.lazy_request_body_buffer = this;
         } else {
+            // This case hypothetically should never happen
             this.deinit();
         }
     }
@@ -172,11 +195,11 @@ fn initOnce(opts: *const InitOpts) void {
     bun.http.http_thread = .{
         .loop = undefined,
         .http_context = .{
-            .us_socket_context = undefined,
+            .ref_count = .init(),
             .pending_sockets = NewHTTPContext(false).PooledSocketHiveAllocator.empty,
         },
         .https_context = .{
-            .us_socket_context = undefined,
+            .ref_count = .init(),
             .pending_sockets = NewHTTPContext(true).PooledSocketHiveAllocator.empty,
         },
         .timer = std.time.Timer.start() catch unreachable,
@@ -202,6 +225,18 @@ pub fn onStart(opts: InitOpts) void {
     bun.http.default_arena = Arena.init();
     bun.http.default_allocator = bun.http.default_arena.allocator();
 
+    // uSockets' long-timeout counter is `% 240` minutes (see
+    // `us_socket_long_timeout` in packages/bun-usockets/src/socket.c), so
+    // values above 239 min wrap around and fire early. Clamp here — it's the
+    // only assignment — so the underlying timer can't wrap, and round values
+    // above 240s up to a whole minute so `socket.setTimeout`'s floor-to-
+    // minute long-timer path never yields a timeout *shorter* than requested.
+    // Normalising once here keeps the h1 (`HTTPClient.setTimeout`) and h2
+    // (`ClientSession.rearmTimeout`) paths identical without duplicating the
+    // math at each call site.
+    const raw: u64 = @min(bun.env_var.BUN_CONFIG_HTTP_IDLE_TIMEOUT.get(), 239 * 60);
+    bun.http.idle_timeout_seconds = @intCast(if (raw > 240) ((raw + 59) / 60) * 60 else raw);
+
     const loop = bun.jsc.MiniEventLoop.initGlobal(null, null);
 
     if (Environment.isWindows) {
@@ -218,40 +253,41 @@ pub fn onStart(opts: InitOpts) void {
     bun.http.http_thread.processEvents();
 }
 
-pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewHTTPContext(is_ssl).HTTPSocket {
+pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !?NewHTTPContext(is_ssl).HTTPSocket {
     if (client.unix_socket_path.length() > 0) {
         return try this.context(is_ssl).connectSocket(client, client.unix_socket_path.slice());
     }
 
-    if (comptime is_ssl) {
-        const needs_own_context = client.tls_props != null and client.tls_props.?.requires_custom_request_ctx;
-        if (needs_own_context) {
-            var requested_config = client.tls_props.?;
-            for (custom_ssl_context_map.keys()) |other_config| {
-                if (requested_config.isSame(other_config)) {
-                    // we free the callers config since we have a existing one
-                    if (requested_config != client.tls_props) {
-                        requested_config.deinit();
-                        bun.default_allocator.destroy(requested_config);
-                    }
-                    client.tls_props = other_config;
-                    if (client.http_proxy) |url| {
-                        return try custom_ssl_context_map.get(other_config).?.connect(client, url.hostname, url.getPortAuto());
-                    } else {
-                        return try custom_ssl_context_map.get(other_config).?.connect(client, client.url.hostname, client.url.getPortAuto());
-                    }
+    if (comptime is_ssl) custom_ctx: {
+        if (client.tls_props) |tls| {
+            if (!tls.get().requires_custom_request_ctx) break :custom_ctx;
+            const requested_config = tls.get();
+
+            // Evict stale entries from the cache
+            evictStaleSslContexts(this);
+
+            // Look up by pointer equality (configs are interned)
+            if (custom_ssl_context_map.getPtr(requested_config)) |entry| {
+                // Cache hit - reuse existing SSL context
+                entry.last_used_ns = this.timer.read();
+                client.setCustomSslCtx(entry.ctx);
+                // Keepalive is now supported for custom SSL contexts
+                if (client.http_proxy) |url| {
+                    return try entry.ctx.connect(client, url.hostname, url.getPortAuto());
+                } else {
+                    return try entry.ctx.connect(client, client.url.hostname, client.url.getPortAuto());
                 }
             }
-            // we need the config so dont free it
-            var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
-            custom_context.initWithClientConfig(client) catch |err| {
-                client.tls_props = null;
 
-                requested_config.deinit();
-                bun.default_allocator.destroy(requested_config);
+            // Cache miss - create new SSL context
+            var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
+            custom_context.* = .{
+                .ref_count = .init(),
+                .pending_sockets = NewHTTPContext(is_ssl).PooledSocketHiveAllocator.empty,
+            };
+            custom_context.initWithClientConfig(client) catch |err| {
                 bun.default_allocator.destroy(custom_context);
 
-                // TODO: these error names reach js. figure out how they should be handled
                 return switch (err) {
                     error.FailedToOpenSocket => |e| e,
                     error.InvalidCA => error.FailedToOpenSocket,
@@ -259,14 +295,25 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
                     error.LoadCAFile => error.FailedToOpenSocket,
                 };
             };
-            try custom_ssl_context_map.put(requested_config, custom_context);
-            // We might deinit the socket context, so we disable keepalive to make sure we don't
-            // free it while in use.
-            client.flags.disable_keepalive = true;
+
+            const now = this.timer.read();
+            bun.handleOom(custom_ssl_context_map.put(requested_config, .{
+                .ctx = custom_context,
+                .last_used_ns = now,
+                // Clone a strong ref for the cache entry; client.tls_props keeps its own.
+                .config_ref = tls.clone(),
+            }));
+
+            // Enforce max cache size - evict oldest entry
+            if (custom_ssl_context_map.count() > ssl_context_cache_max_size) {
+                evictOldestSslContext();
+            }
+
+            client.setCustomSslCtx(custom_context);
+            // Keepalive is now supported for custom SSL contexts
             if (client.http_proxy) |url| {
-                // https://github.com/oven-sh/bun/issues/11343
                 if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
-                    return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
+                    return try custom_context.connect(client, url.hostname, url.getPortAuto());
                 }
                 return error.UnsupportedProxyProtocol;
             }
@@ -287,6 +334,47 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
 
 pub fn context(this: *@This(), comptime is_ssl: bool) *NewHTTPContext(is_ssl) {
     return if (is_ssl) &this.https_context else &this.http_context;
+}
+
+/// Evict SSL context cache entries that haven't been used for ssl_context_cache_ttl_ns.
+fn evictStaleSslContexts(this: *@This()) void {
+    const now = this.timer.read();
+    var i: usize = 0;
+    while (i < custom_ssl_context_map.count()) {
+        var entry = custom_ssl_context_map.values()[i];
+        if (now -| entry.last_used_ns > ssl_context_cache_ttl_ns) {
+            custom_ssl_context_map.swapRemoveAt(i);
+            entry.ctx.deref();
+            entry.config_ref.deinit();
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// Evict the least-recently-used SSL context cache entry.
+fn evictOldestSslContext() void {
+    if (custom_ssl_context_map.count() == 0) return;
+    var oldest_idx: usize = 0;
+    var oldest_time: u64 = std.math.maxInt(u64);
+    for (custom_ssl_context_map.values(), 0..) |entry, i| {
+        if (entry.last_used_ns < oldest_time) {
+            oldest_time = entry.last_used_ns;
+            oldest_idx = i;
+        }
+    }
+    var entry = custom_ssl_context_map.values()[oldest_idx];
+    custom_ssl_context_map.swapRemoveAt(oldest_idx);
+    entry.ctx.deref();
+    entry.config_ref.deinit();
+}
+
+fn abortPendingH2Waiter(this: *@This(), async_http_id: u32) bool {
+    if (this.https_context.abortPendingH2Waiter(async_http_id)) return true;
+    for (custom_ssl_context_map.values()) |entry| {
+        if (entry.ctx.abortPendingH2Waiter(async_http_id)) return true;
+    }
+    return false;
 }
 
 fn drainQueuedShutdowns(this: *@This()) void {
@@ -317,9 +405,28 @@ fn drainQueuedShutdowns(this: *@This()) void {
                             client.closeAndAbort(comptime is_tls, socket);
                             continue;
                         }
+                        if (tagged.get(bun.http.H2.ClientSession)) |session| {
+                            session.abortByHttpId(http.async_http_id);
+                            continue;
+                        }
                         socket.close(.failure);
                     },
                 }
+            } else {
+                // No socket for this id. It may be a request coalesced onto a
+                // leader's in-flight h2 TLS connect (parked in `pc.waiters`
+                // with no abort-tracker entry); scan those first so the abort
+                // doesn't wait for the leader's connect to resolve.
+                if (this.abortPendingH2Waiter(http.async_http_id)) continue;
+                // Or it's on an HTTP/3 session, which has no TCP socket to
+                // register in the tracker.
+                if (bun.http.H3.ClientContext.abortByHttpId(http.async_http_id)) continue;
+                // Otherwise the request either hasn't started yet (still in
+                // `queued_tasks`/`deferred_tasks`) or has already completed.
+                // Flag it so `drainEvents` knows to scan the queue for
+                // aborted-but-unstarted tasks even when `active >= max`
+                // would otherwise short-circuit.
+                this.has_pending_queued_abort = true;
             }
         }
         if (queued_shutdowns.items.len == 0) {
@@ -359,8 +466,13 @@ fn drainQueuedWrites(this: *@This()) void {
                                 client.flushStream(is_tls, socket);
                             }
                         }
+                        if (tagged.get(bun.http.H2.ClientSession)) |session| {
+                            session.streamBodyByHttpId(write.async_http_id, ended);
+                        }
                     },
                 }
+            } else {
+                bun.http.H3.ClientContext.streamBodyByHttpId(write.async_http_id, ended);
             }
         }
         if (queued_writes.items.len == 0) {
@@ -393,6 +505,9 @@ fn drainQueuedHTTPResponseBodyDrains(this: *@This()) void {
                         if (tagged.get(HTTPClient)) |client| {
                             client.drainResponseBody(comptime is_tls, socket);
                         }
+                        if (tagged.get(bun.http.H2.ClientSession)) |session| {
+                            session.drainResponseBodyByHttpId(drain.async_http_id);
+                        }
                     },
                 }
             }
@@ -409,6 +524,7 @@ fn drainEvents(this: *@This()) void {
     this.drainQueuedHTTPResponseBodyDrains();
     this.drainQueuedWrites();
     this.drainQueuedShutdowns();
+    bun.http.H3.PendingConnect.drainResolved();
 
     for (this.queued_threadlocal_proxy_derefs.items) |http| {
         http.deref();
@@ -418,7 +534,6 @@ fn drainEvents(this: *@This()) void {
     var count: usize = 0;
     var active = AsyncHTTP.active_requests_count.load(.monotonic);
     const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
-    if (active >= max) return;
     defer {
         if (comptime Environment.allow_assert) {
             if (count > 0)
@@ -426,25 +541,76 @@ fn drainEvents(this: *@This()) void {
         }
     }
 
-    while (this.queued_tasks.pop()) |http| {
-        var cloned = bun.http.ThreadlocalAsyncHTTP.new(.{
-            .async_http = http.*,
-        });
-        cloned.async_http.real = http;
-        // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
-        // which may point to other AsyncHTTP structs that could be freed before the callback
-        // copies data back to the original. If not cleared, retrying a failed request would
-        // re-queue with stale pointers causing use-after-free.
-        cloned.async_http.next = null;
-        cloned.async_http.task.node.next = null;
-        cloned.async_http.onStart();
-        if (comptime Environment.allow_assert) {
-            count += 1;
-        }
+    // Fast path: at capacity and no queued/deferred task could possibly be
+    // aborted. A queued task can only become aborted via `scheduleShutdown`,
+    // which we just drained — `drainQueuedShutdowns` sets
+    // `has_pending_queued_abort` for any id it couldn't find in the socket
+    // tracker. If that's clear, there's nothing to fail-fast and nothing can
+    // start, so don't walk the lists.
+    if (active >= max and !this.has_pending_queued_abort) return;
 
-        active += 1;
-        if (active >= max) break;
+    // Deferred tasks are ones we previously popped from the MPSC queue but
+    // couldn't start because we were at max. They stay in FIFO order ahead of
+    // anything still in `queued_tasks`.
+    //
+    // Already-aborted tasks are started regardless of `max`: `start_()` will
+    // observe the `aborted` signal and fail immediately with
+    // `error.AbortedBeforeConnecting`, and `onAsyncHTTPCallback` decrements
+    // `active_requests_count` in the same turn — so they never hold a slot.
+    // Without this, an aborted fetch that was queued behind `max` would sit
+    // there until some unrelated request completed; if every active request
+    // is itself hung, the aborted one never settles and its promise hangs
+    // forever even though the user called `controller.abort()`.
+    //
+    // `startQueuedTask` can re-enter `onAsyncHTTPCallback` synchronously (for
+    // aborted tasks, or when connect() fails immediately), which reads both
+    // `active_requests_count` and `deferred_tasks.items.len` to decide whether
+    // to wake the loop. To keep those reads accurate we swap the deferred list
+    // out before iterating so the field reflects only tasks still waiting, and
+    // reload `active` from the atomic after every start rather than tracking
+    // it locally.
+    this.has_pending_queued_abort = false;
+    {
+        var pending = this.deferred_tasks;
+        this.deferred_tasks = .{};
+        defer pending.deinit(bun.default_allocator);
+        for (pending.items) |http| {
+            if (http.client.signals.get(.aborted) or active < max) {
+                startQueuedTask(http);
+                if (comptime Environment.allow_assert) count += 1;
+                active = AsyncHTTP.active_requests_count.load(.monotonic);
+            } else {
+                bun.handleOom(this.deferred_tasks.append(bun.default_allocator, http));
+            }
+        }
     }
+
+    while (this.queued_tasks.pop()) |http| {
+        if (!http.client.signals.get(.aborted) and active >= max) {
+            // Can't start this one yet. Defer it (preserves FIFO relative to
+            // later pops) and keep draining — there may be aborted tasks
+            // behind it that we can fail-fast right now.
+            bun.handleOom(this.deferred_tasks.append(bun.default_allocator, http));
+            continue;
+        }
+        startQueuedTask(http);
+        if (comptime Environment.allow_assert) count += 1;
+        active = AsyncHTTP.active_requests_count.load(.monotonic);
+    }
+}
+
+fn startQueuedTask(http: *AsyncHTTP) void {
+    var cloned = bun.http.ThreadlocalAsyncHTTP.new(.{
+        .async_http = http.*,
+    });
+    cloned.async_http.real = http;
+    // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
+    // which may point to other AsyncHTTP structs that could be freed before the callback
+    // copies data back to the original. If not cleared, retrying a failed request would
+    // re-queue with stale pointers causing use-after-free.
+    cloned.async_http.next = null;
+    cloned.async_http.task.node.next = null;
+    cloned.async_http.onStart();
 }
 
 fn processEvents(this: *@This()) noreturn {

@@ -27,7 +27,7 @@ pub const ShellCondExprStatTask = struct {
     condexpr: *CondExpr,
     result: ?Maybe(bun.Stat) = null,
     path: [:0]const u8,
-    cwdfd: bun.FileDescriptor,
+    cwdfd: bun.FD,
 
     pub fn runFromThreadPool(this: *ShellCondExprStatTask) void {
         this.result = ShellSyscall.statat(this.cwdfd, this.path);
@@ -119,7 +119,14 @@ pub fn next(this: *CondExpr) Yield {
             .stat_complete => {
                 switch (this.node.op) {
                     .@"-f" => {
-                        return this.parent.childDone(this, if (this.state.stat_complete.stat == .result) 0 else 1);
+                        const st: bun.Stat = switch (this.state.stat_complete.stat) {
+                            .result => |st| st,
+                            .err => {
+                                // It seems that bash always gives exit code 1
+                                return this.parent.childDone(this, 1);
+                            },
+                        };
+                        return this.parent.childDone(this, if (bun.S.ISREG(@intCast(st.mode))) 0 else 1);
                     },
                     .@"-d" => {
                         const st: bun.Stat = switch (this.state.stat_complete.stat) {
@@ -168,8 +175,10 @@ fn commandImplStart(this: *CondExpr) Yield {
         .@"-d",
         .@"-f",
         => {
-            // Empty string expansion produces no args; the path doesn't exist.
-            if (this.args.items.len == 0) return this.parent.childDone(this, 1);
+            // Empty string expansion produces no args, or the path is an empty string;
+            // the path doesn't exist. On Windows, stat("") can succeed and return the
+            // cwd's stat, so we must check for empty paths explicitly.
+            if (this.args.items.len == 0 or this.args.items[0].len == 0) return this.parent.childDone(this, 1);
             this.state = .waiting_stat;
             return this.doStat();
         },

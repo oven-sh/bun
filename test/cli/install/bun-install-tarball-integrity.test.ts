@@ -1,7 +1,9 @@
 import { file, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted } from "harness";
+import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
+import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { join } from "path";
 import {
   createTestContext,
@@ -486,6 +488,216 @@ describe.concurrent("tarball integrity", () => {
       expect(err).not.toContain("error:");
       expect(await proc.exited).toBe(0);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+    });
+  });
+});
+
+describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mismatch (%s)", linker => {
+  // Regression test for #29646 — with the isolated linker, a SHA-512 mismatch
+  // during the resolve-phase tarball extract left `task_queue` /
+  // `network_dedupe_map` populated, so the install phase's later
+  // `enqueuePackageForDownload` returned early on `found_existing` and the
+  // installer waited forever for a callback that was never dispatched.
+  //
+  // We trigger the mismatch by advertising one tarball's SHA-512 in the
+  // manifest while serving a different tarball's bytes. No existing lockfile
+  // means the failure happens in the resolve phase, where the runTasks
+  // callback is the void `onPackageDownloadError = {}` — i.e. the branch the
+  // fix in runTasks.zig now cleans up.
+  it("should fail (not hang) when tarball bytes don't match manifest SHA-512", { timeout: 60_000 }, async () => {
+    function octal(n: number, width: number) {
+      return n.toString(8).padStart(width - 1, "0") + "\0";
+    }
+    function tarHeader(name: string, size: number) {
+      const buf = Buffer.alloc(512, 0);
+      buf.write(name, 0, 100, "utf8");
+      buf.write(octal(0o644, 8), 100);
+      buf.write(octal(0, 8), 108);
+      buf.write(octal(0, 8), 116);
+      buf.write(octal(size, 12), 124);
+      buf.write(octal(0, 12), 136);
+      buf.fill(" ", 148, 156);
+      buf.write("0", 156);
+      buf.write("ustar\0", 257);
+      buf.write("00", 263);
+      let sum = 0;
+      for (let i = 0; i < 512; i++) sum += buf[i];
+      buf.write(octal(sum, 8), 148);
+      return buf;
+    }
+    function pad512(len: number) {
+      return Buffer.alloc((512 - (len % 512)) % 512, 0);
+    }
+    function buildTarball(body: Buffer) {
+      const tar = Buffer.concat([
+        tarHeader("package/package.json", body.length),
+        body,
+        pad512(body.length),
+        Buffer.alloc(1024, 0),
+      ]);
+      const tgz = gzipSync(tar);
+      return { tgz, integrity: "sha512-" + createHash("sha512").update(tgz).digest("base64") };
+    }
+
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const lie = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
+
+    // Custom server instead of the dummy registry — we need to advertise an
+    // integrity hash that deliberately does not match the served bytes, which
+    // the dummy registry doesn't support.
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.endsWith("/pkg")) {
+          return Response.json({
+            name: "pkg",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "pkg",
+                version: "1.0.0",
+                dist: {
+                  integrity: lie.integrity,
+                  tarball: `http://127.0.0.1:${server.port}/pkg/-/pkg-1.0.0.tgz`,
+                },
+              },
+            },
+          });
+        }
+        if (url.pathname.endsWith("/pkg-1.0.0.tgz")) {
+          return new Response(real.tgz, { headers: { "content-length": String(real.tgz.length) } });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+
+    using dir = tempDir("integrity-mismatch-" + linker, {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { pkg: "1.0.0" },
+      }),
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${server.port}/"\nlinker = "${linker}"\n`,
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+    // The hang path in #29646 also prints "Integrity check failed" (it comes
+    // from the streaming extractor — the hang happens *after*), exits with a
+    // SIGTERM-induced non-zero code when the spawn timeout fires, and never
+    // produces "1 package installed". So the presence of the message, the
+    // absence of success output, and a non-zero exit are all consistent with
+    // either outcome. The load-bearing assertion is `signalCode === null`:
+    // with the fix, bun exits cleanly on its own; on hang, Bun.spawn's
+    // timeout kills the child with SIGTERM.
+    expect(proc.signalCode).toBeNull();
+    expect(stderr + stdout).toContain("Integrity check failed");
+    expect(stdout).not.toContain("1 package installed");
+    expect(exitCode).not.toBe(0);
+  });
+});
+
+describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download failure (%s)", linker => {
+  it("should fail (not hang) when registry returns 404 for tarball", async () => {
+    await withContext({ linker }, async ctx => {
+      const urls: string[] = [];
+      let tarballStatus = 200;
+      setContextHandler(ctx, async request => {
+        const url = request.url.replaceAll("%2f", "/");
+        urls.push(url);
+        if (url.endsWith(".tgz")) {
+          if (tarballStatus !== 200) {
+            return new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.enqueue(
+                    new TextEncoder().encode(
+                      JSON.stringify({ errors: [{ status: 404, message: "Could not find resource" }] }),
+                    ),
+                  );
+                  controller.close();
+                },
+              }),
+              { status: tarballStatus, headers: { "content-type": "application/json" } },
+            );
+          }
+          return new Response(file(join(import.meta.dir, "baz-0.0.3.tgz")));
+        }
+        return Response.json({
+          name: "baz",
+          versions: {
+            "0.0.3": {
+              name: "baz",
+              version: "0.0.3",
+              dist: { tarball: `${ctx.registry_url}baz-0.0.3.tgz` },
+            },
+          },
+          "dist-tags": { latest: "0.0.3" },
+        });
+      });
+
+      // Project-local .npmrc takes precedence over any user-level ~/.npmrc.
+      await writeFile(join(ctx.package_dir, ".npmrc"), `registry=${ctx.registry_url}\n`);
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: { baz: "0.0.3" },
+        }),
+      );
+
+      // First install: succeeds, writes lockfile + node_modules.
+      {
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("404");
+        expect(exitCode).toBe(0);
+      }
+
+      // Second install with node_modules removed and tarball now 404: should
+      // fail with a clear error, not hang. The lockfile is kept so the resolve
+      // phase is a no-op and the tarball download happens in the install phase.
+      await rm(join(ctx.package_dir, "node_modules"), { recursive: true, force: true });
+      tarballStatus = 404;
+      urls.length = 0;
+
+      {
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+        // Previously, the isolated installer would hang indefinitely here
+        // because the store entry's pending-task slot was never released.
+        expect(urls.some(u => u.endsWith(".tgz"))).toBe(true);
+        expect(stderr).toContain("baz");
+        // The isolated installer maps the status to a human-readable
+        // reason phrase; the hoisted installer prints `GET <url> - 404`.
+        expect(stderr).toContain(linker === "isolated" ? "404 Not Found" : "404");
+        expect(stdout).not.toContain("1 package installed");
+        expect(exitCode).not.toBe(0);
+      }
     });
   });
 });

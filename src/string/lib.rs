@@ -89,12 +89,17 @@ unsafe extern "C" {
     fn BunString__fromUTF16ToLatin1(bytes: *const u16, len: usize) -> String;
     safe fn BunString__fromLatin1Unitialized(len: usize) -> String;
     safe fn BunString__fromUTF16Unitialized(len: usize) -> String;
-    fn BunString__toWTFString(this: *mut String);
-    fn BunString__toThreadSafe(this: *mut String);
+    // `&mut String` / `&String` are ABI-identical to the C++ `BunString*`
+    // (thin non-null pointer to a `#[repr(C)]` struct, asserted by
+    // `assert_ffi_layout!` above). C++ reads/writes only the `tag`/`value`
+    // fields in place; the type encodes the sole pointer-validity precondition,
+    // so `safe fn` discharges the link-time proof here.
+    safe fn BunString__toWTFString(this: &mut String);
+    safe fn BunString__toThreadSafe(this: &mut String);
     fn BunString__createAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__tryCreateAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__createStaticExternal(bytes: *const u8, len: usize, isLatin1: bool) -> String;
-    fn BunString__toInt32(this: *const String) -> i64;
+    safe fn BunString__toInt32(this: &String) -> i64;
     fn BunString__createExternal(
         bytes: *const u8,
         len: usize,
@@ -432,7 +437,7 @@ impl String {
     }
     /// Convert in place to a WTF-backed string (consuming the borrow).
     pub fn to_wtf_string(&mut self) {
-        unsafe { BunString__toWTFString(self) }
+        BunString__toWTFString(self)
     }
     /// Zig: `bun.String.init(WTFStringImpl)` / `WTFString.adopt` — wrap a raw
     /// `*mut WTFStringImplStruct`, **adopting** the existing +1 ref (no inc).
@@ -457,7 +462,7 @@ impl String {
     }
     pub fn to_thread_safe(&mut self) {
         if self.0.tag == Tag::WTFStringImpl {
-            unsafe { BunString__toThreadSafe(self) }
+            BunString__toThreadSafe(self)
         }
         debug_assert!(self.is_thread_safe());
     }
@@ -494,7 +499,7 @@ impl String {
         );
     }
     pub fn to_int32(&self) -> Option<i32> {
-        let v = unsafe { BunString__toInt32(self) };
+        let v = BunString__toInt32(self);
         if v > i32::MAX as i64 { None } else { Some(v as i32) }
     }
 
@@ -1075,7 +1080,7 @@ impl String {
     /// [`to_thread_safe`] but leaves the result with one extra ref.
     pub fn to_thread_safe_ensure_ref(&mut self) {
         if self.0.tag == Tag::WTFStringImpl {
-            unsafe { BunString__toThreadSafe(self) };
+            BunString__toThreadSafe(self);
             self.as_wtf().r#ref();
         }
     }

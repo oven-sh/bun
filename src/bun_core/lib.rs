@@ -2059,32 +2059,32 @@ pub mod asan {
 
     #[cfg(bun_asan)]
     unsafe extern "C" {
-        fn __asan_poison_memory_region(ptr: *const c_void, size: usize);
-        fn __asan_unpoison_memory_region(ptr: *const c_void, size: usize);
-        fn __asan_address_is_poisoned(ptr: *const c_void) -> bool;
-        fn __asan_describe_address(ptr: *const c_void);
-        fn __lsan_register_root_region(ptr: *const c_void, size: usize);
-        fn __lsan_unregister_root_region(ptr: *const c_void, size: usize);
+        // The ASAN/LSAN runtime never dereferences `ptr` — it indexes shadow
+        // memory by address value (poison/unpoison/is_poisoned/describe) or
+        // records the range in an internal table (LSAN root regions). Misuse
+        // produces a controlled abort, not UB, so `safe fn` discharges the
+        // link-time proof and callers need no `unsafe` block. The *logical*
+        // "you own this region" precondition stays on the `pub unsafe fn`
+        // wrappers below.
+        safe fn __asan_poison_memory_region(ptr: *const c_void, size: usize);
+        safe fn __asan_unpoison_memory_region(ptr: *const c_void, size: usize);
+        safe fn __asan_address_is_poisoned(ptr: *const c_void) -> bool;
+        safe fn __asan_describe_address(ptr: *const c_void);
+        safe fn __lsan_register_root_region(ptr: *const c_void, size: usize);
+        safe fn __lsan_unregister_root_region(ptr: *const c_void, size: usize);
     }
 
     #[inline]
     pub unsafe fn poison(ptr: *const u8, size: usize) {
         #[cfg(bun_asan)]
-        {
-            // SAFETY: ASAN runtime is linked when this cfg is active; ptr/size
-            // describe a region owned by the caller.
-            unsafe { __asan_poison_memory_region(ptr.cast(), size) };
-        }
+        __asan_poison_memory_region(ptr.cast(), size);
         #[cfg(not(bun_asan))]
         let _ = (ptr, size);
     }
     #[inline]
     pub unsafe fn unpoison(ptr: *const u8, size: usize) {
         #[cfg(bun_asan)]
-        {
-            // SAFETY: see `poison`.
-            unsafe { __asan_unpoison_memory_region(ptr.cast(), size) };
-        }
+        __asan_unpoison_memory_region(ptr.cast(), size);
         #[cfg(not(bun_asan))]
         let _ = (ptr, size);
     }
@@ -2101,13 +2101,9 @@ pub mod asan {
     #[inline]
     pub fn assert_unpoisoned<T>(ptr: *const T) {
         #[cfg(bun_asan)]
-        {
-            // SAFETY: ASAN runtime is linked; reads shadow memory only.
-            if unsafe { __asan_address_is_poisoned(ptr.cast()) } {
-                // SAFETY: diagnostic-only, prints to stderr.
-                unsafe { __asan_describe_address(ptr.cast()) };
-                panic!("Address is poisoned");
-            }
+        if __asan_address_is_poisoned(ptr.cast()) {
+            __asan_describe_address(ptr.cast());
+            panic!("Address is poisoned");
         }
         #[cfg(not(bun_asan))]
         let _ = ptr;
@@ -2119,10 +2115,7 @@ pub mod asan {
     #[inline]
     pub fn register_root_region(ptr: *const c_void, size: usize) {
         #[cfg(bun_asan)]
-        {
-            // SAFETY: LSAN runtime is linked alongside ASAN.
-            unsafe { __lsan_register_root_region(ptr, size) };
-        }
+        __lsan_register_root_region(ptr, size);
         #[cfg(not(bun_asan))]
         let _ = (ptr, size);
     }
@@ -2130,10 +2123,7 @@ pub mod asan {
     #[inline]
     pub fn unregister_root_region(ptr: *const c_void, size: usize) {
         #[cfg(bun_asan)]
-        {
-            // SAFETY: must match a prior register_root_region (caller invariant).
-            unsafe { __lsan_unregister_root_region(ptr, size) };
-        }
+        __lsan_unregister_root_region(ptr, size);
         #[cfg(not(bun_asan))]
         let _ = (ptr, size);
     }

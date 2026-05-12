@@ -2877,9 +2877,7 @@ impl ANSIIterator {
 
     /// Returns the next slice of non-ANSI text, or null when done.
     pub fn next(&mut self) -> Option<&[u8]> {
-        // SAFETY: self is #[repr(C)] and matches the C++ layout; Bun__ANSI__next
-        // writes slice_ptr/slice_len within [input, input+input_len).
-        if unsafe { Bun__ANSI__next(self) } {
+        if Bun__ANSI__next(self) {
             if self.slice_ptr.is_null() {
                 return None;
             }
@@ -2892,7 +2890,12 @@ impl ANSIIterator {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn Bun__ANSI__next(it: *mut ANSIIterator) -> bool;
+    // `&mut ANSIIterator` is ABI-identical to the C++ `ANSIIterator*` (thin
+    // non-null pointer to a `#[repr(C)]` POD struct); C++ reads `input`/
+    // `input_len`/`cursor` and writes `cursor`/`slice_ptr`/`slice_len`. The
+    // `&mut` encodes the only pointer-validity precondition, so `safe fn`
+    // discharges the link-time proof and callers need no `unsafe`.
+    safe fn Bun__ANSI__next(it: &mut ANSIIterator) -> bool;
 }
 
 // Transcoding allocators live in T0 `bun_core::strings` so collections can

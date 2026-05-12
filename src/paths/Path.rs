@@ -248,6 +248,10 @@ pub trait PathUnit: Copy + Eq + 'static {
     #[inline(always)]
     fn id_u8_mut(_: &mut [Self]) -> &mut [u8] { unreachable!("PathUnit::id_u8_mut on non-u8") }
     #[inline(always)]
+    fn id_u8_slices<'a, 'b>(_: &'a [&'b [Self]]) -> &'a [&'b [u8]] {
+        unreachable!("PathUnit::id_u8_slices on non-u8")
+    }
+    #[inline(always)]
     fn id_u16(_: &[Self]) -> &[u16] { unreachable!("PathUnit::id_u16 on non-u16") }
     #[inline(always)]
     fn id_u16_mut(_: &mut [Self]) -> &mut [u16] { unreachable!("PathUnit::id_u16_mut on non-u16") }
@@ -298,6 +302,8 @@ impl PathUnit for u8 {
     fn id_u8(s: &[u8]) -> &[u8] { s }
     #[inline(always)]
     fn id_u8_mut(s: &mut [u8]) -> &mut [u8] { s }
+    #[inline(always)]
+    fn id_u8_slices<'a, 'b>(s: &'a [&'b [u8]]) -> &'a [&'b [u8]] { s }
     #[inline]
     fn convert_from_other(dest: &mut [u8], src: &[u16]) -> usize {
         strings::convert_utf16_to_utf8_in_buffer(dest, src)
@@ -1165,11 +1171,10 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         {
             let pooled: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut self._buf.pooled));
             let cloned_slice: &[u8] = U::id_u8(cloned.slice());
-            // SAFETY: TypeId check above proves U == u8; &[&[U]] and &[&[u8]]
-            // have identical layout (slice of slices, only the inner element
-            // type differs nominally). No `id_*` helper covers nested slices.
-            let parts_u8: &[&[u8]] =
-                unsafe { core::slice::from_raw_parts(parts.as_ptr().cast(), parts.len()) };
+            // TypeId check above proves U == u8; trait-dispatched identity (no
+            // `unsafe`) — the u8 impl is `fn(s) { s }`, the u16 default is
+            // `unreachable!()` and is const-folded out in this monomorphisation.
+            let parts_u8: &[&[u8]] = U::id_u8_slices(parts);
             let joined = sep_dispatch!(join_abs_string_buf(cloned_slice, pooled, parts_u8));
 
             let trimmed = trim_input(TrimInputKind::Abs, joined);

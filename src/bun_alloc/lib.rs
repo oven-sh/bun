@@ -772,10 +772,7 @@ impl WTFStringImplStruct {
     pub fn r#ref(&self) {
         let current_count = self.ref_count();
         debug_assert!(self.has_at_least_one_ref()); // do not use current_count, it breaks for static strings
-        // SAFETY: `self` is a live WTF::StringImpl; FFI increments the WTF refcount.
-        // `m_ref_count` is `Cell<u32>` so mutation through this `&self`-derived
-        // pointer is sound under Stacked Borrows.
-        unsafe { Bun__WTFStringImpl__ref(self) };
+        Bun__WTFStringImpl__ref(self);
         debug_assert!(self.ref_count() > current_count || self.is_static());
         let _ = current_count;
     }
@@ -834,16 +831,12 @@ impl WTFStringImplStruct {
     }
     #[inline]
     pub fn is_thread_safe(&self) -> bool {
-        // SAFETY: `self` is a valid &WTFStringImplStruct backed by a live WTF::StringImpl.
-        unsafe { WTFStringImpl__isThreadSafe(self) }
+        WTFStringImpl__isThreadSafe(self)
     }
     /// Compute the hash() if necessary
     #[inline]
     pub fn ensure_hash(&self) {
-        // SAFETY: `self` is a live WTF::StringImpl. C++ `StringImpl::hash()`
-        // writes the computed hash into `m_hashAndFlags`; that field is
-        // `Cell<u32>` so mutation through this `&self`-derived pointer is sound.
-        unsafe { Bun__WTFStringImpl__ensureHash(self) };
+        Bun__WTFStringImpl__ensureHash(self);
     }
     #[inline]
     pub fn has_prefix(&self, text: &[u8]) -> bool {
@@ -861,10 +854,17 @@ impl WTFStringImplStruct {
 }
 
 unsafe extern "C" {
-    pub fn Bun__WTFStringImpl__ref(this: *const WTFStringImplStruct);
+    // `&WTFStringImplStruct` is ABI-identical to the C++ `StringImpl*` (thin
+    // non-null pointer to a `#[repr(C)]` struct). C++-side mutation lands in
+    // `m_ref_count` / `m_hash_and_flags`, both `Cell<u32>`, so writes through
+    // a `&`-derived pointer are sound. The type encodes the only validity
+    // precondition, so `safe fn` discharges the link-time proof.
+    // `deref` stays `*const` + `unsafe`: it may free the allocation backing
+    // the reference when the count reaches zero.
+    pub safe fn Bun__WTFStringImpl__ref(this: &WTFStringImplStruct);
     pub fn Bun__WTFStringImpl__deref(this: *const WTFStringImplStruct);
-    fn WTFStringImpl__isThreadSafe(this: *const WTFStringImplStruct) -> bool;
-    fn Bun__WTFStringImpl__ensureHash(this: *const WTFStringImplStruct);
+    safe fn WTFStringImpl__isThreadSafe(this: &WTFStringImplStruct) -> bool;
+    safe fn Bun__WTFStringImpl__ensureHash(this: &WTFStringImplStruct);
     fn Bun__WTFStringImpl__hasPrefix(
         this: *const WTFStringImplStruct,
         text_ptr: *const u8,

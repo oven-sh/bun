@@ -346,21 +346,19 @@ impl VirtualMachineSqlExt for VirtualMachine {
     }
     #[inline]
     fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
-        let p: *mut VirtualMachine = self;
-        // SAFETY: `p` derived from `&mut self` (live, exclusive). The two
-        // derefs touch field-disjoint state — `rare_data()` returns the
-        // separate `&mut RareData` allocation, and `&*p` is read-only for
-        // VM-level config inside `postgres_group`. One audited deref here
-        // replaces the per-caller raw-pointer dance (PORT NOTE at each
-        // former site).
-        unsafe { (*p).rare_data().postgres_group::<SSL>(&*p) }
+        // `rare_data()` returns the boxed `&mut RareData` (disjoint allocation);
+        // `*_group` only reads `vm.uws_loop()`. Route the read-only `vm`
+        // argument through the JS-thread singleton accessor instead of a
+        // raw-pointer split-borrow — `VirtualMachine::get()` is `&'static`
+        // and doesn't borrow `self`, so borrowck is satisfied without a
+        // per-site raw-pointer deref.
+        self.rare_data().postgres_group::<SSL>(VirtualMachine::get())
     }
     #[inline]
     fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
-        let p: *mut VirtualMachine = self;
-        // SAFETY: see `postgres_socket_group` — field-disjoint borrows of the
-        // live `&mut self` routed through one raw pointer.
-        unsafe { (*p).rare_data().mysql_group::<SSL>(&*p) }
+        // See `postgres_socket_group` — singleton `&'static` for the read-only
+        // `vm` argument avoids the raw-pointer split-borrow.
+        self.rare_data().mysql_group::<SSL>(VirtualMachine::get())
     }
 }
 

@@ -1525,26 +1525,28 @@ pub struct Writer {
 }
 
 impl Writer {
-    #[inline]
-    fn write_buffer(&self) -> &mut OffsetByteList {
-        // SAFETY: `write_buffer` is a `JsCell` (UnsafeCell-backed); single-JS-thread
-        // and no other `&mut` to this cell is live while a Writer is. The backref
-        // deref itself is safe (`BackRef` invariant: connection outlives Writer).
-        unsafe { self.connection.write_buffer.get_mut() }
-    }
+    // `write_buffer` is a `JsCell`; route mutation through the safe
+    // closure-scoped `with_mut` and reads through `get()` so the backref
+    // deref stays inside `BackRef`'s safe `Deref` — no raw `get_mut`
+    // escape hatch needed.
 
     pub fn write(&mut self, data: &[u8]) -> Result<(), AnyPostgresError> {
-        self.write_buffer().write(data).map_err(|_| AnyPostgresError::OutOfMemory)?;
+        self.connection
+            .write_buffer
+            .with_mut(|b| b.write(data))
+            .map_err(|_| AnyPostgresError::OutOfMemory)?;
         Ok(())
     }
 
     pub fn pwrite(&mut self, data: &[u8], index: usize) -> Result<(), AnyPostgresError> {
-        self.write_buffer().byte_list.slice_mut()[index..][..data.len()].copy_from_slice(data);
+        self.connection.write_buffer.with_mut(|b| {
+            b.byte_list.slice_mut()[index..][..data.len()].copy_from_slice(data);
+        });
         Ok(())
     }
 
     pub fn offset(&self) -> usize {
-        self.write_buffer().len() as usize
+        self.connection.write_buffer.get().len() as usize
     }
 }
 
@@ -1575,13 +1577,13 @@ pub struct Reader {
 }
 
 impl Reader {
+    // `read_buffer` is a `JsCell`; route reads through safe `get()` (the
+    // `BackRef` deref is safe under the connection-outlives-Reader invariant)
+    // and the lone mutator (`skip`) through closure-scoped `with_mut`, so the
+    // raw `get_mut` accessor is not needed.
     #[inline]
-    fn read_buffer(&self) -> &mut OffsetByteList {
-        // SAFETY: `read_buffer` is a `JsCell` (UnsafeCell-backed). Single-JS-thread;
-        // `on()` never touches `read_buffer` through its own `&self` while a Reader
-        // is live, so no two `&mut OffsetByteList` coexist. The backref deref itself
-        // is safe (`BackRef` invariant: connection outlives Reader).
-        unsafe { self.connection.read_buffer.get_mut() }
+    fn read_buffer(&self) -> &OffsetByteList {
+        self.connection.read_buffer.get()
     }
 
     pub fn mark_message_start(&mut self) {
@@ -1598,8 +1600,9 @@ impl Reader {
     }
 
     pub fn skip(&mut self, count: usize) {
-        let buf = self.read_buffer();
-        buf.head = (buf.head + (count as u32)).min(buf.byte_list.len() as u32);
+        self.connection.read_buffer.with_mut(|buf| {
+            buf.head = (buf.head + (count as u32)).min(buf.byte_list.len() as u32);
+        });
     }
 
     pub fn ensure_capacity(&self, count: usize) -> bool {
@@ -2169,19 +2172,13 @@ impl PostgresSQLConnection {
                 for c in cells.iter_mut() { *c = DataCell::SQLDataCell::default(); }
                 putter.list = cells;
 
-                // PORT NOTE: DataRow::decode takes the context by-value (Copy) and calls the
-                // callback with it; pass a raw `*mut Putter` so the closure can mutate it.
-                let putter_ptr: *mut DataCell::Putter<'_> = &raw mut putter;
+                // `DataRow::decode`'s callback is `FnMut`, so capture `&mut putter`
+                // directly instead of laundering it through a raw `*mut` context —
+                // the by-value `C: Copy` slot is unused (`()`).
                 let decode_result = if request_flags.result_mode == SQLQueryResultMode::Raw {
-                    protocol::DataRow::decode(putter_ptr, &mut reader, |p, i, b| {
-                        // SAFETY: putter outlives this call.
-                        unsafe { &mut *p }.put_raw(i, b)
-                    })
+                    protocol::DataRow::decode((), &mut reader, |(), i, b| putter.put_raw(i, b))
                 } else {
-                    protocol::DataRow::decode(putter_ptr, &mut reader, |p, i, b| {
-                        // SAFETY: putter outlives this call.
-                        unsafe { &mut *p }.put(i, b)
-                    })
+                    protocol::DataRow::decode((), &mut reader, |(), i, b| putter.put(i, b))
                 };
                 // PORT NOTE: Zig `defer { for (cells[0..putter.count]) |*cell| cell.deinit(); if (free_cells) free(cells); }`
                 // runs on ALL exits (decode error, to_js error, success). Capture raw pointers so

@@ -54,7 +54,13 @@ impl Default for ArrayBuffer {
 // without a `&T as *const T as *mut T` provenance laundering cast. This matches
 // the pattern used by `JSGlobalObject`'s own extern block in `JSGlobalObject.rs`.
 unsafe extern "C" {
-    fn JSBuffer__fromMmap(global: *const JSGlobalObject, addr: *mut c_void, len: usize) -> JSValue;
+    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
+    // ABI-identical to non-null `*const`); `addr`/`len` are an opaque mmap region
+    // C++ stores into the Buffer's `ArrayBufferContents` (adopted, freed via
+    // munmap by JSC) — same round-trip-pointer contract as
+    // `Bun__makeArrayBufferWithBytesNoCopy` below. The public wrapper that
+    // produces `addr` already discharges the validity proof.
+    safe fn JSBuffer__fromMmap(global: &JSGlobalObject, addr: *mut c_void, len: usize) -> JSValue;
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); remaining args are by-value scalars.
     safe fn ArrayBuffer__fromSharedMemfd(
@@ -73,15 +79,23 @@ unsafe extern "C" {
     fn Bun__createUint8ArrayForCopy(global: *const JSGlobalObject, ptr: *const c_void, len: usize, buffer: bool) -> JSValue;
     fn Bun__createArrayBufferForCopy(global: *const JSGlobalObject, ptr: *const c_void, len: usize) -> JSValue;
     fn JSArrayBuffer__fromDefaultAllocator(global: *const JSGlobalObject, ptr: *mut u8, len: usize) -> JSValue;
-    fn Bun__makeArrayBufferWithBytesNoCopy(
-        global: *const JSGlobalObject,
+    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
+    // ABI-identical to non-null `*const`); `ptr`/`len`/`ctx` are opaque
+    // round-trip pointers C++ stores into the new `ArrayBufferContents` and
+    // forwards to `dealloc` on GC (never dereferenced as Rust data on this
+    // path) — same contract as `Zig__GlobalObject__create`'s `console`/`worker_ptr`.
+    // The public wrappers (`make_*_with_bytes_no_copy`) are already safe and
+    // forward these raw pointers verbatim, so the validity obligation lives at
+    // that layer.
+    safe fn Bun__makeArrayBufferWithBytesNoCopy(
+        global: &JSGlobalObject,
         ptr: *mut c_void,
         len: usize,
         dealloc: jsc_c::JSTypedArrayBytesDeallocator,
         ctx: *mut c_void,
     ) -> JSValue;
-    fn Bun__makeTypedArrayWithBytesNoCopy(
-        global: *const JSGlobalObject,
+    safe fn Bun__makeTypedArrayWithBytesNoCopy(
+        global: &JSGlobalObject,
         ty: TypedArrayType,
         ptr: *mut c_void,
         len: usize,
@@ -227,11 +241,8 @@ impl ArrayBuffer {
 
         match result {
             bun_sys::Result::Ok(buf) => {
-                // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `buf`
-                // is a fresh mmap region whose ownership transfers to JSC.
-                Ok(unsafe {
-                    JSBuffer__fromMmap(global, buf.cast(), map_len)
-                })
+                // `buf` is a fresh mmap region whose ownership transfers to JSC.
+                Ok(JSBuffer__fromMmap(global, buf.cast(), map_len))
             }
             bun_sys::Result::Err(err) => {
                 let err_js = err.to_js(global);
@@ -985,9 +996,8 @@ pub fn make_array_buffer_with_bytes_no_copy(
     deallocator: jsc_c::JSTypedArrayBytesDeallocator,
     deallocator_context: *mut c_void,
 ) -> JsResult<JSValue> {
-    // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const);
     // ptr/len/deallocator are forwarded as-is to JSC which adopts ownership.
-    crate::host_fn::from_js_host_call(global, || unsafe {
+    crate::host_fn::from_js_host_call(global, || {
         Bun__makeArrayBufferWithBytesNoCopy(global, ptr, len, deallocator, deallocator_context)
     })
 }
@@ -1000,9 +1010,8 @@ pub fn make_typed_array_with_bytes_no_copy(
     deallocator: jsc_c::JSTypedArrayBytesDeallocator,
     deallocator_context: *mut c_void,
 ) -> JsResult<JSValue> {
-    // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const);
     // ptr/len/deallocator are forwarded as-is to JSC which adopts ownership.
-    crate::host_fn::from_js_host_call(global, || unsafe {
+    crate::host_fn::from_js_host_call(global, || {
         Bun__makeTypedArrayWithBytesNoCopy(global, array_type, ptr, len, deallocator, deallocator_context)
     })
 }

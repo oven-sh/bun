@@ -676,9 +676,9 @@ impl TarballStream {
     /// `WantData` so the next `step()` iteration starts pulling its body.
     fn begin_entry(&mut self, entry: &mut lib::Entry) -> Result<(), bun_core::Error> {
         #[cfg(windows)]
-        let mut pathname: OSPathZ = entry.pathname_w();
+        let pathname: OSPathZ = entry.pathname_w();
         #[cfg(not(windows))]
-        let mut pathname: OSPathZ = entry.pathname();
+        let pathname: OSPathZ = entry.pathname();
 
         if self.want_first_dirname {
             self.want_first_dirname = false;
@@ -732,15 +732,15 @@ impl TarballStream {
         }
         // tokenizeScalar.rest() — need byte offset of remainder, not just
         // iterator. `split().filter()` loses that, so use a manual
-        // index-of-first-'/' + skip-leading-'/' instead.
+        // index-of-first-'/' + skip-leading-'/' instead. The result is fed
+        // straight to `normalize_buf_t` (which takes `&[OSPathChar]`, not a
+        // NUL-terminated slice) so there is no need to reconstruct an
+        // `OSPathSliceZ` suffix view here.
         let rest: &[OSPathChar] = tokenize_rest_after_first(&pathname[..]);
-        // SAFETY: `rest` is a suffix of the original NUL-terminated `pathname`;
-        // `rest.ptr[rest.len]` is the same NUL byte.
-        pathname = unsafe { OSPathSliceZ::from_raw(rest.as_ptr(), rest.len()) };
 
         let mut norm_buf = OSPathBuffer::uninit();
         let normalized =
-            resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(&pathname[..], &mut norm_buf[..]);
+            resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..]);
         let norm_len = normalized.len();
         norm_buf[norm_len] = 0;
         // SAFETY: norm_buf[norm_len] == 0 written above.

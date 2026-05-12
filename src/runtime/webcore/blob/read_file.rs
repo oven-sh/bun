@@ -424,14 +424,15 @@ impl ReadFile {
     /// UB). The slice is materialised only at the syscall boundary.
     // PORT NOTE: Zig indexed raw ptr range `items.ptr[items.len..capacity]`.
     fn remaining_buffer(&mut self, stack_buffer: &mut [u8]) -> (*mut u8, usize) {
-        let spare_len = self.buffer.capacity() - self.buffer.len();
-        let (ptr, len) = if spare_len < stack_buffer.len() {
+        // `spare_capacity_mut()` is the safe spelling of
+        // `as_mut_ptr().add(len) .. as_mut_ptr().add(cap)`; we immediately
+        // decay it to a raw `(ptr, len)` so the borrow does not outlive this
+        // call (the caller carries the raw pair across `&mut self`).
+        let spare = self.buffer.spare_capacity_mut();
+        let (ptr, len) = if spare.len() < stack_buffer.len() {
             (stack_buffer.as_mut_ptr(), stack_buffer.len())
         } else {
-            let cur = self.buffer.len();
-            // SAFETY: `as_mut_ptr()+cur` addresses spare capacity within the
-            // allocation; bytes are POD and never read before write via read(2).
-            (unsafe { self.buffer.as_mut_ptr().add(cur) }, spare_len)
+            (spare.as_mut_ptr().cast::<u8>(), spare.len())
         };
         let cap = len.min((self.max_length.saturating_sub(self.read_off)) as usize);
         (ptr, cap)

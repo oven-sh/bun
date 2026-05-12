@@ -375,6 +375,25 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         unsafe { Parent::on_error(self.parent(), err) }
     }
 
+    /// Reborrow a PORT_NOTES_PLAN R-2 laundered self-pointer.
+    ///
+    /// `_on_write` launders `&mut self` through `black_box` because
+    /// `Parent::on_write` re-enters via a fresh `&mut Self` and writes
+    /// `is_done` / `handle`. Every such site previously open-coded
+    /// `unsafe { (*this).field }`. This accessor centralises that proof:
+    /// `this` always aliases a `&mut self` whose stack frame is still live;
+    /// the writer is an intrusive field of `Parent` and is never freed during
+    /// re-entry; single JS thread. Each short-lived `&mut Self` materialised
+    /// here is the sole live borrow at the point of use (the laundered raw
+    /// pointer carries no `noalias`, so the compiler may not cache across
+    /// re-entry). Mirrors [`SSLWrapper::r`](crate) in `bun_uws`.
+    #[inline(always)]
+    fn r<'a>(this: *mut Self) -> &'a mut Self {
+        debug_assert!(!this.is_null());
+        // SAFETY: see doc comment — R-2 laundered self-pointer invariant.
+        unsafe { &mut *this }
+    }
+
     pub fn memory_cost(&self) -> usize {
         mem::size_of::<Self>()
     }
@@ -418,12 +437,11 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         // `self.close()` without reload. Launder so post-call accesses see
         // fresh state.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // SAFETY: `this` is the live `&mut self`; raw deref is the only access path.
-        let was_done = unsafe { (*this).is_done } == true;
-        let parent = unsafe { &*this }.parent();
+        let was_done = Self::r(this).is_done == true;
+        let parent = Self::r(this).parent();
 
         if status == WriteStatus::EndOfFile && !was_done {
-            unsafe { (*this).close_without_reporting() };
+            Self::r(this).close_without_reporting();
         }
 
         // SAFETY: parent BACKREF valid.
@@ -432,9 +450,9 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         // `self.handle` from before `on_write`.
         core::hint::black_box(this);
         if status == WriteStatus::EndOfFile && !was_done {
-            // SAFETY: `this` is live; `close()` reads `is_done`/`handle` which
-            // may have been written re-entrantly above.
-            unsafe { (*this).close() };
+            // `close()` reads `is_done`/`handle` which may have been written
+            // re-entrantly above; `r()` reborrows fresh from the laundered ptr.
+            Self::r(this).close();
         }
     }
 
@@ -702,6 +720,16 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         unsafe { Parent::on_write(self.parent(), amount, status) }
     }
 
+    /// Reborrow a PORT_NOTES_PLAN R-2 laundered self-pointer. See
+    /// [`PosixBufferedWriter::r`] for the encapsulated invariant.
+    #[inline(always)]
+    fn r<'a>(this: *mut Self) -> &'a mut Self {
+        debug_assert!(!this.is_null());
+        // SAFETY: R-2 laundered self-pointer invariant — see
+        // `PosixBufferedWriter::r` doc comment.
+        unsafe { &mut *this }
+    }
+
     pub fn get_force_sync(&self) -> bool {
         self.force_sync
     }
@@ -806,12 +834,11 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 // ASM-verified PROVEN_CACHED on the `self.close()` path's
                 // field reads. Launder so `close()` sees fresh state.
                 let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-                // SAFETY: parent BACKREF valid; `this` aliases the live
-                // `&mut self` and is the only mutable view used hereafter.
-                unsafe { Parent::on_error((*this).parent(), err) };
-                // SAFETY: `this` is still live (parent owns this writer; an
-                // on_error handler may end/detach but never frees mid-call).
-                unsafe { &mut *this }.close();
+                // SAFETY: parent BACKREF valid.
+                unsafe { Parent::on_error(Self::r(this).parent(), err) };
+                // `this` is still live (parent owns this writer; an on_error
+                // handler may end/detach but never frees mid-call).
+                Self::r(this).close();
             }
             sys::Result::Ok(()) => {}
         }
@@ -1489,6 +1516,18 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         unsafe { Parent::on_error(self.parent(), err) }
     }
 
+    /// Reborrow a PORT_NOTES_PLAN R-2 laundered self-pointer. See
+    /// [`PosixBufferedWriter::r`] for the encapsulated invariant; the Windows
+    /// libuv callbacks have the identical re-entry shape (`FileSink::on_write`
+    /// → JS → `writer.with_mut(|w| w.end())`).
+    #[inline(always)]
+    fn r<'a>(this: *mut Self) -> &'a mut Self {
+        debug_assert!(!this.is_null());
+        // SAFETY: R-2 laundered self-pointer invariant — see
+        // `PosixBufferedWriter::r` doc comment.
+        unsafe { &mut *this }
+    }
+
     pub fn memory_cost(&self) -> usize {
         mem::size_of::<Self>() + self.write_buffer.len as usize
     }
@@ -1506,22 +1545,21 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         // `filesink.test.ts` hang (stale `is_done` → never closes / never
         // resubmits). Launder so post-`on_write` reads see fresh state.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // SAFETY: `this` is the live `&mut self`; raw deref is the only access path.
-        let written = unsafe { (*this).pending_payload_size };
-        unsafe { (*this).pending_payload_size = 0 };
+        let written = Self::r(this).pending_payload_size;
+        Self::r(this).pending_payload_size = 0;
         if let Some(err) = status.to_error(sys::Tag::write) {
-            unsafe { (*this).close() };
+            Self::r(this).close();
             // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_error((*this).parent(), err) };
+            unsafe { Parent::on_error(Self::r(this).parent(), err) };
             return;
         }
-        let pending = unsafe { (*this).get_buffer_internal() };
+        let pending = Self::r(this).get_buffer_internal();
         let has_pending_data = (pending.len() - written) != 0;
-        let is_done_before = unsafe { (*this).is_done };
+        let is_done_before = Self::r(this).is_done;
         // SAFETY: parent BACKREF valid.
         unsafe {
             Parent::on_write(
-                (*this).parent(),
+                Self::r(this).parent(),
                 written,
                 if is_done_before && !has_pending_data { WriteStatus::Drained } else { WriteStatus::Pending },
             )
@@ -1530,15 +1568,15 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         // values spilled from before `on_write`.
         core::hint::black_box(this);
         // is_done can be changed inside on_write
-        if unsafe { (*this).is_done } && !has_pending_data {
+        if Self::r(this).is_done && !has_pending_data {
             // already done and end was called
-            unsafe { (*this).close() };
+            Self::r(this).close();
             return;
         }
 
         if Parent::HAS_ON_WRITABLE {
             // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_writable((*this).parent()) };
+            unsafe { Parent::on_writable(Self::r(this).parent()) };
         }
     }
 
@@ -1583,22 +1621,21 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
 
         if was_canceled {
             // Canceled write - clear pending state
-            // SAFETY: `this` sole access path on the JS thread.
-            unsafe { (*this).pending_payload_size = 0 };
+            Self::r(this).pending_payload_size = 0;
             return;
         }
 
         if let Some(err) = result.to_error(sys::Tag::write) {
-            // SAFETY: `this` sole access path; close() may re-enter JS.
-            unsafe { (*this).close() };
+            // close() may re-enter JS.
+            Self::r(this).close();
             core::hint::black_box(this);
             // SAFETY: parent BACKREF valid; re-read after close() re-entry.
-            unsafe { Parent::on_error((*this).parent(), err) };
+            unsafe { Parent::on_error(Self::r(this).parent(), err) };
             return;
         }
 
-        // SAFETY: `this` sole access path; on_write_complete is itself laundered.
-        unsafe { (*this).on_write_complete(uv::ReturnCode::zero()) };
+        // on_write_complete is itself laundered.
+        Self::r(this).on_write_complete(uv::ReturnCode::zero());
     }
 
     pub fn write(&mut self) {
@@ -1947,6 +1984,20 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.parent
     }
 
+    /// Reborrow a PORT_NOTES_PLAN R-2 laundered self-pointer. See
+    /// [`PosixBufferedWriter::r`] for the encapsulated invariant; the Windows
+    /// streaming path has the identical re-entry shape (`FileSink::on_write` →
+    /// JS → `writer.with_mut(|w| w.end()/write(..))`). Each call yields a
+    /// fresh short-lived `&mut Self` that is the sole live borrow at the point
+    /// of use; do **not** hold the result across a `Parent::*` dispatch.
+    #[inline(always)]
+    fn r<'a>(this: *mut Self) -> &'a mut Self {
+        debug_assert!(!this.is_null());
+        // SAFETY: R-2 laundered self-pointer invariant — see
+        // `PosixBufferedWriter::r` doc comment.
+        unsafe { &mut *this }
+    }
+
     pub fn memory_cost(&self) -> usize {
         mem::size_of::<Self>() + self.current_payload.memory_cost() + self.outgoing.memory_cost()
     }
@@ -1986,46 +2037,44 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // read is not folded with any pre-call load.
         // SAFETY: ref taken in process_send keeps parent (and self-as-field) alive until this deref.
         let _g = scopeguard::guard(this, |s| unsafe {
-            Parent::deref((*s).parent)
+            Parent::deref(Self::r(s).parent)
         });
 
         if let Some(err) = status.to_error(sys::Tag::write) {
             log!("onWrite() = {}", bstr::BStr::new(err.name()));
-            // SAFETY: `this` is the live `&mut self`; raw deref is the only access path.
-            unsafe { (*this).last_write_result = WriteResult::Err(err.clone()) };
+            Self::r(this).last_write_result = WriteResult::Err(err.clone());
             // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_error((*this).parent(), err) };
+            unsafe { Parent::on_error(Self::r(this).parent(), err) };
             core::hint::black_box(this);
-            unsafe { (*this).close_without_reporting() };
+            Self::r(this).close_without_reporting();
             return;
         }
 
         // success means that we send all the data inside current_payload
-        // SAFETY: `this` is the live `&mut self`; raw deref is the only access path.
-        let written = unsafe { (*this).current_payload.size() };
-        unsafe { (*this).current_payload.reset() };
+        let written = Self::r(this).current_payload.size();
+        Self::r(this).current_payload.reset();
 
         // if we dont have more outgoing data we report done in onWrite
-        let done = unsafe { (*this).outgoing.is_empty() };
-        let was_done = unsafe { (*this).is_done };
+        let done = Self::r(this).outgoing.is_empty();
+        let was_done = Self::r(this).is_done;
 
-        log!("onWrite({}) ({} left)", written, unsafe { (*this).outgoing.size() });
+        log!("onWrite({}) ({} left)", written, Self::r(this).outgoing.size());
 
         if was_done && done {
             // we already call .end lets close the connection
-            unsafe { (*this).last_write_result = WriteResult::Done(written) };
+            Self::r(this).last_write_result = WriteResult::Done(written);
             // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_write((*this).parent(), written, WriteStatus::EndOfFile) };
+            unsafe { Parent::on_write(Self::r(this).parent(), written, WriteStatus::EndOfFile) };
             return;
         }
         // .end was not called yet
-        unsafe { (*this).last_write_result = WriteResult::Wrote(written) };
+        Self::r(this).last_write_result = WriteResult::Wrote(written);
 
         // report data written
         // SAFETY: parent BACKREF valid.
         unsafe {
             Parent::on_write(
-                (*this).parent(),
+                Self::r(this).parent(),
                 written,
                 if done { WriteStatus::Drained } else { WriteStatus::Pending },
             )
@@ -2036,12 +2085,12 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         core::hint::black_box(this);
 
         // process pending outgoing data if any
-        unsafe { (*this).process_send() };
+        Self::r(this).process_send();
 
         // TODO: should we report writable?
         if Parent::HAS_ON_WRITABLE {
             // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_writable((*this).parent()) };
+            unsafe { Parent::on_writable(Self::r(this).parent()) };
         }
     }
 
@@ -2095,10 +2144,9 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
         if was_canceled {
             // Canceled write - reset buffers and deref to balance process_send ref
-            // SAFETY: `this` is the live writer ctx; sole access path on the JS thread.
-            unsafe { (*this).current_payload.reset() };
+            Self::r(this).current_payload.reset();
             // SAFETY: parent is BACKREF; ref taken in process_send keeps it alive until this deref.
-            unsafe { Parent::deref((*this).parent) };
+            unsafe { Parent::deref(Self::r(this).parent) };
             return;
         }
 
@@ -2107,19 +2155,18 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             // guard execution (Zig defer semantics), not eagerly, in case
             // close()/on_error re-enter and swap the parent pointer.
             // SAFETY: ref taken in process_send keeps parent (and self) alive until this deref.
-            let _g = scopeguard::guard(this, |s| unsafe { Parent::deref((*s).parent) });
-            // SAFETY: `this` sole access path; close() may re-enter JS — every
-            // post-call `(*this)` deref reloads (raw ptr, no noalias).
-            unsafe { (*this).close() };
+            let _g = scopeguard::guard(this, |s| unsafe { Parent::deref(Self::r(s).parent) });
+            // close() may re-enter JS — every post-call `r(this)` reborrow
+            // reloads (laundered raw ptr, no noalias).
+            Self::r(this).close();
             core::hint::black_box(this);
             // SAFETY: parent BACKREF valid; re-read after close() re-entry.
-            unsafe { Parent::on_error((*this).parent(), err) };
+            unsafe { Parent::on_error(Self::r(this).parent(), err) };
             return;
         }
 
         // on_write_complete handles the deref (and is itself laundered).
-        // SAFETY: `this` sole access path on the JS thread.
-        unsafe { (*this).on_write_complete(uv::ReturnCode::zero()) };
+        Self::r(this).on_write_complete(uv::ReturnCode::zero());
     }
 
     /// this tries to send more data returning if we are writable or not after this
@@ -2138,18 +2185,18 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // the large-iterable test, so launder this entry point too — it is
         // also reached from `on_write_complete:2009` with a fresh `&mut`.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // SAFETY: `this` is the only access path to `*self` for the rest of
-        // this function; every deref is sole-aliased on the JS thread.
-        if unsafe { (*this).current_payload.is_not_empty() } {
+        // `this` is the only access path to `*self` for the rest of this
+        // function; every `r(this)` reborrow is sole-aliased on the JS thread.
+        if Self::r(this).current_payload.is_not_empty() {
             // we have some pending async request, the next outgoing data will be processed after this finish
-            unsafe { (*this).last_write_result = WriteResult::Pending(0) };
+            Self::r(this).last_write_result = WriteResult::Pending(0);
             return;
         }
 
-        let bytes_len = unsafe { (*this).outgoing.slice().len() };
+        let bytes_len = Self::r(this).outgoing.slice().len();
         // nothing todo (we assume we are writable until we try to write something)
         if bytes_len == 0 {
-            unsafe { (*this).last_write_result = WriteResult::Wrote(0) };
+            Self::r(this).last_write_result = WriteResult::Wrote(0);
             return;
         }
 
@@ -2157,14 +2204,14 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // borrowing into `(*this).source`. The boxed `File`/`Pipe` are separate
         // heap allocations, so a `*mut` snapshot is provenance-disjoint.
         let (file_raw, stream_raw): (*mut crate::source::File, *mut uv::uv_stream_t) =
-            match unsafe { (*this).source.as_mut() } {
+            match Self::r(this).source.as_mut() {
                 None => {
                     let err = sys::Error::from_code(sys::E::PIPE, sys::Tag::pipe);
-                    unsafe { (*this).last_write_result = WriteResult::Err(err.clone()) };
+                    Self::r(this).last_write_result = WriteResult::Err(err.clone());
                     // SAFETY: parent BACKREF valid.
-                    unsafe { Parent::on_error((*this).parent(), err) };
+                    unsafe { Parent::on_error(Self::r(this).parent(), err) };
                     core::hint::black_box(this);
-                    unsafe { (*this).close_without_reporting() };
+                    Self::r(this).close_without_reporting();
                     return;
                 }
                 Some(Source::SyncFile(_)) => {
@@ -2175,17 +2222,19 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             };
 
         // current payload is empty we can just swap with outgoing
-        unsafe { mem::swap(&mut (*this).current_payload, &mut (*this).outgoing) };
+        {
+            let s = Self::r(this);
+            mem::swap(&mut s.current_payload, &mut s.outgoing);
+        }
         // Snapshot the post-swap payload into an owned `uv_buf_t` (ptr + len,
         // `Copy`); the underlying storage is not reallocated until
         // `on_write_complete` resets it, and libuv reads it via this same
         // ptr/len. `current_payload` was just swapped from `outgoing`, so its
         // slice length equals `bytes_len` captured above.
-        // SAFETY: `this` is the sole access path on the JS thread (see launder
-        // note at function head).
-        let write_buf = unsafe {
-            debug_assert_eq!((*this).current_payload.slice().len(), bytes_len);
-            uv::uv_buf_t::init((*this).current_payload.slice())
+        let write_buf = {
+            let s = Self::r(this);
+            debug_assert_eq!(s.current_payload.slice().len(), bytes_len);
+            uv::uv_buf_t::init(s.current_payload.slice())
         };
 
         if !file_raw.is_null() {
@@ -2196,10 +2245,12 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
             file.fs.data = this.cast::<c_void>();
             file.prepare();
-            unsafe { (*this).write_buffer = write_buf };
+            Self::r(this).write_buffer = write_buf;
 
             // SAFETY: file is fully initialized; libuv stores the cb and fires
-            // it on the event loop. parent BACKREF valid.
+            // it on the event loop. parent BACKREF valid. `(*this)` raw deref
+            // (not `r()`) so the `&write_buffer` borrow is not invalidated by a
+            // sibling Unique tag from the `parent()` arg under Stacked Borrows.
             if let Some(err) = unsafe {
                 uv::uv_fs_write(
                     Parent::loop_((*this).parent()),
@@ -2214,32 +2265,34 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             .to_error(sys::Tag::write)
             {
                 file.complete(false);
-                unsafe { (*this).last_write_result = WriteResult::Err(err.clone()) };
+                Self::r(this).last_write_result = WriteResult::Err(err.clone());
                 // SAFETY: parent BACKREF valid.
-                unsafe { Parent::on_error((*this).parent(), err) };
+                unsafe { Parent::on_error(Self::r(this).parent(), err) };
                 core::hint::black_box(this);
-                unsafe { (*this).close_without_reporting() };
+                Self::r(this).close_without_reporting();
                 return;
             }
         } else {
             // enqueue the write
-            unsafe { (*this).write_buffer = write_buf };
+            Self::r(this).write_buffer = write_buf;
+            // SAFETY: `(*this)` raw deref (not `r()`) so the two field borrows
+            // (`write_req`, `write_buffer`) coexist under Stacked Borrows. The
+            // closure's `(*p)` is the libuv callback ctx — `p` is `this` and
+            // libuv invokes on the loop thread with no other Rust borrow live.
             if let Some(err) = unsafe {
                 (*this)
                     .write_req
-                    // SAFETY: `p` is `this`; libuv invokes on the loop thread with no
-                    // other Rust borrow of `*p` live, so `&mut *p` is the sole alias.
                     .write(stream_raw, &(*this).write_buffer, this, |p, s| {
                         (*p).on_write_complete(s)
                     })
             }
             .to_error(sys::Tag::write)
             {
-                unsafe { (*this).last_write_result = WriteResult::Err(err.clone()) };
+                Self::r(this).last_write_result = WriteResult::Err(err.clone());
                 // SAFETY: parent BACKREF valid.
-                unsafe { Parent::on_error((*this).parent(), err) };
+                unsafe { Parent::on_error(Self::r(this).parent(), err) };
                 core::hint::black_box(this);
-                unsafe { (*this).close_without_reporting() };
+                Self::r(this).close_without_reporting();
                 return;
             }
         }
@@ -2247,8 +2300,8 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // write is in flight. The matching deref is in on_write_complete
         // or on_fs_write_complete.
         // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
-        unsafe { Parent::ref_((*this).parent()) };
-        unsafe { (*this).last_write_result = WriteResult::Pending(0) };
+        unsafe { Parent::ref_(Self::r(this).parent()) };
+        Self::r(this).last_write_result = WriteResult::Pending(0);
     }
 
     fn close_without_reporting(&mut self) {

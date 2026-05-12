@@ -371,15 +371,14 @@ bun_spawn::link_impl_ProcessExit! {
 impl Subprocess<'_> {
     /// Shared borrow of the attached `AbortSignal`, if any.
     ///
-    /// Centralises the `Option<NonNull> → Option<&T>` deref so callers stay
-    /// safe. `abort_signal` holds a +1 C++-intrusive ref taken in
+    /// `abort_signal` holds a +1 C++-intrusive ref taken in
     /// `spawn_maybe_sync`; the pointee is therefore live for as long as the
     /// cell is `Some` (it is `take`n *before* `unref()` in
-    /// [`clear_abort_signal`](Self::clear_abort_signal)).
+    /// [`clear_abort_signal`](Self::clear_abort_signal)) — i.e. the
+    /// owner-outlives-holder `BackRef` invariant holds.
     #[inline]
-    pub fn abort_signal_ref(&self) -> Option<&AbortSignal> {
-        // SAFETY: see fn doc — +1-ref'd C++ handle, live while stored.
-        self.abort_signal.get().map(|p| unsafe { p.as_ref() })
+    pub fn abort_signal_ref(&self) -> Option<bun_ptr::BackRef<AbortSignal>> {
+        self.abort_signal.get().map(bun_ptr::BackRef::from)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -490,7 +489,7 @@ impl Subprocess<'_> {
                     let pipe = *pipe;
                     // `signal` is a `JsCell`, so the shared `&FileSink` from the
                     // centralised `pipe_sink` accessor suffices for `with_mut`.
-                    Writable::pipe_sink(&pipe).signal.with_mut(|s| s.clear());
+                    Writable::pipe_sink(pipe).signal.with_mut(|s| s.clear());
                     *stdin = Writable::Ignore;
                     // SAFETY: `Writable::Pipe` owns one intrusive ref (NonNull,
                     // no Drop impl); release it explicitly now that the variant

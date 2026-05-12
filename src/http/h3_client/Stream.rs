@@ -69,8 +69,10 @@ impl Stream {
     /// `self`, so the returned `&mut` does not alias `self`. HTTP-thread-only.
     #[inline]
     pub fn qstream_mut<'s>(&self) -> Option<&'s mut quic::Stream> {
-        // SAFETY: see INVARIANT above.
-        self.qstream.map(|qs| unsafe { &mut *qs.as_ptr() })
+        // Route through the shared `client_session::quic_stream_mut` accessor;
+        // see INVARIANT above.
+        self.qstream
+            .map(|qs| super::client_session::quic_stream_mut(qs.as_ptr()))
     }
 
     /// Mutable access to the owning `ClientSession`.

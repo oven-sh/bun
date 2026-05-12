@@ -24,24 +24,23 @@ use crate::h3_client::h3_client;
 
 /// Upgrade an lsquic-supplied `*mut quic::Socket` callback argument to `&mut`.
 ///
-/// INVARIANT (single point of unsafe): every `extern "C"` callback in this
-/// module receives a non-null `quic::Socket` pointer that lsquic guarantees
-/// live for the callback's duration; all callbacks run on the HTTP thread, so
-/// the `&mut` is the sole live borrow. Centralises the raw `&mut *qs`
-/// upgrade repeated at every callback entry.
+/// INVARIANT: every `extern "C"` callback in this module receives a non-null
+/// `quic::Socket` pointer that lsquic guarantees live for the callback's
+/// duration; all callbacks run on the HTTP thread, so the `&mut` is the sole
+/// live borrow. Routes through the shared
+/// [`client_session::quic_socket_mut`] accessor.
 #[inline(always)]
 fn qsocket_arg<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket {
-    // SAFETY: see INVARIANT above.
-    unsafe { &mut *qs }
+    super::client_session::quic_socket_mut(qs)
 }
 
 /// Upgrade an lsquic-supplied `*mut quic::Stream` callback argument to `&mut`.
 /// Same INVARIANT as [`qsocket_arg`] (lsquic-owned, live for the callback,
-/// HTTP-thread-only).
+/// HTTP-thread-only). Routes through the shared
+/// [`client_session::quic_stream_mut`] accessor.
 #[inline(always)]
 fn qstream_arg<'a>(s: *mut quic::Stream) -> &'a mut quic::Stream {
-    // SAFETY: see [`qsocket_arg`] INVARIANT.
-    unsafe { &mut *s }
+    super::client_session::quic_stream_mut(s)
 }
 
 /// Recover the `ClientSession` from a `quic::Socket`'s ext slot.

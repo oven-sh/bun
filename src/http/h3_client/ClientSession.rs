@@ -79,8 +79,8 @@ impl ClientSession {
     /// returned `&mut` does not alias `self`. HTTP-thread-only.
     #[inline]
     pub(super) fn qsocket_mut<'s>(&self) -> Option<&'s mut quic::Socket> {
-        // SAFETY: see INVARIANT above.
-        self.qsocket.map(|qs| unsafe { &mut *qs.as_ptr() })
+        // Route through the shared [`quic_socket_mut`] accessor; see INVARIANT.
+        self.qsocket.map(|qs| quic_socket_mut(qs.as_ptr()))
     }
 
     pub fn has_headroom(&self) -> bool {
@@ -375,6 +375,34 @@ impl ClientSession {
 #[inline]
 pub(super) fn client_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPClient<'static> {
     HTTPClient::from_erased_backref(p)
+}
+
+/// Upgrade a non-null `*mut quic::Socket` lsquic FFI handle to `&mut`.
+///
+/// INVARIANT: every caller passes a non-null `quic::Socket` that lsquic owns
+/// and keeps live for the borrow's duration — either an `extern "C"` callback
+/// argument (live for the callback), or a `ClientSession.qsocket` field (set
+/// by `ClientContext::connect`, valid until `on_conn_close`). The handle is an
+/// FFI-owned allocation distinct from any Rust struct holding it. All access
+/// is HTTP-thread-only, so the returned `&mut` is the sole live borrow.
+/// Centralises the raw `&mut *qs` upgrade shared by `callbacks::qsocket_arg`
+/// and `ClientSession::qsocket_mut`.
+#[inline(always)]
+pub(super) fn quic_socket_mut<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket {
+    // SAFETY: see INVARIANT above.
+    unsafe { &mut *qs }
+}
+
+/// Upgrade a non-null `*mut quic::Stream` lsquic FFI handle to `&mut`.
+///
+/// Same INVARIANT as [`quic_socket_mut`] — lsquic-owned, live for the
+/// borrow's duration (callback argument, or `Stream.qstream` set in
+/// `on_stream_open` and nulled in `on_stream_close` / `detach`), FFI
+/// allocation distinct from any Rust holder, HTTP-thread-only.
+#[inline(always)]
+pub(super) fn quic_stream_mut<'a>(s: *mut quic::Stream) -> &'a mut quic::Stream {
+    // SAFETY: see [`quic_socket_mut`] INVARIANT.
+    unsafe { &mut *s }
 }
 
 /// Upgrade a `*mut Stream` (a `self.pending` entry, or one just removed from

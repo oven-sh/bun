@@ -604,15 +604,13 @@ impl JSMySQLQuery {
         // here mirrors the Zig spec's `*jsc.VirtualMachine`.
         unsafe { &mut *self.vm.as_ptr() }
     }
-    /// `&mut EventLoop` for `run_callback`. One audited unsafe here replaces
-    /// the per-site `unsafe { self.vm().event_loop_mut() }` — the loop is a
-    /// disjoint heap allocation owned by the JS-thread VM singleton stored in
-    /// `self.vm`; single-thread affinity ⇒ no two `&mut EventLoop` coexist.
+    /// `&mut EventLoop` for `run_callback`. Routes through the inherent safe
+    /// `VirtualMachine::event_loop_mut` accessor — the loop is a disjoint heap
+    /// allocation owned by the JS-thread VM singleton stored in `self.vm`;
+    /// single-thread affinity ⇒ no two `&mut EventLoop` coexist.
     #[inline]
     fn event_loop(&self) -> &mut crate::jsc::EventLoop {
-        // SAFETY: `self.vm` is the process-lifetime VM `BackRef` (see
-        // `vm_mut`); the owned event loop lives for the VM's lifetime.
-        unsafe { self.vm().event_loop_mut() }
+        self.vm().event_loop_mut()
     }
     #[inline]
     fn global_object(&self) -> &JSGlobalObject {

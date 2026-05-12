@@ -41,7 +41,7 @@ pub struct ClientSession {
     /// pool transfer a ref rather than touching the count.
     pub ref_count: Cell<u32>,
 
-    pub hpack: *mut lshpack::HPACK, // FFI handle owned via init/destroy
+    pub hpack: lshpack::HpackHandle, // RAII owner; Deref/DerefMut to lshpack::HPACK
     pub socket: Socket,
     pub ctx: *mut NewHTTPContext<true>, // BACKREF: context outlives and registers this session
 
@@ -198,20 +198,6 @@ impl ClientSession {
         self.registry_index.set(i);
     }
 
-    /// # Safety
-    /// `hpack` is a disjoint FFI heap allocation owned for the session's
-    /// lifetime (init in `create`, freed in `Drop`). Taking `&self` (not
-    /// `&mut self`) lets callers borrow other session fields alongside the
-    /// returned `&mut HPACK`. The caller must ensure no other live `&mut`
-    /// to the HPACK table overlaps the returned borrow — the type system
-    /// cannot enforce this through `&self`, so two `s.hpack()` calls with
-    /// overlapping lifetimes would alias. Marked `unsafe` so each call site
-    /// carries that obligation explicitly.
-    #[inline]
-    pub(crate) unsafe fn hpack(&self) -> &mut lshpack::HPACK {
-        unsafe { &mut *self.hpack }
-    }
-
     /// Send RST_STREAM for `stream` and mark it closed. Equivalent to
     /// `Stream::rst` but routed through `self` directly so the stream's
     /// `session` backref is not dereferenced while `&mut self` is already
@@ -234,7 +220,7 @@ impl ClientSession {
     ) -> *mut ClientSession {
         let this = bun_core::heap::into_raw(Box::new(ClientSession {
             ref_count: Cell::new(1),
-            hpack: lshpack::HPACK::init(4096),
+            hpack: lshpack::HpackHandle::new(4096),
             socket,
             ctx,
             hostname: Box::<[u8]>::from(client.connected_url.hostname),
@@ -1088,8 +1074,7 @@ impl Drop for ClientSession {
     fn drop(&mut self) {
         super::live_sessions.fetch_sub(1, Ordering::Relaxed);
         debug_assert!(self.registry_index.get() == u32::MAX);
-        // SAFETY: hpack was allocated by lshpack::HPACK::init and not yet freed.
-        unsafe { lshpack::HPACK::destroy(self.hpack) };
+        // hpack: HpackHandle drops automatically (lshpack_wrapper_deinit).
         // write_buffer / read_buffer / pending_attach / orphan_header_block /
         // encode_scratch / hostname / ssl_config are dropped automatically.
         for &e in self.streams.values() {

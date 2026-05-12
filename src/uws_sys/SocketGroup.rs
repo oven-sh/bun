@@ -289,8 +289,9 @@ impl SocketGroup {
     }
 
     pub fn next_in_loop(&mut self) -> *mut SocketGroup {
-        // SAFETY: forwarding to C; `self` is a valid initialized group.
-        unsafe { us_socket_group_next(self) }
+        // `us_socket_group_next` is `return group->next` (context.c:165); this
+        // struct is a full `#[repr(C)]` mirror, so read the field directly.
+        self.next
     }
 }
 
@@ -311,7 +312,6 @@ unsafe extern "C" {
     fn us_socket_group_timestamp(group: *mut SocketGroup) -> c_ushort;
     #[allow(dead_code)]
     fn us_socket_group_loop(group: *mut SocketGroup) -> *mut Loop;
-    fn us_socket_group_next(group: *mut SocketGroup) -> *mut SocketGroup;
     fn us_socket_group_listen(
         group: *mut SocketGroup,
         kind: u8,

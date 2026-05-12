@@ -91,15 +91,17 @@ pub mod ffi {
         pub fn SSL_get_finished(ssl: *const SSL, buf: *mut c_void, count: usize) -> usize;
         // SAFETY (unsafe fn): `buf` must be writable for `count` bytes.
         pub fn SSL_get_peer_finished(ssl: *const SSL, buf: *mut c_void, count: usize) -> usize;
-        // SAFETY (unsafe fn): out-params must each be null or point to a valid `c_int`/`u8`.
-        pub fn SSL_get_shared_sigalgs(
-            ssl: *mut SSL,
+        // Opaque-ZST `&SSL` + `Option<&mut _>` out-params (NPO ⇒ ABI-identical
+        // to nullable `*mut _`); BoringSSL writes each non-null slot in place.
+        // No remaining caller-side precondition.
+        pub safe fn SSL_get_shared_sigalgs(
+            ssl: &SSL,
             idx: c_int,
-            psign: *mut c_int,
-            phash: *mut c_int,
-            psignhash: *mut c_int,
-            rsig: *mut u8,
-            rhash: *mut u8,
+            psign: Option<&mut c_int>,
+            phash: Option<&mut c_int>,
+            psignhash: Option<&mut c_int>,
+            rsig: Option<&mut u8>,
+            rhash: Option<&mut u8>,
         ) -> c_int;
         // SAFETY (unsafe fn): `out`/`label`/`context` must be valid for the given lengths.
         pub fn SSL_export_keying_material(
@@ -117,15 +119,17 @@ pub mod ffi {
 
         // ── SSL_SESSION ───────────────────────────────────────────────────
         pub safe fn SSL_get_session(ssl: &SSL) -> *mut SSL_SESSION;
-        // SAFETY (unsafe fn): `session` must be a live SSL_SESSION (or null); BoringSSL bumps its refcount.
-        pub fn SSL_set_session(ssl: *mut SSL, session: *mut SSL_SESSION) -> c_int;
+        // Both handles are opaque-ZST refs (`UnsafeCell` body); BoringSSL bumps
+        // `session`'s refcount internally — no caller-side precondition.
+        pub safe fn SSL_set_session(ssl: &SSL, session: &SSL_SESSION) -> c_int;
         // SAFETY (unsafe fn): consumes a +1 reference; `session` must be uniquely owned or null.
         pub fn SSL_SESSION_free(session: *mut SSL_SESSION);
-        // SAFETY (unsafe fn): out-params must point to valid `*const u8` / `usize` slots.
-        pub fn SSL_SESSION_get0_ticket(
-            session: *const SSL_SESSION,
-            out_ticket: *mut *const u8,
-            out_len: *mut usize,
+        // Opaque-ZST `&SSL_SESSION` + `&mut` out-params (FFI-nonnull) ⇒ no
+        // caller-side precondition; BoringSSL writes a borrowed ptr/len pair.
+        pub safe fn SSL_SESSION_get0_ticket(
+            session: &SSL_SESSION,
+            out_ticket: &mut *const u8,
+            out_len: &mut usize,
         );
         // SAFETY (unsafe fn): `pp` (when non-null) must point to a buffer with capacity for the encoded session.
         pub fn i2d_SSL_SESSION(session: *mut SSL_SESSION, pp: *mut *mut u8) -> c_int;
@@ -399,18 +403,7 @@ pub fn get_shared_sigalgs(this: &This, global: &JSGlobalObject, _frame: &CallFra
 
     let Some(ssl_ptr) = this.socket.get().ssl() else { return Ok(JSValue::NULL) };
 
-    // SAFETY: ssl_ptr is a live *mut SSL; passing null out-params requests only the count.
-    let nsig = unsafe {
-        ffi::SSL_get_shared_sigalgs(
-            ssl_ptr,
-            0,
-            core::ptr::null_mut(),
-            core::ptr::null_mut(),
-            core::ptr::null_mut(),
-            core::ptr::null_mut(),
-            core::ptr::null_mut(),
-        )
-    };
+    let nsig = ffi::SSL_get_shared_sigalgs(boringssl::SSL::opaque_ref(ssl_ptr), 0, None, None, None, None, None);
 
     let array = JSValue::create_empty_array(global, usize::try_from(nsig).expect("int cast"))?;
 
@@ -419,18 +412,15 @@ pub fn get_shared_sigalgs(this: &This, global: &JSGlobalObject, _frame: &CallFra
         let mut sign_nid: c_int = 0;
         let mut sig_with_md: &[u8] = b"";
 
-        // SAFETY: ssl_ptr is a live *mut SSL; i is in [0, nsig); out-params are valid stack locals or null.
-        unsafe {
-            ffi::SSL_get_shared_sigalgs(
-                ssl_ptr,
-                c_int::try_from(i).expect("int cast"),
-                &raw mut sign_nid,
-                &raw mut hash_nid,
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-            );
-        }
+        ffi::SSL_get_shared_sigalgs(
+            boringssl::SSL::opaque_ref(ssl_ptr),
+            c_int::try_from(i).expect("int cast"),
+            Some(&mut sign_nid),
+            Some(&mut hash_nid),
+            None,
+            None,
+            None,
+        );
         match sign_nid {
             ffi::EVP_PKEY_RSA => {
                 sig_with_md = b"RSA";
@@ -780,8 +770,7 @@ pub fn set_session(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> J
         // so we must release the one returned by d2i_SSL_SESSION on every path.
         // SAFETY: `s` is the +1 SSL_SESSION reference returned by d2i_SSL_SESSION; we own it.
         let _guard = scopeguard::guard(session, |s| unsafe { ffi::SSL_SESSION_free(s) });
-        // SAFETY: ssl_ptr is a live *mut SSL; session is a non-null *mut SSL_SESSION owned above.
-        if unsafe { ffi::SSL_set_session(ssl_ptr, session) } != 1 {
+        if ffi::SSL_set_session(boringssl::SSL::opaque_ref(ssl_ptr), ffi::SSL_SESSION::opaque_ref(session)) != 1 {
             return Err(global.throw_value(get_ssl_exception(global, b"SSL_set_session error")));
         }
         Ok(JSValue::UNDEFINED)
@@ -799,8 +788,7 @@ pub fn get_tls_ticket(this: &This, global: &JSGlobalObject, _frame: &CallFrame) 
     let mut ticket: *const u8 = core::ptr::null();
     let mut length: usize = 0;
     // The pointer is only valid while the connection is in use so we need to copy it
-    // SAFETY: session is a non-null *mut SSL_SESSION; out-params are valid stack locals.
-    unsafe { ffi::SSL_SESSION_get0_ticket(session, &raw mut ticket, &raw mut length) };
+    ffi::SSL_SESSION_get0_ticket(ffi::SSL_SESSION::opaque_ref(session), &mut ticket, &mut length);
 
     if ticket.is_null() || length == 0 {
         return Ok(JSValue::UNDEFINED);

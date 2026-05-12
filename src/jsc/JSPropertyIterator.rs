@@ -217,8 +217,13 @@ impl<'a> JSPropertyIterator<'a> {
             } else {
                 // Exception check is unnecessary here because it won't throw.
                 let iter = self.impl_.expect("len > 0 implies impl_ is Some").as_ptr();
-                // SAFETY: `iter` is a live FFI handle; `name` is a valid out-param.
-                unsafe { Bun__JSPropertyIterator__getName(iter, &raw mut name, i) };
+                // `iter` is a live FFI handle owned by `self`; `JSPropertyIteratorImpl`
+                // is an opaque ZST handle so `opaque_mut` is the centralised proof.
+                Bun__JSPropertyIterator__getName(
+                    JSPropertyIteratorImpl::opaque_mut(iter),
+                    &mut name,
+                    i,
+                );
             }
 
             if name.is_dead() {
@@ -332,9 +337,12 @@ unsafe extern "C" {
         property_name: *mut bstr::String,
         i: usize,
     ) -> JSValue;
-    fn Bun__JSPropertyIterator__getName(
-        iter: *mut JSPropertyIteratorImpl,
-        property_name: *mut bstr::String,
+    // safe: `JSPropertyIteratorImpl` is an `opaque_ffi!` ZST handle (`&mut` is
+    // ABI-identical to a non-null `*mut`); `bstr::String` is a `#[repr(C)]`
+    // out-param the C++ side fills in-place.
+    safe fn Bun__JSPropertyIterator__getName(
+        iter: &mut JSPropertyIteratorImpl,
+        property_name: &mut bstr::String,
         i: usize,
     );
     fn Bun__JSPropertyIterator__deinit(iter: *mut JSPropertyIteratorImpl);

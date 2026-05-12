@@ -341,13 +341,10 @@ pub trait VirtualMachineSqlExt {
     fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache;
     /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
     fn vm_ctx(&self) -> bun_io::EventLoopCtx;
-    /// &mut *self.event_loop() — EventLoop::{enter,exit,run_callback} take
-    /// &mut self; bun_jsc returns the raw pointer. Unbounded lifetime so the
-    /// returned &mut does not borrow *self (the loop is a disjoint heap
-    /// allocation owned by the VM).
-    ///
-    /// SAFETY: caller must not hold another live &mut EventLoop.
-    unsafe fn event_loop_mut<'a>(&self) -> &'a mut EventLoop;
+    // NOTE: `event_loop_mut` lives on `VirtualMachine` as a safe inherent
+    // accessor (single audited deref under the JS-thread-singleton invariant);
+    // the former unsafe trait shim here was dead — inherent methods always win
+    // method resolution over this extension trait.
 }
 impl VirtualMachineSqlExt for VirtualMachine {
     #[inline]
@@ -372,12 +369,6 @@ impl VirtualMachineSqlExt for VirtualMachine {
     #[inline]
     fn vm_ctx(&self) -> bun_io::EventLoopCtx {
         bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
-    }
-    #[inline]
-    unsafe fn event_loop_mut<'a>(&self) -> &'a mut EventLoop {
-        // SAFETY: caller contract; event_loop() points into the VM-owned
-        // EventLoop, live for the VM lifetime.
-        unsafe { &mut *self.event_loop() }
     }
 }
 

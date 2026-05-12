@@ -2768,8 +2768,10 @@ impl IPCInstance {
             crate::ipc::DecodedIPCMessage::Data(data) => {
                 bun_core::scoped_log!(IPC, "Received IPC message from parent");
                 event_loop.enter();
-                // SAFETY: extern "C" FFI; `global_this` is the live VM global.
-                unsafe { Process__emitMessageEvent(global_this, data, handle) };
+                // `global_this` is the live VM global; `JSGlobalObject` is an
+                // opaque ZST handle so `opaque_ref` is the centralised
+                // zero-byte deref proof (panics on null).
+                Process__emitMessageEvent(JSGlobalObject::opaque_ref(global_this), data, handle);
                 event_loop.exit();
             }
             crate::ipc::DecodedIPCMessage::Internal(data) => {
@@ -2804,11 +2806,10 @@ impl IPCInstance {
 }
 
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle, so
-// `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*`.
-// `Process__emitMessageEvent` keeps the raw pointer because its sole caller
-// holds a `*const JSGlobalObject` (IPCInstance field) and must deref it anyway.
+// `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*` and C++
+// mutating VM/process state through it is interior mutation invisible to Rust.
 unsafe extern "C" {
-    fn Process__emitMessageEvent(global: *mut JSGlobalObject, value: JSValue, handle: JSValue);
+    safe fn Process__emitMessageEvent(global: &JSGlobalObject, value: JSValue, handle: JSValue);
     safe fn Process__emitDisconnectEvent(global: &JSGlobalObject);
 }
 

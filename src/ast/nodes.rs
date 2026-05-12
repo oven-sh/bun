@@ -209,22 +209,10 @@ impl StoreStr {
         core::ptr::slice_from_raw_parts(self.ptr.as_ptr(), self.len)
     }
 
-    /// Reconstruct from a raw fat pointer (inverse of `as_raw`). Exists only
-    /// for the handful of callers that still hold a `*const [u8]`
-    /// (e.g. `js_printer::renamer::NameStr`) during the StoreSlice migration.
-    ///
-    /// # Safety
-    /// `p` must satisfy the `StoreStr` invariant: either null (yielding
-    /// `EMPTY`) or pointing at `p.len()` initialized bytes valid for the
-    /// owning arena's lifetime. The result auto-`Deref`s, so a garbage fat
-    /// pointer here is immediate UB at the first read.
-    #[inline]
-    pub unsafe fn from_raw(p: *const [u8]) -> Self {
-        match core::ptr::NonNull::new(p.cast_mut()) {
-            Some(nn) => StoreStr { ptr: nn.cast::<u8>(), len: p.len() },
-            None => StoreStr::EMPTY,
-        }
-    }
+    // (former `from_raw(*const [u8])` removed — the StoreSlice migration is
+    // complete; `js_printer::renamer::NameStr` now constructs via the safe
+    // `StoreStr::new(&[u8])`, so the raw-fat-pointer back-door has no
+    // remaining callers.)
 }
 
 impl Default for StoreStr {

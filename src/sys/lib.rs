@@ -4138,7 +4138,12 @@ pub mod c {
     /// libc `__errno_location()` / `__error()` / CRT `_errno()` — pointer to
     /// thread-local errno. Canonical cfg-ladder lives in `bun_core::ffi`.
     #[inline]
-    pub unsafe fn errno_location() -> *mut c_int { unsafe { bun_core::ffi::errno_ptr() } }
+    pub fn errno_location() -> *mut c_int {
+        // SAFETY: `__errno_location()` (and per-OS equivalents) take no args and
+        // return the calling thread's TLS errno cell — obtaining the pointer has
+        // no caller precondition (dereferencing it is what requires care).
+        unsafe { bun_core::ffi::errno_ptr() }
+    }
     // Win32 file APIs frequently spelled `bun.C.*` in Zig (windows.zig flattens
     // a slice of `kernel32` into `bun.C`). Re-export the handful node_fs.rs
     // reaches via `sys::c::*` so the call sites stay target-neutral.
@@ -4263,7 +4268,10 @@ pub mod c {
     /// `bun.c.kqueue` — create a new kqueue fd.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     #[inline]
-    pub unsafe fn kqueue() -> c_int { unsafe { libc::kqueue() } }
+    pub fn kqueue() -> c_int {
+        // SAFETY: `kqueue(2)` takes no arguments; no caller precondition.
+        unsafe { libc::kqueue() }
+    }
 
     /// `bun.c.kevent` — raw BSD kqueue event syscall (Darwin/FreeBSD only).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -4517,7 +4525,8 @@ pub mod linux {
     }
 
     #[inline]
-    pub unsafe fn inotify_init1(flags: c_int) -> c_int {
+    pub fn inotify_init1(flags: c_int) -> c_int {
+        // SAFETY: scalar-only syscall — bad `flags` yields `EINVAL`, never UB.
         unsafe { libc::inotify_init1(flags) }
     }
     #[inline]
@@ -4525,10 +4534,11 @@ pub mod linux {
         unsafe { libc::inotify_add_watch(fd, path, mask) }
     }
     #[inline]
-    pub unsafe fn inotify_rm_watch(fd: c_int, wd: c_int) -> c_int {
+    pub fn inotify_rm_watch(fd: c_int, wd: c_int) -> c_int {
         // bionic declares the watch-descriptor param `uint32_t` (libc binds it
         // `u32`) while glibc/musl use `int`. The kernel ABI is the same `__s32`
         // either way; cast for the bionic signature.
+        // SAFETY: scalar-only syscall — bad `fd`/`wd` yields `EBADF`/`EINVAL`.
         #[cfg(target_os = "android")]
         return unsafe { libc::inotify_rm_watch(fd, wd as u32) };
         #[cfg(not(target_os = "android"))]
@@ -8101,10 +8111,11 @@ unsafe fn adapter_flush(w: *mut bun_core::io::Writer)
 }
 
 #[cfg(unix)]
-unsafe fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
+fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
     // SAFETY: POD, zero-valid — libc::winsize is all-integer; ioctl writes it.
     let mut ws: libc::winsize = bun_core::ffi::zeroed();
-    // SAFETY: TIOCGWINSZ expects a *mut winsize.
+    // SAFETY: TIOCGWINSZ writes exactly `sizeof(winsize)` into the stack-local
+    // `ws`; `fd` is a plain int (bad fd → ENOTTY/EBADF, never UB).
     let rc = unsafe { libc::ioctl(fd.native(), libc::TIOCGWINSZ, &raw mut ws) };
     if rc != 0 { return None; }
     Some(bun_core::Winsize {
@@ -8115,7 +8126,7 @@ unsafe fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
     })
 }
 #[cfg(not(unix))]
-unsafe fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
+fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
     // TODO(b2-windows): GetConsoleScreenBufferInfo.
     None
 }

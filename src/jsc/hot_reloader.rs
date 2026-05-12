@@ -310,15 +310,18 @@ pub trait HotReloaderCtx {
 /// with a trait bound on the `EventLoopType` generic. The only concrete event
 /// loop ever instantiated is `crate::event_loop::EventLoop`.
 pub trait HotReloaderEventLoop {
-    /// # Safety
-    /// `this` must point to a live event loop owned by the reloader's `Ctx`.
-    unsafe fn enqueue_task_concurrent(this: *mut Self, task: *mut ConcurrentTask);
+    /// Forward to the inherent `enqueue_task_concurrent` (safe `&self` method
+    /// on every concrete event loop). Takes `&Self` so the raw-pointer
+    /// dereference of the `Ctx`-owned `*mut EventLoopType` is narrowed to the
+    /// two call sites, not spread across the trait + impls.
+    fn enqueue_task_concurrent(this: &Self, task: *mut ConcurrentTask);
 }
 
 impl HotReloaderEventLoop for EventLoop {
-    unsafe fn enqueue_task_concurrent(this: *mut Self, task: *mut ConcurrentTask) {
-        // SAFETY: precondition — `this` is the VM's live event loop pointer.
-        unsafe { (*this).enqueue_task_concurrent(task) }
+    fn enqueue_task_concurrent(this: &Self, task: *mut ConcurrentTask) {
+        // Inherent `EventLoop::enqueue_task_concurrent(&self, ..)` — inherent
+        // methods take precedence over trait methods, so this is not recursive.
+        this.enqueue_task_concurrent(task)
     }
 }
 
@@ -329,7 +332,7 @@ impl HotReloaderEventLoop for EventLoop {
 /// `BundleV2` doesn't even define `eventLoop()` — Zig's lazy compilation never
 /// instantiates it. Match that here.
 impl HotReloaderEventLoop for bun_event_loop::AnyEventLoop<'static> {
-    unsafe fn enqueue_task_concurrent(_this: *mut Self, _task: *mut ConcurrentTask) {
+    fn enqueue_task_concurrent(_this: &Self, _task: *mut ConcurrentTask) {
         unreachable!()
     }
 }
@@ -705,8 +708,9 @@ where
             // a whole-struct `&NewHotReloader` (see `Self::pending_count` doc).
             // `RELOAD_IMMEDIATELY` already diverged above so its guard is dead here.
             let ctx = self.ctx_ptr();
-            // SAFETY: ctx outlives reloader (BACKREF).
-            let event_loop = (*ctx).event_loop();
+            // SAFETY: ctx outlives reloader (BACKREF); `event_loop()` returns
+            // the live event-loop pointer owned by `Ctx`.
+            let event_loop = &*(*ctx).event_loop();
             EventLoopType::enqueue_task_concurrent(event_loop, std::ptr::from_mut(concurrent));
         }
         self.count = 0;
@@ -781,7 +785,8 @@ where
 
         // SAFETY: `event_loop()` returns the live event-loop pointer owned by
         // `Ctx`, which outlives the reloader.
-        unsafe { EventLoopType::enqueue_task_concurrent(self.event_loop(), task) };
+        let event_loop = unsafe { &*self.event_loop() };
+        EventLoopType::enqueue_task_concurrent(event_loop, task);
     }
 
     pub fn enable_hot_module_reloading(this: *mut Ctx, entry_path: Option<&'static [u8]>) {

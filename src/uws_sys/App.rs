@@ -497,8 +497,7 @@ impl<const SSL: bool> App<SSL> {
     }
 
     pub fn get_native_handle(&mut self) -> *mut c_void {
-        // SAFETY: self is a valid app.
-        unsafe { c::uws_get_native_handle(Self::SSL_FLAG, std::ptr::from_mut::<Self>(self).cast::<c_void>()) }
+        c::uws_get_native_handle(Self::SSL_FLAG, self.as_raw())
     }
 
     pub fn remove_server_name(&mut self, hostname_pattern: &core::ffi::CStr) {
@@ -801,7 +800,11 @@ pub mod c {
             opcode: Opcode,
             compress: bool,
         ) -> bool;
-        pub fn uws_get_native_handle(ssl: i32, app: *mut c_void) -> *mut c_void;
+        // safe: `uws_app_s` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so
+        // `&mut uws_app_s` is ABI-identical to the C `uws_app_t*` (non-null,
+        // no `noalias`/`readonly`). The C++ body only reads `app->getNativeHandle()`
+        // — no preconditions beyond a live handle.
+        pub safe fn uws_get_native_handle(ssl: i32, app: &mut uws_app_s) -> *mut c_void;
         pub fn uws_remove_server_name(
             ssl: i32,
             app: *mut uws_app_t,

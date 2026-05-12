@@ -96,11 +96,13 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // drop(this) — Box freed at scope exit
     }
 
-    /// SAFETY: `task` points to the `task` field of a heap-allocated `Self`
-    /// created in `create_on_js_thread`.
-    pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
+    pub fn run_from_thread_pool(task: *mut WorkPoolTask) {
         crate::mark_binding();
-        // SAFETY: recover the parent via offset_of.
+        // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
+        // slot — safe-fn coerces) for the `task` field initialised in
+        // `create_on_js_thread`; the WorkPool calls back with exactly that
+        // field, so `from_field_ptr!` recovers the live heap `Self` parent,
+        // exclusively owned by the work pool for this callback's duration.
         let this: *mut Self = unsafe {
             bun_core::from_field_ptr!(Self, task, task)
         };

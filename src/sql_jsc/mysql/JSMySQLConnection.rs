@@ -466,14 +466,13 @@ impl JSMySQLConnection {
     /// `.classes.ts` `m_ctx` payload; teardown is driven by `finalize()` → `deref()`.
     /// Private: only `deref()` calls this when the count hits 0.
     ///
-    /// SAFETY: `this` was originally allocated via `Box::new` and leaked via
-    /// `heap::alloc` in `create_instance`; the caller is the unique owner.
-    /// No `&Self` / `&mut Self` may outlive the `heap::take` drop below —
-    /// that is why this (and `deref`) are raw-pointer-shaped, mirroring Zig's
-    /// `fn deinit(this: *@This())` which has no reference-validity invariant.
-    unsafe fn deinit(this: *mut Self) {
-        // SAFETY: see fn-level contract — `this` is a live `heap::alloc` ptr;
-        // unique owner; no `&`/`&mut Self` outlives the `heap::take` below.
+    /// Raw-pointer-shaped (not `&mut self`): ends in `heap::take(this)`, and a
+    /// `&mut self` protector live across the dealloc would be UB under Stacked
+    /// Borrows — direct mapping of Zig's `fn deinit(this: *@This())`.
+    fn deinit(this: *mut Self) {
+        // SAFETY: routed only through `CellRefCounted::destroy` (refcount==0);
+        // `this` is the live `heap::alloc` ptr from `create_instance`, sole
+        // owner; no `&`/`&mut Self` outlives the `heap::take` below.
         unsafe {
             {
                 let r = &*this;

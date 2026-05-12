@@ -565,8 +565,11 @@ impl TranspilerJob {
         WorkPool::schedule(&raw mut self.work_task);
     }
 
-    pub unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
-        // SAFETY: work_task points to TranspilerJob.work_task; recover parent via offset_of!
+    pub fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
+        // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
+        // slot — safe-fn coerces) for the `work_task` field initialised in
+        // `transpile`; the WorkPool calls back with exactly that field, so
+        // `from_field_ptr!` recovers the live heap `TranspilerJob` parent.
         let this = unsafe {
             &mut *bun_core::from_field_ptr!(TranspilerJob, work_task, work_task)
         };

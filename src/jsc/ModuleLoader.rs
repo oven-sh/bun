@@ -261,14 +261,16 @@ pub struct LoaderHooks {
 unsafe extern "Rust" {
     /// The single `&'static` instance, defined `#[no_mangle]` in
     /// `bun_runtime::jsc_hooks`. Link-time resolved — no `AtomicPtr`, no
-    /// init-order hazard.
-    static __BUN_LOADER_HOOKS: LoaderHooks;
+    /// init-order hazard. `LoaderHooks` is a `#[repr(Rust)]` POD of fn-ptrs
+    /// with a single immutable definition; reading it has no precondition
+    /// beyond the link succeeding → `safe static`.
+    safe static __BUN_LOADER_HOOKS: LoaderHooks;
 }
 
 #[inline]
 fn loader_hooks() -> Option<&'static LoaderHooks> {
-    // SAFETY: link-time-resolved `&'static` Rust-ABI static. Always `Some`.
-    Some(unsafe { &__BUN_LOADER_HOOKS })
+    // Link-time-resolved `&'static` Rust-ABI static. Always `Some`.
+    Some(&__BUN_LOADER_HOOKS)
 }
 
 /// `ModuleLoader.transpileSourceCode(...)` — thin shim over the §Dispatch

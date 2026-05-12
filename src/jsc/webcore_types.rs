@@ -127,14 +127,18 @@ const _: () = {
     // `JSValue::as(Blob)` (JSValue.zig:462-472) special-case: a `BuildArtifact`
     // wraps a `Blob`, so downcasting to `Blob` must also match it. The struct
     // lives in `bun_runtime`, so resolve the fallback at link time.
+    //
+    // safe: by-value `JSValue` (tagged i64); the Rust-ABI body in `bun_runtime`
+    // only type-checks the encoded value and returns the stored payload pointer
+    // (or `None`) — no precondition beyond the link succeeding.
     unsafe extern "Rust" {
-        fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob>;
+        safe fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob>;
     }
 
     impl JsClass for Blob {
         fn from_js(value: JSValue) -> Option<*mut Self> {
             JSBlob::from_js(value)
-                .or_else(|| unsafe { __bun_blob_from_build_artifact(value) })
+                .or_else(|| __bun_blob_from_build_artifact(value))
         }
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
             JSBlob::from_js_direct(value)

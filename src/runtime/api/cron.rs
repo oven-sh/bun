@@ -52,9 +52,11 @@ fn vm_ctx() -> bun_io::EventLoopCtx {
 }
 
 /// Recover `&mut VirtualMachine` from the per-thread singleton.
-/// SAFETY: single JS thread; caller must not hold an aliasing `&mut`.
+///
+/// Safe: delegates to [`VirtualMachine::as_mut`], which already encapsulates
+/// the single-JS-thread thread-local deref (provenance from `get_mut_ptr()`).
 #[inline]
-unsafe fn vm_mut<'a>() -> &'a mut VirtualMachine {
+fn vm_mut<'a>() -> &'a mut VirtualMachine {
     VirtualMachine::get().as_mut()
 }
 
@@ -91,8 +93,7 @@ trait CronJobBase: Sized {
     fn loop_(&self) -> *mut AsyncLoop {
         #[cfg(windows)]
         {
-            // SAFETY: per-thread VM singleton.
-            unsafe { vm_mut() }.uv_loop()
+            vm_mut().uv_loop()
         }
         #[cfg(not(windows))]
         {
@@ -101,8 +102,7 @@ trait CronJobBase: Sized {
     }
 
     fn event_loop(&self) -> *mut EventLoop {
-        // SAFETY: per-thread VM singleton.
-        unsafe { vm_mut() }.event_loop()
+        vm_mut().event_loop()
     }
 
     /// May free `this` via `maybe_finished`.
@@ -758,8 +758,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
             exit_status: None,
             err_msg: None,
             tmp_path: None,
-            // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
-            event_loop_handle: EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>()),
+            event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
         }));
         // SAFETY: just allocated; unique. Short-lived borrow ends before
         // `start_*` (which may free `job`).
@@ -1241,8 +1240,7 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
             exit_status: None,
             err_msg: None,
             tmp_path: None,
-            // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
-            event_loop_handle: EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>()),
+            event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
         }));
         // SAFETY: just allocated; unique. Short-lived borrow ends before
         // `start_*` (which may free `job`).
@@ -2064,8 +2062,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         argv0: resolved_argv0,
         #[cfg(windows)]
         windows: spawn::WindowsOptions {
-            // SAFETY: per-thread VM singleton.
-            loop_: EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>()),
+            loop_: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
             ..Default::default()
         },
         ..SpawnOptions::default()
@@ -2150,8 +2147,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         }
     }
 
-    // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
-    let ev_handle = EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>());
+    let ev_handle = EventLoopHandle::init(vm_mut().event_loop().cast::<()>());
     let process = spawned.to_process(ev_handle, false);
     *s.process_slot() = Some(process);
     // SAFETY: `process` was just allocated by `to_process`; we hold the only

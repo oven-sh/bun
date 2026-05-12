@@ -59,9 +59,12 @@ impl SecretsJob {
         job
     }
 
-    pub unsafe fn run_task(task: *mut WorkPoolTask) {
-        // SAFETY: task points to SecretsJob.task; SecretsJob was allocated via
-        // heap::alloc in `create` and is alive until run_from_js drops it.
+    pub fn run_task(task: *mut WorkPoolTask) {
+        // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
+        // slot — safe-fn coerces) for the `task` field initialised in
+        // `create`; the WorkPool calls back with exactly that field, so
+        // `from_field_ptr!` recovers the live heap `SecretsJob` (alive until
+        // `run_from_js` drops it).
         let job: &mut SecretsJob = unsafe {
             &mut *bun_core::from_field_ptr!(SecretsJob, task, task)
         };

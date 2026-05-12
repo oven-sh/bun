@@ -88,8 +88,9 @@ impl JSMySQLQuery {
             .throw_invalid_arguments(format_args!("MySQLQuery cannot be constructed directly")))
     }
 
-    unsafe fn deinit(this: *mut Self) {
-        // SAFETY: called once when ref_count reaches 0; `this` came from heap::alloc.
+    fn deinit(this: *mut Self) {
+        // SAFETY: routed only through `CellRefCounted::destroy` (refcount==0);
+        // `this` is the sole live owner of its `heap::alloc` allocation.
         unsafe {
             (*this).query.with_mut(|q| q.cleanup());
             drop(bun_core::heap::take(this));

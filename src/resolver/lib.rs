@@ -1883,32 +1883,32 @@ pub mod fs {
                 let mut symlink: &[u8] = b"";
 
                 if is_symlink {
-                    let file: Fd = if let Some(valid) = existing_fd.unwrap_valid() {
-                        valid
+                    let file: bun_sys::File = if let Some(valid) = existing_fd.unwrap_valid() {
+                        bun_sys::File::from_fd(valid)
                     } else if store_fd {
-                        bun_sys::open_file_absolute_z(absolute_path_c, bun_sys::OpenFlags::READ_ONLY)?.handle()
+                        bun_sys::open_file_absolute_z(absolute_path_c, bun_sys::OpenFlags::READ_ONLY)?
                     } else {
                         // PORT NOTE: Zig `bun.openFileForPath` (O_PATH on Linux); fall back to RDONLY.
-                        bun_sys::open(absolute_path_c, bun_sys::O::PATH | bun_sys::O::CLOEXEC, 0)?
+                        bun_sys::File::open(absolute_path_c, bun_sys::O::PATH | bun_sys::O::CLOEXEC, 0)?
                     };
-                    FileSystem::set_max_fd(file.native());
+                    FileSystem::set_max_fd(file.handle().native());
 
                     // PORT NOTE: Zig `defer { if (...) file.close() else cache.fd = file }` runs on
                     // BOTH success and error paths — use scopeguard so close-or-store happens even if
                     // fstat()/get_fd_path() return early with `?`.
                     let need_to_close_files = self.need_to_close_files();
                     let cache_ptr: *mut EntryCache = &raw mut cache;
-                    let _guard = scopeguard::guard(file, move |file| {
+                    let _guard = scopeguard::guard(file.handle(), move |fd| {
                         if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
-                            let _ = bun_sys::close(file);
+                            let _ = bun_sys::close(fd);
                         } else if bun_core::feature_flags::STORE_FILE_DESCRIPTORS {
                             // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
-                            unsafe { (*cache_ptr).fd = file };
+                            unsafe { (*cache_ptr).fd = fd };
                         }
                     });
 
-                    let file_stat = bun_sys::fstat(*_guard)?;
-                    symlink = bun_sys::get_fd_path(*_guard, &mut outpath)?;
+                    let file_stat = file.stat()?;
+                    symlink = file.get_path(&mut outpath)?;
                     file_kind = kind_from_mode(file_stat.st_mode as bun_sys::Mode);
                 }
 
@@ -2694,8 +2694,9 @@ pub mod cache {
 
             let file_handle: bun_sys::File = if let Some(fd) = cached_file_descriptor {
                 // `try handle.seekTo(0)` — rewind a cached fd before re-reading.
-                bun_sys::lseek(fd, 0, libc::SEEK_SET).map_err(bun_core::Error::from)?;
-                bun_sys::File::from_fd(fd)
+                let f = bun_sys::File::from_fd(fd);
+                f.seek_to(0).map_err(bun_core::Error::from)?;
+                f
             } else {
                 bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)
                     .map_err(bun_core::Error::from)?
@@ -2703,11 +2704,7 @@ pub mod cache {
 
             let will_close = rfs.need_to_close_files() && cached_file_descriptor.is_none();
             let fd = file_handle.handle();
-            let file_handle = scopeguard::guard(file_handle, move |fh| {
-                if will_close {
-                    let _ = fh.close();
-                }
-            });
+            let _close = will_close.then(|| bun_sys::CloseOnDrop::new(fd));
 
             let contents =
                 match fs_mod::read_file_contents(&file_handle, path.as_bytes(), true, shared, self.stream).map(Contents::from) {
@@ -2770,11 +2767,12 @@ pub mod cache {
             // branch; restructured into a single let-expression to avoid `mem::zeroed()` on a
             // type that may have niche (NonZero) fields.
             let file_handle: bun_sys::File = if let Some(f) = _file_handle {
-                bun_sys::lseek(f, 0, libc::SEEK_SET).map_err(bun_core::Error::from)?;
-                bun_sys::File::from_fd(f)
+                let f = bun_sys::File::from_fd(f);
+                f.seek_to(0).map_err(bun_core::Error::from)?;
+                f
             } else if feature_flags::STORE_FILE_DESCRIPTORS && dirname_fd.is_valid() {
-                match bun_sys::openat_a(dirname_fd, bun_paths::basename(path), bun_sys::O::RDONLY, 0) {
-                    Ok(fd) => bun_sys::File::from_fd(fd),
+                match bun_sys::File::openat(dirname_fd, bun_paths::basename(path), bun_sys::O::RDONLY, 0) {
+                    Ok(f) => f,
                     Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
                         let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
                             .map_err(bun_core::Error::from)?;
@@ -2798,12 +2796,7 @@ pub mod cache {
             bun_core::scoped_log!(CacheFs, "openat({}, {}) = {}", dirname_fd, bstr::BStr::new(path), fd);
 
             let will_close = rfs.need_to_close_files() && _file_handle.is_none();
-            let file_handle = scopeguard::guard(file_handle, move |fh| {
-                if will_close {
-                    bun_core::scoped_log!(CacheFs, "readFileWithAllocator close({})", fh.handle());
-                    let _ = fh.close();
-                }
-            });
+            let _close = will_close.then(|| bun_sys::CloseOnDrop::new(fd));
 
             // PORT NOTE: reshaped for borrowck — capture `stream` scalar before borrowing
             // the shared buffer.

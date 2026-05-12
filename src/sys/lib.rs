@@ -1336,11 +1336,6 @@ mod posix_impl {
     // each public fn below — because rustix returns the errno in-band and we
     // don't want to round-trip through thread-local `errno`.
     #[cfg(not(target_os = "linux"))]
-    #[inline] unsafe fn sys_open(p: *const libc::c_char, f: i32, m: libc::c_uint) -> i32 {
-        #[cfg(target_os = "macos")] { unsafe { super::nocancel::open(p, f, m) } }
-        #[cfg(not(target_os = "macos"))] { unsafe { libc::open(p, f, m) } }
-    }
-    #[cfg(not(target_os = "linux"))]
     #[inline] unsafe fn sys_openat(d: i32, p: *const libc::c_char, f: i32, m: libc::c_uint) -> i32 {
         #[cfg(target_os = "macos")] { unsafe { super::nocancel::openat(d, p, f, m) } }
         #[cfg(not(target_os = "macos"))] { unsafe { libc::openat(d, p, f, m) } }
@@ -1425,24 +1420,13 @@ mod posix_impl {
         rc
     }}}
 
+    #[inline]
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
-        // sys.zig:1706 — .mac arm: single `open$NOCANCEL`, no EINTR retry.
-        #[cfg(target_os = "macos")]
-        {
-            let rc = check_once_p!(unsafe { sys_open(path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
-            Ok(Fd::from_native(rc))
-        }
-        // sys.zig:1708 — Linux arm: raw `openat(AT_FDCWD, ..)` via `std.os.linux`.
-        #[cfg(target_os = "linux")]
-        {
-            super::linux_syscall::open(path, flags, mode)
-                .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        {
-            let rc = check_p!(unsafe { sys_open(path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
-            Ok(Fd::from_native(rc))
-        }
+        // sys.zig:1820 — `open()` is `openat(.cwd(), ..)` on every POSIX target
+        // ("this is what open() does anyway"). Delegating keeps the strace/SYS
+        // shape identical to Zig: `openat(AT_FDCWD, ..)` on Linux/FreeBSD,
+        // `openat$NOCANCEL(AT_FDCWD, ..)` on Darwin.
+        openat(Fd::cwd(), path, flags, mode)
     }
     pub fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         // sys.zig:1706-1712 — .mac arm: single `openat$NOCANCEL`, no EINTR retry.

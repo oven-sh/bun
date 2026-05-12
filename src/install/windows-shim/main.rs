@@ -216,22 +216,20 @@ pub mod bun_core {
         pub const fn get(&self) -> *mut T {
             self.0.as_ptr()
         }
-        /// # Safety
-        /// No concurrent writer (trivially true: single-threaded). Kept
-        /// `unsafe fn` to mirror `bun_core::RacyCell::read` so
-        /// `bun_shim_impl.rs` compiles identically against both.
+        /// Body is safe `Cell::get()`; the single-thread invariant is
+        /// discharged by the `Sync` impl above, not by the caller.
+        /// `bun_shim_impl.rs` only uses `.new()`/`.get()`, so signature
+        /// parity with `bun_core::RacyCell::read` is unneeded here.
         #[inline]
-        pub unsafe fn read(&self) -> T
+        pub fn read(&self) -> T
         where
             T: Copy,
         {
             self.0.get()
         }
-        /// # Safety
-        /// No concurrent reader/writer (trivially true: single-threaded). Kept
-        /// `unsafe fn` to mirror `bun_core::RacyCell::write`.
+        /// Body is safe `Cell::set()`; see [`Self::read`].
         #[inline]
-        pub unsafe fn write(&self, value: T) {
+        pub fn write(&self, value: T) {
             self.0.set(value)
         }
     }

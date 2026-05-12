@@ -1460,8 +1460,7 @@ describe("Bun.build chains inline input sourcemaps", () => {
     };
 
     const dir = tempDirWithFiles("bun-build-chained-sourcemap-raw", {
-      "intermediate.js":
-        authoredSrc + `\n//# sourceMappingURL=data:application/json,${JSON.stringify(innerMap)}\n`,
+      "intermediate.js": authoredSrc + `\n//# sourceMappingURL=data:application/json,${JSON.stringify(innerMap)}\n`,
       "entry.ts": `import { y } from './intermediate.js';\nconsole.log(y);\n`,
     });
 
@@ -1521,8 +1520,7 @@ describe("Bun.build chains inline input sourcemaps", () => {
   // back to the intermediate as the deepest source.
   test("malformed inline map — build succeeds and falls back", async () => {
     const dir = tempDirWithFiles("bun-build-chained-sourcemap-bad", {
-      "intermediate.js":
-        "export const z = 2;\n//# sourceMappingURL=data:application/json;base64,!!!not-valid!!!\n",
+      "intermediate.js": "export const z = 2;\n//# sourceMappingURL=data:application/json;base64,!!!not-valid!!!\n",
       "entry.ts": `import { z } from './intermediate.js';\nconsole.log(z);\n`,
     });
 

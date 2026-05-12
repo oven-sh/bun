@@ -774,16 +774,26 @@ bun_jsc::jsc_abi_extern! {
 // §Dispatch — the bundler holds `JSBundleCompletionTask` as a
 // `dispatch::CompletionHandle` (erased owner + this `&'static` vtable) so the
 // struct layout stays in `bun_runtime`.
+
+/// Recover `&JSBundleCompletionTask` from the opaque vtable owner pointer.
+///
+/// Centralises the `NonNull<Bv2OpaqueCompletion> → &JSBundleCompletionTask`
+/// cast+deref so the two `CompletionDispatch` thunks below stay safe at the
+/// call site (one accessor, N safe callers).
+#[inline]
+fn from_completion_handle<'a>(c: NonNull<Bv2OpaqueCompletion>) -> &'a JSBundleCompletionTask {
+    // SAFETY: `c` is the live backref the bundler stashed in
+    // `CompletionHandle.owner` (set from a `Box<JSBundleCompletionTask>` that
+    // outlives every dispatch call). The opaque marker and the concrete struct
+    // are the same allocation; only shared field reads follow.
+    unsafe { &*c.as_ptr().cast::<JSBundleCompletionTask>() }
+}
+
 static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
-    result_is_err: |c| {
-        // SAFETY: `c` is a live backref the bundler set in `BundleThread`.
-        matches!(unsafe { &(*c.as_ptr().cast::<JSBundleCompletionTask>()).result }, BundleV2Result::Err(_))
-    },
+    result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
     enqueue_task_concurrent: |c, task| {
-        // SAFETY: `c` is a live backref the bundler set in `BundleThread`.
         // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        unsafe { (*c.as_ptr().cast::<JSBundleCompletionTask>()).jsc_event_loop }
-            .enqueue_task_concurrent(task)
+        from_completion_handle(c).jsc_event_loop.enqueue_task_concurrent(task)
     },
 };
 

@@ -126,8 +126,9 @@ pub fn post_process_js_chunk(
             // PERF(port): was appendAssumeCapacity
             cross_chunk_import_records.push(ImportRecord {
                 kind: import_record.import_kind,
-                // SAFETY: chunk_index is in-bounds (produced by the linker for this chunks slice).
-                path: bun_paths::fs::Path::init(unsafe { &(*ctx.chunks)[import_record.chunk_index as usize] }.unique_key),
+                // `ctx.chunks` is a `BackRef<[Chunk]>` (safe `Deref`); chunk_index is
+                // in-bounds (produced by the linker for this chunks slice).
+                path: bun_paths::fs::Path::init(ctx.chunks[import_record.chunk_index as usize].unique_key),
                 range: bun_ast::Range::NONE,
                 // Remaining fields take their Zig defaults (no Default impl):
                 tag: ImportRecordTag::None,

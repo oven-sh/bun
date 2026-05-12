@@ -65,7 +65,10 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     let _unget = scopeguard::guard(&mut *worker, |w| w.unget());
 
     let chunk: *mut Chunk = ctx.chunk;
-    let chunks: *mut [Chunk] = ctx.chunks;
+    // `ctx.chunks` is a `BackRef<[Chunk]>` constructed via `new_mut` (write
+    // provenance); recover the raw `*mut [Chunk]` for the HTML loader, which
+    // still needs `&mut [Chunk]` for `get_{js,css}_chunk_for_html`.
+    let chunks: *mut [Chunk] = ctx.chunks.as_ptr();
     // SAFETY: `chunk` is this task's exclusively-owned HTML chunk for the
     // duration of the compile step; the result slot was pre-allocated.
     let result = unsafe { generate_compile_result_for_html_chunk_impl(&*c, &*chunk, chunks) };

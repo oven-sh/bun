@@ -75,7 +75,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
             // write provenance preserved.
             c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) },
-            chunks,
+            chunks: bun_ptr::BackRef::new_mut(chunks),
         };
         // TODO(port): worker_pool.eachPtr signature — arena param dropped; Rust impl is infallible.
         // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for the
@@ -155,9 +155,9 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // stored in every ctx (Zig stores `[]Chunk` by value).
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step.
             let c_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
-            let chunks_ptr: *mut [Chunk] = std::ptr::from_mut::<[Chunk]>(chunks);
+            let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new_mut(chunks);
             for chunk in chunks.iter_mut() {
-                chunk_contexts.push(GenerateChunkCtx { c: c_ref, chunks: chunks_ptr, chunk: std::ptr::from_mut::<Chunk>(chunk) });
+                chunk_contexts.push(GenerateChunkCtx { c: c_ref, chunks: chunks_ref, chunk: std::ptr::from_mut::<Chunk>(chunk) });
                 match &mut chunk.content {
                     crate::chunk::Content::Javascript(js) => {
                         total_count += js.parts_in_chunk_in_order.len();
@@ -324,7 +324,10 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
         #[derive(Default)]
         struct DuplicateEntry {
-            sources: Vec<*mut Chunk>,
+            // `BackRef` (not `*mut`) — entries point at elements of the
+            // stack-owned `chunks: &mut [Chunk]` above, which outlives the
+            // `duplicates_map`; reads go through safe `Deref`.
+            sources: Vec<bun_ptr::BackRef<Chunk>>,
         }
         let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::default();
 
@@ -357,7 +360,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 if !dup.found_existing {
                     *dup.value_ptr = DuplicateEntry::default();
                 }
-                dup.value_ptr.sources.push(std::ptr::from_mut::<Chunk>(chunk));
+                dup.value_ptr.sources.push(bun_ptr::BackRef::new_mut(chunk));
                 continue;
             }
 
@@ -390,9 +393,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             for (key, dup) in duplicates_map.keys().iter().zip(duplicates_map.values().iter()) {
                 write!(&mut msg, "  {}:\n", bstr::BStr::new(key))?;
-                for &chunk in dup.sources.iter() {
-                    // SAFETY: chunk pointers were taken from `chunks` slice above and remain valid.
-                    let chunk = unsafe { &*chunk };
+                for chunk in dup.sources.iter() {
                     if chunk.entry_point.is_entry_point() {
                         if kinds[chunk.entry_point.source_index() as usize] == EntryPoint::Kind::UserSpecified {
                             entry_naming = Some(&chunk.template.data);

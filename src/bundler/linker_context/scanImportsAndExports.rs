@@ -691,12 +691,16 @@ pub fn scan_imports_and_exports(
                     let r#ref: Ref = col_ref!(imports_to_bind_list)[id].keys()[itb_i];
                     let import_source_index;
                     let import_ref;
-                    let re_exports_ptr: *const [Dependency];
+                    // `BackRef<[Dependency]>` — points into the `imports_to_bind`
+                    // value column, which is not mutated for the rest of this
+                    // loop body; the backref invariant (pointee outlives holder)
+                    // lets the inner-loop reads go through safe `Deref`.
+                    let re_exports_ptr: bun_ptr::BackRef<[Dependency]>;
                     {
                         let import: &ImportData = &col_ref!(imports_to_bind_list)[id].values()[itb_i];
                         import_source_index = import.data.source_index.get();
                         import_ref = import.data.import_ref;
-                        re_exports_ptr = std::ptr::from_ref::<[Dependency]>(import.re_exports.slice());
+                        re_exports_ptr = bun_ptr::BackRef::new(import.re_exports.slice());
                     }
 
                     if let Some(named_import) = col_ref!(named_imports)[id].get(&r#ref) {
@@ -712,9 +716,7 @@ pub fn scan_imports_and_exports(
 
                             let part: &mut Part =
                                 &mut col!(parts_list)[id].slice_mut()[part_index as usize];
-                            // SAFETY: `re_exports_ptr` borrows the `imports_to_bind` value
-                            // which is not mutated in this loop body.
-                            let re_exports: &[Dependency] = unsafe { &*re_exports_ptr };
+                            let re_exports: &[Dependency] = &re_exports_ptr;
                             let total_len = parts_declaring_symbol.len()
                                 + re_exports.len()
                                 + part.dependencies.len() as usize;
@@ -1279,14 +1281,15 @@ impl ExportStarContext {
             // PERF(port): was zero-copy `iter()` over StringArrayHashMap; profile.
             let exports_len = col_ref!(self.named_exports)[other_id].keys().len();
             'next_export: for ne_i in 0..exports_len {
-                let alias: *const [u8] =
-                    std::ptr::from_ref::<[u8]>(col_ref!(self.named_exports)[other_id].keys()[ne_i].as_ref());
+                // `BackRef<[u8]>` — points into the `named_exports` key
+                // storage, which is not mutated in this loop; the backref
+                // invariant lets reads go through safe `Deref`.
+                let alias: bun_ptr::BackRef<[u8]> =
+                    bun_ptr::BackRef::new(col_ref!(self.named_exports)[other_id].keys()[ne_i].as_ref());
                 let name = col_ref!(self.named_exports)[other_id].values()[ne_i];
 
                 // ES6 export star statements ignore exports named "default"
-                // SAFETY: alias points into the named_exports key storage which
-                // is not mutated in this loop.
-                let alias_slice: &[u8] = unsafe { &*alias };
+                let alias_slice: &[u8] = &alias;
                 if alias_slice == b"default" {
                     continue;
                 }

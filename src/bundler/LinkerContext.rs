@@ -1503,7 +1503,13 @@ pub type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 #[derive(Clone, Copy)]
 pub struct GenerateChunkCtx<'a> {
     pub c: bun_ptr::ParentRef<LinkerContext<'a>>,
-    pub chunks: *mut [Chunk],
+    /// Backref to the full `chunks: &mut [Chunk]` slice owned by
+    /// `generate_chunks_in_parallel`. The slice outlives every
+    /// `GenerateChunkCtx` (joined via `wait_for_all`), so [`bun_ptr::BackRef`]'s
+    /// owner-outlives-holder invariant holds and per-task reads go through
+    /// safe `Deref`. Tasks that need write provenance (HTML loader) recover
+    /// the raw `*mut [Chunk]` via [`bun_ptr::BackRef::as_ptr`].
+    pub chunks: bun_ptr::BackRef<[Chunk]>,
     pub chunk: *mut Chunk,
 }
 // SAFETY: see PORT NOTE above — mirrors Zig's freely-aliased `*LinkerContext`.

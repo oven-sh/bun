@@ -2372,7 +2372,17 @@ declare module "bun" {
     };
   }
 
-  interface TranspilerOptions {
+  /**
+   * Values the `sourcemap` constructor option can take.
+   *
+   * Used as a generic parameter on {@link Transpiler} so the return type of
+   * `transformSync` / `transform` narrows to `string` or
+   * {@link TranspilerTransformResult} based on whether the transpiler is
+   * configured to return an external map.
+   */
+  type TranspilerSourceMapOption = "none" | "inline" | "external" | "linked" | boolean;
+
+  interface TranspilerOptions<SM extends TranspilerSourceMapOption = "none"> {
     /**
      * Replace key with value. Value must be a JSON string.
      * @example
@@ -2506,7 +2516,7 @@ declare module "bun" {
      *
      * @default "none"
      */
-    sourcemap?: "none" | "inline" | "external" | "linked" | boolean;
+    sourcemap?: SM;
   }
 
   /**
@@ -2546,8 +2556,18 @@ declare module "bun" {
     map: string;
   }
 
-  class Transpiler {
-    constructor(options?: TranspilerOptions);
+  /**
+   * Picks the return type for `transform` / `transformSync` based on the
+   * transpiler's `sourcemap` configuration. Only `"external"` and `"linked"`
+   * produce the `{ code, map }` object; every other mode stays a plain
+   * `string` so existing callers keep their current typing.
+   */
+  type TranspilerTransformReturn<SM extends TranspilerSourceMapOption> = SM extends "external" | "linked"
+    ? TranspilerTransformResult
+    : string;
+
+  class Transpiler<const SM extends TranspilerSourceMapOption = "none"> {
+    constructor(options?: TranspilerOptions<SM>);
 
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
@@ -2563,7 +2583,7 @@ declare module "bun" {
     transform(
       code: Bun.StringOrBuffer,
       loader?: JavaScriptLoader,
-    ): Promise<string | TranspilerTransformResult>;
+    ): Promise<TranspilerTransformReturn<SM>>;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
@@ -2573,14 +2593,14 @@ declare module "bun" {
       code: Bun.StringOrBuffer,
       loader: JavaScriptLoader,
       ctx: object,
-    ): string | TranspilerTransformResult;
+    ): TranspilerTransformReturn<SM>;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
      * @param code The code to transpile
      * @param ctx An object to pass to macros
      */
-    transformSync(code: Bun.StringOrBuffer, ctx: object): string | TranspilerTransformResult;
+    transformSync(code: Bun.StringOrBuffer, ctx: object): TranspilerTransformReturn<SM>;
 
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
@@ -2596,7 +2616,7 @@ declare module "bun" {
     transformSync(
       code: Bun.StringOrBuffer,
       loader?: JavaScriptLoader,
-    ): string | TranspilerTransformResult;
+    ): TranspilerTransformReturn<SM>;
 
     /**
      * Get a list of import paths and paths from a TypeScript, JSX, TSX, or JavaScript file.

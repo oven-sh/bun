@@ -467,6 +467,19 @@ describe("bunshell", () => {
       }).toThrow("ReadableStream has already been used");
     });
 
+    test("direct ReadableStream that throws in pull() does not crash", async () => {
+      const stream = new ReadableStream({
+        type: "direct",
+        pull() {
+          throw new Error("stream pull failed");
+        },
+      });
+      const { stderr, exitCode } = await $`${BUN} -e ${"process.exit(0)"} < ${stream}`.env(bunEnv).quiet();
+      expect(stderr.toString()).toContain("Failed to pipe ReadableStream to stdin");
+      expect(stderr.toString()).toContain("stream pull failed");
+      expect(exitCode).not.toBe(0);
+    });
+
     test("builtin rejects ReadableStream with a clear error", async () => {
       const stream = new ReadableStream({
         start(controller) {

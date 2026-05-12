@@ -724,13 +724,7 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, orde
  * Input (bun-profile) is NOT modified — strip writes a new file via `-o`.
  * The profile binary keeps its symbols for profiling/debugging release crashes.
  */
-function emitStrip(
-  n: Ninja,
-  cfg: Config,
-  inputExe: string,
-  stripflags: string[],
-  orderVerified?: string,
-): string {
+function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[], orderVerified?: string): string {
   const out = resolve(cfg.buildDir, "bun" + cfg.exeSuffix);
 
   // Windows: strip equivalent is handled at link time (/OPT:REF etc), no

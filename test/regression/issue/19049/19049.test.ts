@@ -149,6 +149,8 @@ describe("bun run: unsettled top-level await", () => {
     });
     const r = await run({ cmd: [bunExe(), "--preload", "./preload.mjs", "entry.mjs"], cwd: String(dir) });
     expect(r.signalCode).toBeNull();
+    // The error should name the preload, not just the entry.
+    expect(r.stderr).toContain(`Top-level await in preload "./preload.mjs" never resolved`);
     expect(r.stderr).toContain("unsettled top-level await");
     expect(r.stdout).not.toContain("unreachable");
     expect(r.exitCode).toBe(13);

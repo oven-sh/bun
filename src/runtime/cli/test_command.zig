@@ -2168,11 +2168,16 @@ pub const TestCommand = struct {
                 },
                 .pending => {
                     // Top-level await never settled and the event loop drained. Report it as a
-                    // load error for this file and move on instead of hanging forever. The
-                    // pending promise may belong to a --preload rather than the entry file
-                    // itself, so word the message as "while loading <file>" instead of
-                    // "in <file>".
+                    // load error for this file and move on instead of hanging forever. If the
+                    // pending promise came from a --preload, loadPreloads() put a
+                    // "Top-level await in preload ..." entry in vm.log — print that first so
+                    // the user sees which file is actually stuck.
                     reporter.jest.current_file.printIfNeeded();
+                    if (vm.log.errors > 0) {
+                        vm.log.print(Output.errorWriter()) catch {};
+                        vm.log.msgs.clearRetainingCapacity();
+                        vm.log.errors = 0;
+                    }
                     Output.prettyErrorln(
                         "<r><red>error<r><d>:<r> Top-level await never resolved while loading <b>{s}<r> and nothing is keeping the event loop alive.",
                         .{file_title},

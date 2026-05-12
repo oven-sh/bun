@@ -2310,9 +2310,22 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
 
         // Propagate both rejection and still-pending (unsettled TLA on an
         // idle loop) so callers report it instead of silently continuing to
-        // later preloads / the entry point.
-        if (promise.status() != .fulfilled)
-            return promise;
+        // later preloads / the entry point. For `.pending`, name the preload
+        // here — downstream reporting only knows the entry path.
+        switch (promise.status()) {
+            .fulfilled => {},
+            .rejected => return promise,
+            .pending => {
+                this.log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    this.allocator,
+                    "Top-level await in preload {f} never resolved",
+                    .{bun.fmt.formatJSONStringLatin1(preload)},
+                ) catch unreachable;
+                return promise;
+            },
+        }
     }
 
     // Under --isolate each test file gets a fresh global, so preloads must

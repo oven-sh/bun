@@ -172,8 +172,14 @@ impl FdExt for Fd {
                         }
                     }
                     DecodeWindows::Windows(handle) => {
-                        // SAFETY: handle is a valid NT HANDLE per decode_windows().
-                        match unsafe { bun_windows_sys::ntdll::NtClose(handle) } {
+                        unsafe extern "system" {
+                            // safe: by-value `HANDLE` only; bad/stale handle →
+                            // `STATUS_INVALID_HANDLE`, never UB (mirrors POSIX
+                            // `close(fd)` → `EBADF`, which is `safe fn` in
+                            // `safe_libc`).
+                            safe fn NtClose(Handle: bun_windows_sys::HANDLE) -> NTSTATUS;
+                        }
+                        match NtClose(handle) {
                             NTSTATUS::SUCCESS => None,
                             rc => Some(sys::Error {
                                 errno: Win32Error::from_nt_status(rc)

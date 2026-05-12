@@ -4032,8 +4032,7 @@ pub enum Subsystem {
 
 pub fn edit_win32_binary_subsystem(fd: bun_sys::File, subsystem: Subsystem) -> Result<(), bun_core::Error> {
     const _: () = assert!(cfg!(windows));
-    // SAFETY: fd.handle is a valid Windows HANDLE
-    if unsafe { externs::SetFilePointerEx(fd.handle.native(), PE_HEADER_OFFSET_LOCATION, ptr::null_mut(), win32::FILE_BEGIN) } == 0 {
+    if kernel32_2::SetFilePointerEx(fd.handle.native(), PE_HEADER_OFFSET_LOCATION, None, win32::FILE_BEGIN) == 0 {
         return Err(bun_core::err!("Win32Error"));
     }
     // Zig: `fd.reader().readInt(u32, .little)` — std.io.Reader loops until
@@ -4044,8 +4043,7 @@ pub fn edit_win32_binary_subsystem(fd: bun_sys::File, subsystem: Subsystem) -> R
     let n = fd.read_all(&mut off_bytes).map_err(bun_core::Error::from)?;
     if n != 4 { return Err(bun_core::err!("EndOfStream")); }
     let offset: u32 = u32::from_le_bytes(off_bytes);
-    // SAFETY: fd.handle is a valid Windows HANDLE
-    if unsafe { externs::SetFilePointerEx(fd.handle.native(), offset as i64 + SUBSYSTEM_OFFSET, ptr::null_mut(), win32::FILE_BEGIN) } == 0 {
+    if kernel32_2::SetFilePointerEx(fd.handle.native(), offset as i64 + SUBSYSTEM_OFFSET, None, win32::FILE_BEGIN) == 0 {
         return Err(bun_core::err!("Win32Error"));
     }
     // Zig: `fd.writer().writeInt(u16, ..., .little)` — std.io.Writer loops
@@ -4368,8 +4366,11 @@ pub fn become_watcher_manager() -> ! {
             }
             bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", err.name()));
         }
-        // SAFETY: hProcess valid
-        if let Err(err) = unsafe { win32::WaitForSingleObject(procinfo.hProcess, win32::INFINITE) } {
+        // `kernel32::WaitForSingleObject` is the local `safe fn` re-decl
+        // (by-value `HANDLE`/`DWORD` only); avoid the `bun_windows_sys`
+        // `unsafe fn` Result-wrapper and check `WAIT_FAILED` inline.
+        if kernel32::WaitForSingleObject(procinfo.hProcess, win32::INFINITE) == externs::WAIT_FAILED {
+            let err = Win32Error::get();
             bun_core::Output::panic(format_args!("Failed to wait for child process: {}\n", err.0));
         }
         let mut exit_code: DWORD = 0;
@@ -4377,12 +4378,10 @@ pub fn become_watcher_manager() -> ! {
             // Capture before NtClose — closing the handle may overwrite the
             // thread's last-error.
             let err = Win32Error(GetLastError() as u16);
-            // SAFETY: hProcess owned by this fn; closing on error path
-            unsafe { let _ = externs::NtClose(procinfo.hProcess); }
+            let _ = kernel32_2::NtClose(procinfo.hProcess);
             bun_core::Output::panic(format_args!("Failed to get exit code of child process: {:?}\n", err));
         }
-        // SAFETY: hProcess owned by this fn
-        unsafe { let _ = externs::NtClose(procinfo.hProcess); }
+        let _ = kernel32_2::NtClose(procinfo.hProcess);
 
         // magic exit code to indicate that the child process should be re-spawned
         if exit_code == WATCHER_RELOAD_EXIT {
@@ -4519,11 +4518,9 @@ pub fn spawn_watcher_child(
         return Err(bun_core::err!("Win32Error"));
     }
     let mut is_in_job: BOOL = 0;
-    // SAFETY: procinfo.hProcess and job are valid handles; is_in_job is a valid out-param
-    unsafe { let _ = externs::IsProcessInJob(procinfo.hProcess, job, &mut is_in_job); }
+    let _ = kernel32_2::IsProcessInJob(procinfo.hProcess, job, &mut is_in_job);
     debug_assert!(is_in_job != 0);
-    // SAFETY: procinfo.hThread owned by this fn
-    unsafe { let _ = externs::NtClose(procinfo.hThread); }
+    let _ = kernel32_2::NtClose(procinfo.hThread);
     Ok(())
 }
 
@@ -4800,6 +4797,23 @@ mod kernel32_2 {
         pub(super) safe fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: &mut DWORD) -> BOOL;
         pub(super) safe fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
         pub(super) safe fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: &mut DWORD) -> BOOL;
+        // safe: by-value `HANDLE`×2; out-param is `&mut BOOL` (non-null, valid
+        // for write). Bad handle → BOOL 0 + GetLastError, never UB.
+        pub(super) safe fn IsProcessInJob(hProcess: HANDLE, hJob: HANDLE, result: &mut BOOL) -> BOOL;
+        // safe: by-value `HANDLE`/`i64`/`DWORD`; out-param is
+        // `Option<&mut i64>` (FFI-safe via the null-pointer niche →
+        // ABI-identical to a nullable `PLARGE_INTEGER`). Bad handle → BOOL 0
+        // + GetLastError, never UB.
+        pub(super) safe fn SetFilePointerEx(
+            hFile: HANDLE,
+            liDistanceToMove: i64,
+            lpNewFilePointer: Option<&mut i64>,
+            dwMoveMethod: DWORD,
+        ) -> BOOL;
+        // safe: by-value `HANDLE` only; bad/stale handle →
+        // `STATUS_INVALID_HANDLE`, never UB (mirrors POSIX `close(fd)` →
+        // `EBADF`, which is `safe fn` in `safe_libc`).
+        pub(super) safe fn NtClose(Handle: HANDLE) -> NTSTATUS;
     }
 }
 

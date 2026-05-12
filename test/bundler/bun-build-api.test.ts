@@ -649,6 +649,36 @@ describe("Bun.build", () => {
       expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
     },
   );
+
+  test("does not crash with many custom conditions", async () => {
+    // ESMConditions.init under-reserved capacity when allow_addons was true
+    // (the default) due to `if`-expression precedence, so passing several
+    // custom conditions overflowed putAssumeCapacity and crashed the bundler
+    // thread. Run in a subprocess since the crash aborts the whole process.
+    const dir = tempDirWithFiles("bun-build-api-conditions", {
+      "entry.ts": "export const x = 1;",
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const result = await Bun.build({
+            entrypoints: [${JSON.stringify(join(dir, "entry.ts"))}],
+            conditions: ["a", "b", "c", "d", "e", "f", "g", "h"],
+          });
+          console.log("success:" + result.success);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("success:true");
+    expect(exitCode).toBe(0);
+  });
 });
 
 test.concurrent("macro with nested object", async () => {

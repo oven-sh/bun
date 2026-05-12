@@ -66,16 +66,14 @@ impl Request {
     }
     pub fn url(&self) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
-        // SAFETY: uws_req_get_url writes a pointer into request-owned storage and returns its length
-        let len = unsafe { c::uws_req_get_url(self, &raw mut ptr) };
+        let len = c::uws_req_get_url(self, &mut ptr);
         // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
         // ffi::slice tolerates the (null, 0) shape uWS returns when no URL is present.
         unsafe { bun_core::ffi::slice(ptr, len) }
     }
     pub fn method(&self) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
-        // SAFETY: uws_req_get_method writes a pointer into request-owned storage and returns its length
-        let len = unsafe { c::uws_req_get_method(self, &raw mut ptr) };
+        let len = c::uws_req_get_method(self, &mut ptr);
         // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
         // ffi::slice tolerates the (null, 0) shape uWS returns when no method is present.
         unsafe { bun_core::ffi::slice(ptr, len) }
@@ -102,9 +100,7 @@ impl Request {
     }
     pub fn parameter(&self, index: u16) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
-        // SAFETY: uws_req_get_parameter writes a pointer into request-owned storage and returns its length
-        let len =
-            unsafe { c::uws_req_get_parameter(self, c_ushort::try_from(index).unwrap(), &raw mut ptr) };
+        let len = c::uws_req_get_parameter(self, c_ushort::try_from(index).unwrap(), &mut ptr);
         // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
         // ffi::slice tolerates the (null, 0) shape uWS returns when no parameter is present.
         unsafe { bun_core::ffi::slice(ptr, len) }
@@ -119,8 +115,11 @@ mod c {
         pub safe fn uws_req_is_ancient(res: &Request) -> bool;
         pub safe fn uws_req_get_yield(res: &Request) -> bool;
         pub safe fn uws_req_set_yield(res: &mut Request, yield_: bool);
-        pub fn uws_req_get_url(res: *const Request, dest: *mut *const u8) -> usize;
-        pub fn uws_req_get_method(res: *const Request, dest: *mut *const u8) -> usize;
+        // Out-param `dest` is a `&mut *const u8` (non-null, valid for write); the C
+        // shim only stores a pointer into request-owned storage and returns its
+        // length — no read-through-ptr precondition, so `safe fn`.
+        pub safe fn uws_req_get_url(res: &Request, dest: &mut *const u8) -> usize;
+        pub safe fn uws_req_get_method(res: &Request, dest: &mut *const u8) -> usize;
         pub fn uws_req_get_header(
             res: *const Request,
             lower_case_header: *const u8,
@@ -133,10 +132,10 @@ mod c {
             key_length: usize,
             dest: *mut *const u8,
         ) -> usize;
-        pub fn uws_req_get_parameter(
-            res: *const Request,
+        pub safe fn uws_req_get_parameter(
+            res: &Request,
             index: c_ushort,
-            dest: *mut *const u8,
+            dest: &mut *const u8,
         ) -> usize;
     }
 }

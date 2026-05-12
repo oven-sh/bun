@@ -3579,15 +3579,22 @@ pub use bun_core::windows_sys::PebView as PEB;
 pub use bun_core::windows_sys::ProcessParameters as RTL_USER_PROCESS_PARAMETERS;
 
 /// `std.os.windows.teb()` — `gs:[0x30]` (x64) / `x18` (ARM64).
+///
+/// Obtaining the TEB pointer has no preconditions on Windows (the segment
+/// register / `x18` is set up by the loader for every thread); only the
+/// inline `asm!` is guarded, so the wrapper is a safe fn and the deref
+/// obligation lives with the caller of the returned `*mut TEB`.
 #[inline]
-pub unsafe fn teb() -> *mut TEB {
+pub fn teb() -> *mut TEB {
     #[cfg(target_arch = "x86_64")]
+    // SAFETY: pure read of `gs:[0x30]`; no memory writes, no side effects.
     unsafe {
         let p: *mut TEB;
         core::arch::asm!("mov {}, gs:[0x30]", out(reg) p, options(nostack, pure, readonly));
         p
     }
     #[cfg(target_arch = "aarch64")]
+    // SAFETY: pure read of `x18` (TEB on Windows ARM64 ABI).
     unsafe {
         let p: *mut TEB;
         core::arch::asm!("mov {}, x18", out(reg) p, options(nostack, pure, readonly));

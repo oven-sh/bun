@@ -186,7 +186,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
 
     pub fn get_remote_address<'a>(&mut self, buf: &'a mut [u8]) -> &'a mut [u8] {
         let mut ptr: *mut u8 = core::ptr::null_mut();
-        let len = unsafe { c::uws_ws_get_remote_address(SSL_FLAG, self.raw(), &raw mut ptr) };
+        let len = c::uws_ws_get_remote_address(SSL_FLAG, self.raw(), &mut ptr);
         // SAFETY: uWS returns a pointer+len into its internal buffer.
         let src = unsafe { bun_core::ffi::slice(ptr, len) };
         buf[..len].copy_from_slice(src);
@@ -437,13 +437,9 @@ impl AnyWebSocket {
     }
 
     pub fn get_remote_address<'a>(self, buf: &'a mut [u8]) -> &'a mut [u8] {
-        let (ssl_flag, p) = match self {
-            AnyWebSocket::Ssl(p) => (1, p),
-            AnyWebSocket::Tcp(p) => (0, p),
-        };
+        let (ssl_flag, ws) = self.split();
         let mut ptr: *mut u8 = core::ptr::null_mut();
-        // SAFETY: `p` is a live uWS-owned socket; out-param is a valid *mut *mut u8.
-        let len = unsafe { c::uws_ws_get_remote_address(ssl_flag, p, &raw mut ptr) };
+        let len = c::uws_ws_get_remote_address(ssl_flag, ws, &mut ptr);
         // SAFETY: uWS returns a pointer+len into its internal buffer.
         let src = unsafe { bun_core::ffi::slice(ptr, len) };
         buf[..len].copy_from_slice(src);
@@ -834,15 +830,18 @@ pub mod c {
             compress: bool,
         ) -> bool;
         pub safe fn uws_ws_get_buffered_amount(ssl: i32, ws: &mut RawWebSocket) -> usize;
-        pub fn uws_ws_get_remote_address(
+        // Out-param `dest` is `&mut *mut u8` (non-null, valid for write); the C
+        // shim only stores a pointer into socket-owned storage and returns its
+        // length — no read-through precondition, so `safe fn`.
+        pub safe fn uws_ws_get_remote_address(
             ssl: i32,
-            ws: *mut RawWebSocket,
-            dest: *mut *mut u8,
+            ws: &mut RawWebSocket,
+            dest: &mut *mut u8,
         ) -> usize;
-        pub fn uws_ws_get_remote_address_as_text(
+        pub safe fn uws_ws_get_remote_address_as_text(
             ssl: i32,
-            ws: *mut RawWebSocket,
-            dest: *mut *mut u8,
+            ws: &mut RawWebSocket,
+            dest: &mut *mut u8,
         ) -> usize;
     }
 }

@@ -140,10 +140,11 @@ impl SocketGroup {
     /// non-null owner (Listener, uWS App/Context). Per-kind VM groups in
     /// `RareData` pass null, so callers must know which they have.
     ///
-    /// # Safety
-    /// `T` must be the exact type whose pointer was passed to `init`, and that
-    /// object must still be alive (it embeds this group by value, so it is).
-    pub unsafe fn owner<T>(&self) -> *mut T {
+    /// Returns a raw pointer; the cast itself is sound for any `T`. The caller
+    /// must still deref it with the correct `T` (the type whose pointer was
+    /// passed to `init`) — that obligation lives at the deref site, not here,
+    /// so this accessor is a safe fn.
+    pub fn owner<T>(&self) -> *mut T {
         debug_assert!(!self.ext.is_null());
         self.ext.cast::<T>()
     }

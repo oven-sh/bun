@@ -1064,7 +1064,12 @@ pub fn last_errno() -> i32 { bun_core::ffi::errno() }
 /// shape (`unsafe { *bun_sys::errno() }`).
 #[cfg(unix)]
 #[inline]
-pub unsafe fn errno() -> *mut i32 { unsafe { bun_core::ffi::errno_ptr() } }
+pub fn errno() -> *mut i32 {
+    // SAFETY: `__errno_location()` (and per-OS equivalents) take no arguments
+    // and unconditionally return the calling thread's errno slot; obtaining the
+    // pointer has no preconditions. The deref obligation lives at the call site.
+    unsafe { bun_core::ffi::errno_ptr() }
+}
 
 /// `std.posix.toPosixPath` — copy `path` into a NUL-terminated buffer.
 /// Returns `NameTooLong` if `path` contains an interior NUL.

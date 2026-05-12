@@ -125,18 +125,7 @@ impl Socket {
         iface: Option<&sockaddr_storage>,
         drop: bool,
     ) -> c_int {
-        // SAFETY: self is a live us_udp_socket_t; address/iface outlive the call.
-        unsafe {
-            us_udp_socket_set_membership(
-                self,
-                address,
-                match iface {
-                    Some(p) => std::ptr::from_ref::<sockaddr_storage>(p),
-                    None => core::ptr::null(),
-                },
-                drop as c_int,
-            )
-        }
+        us_udp_socket_set_membership(self, address, iface, drop as c_int)
     }
 
     pub fn set_source_specific_membership(
@@ -146,19 +135,7 @@ impl Socket {
         iface: Option<&sockaddr_storage>,
         drop: bool,
     ) -> c_int {
-        // SAFETY: self is a live us_udp_socket_t; source/group/iface outlive the call.
-        unsafe {
-            us_udp_socket_set_source_specific_membership(
-                self,
-                source,
-                group,
-                match iface {
-                    Some(p) => std::ptr::from_ref::<sockaddr_storage>(p),
-                    None => core::ptr::null(),
-                },
-                drop as c_int,
-            )
-        }
+        us_udp_socket_set_source_specific_membership(self, source, group, iface, drop as c_int)
     }
 }
 
@@ -197,17 +174,21 @@ unsafe extern "C" {
         socket: &mut Socket,
         iface: &sockaddr_storage,
     ) -> c_int;
-    fn us_udp_socket_set_membership(
-        socket: *mut Socket,
-        address: *const sockaddr_storage,
-        iface: *const sockaddr_storage,
+    // `Option<&sockaddr_storage>` is FFI-safe (null-pointer niche → `*const`);
+    // the C side reads through `iface` only when non-null. With every pointer
+    // arg either a reference or a niche-optimized `Option<&T>`, the validity
+    // proof is in the type signature — no remaining preconditions, so `safe fn`.
+    safe fn us_udp_socket_set_membership(
+        socket: &mut Socket,
+        address: &sockaddr_storage,
+        iface: Option<&sockaddr_storage>,
         drop: c_int,
     ) -> c_int;
-    fn us_udp_socket_set_source_specific_membership(
-        socket: *mut Socket,
-        source: *const sockaddr_storage,
-        group: *const sockaddr_storage,
-        iface: *const sockaddr_storage,
+    safe fn us_udp_socket_set_source_specific_membership(
+        socket: &mut Socket,
+        source: &sockaddr_storage,
+        group: &sockaddr_storage,
+        iface: Option<&sockaddr_storage>,
         drop: c_int,
     ) -> c_int;
 }

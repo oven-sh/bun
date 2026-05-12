@@ -280,10 +280,7 @@ impl<const SSL: bool> Response<SSL> {
 
     pub fn get_remote_address_as_text(&mut self) -> Option<&[u8]> {
         let mut buf: *const u8 = core::ptr::null();
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        let size = unsafe {
-            c::uws_res_get_remote_address_as_text(Self::ssl_flag(), self.downcast(), &raw mut buf)
-        };
+        let size = c::uws_res_get_remote_address_as_text(Self::ssl_flag(), self.as_raw(), &mut buf);
         if size > 0 {
             // SAFETY: uws populated `buf` with `size` bytes valid while the response lives.
             Some(unsafe { bun_core::ffi::slice(buf, size) })
@@ -299,10 +296,8 @@ impl<const SSL: bool> Response<SSL> {
         // This function will fill in the slots and return len.
         // if len is zero it will not fill in the slots so it is ub to
         // return the struct in that case.
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        let ip_len = unsafe {
-            c::uws_res_get_remote_address_info(self.downcast(), &raw mut ip_ptr, &raw mut port, &raw mut is_ipv6)
-        };
+        let ip_len =
+            c::uws_res_get_remote_address_info(self.as_raw(), &mut ip_ptr, &mut port, &mut is_ipv6);
         if ip_len > 0 {
             // SocketAddress is defined locally (moved down from bun_uws); `ip`
             // borrows uWS-owned memory valid while the response lives.
@@ -1007,11 +1002,13 @@ pub mod c {
         pub safe fn us_socket_mark_needs_more_not_ssl(socket: &mut uws_res);
         pub safe fn uws_res_state(ssl: c_int, res: &uws_res) -> State;
         pub safe fn uws_res_is_connect_request(ssl: i32, res: &mut uws_res) -> bool;
-        pub fn uws_res_get_remote_address_info(
-            res: *mut uws_res,
-            dest: *mut *const u8,
-            port: *mut i32,
-            is_ipv6: *mut bool,
+        // Out-params are `&mut` (non-null, valid for write); the C shim only
+        // stores into them and returns a length — no read-through precondition.
+        pub safe fn uws_res_get_remote_address_info(
+            res: &mut uws_res,
+            dest: &mut *const u8,
+            port: &mut i32,
+            is_ipv6: &mut bool,
         ) -> usize;
         pub safe fn uws_res_uncork(ssl: i32, res: &mut uws_res);
         pub fn uws_res_end(
@@ -1088,10 +1085,10 @@ pub mod c {
         pub safe fn uws_res_end_stream(ssl: i32, res: &mut uws_res, close_connection: bool);
         pub safe fn uws_res_prepare_for_sendfile(ssl: i32, res: &mut uws_res);
         pub safe fn uws_res_get_native_handle(ssl: i32, res: &mut uws_res) -> *mut Socket;
-        pub fn uws_res_get_remote_address_as_text(
+        pub safe fn uws_res_get_remote_address_as_text(
             ssl: i32,
-            res: *mut uws_res,
-            dest: *mut *const u8,
+            res: &mut uws_res,
+            dest: &mut *const u8,
         ) -> usize;
         pub fn uws_res_on_data(
             ssl: i32,

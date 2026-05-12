@@ -177,6 +177,17 @@ test("tagged template unicode escape", () => {
   });
 });
 
+test("tagged template line continuation cooks to empty string", () => {
+  // prettier-ignore
+  // A segment that is only `\<LF>` cooks to "".
+  expect(templateTag`\
+${1}rest`).toEqual({
+    cooked: ["", "rest"],
+    raw: ["\\\n", "rest"],
+    values: [1],
+  });
+});
+
 test("tagged template invalid escape has undefined cooked value", () => {
   expect(templateTag`\unicode`).toEqual({
     cooked: [undefined],

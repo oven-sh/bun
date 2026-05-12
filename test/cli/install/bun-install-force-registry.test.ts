@@ -224,6 +224,28 @@ describe.concurrent("install.forceRegistry", () => {
     expect(forced.auth).toEqual(["Bearer corp-token-123"]);
   });
 
+  test("string-form forceRegistry in bunfig preserves BUN_CONFIG_TOKEN", async () => {
+    const forced = makeRegistry();
+    await using _f = forced.server;
+
+    using dir = tempDir("force-registry-bunfig-string-token", {
+      // URL-only string form — token should fall back to BUN_CONFIG_TOKEN.
+      "home/.bunfig.toml": `[install]\nforceRegistry = "${forced.url}"\n`,
+      "project/bunfig.toml": `[install]\ncache = false\n`,
+      "project/package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
+    });
+
+    await runInstall(
+      String(dir),
+      makeEnv(String(dir), {
+        BUN_CONFIG_TOKEN: "corp-token-789",
+      }),
+    );
+
+    expect(forced.hits).toEqual(["/no-deps"]);
+    expect(forced.auth).toEqual(["Bearer corp-token-789"]);
+  });
+
   test("forceRegistry object carries its own token", async () => {
     const forced = makeRegistry();
     const other = makeRegistry();

@@ -39,9 +39,15 @@ pub type Index = IndexType;
 /// Non-owning, `Copy` handle to a `DirInfo` slot in the BSSMap singleton.
 /// `Deref<Target = DirInfo>` so call sites read `dir.abs_path` instead of
 /// `unsafe { &*dir }.abs_path`.
+///
+/// Wraps [`bun_ptr::BackRef`] (the canonical non-owning back-reference type)
+/// rather than open-coding `NonNull` + `unsafe as_ref` here: the BSSMap
+/// singleton strictly outlives every `DirInfoRef` (slots are never freed),
+/// which is exactly the `BackRef` invariant, so the deref `unsafe` lives once
+/// in `BackRef::get` instead of being re-derived per wrapper type.
 #[repr(transparent)]
 #[derive(Copy, Clone)]
-pub struct DirInfoRef(NonNull<DirInfo>);
+pub struct DirInfoRef(bun_ptr::BackRef<DirInfo>);
 
 impl DirInfoRef {
     /// Wrap a raw BSSMap slot pointer.
@@ -54,18 +60,19 @@ impl DirInfoRef {
     /// for BSSMap slots: they are never individually freed).
     #[inline]
     pub const unsafe fn from_raw(p: *mut DirInfo) -> Self {
-        // SAFETY: caller contract — `p` is a non-null BSSMap slot.
-        DirInfoRef(unsafe { NonNull::new_unchecked(p) })
+        // SAFETY: caller contract — `p` is a non-null BSSMap slot that
+        // outlives every copy of the handle (the `BackRef` invariant).
+        DirInfoRef(unsafe { bun_ptr::BackRef::from_raw(p) })
     }
 
     /// Wrap a BSSMap slot reference. Safe: a `&mut DirInfo` obtained from
     /// `BSSMapInner::at_index`/`put` is by construction a non-null slot in the
-    /// process-lifetime BSSMap singleton — exactly the [`from_raw`] contract —
-    /// and `NonNull::from(&mut _)` is itself safe. Centralizes the per-site
-    /// `from_raw(ptr::from_mut(d))` open-coding at every `at_index` call.
+    /// process-lifetime BSSMap singleton — exactly the [`from_raw`] contract.
+    /// Centralizes the per-site `from_raw(ptr::from_mut(d))` open-coding at
+    /// every `at_index` call.
     #[inline]
     pub fn from_slot(slot: &mut DirInfo) -> Self {
-        DirInfoRef(NonNull::from(slot))
+        DirInfoRef(bun_ptr::BackRef::new_mut(slot))
     }
 
     /// Raw pointer to the underlying slot. Preserves mut-provenance from the
@@ -80,18 +87,19 @@ impl core::ops::Deref for DirInfoRef {
     type Target = DirInfo;
     #[inline]
     fn deref(&self) -> &DirInfo {
-        // SAFETY: ARENA — `self.0` is a slot in the process-lifetime BSSMap
-        // singleton (see type-level doc). The slot is never freed and never
-        // aliased by a live `&mut DirInfo` while a `DirInfoRef` is held:
-        // writes occur only in `dir_info_uncached` against a freshly-`put`
-        // slot before any handle escapes, under the resolver mutex.
-        unsafe { self.0.as_ref() }
+        // ARENA — `self.0` is a slot in the process-lifetime BSSMap singleton
+        // (see type-level doc). The slot is never freed and never aliased by a
+        // live `&mut DirInfo` while a `DirInfoRef` is held: writes occur only
+        // in `dir_info_uncached` against a freshly-`put` slot before any handle
+        // escapes, under the resolver mutex. The deref `unsafe` is centralised
+        // in `BackRef::get`.
+        self.0.get()
     }
 }
 
 impl core::fmt::Debug for DirInfoRef {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_tuple("DirInfoRef").field(&self.0).finish()
+        f.debug_tuple("DirInfoRef").field(&self.0.as_ptr()).finish()
     }
 }
 

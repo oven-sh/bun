@@ -4842,12 +4842,16 @@ impl<'a> Resolver<'a> {
                         // the closure captures only Copy values — keeps `self` and
                         // `query.entry` reborrowable across the guard's lifetime.
                         let need_close = self.fs_ref().fs.need_to_close_files();
-                        let entry_ptr: *mut Fs::file_system::Entry = query.entry;
+                        // ARENA — Entry lives in the BSSMap singleton; guard runs before
+                        // the slot is reused (resolver mutex held). Capture as `BackRef`
+                        // (Copy, Deref) so the closure stays Copy-only while the read is
+                        // a safe `BackRef::get()` instead of a raw-ptr deref.
+                        let entry_ref = bun_ptr::BackRef::<Fs::file_system::Entry>::from(
+                            core::ptr::NonNull::new(query.entry).expect("EntryStore slot"),
+                        );
                         scopeguard::defer! {
                             if need_close {
-                                // SAFETY: ARENA — Entry lives in the BSSMap singleton; guard
-                                // runs before the slot is reused (resolver mutex held).
-                                let e = unsafe { &*entry_ptr };
+                                let e = entry_ref.get();
                                 let fd = e.cache().fd;
                                 if fd.is_valid() {
                                     fd.close();
@@ -8021,16 +8025,18 @@ impl<'a> Resolver<'a> {
 
         let dir_path = strings::without_trailing_slash_windows_path(Dirname::dirname(path));
 
-        // SAFETY: PORT — `dir_entry` is a slot in the BSSMap singleton (ARENA, see
-        // LIFETIMES.tsv); convert to raw immediately so later `&mut self` calls
-        // (debug_logs / load_extension / dirname_store) don't trip borrowck.
-        let dir_entry: *mut Fs::file_system::real_fs::EntriesOption =
+        // PORT — `dir_entry` is a slot in the BSSMap singleton (ARENA, see
+        // LIFETIMES.tsv); wrap in `BackRef` so later `&mut self` calls
+        // (debug_logs / load_extension / dirname_store) don't trip borrowck
+        // while each read goes through safe `BackRef: Deref` (pointee outlives
+        // holder by ARENA invariant).
+        let dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption> =
             match unsafe { &mut *rfs }.read_directory(dir_path, None, self.generation, self.store_fd) {
-                Ok(e) => std::ptr::from_mut(e),
+                Ok(e) => bun_ptr::BackRef::new_mut(e),
                 Err(_) => dec_ret!(None),
             };
 
-        if let Fs::file_system::real_fs::EntriesOption::Err(err) = unsafe { &*dir_entry } {
+        if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
             match err.original_err {
                 e if e == bun_core::err!("ENOENT")
                     || e == bun_core::err!("FileNotFound")
@@ -8051,9 +8057,10 @@ impl<'a> Resolver<'a> {
             dec_ret!(None);
         }
 
-        // SAFETY: see `dir_entry` PORT note above — ARENA-backed, re-borrowed at each use.
-        let entries: *const Fs::file_system::DirEntry = unsafe { &*dir_entry }.entries();
-        macro_rules! entries { () => { unsafe { &*entries } } }
+        // ARENA-backed `DirEntry` (see `dir_entry` note above) — `BackRef` so each
+        // `entries!()` is a fresh safe shared borrow instead of an open-coded raw deref.
+        let entries = bun_ptr::BackRef::new(dir_entry.entries());
+        macro_rules! entries { () => { entries.get() } }
 
         let base = bun_paths::basename(path);
 
@@ -8223,7 +8230,11 @@ impl<'a> Resolver<'a> {
         // field so `unsafe { &mut *self.fs() }` calls below (`filename_store.append_parts`) don't pop
         // its provenance under Stacked Borrows.
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
-        let entries: *const Fs::file_system::DirEntry = entries;
+        // BACKREF — `entries` is a slot in the BSSMap-backed `DirEntry` arena
+        // (see `load_as_file`); detach the borrowck lifetime via `BackRef` so the
+        // `&mut self` calls below (debug_logs / fs_ref) don't conflict, while
+        // each read stays a safe `BackRef: Deref`.
+        let entries = bun_ptr::BackRef::new(entries);
         let buffer = &mut bufs!(load_as_file)[0..path.len() + ext.len()];
         buffer[path.len()..].copy_from_slice(ext);
         let file_name = &buffer[path.len() - base.len()..buffer.len()];
@@ -8232,7 +8243,7 @@ impl<'a> Resolver<'a> {
             debug.add_note_fmt(format_args!("Checking for file \"{}\" ", bstr::BStr::new(&buffer[..])));
         }
 
-        if let Some(query) = unsafe { &*entries }.get(file_name) {
+        if let Some(query) = entries.get().get(file_name) {
             if query.entry().kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(&buffer[..])));
@@ -8252,7 +8263,7 @@ impl<'a> Resolver<'a> {
                         crate::path_string_static(&query.entry().abs_path)
                     },
                     diff_case: query.diff_case,
-                    dirname_fd: unsafe { &*entries }.fd,
+                    dirname_fd: entries.fd,
                     file_fd: query.entry().cache().fd,
                     dir_info: None,
                 });
@@ -8432,8 +8443,10 @@ impl<'a> Resolver<'a> {
             if !self.opts.preserve_symlinks {
                 if let Some(parent_entries) = parent_.get_entries_ref(self.generation) {
                     if let Some(lookup) = parent_entries.get(base) {
-                        // SAFETY: entries_ptr is a slot in the BSSMap-backed entries singleton.
-                        let entries_fd = unsafe { &*entries_ptr }.fd;
+                        // `entries_ptr` is a slot in the BSSMap-backed entries singleton —
+                        // route the read-only `.fd` access through the existing
+                        // `entries!()` re-borrow macro instead of a raw-ptr deref.
+                        let entries_fd = entries!().fd;
                         if entries_fd.is_valid() && !lookup.entry().cache().fd.is_valid() && self.store_fd {
                             lookup.entry().set_cache_fd(entries_fd);
                         }
@@ -8569,15 +8582,16 @@ impl<'a> Resolver<'a> {
                 if let Some(tsconfig_json) = parsed_tsconfig {
                     let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::default();
                     parent_configs.append(tsconfig_json)?;
-                    let mut current = tsconfig_json;
-                    // SAFETY: (loop-wide) `current`/`parent_config_ptr`/`merged_config` are heap
-                    // TSConfigJSON allocations from `parse_tsconfig` (heap::alloc). They are uniquely
-                    // owned by this extends-chain walk and freed via heap::take below.
-                    while !unsafe { &*current }.extends.is_empty() {
-                        // SAFETY: see loop-wide note above.
-                        let ts_dir_name = Dirname::dirname(&unsafe { &*current }.abs_path);
-                        // SAFETY: see loop-wide note above.
-                        let abs_path = ResolvePath::join_abs_string_buf(ts_dir_name, bufs!(tsconfig_path_abs), &[ts_dir_name, &unsafe { &*current }.extends], bun_paths::Platform::AUTO);
+                    // `current`/`parent_config_ptr`/`merged_config` are heap TSConfigJSON
+                    // allocations from `parse_tsconfig` (heap::alloc); uniquely owned by
+                    // this extends-chain walk and freed via heap::take below. Hold as
+                    // `BackRef` (pointee outlives holder) so the loop body reads via safe
+                    // `Deref` instead of three open-coded raw-ptr derefs.
+                    let mut current =
+                        bun_ptr::BackRef::from(core::ptr::NonNull::new(tsconfig_json).expect("heap alloc"));
+                    while !current.extends.is_empty() {
+                        let ts_dir_name = Dirname::dirname(&current.abs_path);
+                        let abs_path = ResolvePath::join_abs_string_buf(ts_dir_name, bufs!(tsconfig_path_abs), &[ts_dir_name, &current.extends], bun_paths::Platform::AUTO);
                         let parent_config_maybe: Option<*mut TSConfigJSON> = match self.parse_tsconfig(abs_path, FD::INVALID) {
                             Ok(v) => v.map(bun_core::heap::into_raw),
                             Err(err) => {
@@ -8591,7 +8605,9 @@ impl<'a> Resolver<'a> {
                         };
                         if let Some(parent_config) = parent_config_maybe {
                             parent_configs.append(parent_config)?;
-                            current = parent_config;
+                            current = bun_ptr::BackRef::from(
+                                core::ptr::NonNull::new(parent_config).expect("heap alloc"),
+                            );
                         } else {
                             break;
                         }

@@ -127,12 +127,11 @@ impl BOM {
                 // See `remove_and_convert_to_utf8_and_free` — `&list[2..]` has no
                 // u16-alignment guarantee, so use the byte-level transcode helper.
                 let out = strings::to_utf8_alloc_from_le_bytes(&list[Self::UTF16_LE_BYTES.len()..]);
-                if list.capacity() < out.len() {
-                    list.reserve(out.len() - list.len());
-                }
-                // SAFETY: capacity ensured; bytes overwritten immediately below.
-                unsafe { list.set_len(out.len()) };
-                list.copy_from_slice(&out);
+                // `clear` keeps capacity (the "without_dealloc" contract);
+                // `extend_from_slice` grows only if needed — safe equivalent of
+                // the prior reserve/`set_len`/`copy_from_slice` open-coding.
+                list.clear();
+                list.extend_from_slice(&out);
                 &list[..]
             }
             _ => {

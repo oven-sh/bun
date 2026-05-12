@@ -921,24 +921,20 @@ impl<'a> Linker<'a> {
             return;
         }
 
-        let (content, content_to_free): (&[u8], Box<[u8]>) = 'brk: {
-            if chunk.len() >= shebang_buf.len() {
-                // Partial read. Need to read the rest of the file.
-                let original_contents = match sys::File::read_from(Fd::cwd(), abs_target) {
-                    sys::Result::Ok(contents) => contents,
-                    sys::Result::Err(_) => return,
-                };
-                // PORT NOTE: reshaped for borrowck — content borrows the boxed slice we own
-                // TODO(port): the Zig aliased the same buffer; here we duplicate the reference
-                let original_contents = original_contents.into_boxed_slice();
-                break 'brk (
-                    // SAFETY: content_to_free outlives content within this fn body
-                    unsafe { bun_core::ffi::slice(original_contents.as_ptr(), original_contents.len()) },
-                    original_contents,
-                );
-            }
-
-            break 'brk (chunk, Box::default());
+        // PORT NOTE: reshaped for borrowck — bind the owned buffer first, then
+        // borrow `content` from it (or fall back to the stack `chunk`).
+        let content_to_free: Box<[u8]>;
+        let content: &[u8] = if chunk.len() >= shebang_buf.len() {
+            // Partial read. Need to read the rest of the file.
+            let original_contents = match sys::File::read_from(Fd::cwd(), abs_target) {
+                sys::Result::Ok(contents) => contents,
+                sys::Result::Err(_) => return,
+            };
+            content_to_free = original_contents.into_boxed_slice();
+            &content_to_free[..]
+        } else {
+            content_to_free = Box::default();
+            chunk
         };
         let _ = &content_to_free; // freed on drop
 

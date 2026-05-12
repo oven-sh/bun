@@ -40,8 +40,9 @@ thread_local! {
 
 fn tl_bufs() -> *mut TlBufs {
     // SAFETY (audited phase-d):
-    // - `TL_BUFS` is thread-local `UnsafeCell<TlBufs>`: no cross-thread sharing, and
-    //   `UnsafeCell::get()` is the sanctioned way to obtain `*mut` for interior mut.
+    // - `TL_BUFS` is thread-local `Cell<*mut TlBufs>`: no cross-thread sharing; the
+    //   pointer is `Copy` so `.get()/.set()` are zero-unsafe. The payload itself is a
+    //   leaked heap alloc (lazy-init below), so the `*mut` stays valid for thread life.
     // - Zig's `bun.ThreadlocalBuffers(T).get()` returns `*T` (a freely-aliasing raw
     //   ptr), and `&tl_bufs.get().folder_name_buf` in Zig is raw-ptr field projection
     //   that never asserts uniqueness over sibling buffers. We mirror that exactly:

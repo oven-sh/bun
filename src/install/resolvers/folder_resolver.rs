@@ -76,10 +76,10 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
         {
             joined[0] = b'.';
             joined[1] = SEP;
-            // SAFETY: paths.rel points into joined[2..]; extend the view backward by 2.
-            paths.rel = unsafe {
-                bun_core::ffi::slice(joined.as_ptr(), paths.rel.len() + 2)
-            };
+            // `paths.rel` points into `joined[2..]`; extend the view backward
+            // by the two bytes just written via safe slicing of `joined`.
+            let n = paths.rel.len() + 2;
+            paths.rel = &joined[..n];
         }
 
         if self.quoted {

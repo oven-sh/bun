@@ -44,24 +44,23 @@ if (process.argv[2] === "child") {
   } else {
     console.log(`firstFalseAt=${count}`);
   }
-  return;
+} else {
+  const child = fork(__filename, ["child"], {
+    serialization: "advanced",
+    // Inherit stdout so the child's console.log reaches the parent harness.
+    stdio: ["pipe", "inherit", "inherit", "ipc"],
+  });
+
+  let received = 0;
+  child.on("message", () => {
+    received++;
+  });
+
+  // 'close' fires after all stdio + the IPC channel have drained, so every
+  // queued 'message' has been emitted by then. 'exit' fires as soon as the
+  // child process terminates — in-flight kernel-buffered messages may still
+  // be unread, making `received` an undercount if we read it there.
+  child.on("close", (code, signal) => {
+    console.log(`parent received=${received} exit=${code} signal=${signal}`);
+  });
 }
-
-const child = fork(__filename, ["child"], {
-  serialization: "advanced",
-  // Inherit stdout so the child's console.log reaches the parent harness.
-  stdio: ["pipe", "inherit", "inherit", "ipc"],
-});
-
-let received = 0;
-child.on("message", () => {
-  received++;
-});
-
-// 'close' fires after all stdio + the IPC channel have drained, so every
-// queued 'message' has been emitted by then. 'exit' fires as soon as the
-// child process terminates — in-flight kernel-buffered messages may still
-// be unread, making `received` an undercount if we read it there.
-child.on("close", (code, signal) => {
-  console.log(`parent received=${received} exit=${code} signal=${signal}`);
-});

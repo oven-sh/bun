@@ -842,18 +842,26 @@ pub const SendQueue = struct {
     }
     /// Matches Node's `ChildProcess.send()` threshold — the channel is
     /// considered backpressured only once queued userspace bytes exceed
-    /// `BACKPRESSURE_THRESHOLD_BYTES`. Handle-ACK waits are always backpressure
-    /// since no further data can be delivered until the receiver acks.
+    /// `BACKPRESSURE_THRESHOLD_BYTES`, or when a handle ACK is pending and
+    /// further items are already stacked up behind it (no further data can
+    /// ship until the receiver acks).
     ///
     /// A byte threshold (rather than "queue non-empty") is what handles the
     /// case where a transparent plumbing packet — e.g. the 5-byte advanced-
-    /// mode version header — is still mid-flight when the user's first send
-    /// runs on Windows. libuv's `uv_write` is always async, so on Windows the
-    /// version packet's write stays pending while the user's message enqueues
-    /// behind it; without a byte threshold every first `process.send()` would
-    /// report backpressure even though the kernel has absorbed everything.
+    /// mode version header, or a back-to-back send in the same tick — is
+    /// still mid-flight when the user's next send runs on Windows. libuv's
+    /// `uv_write` is always async, so on Windows the prior write stays
+    /// pending while the new message enqueues behind it; without a byte
+    /// threshold every such send would report backpressure even though the
+    /// kernel has absorbed everything.
+    ///
+    /// The `waiting_for_ack` check is deliberately gated on `queue.items.len`:
+    /// on POSIX `_onWriteComplete` runs inline, so a send that ships a handle
+    /// moves straight into `waiting_for_ack` before this helper runs. That
+    /// `send()` itself handed all bytes to the kernel and should return true;
+    /// only *subsequent* sends behind it are actual backpressure.
     fn hasBufferedData(self: *const SendQueue) bool {
-        if (self.waiting_for_ack != null) return true;
+        if (self.waiting_for_ack != null and self.queue.items.len > 0) return true;
         return self.bufferedBytes() > BACKPRESSURE_THRESHOLD_BYTES;
     }
     /// Bytes sitting in userspace that the kernel hasn't accepted yet. On

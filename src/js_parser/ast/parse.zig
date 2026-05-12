@@ -1184,23 +1184,36 @@ pub fn Parse(
                 // Parse one or more directives at the beginning
                 if (isDirectivePrologue) {
                     isDirectivePrologue = false;
+                    // ES2015 §14.1.1: the directive prologue is the leading
+                    // sequence of ExpressionStatements consisting of a single
+                    // StringLiteral — ONLY at the top of a FunctionBody or
+                    // the top-level Script/Module. Block-scope string
+                    // literals are ordinary expressions (dead code in most
+                    // cases) and must not be promoted to S.Directive.
+                    const scope_kind = p.current_scope.kind;
+                    const is_directive_scope = scope_kind == .entry or scope_kind == .function_body;
                     switch (stmt.data) {
                         .s_expr => |expr| {
                             switch (expr.value.data) {
                                 .e_string => |str| {
-                                    if (!str.prefer_template) {
+                                    if (!str.prefer_template and is_directive_scope) {
                                         isDirectivePrologue = true;
 
-                                        if (str.eqlComptime("use strict")) {
-                                            skip = true;
-                                            // Track "use strict" directives
+                                        const is_strict = str.eqlComptime("use strict");
+                                        if (is_strict) {
                                             p.current_scope.strict_mode = .explicit_strict_mode;
-                                            if (p.current_scope == p.module_scope)
-                                                p.module_scope_directive_loc = stmt.loc;
+                                        }
+                                        if (is_strict and p.current_scope == p.module_scope) {
+                                            // Module-level "use strict" is dropped; the CJS
+                                            // wrapper re-emits it so the IIFE runs in strict mode.
+                                            skip = true;
+                                            p.module_scope_directive_loc = stmt.loc;
                                         } else if (str.eqlComptime("use asm")) {
                                             skip = true;
                                             stmt.data = Prefill.Data.SEmpty;
                                         } else {
+                                            // Preserve other directives (including function-level
+                                            // "use strict" — no later pass restores it).
                                             stmt = Stmt.alloc(S.Directive, S.Directive{
                                                 .value = str.slice(p.allocator),
                                             }, stmt.loc);

@@ -6506,10 +6506,15 @@ pub fn NewParser_(
                     total_stmts_count += part.stmts.len;
                 }
 
+                // Only skip re-emitting "use strict" if the first output
+                // statement IS already "use strict". Other directives (e.g.
+                // "use client") do not satisfy the strict-mode contract and
+                // would otherwise let the wrapper IIFE run sloppy.
                 const preserve_strict_mode = p.module_scope.strict_mode == .explicit_strict_mode and
                     !(parts.items.len > 0 and
                         parts.items[0].stmts.len > 0 and
-                        parts.items[0].stmts[0].data == .s_directive);
+                        parts.items[0].stmts[0].data == .s_directive and
+                        strings.eqlComptime(parts.items[0].stmts[0].data.s_directive.value, "use strict"));
 
                 total_stmts_count += @as(usize, @intCast(@intFromBool(preserve_strict_mode)));
 

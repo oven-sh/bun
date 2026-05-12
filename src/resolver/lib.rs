@@ -3252,7 +3252,7 @@ pub mod __phase_a_body {
     /// `DirInfo::reset()`'s `drop_in_place` -- handing out `&T` here and casting
     /// back to `*mut T` at the drop site would be UB under Stacked Borrows.
     fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
-        static ARENA: std::sync::LazyLock<parking_lot::Mutex<Vec<Box<PackageJSON>>>> =
+        static ARENA: std::sync::LazyLock<bun_threading::Guarded<Vec<Box<PackageJSON>>>> =
             std::sync::LazyLock::new(Default::default);
         let mut guard = ARENA.lock();
         guard.push(Box::new(pkg));

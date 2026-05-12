@@ -15,7 +15,6 @@ shim_standalone = []
 
 [dependencies]
 bytemuck = "1"
-parking_lot.workspace = true
 strum.workspace = true
 thiserror.workspace = true
 phf.workspace = true

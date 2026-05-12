@@ -670,3 +670,33 @@ describe("Bun.serve unix socket validation", () => {
     }
   });
 });
+
+describe("app", () => {
+  test("non-object bundlerOptions throws", () => {
+    expect(() => {
+      // @ts-expect-error
+      serve({ port: 0, app: { bundlerOptions: 315 } });
+    }).toThrow(TypeError);
+  });
+
+  test.each(["server", "client", "ssr"])("non-object bundlerOptions.%s throws", key => {
+    expect(() => {
+      // @ts-expect-error
+      serve({ port: 0, app: { bundlerOptions: { [key]: 5 } } });
+    }).toThrow(TypeError);
+  });
+
+  test("non-object bundlerOptions.server.minify throws", () => {
+    expect(() => {
+      // @ts-expect-error
+      serve({ port: 0, app: { bundlerOptions: { server: { minify: 5 } } } });
+    }).toThrow(TypeError);
+  });
+
+  test("bundlerOptions.server.minify: false does not crash", () => {
+    expect(() => {
+      // @ts-expect-error
+      serve({ port: 0, app: { bundlerOptions: { server: { minify: false } } } });
+    }).toThrow("'app' is missing 'framework'");
+  });
+});

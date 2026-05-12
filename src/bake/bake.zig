@@ -68,6 +68,9 @@ pub const UserOptions = struct {
         }
 
         if (try config.getOptional(global, "bundlerOptions", JSValue)) |js_options| {
+            if (!js_options.isObject()) {
+                return global.throwInvalidArguments("'" ++ api_name ++ ".bundlerOptions' must be an object", .{});
+            }
             if (try js_options.getOptional(global, "server", JSValue)) |server_options| {
                 bundler_options.server = try BuildConfigSubset.fromJS(global, server_options);
             }
@@ -205,6 +208,10 @@ const BuildConfigSubset = struct {
     pub fn fromJS(global: *jsc.JSGlobalObject, js_options: JSValue) bun.JSError!BuildConfigSubset {
         var options = BuildConfigSubset{};
 
+        if (!js_options.isObject()) {
+            return global.throwInvalidArguments("'" ++ api_name ++ ".bundlerOptions' values must be objects", .{});
+        }
+
         if (try js_options.getOptional(global, "sourcemap", JSValue)) |val| brk: {
             if (try bun.schema.api.SourceMapMode.fromJS(global, val)) |sourcemap| {
                 options.source_map = sourcemap;
@@ -215,11 +222,16 @@ const BuildConfigSubset = struct {
         }
 
         if (try js_options.getOptional(global, "minify", JSValue)) |minify_options| brk: {
-            if (minify_options.isBoolean() and minify_options.asBoolean()) {
-                options.minify_syntax = minify_options.asBoolean();
-                options.minify_identifiers = minify_options.asBoolean();
-                options.minify_whitespace = minify_options.asBoolean();
+            if (minify_options.isBoolean()) {
+                const b = minify_options.asBoolean();
+                options.minify_syntax = b;
+                options.minify_identifiers = b;
+                options.minify_whitespace = b;
                 break :brk;
+            }
+
+            if (!minify_options.isObject()) {
+                return global.throwInvalidArguments("Expected 'minify' to be a boolean or an object", .{});
             }
 
             if (try minify_options.getBooleanLoose(global, "whitespace")) |value| {

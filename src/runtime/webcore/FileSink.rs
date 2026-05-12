@@ -1215,14 +1215,14 @@ impl FileSink {
             // Zig; this captures the dynamic state.
             let state = format!(
                 "STATE: must_be_kept_alive={} done={} started={} fd={:?} written={} \
-                 pending.state={:?} owns_fd={} writer.is_done={} writer.has_pending={} \
+                 pending.state={} owns_fd={} writer.is_done={} writer.has_pending={} \
                  js_sink_ref.has={}\n",
                 self_.must_be_kept_alive_until_eof.get(),
                 self_.done.get(),
                 self_.started.get(),
                 self_.fd.get(),
                 self_.written.get(),
-                self_.pending.get().state,
+                self_.pending.get().state as u8,
                 self_.writer.get().owns_fd,
                 self_.writer.get().is_done,
                 self_.writer.get().has_pending_data(),

@@ -68,7 +68,7 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     let chunks: *mut [Chunk] = ctx.chunks;
     // SAFETY: `chunk` is this task's exclusively-owned HTML chunk for the
     // duration of the compile step; the result slot was pre-allocated.
-    let result = unsafe { generate_compile_result_for_html_chunk_impl(&*c, chunk, chunks) };
+    let result = unsafe { generate_compile_result_for_html_chunk_impl(&*c, &*chunk, chunks) };
     // SAFETY: HTML chunks have exactly one part-range (i == 0); see
     // `Chunk::write_compile_result_slot` for the disjoint-slot contract.
     unsafe { Chunk::write_compile_result_slot(chunk, i, result) };
@@ -89,7 +89,10 @@ struct HTMLLoader<'a> {
     #[allow(dead_code)]
     log: *mut Log,
     current_import_record_index: u32,
-    chunk: *const Chunk,
+    /// Backref to this task's HTML chunk (an element of `*chunks`). The chunk
+    /// outlives this `HTMLLoader` (link-step duration), so `BackRef`'s
+    /// owner-outlives-holder invariant holds and reads go through safe `Deref`.
+    chunk: bun_ptr::BackRef<Chunk>,
     chunks: *mut [Chunk],
     #[allow(dead_code)]
     minify_whitespace: bool,
@@ -254,8 +257,9 @@ impl<'a> HTMLLoader<'a> {
         self.added_body_script = true;
 
         // PERF(port): was stack-fallback (std.heap.stackFallback(256))
-        // SAFETY: chunk/chunks raw pointers valid for the duration of the link step.
-        if let Some(js_chunk) = unsafe { (*self.chunk).get_js_chunk_for_html(&mut *self.chunks) } {
+        // `self.chunk` is a `BackRef` (safe `Deref`); SAFETY for `chunks`:
+        // raw `*mut [Chunk]` valid for the link step, sole live `&mut`.
+        if let Some(js_chunk) = self.chunk.get_js_chunk_for_html(unsafe { &mut *self.chunks }) {
             let mut script = Vec::new();
             write!(
                 &mut script,
@@ -271,8 +275,9 @@ impl<'a> HTMLLoader<'a> {
     fn get_head_tags(&self) -> BoundedArray<Vec<u8>, 2> {
         // PERF(port): was stack-fallback arena; now heap Vec<u8>
         let mut array: BoundedArray<Vec<u8>, 2> = BoundedArray::default();
-        // SAFETY: chunk/chunks raw pointers valid for the duration of the link step.
-        let chunk = unsafe { &*self.chunk };
+        // `self.chunk` is a `BackRef` (safe `Deref`).
+        let chunk: &Chunk = &self.chunk;
+        // SAFETY: `chunks` raw pointer valid for the link step; sole live `&mut`.
         let chunks = unsafe { &mut *self.chunks };
         if self.compile_to_standalone_html {
             // In standalone HTML mode, only put CSS in <head>; JS goes before </body>
@@ -385,19 +390,18 @@ impl<'a> HTMLLoader<'a> {
     }
 }
 
-/// SAFETY: `chunk` must point to a live `Chunk` that is an element of `*chunks`,
-/// and both must remain valid for the duration of this call. `chunk` is only
-/// read here; the caller retains the sole writer.
+/// SAFETY: `chunk` must be an element of `*chunks`, and `*chunks` must remain
+/// valid for the duration of this call. `chunk` is only read here (held as a
+/// `BackRef` inside `HTMLLoader`); the caller retains the sole writer.
 unsafe fn generate_compile_result_for_html_chunk_impl<'a>(
     c: &'a LinkerContext<'a>,
-    chunk: *const Chunk,
+    chunk: &Chunk,
     chunks: *mut [Chunk],
 ) -> CompileResult {
     let parse_graph = c.parse_graph();
     let sources = parse_graph.input_files.items_source();
     let import_records = c.graph.ast.items_import_records();
-    // SAFETY: caller guarantees `chunk` is live; we only read `entry_point`.
-    let source_index = unsafe { (*chunk).entry_point.source_index() };
+    let source_index = chunk.entry_point.source_index();
 
     // HTML bundles for dev server must be allocated to it, as it must outlive
     // the bundle task. See `DevServer.RouteBundle.HTML.bundled_html_text`
@@ -422,7 +426,7 @@ unsafe fn generate_compile_result_for_html_chunk_impl<'a>(
         current_import_record_index: 0,
         minify_whitespace,
         compile_to_standalone_html,
-        chunk,
+        chunk: bun_ptr::BackRef::new(chunk),
         chunks,
         output: Vec::new(),
         end_tag_indices: EndTagIndices {
@@ -473,10 +477,12 @@ unsafe fn generate_compile_result_for_html_chunk_impl<'a>(
                 }
                 if !html_loader.added_body_script {
                     if html_loader.compile_to_standalone_html {
-                        // SAFETY: chunk/chunks raw pointers valid for the duration of the link step.
-                        if let Some(js_chunk) = unsafe {
-                            (*html_loader.chunk).get_js_chunk_for_html(&mut *html_loader.chunks)
-                        } {
+                        // `chunk` is a `BackRef` (safe `Deref`); SAFETY for `chunks`:
+                        // raw `*mut [Chunk]` valid for the link step, sole live `&mut`.
+                        if let Some(js_chunk) = html_loader
+                            .chunk
+                            .get_js_chunk_for_html(unsafe { &mut *html_loader.chunks })
+                        {
                             let mut script = Vec::new();
                             write!(
                                 &mut script,

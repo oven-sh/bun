@@ -447,11 +447,15 @@ pub fn find_imported_files_in_css_order<'a>(
     // copy instead of the last copy like other things in CSS.
     {
         struct DuplicateEntry {
-            // PORT NOTE: raw slice header — borrows either `css_asts[..].layer_names`
-            // (real `::bun_css::LayerName`) or `Layers::inner()` (shadow `LayerName`).
-            // Both nominal types must be reconciled in Phase B; until then we compare
-            // via `LayerName::eql` on the shadow type and cast at the boundary.
-            layers: *const [LayerName],
+            // PORT NOTE: lifetime-erased slice header — borrows either
+            // `css_asts[..].layer_names` (real `::bun_css::LayerName`) or
+            // `Layers::inner()` (shadow `LayerName`). Both nominal types must
+            // be reconciled in Phase B; until then we compare via
+            // `LayerName::eql` on the shadow type and cast at the boundary.
+            // `RawSlice` (vs raw `*const [_]`) so reads go through safe
+            // `.slice()` under the back-reference invariant: the borrowed
+            // storage (`css_asts` arena / `Layers` Vec) outlives this loop.
+            layers: bun_ptr::RawSlice<LayerName>,
             indices: Vec<u32>,
         }
         let mut layer_duplicates: Vec<DuplicateEntry> = Vec::new();
@@ -556,8 +560,7 @@ pub fn find_imported_files_in_css_order<'a>(
             let layers_key: &[LayerName] = unsafe { &*layers_key };
             let mut index: usize = 0;
             while index < layer_duplicates.len() as usize {
-                let dup_layers: &[LayerName] =
-                    unsafe { &*layer_duplicates.at(index).layers };
+                let dup_layers: &[LayerName] = layer_duplicates.at(index).layers.slice();
                 let both_equal = 'both_equal: {
                     if layers_key.len() != dup_layers.len() {
                         break 'both_equal false;
@@ -581,7 +584,7 @@ pub fn find_imported_files_in_css_order<'a>(
                 // This is the first time we've seen this combination of layer names.
                 // Allocate a new set of duplicate indices to track this combination.
                 layer_duplicates.push(DuplicateEntry {
-                    layers: layers_key,
+                    layers: bun_ptr::RawSlice::new(layers_key),
                     indices: Vec::new(),
                 });
             }

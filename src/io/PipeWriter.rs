@@ -1994,6 +1994,52 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         unsafe { &mut *this }
     }
 
+    /// Single nonnull-asref dispatch for the set-once `parent` backref,
+    /// laundered-receiver variant.
+    ///
+    /// Type invariant (encapsulated `unsafe`): `self.parent` is populated by
+    /// [`set_parent`](BaseWindowsPipeWriter::set_parent) before any write path
+    /// is reached, and the writer is an intrusive field of `*parent` so the
+    /// pointee strictly outlives `self`. Unlike a `&self` accessor (which would
+    /// place a `readonly`/SB-protector on `*self` for the duration of the
+    /// re-entrant `Parent::on_error` call — see the `parent_on_error` note on
+    /// [`WindowsBufferedWriter`]), this takes the R-2 `*mut Self`: the field
+    /// read completes before dispatch, so no Rust borrow of `*this` is live
+    /// across the (re-entrant) call. Collapses the five identical
+    /// `Parent::on_error(Self::r(this).parent(), err)` dispatch blocks in
+    /// `on_write_complete` / `on_fs_write_complete` / `process_send` into one.
+    #[inline(always)]
+    fn r_on_error(this: *mut Self, err: sys::Error) {
+        let parent = Self::r(this).parent;
+        // SAFETY: type invariant — set-once parent backref outlives writer.
+        unsafe { Parent::on_error(parent, err) }
+    }
+
+    /// See [`r_on_error`](Self::r_on_error) for the encapsulated type
+    /// invariant and laundered-receiver rationale. Collapses the two
+    /// `Parent::on_write` arms in `on_write_complete` into one `unsafe`.
+    #[inline(always)]
+    fn r_on_write(this: *mut Self, written: usize, status: WriteStatus) {
+        let parent = Self::r(this).parent;
+        // SAFETY: type invariant — set-once parent backref outlives writer.
+        unsafe { Parent::on_write(parent, written, status) }
+    }
+
+    /// See [`r_on_error`](Self::r_on_error) for the encapsulated type
+    /// invariant and laundered-receiver rationale. Reads `self.parent`
+    /// **before** dispatch so the (potentially freeing) `Parent::deref`
+    /// runs with no borrow of `*this` live — mirrors the lazy Zig-`defer`
+    /// read order at each scopeguard site. Collapses the three
+    /// `Parent::deref` blocks into one `unsafe`.
+    #[inline(always)]
+    fn r_deref(this: *mut Self) {
+        let parent = Self::r(this).parent;
+        // SAFETY: type invariant — set-once parent backref; ref taken in
+        // `process_send` keeps parent (and self-as-field) alive until this
+        // deref runs.
+        unsafe { Parent::deref(parent) }
+    }
+
     pub fn memory_cost(&self) -> usize {
         mem::size_of::<Self>() + self.current_payload.memory_cost() + self.outgoing.memory_cost()
     }
@@ -2031,16 +2077,12 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // Capture the laundered `*mut Self` and read `.parent` at guard
         // execution instead — the `black_box` above also ensures the guard's
         // read is not folded with any pre-call load.
-        // SAFETY: ref taken in process_send keeps parent (and self-as-field) alive until this deref.
-        let _g = scopeguard::guard(this, |s| unsafe {
-            Parent::deref(Self::r(s).parent)
-        });
+        let _g = scopeguard::guard(this, |s| Self::r_deref(s));
 
         if let Some(err) = status.to_error(sys::Tag::write) {
             log!("onWrite() = {}", bstr::BStr::new(err.name()));
             Self::r(this).last_write_result = WriteResult::Err(err.clone());
-            // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_error(Self::r(this).parent(), err) };
+            Self::r_on_error(this, err);
             core::hint::black_box(this);
             Self::r(this).close_without_reporting();
             return;
@@ -2059,22 +2101,18 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         if was_done && done {
             // we already call .end lets close the connection
             Self::r(this).last_write_result = WriteResult::Done(written);
-            // SAFETY: parent BACKREF valid.
-            unsafe { Parent::on_write(Self::r(this).parent(), written, WriteStatus::EndOfFile) };
+            Self::r_on_write(this, written, WriteStatus::EndOfFile);
             return;
         }
         // .end was not called yet
         Self::r(this).last_write_result = WriteResult::Wrote(written);
 
         // report data written
-        // SAFETY: parent BACKREF valid.
-        unsafe {
-            Parent::on_write(
-                Self::r(this).parent(),
-                written,
-                if done { WriteStatus::Drained } else { WriteStatus::Pending },
-            )
-        };
+        Self::r_on_write(
+            this,
+            written,
+            if done { WriteStatus::Drained } else { WriteStatus::Pending },
+        );
         // Re-escape so `process_send`/`on_writable` and the deferred guard
         // cannot reuse `is_done`/`outgoing`/`parent` spilled from before
         // `on_write`.
@@ -2137,8 +2175,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         if was_canceled {
             // Canceled write - reset buffers and deref to balance process_send ref
             Self::r(this).current_payload.reset();
-            // SAFETY: parent is BACKREF; ref taken in process_send keeps it alive until this deref.
-            unsafe { Parent::deref(Self::r(this).parent) };
+            Self::r_deref(this);
             return;
         }
 
@@ -2146,14 +2183,12 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             // deref to balance process_send ref — read `.parent` LAZILY at
             // guard execution (Zig defer semantics), not eagerly, in case
             // close()/on_error re-enter and swap the parent pointer.
-            // SAFETY: ref taken in process_send keeps parent (and self) alive until this deref.
-            let _g = scopeguard::guard(this, |s| unsafe { Parent::deref(Self::r(s).parent) });
+            let _g = scopeguard::guard(this, |s| Self::r_deref(s));
             // close() may re-enter JS — every post-call `r(this)` reborrow
             // reloads (laundered raw ptr, no noalias).
             Self::r(this).close();
             core::hint::black_box(this);
-            // SAFETY: parent BACKREF valid; re-read after close() re-entry.
-            unsafe { Parent::on_error(Self::r(this).parent(), err) };
+            Self::r_on_error(this, err);
             return;
         }
 
@@ -2200,8 +2235,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                 None => {
                     let err = sys::Error::from_code(sys::E::PIPE, sys::Tag::pipe);
                     Self::r(this).last_write_result = WriteResult::Err(err.clone());
-                    // SAFETY: parent BACKREF valid.
-                    unsafe { Parent::on_error(Self::r(this).parent(), err) };
+                    Self::r_on_error(this, err);
                     core::hint::black_box(this);
                     Self::r(this).close_without_reporting();
                     return;
@@ -2258,8 +2292,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             {
                 file.complete(false);
                 Self::r(this).last_write_result = WriteResult::Err(err.clone());
-                // SAFETY: parent BACKREF valid.
-                unsafe { Parent::on_error(Self::r(this).parent(), err) };
+                Self::r_on_error(this, err);
                 core::hint::black_box(this);
                 Self::r(this).close_without_reporting();
                 return;
@@ -2281,8 +2314,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             .to_error(sys::Tag::write)
             {
                 Self::r(this).last_write_result = WriteResult::Err(err.clone());
-                // SAFETY: parent BACKREF valid.
-                unsafe { Parent::on_error(Self::r(this).parent(), err) };
+                Self::r_on_error(this, err);
                 core::hint::black_box(this);
                 Self::r(this).close_without_reporting();
                 return;

@@ -115,16 +115,14 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
             (data.1)(unsafe { &mut *data.0 });
         }
         let mut data: (*mut C, fn(&mut C)) = (std::ptr::from_mut::<C>(ctx), callback);
-        // SAFETY: self.raw() is a live uWS-owned socket; `data` lives on this
-        // stack frame for the duration of the synchronous uws_ws_cork call.
-        unsafe {
-            c::uws_ws_cork(
-                SSL_FLAG,
-                self.raw(),
-                Some(wrap::<C>),
-                (&raw mut data).cast::<c_void>(),
-            )
-        }
+        // `data` lives on this stack frame for the duration of the synchronous
+        // uws_ws_cork call; the shim only forwards the pointer back to `wrap`.
+        c::uws_ws_cork(
+            SSL_FLAG,
+            self.raw(),
+            Some(wrap::<C>),
+            (&raw mut data).cast::<c_void>(),
+        )
     }
 
     pub fn subscribe(&mut self, topic: &[u8]) -> bool {
@@ -325,9 +323,9 @@ impl AnyWebSocket {
         let mut data: (*mut C, fn(&mut C)) = (std::ptr::from_mut::<C>(ctx), callback);
         let ud = (&raw mut data).cast::<c_void>();
         let (ssl, ws) = self.split();
-        // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); `data` lives on
-        // this stack frame for the duration of the synchronous uws_ws_cork call.
-        unsafe { c::uws_ws_cork(ssl, ws, Some(wrap::<C>), ud) }
+        // `data` lives on this stack frame for the duration of the synchronous
+        // uws_ws_cork call; the shim only forwards `ud` back to `wrap`.
+        c::uws_ws_cork(ssl, ws, Some(wrap::<C>), ud)
     }
 
     pub fn subscribe(self, topic: &[u8]) -> bool {
@@ -740,9 +738,13 @@ pub mod c {
             message: *const u8,
             length: usize,
         );
-        pub fn uws_ws_cork(
+        // safe: cork is synchronous — `user_data` is passed straight back to
+        // `handler` without being dereferenced by the C++ shim itself, so the
+        // call has no preconditions beyond the live opaque handle. Mirrors
+        // `uws_res_cork`.
+        pub safe fn uws_ws_cork(
             ssl: i32,
-            ws: *mut RawWebSocket,
+            ws: &mut RawWebSocket,
             handler: Option<unsafe extern "C" fn(*mut c_void)>,
             user_data: *mut c_void,
         );

@@ -53,4 +53,26 @@ import * as tsd from "./utilities";
   const t = new Bun.Transpiler({ loader: "ts", sourcemap: "linked" });
   const result = t.transformSync("const x: number = 1;");
   tsd.expectType<Bun.TranspilerTransformResult>(result);
+
+  const p = t.transform("const x: number = 1;");
+  tsd.expectType<Promise<Bun.TranspilerTransformResult>>(p);
+}
+
+// Explicitly-typed options must accept every sourcemap value, not just
+// the default. Regression guard for the `TranspilerOptions` generic
+// default — if it narrows to `"none"`, `sourcemap: "external"` here is
+// a type error.
+{
+  const opts: Bun.TranspilerOptions = { loader: "ts", sourcemap: "external" };
+  const t = new Bun.Transpiler(opts);
+  // Intermediate `opts` loses the literal type, so the return widens
+  // to the union of both shapes. We just want this to compile.
+  t.transformSync("const x: number = 1;");
+}
+
+// Narrowing via the explicit type argument still works.
+{
+  const opts: Bun.TranspilerOptions<"external"> = { loader: "ts", sourcemap: "external" };
+  const t = new Bun.Transpiler<"external">(opts);
+  tsd.expectType<Bun.TranspilerTransformResult>(t.transformSync("const x: number = 1;"));
 }

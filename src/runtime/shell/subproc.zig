@@ -124,6 +124,7 @@ pub const ShellSubprocess = struct {
             event_loop: jsc.EventLoopHandle,
             subprocess: *Subprocess,
             result: StdioResult,
+            out_assign_error: *jsc.JSValue,
         ) !Writable {
             assertStdioResult(result);
 
@@ -149,9 +150,12 @@ pub const ShellSubprocess = struct {
                             if (stdio.* == .readable_stream) {
                                 const global = event_loop.js.global;
                                 const assign_result = pipe.assignToStream(&stdio.readable_stream, global);
-                                if (assign_result.toError()) |_| {
-                                    pipe.deref();
-                                    return error.UnexpectedCreatingStdin;
+                                if (assign_result.toError()) |err| {
+                                    // Surface to the caller; a still-valid Writable is returned
+                                    // so spawnMaybeSyncImpl can tear down the subprocess via the
+                                    // same abortAfterFailedStart() path it uses for other post-
+                                    // spawn start failures.
+                                    out_assign_error.* = err;
                                 }
                             }
 
@@ -244,9 +248,12 @@ pub const ShellSubprocess = struct {
                     pipe.writer.handle.poll.flags.insert(.socket);
 
                     const assign_result = pipe.assignToStream(&stdio.readable_stream, global);
-                    if (assign_result.toError()) |_| {
-                        pipe.deref();
-                        return error.UnexpectedCreatingStdin;
+                    if (assign_result.toError()) |err| {
+                        // Surface to the caller; a still-valid Writable is returned so
+                        // spawnMaybeSyncImpl can tear down the subprocess via the same
+                        // abortAfterFailedStart() path it uses for other post-spawn start
+                        // failures.
+                        out_assign_error.* = err;
                     }
 
                     return Writable{ .pipe = pipe };
@@ -912,6 +919,7 @@ pub const ShellSubprocess = struct {
 
         var subprocess = bun.handleOom(event_loop.allocator().create(Subprocess));
         out_subproc.* = subprocess;
+        var stdin_assign_error: jsc.JSValue = .zero;
         subprocess.* = Subprocess{
             .event_loop = event_loop,
             .process = spawn_result.toProcess(
@@ -923,6 +931,7 @@ pub const ShellSubprocess = struct {
                 event_loop,
                 subprocess,
                 spawn_result.stdin,
+                &stdin_assign_error,
             ) catch |err| switch (err) {
                 error.UnexpectedCreatingStdin => std.debug.panic(
                     "unexpected error while creating stdin",
@@ -945,6 +954,23 @@ pub const ShellSubprocess = struct {
             // When stdin came from a ReadableStream, FileSink.assignToStream already
             // set up the signal; overwriting it here would break the stream→sink link.
             subprocess.stdin.pipe.signal = bun.webcore.streams.Signal.init(&subprocess.stdin);
+        }
+
+        if (stdin_assign_error != .zero) {
+            // assignToStream failed (e.g. a direct ReadableStream whose pull() threw
+            // synchronously). Return a shell error instead of panicking so the user
+            // sees the failure; tear down the child the same way other post-spawn
+            // start failures do.
+            stdin_assign_error.ensureStillAlive();
+            const global = event_loop.js.global;
+            const msg = blk: {
+                var str = stdin_assign_error.toBunString(global) catch break :blk bun.handleOom(bun.default_allocator.dupe(u8, "Failed to pipe ReadableStream to stdin"));
+                defer str.deref();
+                break :blk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to pipe ReadableStream to stdin: {f}", .{str}));
+            };
+            _ = subprocess.tryKill(@intFromEnum(bun.SignalCode.SIGTERM));
+            subprocess.abortAfterFailedStart();
+            return .{ .err = .{ .custom = msg } };
         }
 
         switch (subprocess.process.watch()) {

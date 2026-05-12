@@ -134,6 +134,20 @@ const FILESINK_LIVE: u32 = 0xF11E_51A1; // "FileSink" alive
 #[cfg(windows)]
 const FILESINK_DEAD: u32 = 0xDEAD_51A1;
 
+/// #53265 probe v5 (UAF backtrace map): the v3/v4 probes proved
+/// `m_sinkPtr` was a live FileSink at JSFileSink-ctor time (assertLive
+/// passed) but its slot has been freed-then-reused by GC-sweep finalize
+/// (magic=0x0, head bytes decode as a `UVFSRequest<_, args::Close, _>`).
+/// To name the over-deref site, `deinit` records the *freeing* call stack
+/// here keyed by `*mut FileSink as usize`; `finalize`'s bad-magic panic
+/// looks it up so the next CI hit prints the actual `ref_count→0` path
+/// instead of the (uninformative) lazy-sweep stack. Windows debug only;
+/// removed with the rest of the probe once root-caused.
+#[cfg(all(windows, debug_assertions))]
+static FREED_AT: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<usize, String>>,
+> = std::sync::LazyLock::new(Default::default);
+
 /// #53265 probe v4: called from the C++ `JSFileSink` / `JSReadableFileSinkController`
 /// constructors immediately after `m_sinkPtr = sinkPtr` (see generate-jssink.ts).
 /// v3 showed magic=0x0 at GC-sweep finalize — i.e. `m_sinkPtr` was never (or is no
@@ -910,10 +924,46 @@ impl FileSink {
                         64,
                     )
                 };
+                // ── probe v5: decode the slot reuse + recover the deinit backtrace ──
+                // head layout observed in CI matches `UVFSRequest<_, args::Close, _>`:
+                //   @0  u64 tracker.id
+                //   @8  u64 args::Close{fd}  (Fd::from_uv(n) sets bit 63)
+                //   @16 *mut self (req.data)
+                //   @24 u32 req.type_ (uv_req_type; 6 = UV_FS)
+                let w = |i: usize| u64::from_ne_bytes(head[i..i + 8].try_into().unwrap());
+                let fd_raw = w(8);
+                let fd_decoded = if fd_raw & (1u64 << 63) != 0 {
+                    format!("Fd::from_uv({})", (fd_raw & !(1u64 << 63)) as i64)
+                } else {
+                    format!("{fd_raw:#x}")
+                };
+                let req_type = u32::from_ne_bytes(head[24..28].try_into().unwrap());
+                let reuse = if req_type == 6 {
+                    "slot reused by UVFSRequest (uv_req_type=UV_FS)"
+                } else {
+                    "slot reuse type unknown"
+                };
+                #[cfg(debug_assertions)]
+                let freed_bt = FREED_AT
+                    .lock()
+                    .ok()
+                    .and_then(|m| m.get(&(self as *const _ as usize)).cloned())
+                    .unwrap_or_else(|| "<no deinit backtrace recorded>".into());
+                #[cfg(not(debug_assertions))]
+                let freed_bt = String::from("<release build>");
                 panic!(
                     "FileSink::finalize: bad magic {m:#x} (LIVE={:#x} DEAD={:#x}) at self={:p}; \
-                     m_sinkPtr is stale or not-a-FileSink. head[0..64]={:02x?}",
-                    FILESINK_LIVE, FILESINK_DEAD, self as *const _, head,
+                     m_sinkPtr is stale (UAF). head[0..64]={:02x?} | decode: @8 fd={} @16 data={:#x} \
+                     @24 req_type={} ({}) | freed at:\n{}",
+                    FILESINK_LIVE,
+                    FILESINK_DEAD,
+                    self as *const _,
+                    head,
+                    fd_decoded,
+                    w(16),
+                    req_type,
+                    reuse,
+                    freed_bt,
                 );
             }
         }
@@ -925,11 +975,12 @@ impl FileSink {
         // stored in, so no extra `ref_()` there.
         //
         // PORT NOTE: Zig's `FileSink.toJS` does *not* `self.ref()` — it relies
-        // on the caller's existing +1 transferring to the wrapper, and Zig has
-        // no path where both `JSFileSink` and `JSReadable*Controller` finalize
-        // the same `m_sinkPtr` without an intervening `ref()`. The Rust port
-        // makes the per-wrapper +1 explicit so the protocol is locally
-        // verifiable: N wrappers ⇒ N `ref_()` ⇒ N `finalize` ⇒ N `deref()`.
+        // on the caller's existing +1 transferring to the wrapper. The Rust
+        // port makes the per-wrapper +1 explicit so the protocol is locally
+        // verifiable (N wrappers ⇒ N `ref_()` ⇒ N `finalize` ⇒ N `deref()`),
+        // **but** that means callers that allocate via `init`/`create` and
+        // then `to_js()` must `deref()` once to release init's +1 (see
+        // `Blob::get_writer`). #53265 was init's +1 leaking on that path.
 
         // ── #53265/#53570 Windows Strong-corruption probe ────────────────────
         // The shared Strong::Impl::destroy panic tail can't distinguish which
@@ -1122,6 +1173,16 @@ impl FileSink {
         LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
         // SAFETY: caller contract — `this` is valid and uniquely owned.
         let self_ = unsafe { &mut *this };
+        // #53265 probe v5: record the freeing call stack BEFORE poisoning, so a
+        // later finalize-on-stale-m_sinkPtr can name the over-deref site (the
+        // GC-sweep stack at finalize time is uninformative). See `FREED_AT`.
+        #[cfg(all(windows, debug_assertions))]
+        if let Ok(mut m) = FREED_AT.lock() {
+            m.insert(
+                this as usize,
+                std::backtrace::Backtrace::force_capture().to_string(),
+            );
+        }
         #[cfg(windows)]
         self_.magic.set(FILESINK_DEAD);
         // PORT NOTE: pending/readable_stream/js_sink_ref are dropped by Box drop

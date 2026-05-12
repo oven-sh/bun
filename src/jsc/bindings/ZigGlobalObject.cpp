@@ -2502,16 +2502,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
-    m_JSFileSinkClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FileSink);
-            auto* structure = JSFileSink::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSFileSinkConstructor::create(init.vm, init.global, JSFileSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
     m_JSBufferListClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = JSBufferListPrototype::create(

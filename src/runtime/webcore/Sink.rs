@@ -1042,9 +1042,29 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             sys::Result::Err(err) => Err(global.throw_value(err.to_js(global)?)),
         };
 
-        // Protect the JS wrapper from GC while an async operation is pending.
-        if T::HAS_PROTECT_JS_WRAPPER && this.sink.pending_state_is_pending() {
-            this.sink.protect_js_wrapper(global, frame.this());
+        if T::HAS_PROTECT_JS_WRAPPER {
+            if this.sink.pending_state_is_pending() {
+                // Protect the JS wrapper from GC while an async operation is
+                // pending. The wrapper stays attached so `run_pending` can
+                // resolve the Promise; `~JS${name}` → `finalize` releases the
+                // per-wrapper +1 once GC sweeps.
+                this.sink.protect_js_wrapper(global, frame.this());
+            } else {
+                // #53265 defense: `end_from_js` completed synchronously (or
+                // errored). The native sink will receive no further callbacks
+                // on this wrapper's behalf, but `m_sinkPtr` is still set, so a
+                // later GC sweep would call `${name}__finalize` on it — UAF if
+                // any other path over-derefs first. Detach now (null
+                // `m_sinkPtr`, mirroring `${name}__doClose`) and run
+                // `finalize` eagerly to release the per-wrapper +1 that
+                // `to_js`/`construct` took. After this, `~JS${name}` is a
+                // no-op and the wrapper cannot observe a freed native sink.
+                // Gated on `HAS_PROTECT_JS_WRAPPER` (FileSink only) — other
+                // sinks have no async lifetime to defend.
+                T::detach_ptr_extern(frame.this());
+                this.sink.finalize();
+                // `this` may be freed now; do NOT touch it.
+            }
         }
 
         result

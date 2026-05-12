@@ -1891,7 +1891,15 @@ impl BlobExt for Blob {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
-            return Ok(sink_mut.to_js(global_this));
+            // #53265: `FileSink::to_js` takes its own per-wrapper +1 (Rust port
+            // makes this explicit; Zig's `toJS` *transfers* init's +1). Release
+            // init's +1 here so the accounting matches Zig — otherwise the
+            // sink starts at rc=2 and the writer-close path's net deref balance
+            // is off by one against `~JSFileSink`'s `finalize`.
+            let js = sink_mut.to_js(global_this);
+            // SAFETY: `to_js` took a +1; this releases init's +1 (rc ≥ 1 after).
+            unsafe { webcore::FileSink::deref(sink) };
+            return Ok(js);
         }
 
         #[cfg(not(windows))]
@@ -1944,8 +1952,12 @@ impl BlobExt for Blob {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
-            // SAFETY: sink is live; `to_js` transfers ownership to the JS wrapper.
-            Ok(unsafe { (*sink).to_js(global_this) })
+            // SAFETY: sink is live; `to_js` takes its own per-wrapper +1.
+            let js = unsafe { (*sink).to_js(global_this) };
+            // #53265: release init's +1 (see Windows arm above for rationale).
+            // SAFETY: `to_js` took a +1; rc ≥ 1 after this deref.
+            unsafe { webcore::FileSink::deref(sink) };
+            Ok(js)
         }
     }
     fn get_slice_from(

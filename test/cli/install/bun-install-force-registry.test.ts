@@ -106,6 +106,30 @@ describe.concurrent("install.forceRegistry", () => {
     });
   });
 
+  test("project .env cannot inject BUN_CONFIG_FORCE_REGISTRY", async () => {
+    const forced = makeRegistry();
+    const other = makeRegistry();
+    await using _f = forced.server;
+    await using _o = other.server;
+
+    using dir = tempDir("force-registry-dotenv", {
+      "home/.bunfig.toml": `[install]\nforceRegistry = "${forced.url}"\n`,
+      // A checked-in .env tries to hijack the forced registry. Must be
+      // ignored — BUN_CONFIG_FORCE_REGISTRY is read from the real process
+      // environment only, not the DotEnv loader.
+      "project/.env": `BUN_CONFIG_FORCE_REGISTRY=${other.url}\n`,
+      "project/bunfig.toml": `[install]\ncache = false\n`,
+      "project/package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
+    });
+
+    await runInstall(String(dir), makeEnv(String(dir)));
+
+    expect({ forced: forced.hits, other: other.hits }).toEqual({
+      forced: ["/no-deps"],
+      other: [],
+    });
+  });
+
   test("global bunfig forceRegistry overrides .npmrc scoped registry", async () => {
     const forced = makeRegistry();
     const other = makeRegistry();

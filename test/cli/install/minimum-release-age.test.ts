@@ -1974,6 +1974,61 @@ registry = "${mockRegistryUrl}"`,
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
       expect(lockfile).toContain("regular-package@2.1.0");
     });
+
+    // Fail-closed: when we cannot verify a locked version's publish date
+    // against the manifest (e.g. the exact version was unpublished from
+    // the registry after it was resolved into bun.lock), the install must
+    // block rather than silently skip. Otherwise a supply-chain actor
+    // could slip a too-young version past the gate by unpublishing it
+    // and re-publishing under the same number — or by planting a
+    // fabricated entry in a lockfile.
+    test("blocks install when locked version is absent from the manifest", async () => {
+      using dir = tempDir("frozen-lockfile-missing-version", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "2.1.0" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        expect(await proc.exited).toBe(0);
+      }
+
+      // Point bun.lock at a version that the registry's manifest does not
+      // list — the next `bun install` has nothing to check the age against.
+      const lockfilePath = `${dir}/bun.lock`;
+      const original = await Bun.file(lockfilePath).text();
+      await Bun.write(lockfilePath, original.replaceAll("regular-package@2.1.0", "regular-package@99.99.99"));
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "install",
+          "--frozen-lockfile",
+          "--minimum-release-age",
+          `${5 * SECONDS_PER_DAY}`,
+          "--no-verify",
+        ],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("regular-package");
+      expect(stderr).toContain("99.99.99");
+      expect(stderr.toLowerCase()).toContain("minimum release age");
+    });
   });
 
   describe("monorepo with linker modes", () => {

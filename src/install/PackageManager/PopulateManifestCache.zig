@@ -186,17 +186,42 @@ pub fn enforceLockfileAgeFilter(manager: *PackageManager) !void {
         if (resolution.tag != .npm) continue;
 
         const name_str = name.slice(string_buf);
+
+        // Fail closed: if we cannot reach the manifest or locate the exact
+        // pinned version, we cannot prove the version satisfies the cooldown.
+        // Silently skipping would re-open the lockfile bypass this gate is
+        // meant to close (e.g. a version that was unpublished from the
+        // registry, or a manifest fetch that couldn't be completed).
         const manifest = manager.manifests.byNameHash(
             manager,
             manager.scopeForPackageName(name_str),
             name_hash,
             .load_from_memory_fallback_to_disk,
             true,
-        ) orelse continue;
+        ) orelse {
+            if (isExcludedByName(name_str, manager.options.minimum_release_age_excludes)) continue;
+            manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                manager.allocator,
+                "Package \"{s}@{f}\" in lockfile could not be checked against minimum release age (manifest unavailable)",
+                .{ name_str, resolution.value.npm.version.fmt(string_buf) },
+            ) catch bun.outOfMemory();
+            continue;
+        };
 
         if (manifest.shouldExcludeFromAgeFilter(manager.options.minimum_release_age_excludes)) continue;
 
-        const find_result = manifest.findByVersion(resolution.value.npm.version) orelse continue;
+        const find_result = manifest.findByVersion(resolution.value.npm.version) orelse {
+            manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                manager.allocator,
+                "Package \"{s}@{f}\" in lockfile could not be checked against minimum release age (version not in manifest)",
+                .{ name_str, resolution.value.npm.version.fmt(string_buf) },
+            ) catch bun.outOfMemory();
+            continue;
+        };
         if (!Npm.PackageManifest.isPackageVersionTooRecent(find_result.package, min_age_ms)) continue;
 
         manager.log.addErrorFmt(
@@ -211,6 +236,17 @@ pub fn enforceLockfileAgeFilter(manager: *PackageManager) !void {
             },
         ) catch bun.outOfMemory();
     }
+}
+
+/// Mirrors `PackageManifest.shouldExcludeFromAgeFilter` for the code path
+/// where no manifest is available (the manifest lookup above returned null).
+/// Kept in sync with the real check in `src/install/npm.zig`.
+fn isExcludedByName(name: []const u8, exclusions: ?[]const []const u8) bool {
+    const excl = exclusions orelse return false;
+    for (excl) |entry| {
+        if (bun.strings.eql(entry, name)) return true;
+    }
+    return false;
 }
 
 const std = @import("std");

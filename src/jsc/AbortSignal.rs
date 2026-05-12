@@ -213,14 +213,15 @@ impl AbortSignal {
 unsafe impl bun_ptr::ExternalSharedDescriptor for AbortSignal {
     #[inline]
     unsafe fn ext_ref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is a live `WebCore::AbortSignal`.
-        WebCore__AbortSignal__ref(unsafe { &*this });
+        // `opaque_ref` is the centralised ZST-handle deref proof; caller
+        // contract guarantees `this` is a live `WebCore::AbortSignal`.
+        WebCore__AbortSignal__ref(Self::opaque_ref(this));
     }
     #[inline]
     unsafe fn ext_deref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is a live `WebCore::AbortSignal`;
-        // C++ frees the object iff the count reaches zero.
-        WebCore__AbortSignal__unref(unsafe { &*this });
+        // `opaque_ref` is the centralised ZST-handle deref proof; C++ frees
+        // the object iff the count reaches zero.
+        WebCore__AbortSignal__unref(Self::opaque_ref(this));
     }
 }
 

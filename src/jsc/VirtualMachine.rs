@@ -3279,12 +3279,13 @@ impl VirtualMachine {
                     // `global()` is `&'static`, so it survives the `&mut self`
                     // call below.
                     let global_ref = self.global();
-                    // SAFETY: `promise` is a live JSC heap cell.
-                    let result = unsafe { &mut *promise }.result(global_ref.vm());
+                    // `JSPromise` is an `opaque_ffi!` ZST handle; `opaque_mut`
+                    // is the centralised non-null deref proof (live JSC heap
+                    // cell tracked by the VM's strong-ref slot).
+                    let result = crate::JSPromise::opaque_mut(promise).result(global_ref.vm());
                     let promise_js = JSValue::from_cell(promise);
                     self.unhandled_rejection(global_ref, result, promise_js);
-                    // SAFETY: see above.
-                    unsafe { &mut *promise }.set_handled();
+                    crate::JSPromise::opaque_mut(promise).set_handled();
                 }
             }
             crate::js_promise::Status::Fulfilled => {}

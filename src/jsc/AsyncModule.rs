@@ -997,9 +997,9 @@ impl AsyncModule {
         // PORT NOTE: Zig called `this.deinit()` here; in Rust the caller
         // (Queue::retain_mut) returns `false` and Vec drops the element,
         // running Drop.
-        // SAFETY: `promise` is a live `JSInternalPromise*` from
-        // `as_internal_promise`; reborrow for the FFI call only.
-        let _ = unsafe { &mut *promise }.reject_as_handled(global_this, error_instance);
+        // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is
+        // the centralised non-null deref proof.
+        let _ = JSInternalPromise::opaque_mut(promise).reject_as_handled(global_this, error_instance);
         Ok(())
     }
 
@@ -1215,9 +1215,9 @@ impl AsyncModule {
         ));
         // PORT NOTE: Zig called `this.deinit()` here; caller drops via
         // retain_mut → false.
-        // SAFETY: `promise` is a live `JSInternalPromise*` from
-        // `as_internal_promise`; reborrow for the FFI call only.
-        let _ = unsafe { &mut *promise }.reject_as_handled(global_this, error_instance);
+        // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is
+        // the centralised non-null deref proof.
+        let _ = JSInternalPromise::opaque_mut(promise).reject_as_handled(global_this, error_instance);
         Ok(())
     }
 

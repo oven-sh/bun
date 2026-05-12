@@ -494,9 +494,11 @@ impl All {
     }
 
     /// Spec Timer.zig:154-159 `onUVTimer` — libuv timer callback; drain due
-    /// timers then re-arm for the next deadline.
+    /// timers then re-arm for the next deadline. Only ever invoked by libuv
+    /// (coerces to the `uv_timer_cb` fn-pointer type at the `Timer::start`
+    /// call site); body wraps its derefs explicitly.
     #[cfg(windows)]
-    unsafe extern "C" fn on_uv_timer(uv_timer_t: *mut uv::Timer) {
+    extern "C" fn on_uv_timer(uv_timer_t: *mut uv::Timer) {
         // SAFETY: `uv_timer_t` is the address of `All.uv_timer` (libuv passes
         // back exactly the handle pointer we registered in `ensure_uv_timer`);
         // recover the containing `All` via container_of.

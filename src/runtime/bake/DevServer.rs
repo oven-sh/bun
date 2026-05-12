@@ -1620,15 +1620,14 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
 
 // TODO(port): Zig was generic over `T` via `@bitCast([@sizeOf(T)]u8)`. Stable
 // Rust can't size a stack array by a generic `T` without `generic_const_exprs`,
-// so cap the buffer at 16 bytes (enough for u128) and bound on `Copy`.
-pub fn parse_hex_to_int<T: Copy>(slice: &[u8]) -> Option<T> {
+// so cap the buffer at 16 bytes (enough for u128) and bound on `Pod`.
+pub fn parse_hex_to_int<T: bytemuck::Pod>(slice: &[u8]) -> Option<T> {
     let size = ::core::mem::size_of::<T>();
     debug_assert!(size <= 16);
     let mut out = [0u8; 16];
     let decoded = strings::decode_hex_to_bytes(&mut out[..size], slice).ok()?;
     debug_assert!(decoded == size);
-    // SAFETY: out[..size] is fully initialized by decode_hex_to_bytes; T: Copy
-    Some(unsafe { ::core::ptr::read_unaligned(out.as_ptr().cast::<T>()) })
+    Some(bytemuck::pod_read_unaligned::<T>(&out[..size]))
 }
 
 fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
@@ -3438,7 +3437,7 @@ pub struct HotUpdateContext<'a> {
     pub server_to_client_bitset: DynamicBitSet,
     /// Used to reduce calls to the IncrementalGraph hash table.
     /// First half is for client graph, second half for server.
-    pub resolved_index_cache: &'a mut [u32],
+    pub resolved_index_cache: &'a mut [CachedFileIndex],
     /// Used to tell if the server should replace or append import records.
     pub server_seen_bit_set: DynamicBitSet,
     pub gts: &'a mut GraphTraceState,
@@ -3446,8 +3445,8 @@ pub struct HotUpdateContext<'a> {
 
 /// Sentinel-encoded `Option<FileIndex>` packed into a `u32` (`u32::MAX` == none).
 /// Mirrors Zig `IncrementalGraph(side).FileIndex.Optional`. Side-erased so the
-/// `resolved_index_cache: &mut [u32]` backing slice can be reinterpreted in
-/// place; callers re-tag with the correct `FileIndex<SIDE>` on `unwrap`.
+/// `resolved_index_cache` backing slice stores it directly (Zig stored `[]u32`
+/// and bit-cast); callers re-tag with the correct `FileIndex<SIDE>` on `unwrap`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct CachedFileIndex(pub u32);
@@ -3477,18 +3476,7 @@ impl<'a> HotUpdateContext<'a> {
             bake::Side::Server => len,
         };
 
-        let subslice = &mut self.resolved_index_cache[start..][..len];
-
-        const _: () = assert!(
-            ::core::mem::align_of::<CachedFileIndex>() == ::core::mem::align_of::<u32>()
-        );
-        const _: () = assert!(
-            ::core::mem::size_of::<CachedFileIndex>() == ::core::mem::size_of::<u32>()
-        );
-        let elem: &mut u32 = &mut subslice[i.get() as usize];
-        // SAFETY: CachedFileIndex is repr(transparent) over u32; pointer derived
-        // from a unique `&mut u32` so the resulting `&mut` is non-aliased.
-        unsafe { &mut *std::ptr::from_mut::<u32>(elem).cast::<CachedFileIndex>() }
+        &mut self.resolved_index_cache[start..][..len][i.get() as usize]
     }
 }
 
@@ -3635,7 +3623,7 @@ pub fn finalize_bundle(
     }
 
     let mut resolved_index_cache = vec![
-        CachedFileIndex::NONE.raw();
+        CachedFileIndex::NONE;
         input_file_sources.len() * 2
     ];
 

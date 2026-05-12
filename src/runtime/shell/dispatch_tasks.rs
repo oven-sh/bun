@@ -38,11 +38,13 @@ pub struct ShellAsyncSubprocessDone {
 impl ShellAsyncSubprocessDone {
     /// Spec: interpreter.zig `ShellAsyncSubprocessDone.runFromMainThread`.
     ///
-    /// # Safety
-    /// `this` is the live `heap::alloc` payload enqueued by
-    /// `ShellSubprocess::on_process_exit`.
-    pub unsafe fn run_from_main_thread(this: *mut Self) {
-        // SAFETY: caller contract; `interp` outlives every spawned subprocess.
+    /// Reached only via `runtime::dispatch::run_task` for
+    /// `task_tag::ShellAsyncSubprocessDone`, which always passes the
+    /// `heap::alloc` payload enqueued by `ShellSubprocess::on_process_exit`.
+    pub fn run_from_main_thread(this: *mut Self) {
+        // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
+        // enqueued by `ShellSubprocess::on_process_exit`; `interp` outlives
+        // every spawned subprocess.
         let (owned, interp) = unsafe {
             let owned = bun_core::heap::take(this);
             let interp = &*owned.interp;
@@ -62,11 +64,12 @@ pub struct AsyncDeinitWriter {
 }
 
 impl AsyncDeinitWriter {
-    /// # Safety
-    /// `this` is the live `heap::alloc` payload enqueued by
-    /// `IOWriter::async_deinit`.
-    pub unsafe fn run_from_main_thread(this: *mut Self) {
-        // SAFETY: caller contract.
+    /// Reached only via `runtime::dispatch::run_task` for
+    /// `task_tag::ShellIOWriterAsyncDeinit`, which always passes the
+    /// `heap::alloc` payload enqueued by `IOWriter::async_deinit`.
+    pub fn run_from_main_thread(this: *mut Self) {
+        // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
+        // enqueued by `IOWriter::async_deinit`.
         let owned = unsafe { bun_core::heap::take(this) };
         crate::shell::io_writer::IOWriter::deinit_on_main_thread(owned.writer);
     }
@@ -80,11 +83,12 @@ pub struct AsyncDeinitReader {
 }
 
 impl AsyncDeinitReader {
-    /// # Safety
-    /// `this` is the live `heap::alloc` payload enqueued by
-    /// `IOReader::async_deinit`.
-    pub unsafe fn run_from_main_thread(this: *mut Self) {
-        // SAFETY: caller contract.
+    /// Reached only via `runtime::dispatch::run_task` for
+    /// `task_tag::ShellIOReaderAsyncDeinit`, which always passes the
+    /// `heap::alloc` payload enqueued by `IOReader::async_deinit`.
+    pub fn run_from_main_thread(this: *mut Self) {
+        // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
+        // enqueued by `IOReader::async_deinit`.
         let owned = unsafe { bun_core::heap::take(this) };
         crate::shell::io_reader::IOReader::deinit_on_main_thread(owned.reader);
     }

@@ -642,9 +642,11 @@ impl WindowsNamedPipe {
 
     /// `extern "C"` trampoline matching `uv_connect_cb` (`Pipe::connect`'s
     /// `on_connect` parameter). Recovers `*mut Self` from `req->data` (set in
-    /// `connect()`) and forwards to the safe `&mut self` body.
+    /// `connect()`) and forwards to the safe `&mut self` body. Only ever
+    /// invoked by libuv (coerces to the `uv_connect_cb` fn-pointer type at the
+    /// `Pipe::connect` call site); body wraps its derefs explicitly.
     #[cfg(windows)]
-    unsafe extern "C" fn uv_on_connect(req: *mut uv::uv_connect_t, status: uv::ReturnCode) {
+    extern "C" fn uv_on_connect(req: *mut uv::uv_connect_t, status: uv::ReturnCode) {
         // SAFETY: `req` is the `&mut self.connect_req` we passed to
         // `Pipe::connect`; `req->data` was set to `self as *mut Self` and the
         // owning struct is kept alive by the `r#ref()` taken before the call.

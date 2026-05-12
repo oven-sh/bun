@@ -1508,11 +1508,13 @@ impl DirTask {
 
     /// Spec: rm.zig `DirTask.runFromMainThread` — flush verbose output.
     ///
-    /// # Safety
-    /// `this` is a live DirTask posted via [`queue_for_write`]; main thread.
-    pub unsafe fn run_from_main_thread(this: *mut DirTask) {
-        // SAFETY: caller contract; pending count keeps `task_manager` alive;
-        // `interp` set at create.
+    /// Reached only via `runtime::dispatch::run_task` for
+    /// `task_tag::ShellRmDirTask` (or the mini-loop trampoline below), which
+    /// always passes a live DirTask posted via [`queue_for_write`].
+    pub fn run_from_main_thread(this: *mut DirTask) {
+        // SAFETY: dispatch contract — `this` is a live DirTask posted via
+        // `queue_for_write`; pending count keeps `task_manager` alive; `interp`
+        // set at create.
         let (interp, cmd) = unsafe {
             let tm = (*this).task_manager;
             (&*(*tm).task.interp, (*tm).cmd)
@@ -1536,8 +1538,7 @@ impl DirTask {
 }
 
 fn dir_task_run_from_main_thread_mini(this: *mut DirTask, _: *mut ()) {
-    // SAFETY: mini-loop dispatch on main thread.
-    unsafe { DirTask::run_from_main_thread(this) };
+    DirTask::run_from_main_thread(this);
 }
 
 // ── RemoveFileHandler — Zig `vtable: anytype` lowered to a trait ───────────

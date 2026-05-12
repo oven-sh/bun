@@ -183,11 +183,9 @@ impl IOWriter {
     /// (`// this is unused`). Kept only because `task_tag::ShellIOWriter`
     /// exists in the Zig task-tag enum and the Rust dispatch table mirrors it.
     /// No code path enqueues this tag.
-    ///
-    /// # Safety
-    /// `this` must point to a live `IOWriter`.
-    pub unsafe fn run_from_main_thread(_this: *mut IOWriter) {
-        // intentionally empty — see spec.
+    pub fn run_from_main_thread(_this: *mut IOWriter) {
+        // intentionally empty — see spec. No unsafe operations; the pointer
+        // is never dereferenced.
     }
 
     /// Spec: IOWriter.zig `__deinit` (the body `AsyncDeinitWriter` posts back

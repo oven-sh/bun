@@ -1575,13 +1575,20 @@ impl WindowsNamedPipeListeningContext {
 
     /// `uv_connection_cb` trampoline — recovers `*Self` from `handle.data`
     /// (set by `Pipe::listen`) and forwards to [`on_client_connect`].
-    unsafe extern "C" fn uv_on_client_connect(handle: *mut uv::uv_stream_t, status: uv::ReturnCode) {
+    /// Only ever invoked by libuv (coerces to the `uv_connection_cb` fn-pointer
+    /// type at the `Pipe::listen_named_pipe` call site); body wraps its derefs
+    /// explicitly — matches the `extern "C" fn` callback convention used in
+    /// `udp_socket.rs` / `bun_io::PipeReader`.
+    extern "C" fn uv_on_client_connect(handle: *mut uv::uv_stream_t, status: uv::ReturnCode) {
         // SAFETY: `data` was set to `*mut Self` by `Pipe::listen` below.
         let this = unsafe { (*handle).data.cast::<WindowsNamedPipeListeningContext>() };
         Self::on_client_connect(this, status);
     }
 
-    unsafe extern "C" fn on_pipe_closed(pipe: *mut uv::Pipe) {
+    /// `uv_close_cb` trampoline. Only ever invoked by libuv (coerces to the
+    /// `uv_close_cb` fn-pointer type at the `Pipe::close` call site); body
+    /// wraps its deref explicitly.
+    extern "C" fn on_pipe_closed(pipe: *mut uv::Pipe) {
         // SAFETY: `pipe.data` was set to `this` in `close_pipe_and_deinit`.
         let this = unsafe { (*pipe).data.cast::<WindowsNamedPipeListeningContext>() };
         Self::deinit(this);

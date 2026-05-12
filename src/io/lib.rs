@@ -115,12 +115,15 @@ impl EventLoopCtx {
     /// across this borrow (resolver-style accessor; the loop is per-thread).
     #[inline]
     pub unsafe fn platform_event_loop(&self) -> &mut bun_uws_sys::Loop {
-        unsafe { &mut *self.platform_event_loop_ptr() }
+        // Route through the single nonnull-asref accessor below; the `unsafe`
+        // on this fn's signature is the caller-side aliasing contract — the
+        // body itself needs no extra `unsafe`.
+        self.loop_mut()
     }
     /// SAFETY: same aliasing hazard as [`platform_event_loop`].
     #[inline]
     pub unsafe fn file_polls(&self) -> &mut Store {
-        unsafe { &mut *self.file_polls_ptr() }
+        self.file_polls_mut()
     }
 
     // ── safe leaf wrappers (nonnull-asref) ──────────────────────────────
@@ -148,6 +151,38 @@ impl EventLoopCtx {
         // before returning — see block comment above.
         unsafe { &mut *self.platform_event_loop_ptr() }
     }
+    /// Single backref-deref accessor for the per-thread `Store`. Same contract
+    /// as [`loop_mut`]: `pub(crate)`, `&self → &mut`, must NOT be called while
+    /// another `&mut Store` (or a `&mut FilePoll` that lives inside the inline
+    /// hive buffer) is live. Every in-crate caller is a leaf op that decays
+    /// any conflicting `&mut FilePoll` to a raw slot pointer first
+    /// (`deinit_possibly_defer`) or holds none (`init_with_owner`,
+    /// `alloc_file_poll`), so no two `&mut Store` ever coexist.
+    #[inline]
+    pub(crate) fn file_polls_mut(&self) -> &mut Store {
+        // SAFETY: per-thread set-once pointer (`BackRef`-shaped); the event
+        // loop is single-threaded so no concurrent `&mut Store` exists, and
+        // every crate-internal caller upholds the leaf-op / decayed-slot
+        // discipline above — see block comment.
+        unsafe { &mut *self.file_polls_ptr() }
+    }
+    /// Single nonnull-asref accessor for the per-loop pipe-read scratch
+    /// buffer. Same contract as [`loop_mut`]: `pub(crate)`, the buffer is a
+    /// per-thread set-once allocation owned by the VM/Mini loop, and the
+    /// event loop is single-threaded, so no second `&mut [u8]` to it can be
+    /// live. Every in-crate caller (`PipeReader::read_*`) uses it for one
+    /// blocking syscall and drops the borrow before re-entering the loop.
+    /// `'static` matches the unbounded lifetime the inline raw-ptr derefs at
+    /// the call sites already produced; collapses their N identical
+    /// `&mut *ctx.pipe_read_buffer()` derefs into this one block.
+    #[inline]
+    pub(crate) fn pipe_read_buffer_mut(&self) -> &'static mut [u8] {
+        // SAFETY: per-thread set-once scratch buffer (`BackRef`-shaped); the
+        // event loop is single-threaded so this is the sole live `&mut`, and
+        // every crate-internal caller drops the borrow before any path that
+        // could re-derive it — see doc comment above.
+        unsafe { &mut *self.pipe_read_buffer() }
+    }
     #[inline]
     pub fn loop_ref(&self) { self.loop_mut().ref_(); }
     #[inline]
@@ -163,8 +198,7 @@ impl EventLoopCtx {
     #[cfg(not(windows))]
     #[inline]
     pub fn alloc_file_poll(&self, value: FilePoll) -> core::ptr::NonNull<FilePoll> {
-        // SAFETY: per-thread set-once pointer; sole `&mut Store` for this call.
-        unsafe { &mut *self.file_polls_ptr() }.get_init(value)
+        self.file_polls_mut().get_init(value)
     }
 
     #[inline]

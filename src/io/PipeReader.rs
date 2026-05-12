@@ -627,10 +627,9 @@ impl PosixBufferedReader {
             let mut got_retry = false;
 
             if parent._buffer.capacity() == 0 {
-                // Use stack buffer for streaming
-                // SAFETY: per-loop scratch buffer; single-threaded event loop,
-                // sole live `&mut` for the read below.
-                let stack_buffer = unsafe { &mut *parent.vtable.event_loop().pipe_read_buffer() };
+                // Use stack buffer for streaming — per-loop scratch buffer;
+                // single-threaded event loop (see `EventLoopCtx::pipe_read_buffer_mut`).
+                let stack_buffer = parent.vtable.event_loop().pipe_read_buffer_mut();
 
                 match sys::read_nonblocking(fd, stack_buffer) {
                     sys::Result::Ok(bytes_read) => {
@@ -815,9 +814,9 @@ impl PosixBufferedReader {
         let streaming = parent.vtable.is_streaming_enabled();
 
         if streaming {
-            // SAFETY: per-loop scratch buffer; single-threaded event loop,
-            // sole live `&mut` for the read below.
-            let stack_buffer = unsafe { &mut *parent.vtable.event_loop().pipe_read_buffer() };
+            // Per-loop scratch buffer; single-threaded event loop (see
+            // `EventLoopCtx::pipe_read_buffer_mut`).
+            let stack_buffer = parent.vtable.event_loop().pipe_read_buffer_mut();
             let stack_buffer_len = stack_buffer.len();
             while parent._buffer.capacity() == 0 {
                 let stack_buffer_cutoff = stack_buffer_len / 2;
@@ -927,9 +926,9 @@ impl PosixBufferedReader {
             }
         } else if parent._buffer.capacity() == 0 && parent._offset == 0 {
             // Avoid a 16 KB dynamic memory allocation when the buffer might very well be empty.
-            // SAFETY: per-loop scratch buffer; single-threaded event loop,
-            // sole live `&mut` for the read below.
-            let stack_buffer = unsafe { &mut *parent.vtable.event_loop().pipe_read_buffer() };
+            // Per-loop scratch buffer; single-threaded event loop (see
+            // `EventLoopCtx::pipe_read_buffer_mut`).
+            let stack_buffer = parent.vtable.event_loop().pipe_read_buffer_mut();
 
             // Unlike the block of code following this one, only handle the non-streaming case.
             debug_assert!(!streaming);
@@ -1066,10 +1065,13 @@ impl Drop for PosixBufferedReader {
 // SAFETY helper: view Vec spare capacity as &mut [u8] for syscall reads.
 #[inline]
 unsafe fn spare_capacity_as_slice(v: &mut Vec<u8>) -> &mut [u8] {
-    let len = v.len();
-    let cap = v.capacity();
-    // SAFETY: caller promises to only treat the prefix the syscall wrote as initialized.
-    core::slice::from_raw_parts_mut(v.as_mut_ptr().add(len), cap - len)
+    // Use the safe stdlib accessor for the (ptr, len) bounds; the only unsafe
+    // step is the `MaybeUninit<u8> → u8` element reinterpret, which is sound
+    // because (a) `u8` has no invalid bit patterns and (b) callers treat only
+    // the syscall-written prefix as initialized (via `set_len`).
+    let spare = v.spare_capacity_mut();
+    // SAFETY: `MaybeUninit<u8>` and `u8` have identical layout; see above.
+    unsafe { &mut *(spare as *mut [core::mem::MaybeUninit<u8>] as *mut [u8]) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -17,10 +17,14 @@ pub type Tty = uv::uv_tty_t;
 
 pub enum Source {
     Pipe(Box<Pipe>),
-    /// `NonNull` not `Box`: the stdin tty (fd 0) lives in static storage
+    /// `BackRef` not `Box`: the stdin tty (fd 0) lives in static storage
     /// (`stdin_tty::value()`), and Box-from-static is UB. Heap-allocated ttys
     /// use `heap::alloc`; destroy paths gate `heap::take` on `!is_stdin_tty()`.
-    Tty(core::ptr::NonNull<Tty>),
+    /// In both cases the `Tty` strictly outlives every `Source` that holds it
+    /// (process-static, or freed only by the libuv close callback after the
+    /// `Source` is dropped), so the `BackRef` invariant holds and `Deref`
+    /// yields `&Tty` without a per-site `unsafe`.
+    Tty(bun_ptr::BackRef<Tty>),
     File(Box<File>),
     SyncFile(Box<File>),
 }
@@ -196,14 +200,23 @@ impl File {
 }
 
 impl Source {
-    // SAFETY helper: Tty arm holds NonNull; ptr is live for the Source's lifetime.
-    #[inline] fn tty_ref(tty: &core::ptr::NonNull<Tty>) -> &Tty { unsafe { tty.as_ref() } }
-    #[inline] fn tty_mut(tty: &mut core::ptr::NonNull<Tty>) -> &mut Tty { unsafe { tty.as_mut() } }
+    /// Exclusive borrow of the `Tty` arm. `BackRef` already gives safe `Deref`
+    /// for shared reads; mutation still needs the per-site exclusivity
+    /// guarantee (single-threaded uv loop, no other `&Tty` live), so this
+    /// remains the one centralised `unsafe` for tty mutation.
+    #[inline]
+    fn tty_mut(tty: &mut bun_ptr::BackRef<Tty>) -> &mut Tty {
+        // SAFETY: `BackRef` invariant guarantees liveness/alignment; the uv
+        // loop is single-threaded and `&mut Source` (or the sole `BackRef`
+        // returned from `open_tty`) is the only access path, so no `&Tty`
+        // overlaps this `&mut Tty`.
+        unsafe { tty.get_mut() }
+    }
 
     pub fn is_closed(&self) -> bool {
         match self {
             Source::Pipe(pipe) => pipe.is_closed(),
-            Source::Tty(tty) => Self::tty_ref(tty).is_closed(),
+            Source::Tty(tty) => tty.is_closed(),
             Source::SyncFile(file) | Source::File(file) => file.file == -1,
         }
     }
@@ -211,7 +224,7 @@ impl Source {
     pub fn is_active(&self) -> bool {
         match self {
             Source::Pipe(pipe) => pipe.is_active(),
-            Source::Tty(tty) => Self::tty_ref(tty).is_active(),
+            Source::Tty(tty) => tty.is_active(),
             Source::SyncFile(_) | Source::File(_) => true,
         }
     }
@@ -242,7 +255,7 @@ impl Source {
             // Windows); tag kind=system so callers can round-trip through
             // `Fd::native()`.
             Source::Pipe(pipe) => Fd::from_system(pipe.fd()),
-            Source::Tty(tty) => Fd::from_system(Self::tty_ref(tty).fd()),
+            Source::Tty(tty) => Fd::from_system(tty.fd()),
             Source::SyncFile(file) | Source::File(file) => Fd::from_uv(file.file),
         }
     }
@@ -258,7 +271,7 @@ impl Source {
     pub fn get_data(&self) -> *mut c_void {
         match self {
             Source::Pipe(pipe) => pipe.data,
-            Source::Tty(tty) => Self::tty_ref(tty).data,
+            Source::Tty(tty) => tty.data,
             Source::SyncFile(file) | Source::File(file) => file.fs.data,
         }
     }
@@ -282,7 +295,7 @@ impl Source {
     pub fn has_ref(&self) -> bool {
         match self {
             Source::Pipe(pipe) => pipe.has_ref(),
-            Source::Tty(tty) => Self::tty_ref(tty).has_ref(),
+            Source::Tty(tty) => tty.has_ref(),
             Source::SyncFile(_) | Source::File(_) => false,
         }
     }
@@ -308,7 +321,7 @@ impl Source {
         bun_sys::Result::Ok(pipe)
     }
 
-    pub fn open_tty(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<core::ptr::NonNull<Tty>> {
+    pub fn open_tty(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<bun_ptr::BackRef<Tty>> {
         bun_core::scoped_log!(PipeSource,"openTTY (fd = {})", fd);
 
         let uv_fd = fd.uv();
@@ -323,7 +336,11 @@ impl Source {
             return bun_sys::Result::Err(err);
         }
 
-        bun_sys::Result::Ok(bun_core::heap::into_raw_nn(tty))
+        // Heap-allocated tty: ownership is handed to libuv (the close callback
+        // `heap::take`s it). The `BackRef` invariant — pointee outlives every
+        // holder — is upheld because the only holder is the `Source::Tty` arm,
+        // which is dropped before the close callback fires.
+        bun_sys::Result::Ok(bun_ptr::BackRef::from(bun_core::heap::into_raw_nn(tty)))
     }
 
     pub fn open_file(fd: Fd) -> Box<File> {
@@ -416,7 +433,7 @@ pub mod stdin_tty {
         core::ptr::eq(tty, value())
     }
 
-    pub(super) fn get_stdin_tty(loop_: *mut uv::Loop) -> bun_sys::Result<core::ptr::NonNull<Tty>> {
+    pub(super) fn get_stdin_tty(loop_: *mut uv::Loop) -> bun_sys::Result<bun_ptr::BackRef<Tty>> {
         // Zig spec (source.zig:247-248): `lock.lock(); defer lock.unlock();`
         // bun_threading::Mutex::lock() returns `()` — must use lock_guard() for RAII
         // unlock-on-drop, otherwise the mutex is held forever and the next call
@@ -433,9 +450,9 @@ pub mod stdin_tty {
         }
 
         // Destroy path must gate `heap::take` on `!is_stdin_tty(ptr)`.
-        bun_sys::Result::Ok(
+        bun_sys::Result::Ok(bun_ptr::BackRef::from(
             core::ptr::NonNull::new(value()).expect("stdin_tty value() is a process-global static"),
-        )
+        ))
     }
 }
 

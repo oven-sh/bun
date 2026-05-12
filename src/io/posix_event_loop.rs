@@ -509,14 +509,13 @@ impl FilePoll {
         // `&mut Store` taken while `&mut self` is live would assert unique
         // access over the slot and invalidate `self`'s tag (Stacked Borrows).
         // Decay `self` to a raw slot pointer first, *then* materialise the
-        // `&mut Store` via the safe raw-pointer accessor + a single deref.
+        // `&mut Store` via the crate-private backref-deref accessor.
         let this: *mut FilePoll = std::ptr::from_mut::<FilePoll>(self);
-        let polls: *mut Store = vm.file_polls_ptr();
-        // SAFETY: `polls` is the per-thread set-once `Store` back-pointer
-        // (`BackRef`-shaped); no other `&mut Store` is live in this scope and
-        // `&mut self` has been retired to `this` above. `Store::put` itself
-        // touches `this` only via raw-pointer ops.
-        unsafe { (*polls).put(this, vm, was_ever_registered) };
+        // `file_polls_mut()` is the per-thread set-once `Store` back-pointer
+        // (`BackRef`-shaped); `&mut self` has been retired to `this` above so
+        // the `&mut Store` it produces is the sole unique borrow into the hive.
+        // `Store::put` itself touches `this` only via raw-pointer ops.
+        vm.file_polls_mut().put(this, vm, was_ever_registered);
     }
 
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {

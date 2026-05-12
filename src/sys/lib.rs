@@ -3490,9 +3490,11 @@ impl File {
         loop {
             if buf.capacity() == buf.len() { buf.reserve(8192); }
             let spare = buf.spare_capacity_mut();
-            // SAFETY: read() writes initialized bytes; we set_len to exactly what was written.
+            // SAFETY: `MaybeUninit<u8>` ↔ `u8` are layout-identical; read() only
+            // writes (never reads) into this region and we set_len to exactly
+            // the byte count it reports.
             let n = read(self.handle, unsafe {
-                core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast(), spare.len())
+                &mut *(spare as *mut [core::mem::MaybeUninit<u8>] as *mut [u8])
             })?;
             if n == 0 { return Ok(buf.len() - start); }
             unsafe { buf.set_len(buf.len() + n); }
@@ -3542,9 +3544,11 @@ impl File {
         loop {
             if buf.capacity() == buf.len() { buf.reserve(16); }
             let spare = buf.spare_capacity_mut();
-            // SAFETY: pread()/read() write initialized bytes; we set_len to exactly what was written.
+            // SAFETY: `MaybeUninit<u8>` ↔ `u8` are layout-identical; pread()/read()
+            // only write (never read) into this region and we set_len to exactly
+            // the byte count reported.
             let dst = unsafe {
-                core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), spare.len())
+                &mut *(spare as *mut [core::mem::MaybeUninit<u8>] as *mut [u8])
             };
             #[cfg(unix)]
             let n = pread(self.handle, dst, total)?;
@@ -6299,8 +6303,10 @@ pub fn environ() -> &'static [*const c_char] {
         // process lifetime so `'static` here is sound.
         // SAFETY: written exactly once at startup before any reader runs.
         let s = unsafe { bun_core::os::environ() };
-        // SAFETY: `[*mut c_char]` → `[*const c_char]` is a layout-identical reinterpret.
-        unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<*const c_char>(), s.len()) }
+        // SAFETY: `*mut c_char` and `*const c_char` have identical layout; the
+        // fat-pointer cast preserves the original slice's (ptr, len) metadata
+        // exactly instead of re-deriving it.
+        unsafe { &*(s as *const [*mut c_char] as *const [*const c_char]) }
     }
 }
 

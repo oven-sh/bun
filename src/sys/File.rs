@@ -308,13 +308,13 @@ impl File {
                 list.reserve(16);
             }
 
-            // SAFETY: u8 has no invalid bit patterns; the read syscall only writes
-            // initialized bytes into this region, and we set_len to exactly the
-            // number of bytes written below.
-            let spare = unsafe {
-                let s = list.spare_capacity_mut();
-                core::slice::from_raw_parts_mut(s.as_mut_ptr().cast::<u8>(), s.len())
-            };
+            // Safe accessor gives us `&mut [MaybeUninit<u8>]`; the only unsafe
+            // step is the `MaybeUninit<u8> → u8` element reinterpret, sound
+            // because `u8` has no invalid bit patterns and the read syscall
+            // only writes initialized bytes (we `set_len` to exactly that count).
+            let s = list.spare_capacity_mut();
+            // SAFETY: `MaybeUninit<u8>` and `u8` have identical layout; see above.
+            let spare = unsafe { &mut *(s as *mut [core::mem::MaybeUninit<u8>] as *mut [u8]) };
 
             #[cfg(unix)]
             let rc = sys::pread(self.handle, spare, total);

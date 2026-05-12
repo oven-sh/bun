@@ -777,10 +777,12 @@ pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize> {
 pub fn writev(fd: Fd, bufs: &[PlatformIOVec]) -> Result<usize> {
     // TODO(port): Zig signature is `[]bun.PlatformIOVec` (mutable) but pwritev takes
     // `[]const bun.PlatformIOVecConst`; on Windows both alias uv_buf_t. Reconcile in Phase B.
-    // SAFETY: PlatformIOVec and PlatformIOVecConst have identical repr on Windows.
-    let const_bufs = unsafe {
-        core::slice::from_raw_parts(bufs.as_ptr().cast::<PlatformIOVecConst>(), bufs.len())
-    };
+    // SAFETY: `PlatformIOVec` (= `uv_buf_t`) and `PlatformIOVecConst` are
+    // layout-identical on Windows (size/align asserted in lib.rs); the
+    // fat-pointer cast preserves the original slice's (ptr, len) metadata
+    // exactly instead of re-deriving it.
+    let const_bufs =
+        unsafe { &*(bufs as *const [PlatformIOVec] as *const [PlatformIOVecConst]) };
     pwritev(fd, const_bufs, -1)
 }
 

@@ -215,8 +215,8 @@ impl FilePoll {
         flags: FlagsStruct,
         owner: Owner,
     ) -> *mut FilePoll {
-        // SAFETY: vtable contract — single live `&mut Store` borrow.
-        let poll = unsafe { vm.file_polls() }.get();
+        // Crate-private backref-deref accessor — single live `&mut Store` borrow.
+        let poll = vm.file_polls_mut().get();
         // SAFETY: `get()` returns a valid, uniquely-owned, *uninitialized* slot from the
         // HiveArray pool. We must not materialize `&mut FilePoll` (validity invariant
         // requires initialized memory); write the whole value through the raw pointer.
@@ -260,16 +260,7 @@ impl FilePoll {
         true
     }
 
-    fn deinit_possibly_defer(
-        &mut self,
-        vm: EventLoopCtx,
-        loop_: &mut WindowsLoop,
-        // Raw `*mut Store`, NOT `&mut Store`: `self` may live inside
-        // `Store.hive`'s inline 128-slot buffer, so a `&mut Store` argument here
-        // would overlap `&mut self` (two aliasing unique references in one call).
-        // Zig `*Store`/`*FilePoll` alias freely; mirror that with a raw pointer.
-        polls: *mut Store,
-    ) {
+    fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, loop_: &mut WindowsLoop) {
         if self.is_registered() {
             let _ = self.unregister(loop_);
         }
@@ -283,9 +274,10 @@ impl FilePoll {
         // that allocation when `Store::put` runs. `self` is never touched after
         // this line — `Store::put` itself accesses `this` only via raw-pointer ops.
         let this: *mut FilePoll = ptr::from_mut(self);
-        // SAFETY: `polls` was obtained from `vm.file_polls_ptr()`; the Store
-        // outlives all FilePolls it vends. No other `&mut Store` borrow is live.
-        unsafe { (*polls).put(this, vm, was_ever_registered) };
+        // `file_polls_mut()` is the per-thread set-once `Store` back-pointer
+        // (`BackRef`-shaped); `&mut self` has been retired to `this` above so
+        // the `&mut Store` it produces is the sole unique borrow into the hive.
+        vm.file_polls_mut().put(this, vm, was_ever_registered);
     }
 
     pub fn is_readable(&mut self) -> bool {
@@ -319,15 +311,11 @@ impl FilePoll {
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
         // `loop_mut()` — crate-private nonnull-asref accessor (single deref in
         // `EventLoopCtx`); the uws loop is a disjoint allocation from `self`.
-        let loop_ = vm.loop_mut();
         // Stacked-Borrows: `self` may live inside `Store.hive`'s inline buffer,
-        // so materializing `&mut Store` here (via `vm.file_polls()`) would assert
-        // unique access over that buffer and invalidate `&mut self`'s provenance
-        // *before* we reborrow it on the next line. Keep the Store as a raw
-        // pointer until after all `self` mutations are done inside
-        // `deinit_possibly_defer` (Zig: `vm.rareData().filePolls(vm)` aliases freely).
-        let polls: *mut Store = vm.file_polls_ptr();
-        self.deinit_possibly_defer(vm, loop_, polls);
+        // so `&mut Store` is materialised only *after* `&mut self` is retired
+        // inside `deinit_possibly_defer` (via `file_polls_mut()`).
+        let loop_ = vm.loop_mut();
+        self.deinit_possibly_defer(vm, loop_);
     }
 
     pub fn enable_keeping_process_alive(&mut self, vm: EventLoopCtx) {

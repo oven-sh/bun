@@ -2748,7 +2748,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if let Some(import_source) = self.lexer.jsx_pragma.jsx_import_source() {
             // SAFETY: Span.text is `ArenaStr` valid for 'a.
             let text = import_source.text.slice();
-            self.options.jsx.classic_import_source = Box::from(text);
+            self.options.jsx.classic_import_source = text.to_vec().into();
             self.options.jsx.package_name = self.options.jsx.classic_import_source.clone();
             self.options.jsx.set_import_source();
         }
@@ -3186,12 +3186,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // the original `&mut` would pop `scope_nn`'s tag off the borrow stack
         // (Stacked Borrows); going `&mut → NonNull → *mut` avoids that — every
         // later deref/store comes from `scope_nn` / `scope_ptr` only.
+        // `..Scope::EMPTY` (a `const`) instead of `..Default::default()` so the
+        // remaining fields are filled from a compile-time value: no temporary
+        // `Scope` is built via the `Default` chain and then partially dropped,
+        // and the `members`/`children`/`generated` empty headers const-fold.
+        // This runs once per pushed scope (every block/fn/class body).
         let scope_nn: NonNull<Scope> = NonNull::from(arena.alloc(Scope {
             kind: KIND,
-            label_ref: None,
             parent: Some(parent_nn.into()),
-            generated: bun_alloc::AstAlloc::vec(),
-            ..Default::default()
+            ..Scope::EMPTY
         }));
         let scope_ptr: *mut Scope = scope_nn.as_ptr();
         // SAFETY: fresh arena allocation; the `&mut` is a child of `scope_ptr`'s
@@ -4254,26 +4257,42 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // Allocate a new symbol
         let mut ref_ = self.new_symbol(kind, name)?;
 
-        // PORT NOTE: reshaped for Stacked Borrows — Zig holds the getOrPut entry
-        // across the canMergeSymbols call. In Rust that required an aliased
-        // `&mut *self.current_scope` / `&*self.current_scope` pair on the same
-        // object, which is UB (creating the shared ref invalidates the unique
-        // tag, so the trailing `*entry.value_ptr = ..` writes through an
-        // invalidated borrow). Instead: read the existing member (if any) under
-        // a short-lived shared borrow, compute the merge, then take a fresh
-        // &mut to write the member back. Two probes instead of one;
-        // PERF(port): single-probe getOrPut — profile in Phase B.
-        let existing_member: Option<js_ast::scope::Member> =
-            self.current_scope().members.get(name).copied();
-        if let Some(existing) = existing_member {
+        // Single-probe `getOrPut`, matching Zig. The previous two-probe shape
+        // (`members.get` then `members.put_borrowed`) existed only because the
+        // merge decision read `self.current_scope()` while the entry borrow was
+        // live, which under Stacked Borrows invalidated the entry's `&mut`.
+        // That coupling is gone: `can_merge_symbol_kinds` is an associated fn
+        // taking the scope `Kind` by value, so we copy `scope.kind` out before
+        // taking the entry, and every other read inside the match
+        // (`self.symbols`, `self.log()`, `self.source`) touches `P` fields
+        // disjoint from the arena `Scope` the entry borrows. Deriving the
+        // `&mut Scope` directly from the raw `current_scope` pointer (not via
+        // `current_scope_mut`, which would tie it to `&mut self`) is what lets
+        // borrowck see that disjointness.
+        //
+        // SAFETY (scope deref): `current_scope` is an arena-owned non-null
+        // pointer (see `current_scope_mut`); nothing below re-derives a
+        // reference to `*self.current_scope` while `entry` is live.
+        // SAFETY (key lifetime): `name: &'a [u8]` points into source text or
+        // the lexer string-table, both of which outlive the arena-owned
+        // `Scope` — see `Scope::get_or_put_member_with_hash`.
+        let scope: &mut js_ast::Scope = unsafe { &mut *self.current_scope };
+        let scope_kind = scope.kind;
+        let entry = unsafe { scope.members.get_or_put_borrowed(name) };
+        if entry.found_existing {
+            let existing: js_ast::scope::Member = *entry.value_ptr;
             let symbol_idx = existing.ref_.inner_index() as usize;
 
             if !IS_GENERATED {
                 use js_ast::scope::SymbolMergeResult as MR;
-                let merge = self.current_scope()
-                    .can_merge_symbols::<TYPESCRIPT>(self.symbols[symbol_idx].kind, kind);
+                let merge = js_ast::Scope::can_merge_symbol_kinds::<TYPESCRIPT>(
+                    scope_kind,
+                    self.symbols[symbol_idx].kind,
+                    kind,
+                );
                 match merge {
                     MR::Forbidden => {
+                        // Entry already holds `existing`; leave it untouched.
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let orig = self.symbols[symbol_idx].original_name.slice();
                         self.log().add_symbol_already_declared_error(
@@ -4309,16 +4328,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 self.symbols[ref_.inner_index() as usize].link.set(existing.ref_);
             }
         }
-        // PORT NOTE: StringHashMap has no key_ptr (std::HashMap can't hand out &mut K).
-        // Zig stored the `[]const u8` slice by value; do the same here instead of
-        // heap-boxing — `name: &'a [u8]` points into source text or the lexer
-        // string-table, both of which outlive the arena-owned `Scope`.
-        // SAFETY: see `Scope::get_or_put_member_with_hash` for the lifetime argument.
-        unsafe {
-            self.current_scope_mut()
-                .members
-                .put_borrowed(name, js_ast::scope::Member { ref_, loc })?;
-        }
+        *entry.value_ptr = js_ast::scope::Member { ref_, loc };
         if IS_GENERATED {
             VecExt::append(&mut self.module_scope_mut().generated, ref_);
         }
@@ -7615,7 +7625,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             symbols,
             parts: parts_list,
             import_records,
-            ..Default::default()
+
+            // ── Remaining fields spelled out (their Zig struct-literal
+            //    defaults). Previously `..Default::default()` constructed a
+            //    full temporary `Ast` — including a `Scope::default()` for
+            //    `module_scope` and empty `Vec`/map headers for
+            //    `parts`/`symbols`/`import_records`/`named_*` — only to drop
+            //    every one of those (all are explicitly set above). Spelling
+            //    the six actually-defaulted scalars avoids that temporary's
+            //    construct/drop entirely. ──
+            has_lazy_export: false,
+            runtime_import_record_id: None,
+            needs_runtime: false,
+            has_top_level_return: false,
+            redirect_import_record_index: None,
+            target: js_ast::Target::Browser,
         })
     }
 

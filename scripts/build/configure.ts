@@ -15,6 +15,7 @@ import { type Config, type PartialConfig, type Toolchain, detectHost, findRepoRo
 import { BuildError } from "./error.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { Ninja } from "./ninja.ts";
+import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
 import { quote } from "./shell.ts";
 import { findBun, findCargo, findMsvcLinker, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
@@ -113,23 +114,43 @@ function configureInputs(cwd: string): string[] {
 }
 
 /**
+ * What the user asked for, *before* profile expansion. This is what gets
+ * persisted to configure.json and replayed by ninja's generator rule.
+ *
+ * We persist the profile NAME (not its expanded values) so that editing
+ * profiles.ts propagates to existing build dirs on the next regen. The old
+ * scheme persisted the post-merge PartialConfig, which froze whatever the
+ * profile said at first-configure time — a build dir created from
+ * `--profile=release --build-dir=build/btg` would keep replaying
+ * `lto:false` forever even after a `btg` profile with `lto:true` was added.
+ */
+export interface ConfigureInput {
+  /** Profile name to resolve via getProfile(). Omitted = no profile base. */
+  profile?: string;
+  /** Explicit CLI overrides layered on top of the profile. */
+  overrides?: PartialConfig;
+}
+
+/**
  * Emit the generator rule — makes build.ninja self-rebuilding. When you
  * run `ninja` directly and a build script has changed, ninja runs
  * reconfigure first, then restarts with the fresh graph.
  *
- * The original PartialConfig is persisted to configure.json; the regen
- * command reads it back via --config-file. This ensures the replay uses
- * the exact same profile/overrides as the original configure.
+ * The *unresolved* ConfigureInput (profile name + CLI overrides) is
+ * persisted to configure.json; the regen command reads it back via
+ * --config-file and re-expands the profile against the current
+ * profiles.ts. Edits to a profile therefore take effect on the next
+ * `ninja` in an existing build dir without `rm -rf`.
  */
-function emitGeneratorRule(n: Ninja, cfg: Config, partial: PartialConfig): void {
+function emitGeneratorRule(n: Ninja, cfg: Config, input: ConfigureInput): void {
   const configFile = resolve(cfg.buildDir, "configure.json");
   const buildScript = resolve(cfg.cwd, "scripts", "build.ts");
 
-  // Persist the partial config. writeIfChanged — same config → no mtime
+  // Persist the unresolved input. writeIfChanged — same input → no mtime
   // bump → no unnecessary regen on identical reconfigures.
   // This runs before n.write() (which mkdir's), so ensure dir exists.
   mkdirSync(cfg.buildDir, { recursive: true });
-  writeIfChanged(configFile, JSON.stringify(partial, null, 2) + "\n");
+  writeIfChanged(configFile, JSON.stringify(input, null, 2) + "\n");
 
   const hostWin = cfg.host.os === "windows";
   n.rule("regen", {
@@ -184,14 +205,23 @@ function ccacheEnv(cfg: Config): Record<string, string> {
  * Configure: resolve config → emit build.ninja. Returns the resolved config
  * and emitted build info.
  *
- * `partial` comes from a profile + CLI overrides. If no buildDir is set,
- * one is computed from the build type (build/debug, build/release, etc).
+ * `input` is the profile name + explicit CLI overrides. The profile is
+ * expanded here (not by the caller) so the generator rule can persist the
+ * unresolved input and re-expand it on regen — see emitGeneratorRule. If
+ * no buildDir is set, one is computed from the build type (build/debug,
+ * build/release, etc).
  */
-export async function configure(partial: PartialConfig): Promise<ConfigureResult> {
+export async function configure(input: ConfigureInput): Promise<ConfigureResult> {
   const start = performance.now();
   const trace = process.env.BUN_BUILD_TRACE === "1";
   const mark = (label: string) => {
     if (trace) process.stderr.write(`  ${label}: ${Math.round(performance.now() - start)}ms\n`);
+  };
+
+  // Expand profile → PartialConfig. Overrides win.
+  const partial: PartialConfig = {
+    ...(input.profile !== undefined ? getProfile(input.profile) : {}),
+    ...(input.overrides ?? {}),
   };
 
   const toolchain = resolveToolchain();
@@ -229,7 +259,7 @@ export async function configure(partial: PartialConfig): Promise<ConfigureResult
   // Emit ninja.
   const n = new Ninja({ buildDir: cfg.buildDir });
   registerAllRules(n, cfg);
-  emitGeneratorRule(n, cfg, partial);
+  emitGeneratorRule(n, cfg, input);
   const output = emitBun(n, cfg, sources);
   mark("emitBun");
 

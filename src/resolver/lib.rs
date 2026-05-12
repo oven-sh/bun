@@ -114,16 +114,18 @@ pub mod fs {
                 pub fn instance() -> &'static Self { &$zst }
                 pub fn append_slice(&self, value: &[u8]) -> core::result::Result<&'static [u8], bun_core::Error> {
                     // SAFETY: `$backing()` returns the raw `*mut` process-lifetime singleton
-                    // (Zig `*Self`); the singleton serializes all mutation through its
-                    // internal `mutex`. The returned slice borrows its never-freed backing
-                    // storage (heap-owned by a `'static` `BSSStringList` or a leaked
-                    // mi_malloc); the unbounded raw-deref lifetime coerces soundly to
-                    // `'static`.
-                    unsafe { (*$backing()).append(value) }.map_err(|_| bun_core::err!("OutOfMemory"))
+                    // (Zig `*Self`); `BSSStringList::append` takes `*mut Self` and serializes
+                    // all mutation through its internal `mutex` (no aliased `&mut` is ever
+                    // formed). The returned slice borrows its never-freed backing storage
+                    // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc), so
+                    // widening to `'static` is sound.
+                    unsafe { bun_alloc::BSSStringList::append($backing(), value) }
+                        .map_err(|_| bun_core::err!("OutOfMemory"))
                 }
                 pub fn append_parts(&self, parts: &[&[u8]]) -> core::result::Result<&'static [u8], bun_core::Error> {
                     // SAFETY: see `append_slice`.
-                    unsafe { (*$backing()).append(parts) }.map_err(|_| bun_core::err!("OutOfMemory"))
+                    unsafe { bun_alloc::BSSStringList::append($backing(), parts) }
+                        .map_err(|_| bun_core::err!("OutOfMemory"))
                 }
                 /// Zig: `FileSystem.DirnameStore.print(fmt, args)` — format
                 /// directly into the store's tail; no intermediate `String`.
@@ -132,7 +134,7 @@ pub mod fs {
                     args: core::fmt::Arguments<'_>,
                 ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
                     // SAFETY: see `append_slice`.
-                    let s = unsafe { &mut *$backing() }.print(args)?;
+                    let s = unsafe { bun_alloc::BSSStringList::print($backing(), args)? };
                     // SAFETY: storage owned by the process-lifetime `BSSStringList`
                     // singleton (never freed); `Interned` is the canonical proof type.
                     Ok(unsafe { bun_ptr::Interned::assume(s) }.as_bytes())
@@ -157,16 +159,18 @@ pub mod fs {
                 #[inline]
                 pub fn append(&self, value: &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
                     // SAFETY: `$backing()` returns the raw `*mut` process-lifetime singleton;
-                    // the singleton serializes all mutation through its internal `mutex`.
-                    // Returned slice borrows its never-freed storage; the unbounded
-                    // raw-deref lifetime coerces soundly to `'static`.
-                    unsafe { (*$backing()).append(value) }.map_err(|_| bun_alloc::AllocError)
+                    // `BSSStringList::append` takes `*mut Self` and serializes all mutation
+                    // through its internal `mutex`. Returned slice borrows its never-freed
+                    // storage, so widening to `'static` is sound.
+                    unsafe { bun_alloc::BSSStringList::append($backing(), value) }
+                        .map_err(|_| bun_alloc::AllocError)
                 }
                 /// Zig: `<Store>.appendLowerCase(allocator, value)`.
                 #[inline]
                 pub fn append_lower_case(&self, value: &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
                     // SAFETY: see `append`.
-                    unsafe { (*$backing()).append_lower_case(value) }.map_err(|_| bun_alloc::AllocError)
+                    unsafe { bun_alloc::BSSStringList::append_lower_case($backing(), value) }
+                        .map_err(|_| bun_alloc::AllocError)
                 }
             }
         };

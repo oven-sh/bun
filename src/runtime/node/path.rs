@@ -1,7 +1,9 @@
+use crate::jsc::rare_data::PathBuf as RarePathBuf;
 use crate::jsc::{bun_string_jsc as BunString, host_fn, JSGlobalObject, JSValue, JsResult, SysErrorJsc as _};
 use crate::node::validators::{validate_object, validate_string};
+use bun_collections::smallvec::SmallVec;
 use bun_paths::{self, Platform, MAX_PATH_BYTES};
-use bun_str::{self, strings, ZigString};
+use bun_str::{self, strings, ZigString, ZigStringSlice};
 use bun_sys;
 
 /// Local shim for `bun.String.createUTF8ForJS` over `[T]` (T = u8 | u16).
@@ -50,6 +52,49 @@ impl ZigStringTruncExt for ZigString {
 // - extra padding
 const STACK_FALLBACK_SIZE_LARGE: usize =
     8 * core::mem::size_of::<&[u8]>() + ((STACK_FALLBACK_SIZE_SMALL * 3) + 64);
+
+/// Pooled path scratch carved from the per-VM [`RarePathBuf`] (mirrors Zig's
+/// `RareData.path_buf.get(min_len, fallback)` `StackFallbackAllocator`).
+///
+/// JS is single-threaded, so re-using the lazily-allocated tier across calls is
+/// sound. When the request exceeds the largest tier (32 × `MAX_PATH_BYTES`) —
+/// or when `T = u16`, since the pool is byte-typed — we spill to a one-shot
+/// uninitialised heap slab instead. Either way the storage is **not zeroed**:
+/// every consumer (`normalize_string_t`, `resolve_*_t`, `_format_t`, …) writes
+/// each index before reading it, so observing uninit bytes is impossible.
+enum PathScratch<'a, T: PathChar> {
+    Pooled(&'a mut [T]),
+    Spill(Box<[core::mem::MaybeUninit<T>]>),
+}
+
+impl<'a, T: PathChar> PathScratch<'a, T> {
+    /// Largest pool tier in `RarePathBuf` (`32 * MAX_PATH_BYTES`).
+    const POOL_MAX: usize = 32 * MAX_PATH_BYTES;
+
+    #[inline]
+    fn new(pool: &'a mut RarePathBuf, len: usize) -> Self {
+        if !T::IS_U16 && len <= Self::POOL_MAX {
+            // SAFETY-adjacent: `!IS_U16` ⇒ `T == u8`; `cast_slice_mut::<u8, u8>`
+            // is the bytemuck identity cast — never panics, no alignment hazard.
+            let bytes = &mut pool.get(len)[..len];
+            Self::Pooled(bytemuck::cast_slice_mut::<u8, T>(bytes))
+        } else {
+            Self::Spill(Box::<[T]>::new_uninit_slice(len))
+        }
+    }
+
+    #[inline]
+    fn slice(&mut self) -> &mut [T] {
+        match self {
+            Self::Pooled(s) => s,
+            // SAFETY: `T: Pod`; downstream path algorithms are write-before-read
+            // (same invariant `pread_box` relies on in `RuntimeTranspilerCache`).
+            Self::Spill(b) => unsafe {
+                core::slice::from_raw_parts_mut(b.as_mut_ptr().cast::<T>(), b.len())
+            },
+        }
+    }
+}
 
 const PATH_MIN_WIDE: usize = 4096; // 4 KB
 #[cfg(windows)]
@@ -1247,6 +1292,7 @@ pub fn format_windows_js_t<T: PathChar>(
 
 pub fn format_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
+    pool: &mut RarePathBuf,
     is_windows: bool,
     path_object: &PathParsed<'_, T>,
 ) -> JsResult<JSValue> {
@@ -1261,11 +1307,12 @@ pub fn format_js_t<T: PathChar>(
             path_object.name.len() + path_object.ext.len()
         }))
     .max(path_size::<T>());
-    let mut buf = vec![T::default(); buf_len];
+    let mut scratch = PathScratch::<T>::new(pool, buf_len);
+    let buf = scratch.slice();
     if is_windows {
-        format_windows_js_t(global_object, path_object, &mut buf)
+        format_windows_js_t(global_object, path_object, buf)
     } else {
-        format_posix_js_t(global_object, path_object, &mut buf)
+        format_posix_js_t(global_object, path_object, buf)
     }
 }
 
@@ -1331,8 +1378,10 @@ pub fn format(
         ext = slice.slice();
     }
 
+    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
     format_js_t::<u8>(
         global_object,
+        pool,
         is_windows,
         &PathParsed { root, dir, base, ext, name: _name },
     )
@@ -1575,6 +1624,7 @@ pub fn join_windows_js_t<T: PathChar>(
 
 pub fn join_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
+    pool: &mut RarePathBuf,
     is_windows: bool,
     paths: &[&[T]],
 ) -> JsResult<JSValue> {
@@ -1584,12 +1634,12 @@ pub fn join_js_t<T: PathChar>(
         buf_len += if !path.is_empty() { path.len() + 1 } else { path.len() };
     }
     buf_len = buf_len.max(path_size::<T>());
-    let mut buf = vec![T::default(); buf_len];
-    let mut buf2 = vec![T::default(); buf_len];
+    let mut scratch = PathScratch::<T>::new(pool, buf_len * 2);
+    let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
     if is_windows {
-        join_windows_js_t(global_object, paths, &mut buf, &mut buf2)
+        join_windows_js_t(global_object, paths, buf, buf2)
     } else {
-        join_posix_js_t(global_object, paths, &mut buf, &mut buf2)
+        join_posix_js_t(global_object, paths, buf, buf2)
     }
 }
 
@@ -1603,12 +1653,12 @@ pub fn join(
         return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
     }
 
-    // PERF(port): was arena bulk-free + stack-fallback — profile in Phase B
-
     // Zig leaks each per-arg `toSlice()` into the arena and bulk-frees at the end;
-    // here the `ZigStringSlice` RAII guards live in `owned` for the same effect.
-    let mut owned: Vec<bun_str::ZigStringSlice> = Vec::with_capacity(args_len as usize);
-    let mut paths: Vec<&[u8]> = Vec::with_capacity(args_len as usize);
+    // here the `ZigStringSlice` RAII guards live inline in `owned` for the same
+    // effect. ASCII-only inputs (the common case) borrow the WTF backing without
+    // allocating; only non-ASCII triggers a transcode allocation.
+    let mut owned: SmallVec<[ZigStringSlice; 8]> = SmallVec::new();
+    let mut paths: SmallVec<[&[u8]; 8]> = SmallVec::new();
 
     for (i, &path_ptr) in args.iter().enumerate() {
         // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
@@ -1622,7 +1672,8 @@ pub fn join(
         paths.push(s.slice());
     }
     // Empty entries are skipped both here and inside `join_*_t`, matching Zig.
-    join_js_t::<u8>(global_object, is_windows, &paths)
+    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+    join_js_t::<u8>(global_object, pool, is_windows, &paths)
 }
 
 /// Based on Node v21.6.1 private helper normalizeString:
@@ -2026,16 +2077,18 @@ pub fn normalize_windows_js_t<T: PathChar>(
 
 pub fn normalize_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
+    pool: &mut RarePathBuf,
     is_windows: bool,
     path: &[T],
 ) -> JsResult<JSValue> {
     let buf_len = path.len().max(path_size::<T>());
     // +1 for null terminator
-    let mut buf = vec![T::default(); buf_len + 1];
+    let mut scratch = PathScratch::<T>::new(pool, buf_len + 1);
+    let buf = scratch.slice();
     if is_windows {
-        normalize_windows_js_t(global_object, path, &mut buf)
+        normalize_windows_js_t(global_object, path, buf)
     } else {
-        normalize_posix_js_t(global_object, path, &mut buf)
+        normalize_posix_js_t(global_object, path, buf)
     }
 }
 
@@ -2054,9 +2107,9 @@ pub fn normalize(
         return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
     }
 
-    // PERF(port): was stack-fallback — profile in Phase B
     let path_zslice = path_zstr.to_slice();
-    normalize_js_t::<u8>(global_object, is_windows, path_zslice.slice())
+    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+    normalize_js_t::<u8>(global_object, pool, is_windows, path_zslice.slice())
 }
 
 // Based on Node v21.6.1 path.posix.parse
@@ -2752,6 +2805,7 @@ pub fn relative_windows_js_t<T: PathChar>(
 
 pub fn relative_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
+    pool: &mut RarePathBuf,
     is_windows: bool,
     from: &[T],
     to: &[T],
@@ -2761,14 +2815,14 @@ pub fn relative_js_t<T: PathChar>(
     // 3 bytes of output ("/..", ~1.5x). Use 2x as a safe upper bound.
     let buf_len = ((from.len() + max_path_size::<T>() + 1) * 2 + to.len() + max_path_size::<T>() + 1)
         .max(path_size::<T>());
-    // +1 for null terminator
-    let mut buf = vec![T::default(); buf_len + 1];
-    let mut buf2 = vec![T::default(); buf_len + 1];
-    let mut buf3 = vec![T::default(); buf_len + 1];
+    // +1 for null terminator; ×3 for buf/buf2/buf3 carved from one slab.
+    let mut scratch = PathScratch::<T>::new(pool, (buf_len + 1) * 3);
+    let (buf, rest) = scratch.slice().split_at_mut(buf_len + 1);
+    let (buf2, buf3) = rest.split_at_mut(buf_len + 1);
     if is_windows {
-        relative_windows_js_t(global_object, from, to, &mut buf, &mut buf2, &mut buf3)
+        relative_windows_js_t(global_object, from, to, buf, buf2, buf3)
     } else {
-        relative_posix_js_t(global_object, from, to, &mut buf, &mut buf2, &mut buf3)
+        relative_posix_js_t(global_object, from, to, buf, buf2, buf3)
     }
 }
 
@@ -2789,11 +2843,12 @@ pub fn relative(
         return Ok(from_ptr);
     }
 
-    // PERF(port): was RareData path_buf stack-fallback — profile in Phase B
     let from_zig_slice = from_zig_str.to_slice();
     let to_zig_slice = to_zig_str.to_slice();
+    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
     relative_js_t::<u8>(
         global_object,
+        pool,
         is_windows,
         from_zig_slice.slice(),
         to_zig_slice.slice(),
@@ -3351,6 +3406,7 @@ pub fn resolve_windows_js_t<T: PathChar>(
 
 pub fn resolve_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
+    pool: &mut RarePathBuf,
     is_windows: bool,
     paths: &[&[T]],
 ) -> JsResult<JSValue> {
@@ -3367,13 +3423,14 @@ pub fn resolve_js_t<T: PathChar>(
     // with a separator. Account for this to prevent buffer overflow.
     buf_len += max_path_size::<T>() + 1;
     buf_len = buf_len.max(path_size::<T>());
-    // +2 to account for separator and null terminator during path resolution
-    let mut buf = vec![T::default(); buf_len + 2];
-    let mut buf2 = vec![T::default(); buf_len + 2];
+    // +2 to account for separator and null terminator during path resolution.
+    // Carve buf/buf2 from one pooled slab (mirrors Zig's RareData path_buf).
+    let mut scratch = PathScratch::<T>::new(pool, (buf_len + 2) * 2);
+    let (buf, buf2) = scratch.slice().split_at_mut(buf_len + 2);
     if is_windows {
-        resolve_windows_js_t(global_object, paths, &mut buf, &mut buf2)
+        resolve_windows_js_t(global_object, paths, buf, buf2)
     } else {
-        resolve_posix_js_t(global_object, paths, &mut buf, &mut buf2)
+        resolve_posix_js_t(global_object, paths, buf, buf2)
     }
 }
 
@@ -3383,15 +3440,15 @@ pub fn resolve(
     args: &[JSValue],
 ) -> JsResult<JSValue> {
     let args_len = args.len();
-    // Lazily-allocated RareData buffer replaces the old stack_fallback_size_large on the stack.
-    // The arena handles overflow for very long paths.
-    // PERF(port): was arena bulk-free + RareData path_buf — profile in Phase B
-    // PERF(port): was RareData path_buf pooled allocator — profile in Phase B.
+    // Lazily-allocated RareData buffer replaces the old stack_fallback_size_large
+    // on the stack; `PathScratch` spills to the heap for very long paths.
 
-    let mut paths_buf: Vec<Box<[u8]>> = Vec::with_capacity(args_len as usize);
-    let mut paths_offset: usize = args_len as usize;
-    // Fill with placeholders so we can index from the end.
-    paths_buf.resize_with(args_len as usize, || Box::from([] as [u8; 0]));
+    // Borrow each argument's WTF backing as a `ZigStringSlice` (no per-arg
+    // `to_owned_slice()` heap copy — ASCII inputs borrow in place, only
+    // non-ASCII transcodes). Inline-8 keeps the typical call alloc-free.
+    // Walk back-to-front to preserve Zig's early-out on the first absolute
+    // POSIX path; reverse the borrowed views before handing to `resolve_*_t`.
+    let mut owned: SmallVec<[ZigStringSlice; 8]> = SmallVec::new();
     let mut resolved_root = false;
 
     let mut i = args_len;
@@ -3404,25 +3461,26 @@ pub fn resolve(
 
         let path = args[i as usize];
         validate_string(global_object, path, format_args!("paths[{}]", i))?;
-        // `to_bun_string` returns +1 ref; `bun_str::String` is `Copy` (no Drop),
-        // so wrap in the RAII guard for Zig's `defer path_str.deref()`.
-        let path_str = bun_str::OwnedString::new(path.to_bun_string(global_object)?);
+        let path_zstr = path.get_zig_string(global_object)?;
 
-        if path_str.length() == 0 {
+        if path_zstr.len == 0 {
             continue;
         }
 
-        paths_offset -= 1;
-        paths_buf[paths_offset] = path_str.to_owned_slice().into_boxed_slice();
+        owned.push(path_zstr.to_slice());
 
         if !is_windows {
-            if path_str.char_at(0) == u16::from(CHAR_FORWARD_SLASH) {
+            // `'/'` is ASCII, so byte-level check on the UTF-8 view matches `charAt(0)`.
+            if owned.last().unwrap().slice().first() == Some(&CHAR_FORWARD_SLASH) {
                 resolved_root = true;
             }
         }
     }
 
-    let paths: Vec<&[u8]> = paths_buf[paths_offset..].iter().map(|b| &**b).collect();
+    let mut paths: SmallVec<[&[u8]; 8]> = SmallVec::with_capacity(owned.len());
+    for s in owned.iter().rev() {
+        paths.push(s.slice());
+    }
 
     #[cfg(unix)]
     {
@@ -3438,7 +3496,8 @@ pub fn resolve(
         }
     }
 
-    resolve_js_t::<u8>(global_object, is_windows, &paths)
+    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+    resolve_js_t::<u8>(global_object, pool, is_windows, &paths)
 }
 
 /// Based on Node v21.6.1 path.win32.toNamespacedPath:
@@ -3535,6 +3594,7 @@ pub fn to_namespaced_path_windows_js_t<T: PathChar>(
 
 pub fn to_namespaced_path_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
+    pool: &mut RarePathBuf,
     is_windows: bool,
     path: &[T],
 ) -> JsResult<JSValue> {
@@ -3543,10 +3603,10 @@ pub fn to_namespaced_path_js_t<T: PathChar>(
     }
     // Account for CWD (up to MAX_PATH_SIZE) that resolve may prepend to relative paths.
     let buf_len = (path.len() + max_path_size::<T>() + 1).max(path_size::<T>());
-    // +8 for possible UNC prefix, +1 for null terminator
-    let mut buf = vec![T::default(); buf_len + 8 + 1];
-    let mut buf2 = vec![T::default(); buf_len + 8 + 1];
-    to_namespaced_path_windows_js_t(global_object, path, &mut buf, &mut buf2)
+    // +8 for possible UNC prefix, +1 for null terminator; ×2 for buf/buf2.
+    let mut scratch = PathScratch::<T>::new(pool, (buf_len + 8 + 1) * 2);
+    let (buf, buf2) = scratch.slice().split_at_mut(buf_len + 8 + 1);
+    to_namespaced_path_windows_js_t(global_object, path, buf, buf2)
 }
 
 pub fn to_namespaced_path(
@@ -3574,10 +3634,9 @@ pub fn to_namespaced_path(
         return Ok(path_ptr);
     }
 
-    // PERF(port): was RareData path_buf pooled allocator — profile in Phase B.
-    // PERF(port): was RareData path_buf stack-fallback — profile in Phase B
     let path_zslice = path_zstr.to_slice();
-    to_namespaced_path_js_t::<u8>(global_object, is_windows, path_zslice.slice())
+    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+    to_namespaced_path_js_t::<u8>(global_object, pool, is_windows, path_zslice.slice())
 }
 
 // Zig used `bun.jsc.host_fn.wrap4v(...)` to generate the C-ABI shims. The Rust

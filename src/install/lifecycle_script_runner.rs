@@ -70,6 +70,13 @@ impl YarnCommands {
 /// another package manager.
 ///
 /// Port of `RunCommand.replacePackageManagerRun` (src/cli/run_command.zig).
+///
+/// `#[cold]`: only reached when actually executing a package.json script /
+/// lifecycle script — never on plain `bun foo.js` startup. Forcing it into
+/// `.text.unlikely.*` keeps the byte-scanning loop out of the hot
+/// fault-around windows the startup/dot benches page in (belt-and-suspenders
+/// alongside `startup.order` regen — survives mangling-hash drift).
+#[cold]
 pub fn replace_package_manager_run(
     copy_script: &mut Vec<u8>,
     script: &[u8],

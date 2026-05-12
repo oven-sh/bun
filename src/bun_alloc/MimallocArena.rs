@@ -1,10 +1,22 @@
 //! Port of `src/bun_alloc/MimallocArena.zig`.
 //!
-//! A per-heap mimalloc allocator. Unlike `bumpalo::Bump`, every allocation
-//! made through this arena is individually freeable (via `mi_free`) and
-//! resizable (via `mi_heap_realloc_aligned`), so `Vec<T, &MimallocArena>`
-//! does **not** leak the old buffer on grow. `Drop`/`reset()` bulk-free the
-//! whole heap with `mi_heap_destroy`, matching Zig's `deinit`.
+//! A per-heap mimalloc allocator with a **bump-chunk front layer**: each
+//! `MimallocArena` owns a `mi_heap_t` *and* a current `[bump_start, bump_end)`
+//! chunk carved from that heap. [`aligned_alloc`](MimallocArena::aligned_alloc)
+//! (and therefore `alloc()` / `Vec<T, &MimallocArena>` / `ArenaVec` / `BumpVec`)
+//! is a pointer-add within the chunk; only when the chunk is exhausted does it
+//! call `mi_theap_malloc` for a geometrically-grown refill. This restores the
+//! Zig `std.heap.ArenaAllocator` cost model the parser was ported from — one
+//! mimalloc call per ~10⁵ allocations instead of one per allocation — without
+//! giving up `mi_heap_destroy` bulk-free on `Drop`/`reset()`.
+//!
+//! Because allocations are interior to a bump chunk, `Allocator::deallocate`
+//! is a **no-op** for owned arenas (the chunk is bulk-freed by
+//! `mi_heap_destroy`), and `grow` does last-alloc in-place extend or
+//! carve-and-copy (matching `std.heap.ArenaAllocator.resize`). The
+//! [`borrowing_default`](MimallocArena::borrowing_default) shape (no owned
+//! heap, no bulk-free) bypasses the bump layer entirely and keeps the original
+//! per-allocation `mi_malloc`/`mi_free`/`mi_realloc` behaviour.
 //!
 //! The bumpalo-compatible convenience methods (`alloc`, `alloc_slice_copy`,
 //! `alloc_slice_fill_*`, `alloc_str`, `alloc_layout`) are provided so that
@@ -103,6 +115,44 @@ pub struct MimallocArena {
     /// per-thread theap cache would be wrong there — those calls fall back to
     /// the `mi_heap_*` path that resolves the theap each time).
     theap: Cell<*mut mimalloc::THeap>,
+    // ── Bump-chunk front layer ───────────────────────────────────────────
+    // Zig backs the parser arena with `std.heap.ArenaAllocator` — a chained-
+    // buffer bump allocator — so each `arena.alloc(Scope{..})` /
+    // `BumpVec::push` / scope-map insert is a pointer add. The original Rust
+    // port called raw `mi_theap_malloc` once per allocation here, which on
+    // `next lint` / `bun build create-vite` showed up as the entire
+    // `Bun__transpileFile` delta vs Zig: perf-diff (5-run main-thread agg)
+    // `_mi_malloc_generic` 62 vs 12, `mi_theap_malloc_zero_aligned_at_overalloc`
+    // 16 vs 0, `__memset_avx512` +47 (fresh-page bitmap zeroing),
+    // `do_anonymous_page` +24, `__madvise` +16; strace +73 madvise / +500
+    // minor faults. Top mimalloc-slow-path callers were `Parser::__parse`,
+    // `P::push_scope_for_parse_pass`, and `Stmt/Expr::Data::Store::append` —
+    // all of which go through `aligned_alloc` below.
+    //
+    // These four `Cell`s restore the bump layer at the *arena* level (the
+    // `AstAlloc` ZST already had a TLS bump for `Vec<_, AstAlloc>`; this
+    // covers every other `arena.alloc()` / `ArenaVec` / `BumpVec` caller).
+    // `aligned_alloc` carves from `[bump_cur, bump_end)`; on miss,
+    // [`bump_refill`](Self::bump_refill) requests a geometrically-grown chunk
+    // via the cached `theap` and installs it. Chunks are never individually
+    // freed — `mi_heap_destroy` reclaims them on `reset()`/`Drop`.
+    //
+    // For `borrowing_default()` arenas (`owns == false`) these stay null for
+    // the arena's lifetime and `aligned_alloc` falls through to the per-call
+    // `mi_heap_*` path, so allocations there remain individually
+    // `mi_free`-able (no bulk-free is available without an owned heap).
+    /// Start of the current bump chunk (a real `mi_theap_malloc` block head).
+    /// Retained so [`reset_retain_with_limit`](Self::reset_retain_with_limit)
+    /// can rewind `bump_cur` without a `mi_*` call when under the limit.
+    bump_start: Cell<*mut u8>,
+    /// Next-free byte within `[bump_start, bump_end)`. Null ⇒ no chunk yet.
+    bump_cur: Cell<*mut u8>,
+    /// One-past-end of the current bump chunk.
+    bump_end: Cell<*mut u8>,
+    /// Size of the *next* chunk to request from mimalloc. Starts at
+    /// [`BUMP_CHUNK_INIT`] and doubles per refill up to [`BUMP_CHUNK_MAX`],
+    /// matching `std.heap.ArenaAllocator`'s geometric node growth.
+    bump_next: Cell<usize>,
     /// `true` when `heap` came from `mi_heap_new()` and must be
     /// `mi_heap_destroy`ed on `Drop`/`reset()`. `false` when borrowing the
     /// process-wide `mi_heap_main()` (see [`Self::borrowing_default`]) — Drop
@@ -127,6 +177,13 @@ pub struct MimallocArena {
     #[cfg(debug_assertions)]
     owning_thread: AtomicU64,
 }
+
+/// First bump-chunk size. 64 KiB covers `P::init`'s ~dozen allocations and the
+/// first few hundred scope/stmt nodes of a small module without a refill.
+const BUMP_CHUNK_INIT: usize = 64 * 1024;
+/// Cap on geometric chunk growth — one mimalloc segment; matches the spec's
+/// `ModuleLoader.zig` `retain_with_limit = 8M`.
+const BUMP_CHUNK_MAX: usize = 8 * 1024 * 1024;
 
 // SAFETY: mimalloc heaps are not generally thread-safe for allocation from
 // multiple threads, but `mi_free` may be called from any thread, and the
@@ -165,6 +222,11 @@ impl MimallocArena {
             // Resolved lazily on first alloc — `mi_heap_new` may be called on
             // a setup thread and the arena `Send`-moved before first use.
             theap: Cell::new(core::ptr::null_mut()),
+            // Bump chunk lazily allocated on first `aligned_alloc` miss.
+            bump_start: Cell::new(core::ptr::null_mut()),
+            bump_cur: Cell::new(core::ptr::null_mut()),
+            bump_end: Cell::new(core::ptr::null_mut()),
+            bump_next: Cell::new(BUMP_CHUNK_INIT),
             owns: true,
             bytes_since_reset: Cell::new(0),
             #[cfg(debug_assertions)]
@@ -195,6 +257,15 @@ impl MimallocArena {
             // The null sentinel makes `aligned_alloc` fall back to the
             // `mi_heap_*` path that resolves the correct theap each call.
             theap: Cell::new(core::ptr::null_mut()),
+            // Bump layer disabled for borrowed-default: there is no
+            // `mi_heap_destroy` to bulk-reclaim chunks, so allocations must
+            // stay individually `mi_free`-able. Null cur/end makes every
+            // `aligned_alloc` fall through to `aligned_alloc_slow`, which
+            // checks `!owns` and goes straight to `mi_heap_malloc`.
+            bump_start: Cell::new(core::ptr::null_mut()),
+            bump_cur: Cell::new(core::ptr::null_mut()),
+            bump_end: Cell::new(core::ptr::null_mut()),
+            bump_next: Cell::new(0),
             owns: false,
             // Unused for borrowed-default — `reset_retain_with_limit` debug-
             // asserts `owns` like `reset()` does.
@@ -278,6 +349,11 @@ impl MimallocArena {
         // Old theap belonged to the destroyed heap; force re-resolve on next
         // alloc (also picks up the new owning thread if `Send`-moved).
         self.theap.set(core::ptr::null_mut());
+        // Bump chunk(s) lived in the destroyed heap and are now dangling.
+        self.bump_start.set(core::ptr::null_mut());
+        self.bump_cur.set(core::ptr::null_mut());
+        self.bump_end.set(core::ptr::null_mut());
+        self.bump_next.set(BUMP_CHUNK_INIT);
         self.bytes_since_reset.set(0);
         // `&mut self` proves exclusive access; re-stamp the debug thread-lock
         // so an arena `Send`-moved to a worker and then reset there may
@@ -288,66 +364,64 @@ impl MimallocArena {
     }
 
 
-    /// Approximation of Zig's `std.heap.ArenaAllocator.reset(.{.retain_with_limit
-    /// = limit})` for the per-CJS-require transpile arena
-    /// (`ModuleLoader.transpile_source_code_arena`).
+    /// Zig: `std.heap.ArenaAllocator.reset(.{.retain_with_limit = limit})` for
+    /// the per-module transpile arena (`ModuleLoader.transpile_source_code_arena`).
     ///
-    /// Zig's `ArenaAllocator` is a bump allocator: `.retain_with_limit(N)`
-    /// resets the bump pointer and keeps up to `N` bytes of pages warm so the
-    /// next module's allocations reuse them with no syscalls. The Rust port
-    /// backs this slot with a `mi_heap` instead, and the only mimalloc
-    /// primitive that bulk-invalidates *live* allocations is `mi_heap_destroy`
-    /// — which also frees the heap struct, so [`Self::reset`] follows it with
-    /// `mi_heap_new`. Each fresh heap then pays `mi_arena_pages_alloc` →
-    /// `zalloc` of the per-heap arena bitmap on its first allocation: ~1% of
-    /// `next lint`'s cycles in `memset` when this runs once per `require()`.
+    /// With the bump-chunk front layer, this now matches Zig's semantics
+    /// directly: when the heap's committed footprint is ≤ `limit`, **rewind**
+    /// `bump_cur` to the start of the current (warm) chunk — no `mi_*` call,
+    /// no page faults, next parse's allocations reuse hot pages immediately.
+    /// All previously-returned pointers are invalidated (they alias the
+    /// rewound region), exactly as in Zig.
     ///
-    /// This method instead lets garbage from previous transpiles accumulate in
-    /// the heap until `bytes_since_reset` exceeds `limit`, and only *then*
-    /// pays the destroy+new round-trip. The Zig version invalidates pointers
-    /// every call (it's a bump reset); this one does not until the limit is
-    /// crossed. That is fine here because the give-back contract already
-    /// forbids holding arena pointers past the give-back, and the only effect
-    /// of "still valid" is that those bytes are not yet recycled.
+    /// When the footprint exceeds `limit`, fall through to a full
+    /// `mi_heap_destroy` + `mi_heap_new`, then **eagerly prime** one
+    /// [`BUMP_CHUNK_INIT`] chunk so the next `P::init`'s first allocations
+    /// don't each walk the cold `_mi_malloc_generic → mi_page_queue_find_free_ex
+    /// → mi_arenas_page_alloc_fresh` path (perf showed that chain rooted at
+    /// `Parser::__parse` as the single largest mimalloc-slow-path caller).
     ///
-    /// Returns whether a real reset (and therefore pointer invalidation)
-    /// happened, in case a caller wants the Zig `arena.reset()` bool.
+    /// `bytes_since_reset` is kept as a cheap fast-positive; the authoritative
+    /// check is [`heap_committed_exceeds`](Self::heap_committed_exceeds), which
+    /// also sees `AstAlloc`'s direct-to-heap bump chunks (those bypass
+    /// `track_alloc` entirely).
+    ///
+    /// Returns whether a full destroy+new (vs. a warm rewind) happened.
     pub fn reset_retain_with_limit(&mut self, limit: usize) -> bool {
         debug_assert!(
             self.owns,
             "MimallocArena::reset_retain_with_limit() on a borrowing_default() arena"
         );
-        // `bytes_since_reset` only sees allocations that flow through this
-        // struct's `Allocator` impl / `std_allocator()` vtable thunks. The
-        // `AstAlloc` ZST (`ast_alloc.rs`) reads `AST_HEAP` (a raw
-        // `*mut mi_heap_t`) and calls `mi_heap_malloc[_aligned]` directly, so
-        // every `Vec<_, AstAlloc>` / `Box<_, AstAlloc>` buffer — i.e. the bulk
-        // of a parsed module on the import() path — bypasses `track_alloc`
-        // entirely. The counter therefore stays under `limit` indefinitely and
-        // the heap is never destroyed: ~299 MB retained on
-        // require-cache.test.ts "via import() doesn't leak file paths".
-        //
-        // Query the heap's actual committed footprint instead. This is
-        // accurate regardless of which alloc path was used. Keep the cheap
-        // counter as a fast-positive: if even the *tracked* bytes already
-        // exceed `limit`, skip the page walk.
-        // NOTE: under-limit does NOT call `mi_heap_collect` — that should
-        // basically never be called outside debugging. The under-limit branch
-        // is ONLY correct for arenas whose allocations are individually
-        // `Drop`'d by the caller before reset (e.g., the transpile scratch
-        // arena, where the parser's own RAII frees its temporaries). For
-        // arenas holding bulk-free-only data (e.g., `store_ast_alloc_heap`,
-        // whose `Ast.named_exports` etc. are intentionally never `Drop`'d),
-        // the caller MUST use plain `reset()` instead — retain there leaks
-        // every iteration's data until the limit happens to trip.
+        // Match `reset()`'s thread-stamp behaviour so a `Send`-moved arena can
+        // allocate on the new thread regardless of which branch is taken.
+        #[cfg(debug_assertions)]
+        self.owning_thread.store(debug_thread_stamp(), Ordering::Relaxed);
+
         if self.bytes_since_reset.get() > limit || self.heap_committed_exceeds(limit) {
             self.reset();
+            // Prime the fresh heap with one warm chunk so the next parse's
+            // first allocation is a pointer-add, not a cold
+            // `mi_arenas_page_alloc_fresh`. `reset()` cleared `theap`; resolve
+            // it here so `bump_refill` has it (and so subsequent refills on
+            // the same thread skip the lookup).
+            let theap = self.resolve_theap();
+            // `bump_next` was reset to `BUMP_CHUNK_INIT` by `reset()`; a
+            // single 64 KiB chunk covers `P::init`'s ~dozen up-front allocs
+            // and the first few hundred nodes. Geometric growth resumes from
+            // there if the module is larger.
+            self.bump_refill(theap, Layout::from_size_align(0, 1).unwrap());
             true
         } else {
-            // Match `reset()`'s thread-stamp behaviour so a `Send`-moved arena
-            // that was *under* the limit can still allocate on the new thread.
-            #[cfg(debug_assertions)]
-            self.owning_thread.store(debug_thread_stamp(), Ordering::Relaxed);
+            // Warm rewind: `[bump_start, bump_end)` is a live chunk in the
+            // (un-destroyed) heap. Rewinding `cur` makes the whole chunk
+            // available again; earlier (smaller) chunks from prior refills
+            // stay committed in the heap and count toward
+            // `heap_committed_exceeds` on the *next* call, so they are
+            // eventually reclaimed by the over-limit branch. `bump_next` is
+            // intentionally left at its grown value so a steady-state workload
+            // refills at the right size immediately.
+            self.bump_cur.set(self.bump_start.get());
+            self.bytes_since_reset.set(0);
             false
         }
     }
@@ -465,7 +539,7 @@ impl MimallocArena {
         unsafe { mimalloc::mi_heap_contains(self.heap_ptr(), p) }
     }
 
-    // ── Zig vtable parity (alloc / resize / remap / free) ────────────────
+    // ── Bump-chunk allocation core ───────────────────────────────────────
 
     /// Resolve and cache this thread's `mi_theap_t*` for `self.heap`. Only
     /// called for `owns == true` arenas (single-thread alloc contract); the
@@ -480,71 +554,191 @@ impl MimallocArena {
         theap
     }
 
-    /// Zig: `Borrowed.alignedAlloc` — uses `mi_*_malloc_aligned` only when
-    /// `alignment > MI_MAX_ALIGN_SIZE`, otherwise the cheaper `mi_*_malloc`.
-    /// Dispatches through the cached [`theap`](Self::theap) to skip mimalloc's
-    /// per-call `heap → theap` TLS lookup; see the field doc for why that
-    /// lookup thrashes on the runtime-transpile arena.
+    /// Bump fast path: align `bump_cur` up to `align`, carve `len` bytes if
+    /// they fit before `bump_end`, else null. Address arithmetic only — `cur`
+    /// and `end` are within (or one-past) the same `mi_theap_malloc` block, so
+    /// the `add`s stay in-bounds of that allocation.
+    ///
+    /// `cur`/`end` may be null (no chunk yet, or `borrowing_default`); the
+    /// arithmetic then degenerates to `0`/`0` and the capacity check fails for
+    /// any nonzero `len`, so the caller falls through to the slow path. For
+    /// `len == 0` with null `cur` it returns null too (caught by the caller's
+    /// null check → slow path → real non-null pointer).
+    #[inline(always)]
+    fn bump_carve(&self, len: usize, align: usize) -> *mut u8 {
+        let cur = self.bump_cur.get();
+        let end = self.bump_end.get();
+        let cur_addr = cur as usize;
+        // `align` is a power of two (Layout invariant).
+        let pad = cur_addr.wrapping_neg() & (align - 1);
+        // `Layout` invariant: `size + (align - 1) <= isize::MAX`; `pad < align`,
+        // so `pad + len` cannot overflow.
+        let need = pad + len;
+        if (end as usize).wrapping_sub(cur_addr) < need {
+            return core::ptr::null_mut();
+        }
+        // SAFETY: `cur + pad + len <= end`, all within the live chunk allocation.
+        let aligned = unsafe { cur.add(pad) };
+        self.bump_cur.set(unsafe { aligned.add(len) });
+        aligned
+    }
+
+    /// Slow path: current chunk exhausted (or none yet). Allocate a fresh chunk
+    /// of `max(bump_next, padded(layout))` from the arena's heap via the cached
+    /// `theap`, install it as the new bump region, and carve `layout` from it.
+    /// The previous chunk (if any) is abandoned in the heap — reclaimed by
+    /// `mi_heap_destroy` on `reset()`/`Drop`.
+    #[cold]
+    fn bump_refill(&self, theap: *mut mimalloc::THeap, layout: Layout) -> *mut u8 {
+        let align = layout.align();
+        // Chunk size: at least the geometric `next`, and at least enough for
+        // this request including worst-case alignment padding (mimalloc returns
+        // 16-aligned blocks; anything stricter is padded inside the chunk).
+        let next = self.bump_next.get();
+        let want = layout.size().saturating_add(align.saturating_sub(1));
+        let chunk_len = next.max(want);
+        // SAFETY: `theap` is the live `mi_theap_t*` for this thread's
+        // `self.heap` (resolved by `resolve_theap`; the single-thread alloc
+        // contract guarantees the heap is not `reset()` concurrently).
+        // `mi_theap_malloc` returns a fresh ≥16-aligned block of `chunk_len`
+        // bytes or null on OOM.
+        let chunk = unsafe { mimalloc::mi_theap_malloc(theap, chunk_len) }.cast::<u8>();
+        if chunk.is_null() {
+            return core::ptr::null_mut();
+        }
+        // Geometric growth for the *next* refill, clamped so a single huge
+        // request does not permanently inflate the increment.
+        self.bump_next.set((next * 2).min(BUMP_CHUNK_MAX));
+        // SAFETY: `chunk .. chunk + chunk_len` is the just-allocated block.
+        let end = unsafe { chunk.add(chunk_len) };
+        self.bump_start.set(chunk);
+        self.bump_cur.set(chunk);
+        self.bump_end.set(end);
+        // The fresh chunk is sized to fit; this cannot return null.
+        let p = self.bump_carve(layout.size(), align);
+        debug_assert!(!p.is_null());
+        p
+    }
+
+    /// Hot allocation path. For owned arenas this is a pointer-add within the
+    /// current bump chunk (Zig `std.heap.ArenaAllocator` parity); only on chunk
+    /// exhaustion does it touch mimalloc. For `borrowing_default()` arenas the
+    /// bump region is permanently empty and every call falls through to
+    /// [`aligned_alloc_slow`](Self::aligned_alloc_slow) → `mi_heap_malloc`.
     #[inline]
     fn aligned_alloc(&self, len: usize, align: usize) -> *mut u8 {
         self.assert_owning_thread();
         self.track_alloc(len);
+        let p = self.bump_carve(len, align);
+        if !p.is_null() {
+            return p;
+        }
+        self.aligned_alloc_slow(len, align)
+    }
+
+    /// Out-of-line miss path for [`aligned_alloc`](Self::aligned_alloc): either
+    /// refill the bump chunk (owned arena) or call straight into mimalloc
+    /// (`borrowing_default()` — bump layer disabled).
+    #[cold]
+    fn aligned_alloc_slow(&self, len: usize, align: usize) -> *mut u8 {
+        if !self.owns {
+            // `borrowing_default()` — any-thread alloc; no bump, no theap
+            // cache. Allocations are real mimalloc block heads so the
+            // `Allocator::deallocate` `mi_free` branch is sound.
+            // SAFETY: `self.heap_ptr()` is live (`mi_heap_main()`).
+            return unsafe { heap_alloc_maybe_aligned(self.heap_ptr(), len, align) };
+        }
         let mut theap = self.theap.get();
         if theap.is_null() {
-            if !self.owns {
-                // `borrowing_default()` — any-thread alloc; cannot cache a
-                // per-thread theap. Fall back to the resolving entry point.
-                // SAFETY: `self.heap_ptr()` is live.
-                return unsafe { heap_alloc_maybe_aligned(self.heap_ptr(), len, align) };
-            }
             theap = self.resolve_theap();
         }
-        // SAFETY: `theap` is the live theap for `self.heap` on this (owning)
-        // thread — invariant established by `resolve_theap` and maintained by
-        // `reset()` clearing the cache when the heap is destroyed.
-        let p = unsafe {
-            if mimalloc::must_use_aligned_alloc(align) {
-                mimalloc::mi_theap_malloc_aligned(theap, len, align)
-            } else {
-                mimalloc::mi_theap_malloc(theap, len)
-            }
-        };
-        #[cfg(debug_assertions)]
-        if !p.is_null() {
-            // SAFETY: `p` was just returned by mimalloc.
-            let usable = unsafe { mimalloc::mi_malloc_usable_size(p) };
-            debug_assert!(
-                usable >= len,
-                "mimalloc: allocated size is too small: {usable} < {len}"
-            );
-        }
-        p.cast()
+        // `Layout` reconstruction cannot fail: `align` is a power of two and
+        // `len` came from a valid `Layout` at the call site.
+        self.bump_refill(theap, unsafe { Layout::from_size_align_unchecked(len, align) })
     }
 
     /// Zig: `vtable_resize` — in-place expand/shrink, no relocation.
     /// Returns `true` if the block now has at least `new_len` bytes.
+    ///
+    /// For owned arenas `ptr` is interior to a bump chunk, so `mi_expand` is
+    /// not applicable; instead this succeeds iff `ptr` is the *last* carve and
+    /// the chunk has room (matching `std.heap.ArenaAllocator.resize`).
     #[inline]
-    pub fn resize_in_place(&self, ptr: NonNull<u8>, new_len: usize) -> bool {
+    pub fn resize_in_place(&self, ptr: NonNull<u8>, old_len: usize, new_len: usize) -> bool {
+        if self.owns {
+            // SAFETY: `ptr + old_len` is in-bounds of the chunk per the
+            // `Allocator` contract on `ptr`.
+            let old_end = unsafe { ptr.as_ptr().add(old_len) };
+            if old_end == self.bump_cur.get()
+                && (self.bump_end.get() as usize).wrapping_sub(ptr.as_ptr() as usize) >= new_len
+            {
+                // SAFETY: `ptr + new_len <= bump_end`, within the live chunk.
+                self.bump_cur.set(unsafe { ptr.as_ptr().add(new_len) });
+                return true;
+            }
+            // Not the last carve, or out of room: cannot grow in place. Shrink
+            // always "succeeds" (the slot already holds ≥ `new_len` bytes).
+            return new_len <= old_len;
+        }
+        // `borrowing_default()` — `ptr` is a real mimalloc block head.
         // SAFETY: `ptr` was allocated by mimalloc (caller contract).
         unsafe { !mimalloc::mi_expand(ptr.as_ptr().cast(), new_len).is_null() }
     }
 
-    /// Zig: `vtable_remap` — `mi_heap_realloc_aligned`.
+    /// Bump-aware grow/shrink: last-alloc in-place extend, else carve a fresh
+    /// slot and `memcpy` the `min(old, new)` prefix. The old slot is abandoned
+    /// in the chunk (bump-arena semantics; reclaimed on `mi_heap_destroy`).
+    /// Matches `std.heap.ArenaAllocator`'s remap.
+    ///
+    /// For `borrowing_default()` arenas, falls through to
+    /// `mi_heap_realloc_aligned` (pointers there are real block heads).
     #[inline]
-    pub fn remap(&self, ptr: NonNull<u8>, new_len: usize, align: usize) -> *mut u8 {
+    fn remap(&self, ptr: NonNull<u8>, old_len: usize, new_len: usize, align: usize) -> *mut u8 {
         self.assert_owning_thread();
-        // We don't have `old_len` to compute the delta, and `mi_usable_size`
-        // adds an FFI call to a hot realloc path. Count `new_len` outright —
-        // for the soft retain limit this only means a `Vec` growth chain
-        // counts as the sum of intermediate capacities (i.e. ~2× final), which
-        // just trips the limit slightly earlier.
-        self.track_alloc(new_len);
-        // SAFETY: `self.heap` is live; `ptr` was allocated by this heap (or by
-        // any mimalloc heap — `mi_free`/realloc accept cross-heap pointers).
-        unsafe {
-            mimalloc::mi_heap_realloc_aligned(self.heap_ptr(), ptr.as_ptr().cast(), new_len, align)
+        if !self.owns {
+            self.track_alloc(new_len);
+            // SAFETY: `self.heap` is live; `ptr` is a real mimalloc block head
+            // (the `borrowing_default` path never produces bump-interior
+            // pointers). `mi_heap_realloc_aligned` preserves the prefix.
+            return unsafe {
+                mimalloc::mi_heap_realloc_aligned(
+                    self.heap_ptr(),
+                    ptr.as_ptr().cast(),
+                    new_len,
+                    align,
+                )
                 .cast()
+            };
         }
+        // Try in-place extend first: if `ptr` is the last carve and already
+        // satisfies `align`, just move `bump_cur`. (Covers shrink too: `new_len
+        // < old_len` rewinds `cur`, recovering the tail for the next carve.)
+        // SAFETY: `ptr + old_len` is in-bounds per the `Allocator` contract.
+        let old_end = unsafe { ptr.as_ptr().add(old_len) };
+        if old_end == self.bump_cur.get()
+            && (ptr.as_ptr() as usize) & (align - 1) == 0
+            && (self.bump_end.get() as usize).wrapping_sub(ptr.as_ptr() as usize) >= new_len
+        {
+            self.track_alloc(new_len.saturating_sub(old_len));
+            // SAFETY: `ptr + new_len <= bump_end`, within the live chunk.
+            self.bump_cur.set(unsafe { ptr.as_ptr().add(new_len) });
+            return ptr.as_ptr();
+        }
+        if new_len <= old_len {
+            // Shrink of a non-last carve: keep the slot. No rewind — the bytes
+            // are abandoned until `reset()` (bump-arena semantics).
+            return ptr.as_ptr();
+        }
+        // Carve a fresh slot and copy. `aligned_alloc` handles track/refill.
+        let p = self.aligned_alloc(new_len, align);
+        if p.is_null() {
+            return core::ptr::null_mut();
+        }
+        // SAFETY: `p` is a fresh `new_len`-byte slot disjoint from `ptr`
+        // (different bump offset, or different chunk); `old_len` bytes at
+        // `ptr` are initialized per the grow contract; `old_len < new_len`.
+        unsafe { core::ptr::copy_nonoverlapping(ptr.as_ptr(), p, old_len) };
+        p
     }
 
     // ── bumpalo-compatible surface ───────────────────────────────────────
@@ -736,44 +930,56 @@ fn alloc_result(p: *mut u8, size: usize) -> Result<NonNull<[u8]>, AllocError> {
         .ok_or(AllocError)
 }
 
-// SAFETY: every pointer returned by `allocate` comes from
-// `mi_heap_malloc[_aligned]` on `self.heap`, which yields a block of at least
-// `layout.size()` bytes aligned to `layout.align()`. `deallocate` forwards to
-// `mi_free`, which accepts any mimalloc-owned pointer regardless of which heap
-// allocated it (Zig's `vtable_free` relies on the same property). `grow`/
-// `shrink` use `mi_heap_realloc_aligned`, which preserves the
-// `min(old, new)` prefix. Cloned `&MimallocArena` handles refer to the same
-// heap, satisfying the "any clone may free" requirement.
+// SAFETY:
+// - Owned-arena path (`owns == true`): `allocate` returns a sub-slice of a
+//   `mi_theap_malloc` bump chunk of ≥`layout.size()` bytes aligned to
+//   `layout.align()`. The chunk — and therefore every sub-slice — is owned by
+//   `self.heap` and bulk-freed by `mi_heap_destroy` on `reset()`/`Drop`.
+//   `deallocate` is a no-op (permitted: the trait only requires that memory
+//   *may* be reclaimed). `grow`/`shrink` either extend the last carve in place
+//   or carve a fresh slot and `memcpy` the prefix, preserving `min(old, new)`
+//   bytes as required.
+// - `borrowing_default()` path (`owns == false`): the bump region is never
+//   populated, so `allocate` falls through to `mi_heap_malloc[_aligned]`,
+//   `deallocate` to `mi_free`, and `grow`/`shrink` to
+//   `mi_heap_realloc_aligned`, with the standard mimalloc contracts. The two
+//   paths are mutually exclusive per arena instance, so a pointer is never
+//   passed to the wrong free routine.
+// - Cloned `&MimallocArena` handles refer to the same instance, satisfying the
+//   "any clone may free" requirement.
 unsafe impl Allocator for &MimallocArena {
     #[inline]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        // mimalloc tolerates size==0 (returns a unique non-null pointer), so
-        // no special-casing needed.
         let p = self.aligned_alloc(layout.size(), layout.align());
         alloc_result(p, layout.size())
     }
 
     #[inline]
     fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        self.assert_owning_thread();
-        self.track_alloc(layout.size());
-        let heap = self.heap_ptr();
-        // SAFETY: `heap` is live.
-        let p = unsafe {
-            if mimalloc::must_use_aligned_alloc(layout.align()) {
-                mimalloc::mi_heap_zalloc_aligned(heap, layout.size(), layout.align())
-            } else {
-                mimalloc::mi_heap_zalloc(heap, layout.size())
-            }
-        };
-        alloc_result(p.cast::<u8>(), layout.size())
+        let p = self.aligned_alloc(layout.size(), layout.align());
+        let p = NonNull::new(p).ok_or(AllocError)?;
+        // SAFETY: `p` points to `layout.size()` writable bytes just carved
+        // from the bump chunk (or returned by `mi_heap_malloc` for
+        // `borrowing_default`).
+        unsafe { ptr::write_bytes(p.as_ptr(), 0, layout.size()) };
+        Ok(NonNull::slice_from_raw_parts(p, layout.size()))
     }
 
     #[inline]
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        // Zig: `vtable_free` → `mi_free` (debug builds assert
-        // `mi_is_in_heap_region` + sized free; release just `mi_free`).
-        // SAFETY: caller contract — `ptr` came from this allocator.
+        if self.owns {
+            // Bump-interior pointer — strict no-op. NOT a last-alloc rewind:
+            // `ArenaVec::into_bump_slice` (`.leak()`) and the parser's
+            // `arena.alloc()`-then-forget pattern mean two live slices may
+            // alias adjacent carves; the bytes are recovered by
+            // `mi_heap_destroy` on `reset()`/`Drop`. This is the cost of Zig
+            // `std.heap.ArenaAllocator` parity.
+            let _ = (ptr, layout);
+            return;
+        }
+        // `borrowing_default()` — `ptr` is a real mimalloc block head.
+        // SAFETY: caller contract — `ptr` came from this allocator's
+        // `mi_heap_malloc` branch.
         unsafe { crate::basic::mi_free_checked(ptr.as_ptr().cast(), layout.size(), layout.align()) }
     }
 
@@ -781,50 +987,44 @@ unsafe impl Allocator for &MimallocArena {
     unsafe fn grow(
         &self,
         ptr: NonNull<u8>,
-        _old: Layout,
+        old: Layout,
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        // Route through the canonical `mi_heap_realloc_aligned` thunk; `remap`
-        // asserts owning-thread and casts for us.
-        alloc_result(self.remap(ptr, new.size(), new.align()), new.size())
+        alloc_result(self.remap(ptr, old.size(), new.size(), new.align()), new.size())
     }
 
     #[inline]
     unsafe fn grow_zeroed(
         &self,
         ptr: NonNull<u8>,
-        _old: Layout,
+        old: Layout,
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        self.assert_owning_thread();
-        // SAFETY: see `grow`.
-        let p = unsafe {
-            mimalloc::mi_heap_rezalloc_aligned(
-                self.heap_ptr(),
-                ptr.as_ptr().cast(),
-                new.size(),
-                new.align(),
-            )
-        };
-        alloc_result(p.cast::<u8>(), new.size())
+        let p = self.remap(ptr, old.size(), new.size(), new.align());
+        let p = NonNull::new(p).ok_or(AllocError)?;
+        // SAFETY: `p` holds `new.size()` bytes; the `[old.size(), new.size())`
+        // tail is uninitialized (either freshly carved or `mi_realloc`ed).
+        unsafe { ptr::write_bytes(p.as_ptr().add(old.size()), 0, new.size() - old.size()) };
+        Ok(NonNull::slice_from_raw_parts(p, new.size()))
     }
 
     #[inline]
     unsafe fn shrink(
         &self,
         ptr: NonNull<u8>,
-        _old: Layout,
+        old: Layout,
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        // Same FFI call as `grow` — route through `remap`.
-        alloc_result(self.remap(ptr, new.size(), new.align()), new.size())
+        alloc_result(self.remap(ptr, old.size(), new.size(), new.align()), new.size())
     }
 }
 
-/// Shared core of `MimallocArena::aligned_alloc` and `vtable_alloc`:
-/// Zig's `Borrowed.alignedAlloc` body — pick `mi_heap_malloc_aligned` only when
-/// `align > MI_MAX_ALIGN_SIZE`, otherwise the cheaper `mi_heap_malloc`, then
-/// debug-assert the returned block's usable size covers `len`.
+/// Direct-to-mimalloc allocation for the `borrowing_default()` (bump-disabled)
+/// path. Zig's `Borrowed.alignedAlloc` body — pick `mi_heap_malloc_aligned`
+/// only when `align > MI_MAX_ALIGN_SIZE`, otherwise the cheaper
+/// `mi_heap_malloc`, then debug-assert the returned block's usable size covers
+/// `len`. Owned arenas never reach this; they go through `bump_carve`/
+/// `bump_refill` instead.
 ///
 /// SAFETY: `heap` must be a live `mi_heap_t*`.
 #[inline]
@@ -859,6 +1059,23 @@ unsafe fn vtable_alloc(ctx: *mut c_void, len: usize, a: crate::Alignment, _ra: u
     arena.aligned_alloc(len, a.to_byte_units())
 }
 
+unsafe fn vtable_resize(
+    ctx: *mut c_void,
+    buf: &mut [u8],
+    _a: crate::Alignment,
+    new_len: usize,
+    _ra: usize,
+) -> bool {
+    // SAFETY: see `vtable_alloc`.
+    let arena = unsafe { &*ctx.cast::<MimallocArena>() };
+    arena.resize_in_place(
+        // SAFETY: `buf` is a live arena allocation per the vtable contract.
+        unsafe { NonNull::new_unchecked(buf.as_mut_ptr()) },
+        buf.len(),
+        new_len,
+    )
+}
+
 unsafe fn vtable_remap(
     ctx: *mut c_void,
     buf: &mut [u8],
@@ -868,26 +1085,38 @@ unsafe fn vtable_remap(
 ) -> *mut u8 {
     // SAFETY: see `vtable_alloc`.
     let arena = unsafe { &*ctx.cast::<MimallocArena>() };
-    // Reuse `remap` so byte tracking and the realloc thunk stay in one place.
+    // Route through the bump-aware `remap` so interior pointers are handled.
     arena.remap(
-        // SAFETY: `buf` is a live mimalloc allocation per the vtable contract.
+        // SAFETY: `buf` is a live arena allocation per the vtable contract.
         unsafe { NonNull::new_unchecked(buf.as_mut_ptr()) },
+        buf.len(),
         new_len,
         a.to_byte_units(),
     )
 }
 
-/// Zig: `heap_allocator_vtable` — per-heap (`mi_heap_*`) thunks; `ctx` is the
-/// `*const MimallocArena` stashed by `std_allocator()`.
+unsafe fn vtable_free(ctx: *mut c_void, buf: &mut [u8], a: crate::Alignment, _ra: usize) {
+    // SAFETY: see `vtable_alloc`.
+    let arena = unsafe { &*ctx.cast::<MimallocArena>() };
+    if arena.owns {
+        // Bump-interior pointer — no-op (reclaimed by `mi_heap_destroy`).
+        return;
+    }
+    // `borrowing_default()` — real mimalloc block head.
+    // SAFETY: vtable contract — `buf` was allocated by this arena's
+    // `mi_heap_malloc` branch.
+    unsafe { crate::basic::mi_free_checked(buf.as_mut_ptr().cast(), buf.len(), a.to_byte_units()) }
+}
+
+/// Zig: `heap_allocator_vtable` — per-arena thunks; `ctx` is the
+/// `*const MimallocArena` stashed by `std_allocator()`. All four slots are
+/// arena-aware because owned-arena pointers are interior to a bump chunk and
+/// must NOT be passed to `mi_expand`/`mi_free`.
 pub static HEAP_ALLOCATOR_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
     alloc: vtable_alloc,
-    // `mi_expand` is heap-agnostic, so the per-heap vtable shares the same
-    // resize thunk as the global/default allocators.
-    resize: crate::basic::MimallocAllocator::resize_with_default_allocator,
+    resize: vtable_resize,
     remap: vtable_remap,
-    // `mi_free` is heap-agnostic too (Zig's `vtable_free` ignored ctx); share
-    // the canonical thunk so all four mimalloc vtables route through one fn.
-    free: crate::basic::mimalloc_free,
+    free: vtable_free,
 };
 
 // ── Global-mimalloc vtable (Zig: `global_mimalloc_vtable`) ───────────────

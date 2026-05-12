@@ -187,8 +187,12 @@ pub struct Lexer<'a, 'bump> {
     /// Only used for JSON stringification when bundling.
     pub is_ascii_only: bool,
 
-    /// Runtime copy of the comptime `JSONOptions` — see `next()` for why the
-    /// const-generic threading is dropped at this layer.
+    /// Runtime copy of the comptime `JSONOptions`. The cold-path flags
+    /// (`allow_comments`, `guess_indentation`, `ignore_leading_escape_sequences`)
+    /// stay runtime; the hot per-byte string loop is monomorphised over
+    /// `const QUOTE: u8` and reads `is_json` as compile-time `true` (this
+    /// module is the is_json slice — see file header), so nothing in
+    /// `parse_string_literal_inner` loads through this field.
     opts: JSONOptions,
     pub indent_info: IndentInfo,
 }
@@ -469,25 +473,52 @@ where
 
     // ── string literal ───────────────────────────────────────────────────
 
-    /// Zig: `parseStringLiteral(quote)` with `is_json = true`, template-literal
-    /// (`\``) and `$`-substitution arms removed. `quote == 0` is the implicit
-    /// (.env auto-quote) string.
+    /// Runtime-quote dispatcher kept for the `MAYBE_AUTO_QUOTE` retry path in
+    /// `json.rs` (which calls with `0`). Forwards to the const-generic body so
+    /// the per-byte loop always sees a compile-time `QUOTE`.
+    #[inline]
     pub fn parse_string_literal(&mut self, quote: CodePoint) -> LexResult {
+        match quote {
+            0 => self.parse_string_literal_inner::<0>(),
+            q if q == '"' as CodePoint => self.parse_string_literal_inner::<b'"'>(),
+            q if q == '\'' as CodePoint => self.parse_string_literal_inner::<b'\''>(),
+            // Only the three above are ever passed (lexer.zig:630 takes
+            // `comptime quote`); anything else is a port bug.
+            _ => unreachable!("parse_string_literal: invalid quote {}", quote),
+        }
+    }
+
+    /// Zig: `parseStringLiteral(comptime quote)` with `is_json = true`,
+    /// template-literal (`\``) and `$`-substitution arms removed. `QUOTE == 0`
+    /// is the implicit (.env auto-quote) string.
+    ///
+    /// PERF: `QUOTE` is a const generic mirroring Zig's `comptime quote:
+    /// CodePoint` so the per-byte `match` folds to a guard-free jump table and
+    /// the `QUOTE == 0` / SIMD-gate checks const-propagate away. `is_json` is
+    /// hard-wired `true` (this module *is* the is_json slice — see file header)
+    /// so the `< 0x20` control-char check is branchless on the option load.
+    fn parse_string_literal_inner<const QUOTE: u8>(&mut self) -> LexResult {
         self.token = T::TStringLiteral;
         // quote is 0 when parsing JSON from .env — values may be unquoted.
         self.step();
 
         let mut needs_decode = false;
-        let suffix_len: usize = if quote == 0 { 0 } else { 1 };
+        let suffix_len: usize = if QUOTE == 0 { 0 } else { 1 };
+        // Hoisted out of the (rare) `\\` arm so the loop body never reloads
+        // through `&self.opts`.
+        let ignore_trailing_esc = self.opts.ignore_trailing_escape_sequences;
 
         loop {
+            // Literal arms only (no `if` guards) so LLVM can lower this to a
+            // dense switch; the quote check lives in the fall-through body as a
+            // single cmp-against-immediate.
             match self.code_point {
-                cp if cp == '\\' as CodePoint => {
+                0x5C /* \\ */ => {
                     needs_decode = true;
                     self.step();
 
-                    if self.opts.ignore_trailing_escape_sequences
-                        && self.code_point == quote
+                    if ignore_trailing_esc
+                        && self.code_point == QUOTE as CodePoint
                         && self.current >= self.source.contents.len()
                     {
                         self.step();
@@ -496,11 +527,7 @@ where
 
                     match self.code_point {
                         // 0 cannot be in this list because it may be a legacy octal literal.
-                        cp if cp == '`' as CodePoint
-                            || cp == '\'' as CodePoint
-                            || cp == '"' as CodePoint
-                            || cp == '\\' as CodePoint =>
-                        {
+                        0x60 /* ` */ | 0x27 /* ' */ | 0x22 /* " */ | 0x5C /* \\ */ => {
                             self.step();
                             continue;
                         }
@@ -508,34 +535,33 @@ where
                     }
                 }
                 -1 => {
-                    if quote != 0 {
+                    if QUOTE != 0 {
                         self.add_default_error("Unterminated string literal")?;
                     }
                     break;
                 }
-                cp if cp == '\r' as CodePoint => {
+                0x0D /* \r */ => {
                     self.add_default_error("Unterminated string literal")?;
                 }
-                cp if cp == '\n' as CodePoint => {
+                0x0A /* \n */ => {
                     // Implicitly-quoted strings end at newline OR EOF (.env only).
-                    if quote == 0 {
+                    if QUOTE == 0 {
                         break;
                     }
                     self.add_default_error("Unterminated string literal")?;
                 }
-                cp if cp == quote => {
-                    self.step();
-                    break;
-                }
                 cp => {
+                    if cp == QUOTE as CodePoint {
+                        self.step();
+                        break;
+                    }
                     // Non-ASCII strings need the slow path.
                     if cp >= 0x80 {
                         needs_decode = true;
-                    } else if self.opts.is_json && cp < 0x20 {
+                    } else if cp < 0x20 {
+                        // `comptime is_json` is always true in this module.
                         self.syntax_error()?;
-                    } else if (quote == '"' as CodePoint || quote == '\'' as CodePoint)
-                        && bun_core::env::IS_NATIVE
-                    {
+                    } else if (QUOTE == b'"' || QUOTE == b'\'') && bun_core::env::IS_NATIVE {
                         // Spec lexer.zig:730-740 — SIMD skip-ahead over plain
                         // ASCII string content. Critical for inline-sourcemap
                         // JSON where `sourcesContent` can be hundreds of KB.
@@ -543,7 +569,7 @@ where
                         if remainder.len() >= 4096 {
                             match bun_highway::index_of_interesting_character_in_string_literal(
                                 remainder,
-                                quote as u8,
+                                QUOTE,
                             ) {
                                 Some(off) => {
                                     self.current += off;
@@ -564,7 +590,7 @@ where
         }
 
         // Reset string literal.
-        let base = if quote == 0 { self.start } else { self.start + 1 };
+        let base = if QUOTE == 0 { self.start } else { self.start + 1 };
         let end_pos = self.end.saturating_sub(suffix_len);
         let slice_end = self.source.contents.len().min(base.max(end_pos));
         self.string_literal_raw_content = &self.source.contents[base..slice_end];
@@ -729,11 +755,10 @@ where
                             buf.push(value as u16);
                         }
                         _ => {
-                            if self.opts.is_json {
-                                return self.syntax_error();
-                            }
-                            // Zig: pass through.
-                            push_codepoint(buf, c2);
+                            // `comptime is_json` is always true in this module
+                            // (see file header) — the Zig pass-through arm is
+                            // unreachable here.
+                            return self.syntax_error();
                         }
                     }
                 }
@@ -1280,10 +1305,10 @@ where
                 }
 
                 cp if cp == '\'' as CodePoint => {
-                    self.parse_string_literal('\'' as CodePoint)?;
+                    self.parse_string_literal_inner::<b'\''>()?;
                 }
                 cp if cp == '"' as CodePoint => {
-                    self.parse_string_literal('"' as CodePoint)?;
+                    self.parse_string_literal_inner::<b'"'>()?;
                 }
 
                 cp if cp == '\\' as CodePoint => {

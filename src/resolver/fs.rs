@@ -183,40 +183,35 @@ pub struct FilenameStore(());
 static DIRNAME_STORE_ZST: DirnameStore = DirnameStore(());
 static FILENAME_STORE_ZST: FilenameStore = FilenameStore(());
 
-// PORT NOTE: external locks serializing formation of `&mut *backing()`. The backing's
-// own internal mutex is acquired *inside* `append(&mut self, ...)` — i.e. *after* the
-// `&mut self` auto-ref has already been formed, which is too late under Stacked Borrows:
-// two threads could each materialize a live `&mut BSSStringList` to the same singleton
-// before either takes the inner lock (aliased `&mut`, UB). Zig calls go through a raw
-// `*Self` with no noalias guarantee, so its inner mutex suffices; in Rust we must hold
-// an outer lock across the auto-ref so only one `&mut` exists at a time.
-// TODO(port): `bun_threading::Mutex` has no `const fn new()`; LazyLock until it does.
-static DIRNAME_STORE_MUTEX: std::sync::LazyLock<Mutex> = std::sync::LazyLock::new(Mutex::default);
-static FILENAME_STORE_MUTEX: std::sync::LazyLock<Mutex> = std::sync::LazyLock::new(Mutex::default);
+// PORT NOTE: `BSSStringList::append`/`append_lower_case`/`print` now take a raw
+// `*mut Self` receiver (matching `BSSList::append` and Zig's `*Self`), so the
+// inner `self.mutex` is the sole serialization point and no `&mut` is ever
+// materialized before the lock is held. The previous outer `LazyLock<Mutex>`
+// pair existed only to prevent aliased-`&mut`-before-lock UB under the old
+// `&mut self` receiver; with the raw-ptr receiver that hazard is gone, so the
+// outer locks (and their `LazyLock` slow-init / `.text` overhead on the
+// startup path) are dropped.
 
 macro_rules! string_store_impl {
-    ($t:ty, $zst:ident, $backing:ident, $bty:ty, $mutex:ident) => {
+    ($t:ty, $zst:ident, $backing:ident, $bty:ty) => {
         impl $t {
             #[inline]
             pub fn instance() -> &'static Self { &$zst }
             #[inline]
             fn backing() -> *mut $bty {
-                // PORT NOTE: returns the raw `*mut` singleton (Zig `*Self`). Do NOT
-                // materialize a `&'static mut` here — two threads entering `append`
-                // would each hold a live `&'static mut` to the same object (UB)
-                // regardless of the backing's internal mutex. Form the `&mut` only
-                // for the duration of a single locked operation at the call site.
+                // PORT NOTE: returns the raw `*mut` singleton (Zig `*Self`).
+                // `BSSStringList`'s mutating methods take `*mut Self` and lock
+                // internally, so callers may pass this directly without ever
+                // forming a `&mut`.
                 $backing()
             }
             pub fn append(&self, value: &[u8]) -> core::result::Result<&'static [u8], AllocError> {
-                let _guard = $mutex.lock_guard();
-                // SAFETY: `$mutex` is held, so this is the only live `&mut` to the
-                // process-lifetime singleton; `append` further serializes mutation
-                // through its (now-redundant) internal mutex. The returned slice
-                // borrows the singleton's never-freed backing storage (heap-owned
-                // by a `'static` `BSSStringList` or a leaked mi_malloc); the
-                // unbounded raw-deref lifetime coerces soundly to `'static`.
-                unsafe { (*Self::backing()).append(value) }
+                // SAFETY: `backing()` is the live process-lifetime singleton;
+                // `BSSStringList::append` serializes on its inner mutex. The
+                // returned slice borrows the singleton's never-freed storage
+                // (heap-owned by a `'static` `BSSStringList` or a leaked
+                // mi_malloc), so widening to `'static` is sound.
+                unsafe { <$bty>::append(Self::backing(), value) }
             }
             /// Zig: `FileSystem.DirnameStore.print(fmt, args)` — format directly
             /// into the store's tail (no intermediate `String`). See
@@ -225,77 +220,71 @@ macro_rules! string_store_impl {
                 &self,
                 args: core::fmt::Arguments<'_>,
             ) -> core::result::Result<&'static [u8], AllocError> {
-                let _guard = $mutex.lock_guard();
-                // SAFETY: `$mutex` held — sole live `&mut` to the process-lifetime singleton.
-                let s = unsafe { (*Self::backing()).print(args)? };
+                // SAFETY: see `append`.
+                let s = unsafe { <$bty>::print(Self::backing(), args)? };
                 // SAFETY: storage owned by the process-lifetime `BSSStringList`
                 // singleton (never freed); `Interned` is the canonical proof type.
                 Ok(unsafe { bun_ptr::Interned::assume(s) }.as_bytes())
             }
             #[inline]
             pub fn exists(&self, value: &[u8]) -> bool {
-                let _guard = $mutex.lock_guard();
-                // SAFETY: `$mutex` held — no concurrent `&mut` to the singleton.
+                // SAFETY: `backing()` is the live process-lifetime singleton;
+                // `exists` only reads `backing_buf`'s pointer/len (set once at
+                // init, never mutated), so a shared `&` is sound even concurrent
+                // with `append`.
                 unsafe { (*Self::backing()).exists(value) }
             }
         }
         impl strings::Appender for &'static $t {
             fn append(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
-                let _guard = $mutex.lock_guard();
-                // SAFETY: `$mutex` held — sole live `&mut` to the process-lifetime
-                // singleton. Returned slice borrows its never-freed storage; the
-                // unbounded raw-deref lifetime narrows to the trait's elided one.
-                unsafe { (*<$t>::backing()).append(s) }
+                // SAFETY: see `<$t>::append`. Returned `'static` narrows to the
+                // trait's elided lifetime.
+                unsafe { <$bty>::append(<$t>::backing(), s) }
             }
             fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
-                let _guard = $mutex.lock_guard();
                 // SAFETY: see `append`.
-                unsafe { (*<$t>::backing()).append_lower_case(s) }
+                unsafe { <$bty>::append_lower_case(<$t>::backing(), s) }
             }
         }
     };
 }
-string_store_impl!(DirnameStore, DIRNAME_STORE_ZST, dirname_store_backing, DirnameStoreBacking, DIRNAME_STORE_MUTEX);
-string_store_impl!(FilenameStore, FILENAME_STORE_ZST, filename_store_backing, FilenameStoreBacking, FILENAME_STORE_MUTEX);
+string_store_impl!(DirnameStore, DIRNAME_STORE_ZST, dirname_store_backing, DirnameStoreBacking);
+string_store_impl!(FilenameStore, FILENAME_STORE_ZST, filename_store_backing, FilenameStoreBacking);
 
 /// Pre-resolved `FilenameStore` appender for the `readdir` hot loop.
 ///
 /// `<FilenameStore as Appender>::append` re-evaluates `filename_store_backing()`
-/// (a `bss_singleton!` accessor: `Once::call_once` + `AtomicPtr::load`) and
-/// `FILENAME_STORE_MUTEX` (a `LazyLock` deref) on every call. `add_entry` runs
-/// once per directory entry, so for the @material-ui/icons-style 11,000-entry
-/// directories that's 22,000 redundant `Once`/`LazyLock` atomic checks per
-/// directory. Resolving both once up front and carrying the raw pointers across
-/// the loop drops that to a single check per `readdir`.
+/// (a `bss_singleton!` accessor: `Once::call_once` + `AtomicPtr::load`) on every
+/// call. `add_entry` runs once per directory entry, so for the
+/// @material-ui/icons-style 11,000-entry directories that's 11,000+ redundant
+/// `Once` atomic checks per directory. Resolving once up front and carrying the
+/// raw pointer across the loop drops that to a single check per `readdir`.
 pub(crate) struct FilenameStoreAppender {
     backing: *mut FilenameStoreBacking,
-    mutex: &'static Mutex,
 }
 impl FilenameStoreAppender {
     #[inline]
     pub(crate) fn new() -> Self {
-        Self {
-            // One `Once` check + one `LazyLock` deref, hoisted out of the per-entry loop.
-            backing: filename_store_backing(),
-            mutex: &FILENAME_STORE_MUTEX,
-        }
+        // One `Once` check, hoisted out of the per-entry loop.
+        Self { backing: filename_store_backing() }
     }
 }
 impl strings::Appender for FilenameStoreAppender {
+    #[inline]
     fn append(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
-        let _guard = self.mutex.lock_guard();
-        // SAFETY: `mutex` is the same `FILENAME_STORE_MUTEX` that
-        // `string_store_impl!` takes; while held, this is the sole live `&mut`
-        // to the process-lifetime singleton.
-        let r = unsafe { (*self.backing).append(s)? };
+        // SAFETY: `backing` is the live process-lifetime `bss_string_list!`
+        // singleton; `BSSStringList::append` takes `*mut Self` and serializes on
+        // its inner mutex (no aliased `&mut` is ever formed). Returned slice
+        // borrows the singleton's never-freed storage.
+        let r = unsafe { FilenameStoreBacking::append(self.backing, s)? };
         // SAFETY: storage owned by the process-lifetime `BSSStringList` singleton
         // (never freed); `Interned` is the canonical proof type for this widen.
         Ok(unsafe { bun_ptr::Interned::assume(r) }.as_bytes())
     }
+    #[inline]
     fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
-        let _guard = self.mutex.lock_guard();
         // SAFETY: see `append`.
-        let r = unsafe { (*self.backing).append_lower_case(s)? };
+        let r = unsafe { FilenameStoreBacking::append_lower_case(self.backing, s)? };
         // SAFETY: see `append`.
         Ok(unsafe { bun_ptr::Interned::assume(r) }.as_bytes())
     }
@@ -506,6 +495,26 @@ pub(crate) mod dir_entry {
             // mutex (matching Zig `EntryStore.instance.append`); no outer lock.
             unsafe { EntryStoreBacking::append(Self::instance(), value) }
         }
+        /// Reserve an `Entry` slot in the store and return its uninitialized
+        /// storage. The caller MUST fully initialize every field before any
+        /// other code observes the slot (the index is already accounted in
+        /// `used` so a later read past the watermark would see uninit bytes).
+        ///
+        /// This is the in-place-construction primitive for the `readdir` hot
+        /// loop: `Entry` is ~168 bytes and the by-value `append` above forces a
+        /// stack temporary + memcpy that Rust does not reliably NRVO across
+        /// the call boundary. Reserving the slot first lets the per-field
+        /// writes lower straight into the destination (matching Zig's
+        /// result-location semantics).
+        #[inline(always)]
+        pub(crate) fn append_uninit()
+            -> core::result::Result<*mut core::mem::MaybeUninit<Entry>, AllocError>
+        {
+            // SAFETY: `instance()` is the live `'static` `bss_list!` singleton;
+            // `BSSList::append_uninit` takes `*mut Self` and serializes on its
+            // own inner mutex.
+            unsafe { EntryStoreBacking::append_uninit(Self::instance()) }
+        }
     }
 
     #[derive(Clone, Copy)]
@@ -610,35 +619,49 @@ impl DirEntry {
                 }
             }
 
-            // name_slice only lives for the duration of the iteration
-            let name = strings::StringOrTinyString::init_append_if_needed(
-                name_slice,
-                filename_store,
-            )?;
-
-            let name_lowercased = strings::StringOrTinyString::init_lower_case_append_if_needed(
-                name_slice,
-                filename_store,
-            )?;
-
-            dir_entry::EntryStore::append(Entry {
-                base_: name,
-                base_lowercase_: name_lowercased,
-                dir: self.dir,
-                mutex: Mutex::default(),
+            // Reserve the destination slot first so each field write below
+            // lowers straight into the store (Zig result-location semantics) —
+            // avoids a ~168-byte `Entry` stack temporary + memcpy per entry.
+            let slot = dir_entry::EntryStore::append_uninit()?;
+            // SAFETY: `slot` is a freshly-reserved uninit cell exclusively
+            // owned by this thread (`append_uninit` bumped the index under the
+            // store's inner mutex). Every field is written exactly once below
+            // before the cell is observed via `*mut Entry`.
+            unsafe {
+                use core::ptr::addr_of_mut;
+                let p = (*slot).as_mut_ptr();
+                // name_slice only lives for the duration of the iteration.
+                // `init*_append_if_needed` are `#[inline(always)]` so the
+                // 32-byte `StringOrTinyString` is built directly into `*p`
+                // with no intermediate stack copy.
+                addr_of_mut!((*p).base_).write(
+                    strings::StringOrTinyString::init_append_if_needed(
+                        name_slice,
+                        filename_store,
+                    )?,
+                );
+                addr_of_mut!((*p).base_lowercase_).write(
+                    strings::StringOrTinyString::init_lower_case_append_if_needed(
+                        name_slice,
+                        filename_store,
+                    )?,
+                );
+                addr_of_mut!((*p).dir).write(self.dir);
+                addr_of_mut!((*p).mutex).write(Mutex::new());
                 // Call "stat" lazily for performance. The "@material-ui/icons" package
                 // contains a directory with over 11,000 entries in it and running "stat"
                 // for each entry was a big performance issue for that package.
-                need_stat: found_kind.is_none(),
-                cache: EntryCache {
+                addr_of_mut!((*p).need_stat).write(found_kind.is_none());
+                addr_of_mut!((*p).cache).write(EntryCache {
                     symlink: PathString::EMPTY,
                     // if found_kind is null, we have set need_stat above, so we
                     // store an arbitrary kind
                     kind: found_kind.unwrap_or(EntryKind::File),
                     fd: Fd::INVALID,
-                },
-                abs_path: PathString::EMPTY,
-            })?
+                });
+                addr_of_mut!((*p).abs_path).write(PathString::EMPTY);
+                p
+            }
         };
 
         // SAFETY: just produced from EntryStore append or prev_map lookup

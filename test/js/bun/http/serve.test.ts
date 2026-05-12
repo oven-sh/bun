@@ -1587,7 +1587,7 @@ it("should support promise returned from error", async () => {
   subprocess.kill();
 });
 
-if (process.platform === "linux")
+if (process.platform === "linux" && process.getuid?.() !== 0)
   it("should use correct error when using a root range port(#7187)", () => {
     expect(() => {
       using server = Bun.serve({

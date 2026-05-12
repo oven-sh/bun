@@ -6832,16 +6832,14 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         // by-value copy).
         let dont_break_the_code = [tree.module_ref, tree.exports_ref, tree.require_ref];
         for ref_ in dont_break_the_code {
-            if let Some(symbol) = minify_renamer.symbols.get(ref_) {
-                // SAFETY: `Map::get` yields an arena-backed `*mut Symbol`.
-                unsafe { (*symbol).must_not_be_renamed = true; }
+            if let Some(symbol) = minify_renamer.symbols.get_mut(ref_) {
+                symbol.must_not_be_renamed = true;
             }
         }
 
         for named_export in tree.named_exports.values() {
-            if let Some(symbol) = minify_renamer.symbols.get(named_export.ref_) {
-                // SAFETY: `Map::get` yields an arena-backed `*mut Symbol`.
-                unsafe { (*symbol).must_not_be_renamed = true; }
+            if let Some(symbol) = minify_renamer.symbols.get_mut(named_export.ref_) {
+                symbol.must_not_be_renamed = true;
             }
         }
 

@@ -4801,7 +4801,9 @@ const y: number = 10;`;
           // Fail fast on malformed VLQ. Without this guard, (digit & 32)
           // stays truthy for `-1` and we loop forever — a test assertion
           // failure would manifest as a CI hang, not a useful error.
-          throw new Error(`Invalid VLQ digit ${JSON.stringify(ch)} in segment ${JSON.stringify(seg)} at offset ${offset - 1}`);
+          throw new Error(
+            `Invalid VLQ digit ${JSON.stringify(ch)} in segment ${JSON.stringify(seg)} at offset ${offset - 1}`,
+          );
         }
         cont = (digit & 32) !== 0;
         value += (digit & 31) << shift;
@@ -5070,22 +5072,19 @@ const y: number = 10;`;
   // re-encode that to standard VLQ before emitting the v3 JSON map,
   // otherwise JSON.parse chokes on the raw binary bytes embedded in
   // the `mappings` field.
-  it.each(["ts", "tsx", "jsx", "js"])(
-    'target: "bun" emits valid VLQ mappings for loader=%s (sync)',
-    loader => {
-      const t = new Bun.Transpiler({ loader, target: "bun", sourcemap: "external" });
-      const out = t.transformSync("const x = 1;\nconst y = 2;");
-      const parsed = JSON.parse(out.map);
-      // decodeMappings would throw on an invalid VLQ segment; a
-      // successful decode is our proof that the format is correct.
-      const decoded = decodeMappings(parsed.mappings);
-      expect(decoded.length).toBeGreaterThan(0);
-      for (const m of decoded) {
-        expect(m.originalLine).toBeGreaterThanOrEqual(0);
-        expect(m.originalColumn).toBeGreaterThanOrEqual(0);
-      }
-    },
-  );
+  it.each(["ts", "tsx", "jsx", "js"])('target: "bun" emits valid VLQ mappings for loader=%s (sync)', loader => {
+    const t = new Bun.Transpiler({ loader, target: "bun", sourcemap: "external" });
+    const out = t.transformSync("const x = 1;\nconst y = 2;");
+    const parsed = JSON.parse(out.map);
+    // decodeMappings would throw on an invalid VLQ segment; a
+    // successful decode is our proof that the format is correct.
+    const decoded = decodeMappings(parsed.mappings);
+    expect(decoded.length).toBeGreaterThan(0);
+    for (const m of decoded) {
+      expect(m.originalLine).toBeGreaterThanOrEqual(0);
+      expect(m.originalColumn).toBeGreaterThanOrEqual(0);
+    }
+  });
 
   it('target: "bun" with sourcemap: "inline" produces a parseable embedded map', () => {
     const t = new Bun.Transpiler({ loader: "ts", target: "bun", sourcemap: "inline" });

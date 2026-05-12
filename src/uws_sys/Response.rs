@@ -339,15 +339,12 @@ impl<const SSL: bool> Response<SSL> {
             // is a ZST handler (asserted in `thunk::zst`).
             unsafe { thunk::zst::<H>()(data.cast::<U>(), amount, thunk::handle_mut(Response::<SSL>::cast_res(this))) }
         }
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
-            c::uws_res_on_writable(
-                Self::ssl_flag(),
-                self.downcast(),
-                Some(handle::<U, H, SSL>),
-                user_data.cast(),
-            );
-        }
+        c::uws_res_on_writable(
+            Self::ssl_flag(),
+            self.as_raw(),
+            Some(handle::<U, H, SSL>),
+            user_data.cast(),
+        );
     }
 
     pub fn clear_on_writable(&mut self) {
@@ -379,20 +376,16 @@ impl<const SSL: bool> Response<SSL> {
             // is a ZST handler (asserted in `thunk::zst`).
             unsafe { thunk::zst::<H>()(user_data.cast::<U>(), thunk::handle_mut(Response::<SSL>::cast_res(this))) }
         }
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
-            c::uws_res_on_aborted(
-                Self::ssl_flag(),
-                self.downcast(),
-                Some(handle::<U, H, SSL>),
-                optional_data.cast(),
-            );
-        }
+        c::uws_res_on_aborted(
+            Self::ssl_flag(),
+            self.as_raw(),
+            Some(handle::<U, H, SSL>),
+            optional_data.cast(),
+        );
     }
 
     pub fn clear_aborted(&mut self) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_on_aborted(Self::ssl_flag(), self.downcast(), None, core::ptr::null_mut()) }
+        c::uws_res_on_aborted(Self::ssl_flag(), self.as_raw(), None, core::ptr::null_mut())
     }
 
     pub fn on_timeout<U, H>(&mut self, _handler: H, optional_data: *mut U)
@@ -413,25 +406,20 @@ impl<const SSL: bool> Response<SSL> {
             // is a ZST handler (asserted in `thunk::zst`).
             unsafe { thunk::zst::<H>()(user_data.cast::<U>(), thunk::handle_mut(Response::<SSL>::cast_res(this))) }
         }
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
-            c::uws_res_on_timeout(
-                Self::ssl_flag(),
-                self.downcast(),
-                Some(handle::<U, H, SSL>),
-                optional_data.cast(),
-            );
-        }
+        c::uws_res_on_timeout(
+            Self::ssl_flag(),
+            self.as_raw(),
+            Some(handle::<U, H, SSL>),
+            optional_data.cast(),
+        );
     }
 
     pub fn clear_timeout(&mut self) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_on_timeout(Self::ssl_flag(), self.downcast(), None, core::ptr::null_mut()) }
+        c::uws_res_on_timeout(Self::ssl_flag(), self.as_raw(), None, core::ptr::null_mut())
     }
 
     pub fn clear_on_data(&mut self) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_on_data(Self::ssl_flag(), self.downcast(), None, core::ptr::null_mut()) }
+        c::uws_res_on_data(Self::ssl_flag(), self.as_raw(), None, core::ptr::null_mut())
     }
 
     pub fn on_data<U, H>(&mut self, _handler: H, optional_data: *mut U)
@@ -462,15 +450,12 @@ impl<const SSL: bool> Response<SSL> {
                 )
             }
         }
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
-            c::uws_res_on_data(
-                Self::ssl_flag(),
-                self.downcast(),
-                Some(handle::<U, H, SSL>),
-                optional_data.cast(),
-            );
-        }
+        c::uws_res_on_data(
+            Self::ssl_flag(),
+            self.as_raw(),
+            Some(handle::<U, H, SSL>),
+            optional_data.cast(),
+        );
     }
 
     pub fn end_stream(&mut self, close_connection: bool) {
@@ -491,16 +476,13 @@ impl<const SSL: bool> Response<SSL> {
             f();
         }
         let mut f = core::mem::ManuallyDrop::new(f);
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; cork is synchronous so the
-        // stack-allocated closure outlives the FFI call.
-        unsafe {
-            c::uws_res_cork(
-                Self::ssl_flag(),
-                self.downcast(),
-                (&raw mut *f).cast::<c_void>(),
-                handle::<F>,
-            );
-        }
+        // cork is synchronous so the stack-allocated closure outlives the FFI call.
+        c::uws_res_cork(
+            Self::ssl_flag(),
+            self.as_raw(),
+            (&raw mut *f).cast::<c_void>(),
+            handle::<F>,
+        );
     }
 
     pub fn run_corked_with_type<U>(&mut self, handler: fn(*mut U), optional_data: *mut U) {
@@ -516,16 +498,13 @@ impl<const SSL: bool> Response<SSL> {
             (ctx.0)(ctx.1);
         }
         let mut ctx: Ctx<U> = (handler, optional_data);
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; cork is synchronous so the
-        // stack-allocated ctx outlives the FFI call.
-        unsafe {
-            c::uws_res_cork(
-                Self::ssl_flag(),
-                self.downcast(),
-                (&raw mut ctx).cast::<c_void>(),
-                handle::<U>,
-            );
-        }
+        // cork is synchronous so the stack-allocated ctx outlives the FFI call.
+        c::uws_res_cork(
+            Self::ssl_flag(),
+            self.as_raw(),
+            (&raw mut ctx).cast::<c_void>(),
+            handle::<U>,
+        );
     }
 
     pub fn upgrade<D>(
@@ -1055,22 +1034,25 @@ pub mod c {
         pub safe fn uws_res_get_write_offset(ssl: i32, res: &mut uws_res) -> u64;
         pub safe fn uws_res_override_write_offset(ssl: i32, res: &mut uws_res, offset: u64);
         pub safe fn uws_res_has_responded(ssl: i32, res: &mut uws_res) -> bool;
-        pub fn uws_res_on_writable(
+        // safe: `&mut uws_res` is ABI-identical to a non-null `*mut uws_res`;
+        // `handler`/`user_data` are stored opaquely (never dereferenced by the
+        // C++ shim itself) — no preconditions on this call.
+        pub safe fn uws_res_on_writable(
             ssl: i32,
-            res: *mut uws_res,
+            res: &mut uws_res,
             handler: Option<unsafe extern "C" fn(*mut uws_res, u64, *mut c_void) -> bool>,
             user_data: *mut c_void,
         );
         pub safe fn uws_res_clear_on_writable(ssl: i32, res: &mut uws_res);
-        pub fn uws_res_on_aborted(
+        pub safe fn uws_res_on_aborted(
             ssl: i32,
-            res: *mut uws_res,
+            res: &mut uws_res,
             handler: Option<unsafe extern "C" fn(*mut uws_res, *mut c_void)>,
             optional_data: *mut c_void,
         );
-        pub fn uws_res_on_timeout(
+        pub safe fn uws_res_on_timeout(
             ssl: i32,
-            res: *mut uws_res,
+            res: &mut uws_res,
             handler: Option<unsafe extern "C" fn(*mut uws_res, *mut c_void)>,
             optional_data: *mut c_void,
         );
@@ -1090,9 +1072,9 @@ pub mod c {
             res: &mut uws_res,
             dest: &mut *const u8,
         ) -> usize;
-        pub fn uws_res_on_data(
+        pub safe fn uws_res_on_data(
             ssl: i32,
-            res: *mut uws_res,
+            res: &mut uws_res,
             handler: Option<
                 unsafe extern "C" fn(*mut uws_res, *const u8, usize, bool, *mut c_void),
             >,
@@ -1110,9 +1092,12 @@ pub mod c {
             sec_web_socket_extensions_length: usize,
             ws: *mut WebSocketUpgradeContext,
         ) -> *mut Socket;
-        pub fn uws_res_cork(
+        // safe: cork is synchronous — `ctx` is passed straight back to
+        // `corker` without being dereferenced by the C++ shim itself, so the
+        // call has no preconditions beyond the live opaque handle.
+        pub safe fn uws_res_cork(
             ssl: i32,
-            res: *mut uws_res,
+            res: &mut uws_res,
             ctx: *mut c_void,
             corker: unsafe extern "C" fn(*mut c_void),
         );

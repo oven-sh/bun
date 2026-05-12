@@ -380,16 +380,7 @@ impl<const SSL: bool> App<SSL> {
         // TODO(port): Zig generated a type-safe Wrapper.handle per (UserData, handler) at
         // comptime, casting user_data and ListenSocket. Phase B: macro-generate the shim.
         // PERF(port): was @call(.always_inline) on the user handler.
-        // SAFETY: self is a valid app.
-        unsafe {
-            c::uws_app_listen(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                port,
-                Some(handler),
-                user_data,
-            )
-        }
+        c::uws_app_listen(Self::SSL_FLAG, self.as_raw(), port, Some(handler), user_data)
     }
 
     pub fn on_client_error(
@@ -400,15 +391,7 @@ impl<const SSL: bool> App<SSL> {
         // TODO(port): Zig wrapped the C callback to slice raw_packet[0..max(len,0)] and pass
         // a typed UserData. Phase B: macro-generate the shim; for now callers slice manually.
         // PERF(port): was @call(.always_inline) on the user handler.
-        // SAFETY: self is a valid app; handler/user_data outlive the app.
-        unsafe {
-            c::uws_app_set_on_clienterror(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_s>(),
-                handler,
-                user_data,
-            )
-        }
+        c::uws_app_set_on_clienterror(Self::SSL_FLAG, self.as_raw(), handler, user_data)
     }
 
     pub fn listen_with_config(
@@ -547,27 +530,11 @@ impl<const SSL: bool> App<SSL> {
         handler: c::uws_missing_server_handler,
         user_data: *mut c_void,
     ) {
-        // SAFETY: self is a valid app.
-        unsafe {
-            c::uws_missing_server_name(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                handler,
-                user_data,
-            )
-        }
+        c::uws_missing_server_name(Self::SSL_FLAG, self.as_raw(), handler, user_data)
     }
 
     pub fn filter(&mut self, handler: c::uws_filter_handler, user_data: *mut c_void) {
-        // SAFETY: self is a valid app.
-        unsafe {
-            c::uws_filter(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                handler,
-                user_data,
-            )
-        }
+        c::uws_filter(Self::SSL_FLAG, self.as_raw(), handler, user_data)
     }
 
     pub fn ws(&mut self, pattern: &[u8], ctx: *mut c_void, id: usize, behavior_: WebSocketBehavior) {
@@ -670,9 +637,12 @@ pub mod c {
     unsafe extern "C" {
         pub safe fn uws_app_close(ssl: i32, app: &mut uws_app_s);
         pub safe fn uws_app_close_idle(ssl: i32, app: &mut uws_app_s);
-        pub fn uws_app_set_on_clienterror(
+        // safe: `&mut uws_app_s` is ABI-identical to a non-null `*mut`;
+        // `handler`/`user_data` are stored opaquely (never dereferenced by the
+        // C++ shim itself) — no preconditions on this call.
+        pub safe fn uws_app_set_on_clienterror(
             ssl: c_int,
-            app: *mut uws_app_s,
+            app: &mut uws_app_s,
             handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t, u8, *mut u8, c_int),
             user_data: *mut c_void,
         );
@@ -767,9 +737,11 @@ pub mod c {
         );
         pub safe fn uws_app_run(ssl: i32, app: &mut uws_app_t);
         pub fn uws_app_domain(ssl: i32, app: *mut uws_app_t, domain: *const c_char);
-        pub fn uws_app_listen(
+        // safe: handle-only + value `port`; `handler`/`user_data` are stored
+        // opaquely — no preconditions on this call.
+        pub safe fn uws_app_listen(
             ssl: i32,
-            app: *mut uws_app_t,
+            app: &mut uws_app_t,
             port: i32,
             handler: uws_listen_handler,
             user_data: *mut c_void,
@@ -817,15 +789,15 @@ pub mod c {
             hostname_pattern: *const c_char,
             options: BunSocketContextOptions,
         ) -> i32;
-        pub fn uws_missing_server_name(
+        pub safe fn uws_missing_server_name(
             ssl: i32,
-            app: *mut uws_app_t,
+            app: &mut uws_app_t,
             handler: uws_missing_server_handler,
             user_data: *mut c_void,
         );
-        pub fn uws_filter(
+        pub safe fn uws_filter(
             ssl: i32,
-            app: *mut uws_app_t,
+            app: &mut uws_app_t,
             handler: uws_filter_handler,
             user_data: *mut c_void,
         );

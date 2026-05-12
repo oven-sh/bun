@@ -2065,7 +2065,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         parts.push(js_ast::Part {
             stmts: stmts.into(),
             declared_symbols,
-            import_record_indices: vec![import_record_i],
+            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_i),
             tag: bun_ast::PartTag::Runtime,
             ..Default::default()
         });
@@ -2209,7 +2209,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         parts.push(js_ast::Part {
             stmts: stmts.into(),
             declared_symbols,
-            import_record_indices: vec![import_record_i],
+            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_i),
             tag: bun_ast::PartTag::Runtime,
             ..Default::default()
         });
@@ -2364,7 +2364,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         parts.push(js_ast::Part {
             stmts: stmts.into(),
             declared_symbols,
-            import_record_indices: vec![import_record_index],
+            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_index),
             tag: bun_ast::PartTag::Runtime,
             ..Default::default()
         });
@@ -5376,8 +5376,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 },
                 ..Default::default()
             });
-            self.symbol_uses = Default::default();
-            self.import_symbol_property_uses = Default::default();
+            // `symbol_uses` / `import_symbol_property_uses` were already reset
+            // to empty by `core::mem::take` above; no second assignment needed.
             self.had_commonjs_named_exports_this_visit = false;
         } else if self.declared_symbols.len() > 0 || self.symbol_uses.count() > 0 {
             // if the part is dead, invalidate all the usage counts

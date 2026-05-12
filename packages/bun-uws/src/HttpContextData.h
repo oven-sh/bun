@@ -71,7 +71,8 @@ private:
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
 
-    // TODO: SNI
+    // SNI domain routers are owned by TemplatedApp::pendingServerNames and
+    // cleared from TemplatedApp::clearRoutes(); we only own the default one.
     void clearRoutes() {
         this->router = HttpRouter<RouterData>{};
         this->currentRouter = &router;

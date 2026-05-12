@@ -613,6 +613,15 @@ public:
     void clearRoutes() {
         if (httpContext) {
             httpContext->getSocketContextData()->clearRoutes();
+            if constexpr (SSL) {
+                /* Also clear every SNI domain router. reload() frees the
+                 * user_data captured in route handlers, so leaving the old
+                 * handlers here would call into freed memory on the next
+                 * request that arrives with a matching SNI. */
+                for (auto &p : pendingServerNames) {
+                    *p.router = HttpRouter<typename HttpContextData<SSL>::RouterData>{};
+                }
+            }
         }
     }
 

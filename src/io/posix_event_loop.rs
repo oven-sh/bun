@@ -63,7 +63,10 @@ pub use crate::{EventLoopCtx, EventLoopCtxKind, EventLoopKind, OpaqueCallback};
 
 unsafe extern "Rust" {
     /// Defined `#[no_mangle]` in `bun_runtime::jsc_hooks`.
-    fn __bun_get_vm_ctx(kind: AllocatorType) -> EventLoopCtx;
+    // safe: by-value enum arg only; the `#[no_mangle] pub fn` body in
+    // `bun_runtime::jsc_hooks` is itself a safe fn (reads process globals) —
+    // no memory-safety preconditions.
+    safe fn __bun_get_vm_ctx(kind: AllocatorType) -> EventLoopCtx;
 }
 
 /// Kind of fd a `FilePoll` (or pipe reader/writer) is wrapping. Lives here so
@@ -94,10 +97,10 @@ impl FileType {
 
 #[inline]
 pub fn get_vm_ctx(kind: AllocatorType) -> EventLoopCtx {
-    // SAFETY: link-time-resolved Rust-ABI fn; `kind` selects between the
+    // Link-time-resolved Rust-ABI fn; `kind` selects between the
     // process-global JS VM and Mini loop, both initialised before any
     // `KeepAlive`/`FilePoll` caller reaches this.
-    unsafe { __bun_get_vm_ctx(kind) }
+    __bun_get_vm_ctx(kind)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

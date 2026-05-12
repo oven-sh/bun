@@ -106,13 +106,13 @@ impl SignalCode {
         }
     }
 
-    pub fn from<T: Copy>(value: T) -> SignalCode {
-        // SAFETY: reinterpret `value` as bytes and read the first byte, mirroring
-        // Zig `std.mem.asBytes(&value)[0]`. Requires size_of::<T>() >= 1.
-        let byte = unsafe {
-            *(&raw const value).cast::<u8>()
-        };
-        SignalCode(byte)
+    pub fn from<T: bytemuck::NoUninit>(value: T) -> SignalCode {
+        // Zig `std.mem.asBytes(&value)[0]` — view `value` as bytes and read the
+        // first one. `NoUninit` guarantees `T` is `Copy` with no padding/uninit
+        // bytes, so `bytemuck::bytes_of` is the safe equivalent of the raw
+        // `*(&raw const value).cast::<u8>()` reinterpret. A ZST `T` panics on
+        // the `[0]` index (was UB before); all callers pass integer types.
+        SignalCode(bytemuck::bytes_of(&value)[0])
     }
 
     pub fn fmt(self, enable_ansi_colors: bool) -> Fmt {

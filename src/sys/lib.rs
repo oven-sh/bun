@@ -5025,8 +5025,13 @@ impl DynLib {
     /// `dlsym` typed lookup.
     pub fn lookup<T>(&self, name: &ZStr) -> Option<T> {
         let p = dlsym_impl(Some(self.handle), name)?;
-        // SAFETY: caller asserts `T` is a fn-pointer or `*mut c_void`-shaped type
-        // matching the symbol's ABI (same as Zig `bun.cast(T, ptr)`).
+        // SAFETY: irreducible — `dlsym` yields an untyped symbol address as
+        // `*mut c_void`; the caller asserts `T` is a pointer-sized fn pointer
+        // (or `*mut c_void`) whose ABI matches the resolved symbol. fn pointers
+        // are not `bytemuck::Pod` (not zeroable), so no safe cast exists.
+        // `transmute_copy` is used over `transmute` because `T` is generic and
+        // its size cannot be checked at the definition site (debug-asserted at
+        // monomorphisation). Same contract as Zig `bun.cast(T, ptr)`.
         Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&p) })
     }
     pub fn close(self) {
@@ -5100,7 +5105,12 @@ macro_rules! dlsym_with_handle {
                 PTR.store(p, ::core::sync::atomic::Ordering::Relaxed);
             }
         });
-        // SAFETY: read-only after Once; caller asserts `$T` is fn-ptr-shaped.
+        // SAFETY: irreducible — `$T` is a fn-pointer type (caller contract);
+        // fn pointers are not `bytemuck::Pod`, so the `*mut c_void` → `$T`
+        // reinterpretation cannot be expressed safely. `p` is non-null (checked
+        // below) and was obtained from `dlsym`, so it is a valid code address;
+        // `Once` provides happens-before for the store. Same as Zig
+        // `bun.cast($T, ptr)`.
         let p = PTR.load(::core::sync::atomic::Ordering::Relaxed);
         if p.is_null() { None } else {
             Some(unsafe { ::core::mem::transmute_copy::<*mut ::core::ffi::c_void, $T>(&p) })

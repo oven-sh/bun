@@ -742,13 +742,9 @@ fn buf_print_z<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> Option<
     bun_core::fmt::buf_print_z(buf, args).ok()
 }
 
-/// Parse an ASCII decimal pid from bytes. Port helper for
 /// `std.fmt.parseInt(pid_t, s, 10)`.
 #[cfg(unix)]
-fn parse_pid(s: &[u8]) -> Option<libc::pid_t> {
-    // Input is /proc-sourced ASCII digits; from_utf8 cannot fail on valid pids
-    // and is only used to reach `str::parse`.
-    core::str::from_utf8(s).ok()?.parse().ok()
-}
+#[inline]
+fn parse_pid(s: &[u8]) -> Option<libc::pid_t> { bun_core::fmt::parse_int(s, 10).ok() }
 
 // ported from: src/aio/ParentDeathWatchdog.zig

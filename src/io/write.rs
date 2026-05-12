@@ -24,243 +24,12 @@ use core::fmt;
 pub type Result<T = ()> = core::result::Result<T, bun_core::Error>;
 
 // ════════════════════════════════════════════════════════════════════════════
-// trait Write
+// trait Write — canonical definition lives in `bun_core::io` so leaf crates
+// (`bun_string`, `bun_collections`, `bun_url`) can implement it without an
+// upward dep on this crate. Re-exported here so downstream keeps spelling it
+// `bun_io::Write` / `bun_io::IntLe`.
 // ════════════════════════════════════════════════════════════════════════════
-
-/// Byte-level write sink — port of Zig `std.Io.Writer`.
-///
-/// Only [`write_all`](Write::write_all) is required; every other method has a
-/// default in terms of it. Object-safe: `&mut dyn Write` is used by the CSS
-/// printer and friends. Generic helpers that would break object safety carry a
-/// `where Self: Sized` bound and are simply unavailable on `dyn Write`.
-pub trait Write {
-    /// Write the entire buffer. Zig: `writeAll`.
-    fn write_all(&mut self, buf: &[u8]) -> Result<()>;
-
-    /// Flush any internal buffer to the underlying sink. Zig: `flush`.
-    /// Unbuffered sinks leave the default no-op.
-    #[inline]
-    fn flush(&mut self) -> Result<()> {
-        Ok(())
-    }
-
-    /// Total bytes written to this sink so far.
-    ///
-    /// Port of the Zig pattern of recovering `std.Io.Writer.Allocating` via
-    /// `@fieldParentPtr` and calling `.written().len`. Only implemented for
-    /// in-memory / counting sinks (`Vec<u8>`, `MutableString`,
-    /// `DiscardingWriter`, `FixedBufferStream`); the default panics, matching
-    /// the Zig `@panic("css: got bad writer type")` fallthrough for writers
-    /// that do not track a byte count.
-    #[inline]
-    fn written_len(&self) -> usize {
-        panic!("bun_io::Write::written_len: writer does not track bytes written");
-    }
-
-    // ── provided helpers ────────────────────────────────────────────────────
-
-    /// Zig: `writeByte`.
-    #[inline]
-    fn write_byte(&mut self, byte: u8) -> Result<()> {
-        self.write_all(core::slice::from_ref(&byte))
-    }
-
-    /// Convenience for UTF-8 string slices. Zig callers that had a `[]const u8`
-    /// of known-text use this; raw bytes go through `write_all`.
-    #[inline]
-    fn write_str(&mut self, s: &str) -> Result<()> {
-        self.write_all(s.as_bytes())
-    }
-
-    /// Write `n` copies of `byte`. Zig: `splatByteAll` / `writeByteNTimes`.
-    fn splat_byte_all(&mut self, byte: u8, n: usize) -> Result<()> {
-        // 256-byte scratch keeps the loop count low without touching the heap.
-        let chunk = [byte; 256];
-        let mut remain = n;
-        while remain > 0 {
-            let take = remain.min(chunk.len());
-            self.write_all(&chunk[..take])?;
-            remain -= take;
-        }
-        Ok(())
-    }
-
-    /// Formatted write. Zig: `print(fmt, args)`. Enables `write!(w, ...)`.
-    ///
-    /// Bridges `core::fmt` → byte sink by routing `write_str` through
-    /// `write_all`. The underlying I/O error (if any) is preserved rather than
-    /// flattened into `fmt::Error`.
-    fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> Result<()> {
-        struct Bridge<'a, W: ?Sized> {
-            sink: &'a mut W,
-            err: Option<bun_core::Error>,
-        }
-        impl<W: Write + ?Sized> fmt::Write for Bridge<'_, W> {
-            #[inline]
-            fn write_str(&mut self, s: &str) -> fmt::Result {
-                match self.sink.write_all(s.as_bytes()) {
-                    Ok(()) => Ok(()),
-                    Err(e) => {
-                        self.err = Some(e);
-                        Err(fmt::Error)
-                    }
-                }
-            }
-        }
-        let mut bridge = Bridge { sink: self, err: None };
-        match fmt::write(&mut bridge, args) {
-            Ok(()) => Ok(()),
-            Err(_) => Err(bridge
-                .err
-                .unwrap_or_else(|| bun_core::err!("FmtError"))),
-        }
-    }
-
-    /// Alias for [`write_fmt`](Write::write_fmt) under the Zig spelling.
-    #[inline]
-    fn print(&mut self, args: fmt::Arguments<'_>) -> Result<()> {
-        self.write_fmt(args)
-    }
-
-    /// Write an integer in little-endian byte order.
-    /// Zig: `writeInt(T, val, .little)`.
-    ///
-    /// `where Self: Sized` keeps the trait object-safe; `dyn Write` callers
-    /// must go through `write_all(&val.to_le_bytes())` directly.
-    #[inline]
-    fn write_int_le<I: IntLe>(&mut self, val: I) -> Result<()>
-    where
-        Self: Sized,
-    {
-        self.write_all(val.to_le_bytes().as_ref())
-    }
-}
-
-// ── blanket / std impls ─────────────────────────────────────────────────────
-
-/// Forward through `&mut W` so `&mut dyn Write` / `&mut impl Write` nest.
-impl<W: Write + ?Sized> Write for &mut W {
-    #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> Result<()> {
-        (**self).write_all(buf)
-    }
-    #[inline]
-    fn flush(&mut self) -> Result<()> {
-        (**self).flush()
-    }
-    #[inline]
-    fn write_byte(&mut self, byte: u8) -> Result<()> {
-        (**self).write_byte(byte)
-    }
-    #[inline]
-    fn splat_byte_all(&mut self, byte: u8, n: usize) -> Result<()> {
-        (**self).splat_byte_all(byte, n)
-    }
-    #[inline]
-    fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> Result<()> {
-        (**self).write_fmt(args)
-    }
-    #[inline]
-    fn written_len(&self) -> usize {
-        (**self).written_len()
-    }
-}
-
-impl<W: Write + ?Sized> Write for Box<W> {
-    #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> Result<()> {
-        (**self).write_all(buf)
-    }
-    #[inline]
-    fn flush(&mut self) -> Result<()> {
-        (**self).flush()
-    }
-    #[inline]
-    fn written_len(&self) -> usize {
-        (**self).written_len()
-    }
-}
-
-/// Fixed-capacity stack sink. Zig: `std.BoundedArray(u8, N).writer()`.
-/// Merged from `bun_crash_handler`'s local stub (D101) — `BoundedArray` lives
-/// in `bun_collections` (already a dep), so the impl belongs here per orphan
-/// rules now that the canonical `Write` is in this crate.
-impl<const N: usize> Write for bun_collections::BoundedArray<u8, N> {
-    #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> Result<()> {
-        self.append_slice(buf)
-            .map_err(|_| bun_core::err!("NoSpaceLeft"))
-    }
-    #[inline]
-    fn written_len(&self) -> usize {
-        self.len()
-    }
-}
-
-/// In-memory growable sink. Zig: `std.Io.Writer.Allocating`.
-impl Write for Vec<u8> {
-    #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> Result<()> {
-        self.extend_from_slice(buf);
-        Ok(())
-    }
-    #[inline]
-    fn written_len(&self) -> usize {
-        self.len()
-    }
-}
-
-/// `bun_core::io::Writer` is the type-erased vtable header behind
-/// `Output::writer()` / `Output::error_writer()`. Bridge it into `bun_io::Write`
-/// so generic printers (`W: bun_io::Write`) accept the process stdout/stderr
-/// sinks the same way Zig's `std.Io.Writer.Generic` did.
-impl Write for bun_core::io::Writer {
-    #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> Result<()> {
-        bun_core::io::Writer::write_all(self, buf)
-    }
-    #[inline]
-    fn flush(&mut self) -> Result<()> {
-        bun_core::io::Writer::flush(self)
-    }
-}
-
-/// Growable string sink. Zig: `MutableString.writer()`.
-impl Write for bun_string::MutableString {
-    #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> Result<()> {
-        self.append(buf)?;
-        Ok(())
-    }
-    #[inline]
-    fn written_len(&self) -> usize {
-        self.len()
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// IntLe — little-endian integer encoding helper
-// ════════════════════════════════════════════════════════════════════════════
-
-/// Integers that can be written little-endian via [`Write::write_int_le`].
-pub trait IntLe: Copy {
-    type Bytes: AsRef<[u8]> + AsMut<[u8]> + Default;
-    fn to_le_bytes(self) -> Self::Bytes;
-    fn from_le_bytes(bytes: Self::Bytes) -> Self;
-}
-
-macro_rules! impl_int_le {
-    ($($t:ty),* $(,)?) => {$(
-        impl IntLe for $t {
-            type Bytes = [u8; core::mem::size_of::<$t>()];
-            #[inline]
-            fn to_le_bytes(self) -> Self::Bytes { <$t>::to_le_bytes(self) }
-            #[inline]
-            fn from_le_bytes(bytes: Self::Bytes) -> Self { <$t>::from_le_bytes(bytes) }
-        }
-    )*};
-}
-impl_int_le!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
+pub use bun_string::write::{IntBe, IntLe, Write};
 
 // ════════════════════════════════════════════════════════════════════════════
 // DiscardingWriter — counting null sink
@@ -316,6 +85,18 @@ impl<B> FixedBufferStream<B> {
     #[inline]
     pub fn new(buffer: B) -> Self {
         Self { buffer, pos: 0 }
+    }
+
+    /// Seek to absolute position `p`. Zig: `seekTo`.
+    #[inline]
+    pub fn seek_to(&mut self, p: usize) {
+        self.pos = p;
+    }
+
+    /// Rewind to position 0. Zig: `reset`.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.pos = 0;
     }
 }
 
@@ -382,6 +163,14 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
         let mut bytes = I::Bytes::default();
         self.read_exact(bytes.as_mut())?;
         Ok(I::from_le_bytes(bytes))
+    }
+
+    /// Read a big-endian (network-order) integer. Zig: `reader().readInt(T, .big)`.
+    #[inline]
+    pub fn read_int_be<I: IntBe>(&mut self) -> Result<I> {
+        let mut bytes = I::Bytes::default();
+        self.read_exact(bytes.as_mut())?;
+        Ok(I::from_be_bytes(bytes))
     }
 
     /// Read a POD struct. Zig: `reader().readStruct(T)`.
@@ -544,9 +333,9 @@ impl<W: fmt::Write + ?Sized> fmt::Write for FmtAdapter<'_, W> {
     }
 }
 
-// `W: Sized` (no `?Sized`) — together with `pretty_format::IoFmt` (the inverse
-// adapter), `?Sized` here lets rustc probe the infinite tower
-// `FmtAdapter<IoFmt<FmtAdapter<IoFmt<…>>>>` when checking `dyn Write: Write`,
+// `W: Sized` (no `?Sized`) — together with [`AsFmt`] (the inverse adapter),
+// `?Sized` here would let rustc probe the infinite tower
+// `FmtAdapter<AsFmt<FmtAdapter<AsFmt<…>>>>` when checking `dyn Write: Write`,
 // which is E0275. Every caller wraps a concrete sized formatter, so dropping
 // `?Sized` on this side breaks the cycle without losing any instantiation.
 impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
@@ -567,6 +356,55 @@ impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
         self.inner
             .write_fmt(args)
             .map_err(|_| bun_core::err!("FmtError"))
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// AsFmt — bun_io::Write → core::fmt::Write bridge
+// ════════════════════════════════════════════════════════════════════════════
+
+/// View a byte sink (`W: bun_io::Write`) as a `core::fmt::Write`.
+///
+/// Inverse of [`FmtAdapter`]. Use this when a callee is typed against
+/// `impl core::fmt::Write` (e.g. `Display`, const-generic colour formatters,
+/// `Msg::write_format`) but you hold a `bun_io::Write` byte sink — `Vec<u8>`,
+/// `bun_core::io::Writer`, `&mut dyn Write`, etc.
+///
+/// `write_str` routes through `write_all(s.as_bytes())`; the underlying I/O
+/// error is stashed in [`err`](AsFmt::err) so callers that care can recover it
+/// instead of seeing only the unit `fmt::Error`. Callers that don't care just
+/// drop the wrapper.
+///
+/// Erased to `dyn Write` (not generic over `W`) so this type does not pair
+/// with [`FmtAdapter`]'s `impl Write` to form an infinite
+/// `FmtAdapter<AsFmt<…>>` tower (E0275) — see the note on that impl.
+pub struct AsFmt<'a> {
+    sink: &'a mut dyn Write,
+    /// Last I/O error from the underlying sink, if `write_str` failed.
+    pub err: Option<bun_core::Error>,
+}
+
+impl<'a> AsFmt<'a> {
+    /// Wrap any `bun_io::Write` sink. Takes `&mut dyn Write` directly so the
+    /// unsize coercion happens at the call site (where the concrete `W` is
+    /// known) rather than inside a `?Sized` generic — that lets both `&mut Vec`
+    /// (auto-coerced) and an existing `&mut dyn Write` pass with one signature.
+    #[inline]
+    pub fn new(sink: &'a mut dyn Write) -> Self {
+        Self { sink, err: None }
+    }
+}
+
+impl fmt::Write for AsFmt<'_> {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        match self.sink.write_all(s.as_bytes()) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                self.err = Some(e);
+                Err(fmt::Error)
+            }
+        }
     }
 }
 

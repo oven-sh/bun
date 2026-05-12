@@ -675,9 +675,9 @@ impl PosixBufferedReader {
             } else {
                 parent._buffer.reserve(16 * 1024);
                 let buf_len = {
-                    // SAFETY: spare_capacity_mut yields MaybeUninit<u8>; sys::read_nonblocking
-                    // writes only initialized bytes into the prefix it reports.
-                    let buf = unsafe { spare_capacity_as_slice(&mut parent._buffer) };
+                    // SAFETY: sys::read_nonblocking writes only initialized bytes into
+                    // the prefix it reports; commit_spare exposes exactly that prefix.
+                    let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut parent._buffer) };
                     let buf_len = buf.len();
                     match sys::read_nonblocking(fd, buf) {
                         sys::Result::Ok(bytes_read) => {
@@ -688,9 +688,7 @@ impl PosixBufferedReader {
                             }
                             parent._offset += bytes_read;
                             // SAFETY: bytes_read bytes were just initialized by the syscall.
-                            unsafe {
-                                parent._buffer.set_len(parent._buffer.len() + bytes_read);
-                            }
+                            unsafe { bun_core::vec::commit_spare(&mut parent._buffer, bytes_read) };
 
                             if bytes_read == 0 {
                                 parent.close_without_reporting();
@@ -974,8 +972,8 @@ impl PosixBufferedReader {
 
         loop {
             parent._buffer.reserve(16 * 1024);
-            // SAFETY: writing into spare capacity; set_len after syscall reports bytes written.
-            let buf = unsafe { spare_capacity_as_slice(&mut parent._buffer) };
+            // SAFETY: writing into spare capacity; commit after syscall reports bytes written.
+            let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut parent._buffer) };
 
             match sys_fn(fd, buf, parent._offset) {
                 sys::Result::Ok(bytes_read) => {
@@ -986,9 +984,7 @@ impl PosixBufferedReader {
                     }
                     parent._offset += bytes_read;
                     // SAFETY: bytes_read bytes initialized by sys_fn.
-                    unsafe {
-                        parent._buffer.set_len(parent._buffer.len() + bytes_read);
-                    }
+                    unsafe { bun_core::vec::commit_spare(&mut parent._buffer, bytes_read) };
 
                     if bytes_read == 0 {
                         parent.close_without_reporting();
@@ -1061,15 +1057,6 @@ impl Drop for PosixBufferedReader {
         // _buffer freed by Vec Drop.
         self.close_without_reporting();
     }
-}
-
-// SAFETY helper: view Vec spare capacity as &mut [u8] for syscall reads.
-#[inline]
-unsafe fn spare_capacity_as_slice(v: &mut Vec<u8>) -> &mut [u8] {
-    let len = v.len();
-    let cap = v.capacity();
-    // SAFETY: caller promises to only treat the prefix the syscall wrote as initialized.
-    core::slice::from_raw_parts_mut(v.as_mut_ptr().add(len), cap - len)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1304,7 +1291,7 @@ impl WindowsBufferedReader {
         self.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
         self._buffer.reserve(suggested_size);
         // SAFETY: returning spare capacity for libuv to write into; len updated in on_read.
-        unsafe { spare_capacity_as_slice(&mut self._buffer) }
+        unsafe { bun_core::vec::spare_bytes_mut(&mut self._buffer) }
     }
 
     pub fn start_with_current_pipe(&mut self) -> sys::Result<()> {
@@ -1863,9 +1850,7 @@ impl WindowsBufferedReader {
 
         // move cursor foward
         // SAFETY: slice is inside _buffer's spare capacity; libuv wrote `amount_result` bytes.
-        unsafe {
-            self._buffer.set_len(self._buffer.len() + amount_result);
-        }
+        unsafe { bun_core::vec::commit_spare(&mut self._buffer, amount_result) };
 
         let should_continue = self._on_read_chunk(slice, has_more);
 

@@ -47,12 +47,12 @@ pub use tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion as TaggedPoi
 pub mod ref_count;
 pub use ref_count::{
     RefCounted, ThreadSafeRefCounted, AnyRefCounted, CellRefCounted, RefCount, ThreadSafeRefCount,
-    RefPtr, ScopedRef,
+    RefPtr, ScopedRef, finalize_js_box, finalize_js_box_noop,
 };
 // Derive macros — same names as the traits (separate namespace). The derives
 // expand to `::bun_ptr::…` paths, so this crate is the canonical re-export
 // point: `#[derive(bun_ptr::CellRefCounted)]`.
-pub use bun_core_macros::{Anchored, CellRefCounted, ThreadSafeRefCounted};
+pub use bun_core_macros::{Anchored, CellRefCounted, RefCounted, ThreadSafeRefCounted};
 
 pub mod parent_ref;
 pub use parent_ref::{Anchored, LiveMarker, ParentRef};

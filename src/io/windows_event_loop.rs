@@ -12,7 +12,7 @@ use crate::posix_event_loop as posix;
 // only `FilePoll`/`Store`/`KeepAlive`/`Closer`/`Loop`/`Waker` are redefined
 // here. `Flags`/`Owner`/etc. are re-aliased below from `posix` for callers
 // that name them via this module.
-pub use crate::posix_event_loop::{get_vm_ctx, AllocatorType, EventLoopCtx, OpaqueCallback};
+pub use crate::posix_event_loop::{get_vm_ctx, js_vm_ctx, AllocatorType, EventLoopCtx, OpaqueCallback};
 
 bun_core::declare_scope!(KeepAlive, visible);
 bun_core::declare_scope!(FilePoll, visible);
@@ -24,131 +24,8 @@ bun_core::declare_scope!(FilePoll, visible);
 // `SpawnSyncEventLoop` which store/compare the inner `uv::Loop` pointer.)
 pub type Loop = uv::Loop;
 
-#[derive(Default)]
-pub struct KeepAlive {
-    status: Status,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
-enum Status {
-    Active,
-    #[default]
-    Inactive,
-    Done,
-}
-
-impl KeepAlive {
-    #[inline]
-    pub fn is_active(&self) -> bool {
-        self.status == Status::Active
-    }
-
-    /// Make calling ref() on this poll into a no-op.
-    pub fn disable(&mut self) {
-        if self.status == Status::Active {
-            self.unref(get_vm_ctx(AllocatorType::Js));
-        }
-
-        self.status = Status::Done;
-    }
-
-    /// Only intended to be used from EventLoop.Pollable
-    pub fn deactivate(&mut self, loop_: &mut Loop) {
-        if self.status != Status::Active {
-            return;
-        }
-
-        self.status = Status::Inactive;
-        loop_.dec();
-    }
-
-    /// Only intended to be used from EventLoop.Pollable
-    pub fn activate(&mut self, loop_: &mut Loop) {
-        if self.status != Status::Active {
-            return;
-        }
-
-        self.status = Status::Active;
-        loop_.inc();
-    }
-
-    pub fn init() -> KeepAlive {
-        KeepAlive::default()
-    }
-
-    /// Prevent a poll from keeping the process alive.
-    pub fn unref(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.status != Status::Active {
-            return;
-        }
-        self.status = Status::Inactive;
-        event_loop_ctx.loop_sub_active(1);
-    }
-
-    /// From another thread, Prevent a poll from keeping the process alive.
-    pub fn unref_concurrently(&mut self, vm: EventLoopCtx) {
-        if self.status != Status::Active {
-            return;
-        }
-        self.status = Status::Inactive;
-        vm.unref_concurrently();
-    }
-
-    /// Prevent a poll from keeping the process alive on the next tick.
-    pub fn unref_on_next_tick(&mut self, vm: EventLoopCtx) {
-        if self.status != Status::Active {
-            return;
-        }
-        self.status = Status::Inactive;
-        vm.loop_dec();
-    }
-
-    /// From another thread, prevent a poll from keeping the process alive on the next tick.
-    pub fn unref_on_next_tick_concurrently(&mut self, vm: EventLoopCtx) {
-        if self.status != Status::Active {
-            return;
-        }
-        self.status = Status::Inactive;
-        // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
-        vm.loop_dec();
-    }
-
-    /// Allow a poll to keep the process alive.
-    pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.status != Status::Inactive {
-            return;
-        }
-        self.status = Status::Active;
-        event_loop_ctx.loop_ref();
-    }
-
-    /// Allow a poll to keep the process alive.
-    ///
-    /// Raw-identifier alias of [`KeepAlive::ref_`] matching the Zig method name
-    /// `ref` exactly (per PORTING.md "same fn names" rule). Downstream ports
-    /// call both spellings; this keeps them source-compatible.
-    #[inline]
-    pub fn r#ref(&mut self, event_loop_ctx: EventLoopCtx) {
-        self.ref_(event_loop_ctx)
-    }
-
-    /// Allow a poll to keep the process alive.
-    pub fn ref_concurrently(&mut self, vm: EventLoopCtx) {
-        if self.status != Status::Inactive {
-            return;
-        }
-        self.status = Status::Active;
-        vm.ref_concurrently();
-    }
-
-    pub fn ref_concurrently_from_event_loop(&mut self, loop_: EventLoopCtx) {
-        self.ref_concurrently(loop_);
-    }
-
-    pub fn unref_concurrently_from_event_loop(&mut self, loop_: EventLoopCtx) {
-        self.unref_concurrently(loop_);
-    }
-}
+// `KeepAlive` (struct + 14-method impl) was duplicated here and in
+// `posix_event_loop.rs`; both copies now live in `crate::keep_alive`.
 
 pub type Flags = posix::Flags;
 pub type FlagsSet = posix::FlagsSet;
@@ -234,7 +111,7 @@ impl FilePoll {
     // PORT NOTE: not `impl Drop` — FilePoll lives in a HiveArray pool slot, not a Box;
     // teardown returns the slot to the pool via `Store::put`.
     pub fn deinit(&mut self) {
-        self.deinit_with_vm(get_vm_ctx(AllocatorType::Js));
+        self.deinit_with_vm(js_vm_ctx());
     }
 
     #[inline]

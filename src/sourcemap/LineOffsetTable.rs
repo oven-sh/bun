@@ -2,8 +2,9 @@ use core::mem;
 
 use bun_alloc::AllocError;
 use bun_ast::Loc;
-use bun_collections::{MultiArrayList, VecExt};
+use bun_collections::MultiArrayList;
 use bun_core::strings;
+use smallvec::SmallVec;
 
 /// The source map specification is very loose and does not specify what
 /// column numbers actually mean. The popular "source-map" library from Mozilla
@@ -156,11 +157,14 @@ impl LineOffsetTable {
         // the idea here is:
         // we want to avoid re-allocating this array _most_ of the time
         // when lines _do_ have unicode characters, they probably still won't be longer than 255 much
-        // PERF(port): Zig used std.heap.stackFallback(@sizeOf(i32)*256). We keep a heap scratch
-        // buffer instead and `mem::replace` it into the table on non-ASCII lines (no clone), so
-        // ASCII-only lines (the overwhelming majority) touch no allocation at all.
-        const SCRATCH_CAP: usize = 120;
-        let mut columns_for_non_ascii: Vec<i32> = Vec::with_capacity(SCRATCH_CAP);
+        // PERF(port): Zig used `std.heap.stackFallback(@sizeOf(i32)*256)` — a 256-slot stack
+        // buffer with heap spill. The direct Rust equivalent is `SmallVec<[i32; 256]>`: inline
+        // storage stays on-stack, `into_vec()` at hand-over does the same "dupe if stack-owned,
+        // move if spilled" branch Zig does, and `mem::take` resets to a fresh inline buffer
+        // (zero alloc). Previously this was a heap `Vec::with_capacity(120)` re-primed via
+        // `mem::replace` per non-ASCII line, which showed up as one mi_malloc(480) per such
+        // line under `generate` (2× self-time vs Zig on lint/create-vite).
+        let mut columns_for_non_ascii: SmallVec<[i32; 256]> = SmallVec::new();
 
         // Hoist the base pointer so per-iteration offset math is a single sub + truncate,
         // matching Zig's `@truncate(@intFromPtr(remaining.ptr) - @intFromPtr(contents.ptr))`.
@@ -195,9 +199,8 @@ impl LineOffsetTable {
                 debug_assert!(remaining.as_ptr() as usize >= base);
                 // we have a non-ASCII character, so we need to keep track of the
                 // mapping from byte offsets to UTF-16 code unit counts
-                // Scratch always has capacity here (initial SCRATCH_CAP, or freshly
-                // replaced after the previous non-ASCII line), so this never reallocs.
-                columns_for_non_ascii.append_assume_capacity(column);
+                // Scratch is empty here with 256 inline slots, so this never reallocs.
+                columns_for_non_ascii.push(column);
                 column_byte_offset = offset - line_byte_offset;
                 byte_offset_to_first_non_ascii = column_byte_offset;
             }
@@ -253,16 +256,15 @@ impl LineOffsetTable {
                     }
 
                     // Zig used a stack-fallback allocator and duped onto `allocator` only when
-                    // stack-owned, then reset the fixed buffer. The Rust scratch is already
-                    // heap-owned, so for non-ASCII lines we hand the buffer over directly
-                    // (no clone) and re-prime a fresh scratch; for ASCII-only lines (almost
-                    // all of them) we store an inline `Vec::new()` and keep the scratch as-is.
-                    // Previously this was an unconditional `.to_vec()` which dominated
-                    // `generate` on build/create-vue (2.4× vs Zig).
+                    // stack-owned, then reset the fixed buffer. `SmallVec::into_vec()` is the
+                    // exact equivalent: inline → one alloc sized to content (Zig's `dupe`),
+                    // spilled → moves the heap buffer (no alloc). `mem::take` re-primes a fresh
+                    // inline scratch with zero allocation. ASCII-only lines (almost all of them)
+                    // store an inline `Vec::new()` and keep the scratch untouched.
                     let owned = if columns_for_non_ascii.is_empty() {
                         Vec::new()
                     } else {
-                        mem::replace(&mut columns_for_non_ascii, Vec::with_capacity(SCRATCH_CAP))
+                        mem::take(&mut columns_for_non_ascii).into_vec()
                     };
 
                     list.append(LineOffsetTable {
@@ -308,7 +310,7 @@ impl LineOffsetTable {
             let owned = if columns_for_non_ascii.is_empty() {
                 Vec::new()
             } else {
-                columns_for_non_ascii
+                columns_for_non_ascii.into_vec()
             };
             list.append(LineOffsetTable {
                 byte_offset_to_start_of_line: line_byte_offset,

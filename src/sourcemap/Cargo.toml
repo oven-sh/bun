@@ -22,6 +22,7 @@ enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
 bumpalo.workspace = true
+smallvec = { workspace = true, features = ["const_generics", "union"] }
 typed-arena.workspace = true
 bun_alloc.workspace = true
 bun_base64.workspace = true

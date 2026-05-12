@@ -3,11 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-// TODO(before merge): switch to "2b6b1c39ef41955bb10d31430e6ef94eef2274a1" once
-// oven-sh/WebKit#225 is merged and autobuild-2b6b1c39ef41... is published.
-// Using the preview-PR tag lets bun CI validate against the patched WebKit
-// before that PR lands.
-export const WEBKIT_VERSION = "autobuild-preview-pr-225-2b6b1c39";
+export const WEBKIT_VERSION = "5488984d20e0dbfe4be2c3ba8fb18eb81a5e0e8b";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

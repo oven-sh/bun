@@ -562,11 +562,13 @@ pub const Run = struct {
                             // The resumed module body threw. The module-loader
                             // pipeline promise is pre-marked handled so it never
                             // reaches `handleRejectedPromises()`; report manually
-                            // like the initial-load `.rejected` path above.
+                            // like the initial-load `.rejected` path above. If a
+                            // user `uncaughtException` handler swallowed it,
+                            // don't force a non-zero exit.
                             .rejected => {
-                                _ = vm.uncaughtException(vm.global, p.result(vm.global.vm()), true);
+                                const handled = vm.uncaughtException(vm.global, p.result(vm.global.vm()), true);
                                 p.setHandled();
-                                if (vm.exit_handler.exit_code == 0) vm.exit_handler.exit_code = 1;
+                                if (!handled and vm.exit_handler.exit_code == 0) vm.exit_handler.exit_code = 1;
                             },
                             .fulfilled => {},
                         }

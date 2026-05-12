@@ -137,10 +137,7 @@ pub fn kill_sync_script_tree() {
         for slot in &SYNC_PGIDS_BUF[..len] {
             let pgid = slot.load(Ordering::Relaxed);
             if pgid > 1 {
-                // SAFETY: FFI call; kill(2) is async-signal-safe.
-                unsafe {
-                    let _ = libc::kill(-pgid, libc::SIGKILL);
-                }
+                let _ = kill(-pgid, libc::SIGKILL);
             }
         }
         #[cfg(target_os = "macos")]
@@ -172,6 +169,13 @@ unsafe extern "C" {
     // safe: no args; read process IDs — no preconditions, never fail.
     safe fn getpid() -> libc::pid_t;
     safe fn getppid() -> libc::pid_t;
+    // safe: by-value `pid_t`/`c_int` only; bad pid → `ESRCH`, bad sig →
+    // `EINVAL`, never UB. Async-signal-safe.
+    safe fn kill(pid: libc::pid_t, sig: c_int) -> c_int;
+    // safe: out-param is `&mut c_int` (non-null, valid for write); kernel only
+    // writes the slot and reports failure via the return value — bad pid →
+    // `ECHILD`, never UB. Async-signal-safe.
+    safe fn waitpid(pid: libc::pid_t, status: &mut c_int, options: c_int) -> libc::pid_t;
 }
 
 // `should_default_spawn_pdeathsig` moved down to `bun_spawn_sys::pdeathsig::
@@ -365,9 +369,8 @@ extern "C" fn on_process_exit() {
 /// the exit handler — not forking.
 pub fn kill_descendants() {
     #[cfg(unix)]
-    // SAFETY: FFI calls below are async-signal-safe libc.
-    unsafe {
-        let self_pid = libc::getpid();
+    {
+        let self_pid = getpid();
 
         let mut to_visit: Vec<libc::pid_t> = Vec::new();
         let mut to_kill: Vec<libc::pid_t> = Vec::new();
@@ -386,18 +389,18 @@ pub fn kill_descendants() {
                     continue;
                 }
                 // Freeze first, then confirm it's still the process we enumerated.
-                if libc::kill(child, libc::SIGSTOP) != 0 {
+                if kill(child, libc::SIGSTOP) != 0 {
                     continue;
                 }
                 if parent_pid_of(child) != parent {
                     // Recycled between enumerate and STOP — undo and skip.
-                    let _ = libc::kill(child, libc::SIGCONT);
+                    let _ = kill(child, libc::SIGCONT);
                     continue;
                 }
                 if to_kill.try_reserve(1).is_err() {
                     // OOM after we've already STOPped+verified this child — kill it
                     // now rather than leaving it frozen and absent from to_kill.
-                    let _ = libc::kill(child, libc::SIGKILL);
+                    let _ = kill(child, libc::SIGKILL);
                     break;
                 }
                 to_kill.push(child);
@@ -412,7 +415,7 @@ pub fn kill_descendants() {
         let mut i = to_kill.len();
         while i > 0 {
             i -= 1;
-            let _ = libc::kill(to_kill[i], libc::SIGKILL);
+            let _ = kill(to_kill[i], libc::SIGKILL);
         }
     }
 }
@@ -453,9 +456,8 @@ pub fn kill_subreaper_adoptees(siblings: &[libc::pid_t]) {
         let _ = siblings;
     }
     #[cfg(target_os = "linux")]
-    // SAFETY: FFI calls below are async-signal-safe libc.
-    unsafe {
-        let self_pid = libc::getpid();
+    {
+        let self_pid = getpid();
         let mut buf: [libc::pid_t; 4096] = [0; 4096];
 
         // Iterate: kill non-sibling direct children's subtrees, reap, re-read.
@@ -481,7 +483,7 @@ pub fn kill_subreaper_adoptees(siblings: &[libc::pid_t]) {
             // Reap what we just killed so their children (if any raced) reparent.
             loop {
                 let mut st: c_int = 0;
-                if libc::waitpid(-1, &raw mut st, libc::WNOHANG) <= 0 {
+                if waitpid(-1, &mut st, libc::WNOHANG) <= 0 {
                     break;
                 }
             }
@@ -499,64 +501,61 @@ pub fn kill_subreaper_adoptees(siblings: &[libc::pid_t]) {
 /// `root` itself before recursing (ppid==us for subreaper adoptees).
 #[cfg(unix)]
 fn kill_tree_rooted_at(root: libc::pid_t, expected_ppid_of_root: libc::pid_t) {
-    // SAFETY: FFI calls below are async-signal-safe libc.
-    unsafe {
-        let mut to_visit: Vec<libc::pid_t> = Vec::new();
-        let mut to_kill: Vec<libc::pid_t> = Vec::new();
+    let mut to_visit: Vec<libc::pid_t> = Vec::new();
+    let mut to_kill: Vec<libc::pid_t> = Vec::new();
 
-        if libc::kill(root, libc::SIGSTOP) != 0 {
-            return;
-        }
-        if parent_pid_of(root) != expected_ppid_of_root {
-            let _ = libc::kill(root, libc::SIGCONT);
-            return;
-        }
-        if to_kill.try_reserve(1).is_err() {
-            let _ = libc::kill(root, libc::SIGKILL);
-            return;
-        }
-        to_kill.push(root);
-        let _ = to_visit.try_reserve(1);
-        to_visit.push(root);
-        // PORT NOTE: Zig swallowed OOM on the to_visit push; Rust push() after a
-        // failed try_reserve would still attempt (and abort on OOM). In practice
-        // a 1-element reserve never fails; matching exact Zig OOM semantics is
-        // not worth the complexity here.
+    if kill(root, libc::SIGSTOP) != 0 {
+        return;
+    }
+    if parent_pid_of(root) != expected_ppid_of_root {
+        let _ = kill(root, libc::SIGCONT);
+        return;
+    }
+    if to_kill.try_reserve(1).is_err() {
+        let _ = kill(root, libc::SIGKILL);
+        return;
+    }
+    to_kill.push(root);
+    let _ = to_visit.try_reserve(1);
+    to_visit.push(root);
+    // PORT NOTE: Zig swallowed OOM on the to_visit push; Rust push() after a
+    // failed try_reserve would still attempt (and abort on OOM). In practice
+    // a 1-element reserve never fails; matching exact Zig OOM semantics is
+    // not worth the complexity here.
 
-        let mut buf: [libc::pid_t; 4096] = [0; 4096];
-        while !to_visit.is_empty() && to_kill.len() < 4096 {
-            let parent = to_visit.swap_remove(to_visit.len() - 1);
-            let Some(n) = list_child_pids(parent, &mut buf) else {
+    let mut buf: [libc::pid_t; 4096] = [0; 4096];
+    while !to_visit.is_empty() && to_kill.len() < 4096 {
+        let parent = to_visit.swap_remove(to_visit.len() - 1);
+        let Some(n) = list_child_pids(parent, &mut buf) else {
+            continue;
+        };
+        for &child in &buf[..n] {
+            if child <= 1 {
                 continue;
-            };
-            for &child in &buf[..n] {
-                if child <= 1 {
-                    continue;
-                }
-                if libc::kill(child, libc::SIGSTOP) != 0 {
-                    continue;
-                }
-                if parent_pid_of(child) != parent {
-                    let _ = libc::kill(child, libc::SIGCONT);
-                    continue;
-                }
-                if to_kill.try_reserve(1).is_err() {
-                    let _ = libc::kill(child, libc::SIGKILL);
-                    break;
-                }
-                to_kill.push(child);
-                if to_visit.try_reserve(1).is_err() {
-                    break;
-                }
-                to_visit.push(child);
             }
+            if kill(child, libc::SIGSTOP) != 0 {
+                continue;
+            }
+            if parent_pid_of(child) != parent {
+                let _ = kill(child, libc::SIGCONT);
+                continue;
+            }
+            if to_kill.try_reserve(1).is_err() {
+                let _ = kill(child, libc::SIGKILL);
+                break;
+            }
+            to_kill.push(child);
+            if to_visit.try_reserve(1).is_err() {
+                break;
+            }
+            to_visit.push(child);
         }
+    }
 
-        let mut i = to_kill.len();
-        while i > 0 {
-            i -= 1;
-            let _ = libc::kill(to_kill[i], libc::SIGKILL);
-        }
+    let mut i = to_kill.len();
+    while i > 0 {
+        i -= 1;
+        let _ = kill(to_kill[i], libc::SIGKILL);
     }
 }
 

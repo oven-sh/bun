@@ -1002,15 +1002,17 @@ impl ThreadPool {
         if maybe_thread.is_null() {
             return;
         }
-        let thread = maybe_thread;
-        // SAFETY: thread is the calling worker's own stack-local Thread.
-        unsafe { (*thread).join_event.wait() };
+        // SAFETY: `maybe_thread` is the calling worker's own stack-local
+        // `Thread` (set in `ThreadRegistration::new`); it lives on this OS
+        // thread's stack and outlives the entire `unregister` call. Single
+        // shared deref serves both the `join_event.wait()` and `.next` reads.
+        let thread = unsafe { &*maybe_thread };
+        thread.join_event.wait();
 
         // After receiving the shutdown signal, shutdown the next thread in the pool.
         // We have to do that without touching the thread pool itself since its memory is invalidated by now.
         // So just follow our .next link.
-        // SAFETY: same as above.
-        let next_thread = unsafe { (*thread).next };
+        let next_thread = thread.next;
         if next_thread.is_null() {
             return;
         }

@@ -477,6 +477,7 @@ declare function $resolveSync(
   isESM?: boolean,
   isUserRequireResolve?: boolean,
   paths?: string[],
+  parentModule?: JSCommonJSModule | object,
 ): string;
 declare function $resume(): TODO;
 declare function $search(): TODO;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -92,6 +92,67 @@ describe.concurrent("node-module-module", () => {
     const stdout = await proc.stdout.text();
     expect(stdout.trim().endsWith("--pass--")).toBe(true);
     expect(await proc.exited).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/30546
+  // https://github.com/oven-sh/bun/issues/13076
+  // When user code (e.g. tsx) overrides Module._resolveFilename and delegates
+  // to the original, a `require` created via `createRequire(import.meta.url)`
+  // used to pass `parent = undefined` to the override. The original then had
+  // no referrer and couldn't resolve relative specifiers — the failure mode
+  // that reproduced as `Cannot find module '../data/patch.json' from ''` in
+  // css-tree.
+  test("createRequire() + _resolveFilename override gets a proper parent", async () => {
+    using dir = tempDir("create-require-resolve-override", {
+      "parent.mjs": `
+        import Module, { createRequire } from "node:module";
+        const seen = [];
+        const original = Module._resolveFilename;
+        Module._resolveFilename = function(request, parent, ...rest) {
+          seen.push({
+            request,
+            type: typeof parent,
+            filename: parent && parent.filename,
+            id: parent && parent.id,
+          });
+          return original.call(this, request, parent, ...rest);
+        };
+        const require = createRequire(import.meta.url);
+        const child = require("./child.json");
+        const resolved = require.resolve("./child.json");
+        console.log(JSON.stringify({ child, resolved, seen }));
+      `,
+      "child.json": '{"ok":true}',
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const { child, resolved, seen } = JSON.parse(stdout);
+    const parentPath = path.join(String(dir), "parent.mjs");
+    const childPath = path.join(String(dir), "child.json");
+    expect(child).toEqual({ ok: true });
+    expect(resolved).toBe(ospath(childPath));
+    // Both require() and require.resolve() from the ESM-created require must
+    // pass a parent object carrying filename/id to the override — not undefined.
+    expect(seen).toEqual([
+      { request: "./child.json", type: "object", filename: ospath(parentPath), id: ospath(parentPath) },
+      { request: "./child.json", type: "object", filename: ospath(parentPath), id: ospath(parentPath) },
+    ]);
   });
 
   test("Overwriting Module.prototype.require", async () => {

@@ -1396,9 +1396,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    // SAFETY: single JS thread; `ipc_data` is inline in the freshly-boxed
-    // Subprocess and no other borrow is live.
-    if let Some(ipc_data) = unsafe { subprocess.ipc_data.get_mut() }.as_mut() {
+    // `Subprocess::ipc()` centralises the single unsafe `JsCell` deref;
+    // `ipc_data` is inline in the freshly-boxed Subprocess and no other borrow
+    // is live (single JS thread).
+    if let Some(ipc_data) = subprocess.ipc() {
         #[cfg(unix)]
         {
             if let Some(posix_ipc_info) = posix_ipc_info {

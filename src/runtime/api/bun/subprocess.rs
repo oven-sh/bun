@@ -873,11 +873,9 @@ impl Subprocess<'_> {
         } else {
             crate::ipc_host::FromEnum::Subprocess
         };
-        let ipc_data = this.ipc_data.with_mut(|d| d.as_mut().map(|q| q as *mut IPC::SendQueue));
-        // SAFETY: `ipc_data` is inline in `*self`; no other `&mut SendQueue` is
-        // live in this scope (single JS thread). `do_send` may re-enter JS, but
-        // only the SendQueue is borrowed, not `*self`.
-        crate::ipc_host::do_send(ipc_data.map(|p| unsafe { &mut *p }), global, call_frame, context)
+        // `ipc()` centralises the single unsafe `JsCell` deref; `do_send` may
+        // re-enter JS, but only the SendQueue is borrowed, not `*self`.
+        crate::ipc_host::do_send(this.ipc(), global, call_frame, context)
     }
 
     pub fn disconnect_ipc(&self, next_tick: bool) {
@@ -1104,8 +1102,12 @@ impl Subprocess<'_> {
             self.weak_file_sink_stdin_ptr.set(None);
             self.update_flags(|f| f.insert(Flags::HAS_STDIN_DESTRUCTOR_CALLED));
 
-            // SAFETY: pipe_ptr came from a live FileSink (either self.stdin.pipe or the cached JS sink).
-            let pipe = unsafe { pipe_ptr.as_ref() };
+            // `pipe_ptr` came from a live FileSink (either `self.stdin.pipe`'s
+            // +1-intrusive ref or the cached JS sink kept live by GC) and
+            // outlives this scope on the single mutator thread — `BackRef`
+            // invariant. Shared deref via `BackRef::Deref`; the one mutable
+            // call below stays unsafe.
+            let pipe = bun_ptr::BackRef::from(pipe_ptr);
 
             // `onAttachedProcessExit()` → `writer.close()` → `FileSink.onClose`
             // fires `pipe.signal` synchronously on POSIX. When the signal still

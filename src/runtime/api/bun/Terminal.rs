@@ -373,6 +373,29 @@ impl Terminal {
         (self as *const Self).cast_mut()
     }
 
+    /// Recover `&Terminal` from the parent back-pointer stashed via
+    /// [`as_ctx_ptr`](Self::as_ctx_ptr) in `init_terminal` (handed to
+    /// `reader.set_parent` / `writer.parent`). Centralises the set-once
+    /// `*mut Self → &Self` deref so the I/O-vtable trampolines below stay
+    /// safe at the call site (one `unsafe` here, N safe callers).
+    ///
+    /// Only valid for the `BufferedReaderParent` /
+    /// `{Posix,Windows}StreamingWriterParent` thunks where `this` is the
+    /// registered BACKREF — do NOT call from `WindowsWriterParent::ref_` /
+    /// `deref` (those run while a `&mut self.writer` borrow is live and must
+    /// avoid forming `&Terminal`; see Stacked-Borrows note there).
+    #[inline]
+    fn from_parent_ptr<'a>(this: *mut Self) -> &'a Self {
+        // SAFETY: `this` is the BACKREF set via `reader.set_parent` /
+        // `writer.parent = …` in `init_terminal`. The Terminal is heap-stable
+        // (`heap::into_raw`) and outlives every reader/writer callback (the
+        // intrusive +1 ref held by the I/O machinery is dropped only after the
+        // last callback fires). R-2: shared borrow only — bodies take `&self`;
+        // field writes go through `Cell`/`JsCell`, so re-entrant JS forming a
+        // fresh `&Self` from `m_ctx` aliases soundly.
+        unsafe { &*this }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
 
     pub fn ref_(&self) {
@@ -1881,32 +1904,23 @@ impl BufferedReaderParent for Terminal {
     const HAS_ON_READ_CHUNK: bool = true;
 
     unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
-        // SAFETY: `this` is the BACKREF set via `reader.set_parent`. R-2:
-        // deref as shared (`&*const`) — `on_read_chunk` re-enters JS via
-        // `run_callback`, which can call host fns that form a fresh `&Self`
-        // from `m_ctx`; aliased `&Self` is sound where `&mut Self` is not.
-        unsafe { &*this }.on_read_chunk(chunk, has_more)
+        Self::from_parent_ptr(this).on_read_chunk(chunk, has_more)
     }
     unsafe fn on_reader_done(this: *mut Self) {
-        // SAFETY: see on_read_chunk; tail-position (reader done with self).
-        unsafe { &*this }.on_reader_done()
+        Self::from_parent_ptr(this).on_reader_done()
     }
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        // SAFETY: see on_read_chunk; tail-position.
-        unsafe { &*this }.on_reader_error(err)
+        Self::from_parent_ptr(this).on_reader_error(err)
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // SAFETY: see on_read_chunk; shared-only read of event_loop_handle.
         // Delegate to the inherent `Terminal::loop_()` which is cfg-split:
         // on Windows it projects `.uv_loop()` (the `*mut uv_loop_t` field of
         // `WindowsLoop`), NOT a raw cast of the `bun_uws::Loop` wrapper —
         // matching Terminal.zig `loop()` (`this.event_loop_handle.loop().uv_loop`).
-        unsafe { (*this).loop_().cast() }
+        Self::from_parent_ptr(this).loop_().cast()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // `bun_io::EventLoopHandle` is opaque; pass the
-        // SAFETY: see on_read_chunk.
-        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
+        Self::from_parent_ptr(this).event_loop_handle.as_event_loop_ctx()
     }
 }
 
@@ -1918,32 +1932,22 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::TERMINAL_POLL;
     const HAS_ON_READY: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
-        // SAFETY: `this` is the BACKREF set via `writer.parent = terminal`.
-        // R-2: deref as shared (`&*const`) — bodies take `&self` and may
-        // re-enter JS (drain callback) which can form a fresh `&Self`;
-        // aliased `&Self` is sound where `&mut Self` is not.
-        unsafe { &*this }.on_write(amount, status)
+        Self::from_parent_ptr(this).on_write(amount, status)
     }
     unsafe fn on_error(this: *mut Self, err: sys::Error) {
-        // SAFETY: see on_write.
-        unsafe { &*this }.on_writer_error(err)
+        Self::from_parent_ptr(this).on_writer_error(err)
     }
     unsafe fn on_ready(this: *mut Self) {
-        // SAFETY: see on_write.
-        unsafe { &*this }.on_writer_ready()
+        Self::from_parent_ptr(this).on_writer_ready()
     }
     unsafe fn on_close(this: *mut Self) {
-        // SAFETY: see on_write.
-        unsafe { &*this }.on_writer_close()
+        Self::from_parent_ptr(this).on_writer_close()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // SAFETY: see on_write. Shared-only read of event_loop_handle.
-        // SAFETY: see on_write.
-        unsafe { (*this).event_loop_handle.as_event_loop_ctx() }
+        Self::from_parent_ptr(this).event_loop_handle.as_event_loop_ctx()
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
-        // SAFETY: see on_write. Shared-only read of event_loop_handle.
-        unsafe { (*this).event_loop_handle.r#loop() }
+        Self::from_parent_ptr(this).event_loop_handle.r#loop()
     }
 }
 
@@ -1970,21 +1974,16 @@ impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
 impl bun_io::pipe_writer::WindowsStreamingWriterParent for Terminal {
     const HAS_ON_WRITABLE: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
-        // SAFETY: BACKREF set via writer.parent. R-2: deref as shared — bodies
-        // take `&self` and may re-enter JS; aliased `&Self` is sound.
-        unsafe { &*this }.on_write(amount, status)
+        Self::from_parent_ptr(this).on_write(amount, status)
     }
     unsafe fn on_error(this: *mut Self, err: sys::Error) {
-        // SAFETY: see on_write.
-        unsafe { &*this }.on_writer_error(err)
+        Self::from_parent_ptr(this).on_writer_error(err)
     }
     unsafe fn on_writable(this: *mut Self) {
-        // SAFETY: see on_write.
-        unsafe { &*this }.on_writer_ready()
+        Self::from_parent_ptr(this).on_writer_ready()
     }
     unsafe fn on_close(this: *mut Self) {
-        // SAFETY: see on_write.
-        unsafe { &*this }.on_writer_close()
+        Self::from_parent_ptr(this).on_writer_close()
     }
 }
 

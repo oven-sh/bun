@@ -1452,10 +1452,11 @@ pub struct PerThread {
     pub source_maps: StringArrayHashMap<OutputFileIndex>,
 
     // Thread-local
-    // PORT NOTE: Zig's `vm: *jsc.VirtualMachine` is a freely-aliasing mutable
-    // pointer. Stored as `*mut` (not `&VirtualMachine`) so callers like
-    // `load_module` can mutate through it without a `&T as *mut T` cast (UB).
-    pub vm: *mut VirtualMachine,
+    // PORT NOTE: Zig's `vm: *jsc.VirtualMachine`. Stored as `BackRef` (the VM
+    // is process-lifetime and outlives every `PerThread`); `load_module`
+    // re-derives a mutable VM via the per-thread singleton, so no write
+    // provenance is needed here.
+    pub vm: bun_ptr::BackRef<VirtualMachine>,
     /// Indexed by entry point index (OpaqueFileId)
     pub loaded_files: AutoBitSet,
     /// JSArray of JSString, indexed by entry point index (OpaqueFileId)
@@ -1483,9 +1484,9 @@ impl PerThread {
     /// Safe `&VirtualMachine` accessor for the JSC_BORROW `vm` back-pointer.
     #[inline]
     pub fn vm(&self) -> &VirtualMachine {
-        // SAFETY: `vm` is the live per-thread VM (set in `init`/`placeholder`
-        // from `init_bake`); the VM outlives `PerThread`.
-        unsafe { &*self.vm }
+        // BackRef invariant: VM outlives `PerThread` (set in `init`/`placeholder`
+        // from `init_bake`).
+        self.vm.get()
     }
 
     /// Safe `&'static JSGlobalObject` accessor — `self.vm().global()`.
@@ -1502,7 +1503,7 @@ impl PerThread {
             module_keys: Vec::new(),
             module_map: StringArrayHashMap::default(),
             source_maps: StringArrayHashMap::default(),
-            vm,
+            vm: bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null")),
             loaded_files: AutoBitSet::init_empty(0).expect("unreachable"),
             all_server_files: None,
             attached: false,
@@ -1522,8 +1523,9 @@ impl PerThread {
         let loaded_files = AutoBitSet::init_empty(n)?;
         // errdefer loaded_files.deinit() — handled by Drop on error path
 
-        // SAFETY: vm is the live per-thread VM; vm.global is live for VM lifetime.
-        let global = unsafe { &*(*vm).global };
+        // BackRef invariant: vm is the live per-thread VM; outlives PerThread.
+        let vm = bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null"));
+        let global = vm.global();
         let all_server_files = Some(bun_jsc::Strong::create(
             JSValue::create_empty_array(global, n).map_err(js_err)?,
             global,
@@ -1568,7 +1570,7 @@ impl PerThread {
     pub fn load_bundled_module(&self, id: OpaqueFileId) -> Result<JSValue, bun_core::Error> {
         let global = self.global();
         load_module(
-            self.vm,
+            self.vm.as_ptr(),
             global,
             self.module_keys[id.get() as usize].to_js(global).map_err(js_err)?,
         )

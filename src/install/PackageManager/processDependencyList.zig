@@ -245,6 +245,7 @@ pub fn processDependencyListItem(
     item: TaskCallbackContext,
     any_root: ?*bool,
     install_peer: bool,
+    parent_package_id: ?PackageID,
 ) !void {
     switch (item) {
         .dependency => |dependency_id| {
@@ -256,7 +257,7 @@ pub fn processDependencyListItem(
                 &dependency,
                 resolution,
                 install_peer,
-                null,
+                parent_package_id,
             );
         },
         .root_dependency => |dependency_id| {
@@ -268,7 +269,7 @@ pub fn processDependencyListItem(
                 &dependency,
                 resolution,
                 install_peer,
-                null,
+                parent_package_id,
                 assignRootResolution,
                 failRootResolution,
             );
@@ -307,12 +308,13 @@ pub fn processDependencyList(
     ctx: Ctx,
     comptime callbacks: anytype,
     install_peer: bool,
+    parent_package_id: ?PackageID,
 ) !void {
     if (dep_list.items.len > 0) {
         var dependency_list = dep_list;
         var any_root = false;
         for (dependency_list.items) |item| {
-            try this.processDependencyListItem(item, &any_root, install_peer);
+            try this.processDependencyListItem(item, &any_root, install_peer, parent_package_id);
         }
 
         if (comptime @TypeOf(callbacks) != void and @TypeOf(callbacks.onResolve) != void) {

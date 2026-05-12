@@ -320,6 +320,7 @@ pub fn runTasks(
                             extract_ctx,
                             callbacks,
                             install_peer,
+                            null,
                         );
 
                         continue;
@@ -635,7 +636,7 @@ pub fn runTasks(
                 const dependency_list = dependency_list_entry.value_ptr.*;
                 dependency_list_entry.value_ptr.* = .{};
 
-                try manager.processDependencyList(dependency_list, Ctx, extract_ctx, callbacks, install_peer);
+                try manager.processDependencyList(dependency_list, Ctx, extract_ctx, callbacks, install_peer, null);
 
                 if (log_level.showProgress()) {
                     if (!has_updated_this_run) {
@@ -785,7 +786,7 @@ pub fn runTasks(
                                     // will still have the original.
                                     else => {},
                                 }
-                                try manager.processDependencyListItem(dep, &any_root, install_peer);
+                                try manager.processDependencyListItem(dep, &any_root, install_peer, package_id);
                             },
                             else => {
                                 // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
@@ -800,7 +801,7 @@ pub fn runTasks(
                     const dependency_list = dependency_list_entry.value_ptr.*;
                     dependency_list_entry.value_ptr.* = .{};
 
-                    try manager.processDependencyList(dependency_list, void, {}, {}, install_peer);
+                    try manager.processDependencyList(dependency_list, void, {}, {}, install_peer, null);
                 }
 
                 manager.setPreinstallState(package_id, manager.lockfile, .done);
@@ -939,7 +940,7 @@ pub fn runTasks(
                     const dependency_list = dependency_list_entry.value_ptr.*;
                     dependency_list_entry.value_ptr.* = .{};
 
-                    try manager.processDependencyList(dependency_list, Ctx, extract_ctx, callbacks, install_peer);
+                    try manager.processDependencyList(dependency_list, Ctx, extract_ctx, callbacks, install_peer, null);
                 }
 
                 if (log_level.showProgress()) {
@@ -1036,7 +1037,7 @@ pub fn runTasks(
                                 var repo = &manager.lockfile.buffers.dependencies.items[id].version.value.git;
                                 repo.resolved = pkg.resolution.value.git.resolved;
                                 repo.package_name = pkg.name;
-                                try manager.processDependencyListItem(dep, &any_root, install_peer);
+                                try manager.processDependencyListItem(dep, &any_root, install_peer, package_id);
                             },
                             else => {
                                 // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.

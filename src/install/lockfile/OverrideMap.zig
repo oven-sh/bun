@@ -24,6 +24,14 @@ pub const ScopedOverrideContext = struct {
 global: std.ArrayHashMapUnmanaged(PackageNameHash, Dependency, ArrayIdentityContext.U64, false) = .{},
 scoped: std.ArrayHashMapUnmanaged(ScopedOverrideKey, Dependency, ScopedOverrideContext, false) = .{},
 
+/// Lookup an override for a dependency, checking scoped overrides first (if a parent is known),
+/// then falling back to global overrides.
+///
+/// Lookup precedence:
+/// 1. If `parent_package_id` is provided and a scoped override exists for
+///    (parent_name_hash, name_hash), return the scoped override version.
+/// 2. If a global override exists for `name_hash`, return the global override version.
+/// 3. Otherwise, return null.
 pub fn get(this: *const OverrideMap, lockfile: *const Lockfile, name_hash: PackageNameHash, parent_package_id: ?PackageID) ?Dependency.Version {
     if (this.global.count() == 0 and this.scoped.count() == 0) {
         return null;

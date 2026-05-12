@@ -263,6 +263,13 @@ impl Strong {
         self.strong.get().unwrap()
     }
 
+    /// Debug-only raw handle pointer for corruption probes (#53265).
+    #[doc(hidden)]
+    #[inline]
+    pub fn handle_ptr(&self) -> *const () {
+        self.strong.handle_ptr()
+    }
+
     pub fn value_or_empty(&self) -> JSValue {
         self.strong.get().unwrap_or(JSValue::ZERO)
     }

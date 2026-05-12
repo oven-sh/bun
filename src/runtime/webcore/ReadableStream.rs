@@ -39,6 +39,13 @@ impl Strong {
         self.held.has()
     }
 
+    /// Debug-only raw handle pointer for corruption probes (#53265).
+    #[doc(hidden)]
+    #[inline]
+    pub fn held_handle_ptr(&self) -> *const () {
+        self.held.handle_ptr()
+    }
+
     pub fn is_disturbed(&self, global: &JSGlobalObject) -> bool {
         if let Some(stream) = self.get(global) {
             return stream.is_disturbed(global);

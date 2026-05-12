@@ -905,6 +905,40 @@ impl FileSink {
     pub fn finalize(&mut self) {
         // TODO(port): `.classes.ts` finalize — see PORTING.md §JSC. Runs during
         // lazy sweep; must not touch live JS cells.
+
+        // ── #53265/#53570 Windows Strong-corruption probe ────────────────────
+        // The shared Strong::Impl::destroy panic tail can't distinguish which
+        // of the 3 Optional fields holds a small-integer "handle". Probe each
+        // here with the field name + neighbouring fields so the next CI crash
+        // localizes the overwrite. Remove once root-caused.
+        #[cfg(windows)]
+        {
+            #[inline(never)]
+            fn probe(name: &'static str, p: *const (), this: &FileSink) {
+                let addr = p as usize;
+                if addr != 0 && addr < 0x10000 {
+                    panic!(
+                        "FileSink::finalize: Strong field `{}` corrupted ({:p}); \
+                         self={:p} fd={:?} written={} ref_count={} done={} pending.state={:?} \
+                         signal.ptr={:?}",
+                        name, p, this as *const _, this.fd.get(), this.written.get(),
+                        this.ref_count.get(), this.done.get(),
+                        this.pending.get().state as u8, this.signal.get().ptr,
+                    );
+                }
+            }
+            probe(
+                "readable_stream.held",
+                self.readable_stream.get().held_handle_ptr(),
+                self,
+            );
+            probe("js_sink_ref", self.js_sink_ref.get().handle_ptr(), self);
+            // pending.future is an enum; only probe when it's the Promise arm.
+            if let streams::WritableFuture::Promise { strong, .. } = &self.pending.get().future {
+                probe("pending.future.Promise.strong", strong.handle_ptr(), self);
+            }
+        }
+
         self.readable_stream.set(readable_stream::Strong::default());
         self.pending.set(streams::WritablePending::default());
         self.js_sink_ref.with_mut(|r| r.deinit());
@@ -1549,3 +1583,34 @@ bun_jsc::jsc_host_abi! {
 }
 
 // ported from: src/runtime/webcore/FileSink.zig
+
+// ─── DIAGNOSTIC: FileSink layout probe (Windows fs-promises Strong corruption) ───
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

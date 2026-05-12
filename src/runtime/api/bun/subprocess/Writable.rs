@@ -45,6 +45,20 @@ impl<'a> Writable<'a> {
         unsafe { pipe.as_ref() }
     }
 
+    /// Mutable counterpart to [`pipe_sink`](Self::pipe_sink).
+    ///
+    /// Same invariant: `Writable::Pipe` holds a +1 intrusive ref on the
+    /// `FileSink` for the variant's lifetime, and the sink lives in its own
+    /// allocation (disjoint from both the `Writable` value and the parent
+    /// `Subprocess`), so projecting `&mut` here cannot alias any other live
+    /// borrow. Single JS-mutator thread — no concurrent `&mut FileSink`.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub(super) fn pipe_sink_mut(pipe: &NonNull<FileSink>) -> &mut FileSink {
+        // SAFETY: see fn doc — +1-intrusive-ref'd, heap-disjoint, single-thread.
+        unsafe { &mut *pipe.as_ptr() }
+    }
+
     pub fn memory_cost(&self) -> usize {
         match self {
             Writable::Pipe(pipe) => Self::pipe_sink(pipe).memory_cost(),
@@ -379,9 +393,9 @@ impl<'a> Writable<'a> {
             }
             Writable::Pipe(pipe_nn) => {
                 // stdin already replaced with Ignore above (mirrors Zig `this.* = .{ .ignore = {} }`)
-                // SAFETY: pipe is live (held a +1 in this enum); separate
-                // allocation from `*subprocess` so the borrows are disjoint.
-                let pipe = unsafe { &mut *pipe_nn.as_ptr() };
+                // pipe is live (held a +1 in this enum); separate allocation
+                // from `*subprocess` so the borrows are disjoint.
+                let pipe = Self::pipe_sink_mut(&pipe_nn);
                 if subprocess.has_exited()
                     && !subprocess.flags.get().contains(Flags::HAS_STDIN_DESTRUCTOR_CALLED)
                 {
@@ -437,8 +451,7 @@ impl<'a> Writable<'a> {
         let parent_ptr = NonNull::new(subprocess.as_ctx_ptr().cast::<c_void>());
         match subprocess.stdin.replace(Writable::Ignore) {
             Writable::Pipe(pipe_nn) => {
-                // SAFETY: pipe is live for the duration of the variant.
-                let pipe = unsafe { &mut *pipe_nn.as_ptr() };
+                let pipe = Self::pipe_sink_mut(&pipe_nn);
                 if pipe.signal.get().ptr == parent_ptr {
                     pipe.signal.with_mut(|s| s.clear());
                 }

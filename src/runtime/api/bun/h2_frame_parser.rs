@@ -5439,8 +5439,8 @@ impl H2FrameParser {
             this.rejected_streams.set(this.rejected_streams.get() + 1);
             this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
             if this.rejected_streams.get() >= this.max_rejected_streams.get() {
-                let global = unsafe { &*this.handlers.get().global_object };
-                let chunk = this.handlers.get().binary_type.to_js(b"ENHANCE_YOUR_CALM", global)?;
+                let global = this.handlers.get().global();
+                let chunk = this.handlers.get().binary_type.to_js(b"ENHANCE_YOUR_CALM", &global)?;
                 this.dispatch_with_2_extra(JSH2FrameParser::Gc::onError, JSValue::js_number(ErrorCode::ENHANCE_YOUR_CALM.0 as f64), JSValue::js_number(this.last_stream_id.get() as f64), chunk);
             }
             return Ok(JSValue::js_number(stream_id as f64));

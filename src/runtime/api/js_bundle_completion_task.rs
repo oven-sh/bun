@@ -190,6 +190,22 @@ impl JSBundleCompletionTask {
         Ok(value != JSValue::UNDEFINED)
     }
 
+    /// Mutable borrow of the attached `Plugin`, if any.
+    ///
+    /// Centralises the `Option<NonNull> → Option<&mut T>` deref so callers
+    /// (`to_js_error` / `on_complete_anytask`) stay safe. The plugin is a C++
+    /// `JSBundlerPlugin` opaque created by [`PluginJscExt::create`] and
+    /// `protect()`-ed for the task's lifetime; it is freed only via
+    /// `Plugin::destroy` in `deinit` *after* `take()` clears `self.plugins`.
+    /// While the field is `Some` the pointee is therefore live, pinned, and
+    /// disjoint from `*self` (separate C++-heap allocation).
+    #[inline]
+    fn plugins_mut(&mut self) -> Option<&mut Plugin> {
+        // SAFETY: see fn doc — C++-heap opaque, live while `self.plugins` is
+        // `Some`, disjoint from `*self`. Single JS-mutator thread.
+        self.plugins.map(|p| unsafe { &mut *p.as_ptr() })
+    }
+
     fn to_js_error(
         &mut self,
         promise: &mut JSPromise,
@@ -208,9 +224,9 @@ impl JSBundleCompletionTask {
             Err(e) => return promise.reject(global_this, Err(e)),
         };
 
-        let did_handle_callbacks = if let Some(plugin) = self.plugins {
-            // SAFETY: `plugin` is a live FFI handle for the duration of this task.
-            let plugin = unsafe { &mut *plugin.as_ptr() };
+        let did_handle_callbacks = if self.plugins.is_some() {
+            // Compute `rejection` before borrowing the plugin so `&self.log`
+            // does not overlap the `&mut self` taken by `plugins_mut()`.
             let rejection = if throw_on_error {
                 bun_ast_jsc::log_to_js_aggregate_error(
                     &self.log,
@@ -220,6 +236,8 @@ impl JSBundleCompletionTask {
             } else {
                 Ok(JSValue::UNDEFINED)
             };
+            // Checked `is_some` above; accessor encapsulates the deref.
+            let plugin = self.plugins_mut().unwrap();
             match Self::run_on_end_callbacks(global_this, plugin, promise, build_result, rejection)
             {
                 Ok(b) => b,
@@ -707,9 +725,7 @@ impl JSBundleCompletionTask {
                     );
                 }
 
-                let did_handle_callbacks = if let Some(plugin) = this.plugins {
-                    // SAFETY: `plugin` is a live FFI handle for the duration of this task.
-                    let plugin = unsafe { &mut *plugin.as_ptr() };
+                let did_handle_callbacks = if let Some(plugin) = this.plugins_mut() {
                     match Self::run_on_end_callbacks(
                         global_this,
                         plugin,

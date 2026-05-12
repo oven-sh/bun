@@ -1846,7 +1846,9 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
     }
 
     let i = highway::index_of_newline_or_non_ascii(remaining)?;
-    Some(u32::try_from(i).unwrap() + offset)
+    // PORT NOTE: Zig uses @truncate here (immutable.zig:1212); match wrapping semantics
+    // instead of try_from().unwrap() which would panic on >4GB inputs.
+    Some(i as u32 + offset)
 }
 
 pub use highway::contains_newline_or_non_ascii_or_quote;

@@ -315,9 +315,8 @@ impl FetchTasklet {
     /// `clear_abort_signal`).
     #[inline]
     fn abort_signal(&self) -> Option<&AbortSignal> {
-        // SAFETY: see block comment above. AbortSignal methods take `&self`
-        // (FFI pass-through); shared borrow is sufficient.
-        self.signal.map(|p| unsafe { &*p })
+        // S008: `AbortSignal` is an `opaque_ffi!` ZST handle — safe `*const → &`.
+        self.signal.map(|p| bun_opaque::opaque_deref(p))
     }
 
     /// True iff an attached AbortSignal has fired.
@@ -1098,14 +1097,14 @@ impl FetchTasklet {
         let Some(signal) = self.signal.take() else {
             return;
         };
-        // SAFETY: signal is a live C++-owned WebCore::AbortSignal*; we hold one ref
+        // `signal` is a live C++-owned WebCore::AbortSignal*; we hold one ref
         // (taken in `fetch.zig` before populating FetchOptions). Order matches Zig
         // `clearAbortSignal`: cleanNativeBindings first, then defer{unref+pendingUnref}.
-        unsafe {
-            (*signal).clean_native_bindings(std::ptr::from_mut(self).cast::<c_void>());
-            (*signal).pending_activity_unref();
-            (*signal).unref();
-        }
+        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe `*const → &`.
+        let signal = bun_opaque::opaque_deref(signal);
+        signal.clean_native_bindings(std::ptr::from_mut(self).cast::<c_void>());
+        signal.pending_activity_unref();
+        signal.unref();
     }
 
     pub fn on_reject(&mut self) -> BodyValueError {
@@ -1642,14 +1641,14 @@ impl FetchTasklet {
         }
 
         if let Some(signal) = fetch_tasklet.signal {
-            // SAFETY: signal is a live C++-owned WebCore::AbortSignal* (already
-            // ref'd by the caller before populating `fetch_options.signal`).
+            // `signal` is a live C++-owned WebCore::AbortSignal* (already ref'd by
+            // the caller before populating `fetch_options.signal`).
             // Zig: `signal.pendingActivityRef(); fetch_tasklet.signal = signal.listen(...)`.
             // `add_listener` returns `self`, so the field already holds the right ptr.
-            unsafe {
-                (*signal).pending_activity_ref();
-                (*signal).add_listener(fetch_tasklet_ptr.cast::<c_void>(), Self::__abort_listener_c);
-            }
+            // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe `*const → &`.
+            let signal = bun_opaque::opaque_deref(signal);
+            signal.pending_activity_ref();
+            signal.add_listener(fetch_tasklet_ptr.cast::<c_void>(), Self::__abort_listener_c);
         }
         Ok(fetch_tasklet_ptr)
     }

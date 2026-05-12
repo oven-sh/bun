@@ -1884,10 +1884,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // PORT NOTE: reshaped for borrowck — `app.ws(..)` reads `to_behavior()`
         // (borrows `self.config.websocket`) while iterating `self.user_routes`.
-        // Snapshot the websocket pointer up front so the two `&mut self.*`
-        // accesses do not overlap from rustc's POV.
-        let websocket_ptr: Option<*mut WebSocketServerContext> =
-            self.config.websocket.as_mut().map(|w| std::ptr::from_mut(w));
+        // Snapshot as a `BackRef` (pointee = `self.config.websocket`, which is
+        // pinned in the server allocation and outlives every use below — the
+        // BackRef invariant) so the two `&mut self.*` accesses do not overlap
+        // from rustc's POV. Replaces the `Option<*mut _>` + per-site
+        // `unsafe { &*p }` pattern with one safe accessor.
+        let websocket_ptr: Option<bun_ptr::BackRef<WebSocketServerContext>> =
+            self.config.websocket.as_ref().map(bun_ptr::BackRef::new);
 
         for user_route in self.user_routes.iter_mut() {
             let ud: *mut c_void = std::ptr::from_mut::<UserRoute<SSL, DEBUG>>(user_route).cast();
@@ -1927,9 +1930,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             path,
                             ud,
                             1, // id 1 means is a user route
-                            // SAFETY: websocket is a live `*mut WebSocketServerContext`
-                            // (snapshotted from `self.config.websocket` above).
-                            ServerWebSocket::behavior::<Self, SSL>(unsafe { &*websocket }.to_behavior()),
+                            ServerWebSocket::behavior::<Self, SSL>(websocket.to_behavior()),
                         );
                     }
                 }
@@ -1957,8 +1958,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 path,
                                 ud,
                                 1, // id 1 means is a user route
-                                // SAFETY: see above.
-                                ServerWebSocket::behavior::<Self, SSL>(unsafe { &*websocket }.to_behavior()),
+                                ServerWebSocket::behavior::<Self, SSL>(websocket.to_behavior()),
                             );
                         }
                     }
@@ -2119,8 +2119,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     b"/*",
                     self_ptr.cast(),
                     0, // id 0 means is a fallback route and ctx is the server
-                    // SAFETY: see websocket_ptr snapshot comment above.
-                    ServerWebSocket::behavior::<Self, SSL>(unsafe { &*websocket }.to_behavior()),
+                    ServerWebSocket::behavior::<Self, SSL>(websocket.to_behavior()),
                 );
             }
         }

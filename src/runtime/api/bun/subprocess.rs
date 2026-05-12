@@ -535,9 +535,9 @@ impl Subprocess<'_> {
             StdioKind::Stdin => self.stdin.with_mut(|stdin| match stdin {
                 Writable::Pipe(pipe) => {
                     let pipe = *pipe;
-                    // SAFETY: Writable::Pipe holds a live `*FileSink` for the
-                    // subprocess lifetime; we're on the mutator thread.
-                    unsafe { (*pipe.as_ptr()).signal.with_mut(|s| s.clear()) };
+                    // `signal` is a `JsCell`, so the shared `&FileSink` from the
+                    // centralised `pipe_sink` accessor suffices for `with_mut`.
+                    Writable::pipe_sink(&pipe).signal.with_mut(|s| s.clear());
                     *stdin = Writable::Ignore;
                     // SAFETY: `Writable::Pipe` owns one intrusive ref (NonNull,
                     // no Drop impl); release it explicitly now that the variant
@@ -1129,9 +1129,9 @@ impl Subprocess<'_> {
                 .map(|p| p.as_ptr().cast_const())
                 == Some(std::ptr::from_ref::<Self>(self).cast::<c_void>())
             {
-                // SAFETY: `pipe_ptr` is unique on the mutator thread; Zig mutates
-                // through `*FileSink` here.
-                unsafe { (*pipe_ptr.as_ptr()).signal.with_mut(|s| s.clear()) };
+                // `signal` is a `JsCell`; `with_mut` takes `&self`, so the
+                // shared `pipe: &FileSink` deref above is sufficient.
+                pipe.signal.with_mut(|s| s.clear());
             }
             let must_deref = self.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED);
             self.update_flags(|f| f.remove(Flags::DEREF_ON_STDIN_DESTROYED));

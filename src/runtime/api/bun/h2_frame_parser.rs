@@ -1414,10 +1414,12 @@ pub struct SignalRef {
     // LIFETIMES.tsv: SHARED — AbortSignal is intrusively refcounted across FFI/codegen.
     // `AbortSignal` is an opaque C++ type whose ref/unref go through
     // `WebCore__AbortSignal__ref/unref`; it does not (and cannot) implement
-    // `bun_ptr::RefCounted`, so store the raw pointer and balance refs by hand
-    // in `attach_signal` / `Drop` (mirrors Zig `*AbortSignal`).
+    // `bun_ptr::RefCounted`, so balance refs by hand in `attach_signal` / `Drop`
+    // (mirrors Zig `*AbortSignal`). `BackRef` captures the backref invariant
+    // (signal is `ref_()`'d in `attach_signal` and outlives this struct until
+    // `Drop` calls `detach()`/`unref()`), so reads go through safe `Deref`.
     // TODO(port): wrap in a dedicated smart-pointer once AbortSignal grows one.
-    signal: *mut AbortSignal,
+    signal: bun_ptr::BackRef<AbortSignal>,
     // LIFETIMES.tsv: SHARED — H2FrameParser carries an intrusive RefCount and is
     // recovered via `from_field_ptr!` from the auto-flusher. It uses a hand-rolled
     // `Cell<u32>` ref count (not `bun_ptr::RefCount<Self>`), so `IntrusiveRc`'s
@@ -1432,8 +1434,8 @@ pub struct SignalRef {
 
 impl SignalRef {
     pub fn is_aborted(&self) -> bool {
-        // SAFETY: signal is kept alive via .ref() in attach_signal
-        unsafe { (*self.signal).aborted() }
+        // BackRef invariant: signal kept alive via .ref_() in attach_signal.
+        self.signal.aborted()
     }
 
     pub fn abort_listener(this: *mut SignalRef, reason: JSValue) {
@@ -1456,9 +1458,12 @@ impl SignalRef {
 
 impl Drop for SignalRef {
     fn drop(&mut self) {
-        // SAFETY: `signal` is the C++-refcounted AbortSignal we ref()'d in
-        // `attach_signal`; valid until this `detach` releases our listener.
-        unsafe { (*self.signal).detach(std::ptr::from_mut(self).cast::<c_void>()) };
+        // BackRef invariant: `signal` is the C++-refcounted AbortSignal we
+        // ref_()'d in `attach_signal`; valid until this `detach` releases our
+        // listener and unrefs. Copy the `BackRef` out first so the `&mut self`
+        // taken by `from_mut` doesn't overlap the receiver borrow.
+        let signal = self.signal;
+        signal.detach(std::ptr::from_mut(self).cast::<c_void>());
         // ParentRef backref — parser outlives every SignalRef (ref()'d in
         // `attach_signal`); release that ref now via the inherent `deref()`.
         H2FrameParser::deref(self.parser.get());
@@ -1950,18 +1955,20 @@ impl Stream {
     }
 
     pub fn attach_signal(&mut self, parser: &H2FrameParser, signal: &mut AbortSignal) {
+        // `ref_()` bumps the C++ intrusive refcount and returns the same live
+        // `self` pointer with FFI (wildcard) provenance — store *that* in the
+        // `BackRef` so its validity is tied to the refcount, not to the
+        // borrowed `&mut AbortSignal` parameter's lifetime.
+        let refed = core::ptr::NonNull::new(signal.ref_()).expect("AbortSignal::ref_");
         // we need a stable pointer to know what signal points to what stream_id + parser
         let mut signal_ref = Box::new(SignalRef {
-            signal: std::ptr::from_mut(signal),
+            signal: bun_ptr::BackRef::from(refed),
             parser: bun_ptr::ParentRef::new(parser),
             stream_id: self.id,
         });
-        // SAFETY: ref_() bumps the C++ intrusive refcount and returns the same live
-        // pointer; signal_ref is heap-allocated and outlives the listener registration
+        // `signal_ref` is heap-allocated and outlives the listener registration
         // (cleared via `detach` in `Drop for SignalRef`).
-        let refed = signal.ref_();
-        unsafe { (*refed).listen(&raw mut *signal_ref) };
-        signal_ref.signal = refed;
+        signal.listen(&raw mut *signal_ref);
         // TODO: We should not need this ref counting here, since Parser owns Stream
         parser.ref_();
         self.signal = Some(signal_ref);
@@ -3766,22 +3773,22 @@ impl H2FrameParser {
     }
 
     fn to_writer(&self) -> DirectWriterStruct {
-        DirectWriterStruct { writer: std::ptr::from_ref::<Self>(self) }
+        DirectWriterStruct { writer: bun_ptr::BackRef::new(self) }
     }
 }
 
-// PORT NOTE: holds a raw `*const H2FrameParser` so the borrow of the parser
-// ends at `to_writer()`'s return — `Stream::flush_queue` interleaves field
+// PORT NOTE: holds a `BackRef<H2FrameParser>` so the borrow of the parser ends
+// at `to_writer()`'s return — `Stream::flush_queue` interleaves field
 // reads/writes on the parser between `writer.write()` calls. R-2: `write()`
-// takes `&self` (Cell/JsCell-backed), so a shared pointer is sufficient.
+// takes `&self` (Cell/JsCell-backed), so a shared back-reference is sufficient
+// and the `BackRef` invariant (parser outlives this struct) holds by
+// construction.
 struct DirectWriterStruct {
-    writer: *const H2FrameParser,
+    writer: bun_ptr::BackRef<H2FrameParser>,
 }
 impl WireWriter for DirectWriterStruct {
     fn write(&mut self, data: &[u8]) -> Result<usize, bun_core::Error> {
-        // SAFETY: `writer` was derived from `&H2FrameParser` in `to_writer()`;
-        // the parser outlives this struct. `H2FrameParser::write` takes `&self`.
-        Ok(if unsafe { (*self.writer).write(data) } { data.len() } else { 0 })
+        Ok(if self.writer.write(data) { data.len() } else { 0 })
     }
 }
 

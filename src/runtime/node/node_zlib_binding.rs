@@ -303,19 +303,24 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 .throw());
         }
 
+        // Hoisted so `in_` can borrow it past the `else` arm (mirrors `out_buf`).
+        let in_buf: jsc::ArrayBuffer;
         if arguments[1].is_null() {
             // just a flush
             in_ = None;
             in_len = 0;
             in_off = 0;
         } else {
-            let Some(in_buf) = arguments[1].as_array_buffer(global_this) else {
-                return Err(global_this
-                    .err(
-                        ErrorCode::INVALID_ARG_TYPE,
-                        format_args!("The \"in\" argument must be a TypedArray or DataView"),
-                    )
-                    .throw());
+            in_buf = match arguments[1].as_array_buffer(global_this) {
+                Some(b) => b,
+                None => {
+                    return Err(global_this
+                        .err(
+                            ErrorCode::INVALID_ARG_TYPE,
+                            format_args!("The \"in\" argument must be a TypedArray or DataView"),
+                        )
+                        .throw());
+                }
             };
             in_off = jsv_to_u32(arguments[2]);
             in_len = jsv_to_u32(arguments[3]);
@@ -331,11 +336,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                     )
                     .throw());
             }
-            // SAFETY: bounds checked above; backing JS buffer outlives this call
-            // (rooted via `arguments[1]` on the call stack).
-            in_ = Some(unsafe {
-                core::slice::from_raw_parts(in_buf.ptr.add(in_off as usize), in_len as usize)
-            });
+            // Bounds checked above; `byte_slice` is the safe accessor for the JS
+            // ArrayBuffer's backing store (rooted via `arguments[1]` on the call stack).
+            in_ = Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
         }
 
         let Some(mut out_buf) = arguments[4].as_array_buffer(global_this) else {
@@ -540,19 +543,24 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 .throw());
         }
 
+        // Hoisted so `in_` can borrow it past the `else` arm (mirrors `out_buf`).
+        let in_buf: jsc::ArrayBuffer;
         if arguments[1].is_null() {
             // just a flush
             in_ = None;
             in_len = 0;
             in_off = 0;
         } else {
-            let Some(in_buf) = arguments[1].as_array_buffer(global_this) else {
-                return Err(global_this
-                    .err(
-                        ErrorCode::INVALID_ARG_TYPE,
-                        format_args!("The \"in\" argument must be a TypedArray or DataView"),
-                    )
-                    .throw());
+            in_buf = match arguments[1].as_array_buffer(global_this) {
+                Some(b) => b,
+                None => {
+                    return Err(global_this
+                        .err(
+                            ErrorCode::INVALID_ARG_TYPE,
+                            format_args!("The \"in\" argument must be a TypedArray or DataView"),
+                        )
+                        .throw());
+                }
             };
             in_off = jsv_to_u32(arguments[2]);
             in_len = jsv_to_u32(arguments[3]);
@@ -568,10 +576,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                     )
                     .throw());
             }
-            // SAFETY: bounds checked above; backing JS buffer outlives this call.
-            in_ = Some(unsafe {
-                core::slice::from_raw_parts(in_buf.ptr.add(in_off as usize), in_len as usize)
-            });
+            // Bounds checked above; `byte_slice` is the safe accessor for the JS
+            // ArrayBuffer's backing store (rooted via `arguments[1]` on the call stack).
+            in_ = Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
         }
 
         let Some(mut out_buf) = arguments[4].as_array_buffer(global_this) else {

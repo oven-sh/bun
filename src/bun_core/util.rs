@@ -2233,7 +2233,13 @@ impl<T, F> Once<T, F> {
         self.init_slow(f)
     }
 
-    #[cold]
+    // `#[inline(never)]`, not `#[cold]`: the very first call to every `Once`
+    // *always* lands here during single-threaded startup, so this is not a
+    // rare branch — `#[cold]` would only relocate every monomorphisation into
+    // `.text.unlikely`, scattering init code away from the startup.order
+    // cluster. We only want it outlined so the DONE fast path in
+    // `get_or_init` stays a load+branch.
+    #[inline(never)]
     fn init_slow(&self, f: impl FnOnce() -> T) -> &T {
         if once_claim_slow(&self.state) {
             // Reset to UNINIT if `f` unwinds so a later retry isn't deadlocked

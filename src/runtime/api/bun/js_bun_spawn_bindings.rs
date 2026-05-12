@@ -106,6 +106,20 @@ pub struct TerminalCreateResult {
     pub js_value: JSValue,
 }
 
+impl TerminalCreateResult {
+    /// Centralises the set-once `*mut → &Terminal` deref so callers stay safe.
+    ///
+    /// `terminal` is the `IntrusiveRc<Terminal>` pointer leaked via
+    /// `into_raw()` when this struct was populated; the +1 ref is held until
+    /// `Subprocess::finalize` (or the spawn-error scopeguard's
+    /// `abandon_from_spawn`) releases it, so the pointee outlives this struct.
+    #[inline]
+    pub fn term(&self) -> &Terminal {
+        // SAFETY: see fn doc — non-null +1-ref'd IntrusiveRc, live while held.
+        unsafe { &*self.terminal }
+    }
+}
+
 // ── IPC owner trait impl for Subprocess ─────────────────────────────────────
 // Mirrors the `IPCInstance` impl in `bun_jsc::VirtualMachine`; lives here
 // because `Subprocess` is a `bun_runtime` type and `bun_jsc::ipc` (tier-5)
@@ -390,7 +404,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut windows_verbatim_arguments: bool = false;
     let mut abort_signal: Option<*mut WebCore::AbortSignal> = None;
     let mut terminal_info: Option<TerminalCreateResult> = None;
-    let mut existing_terminal: Option<*mut Terminal> = None; // Existing terminal passed by user
+    let mut existing_terminal: Option<bun_ptr::BackRef<Terminal>> = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
     // TODO(port): the Zig `defer` block at function end (abort_signal.unref + terminal cleanup)
     // is implemented via scopeguard below; disarmed where the Zig set the locals to null.
@@ -410,11 +424,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // finalized so onReaderDone skips the JS exit callback — the user
             // never received this terminal (spawn threw).
             if let Some(info) = terminal_info.take() {
-                // SAFETY: `info.terminal` is the `IntrusiveRc<Terminal>` leaked
-                // via `into_raw()` when `terminal_info` was populated below;
                 // `abandon_from_spawn` is the spawn-side error-path teardown
                 // (downgrade JSRef, mark finalized, close_internal).
-                unsafe { (*info.terminal).abandon_from_spawn() };
+                info.term().abandon_from_spawn();
             }
         },
     );
@@ -720,7 +732,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             return Err(global_this
                                 .throw_invalid_arguments(format_args!("terminal pseudoconsole is no longer valid")));
                         }
-                        existing_terminal = Some(terminal.as_ptr());
+                        existing_terminal = Some(term);
                         terminal_js_value = terminal_val;
                     } else if terminal_val.is_object() {
                         // Create a new terminal from options
@@ -761,11 +773,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
                     #[cfg(unix)]
                     {
-                        let terminal = existing_terminal
-                            .unwrap_or_else(|| terminal_info.as_ref().unwrap().terminal);
-                        // SAFETY: `terminal` was just produced above from a live
-                        // wrapper or freshly-created `IntrusiveRc`.
-                        let slave_fd = unsafe { (*terminal).get_slave_fd() };
+                        let slave_fd = existing_terminal
+                            .map(|t| t.get_slave_fd())
+                            .unwrap_or_else(|| terminal_info.as_ref().unwrap().term().get_slave_fd());
                         stdio[0] = Stdio::Fd(slave_fd);
                         stdio[1] = Stdio::Fd(slave_fd);
                         stdio[2] = Stdio::Fd(slave_fd);
@@ -1022,15 +1032,14 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // For existing terminals, the session is already set up - child just uses the fd as stdio.
         #[cfg(unix)]
         pty_slave_fd: match terminal_info.as_ref() {
-            // SAFETY: `ti.terminal` is the live `IntrusiveRc<Terminal>` raw ptr from above.
-            Some(ti) => unsafe { (*ti.terminal).get_slave_fd() }.native(),
+            Some(ti) => ti.term().get_slave_fd().native(),
             None => -1,
         },
         #[cfg(windows)]
         pseudoconsole: existing_terminal
-            .or_else(|| terminal_info.as_ref().map(|ti| ti.terminal))
-            // SAFETY: ptr is from a live wrapper / IntrusiveRc populated above.
-            .and_then(|t| unsafe { (*t).get_pseudoconsole() }),
+            .as_deref()
+            .or_else(|| terminal_info.as_ref().map(TerminalCreateResult::term))
+            .and_then(Terminal::get_pseudoconsole),
 
         #[cfg(windows)]
         windows: spawn::WindowsOptions {
@@ -1176,6 +1185,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         stdout_maxbuf: Cell::new(None),
         terminal: Cell::new(
             existing_terminal
+                .map(|t| t.as_ptr())
                 .or_else(|| terminal_info.as_ref().map(|info| info.terminal))
                 .and_then(NonNull::new),
         ),
@@ -1313,10 +1323,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // For existing terminal: keep slave_fd open so terminal can be reused for more spawns
     if let Some(info) = terminal_info.take() {
         terminal_js_value = info.js_value;
-        // SAFETY: `info.terminal` is the live `IntrusiveRc<Terminal>` raw ptr
-        // populated above; spawn succeeded so the child holds its own copy of
-        // the slave fd.
-        unsafe { (*info.terminal).close_slave_fd() };
+        // Spawn succeeded so the child holds its own copy of the slave fd.
+        info.term().close_slave_fd();
         subprocess.update_flags(|f| f.insert(Subprocess::Flags::OWNS_TERMINAL));
     }
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse

@@ -83,8 +83,9 @@ impl Stream {
     /// `BackRef::get_mut` upgrade repeated in every lsquic callback.
     #[inline]
     pub fn session_mut<'s>(&self) -> &'s mut ClientSession {
-        // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.session.as_ptr() }
+        // Route through the shared `client_session::session_mut` accessor
+        // (one centralised unsafe); see INVARIANT above.
+        super::client_session::session_mut(self.session.as_ptr())
     }
 
     pub fn abort(&mut self) {

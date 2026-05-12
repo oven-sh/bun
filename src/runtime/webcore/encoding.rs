@@ -709,15 +709,16 @@ pub fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize) -> Ve
         // encode latin1 into UTF16
         // return as bytes
         Encoding::Ucs2 | Encoding::Utf16le => {
-            let mut to: Vec<u16> = vec![0u16; len];
-            let _ = strings::copy_latin1_into_utf16(&mut to, input_slice);
-            // SAFETY: reinterpret Vec<u16> as Vec<u8>. mimalloc tolerates the size/align change
-            // (matches Zig's sliceAsBytes on a heap allocation). Phase B: confirm allocator layout.
-            // TODO(port): Vec<u16> -> Vec<u8> reinterpretation — verify allocator layout invariants.
-            unsafe {
-                let mut to = core::mem::ManuallyDrop::new(to);
-                Vec::from_raw_parts(to.as_mut_ptr().cast::<u8>(), len * 2, to.capacity() * 2)
+            // Each Latin-1 byte widens to one native-endian u16 code unit
+            // (`copy_latin1_into_utf16` is exactly that loop). Write the bytes
+            // directly into a `Vec<u8>` so we never depend on the allocator-
+            // layout-dependent `Vec<u16> → Vec<u8>` header reinterpret the Zig
+            // original relied on (`sliceAsBytes` over a heap allocation).
+            let mut to = vec![0u8; len * 2];
+            for (out, &b) in to.chunks_exact_mut(2).zip(input_slice) {
+                out.copy_from_slice(&u16::from(b).to_ne_bytes());
             }
+            to
         }
 
         Encoding::Hex => {

@@ -1048,6 +1048,13 @@ pub fn waitForPromise(this: *VirtualMachine, promise: jsc.AnyPromise) void {
 /// `tick()` + `autoTick()` once the last timer fires and `autoTick` degrades
 /// to a non-blocking `tickWithoutIdle`.
 ///
+/// The liveness check deliberately does NOT use `isEventLoopAlive()`: that
+/// predicate short-circuits to `false` on `unhandled_error_counter != 0`,
+/// which for `bun test` persists across files. An unhandled rejection in an
+/// earlier file would then make every later file with ordinary async TLA
+/// bail here with a spurious "never resolved" error even though ref'd work
+/// would settle it.
+///
 /// Callers must handle a still-`.pending` status on return: for `bun run` this
 /// matches Node's exit code 13 behavior; for `bun test` the file is reported
 /// as a load error.
@@ -1057,9 +1064,16 @@ fn waitForModulePromise(this: *VirtualMachine, promise: *JSInternalPromise) void
 
         if (promise.status() != .pending) return;
 
-        // After draining tasks + microtasks, if nothing is keeping the loop
-        // alive the promise can never settle. Break instead of busy-spinning.
-        if (!this.isEventLoopAlive()) return;
+        // After draining tasks + microtasks, if nothing could still wake the
+        // loop the promise can never settle. Break instead of busy-spinning.
+        const loop = this.event_loop;
+        const has_work = this.event_loop_handle.?.isActive() or
+            this.active_tasks > 0 or
+            loop.tasks.count > 0 or
+            loop.hasPendingRefs() or
+            loop.immediate_tasks.items.len > 0 or
+            loop.next_immediate_tasks.items.len > 0;
+        if (!has_work) return;
 
         this.eventLoop().autoTick();
     }

@@ -532,14 +532,19 @@ pub const Run = struct {
 
                 // The entry module's top-level await never settled and nothing
                 // is keeping the event loop alive. Match Node.js: warn + exit 13.
-                // `onBeforeExit` handlers may have resolved the promise, so drain
-                // microtasks and re-run the event loop once more before deciding.
+                // A `beforeExit` handler may have just resolved the promise,
+                // so drain microtasks to let the module body resume; if the
+                // resumed body scheduled more work, run it and re-dispatch
+                // `beforeExit` (Node fires it every time the loop drains).
                 if (vm.pending_internal_promise) |p| {
                     if (p.status() == .pending) {
                         vm.tick();
-                        while (vm.isEventLoopAlive()) {
-                            vm.tick();
-                            vm.eventLoop().autoTickActive();
+                        if (vm.isEventLoopAlive()) {
+                            while (vm.isEventLoopAlive()) {
+                                vm.tick();
+                                vm.eventLoop().autoTickActive();
+                            }
+                            vm.onBeforeExit();
                         }
                     }
                     if (p.status() == .pending and vm.exit_handler.exit_code == 0) {

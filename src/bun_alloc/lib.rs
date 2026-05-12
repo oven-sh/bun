@@ -322,7 +322,7 @@ pub use buffer_fallback_allocator::BufferFallbackAllocator;
 pub use max_heap_allocator::MaxHeapAllocator;
 pub use maybe_owned::MaybeOwned;
 pub use nullable_allocator::NullableAllocator;
-pub use stack_fallback::{ArenaPtr, BumpWithFallback, MimallocHeapRef};
+pub use stack_fallback::{ArenaPtr, BumpWithFallback, MimallocHeapRef, StackFallback};
 
 #[path = "MimallocArena.rs"]
 pub mod mimalloc_arena;

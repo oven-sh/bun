@@ -401,12 +401,13 @@ impl FileSystemRouter {
                     if entry.base().first() == Some(&b'.') {
                         continue 'outer;
                     }
-                    // SAFETY: `transpiler.fs` is the FileSystem singleton; `&mut .fs`
-                    // (the `Implementation` field) is the lazy-stat receiver. `kind`
-                    // needs `&mut Entry` to update the cached stat; no shared borrow
-                    // of `*entry_ptr` is live across this block.
+                    // `Transpiler::fs_mut()` is the audited safe `&mut FileSystem`
+                    // accessor for the process-lifetime singleton; `&mut .fs` (the
+                    // `Implementation` field) is the lazy-stat receiver. `kind`
+                    // needs `&mut Entry` to update the cached stat; no shared
+                    // borrow of `*entry_ptr` is live across this block.
                     let kind = {
-                        let fs_impl = unsafe { &mut (*vm.transpiler.fs).fs };
+                        let fs_impl = &mut vm.transpiler.fs_mut().fs;
                         unsafe { &mut *entry_ptr }.kind(fs_impl, false)
                     };
                     if kind == Fs::EntryKind::Dir {

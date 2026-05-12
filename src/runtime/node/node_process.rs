@@ -410,8 +410,9 @@ fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSValue> 
     }
     // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
     let vm = global_object.bun_vm();
-    // SAFETY: `vm.transpiler.fs` is a live `*mut FileSystem` (process singleton).
-    let fs = unsafe { &mut *vm.transpiler.fs };
+    // `Transpiler::fs_mut()` is the audited safe `&mut FileSystem` accessor for
+    // the process-lifetime singleton (centralised single-unsafe deref).
+    let fs = vm.transpiler.fs_mut();
 
     let mut buf = PathBuffer::uninit();
     let Ok(slice) = to.slice_z_buf(&mut buf) else {

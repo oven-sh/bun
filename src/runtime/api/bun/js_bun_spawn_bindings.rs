@@ -817,9 +817,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // bump arena; here the struct is the arena and lives until spawn returns).
     let mut inherited_env_storage: Option<bun_dotenv::NullDelimitedEnvMap> = None;
     if !override_env && env_array.is_empty() {
-        // SAFETY: `transpiler.env` is the per-VM DotEnv loader (set during init,
-        // valid for VM lifetime); `.map` is its `&mut Map` slot.
-        let envmap = match unsafe { (*(*jsc_vm.transpiler.env).map).create_null_delimited_env_map() }
+        // `Transpiler::env_mut()` is the audited safe `&mut Loader` accessor
+        // (per-VM DotEnv loader, valid for VM lifetime; centralised
+        // single-unsafe deref). `.map` is its `&'a mut Map` slot.
+        let envmap = match jsc_vm.transpiler.env_mut().map.create_null_delimited_env_map()
         {
             Ok(m) => m,
             Err(_) => return Err(global_this.throw_out_of_memory()),

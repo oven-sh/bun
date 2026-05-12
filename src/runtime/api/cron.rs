@@ -1940,8 +1940,9 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     #[cfg(windows)]
     {
         // Resolve the executable via bun.which, matching Bun.spawn's behavior.
-        // SAFETY: per-thread VM singleton; `env` is the live `*mut Loader`.
-        let path_env = unsafe { (*vm_mut().transpiler.env).map.get(b"PATH") }.unwrap_or(b"");
+        // `Transpiler::env()` is the audited safe `&Loader` accessor for the
+        // process-lifetime dotenv loader (centralised single-unsafe deref).
+        let path_env = vm_mut().transpiler.env().map.get(b"PATH").unwrap_or(b"");
         // SAFETY: argv[0] is a NUL-terminated string from caller.
         let argv0 = unsafe { core::ffi::CStr::from_ptr(argv[0]) }.to_bytes();
         match bun_which::which(&mut path_buf, path_env, b"", argv0) {
@@ -1962,8 +1963,9 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     let envp_owned;
     #[cfg(windows)]
     let envp: *const *const c_char = {
-        // SAFETY: per-thread VM singleton; `env` is the live `*mut Loader`.
-        match unsafe { (*vm_mut().transpiler.env).map.create_null_delimited_env_map() } {
+        // `Transpiler::env_mut()` is the audited safe `&mut Loader` accessor
+        // (process-lifetime singleton; centralised single-unsafe deref).
+        match vm_mut().transpiler.env_mut().map.create_null_delimited_env_map() {
             Ok(v) => {
                 envp_owned = v;
                 envp_owned.as_ptr().cast()

@@ -1,9 +1,8 @@
 use core::cell::RefCell;
 use core::fmt;
 
-use bstr::BStr;
-
-use bun_core::{self as bun, Output};
+use bun_core::{self as bun, fmt as bun_fmt, Output};
+use bun_core::fmt::s;
 use bun_paths::{self as path, PathBuffer, WPathBuffer};
 use bun_semver::{self as Semver, Version};
 use bun_str::{strings, strings::StringOrTinyString, ZStr};
@@ -45,7 +44,7 @@ impl ExtractTarball {
                     bun_ast::Loc::EMPTY,
                     format_args!(
                         "Integrity check failed<r> for tarball: {}",
-                        BStr::new(self.name.slice()),
+                        bun_fmt::s(self.name.slice()),
                     ),
                 );
                 return Err(bun_core::err!("IntegrityCheckFailed"));
@@ -84,19 +83,14 @@ pub fn build_url(
     version: Version,
     string_buf: &[u8],
 ) -> Result<&'static [u8], bun_alloc::AllocError> {
-    // TODO(port): FileSystem.DirnameStore.print returns an interned &'static [u8].
     build_url_with_printer(
         registry_,
         full_name_,
         version,
         string_buf,
-        // Zig: `FileSystem.DirnameStore.print(fmt, args)` formats then interns.
-        // The Rust `DirnameStore` exposes only `append`; format to a temporary
-        // String and intern the bytes.
-        |args| {
-            let s = std::fmt::format(args);
-            FileSystem::instance().dirname_store().append(s.as_bytes())
-        },
+        // Zig: `FileSystem.DirnameStore.print(fmt, args)` — format directly into
+        // the store's tail; no intermediate `String`.
+        |args| FileSystem::instance().dirname_store().print(args),
     )
 }
 
@@ -121,9 +115,12 @@ pub fn build_url_with_printer<R, E>(
     }
 
     // default_format = "{s}/{s}/-/"
-    let registry = BStr::new(registry);
-    let full_name = BStr::new(full_name);
-    let name = BStr::new(name);
+    // `bun_fmt::s` writes bytes straight through — registry hosts, package names
+    // and semver tags are pre-validated ASCII, so we don't need `bstr::BStr`'s
+    // Utf8Chunks scan (Zig `{s}` parity).
+    let registry = s(registry);
+    let full_name = s(full_name);
+    let name = s(name);
 
     if !version.tag.has_pre() && !version.tag.has_build() {
         print(format_args!(
@@ -136,8 +133,8 @@ pub fn build_url_with_printer<R, E>(
             version.major,
             version.minor,
             version.patch,
-            BStr::new(version.tag.pre.slice(string_buf)),
-            BStr::new(version.tag.build.slice(string_buf)),
+            s(version.tag.pre.slice(string_buf)),
+            s(version.tag.build.slice(string_buf)),
         ))
     } else if version.tag.has_pre() {
         print(format_args!(
@@ -145,7 +142,7 @@ pub fn build_url_with_printer<R, E>(
             version.major,
             version.minor,
             version.patch,
-            BStr::new(version.tag.pre.slice(string_buf)),
+            s(version.tag.pre.slice(string_buf)),
         ))
     } else if version.tag.has_build() {
         print(format_args!(
@@ -153,7 +150,7 @@ pub fn build_url_with_printer<R, E>(
             version.major,
             version.minor,
             version.patch,
-            BStr::new(version.tag.build.slice(string_buf)),
+            s(version.tag.build.slice(string_buf)),
         ))
     } else {
         unreachable!()
@@ -253,8 +250,8 @@ impl ExtractTarball {
                         format_args!(
                             "{} when create temporary directory named \"{}\" (while extracting \"{}\")",
                             err.name(),
-                            BStr::new(tmpname.as_bytes()),
-                            BStr::new(name),
+                            bun_fmt::s(tmpname.as_bytes()),
+                            bun_fmt::s(name),
                         ),
                     );
                     return Err(bun_core::err!("InstallFailed"));
@@ -349,7 +346,7 @@ impl ExtractTarball {
                         format_args!(
                             "{} decompressing \"{}\" to \"{}\"",
                             err,
-                            BStr::new(name),
+                            bun_fmt::s(name),
                             bun_core::fmt::fmt_path_u8(tmpname.as_bytes(), Default::default()),
                         ),
                     );
@@ -363,8 +360,8 @@ impl ExtractTarball {
                 let elapsed = decompressing_ended_at - time_started_for_verbose_logs;
                 Output::pretty_errorln(format_args!(
                     "[{}] Extract {}<r> (decompressed {} tgz file in {})",
-                    BStr::new(name),
-                    BStr::new(tmpname.as_bytes()),
+                    bun_fmt::s(name),
+                    bun_fmt::s(tmpname.as_bytes()),
                     bun_core::fmt::size(tgz_bytes.len(), Default::default()),
                     bun_core::fmt::fmt_duration_one_decimal(elapsed),
                 ));
@@ -460,8 +457,8 @@ impl ExtractTarball {
                     - time_started_for_verbose_logs;
                 Output::pretty_errorln(format_args!(
                     "[{}] Extracted to {} ({})<r>",
-                    BStr::new(name),
-                    BStr::new(tmpname.as_bytes()),
+                    bun_fmt::s(name),
+                    bun_fmt::s(tmpname.as_bytes()),
                     bun_core::fmt::fmt_duration_one_decimal(elapsed),
                 ));
                 Output::flush();
@@ -555,10 +552,10 @@ impl ExtractTarball {
                                 bun_ast::Loc::EMPTY,
                                 format_args!(
                                     "moving \"{}\" to cache dir failed\n{}\n From: {}\n   To: {}",
-                                    BStr::new(name),
+                                    bun_fmt::s(name),
                                     err,
-                                    BStr::new(tmpname.as_bytes()),
-                                    BStr::new(folder_name),
+                                    bun_fmt::s(tmpname.as_bytes()),
+                                    bun_fmt::s(folder_name),
                                 ),
                             );
                             return Err(bun_core::err!("InstallFailed"));
@@ -623,10 +620,10 @@ impl ExtractTarball {
                                 bun_ast::Loc::EMPTY,
                                 format_args!(
                                     "moving \"{}\" to cache dir failed\n{}\n  From: {}\n    To: {}",
-                                    BStr::new(name),
+                                    bun_fmt::s(name),
                                     err,
-                                    BStr::new(tmpname.as_bytes()),
-                                    BStr::new(folder_name),
+                                    bun_fmt::s(tmpname.as_bytes()),
+                                    bun_fmt::s(folder_name),
                                 ),
                             );
                             return Err(bun_core::err!("InstallFailed"));
@@ -668,10 +665,10 @@ impl ExtractTarball {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "moving \"{}\" to cache dir failed: {}\n  From: {}\n    To: {}",
-                            BStr::new(name),
+                            bun_fmt::s(name),
                             err,
-                            BStr::new(tmpname.as_bytes()),
-                            BStr::new(folder_name),
+                            bun_fmt::s(tmpname.as_bytes()),
+                            bun_fmt::s(folder_name),
                         ),
                     );
                     return Err(bun_core::err!("InstallFailed"));
@@ -688,7 +685,7 @@ impl ExtractTarball {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "failed to verify cache dir for \"{}\": {}",
-                            BStr::new(name),
+                            bun_fmt::s(name),
                             err.name(),
                         ),
                     );
@@ -707,8 +704,8 @@ impl ExtractTarball {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "failed to resolve cache dir for \"{}\": {}",
-                            BStr::new(name),
-                            BStr::new(err.name()),
+                            bun_fmt::s(name),
+                            bun_fmt::s(err.name()),
                         ),
                     );
                     return Err(bun_core::err!("InstallFailed"));
@@ -766,7 +763,7 @@ impl ExtractTarball {
                             bun_ast::Loc::EMPTY,
                             format_args!(
                                 "\"package.json\" for \"{}\" failed to open: {}",
-                                BStr::new(name),
+                                bun_fmt::s(name),
                                 err.name(),
                             ),
                         );
@@ -784,7 +781,7 @@ impl ExtractTarball {
                             bun_ast::Loc::EMPTY,
                             format_args!(
                                 "\"package.json\" for \"{}\" failed to resolve: {}",
-                                BStr::new(name),
+                                bun_fmt::s(name),
                                 err.name(),
                             ),
                         );

@@ -11,10 +11,6 @@ use bun_sys::File;
 
 bun_output::declare_scope!(CLI, hidden);
 
-// Zig `var start_time: i128 = undefined;` — written once in `Cli::start`
-// (S015: write-once → `OnceLock`).
-pub static START_TIME: std::sync::OnceLock<i128> = std::sync::OnceLock::new();
-
 #[allow(non_upper_case_globals)]
 // Mutable static Option<&[u8]>; written from C++ side (process.title)
 pub static Bun__Node__ProcessTitle: bun_core::RacyCell<Option<&'static [u8]>> =
@@ -39,7 +35,7 @@ pub mod cli {
     pub fn start() {
         IS_MAIN_THREAD.with(|c| c.set(true));
         // Single-threaded process startup; no other reader yet — write-once.
-        let _ = START_TIME.set(bun_core::time::nano_timestamp());
+        bun_core::set_start_time(bun_core::time::nano_timestamp());
         // SAFETY: single-threaded process startup
         unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
 
@@ -432,7 +428,7 @@ pub mod command {
         let ctx_ptr: *mut ContextData = unsafe {
             (*CONTEXT_DATA.get()).write(ContextData {
                 log,
-                start_time: START_TIME.get().copied().unwrap_or(0),
+                start_time: bun_core::start_time(),
                 // allocator dropped — global mimalloc
                 // args left to Default — TransformOptions contains NonNull-backed
                 // collections, so the Zig zero-init does not translate.
@@ -776,7 +772,7 @@ pub mod command {
                     let ctx_ptr: *mut ContextData = unsafe {
                         (*CONTEXT_DATA.get()).write(ContextData {
                             log,
-                            start_time: START_TIME.get().copied().unwrap_or(0),
+                            start_time: bun_core::start_time(),
                             // args left to Default — TransformOptions contains
                             // NonNull-backed collections, so the Zig zero-init
                             // does not translate.

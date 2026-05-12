@@ -306,6 +306,19 @@ pub struct LexerType<
     /// `&'a mut Log`).
     pub log: core::ptr::NonNull<Log>,
     pub source: &'a Source,
+    /// Cached `source.contents()` slice. Zig stores `source: logger.Source` by
+    /// value with `contents: []const u8` (flat ptr+len), so the per-byte
+    /// `it.source.contents.ptr[current]` is one direct load and the
+    /// `noalias *LexerType` lets LLVM keep it register-resident across the
+    /// whole `next()` switch. With `source: &'a Source` plus
+    /// `Source.contents: Cow<'static,[u8]>`, every inlined `step()` was a
+    /// 3-load dependent chain (`self.source` → Cow tag/ptr → Cow len) that
+    /// LLVM could not hoist (perf-annotate showed `mov 0x70(%rbx),%rax` at
+    /// ~8% of `next()` cycles). Caching the deref'd `&'a [u8]` once collapses
+    /// every `self.contents[..]` access to a single noalias-protected fat-ptr
+    /// load that stays in a register, matching Zig codegen. `source` is kept
+    /// for error-reporting paths that need `path` / `identifier_name`.
+    pub contents: &'a [u8],
     pub current: usize,
     pub start: usize,
     pub end: usize,
@@ -607,9 +620,7 @@ lexer_impl_header! {
 
         self.current = original_i;
         // SAFETY: indices come from source.contents bounds.
-        &self.source.contents[original_i..end_ix]
-        // TODO(port): lifetime — borrows source.contents stored by value in self; Phase B may
-        // need to return a borrow tied to `&self` instead of `'a`.
+        &self.contents[original_i..end_ix]
     }
 
     #[inline]
@@ -1040,7 +1051,7 @@ lexer_impl_header! {
 
                     if IS_JSON && IGNORE_TRAILING_ESCAPE_SEQUENCES {
                         if self.code_point == QUOTE
-                            && self.current >= self.source.contents.len()
+                            && self.current >= self.contents.len()
                         {
                             self.step();
                             break;
@@ -1120,7 +1131,7 @@ lexer_impl_header! {
                     } else if (QUOTE == 0x22 || QUOTE == 0x27)
                         && Environment::IS_NATIVE
                     {
-                        let remainder = &self.source.contents[self.current..];
+                        let remainder = &self.contents[self.current..];
                         if remainder.len() >= 4096 {
                             match index_of_interesting_character_in_string_literal(
                                 remainder,
@@ -1170,9 +1181,8 @@ lexer_impl_header! {
         } else {
             self.end
         };
-        let slice_end = self.source.contents.len().min(base.max(end_pos));
-        self.string_literal_raw_content = &self.source.contents[base..slice_end];
-        // TODO(port): lifetime — borrows self.source.contents
+        let slice_end = self.contents.len().min(base.max(end_pos));
+        self.string_literal_raw_content = &self.contents[base..slice_end];
         self.string_literal_raw_format = if string_literal_details.needs_decode() {
             StringLiteralRawFormat::NeedsDecode
         } else {
@@ -1198,21 +1208,21 @@ lexer_impl_header! {
 
     #[inline]
     fn next_codepoint_slice(&self) -> &[u8] {
-        if self.current >= self.source.contents.len() {
+        let contents = self.contents;
+        if self.current >= contents.len() {
             return b"";
         }
-        let cp_len = strings::wtf8_byte_sequence_length_with_invalid(
-            self.source.contents[self.current],
-        );
-        if !(cp_len as usize + self.current > self.source.contents.len()) {
-            &self.source.contents[self.current..cp_len as usize + self.current]
+        let cp_len =
+            strings::wtf8_byte_sequence_length_with_invalid(contents[self.current]);
+        if !(cp_len as usize + self.current > contents.len()) {
+            &contents[self.current..cp_len as usize + self.current]
         } else {
             b""
         }
     }
 
     fn remaining(&self) -> &[u8] {
-        &self.source.contents[self.current..]
+        &self.contents[self.current..]
     }
 
     /// PORT NOTE: split into an `#[inline(always)]` ASCII/EOF fast path plus
@@ -1224,7 +1234,7 @@ lexer_impl_header! {
     /// site, matching Zig's per-byte `ptr[current]` increment.
     #[inline(always)]
     fn next_codepoint(&mut self) -> CodePoint {
-        let contents: &[u8] = self.source.contents.as_ref();
+        let contents: &[u8] = self.contents;
         let len = contents.len();
         if self.current >= len {
             self.end = len;
@@ -1260,7 +1270,7 @@ lexer_impl_header! {
     #[cold]
     #[inline(never)]
     fn next_codepoint_multibyte(&mut self, first: u8) -> CodePoint {
-        let contents: &[u8] = self.source.contents.as_ref();
+        let contents: &[u8] = self.contents;
         let len = contents.len();
         let cp_len = strings::wtf8_byte_sequence_length_with_invalid(first) as usize;
         let avail = len - self.current;
@@ -1626,8 +1636,8 @@ lexer_impl_header! {
                         );
                     }
                     if self.start == 0
-                        && self.source.contents.len() > 1
-                        && self.source.contents[1] == b'!'
+                        && self.contents.len() > 1
+                        && self.contents[1] == b'!'
                     {
                         // "#!/usr/bin/env node"
                         self.token = T::THashbang;
@@ -1802,7 +1812,7 @@ lexer_impl_header! {
                         0x2E => {
                             self.token = T::TQuestion;
                             let current = self.current;
-                            let contents = &self.source.contents;
+                            let contents = self.contents;
 
                             // Lookahead to disambiguate with 'a?.1:b'
                             if current < contents.len() {
@@ -2079,7 +2089,7 @@ lexer_impl_header! {
                                         if Environment::ENABLE_SIMD {
                                             if self.code_point < 128 {
                                                 let remainder =
-                                                    &self.source.contents[self.current..];
+                                                    &self.contents[self.current..];
                                                 if remainder.len() >= 512 {
                                                     match skip_to_interesting_character_in_multiline_comment(remainder) {
                                                         Some(off) => {
@@ -2281,7 +2291,7 @@ lexer_impl_header! {
                 0x5F | 0x24 | 0x61..=0x7A | 0x41..=0x5A =>
                 {
                     let advance = latin1_identifier_continue_length(
-                        &self.source.contents[self.current..],
+                        &self.contents[self.current..],
                     );
 
                     self.end = self.current + advance;
@@ -2316,7 +2326,7 @@ lexer_impl_header! {
                 0x5C => {
                     if IS_JSON && IGNORE_LEADING_ESCAPE_SEQUENCES {
                         if self.start == 0
-                            || self.current == self.source.contents.len() - 1
+                            || self.current == self.contents.len() - 1
                         {
                             self.step();
                             continue;
@@ -2383,7 +2393,7 @@ lexer_impl_header! {
         let found: &[u8] = 'finder: {
             self.start = self.start.min(self.end);
 
-            if self.start == self.source.contents.len() {
+            if self.start == self.contents.len() {
                 break 'finder b"end of file";
             } else {
                 break 'finder self.raw();
@@ -2399,8 +2409,8 @@ lexer_impl_header! {
     }
 
     pub fn raw(&self) -> &'a [u8] {
-        // `self.source: &'a Source`, so the slice borrow is `&'a [u8]` directly.
-        &self.source.contents[self.start..self.end]
+        // `self.contents: &'a [u8]` — slice carries `'a` directly.
+        &self.contents[self.start..self.end]
     }
 
     pub fn is_contextual_keyword(&self, keyword: &'static [u8]) -> bool {
@@ -2430,7 +2440,7 @@ lexer_impl_header! {
             )?;
             return Ok(());
         }
-        if self.source.contents.len() != self.start {
+        if self.contents.len() != self.start {
             self.add_range_error(
                 self.range(),
                 format_args!(
@@ -2453,7 +2463,7 @@ lexer_impl_header! {
     }
 
     fn scan_comment_text(&mut self, for_pragma: bool) {
-        let text = &self.source.contents[self.start..self.end];
+        let text = &self.contents[self.start..self.end];
         let has_legal_annotation = text.len() > 2 && text[2] == b'!';
         let is_multiline_comment = text.len() > 1 && text[1] == b'*';
 
@@ -2479,7 +2489,6 @@ lexer_impl_header! {
                 text: text.into(),
                 loc: self.loc(),
             });
-            // TODO(port): lifetime — `text` borrows source.contents
         }
 
         // tsconfig.json doesn't care about annotations
@@ -2545,7 +2554,7 @@ lexer_impl_header! {
                             let pragma_trigger_pos = self.end; // Position OF #/@
                             // Use remaining() which starts *after* the consumed #/@
                             // PORT NOTE: reshaped for borrowck — `remaining()` borrows
-                            // `self.source.contents`; `scan_pragma` needs `&mut self`.
+                            // `self.contents`; `scan_pragma` needs `&mut self`.
                             // Detach via `StoreStr` (arena-owned, lives for parse).
                             let chunk = js_ast::StoreStr::new(self.remaining());
                             let offset =
@@ -2577,8 +2586,8 @@ lexer_impl_header! {
             } else {
                 // Highway found nothing until EOF
                 // Consume the rest of the line.
-                self.end = self.source.contents.len();
-                self.current = self.source.contents.len();
+                self.end = self.contents.len();
+                self.current = self.contents.len();
                 self.code_point = -1; // Set EOF state
                 return;
             }
@@ -2710,9 +2719,14 @@ lexer_impl_header! {
         source: &'a Source,
         arena: &'a Arena,
     ) -> Self {
+        // Deref `Cow<'static,[u8]>` once; the resulting `&[u8]` borrows
+        // `*source` (lifetime `'a`) regardless of Cow arm, so it is sound to
+        // cache for the lexer's lifetime.
+        let contents: &'a [u8] = source.contents();
         Self {
             log: core::ptr::NonNull::from(log),
             source: source,
+            contents,
             current: 0,
             start: 0,
             end: 0,
@@ -3146,7 +3160,7 @@ lexer_impl_header! {
         self.token = T::TStringLiteral;
 
         let raw_content_slice =
-            &self.source.contents[self.start + 1..self.end - 1];
+            &self.contents[self.start + 1..self.end - 1];
         if needs_decode {
             debug_assert!(self.temp_buffer_u16.is_empty());
             let mut tmp = core::mem::take(&mut self.temp_buffer_u16);
@@ -3167,7 +3181,6 @@ lexer_impl_header! {
             self.temp_buffer_u16 = tmp;
         } else {
             self.string_literal_raw_content = raw_content_slice;
-            // TODO(port): lifetime — borrows source.contents
             self.string_literal_raw_format = StringLiteralRawFormat::Ascii;
         }
         Ok(())
@@ -3231,7 +3244,7 @@ lexer_impl_header! {
 
                     self.token = T::TStringLiteral;
                     let raw_content_slice =
-                        &self.source.contents[original_start..self.end];
+                        &self.contents[original_start..self.end];
 
                     if needs_fixing {
                         debug_assert!(self.temp_buffer_u16.is_empty());
@@ -3261,7 +3274,6 @@ lexer_impl_header! {
                         }
                     } else {
                         self.string_literal_raw_content = raw_content_slice;
-                        // TODO(port): lifetime — borrows source.contents
                         self.string_literal_raw_format = StringLiteralRawFormat::Ascii;
                     }
                 }
@@ -3500,10 +3512,10 @@ lexer_impl_header! {
 
         match self.token {
             T::TNoSubstitutionTemplateLiteral | T::TTemplateTail => {
-                text = &self.source.contents[self.start + 1..self.end - 1];
+                text = &self.contents[self.start + 1..self.end - 1];
             }
             T::TTemplateMiddle | T::TTemplateHead => {
-                text = &self.source.contents[self.start + 1..self.end - 2];
+                text = &self.contents[self.start + 1..self.end - 2];
             }
             _ => {}
         }
@@ -3560,8 +3572,8 @@ lexer_impl_header! {
         {
             // "..."
             if (self.code_point == 0x2E
-                && self.current < self.source.contents.len())
-                && self.source.contents[self.current] == b'.'
+                && self.current < self.contents.len())
+                && self.contents[self.current] == b'.'
             {
                 self.step();
                 self.step();

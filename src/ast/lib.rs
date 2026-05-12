@@ -2036,11 +2036,7 @@ impl Log {
         // TODO(port): Zig does comptime fmt-string concat `"{s}: " ++ fmt` and
         // tuple concat `.{x} ++ args`. With `fmt::Arguments` we compose at the
         // value level instead.
-        // PORT NOTE: Zig `coreutils_error_map.get(sys_errno)` returns an Option;
-        // the Rust EnumMap is total (default "unknown error"), so emulate the
-        // None case by treating the default as missing.
-        let label = bun_sys::coreutils_error_map::COREUTILS_ERROR_MAP[sys_errno];
-        let prefix = if label == "unknown error" { tag_name } else { label };
+        let prefix = bun_sys::coreutils_error_map::get(sys_errno).unwrap_or(tag_name);
         self.add_error_fmt(
             None,
             Loc::EMPTY,

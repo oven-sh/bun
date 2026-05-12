@@ -273,6 +273,32 @@ unsafe extern "C" {
     pub fn mi_check_owned(p: *const c_void) -> bool;
 }
 
+bun_opaque::opaque_ffi! {
+    /// Opaque mimalloc v3 thread-local heap handle (`mi_theap_t`).
+    ///
+    /// A `THeap` is the per-thread allocation state belonging to a [`Heap`].
+    /// `mi_heap_*` entry points resolve `heap → theap` on **every** call via
+    /// `_mi_heap_theap` (TLS read of `__mi_theap_cached` + heap-tag compare,
+    /// falling back to `_mi_heap_theap_get_or_init`); the `mi_theap_*` entry
+    /// points take the resolved `THeap` directly and skip that lookup.
+    pub struct THeap;
+}
+
+unsafe extern "C" {
+    /// Resolve (creating if necessary) this thread's `mi_theap_t` for `heap`,
+    /// and prime mimalloc's internal `__mi_theap_cached` TLS slot. Public
+    /// wrapper around `_mi_heap_theap` (`heap.c`).
+    pub fn mi_heap_theap(heap: *mut Heap) -> *mut THeap;
+    /// `mi_heap_malloc` minus the per-call `heap → theap` lookup.
+    pub fn mi_theap_malloc(theap: *mut THeap, size: usize) -> *mut c_void;
+    /// `mi_heap_malloc_aligned` minus the per-call `heap → theap` lookup.
+    pub fn mi_theap_malloc_aligned(
+        theap: *mut THeap,
+        size: usize,
+        alignment: usize,
+    ) -> *mut c_void;
+}
+
 #[repr(C)]
 pub struct struct_mi_heap_area_s {
     pub blocks: *mut core::ffi::c_void,

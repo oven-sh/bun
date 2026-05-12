@@ -4,29 +4,394 @@ use core::marker::PhantomData;
 
 use crate::args::ArgIter;
 use crate::streaming::{self, StreamingClap};
-use crate::{Param, ParseOptions, Values};
+use crate::{Names, Param, ParseOptions, Values};
 
-// TODO(port): The Zig `ComptimeClap` is a type-generator
-//   `fn ComptimeClap(comptime Id: type, comptime params: []const Param(Id)) type`.
-// Its body iterates `params` at comptime to compute three counts (flags / single
-// options / multi options) and a re-indexed `converted_params: []const Param(usize)`,
-// then emits a struct with array fields sized by those counts.
+// ─────────────────────────────────────────────────────────────────────────────
+// Compile-time conversion (Zig parity)
 //
-// Stable Rust const generics cannot carry a `&[Param<Id>]`, and array field lengths
-// cannot be associated-const expressions (`generic_const_exprs` is nightly). B-2
-// therefore reshapes the result as a struct with `Vec`-backed storage sized at
-// runtime from `params`. A `comptime_clap!` proc-macro (Phase B) can later restore
-// the fixed-size arrays and compile-time name lookup.
+// Zig's `ComptimeClap(Id, params)` is a comptime type-generator: it iterates
+// `params` *at comptime* to (a) re-index every param's `id` to its slot within
+// its category (flag / single / multi) and (b) emit a struct with fixed-size
+// array fields. `findParam` is `inline for`, so every `args.flag("--foo")`
+// compiles to a constant index — zero runtime cost.
+//
+// The Phase-A port did all of this at runtime: `convert_params` heap-allocated
+// a `Vec<Param<usize>>` on every CLI start, and `find_param` linear-scanned it
+// for every `flag()`/`option()` lookup (~190 lookups × ~100 params on the
+// `bun run` path). perf put this at ~0.25 % of `bun --version` cycles vs ~0 %
+// in Zig.
+//
+// This module restores the comptime semantics on stable Rust:
+//
+//   * `count_flags` / `count_single` / `count_multi` / `convert_params_array`
+//     / `find_param_index` are all `const fn`, so a param table declared with
+//     `concat_params!` can be converted to a `static [Param<usize>; N]` and a
+//     name lookup can be folded to a constant via `const { find_param_index(..) }`.
+//
+//   * `comptime_table!` (in `lib.rs`) packages the const-fn output as a
+//     `&'static ConvertedTable` — the Rust analogue of the Zig comptime
+//     `converted_params` const baked into the generated type.
+//
+//   * For the existing `clap::parse(&'static [Param<Id>], …)` API (callers
+//     have not yet been migrated to the type-level form), `ConvertedTable`
+//     is built once per *unique* static slice and interned in a tiny
+//     ptr-keyed registry, so repeat parses are alloc-free and `find_param`
+//     resolves long names by hashed binary search / shorts by direct index
+//     instead of the O(n) scan.
+// ─────────────────────────────────────────────────────────────────────────────
 
-/// Per-category counts derived from a param table (Zig: comptime loop lines 6–32).
-struct Counts {
-    flags: usize,
-    single: usize,
-    multi: usize,
+/// `const fn` byte-slice equality (slice `==` is not `const` on stable).
+#[inline]
+const fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
 }
 
-/// Runtime equivalent of the Zig comptime conversion loop: re-indexes each param's
-/// `id` to its slot within its category (flag/single/multi) and returns the counts.
+#[inline]
+const fn is_named<Id>(p: &Param<Id>) -> bool {
+    p.names.long.is_some() || p.names.short.is_some()
+}
+
+/// Count flag params (named, `takes_value == None`). Zig: comptime loop arm.
+pub const fn count_flags<Id>(params: &[Param<Id>]) -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < params.len() {
+        if is_named(&params[i]) && matches!(params[i].takes_value, Values::None) {
+            n += 1;
+        }
+        i += 1;
+    }
+    n
+}
+
+/// Count single-value params (named, `One` / `OneOptional`).
+pub const fn count_single<Id>(params: &[Param<Id>]) -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < params.len() {
+        if is_named(&params[i])
+            && matches!(params[i].takes_value, Values::One | Values::OneOptional)
+        {
+            n += 1;
+        }
+        i += 1;
+    }
+    n
+}
+
+/// Count multi-value params (named, `Many`).
+pub const fn count_multi<Id>(params: &[Param<Id>]) -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < params.len() {
+        if is_named(&params[i]) && matches!(params[i].takes_value, Values::Many) {
+            n += 1;
+        }
+        i += 1;
+    }
+    n
+}
+
+/// Compile-time equivalent of the Zig comptime conversion loop (comptime.zig
+/// lines 6–32): re-indexes each param's `id` to its slot within its category.
+/// `N` must equal `params.len()` (asserted at const-eval).
+pub const fn convert_params_array<Id, const N: usize>(params: &[Param<Id>]) -> [Param<usize>; N] {
+    const DUMMY: Param<usize> = Param {
+        id: 0,
+        names: Names { short: None, long: None, long_aliases: &[] },
+        takes_value: Values::None,
+    };
+    let mut out = [DUMMY; N];
+    let mut flags = 0usize;
+    let mut single = 0usize;
+    let mut multi = 0usize;
+    let mut i = 0;
+    while i < params.len() {
+        let p = &params[i];
+        let mut index = 0usize;
+        if is_named(p) {
+            match p.takes_value {
+                Values::None => {
+                    index = flags;
+                    flags += 1;
+                }
+                Values::One | Values::OneOptional => {
+                    index = single;
+                    single += 1;
+                }
+                Values::Many => {
+                    index = multi;
+                    multi += 1;
+                }
+            }
+        }
+        out[i] = Param { id: index, names: p.names, takes_value: p.takes_value };
+        i += 1;
+    }
+    assert!(i == N, "convert_params_array: N != params.len()");
+    out
+}
+
+/// Compile-time name → converted-param index. This is the Rust analogue of
+/// Zig's `inline for` `findParam` and is intended to be called inside a
+/// `const { }` block so the loop folds to a literal:
+///
+/// ```ignore
+/// const IDX: usize = find_param_index(TABLE.converted, b"--help");
+/// ```
+///
+/// Panics (at const-eval, i.e. a build error) if `name` is not in `converted`
+/// — matching Zig's `@compileError("no param '…'")`.
+pub const fn find_param_index(converted: &[Param<usize>], name: &[u8]) -> usize {
+    if name.len() > 2 && name[0] == b'-' && name[1] == b'-' {
+        let (_, key) = name.split_at(2);
+        let mut i = 0;
+        while i < converted.len() {
+            let n = &converted[i].names;
+            if let Some(l) = n.long {
+                if bytes_eq(l, key) {
+                    return i;
+                }
+            }
+            let mut a = 0;
+            while a < n.long_aliases.len() {
+                if bytes_eq(n.long_aliases[a], key) {
+                    return i;
+                }
+                a += 1;
+            }
+            i += 1;
+        }
+    } else if name.len() == 2 && name[0] == b'-' {
+        let s = name[1];
+        let mut i = 0;
+        while i < converted.len() {
+            if let Some(c) = converted[i].names.short {
+                if c == s {
+                    return i;
+                }
+            }
+            i += 1;
+        }
+    }
+    panic!("clap: no such parameter");
+}
+
+/// `[i16; 128]` ASCII → index into `converted`. `-1` = no such short.
+pub const fn build_short_index(converted: &[Param<usize>]) -> [i16; 128] {
+    let mut idx = [-1i16; 128];
+    let mut i = 0;
+    while i < converted.len() {
+        if let Some(s) = converted[i].names.short {
+            idx[(s & 0x7f) as usize] = i as i16;
+        }
+        i += 1;
+    }
+    idx
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ConvertedTable — interned, per-static-slice
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// FNV-1a 64. `const fn` so `comptime_table!` can pre-hash; also used at
+/// runtime for the long-name index.
+#[inline]
+pub const fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut i = 0;
+    while i < bytes.len() {
+        h ^= bytes[i] as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        i += 1;
+    }
+    h
+}
+
+/// One long-name (or alias) lookup entry: hash → index into `converted`.
+#[derive(Copy, Clone)]
+pub struct LongEntry {
+    hash: u64,
+    idx: u16,
+}
+
+/// Pre-converted param table. Either fully `const`-built via
+/// [`comptime_table!`](crate::comptime_table) (rodata, zero runtime cost) or
+/// lazily built once per unique input slice via [`ConvertedTable::for_params`]
+/// and interned for the process lifetime.
+pub struct ConvertedTable {
+    pub converted: &'static [Param<usize>],
+    pub n_flags: usize,
+    pub n_single: usize,
+    pub n_multi: usize,
+    /// Sorted by `hash`; binary-searched in `find`. Empty for `from_const`
+    /// tables (those use [`find_param_index`] at the call site instead).
+    long_index: &'static [LongEntry],
+    short_index: [i16; 128],
+}
+
+impl ConvertedTable {
+    /// Build a table entirely at compile time. `long_index` is left empty —
+    /// the intended lookup path for const tables is [`find_param_index`]
+    /// folded inside `const { }`, not the runtime `find`. (Runtime `find`
+    /// still works; it falls back to the const-fn linear scan.)
+    pub const fn from_const(
+        converted: &'static [Param<usize>],
+        n_flags: usize,
+        n_single: usize,
+        n_multi: usize,
+    ) -> Self {
+        Self {
+            converted,
+            n_flags,
+            n_single,
+            n_multi,
+            long_index: &[],
+            short_index: build_short_index(converted),
+        }
+    }
+
+    /// Look up (or build + intern) the converted table for a `'static` param
+    /// slice. The registry is keyed by `(ptr, len)`, so each `static …_PARAMS`
+    /// table in the binary converts at most once per process; the leaked
+    /// allocations are bounded by the number of distinct subcommand tables
+    /// (< 16) and live for the process lifetime — same as Zig's comptime
+    /// `converted_params`, which also lives in rodata forever.
+    pub fn for_params<Id>(params: &'static [Param<Id>]) -> &'static ConvertedTable {
+        let key = (params.as_ptr() as usize, params.len());
+        {
+            let reg = registry().lock();
+            let mut i = 0;
+            while i < reg.len() {
+                if reg[i].0 == key {
+                    return reg[i].1;
+                }
+                i += 1;
+            }
+        }
+        let built = Self::build(params);
+        let mut reg = registry().lock();
+        // Re-check under lock (startup is single-threaded in practice, but be safe).
+        let mut i = 0;
+        while i < reg.len() {
+            if reg[i].0 == key {
+                return reg[i].1;
+            }
+            i += 1;
+        }
+        reg.push((key, built));
+        built
+    }
+
+    #[cold]
+    fn build<Id>(params: &'static [Param<Id>]) -> &'static ConvertedTable {
+        // Conversion loop — identical to `convert_params_array` but heap-backed
+        // because `N` is not a const here.
+        let mut flags = 0usize;
+        let mut single = 0usize;
+        let mut multi = 0usize;
+        let mut converted: Vec<Param<usize>> = Vec::with_capacity(params.len());
+        for p in params {
+            let mut index = 0usize;
+            if p.names.long.is_some() || p.names.short.is_some() {
+                let ctr = match p.takes_value {
+                    Values::None => &mut flags,
+                    Values::One | Values::OneOptional => &mut single,
+                    Values::Many => &mut multi,
+                };
+                index = *ctr;
+                *ctr += 1;
+            }
+            converted.push(Param { id: index, names: p.names, takes_value: p.takes_value });
+        }
+        let converted: &'static [Param<usize>] = Box::leak(converted.into_boxed_slice());
+
+        // Long-name index: one entry per long + alias, sorted by hash.
+        let mut long: Vec<LongEntry> = Vec::with_capacity(converted.len());
+        let mut short_index = [-1i16; 128];
+        for (i, p) in converted.iter().enumerate() {
+            if let Some(s) = p.names.short {
+                short_index[(s & 0x7f) as usize] = i as i16;
+            }
+            if let Some(l) = p.names.long {
+                long.push(LongEntry { hash: fnv1a64(l), idx: i as u16 });
+            }
+            for alias in p.names.long_aliases {
+                long.push(LongEntry { hash: fnv1a64(alias), idx: i as u16 });
+            }
+        }
+        long.sort_unstable_by_key(|e| e.hash);
+        let long_index: &'static [LongEntry] = Box::leak(long.into_boxed_slice());
+
+        Box::leak(Box::new(ConvertedTable {
+            converted,
+            n_flags: flags,
+            n_single: single,
+            n_multi: multi,
+            long_index,
+            short_index,
+        }))
+    }
+
+    /// Runtime name resolution. O(1) for shorts, O(log n) for longs (with a
+    /// final byte-compare to reject hash collisions). Falls back to the
+    /// const-fn linear scan when `long_index` is empty (const-built tables).
+    #[inline]
+    fn find(&self, name: &[u8]) -> &'static Param<usize> {
+        if name.len() == 2 && name[0] == b'-' {
+            let i = self.short_index[(name[1] & 0x7f) as usize];
+            if i >= 0 {
+                return &self.converted[i as usize];
+            }
+        } else if name.len() > 2 && name[0] == b'-' && name[1] == b'-' {
+            let key = &name[2..];
+            if !self.long_index.is_empty() {
+                let h = fnv1a64(key);
+                // Binary search to the first entry with this hash, then walk
+                // the (tiny) collision run verifying bytes.
+                let idx = self.long_index.partition_point(|e| e.hash < h);
+                let mut j = idx;
+                while j < self.long_index.len() && self.long_index[j].hash == h {
+                    let p = &self.converted[self.long_index[j].idx as usize];
+                    if p.names.long.map_or(false, |l| l == key)
+                        || p.names.long_aliases.iter().any(|a| *a == key)
+                    {
+                        return p;
+                    }
+                    j += 1;
+                }
+            } else {
+                // Const-built table: no runtime index. This path is only hit
+                // by code that mixes `comptime_table!` with runtime `flag()`;
+                // the intended fast path is `const { find_param_index(..) }`.
+                return &self.converted[find_param_index(self.converted, name)];
+            }
+        }
+        unreachable!("{} is not a parameter.", bstr::BStr::new(name))
+    }
+}
+
+type RegKey = (usize, usize);
+type Registry = parking_lot::Mutex<Vec<(RegKey, &'static ConvertedTable)>>;
+
+fn registry() -> &'static Registry {
+    static REG: Registry = parking_lot::Mutex::new(Vec::new());
+    &REG
+}
+
+/// Legacy runtime conversion. Kept for back-compat with out-of-tree callers;
+/// in-tree code goes through [`ConvertedTable::for_params`] /
+/// [`convert_params_array`].
 pub fn convert_params<Id>(params: &[Param<Id>]) -> (Vec<Param<usize>>, usize, usize, usize) {
     let mut flags = 0usize;
     let mut single = 0usize;
@@ -48,28 +413,50 @@ pub fn convert_params<Id>(params: &[Param<Id>]) -> (Vec<Param<usize>>, usize, us
     (converted, flags, single, multi)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ComptimeClap
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// Deprecated: Use `parse_ex` instead
 pub struct ComptimeClap<Id> {
     // Field order matches comptime.zig.
     // Inner `&'static [u8]` slices borrow argv (process-lifetime); never freed in Zig `deinit`.
-    pub single_options: Vec<Option<&'static [u8]>>,
-    pub multi_options: Vec<Box<[&'static [u8]]>>,
-    pub flags: Vec<bool>,
+    pub single_options: Box<[Option<&'static [u8]>]>,
+    pub multi_options: Box<[Box<[&'static [u8]]>]>,
+    pub flags: Box<[bool]>,
     pub pos: Box<[&'static [u8]]>,
     pub passthrough_positionals: Box<[&'static [u8]]>,
     // `mem.Allocator param` field deleted — global mimalloc (see PORTING.md §Allocators).
 
-    // Zig captures `converted_params` as a comptime const on the returned type; Rust
-    // carries it as data so `flag`/`option`/`options`/`has_flag` can resolve names.
-    converted_params: Vec<Param<usize>>,
+    // Zig captures `converted_params` as a comptime const on the returned type. Rust
+    // carries it as a `&'static` table — either rodata (`comptime_table!`) or
+    // interned-once via the ptr-keyed registry — so `flag`/`option` resolve via
+    // hashed lookup instead of an O(n) scan, and no per-parse `Vec` is allocated.
+    table: &'static ConvertedTable,
     _id: PhantomData<Id>,
 }
 
 impl<Id> ComptimeClap<Id> {
     /// `iter` must yield `&'static [u8]` (process-lifetime args, e.g. `OsIterator`)
     /// because parsed values are stored by reference.
+    ///
+    /// `params` must be `'static` (every in-tree table is a `static`/`const`
+    /// item); the converted form is interned once per unique slice.
     pub fn parse<I>(
-        params: &[Param<Id>],
+        params: &'static [Param<Id>],
+        iter: &mut I,
+        opt: ParseOptions<'_>,
+    ) -> Result<Self, bun_core::Error>
+    where
+        I: ArgIter<'static>,
+    {
+        Self::parse_with_table(ConvertedTable::for_params(params), iter, opt)
+    }
+
+    /// Parse against a pre-converted table (see [`comptime_table!`](crate::comptime_table)).
+    /// This is the zero-conversion-cost entry point — `table` is rodata.
+    pub fn parse_with_table<I>(
+        table: &'static ConvertedTable,
         iter: &mut I,
         opt: ParseOptions<'_>,
     ) -> Result<Self, bun_core::Error>
@@ -77,21 +464,20 @@ impl<Id> ComptimeClap<Id> {
         I: ArgIter<'static>,
     // TODO(port): narrow error set
     {
-        let (converted_params, n_flags, n_single, n_multi) = convert_params(params);
-
         // `opt.allocator` dropped — global mimalloc.
-        let mut multis: Vec<Vec<&'static [u8]>> = (0..n_multi).map(|_| Vec::new()).collect();
+        let mut multis: Vec<Vec<&'static [u8]>> = (0..table.n_multi).map(|_| Vec::new()).collect();
 
         let mut pos: Vec<&'static [u8]> = Vec::new();
         let mut passthrough_positionals: Vec<&'static [u8]> = Vec::new();
 
-        let mut single_options: Vec<Option<&'static [u8]>> = vec![None; n_single];
-        let mut flags: Vec<bool> = vec![false; n_flags];
+        let mut single_options: Box<[Option<&'static [u8]>]> =
+            vec![None; table.n_single].into_boxed_slice();
+        let mut flags: Box<[bool]> = vec![false; table.n_flags].into_boxed_slice();
 
         // Zig: `StreamingClap(usize, @typeInfo(@TypeOf(iter)).pointer.child)` — the second
         // type arg is the pointee of `iter`; in Rust that is just `I`.
         let mut stream = StreamingClap::<usize, I> {
-            params: &converted_params,
+            params: table.converted,
             iter,
             diagnostic: opt.diagnostic,
             state: streaming::State::Normal,
@@ -117,7 +503,6 @@ impl<Id> ComptimeClap<Id> {
                     passthrough_positionals.reserve_exact(remaining_.len());
                     for arg_ in remaining_ {
                         passthrough_positionals.push(*arg_);
-                        // PERF(port): was appendAssumeCapacity — profile in Phase B
                     }
                     break;
                 }
@@ -146,7 +531,7 @@ impl<Id> ComptimeClap<Id> {
             flags,
             pos: pos.into_boxed_slice(),
             passthrough_positionals: passthrough_positionals.into_boxed_slice(),
-            converted_params,
+            table,
             _id: PhantomData,
         })
     }
@@ -156,21 +541,20 @@ impl<Id> ComptimeClap<Id> {
     // body deleted per PORTING.md §Idiom map (`pub fn deinit` → `impl Drop`, empty body
     // when it only frees owned fields).
 
+    #[inline]
     pub fn flag(&self, name: &[u8]) -> bool {
-        let param = self.find_param(name);
-        // TODO(port): was `@compileError` — runtime assert in Phase A.
+        let param = self.table.find(name);
         debug_assert!(
             param.takes_value == Values::None || param.takes_value == Values::OneOptional,
             "{} is an option and not a flag.",
             bstr::BStr::new(name),
         );
-
         self.flags[param.id]
     }
 
+    #[inline]
     pub fn option(&self, name: &[u8]) -> Option<&'static [u8]> {
-        let param = self.find_param(name);
-        // TODO(port): was `@compileError` — runtime assert in Phase A.
+        let param = self.table.find(name);
         debug_assert!(
             param.takes_value != Values::None,
             "{} is a flag and not an option.",
@@ -184,9 +568,9 @@ impl<Id> ComptimeClap<Id> {
         self.single_options[param.id]
     }
 
+    #[inline]
     pub fn options(&self, name: &[u8]) -> &[&'static [u8]] {
-        let param = self.find_param(name);
-        // TODO(port): was `@compileError` — runtime assert in Phase A.
+        let param = self.table.find(name);
         debug_assert!(
             param.takes_value != Values::None,
             "{} is a flag and not an option.",
@@ -197,8 +581,22 @@ impl<Id> ComptimeClap<Id> {
             "{} takes one option, not multiple.",
             bstr::BStr::new(name),
         );
-
         &self.multi_options[param.id]
+    }
+
+    /// Direct slot accessors — pair with [`find_param_index`] inside
+    /// `const { }` for true Zig-parity zero-cost lookup at the call site.
+    #[inline]
+    pub fn flag_at(&self, converted_idx: usize) -> bool {
+        self.flags[self.table.converted[converted_idx].id]
+    }
+    #[inline]
+    pub fn option_at(&self, converted_idx: usize) -> Option<&'static [u8]> {
+        self.single_options[self.table.converted[converted_idx].id]
+    }
+    #[inline]
+    pub fn options_at(&self, converted_idx: usize) -> &[&'static [u8]] {
+        &self.multi_options[self.table.converted[converted_idx].id]
     }
 
     pub fn positionals(&self) -> &[&'static [u8]] {
@@ -209,54 +607,42 @@ impl<Id> ComptimeClap<Id> {
         &self.passthrough_positionals
     }
 
-    // TODO(port): Zig `hasFlag` is a comptime-only fn (no `self`) over the captured
-    // `converted_params` const. Rust takes the slice explicitly so it can be called
-    // without a parsed instance; a Phase-B proc-macro can restore the const-eval form.
-    pub fn has_flag(params: &[Param<Id>], name: &[u8]) -> bool {
-        params.iter().any(|p| p.names.matches(name))
+    /// Zig `hasFlag` is a comptime-only predicate over the captured table.
+    /// `const fn` here so `const { has_flag(PARAMS, b"--foo") }` folds.
+    pub const fn has_flag(params: &[Param<Id>], name: &[u8]) -> bool {
+        let mut i = 0;
+        while i < params.len() {
+            let n = &params[i].names;
+            if name.len() == 2 && name[0] == b'-' {
+                if let Some(s) = n.short {
+                    if s == name[1] {
+                        return true;
+                    }
+                }
+            } else if name.len() > 2 && name[0] == b'-' && name[1] == b'-' {
+                let (_, key) = name.split_at(2);
+                if let Some(l) = n.long {
+                    if bytes_eq(l, key) {
+                        return true;
+                    }
+                }
+                let mut a = 0;
+                while a < n.long_aliases.len() {
+                    if bytes_eq(n.long_aliases[a], key) {
+                        return true;
+                    }
+                    a += 1;
+                }
+            }
+            i += 1;
+        }
+        false
     }
 
-    // TODO(port): Zig `findParam` is comptime-only and emits `@compileError` on miss.
-    // Phase A does a runtime scan and panics on miss; the Phase-B proc-macro should
-    // resolve names at compile time.
-    //
-    // PERF(port): Zig `findParam` resolves to a constant index at compile time
-    // (zero runtime cost). The Phase-A port made it a linear scan through
-    // `Names::matches`, which re-checks the `-`/`--` prefix and the
-    // short/long/alias arms for *every* param. `Arguments::parse` calls
-    // `flag()`/`option()` ~190 times against ~100 params → ~19k slice
-    // compares per CLI startup, dominating `bun -e ''` self time (perf: ~5%
-    // of cycles). Until a proc-macro restores the comptime resolution, this
-    // hand-rolled scan is the cheapest stand-in: prefix is classified once,
-    // then the inner loop rejects on length before touching bytes.
-    fn find_param(&self, name: &[u8]) -> &Param<usize> {
-        if name.len() > 2 && name[0] == b'-' && name[1] == b'-' {
-            let key = &name[2..];
-            let key_len = key.len();
-            for p in &self.converted_params {
-                // Primary long name (length-gate first; almost every miss
-                // falls out on the single `usize` compare).
-                if let Some(l) = p.names.long {
-                    if l.len() == key_len && l == key {
-                        return p;
-                    }
-                }
-                // Aliases are rare (≤1 on a handful of params).
-                for alias in p.names.long_aliases {
-                    if alias.len() == key_len && *alias == key {
-                        return p;
-                    }
-                }
-            }
-        } else if name.len() == 2 && name[0] == b'-' {
-            let s = name[1];
-            for p in &self.converted_params {
-                if p.names.short == Some(s) {
-                    return p;
-                }
-            }
-        }
-        unreachable!("{} is not a parameter.", bstr::BStr::new(name))
+    /// Exposed for `Args::find_param` callers; resolves via the hashed index.
+    #[inline]
+    pub fn find_param(&self, name: &[u8]) -> &'static Param<usize> {
+        self.table.find(name)
     }
 }
 

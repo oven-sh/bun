@@ -1,6 +1,4 @@
 #![warn(unreachable_pub)]
-use std::sync::LazyLock;
-
 use bun_simdutf_sys::simdutf::{self, SIMDUTFResult};
 
 pub use zig_base64::STANDARD_ALPHABET_CHARS;
@@ -9,20 +7,21 @@ pub use zig_base64::STANDARD_ALPHABET_CHARS;
 const VT: u8 = 0x0B; // std.ascii.control_code.vt
 const FF: u8 = 0x0C; // std.ascii.control_code.ff
 
-// TODO(port): Zig evaluates this at comptime; LazyLock is the Phase-A stand-in.
-// PERF(port): was comptime init — profile in Phase B (consider const fn once for-in-const stabilizes).
-static MIXED_DECODER: LazyLock<zig_base64::Base64DecoderWithIgnore> = LazyLock::new(|| {
+// PORT NOTE: Zig evaluates this at comptime; const-initialized static lands in `.rodata`
+// (no `Once` atomic on the `Integrity::parse` hot path).
+static MIXED_DECODER: zig_base64::Base64DecoderWithIgnore = {
     let mut decoder =
         zig_base64::standard_base64_decoder_with_ignore(&[0xFF, b' ', b'\t', b'\r', b'\n', VT, FF]);
 
     let mut i: usize = 62;
-    for &c in &zig_base64::URL_SAFE_ALPHABET_CHARS[62..] {
-        decoder.decoder.char_to_index[c as usize] = u8::try_from(i).expect("int cast");
+    while i < 64 {
+        let c = zig_base64::URL_SAFE_ALPHABET_CHARS[i];
+        decoder.decoder.char_to_index[c as usize] = i as u8;
         i += 1;
     }
 
     decoder
-});
+};
 
 pub fn decode(destination: &mut [u8], source: &[u8]) -> SIMDUTFResult {
     let result = simdutf::base64::decode(source, destination, false);
@@ -355,8 +354,6 @@ pub mod vlq {
 }
 
 pub mod zig_base64 {
-    use std::sync::LazyLock;
-
     #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
     pub enum Error {
         #[error("InvalidCharacter")]
@@ -382,53 +379,53 @@ pub mod zig_base64 {
     pub const STANDARD_ALPHABET_CHARS: [u8; 64] =
         *b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-    pub fn standard_base64_decoder_with_ignore(ignore: &[u8]) -> Base64DecoderWithIgnore {
+    pub const fn standard_base64_decoder_with_ignore(ignore: &[u8]) -> Base64DecoderWithIgnore {
         Base64DecoderWithIgnore::init(STANDARD_ALPHABET_CHARS, Some(b'='), ignore)
     }
 
     /// Standard Base64 codecs, with padding
-    // PERF(port): was comptime-evaluated in Zig — LazyLock in Phase A.
-    pub static STANDARD: LazyLock<Codecs> = LazyLock::new(|| Codecs {
+    // PORT NOTE: Zig comptime → const-initialized `static` (lives in `.rodata`, no `Once`).
+    pub static STANDARD: Codecs = Codecs {
         alphabet_chars: STANDARD_ALPHABET_CHARS,
         pad_char: Some(b'='),
         decoder_with_ignore: standard_base64_decoder_with_ignore,
         encoder: Base64Encoder::init(STANDARD_ALPHABET_CHARS, Some(b'=')),
         decoder: Base64Decoder::init(STANDARD_ALPHABET_CHARS, Some(b'=')),
-    });
+    };
 
     /// Standard Base64 codecs, without padding
-    pub static STANDARD_NO_PAD: LazyLock<Codecs> = LazyLock::new(|| Codecs {
+    pub static STANDARD_NO_PAD: Codecs = Codecs {
         alphabet_chars: STANDARD_ALPHABET_CHARS,
         pad_char: None,
         decoder_with_ignore: standard_base64_decoder_with_ignore,
         encoder: Base64Encoder::init(STANDARD_ALPHABET_CHARS, None),
         decoder: Base64Decoder::init(STANDARD_ALPHABET_CHARS, None),
-    });
+    };
 
     pub const URL_SAFE_ALPHABET_CHARS: [u8; 64] =
         *b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-    pub fn url_safe_base64_decoder_with_ignore(ignore: &[u8]) -> Base64DecoderWithIgnore {
+    pub const fn url_safe_base64_decoder_with_ignore(ignore: &[u8]) -> Base64DecoderWithIgnore {
         Base64DecoderWithIgnore::init(URL_SAFE_ALPHABET_CHARS, Some(b'='), ignore)
     }
 
     /// URL-safe Base64 codecs, with padding
-    pub static URL_SAFE: LazyLock<Codecs> = LazyLock::new(|| Codecs {
+    pub static URL_SAFE: Codecs = Codecs {
         alphabet_chars: URL_SAFE_ALPHABET_CHARS,
         pad_char: Some(b'='),
         decoder_with_ignore: url_safe_base64_decoder_with_ignore,
         encoder: Base64Encoder::init(URL_SAFE_ALPHABET_CHARS, Some(b'=')),
         decoder: Base64Decoder::init(URL_SAFE_ALPHABET_CHARS, Some(b'=')),
-    });
+    };
 
     /// URL-safe Base64 codecs, without padding
-    pub static URL_SAFE_NO_PAD: LazyLock<Codecs> = LazyLock::new(|| Codecs {
+    pub static URL_SAFE_NO_PAD: Codecs = Codecs {
         alphabet_chars: URL_SAFE_ALPHABET_CHARS,
         pad_char: None,
         decoder_with_ignore: url_safe_base64_decoder_with_ignore,
         encoder: Base64Encoder::init(URL_SAFE_ALPHABET_CHARS, None),
         decoder: Base64Decoder::init(URL_SAFE_ALPHABET_CHARS, None),
-    });
+    };
 
     // PORT NOTE: dropped `standard_pad_char`/`standard_encoder`/`standard_decoder`
     // @compileError deprecation stubs — no Rust equivalent for use-site compile errors.
@@ -441,13 +438,15 @@ pub mod zig_base64 {
 
     impl Base64Encoder {
         /// A bunch of assertions, then simply pass the data right through.
-        pub fn init(alphabet_chars: [u8; 64], pad_char: Option<u8>) -> Base64Encoder {
-            debug_assert!(alphabet_chars.len() == 64);
+        pub const fn init(alphabet_chars: [u8; 64], pad_char: Option<u8>) -> Base64Encoder {
             let mut char_in_alphabet = [false; 256];
-            for &c in &alphabet_chars {
+            let mut i = 0;
+            while i < 64 {
+                let c = alphabet_chars[i];
                 debug_assert!(!char_in_alphabet[c as usize]);
-                debug_assert!(pad_char.is_none() || c != pad_char.unwrap());
+                debug_assert!(match pad_char { None => true, Some(p) => c != p });
                 char_in_alphabet[c as usize] = true;
+                i += 1;
             }
             Base64Encoder { alphabet_chars, pad_char }
         }
@@ -510,19 +509,22 @@ pub mod zig_base64 {
     impl Base64Decoder {
         pub const INVALID_CHAR: u8 = 0xFF;
 
-        pub fn init(alphabet_chars: [u8; 64], pad_char: Option<u8>) -> Base64Decoder {
+        pub const fn init(alphabet_chars: [u8; 64], pad_char: Option<u8>) -> Base64Decoder {
             let mut result = Base64Decoder {
                 char_to_index: [Self::INVALID_CHAR; 256],
                 pad_char,
             };
 
             let mut char_in_alphabet = [false; 256];
-            for (i, &c) in alphabet_chars.iter().enumerate() {
+            let mut i = 0;
+            while i < 64 {
+                let c = alphabet_chars[i];
                 debug_assert!(!char_in_alphabet[c as usize]);
-                debug_assert!(pad_char.is_none() || c != pad_char.unwrap());
+                debug_assert!(match pad_char { None => true, Some(p) => c != p });
 
-                result.char_to_index[c as usize] = u8::try_from(i).expect("int cast");
+                result.char_to_index[c as usize] = i as u8;
                 char_in_alphabet[c as usize] = true;
+                i += 1;
             }
             result
         }
@@ -625,7 +627,7 @@ pub mod zig_base64 {
     }
 
     impl Base64DecoderWithIgnore {
-        pub fn init(
+        pub const fn init(
             alphabet_chars: [u8; 64],
             pad_char: Option<u8>,
             ignore_chars: &[u8],
@@ -634,11 +636,14 @@ pub mod zig_base64 {
                 decoder: Base64Decoder::init(alphabet_chars, pad_char),
                 char_is_ignored: [false; 256],
             };
-            for &c in ignore_chars {
+            let mut i = 0;
+            while i < ignore_chars.len() {
+                let c = ignore_chars[i];
                 debug_assert!(result.decoder.char_to_index[c as usize] == Base64Decoder::INVALID_CHAR);
                 debug_assert!(!result.char_is_ignored[c as usize]);
-                debug_assert!(result.decoder.pad_char != Some(c));
+                debug_assert!(match result.decoder.pad_char { None => true, Some(p) => c != p });
                 result.char_is_ignored[c as usize] = true;
+                i += 1;
             }
             result
         }
@@ -741,7 +746,7 @@ pub mod zig_base64 {
 
         #[test]
         fn test_base64() {
-            let codecs = &*STANDARD;
+            let codecs = &STANDARD;
 
             test_all_apis(codecs, b"", b"");
             test_all_apis(codecs, b"f", b"Zg==");
@@ -778,7 +783,7 @@ pub mod zig_base64 {
 
         #[test]
         fn test_base64_url_safe_no_pad() {
-            let codecs = &*URL_SAFE_NO_PAD;
+            let codecs = &URL_SAFE_NO_PAD;
 
             test_all_apis(codecs, b"", b"");
             test_all_apis(codecs, b"f", b"Zg");

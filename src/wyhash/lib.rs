@@ -356,7 +356,7 @@ impl Wyhash {
         }
     }
 
-    #[inline]
+    #[inline(always)] // Zig: `inline fn smallKey`
     fn small_key(&mut self, input: &[u8]) {
         debug_assert!(input.len() <= 16);
 
@@ -446,7 +446,7 @@ impl Wyhash {
         self.b = Self::read8(&input_lb[input_lb.len() - 8..]);
     }
 
-    #[inline]
+    #[inline(always)] // Zig: `inline fn final2`
     fn final2(&mut self) -> u64 {
         self.a ^= Self::SECRET[1];
         self.b ^= self.state[0];
@@ -475,30 +475,32 @@ impl Wyhash {
                 // iteration (3× 128-bit multiply, 6× le-u64 read).
                 let [mut s0, mut s1, mut s2] = this.state;
                 let (k1, k2, k3) = (Self::SECRET[1], Self::SECRET[2], Self::SECRET[3]);
-                // Six little-endian u64 reads per round. Zig's `std.mem.readInt`
-                // is a single `@bitCast` per word; safe Rust has no
-                // unaligned-load primitive, and at opt-level 0 with ASAN
-                // every spelling that goes through `[u8; 8]` by value
-                // (`from_le_bytes`, `*<&[u8; 8]>`) is intercepted by
-                // `__asan_memcpy`, which dominated the profile. Fold each
-                // word via shift-or instead — more byte loads, but no
-                // aggregate copies for ASAN to intercept.
+                // Six little-endian u64 reads per round. Zig's
+                // `std.mem.readInt(u64, p, .little)` is a single unaligned
+                // load (`@bitCast` of `*const [8]u8`). The previous safe-Rust
+                // spellings here — `input[i..i+48].try_into()` plus per-byte
+                // shift-or — left a slice bounds-check + panic edge per
+                // iteration and 48 scalar byte loads per round, which made
+                // `Wyhash::hash` the #1 self-time symbol when
+                // `RuntimeTranspilerCache` hashes multi-MB sources. Match the
+                // Zig codegen exactly: take the base pointer once and issue
+                // six `read_unaligned::<u64>` per round.
+                //
                 // `i + 48 < len` ⇔ `i < len - 48`; len ≥ 48 is guaranteed
                 // by the enclosing branch, so the subtraction is safe and we
                 // skip a per-iteration overflow check on the addition.
                 let bound = input.len() - 48;
+                let p = input.as_ptr();
                 while i < bound {
-                    let blk: &[u8; 48] = input[i..i + 48].try_into().expect("len checked");
+                    // SAFETY: loop invariant `i < len - 48` ⇒ `i + 48 ≤ len`,
+                    // so every `p.add(i + off)` for off ∈ {0,8,16,24,32,40}
+                    // addresses an 8-byte window wholly inside `input`.
+                    // `read_unaligned` imposes no alignment requirement.
                     macro_rules! r8 {
                         ($o:literal) => {
-                            (blk[$o] as u64)
-                                | ((blk[$o + 1] as u64) << 8)
-                                | ((blk[$o + 2] as u64) << 16)
-                                | ((blk[$o + 3] as u64) << 24)
-                                | ((blk[$o + 4] as u64) << 32)
-                                | ((blk[$o + 5] as u64) << 40)
-                                | ((blk[$o + 6] as u64) << 48)
-                                | ((blk[$o + 7] as u64) << 56)
+                            u64::from_le(unsafe {
+                                core::ptr::read_unaligned(p.add(i + $o) as *const u64)
+                            })
                         };
                     }
                     // u64×u64 → u128 cannot overflow; `wrapping_mul` skips

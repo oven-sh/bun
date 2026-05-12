@@ -694,6 +694,31 @@ pub fn fmt_path(path: &[u8], options: PathFormatOptions) -> FormatUTF8<'_> {
     fmt_path_u8(path, options)
 }
 
+/// Non-validating `Display` adapter for a `&[u8]` known to be valid UTF-8.
+///
+/// Port of Zig's `{s}` format specifier on a `[]const u8`: Zig writes the bytes
+/// straight through with no codepoint check. `bstr::BStr`'s `Display` impl walks
+/// the input via `Utf8Chunks` to substitute U+FFFD on invalid sequences, which
+/// shows up in install-hot-path profiles (registry hosts, package names, semver
+/// pre/build tags — all pre-validated ASCII). Use this where the bytes are
+/// already known-good and you just want `f.write_str` semantics.
+///
+/// Prefer the [`s`] alias at call sites — it reads like Zig's `{s}`.
+#[derive(Copy, Clone)]
+#[repr(transparent)]
+pub struct Raw<'a>(pub &'a [u8]);
+impl fmt::Display for Raw<'_> {
+    #[inline(always)]
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // SAFETY: caller contract — `self.0` is valid UTF-8 (in practice ASCII:
+        // npm package names, registry URLs, semver tags). Matches Zig `{s}`.
+        f.write_str(unsafe { core::str::from_utf8_unchecked(self.0) })
+    }
+}
+/// Shorthand constructor for [`Raw`]. Prefer [`s`] (same thing, Zig-style name).
+#[inline(always)]
+pub const fn raw(bytes: &[u8]) -> Raw<'_> { Raw(bytes) }
+
 /// `core::fmt::Write` adapter over a borrowed `&mut [u8]` — the engine behind
 /// [`buf_print`] / [`buf_print_len`] / [`buf_print_z`] and [`print_int`].
 /// Hoisted so other modules can reuse it instead of redefining the same
@@ -2730,14 +2755,19 @@ pub const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
     ]
 }
 
+/// Zero-validation `&[u8] -> impl Display` adapter — alias of [`raw`] named to
+/// read like Zig's `{s}` specifier at call sites (`bun_fmt::s(name)`).
+#[inline(always)]
+pub const fn s(bytes: &[u8]) -> Raw<'_> { Raw(bytes) }
+
 // ───────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ───────────────────────────────────────────────────────────────────────────
 
 #[inline]
 fn write_bytes(w: &mut impl fmt::Write, bytes: &[u8]) -> fmt::Result {
-    // Data is bytes, not str — route through bstr::BStr Display.
-    write!(w, "{}", bstr::BStr::new(bytes))
+    // SAFETY: see `s()` above — Zig's `{s}` path, callers feed ASCII/utf8.
+    w.write_str(unsafe { core::str::from_utf8_unchecked(bytes) })
 }
 
 #[inline]

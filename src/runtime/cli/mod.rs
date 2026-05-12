@@ -315,14 +315,13 @@ pub use multi_run as MultiRun;
 pub use ::bun_clap::concat_params;
 
 // ─── process-lifetime globals ────────────────────────────────────────────────
-// Zig `var start_time: i128 = undefined;` — written once in `Cli::start`
-// during single-threaded startup, read freely after init.
-pub static START_TIME: std::sync::OnceLock<i128> = std::sync::OnceLock::new();
-
-/// Safe accessor for [`START_TIME`]. Returns 0 if not yet set.
+/// Zig `var start_time: i128 = undefined;` — written once in `Cli::start`
+/// during single-threaded startup, read freely after init. The backing
+/// `OnceLock` lives in `bun_core` (single source of truth); this accessor
+/// remains so existing `crate::cli::start_time()` callers don't churn.
 #[inline]
 pub fn start_time() -> i128 {
-    START_TIME.get().copied().unwrap_or(0)
+    bun_core::start_time()
 }
 
 #[allow(non_upper_case_globals)]
@@ -445,9 +444,7 @@ pub mod cli {
         // crash handler lives in a lower tier and can't read `IS_MAIN_THREAD`
         // directly, so it compares against a stored OS tid instead.
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
-        let now = bun_core::time::nano_timestamp();
-        let _ = START_TIME.set(now);
-        bun_core::set_start_time(now);
+        bun_core::set_start_time(bun_core::time::nano_timestamp());
         // SAFETY: single-threaded process startup
         unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
 
@@ -849,14 +846,15 @@ pub mod command {
         // `CONTEXT_DATA` for the process lifetime. `log` is the `&'static mut`
         // borrow of `Cli::LOG_` taken in `Cli::start()`, so storing its raw
         // address is sound for the process lifetime.
+        //
+        // One `ContextData::default()` is constructed and written in place,
+        // then the two non-default fields are patched on the live storage —
+        // avoids the second `Default` temporary (and its drop) that the
+        // `..Default::default()` struct-update form would build on the stack.
         unsafe {
-            (*CONTEXT_DATA.get()).write(ContextData {
-                args: bun_options_types::schema::api::TransformOptions::default(),
-                log: std::ptr::from_mut::<bun_ast::Log>(log),
-                start_time: crate::cli::start_time(),
-                ..Default::default()
-            });
-            let ctx = (*CONTEXT_DATA.get()).assume_init_mut();
+            let ctx = (*CONTEXT_DATA.get()).write(ContextData::default());
+            ctx.log = std::ptr::from_mut::<bun_ast::Log>(log);
+            ctx.start_time = bun_core::start_time();
             bun_options_types::context::set_global(ctx);
             ctx
         }
@@ -1014,6 +1012,34 @@ pub mod command {
         }
 
         let tag = which();
+
+        // Fast path: `bun -e ''` / `bun -p ''` (and the `--eval=` / `--print=`
+        // spellings). Zig's AutoCommand arm constructs the full Context, sees
+        // `eval.script.len == 0` and `positionals.len == 0`, and falls through
+        // to `HelpCommand.exec`. Mirror that outcome *before* paying for
+        // `create_context_data` — `arguments::parse` builds and drops a
+        // `TransformOptions` and forces two `LazyLock`s for what is a no-op.
+        // The check is exact-argv-shape (no other flags/positionals) so it
+        // cannot diverge from the post-parse fall-through.
+        if tag == Tag::AutoCommand {
+            let argv = bun::argv();
+            let empty_eval = match argv.len() {
+                2 => matches!(
+                    argv.get(1).map(bun_core::ZStr::as_bytes),
+                    Some(b"-e=" | b"-p=" | b"--eval=" | b"--print=")
+                ),
+                3 => argv.get(2).is_some_and(|a| a.as_bytes().is_empty())
+                    && matches!(
+                        argv.get(1).map(bun_core::ZStr::as_bytes),
+                        Some(b"-e" | b"-p" | b"--eval" | b"--print")
+                    ),
+                _ => false,
+            };
+            if empty_eval {
+                Output::flush();
+                return HelpCommand::exec();
+            }
+        }
 
         // NOTE: a Phase-C shim used to scan all of `argv` here for
         // `--version`/`--help`/`--revision` and short-circuit, because

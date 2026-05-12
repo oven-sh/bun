@@ -513,22 +513,33 @@ pub fn handle_error_return_trace<E>(_err: E) {
 
 // `err!(Name)` / `err!("Name")` — Zig `error.Name` literal.
 //
-// Expands to a per-site `OnceLock<Error>` that interns the stringified name
-// on first hit, then hands back the cached `NonZeroU16` forever after. Two
+// Expands to a per-site `AtomicU16` slot that interns the stringified name on
+// first hit, then hands back the cached `NonZeroU16` forever after. Two
 // `err!(Foo)` at different sites resolve to the *same* code (the table is
 // process-global), so `e == err!(Foo)` is a plain u16 compare — the property
 // h2 `error_code_for`, install retry loops, etc. were blocked on.
+//
+// Layout: `AtomicU16::new(0)` is 2 bytes of all-zeros (vs `OnceLock<Error>` at
+// 8+), so the ~1.3k call-site statics shrink and land in `.bss` for free. On
+// ELF targets they're additionally clustered into a dedicated `.bun_err`
+// section so the whole set occupies one page. The cold miss path is a single
+// non-generic `#[cold]` function (`intern_cached`) — no per-closure
+// `get_or_init` monomorphization, one `.text` body instead of thousands.
 #[macro_export] macro_rules! err {
-    ($name:ident) => {{
-        static __E: ::std::sync::OnceLock<$crate::Error> = ::std::sync::OnceLock::new();
-        *__E.get_or_init(|| $crate::Error::intern(::core::stringify!($name)))
-    }};
-    ($name:literal) => {{
-        static __E: ::std::sync::OnceLock<$crate::Error> = ::std::sync::OnceLock::new();
-        *__E.get_or_init(|| $crate::Error::intern($name))
-    }};
+    ($name:ident) => { $crate::err!(@__cached ::core::stringify!($name)) };
+    ($name:literal) => { $crate::err!(@__cached $name) };
     // `err!(from e)` — convert a strum::IntoStaticStr enum error to bun_core::Error.
     (from $e:expr) => { $crate::Error::intern(<&'static str>::from(&$e)) };
+    (@__cached $name:expr) => {{
+        #[cfg_attr(target_os = "linux", unsafe(link_section = ".bun_err"))]
+        static __E: ::core::sync::atomic::AtomicU16 = ::core::sync::atomic::AtomicU16::new(0);
+        let __v = __E.load(::core::sync::atomic::Ordering::Relaxed);
+        if __v != 0 {
+            $crate::Error::from_raw(__v)
+        } else {
+            $crate::intern_cached(&__E, $name)
+        }
+    }};
 }
 // `mark_binding!` and `zstr!` are defined in Global.rs / util.rs respectively.
 

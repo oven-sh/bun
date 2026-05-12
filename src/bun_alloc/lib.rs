@@ -4,7 +4,7 @@
 // `#[thread_local]` (vs the `thread_local!` macro) compiles to a bare
 // `__thread` slot — single `mov reg, fs:[OFFSET]` access, no `LocalKey`
 // `__getit()` wrapper, no lazy-init flag check, no dtor-registration probe.
-// Used for the per-allocation hot-path TLS in `ast_alloc::AST_HEAP`; matches
+// Used for the per-allocation hot-path TLS in `ast_alloc::AST_ARENA`; matches
 // Zig's `threadlocal var` semantics exactly.
 #![feature(thread_local)]
 
@@ -240,11 +240,13 @@ pub const USE_MIMALLOC: bool = true;
  #[path = "MaxHeapAllocator.rs"]        pub mod max_heap_allocator;
  #[path = "BufferFallbackAllocator.rs"] pub mod buffer_fallback_allocator;
                                         pub mod fallback;
+                                        pub mod stack_fallback;
 
 pub use nullable_allocator::NullableAllocator;
 pub use max_heap_allocator::MaxHeapAllocator;
 pub use buffer_fallback_allocator::BufferFallbackAllocator;
 pub use maybe_owned::MaybeOwned;
+pub use stack_fallback::{ArenaPtr, BumpWithFallback, MimallocHeapRef};
 
 #[path = "MimallocArena.rs"]
 pub mod mimalloc_arena;
@@ -1255,34 +1257,48 @@ pub mod allocators {
 macro_rules! bss_singleton {
     ($(#[$m:meta])* $vis:vis fn $name:ident() -> $ty:ty) => {
         $(#[$m])*
+        #[inline(always)]
         $vis fn $name() -> *mut $ty {
             // Zig's spec is `default_allocator.create(Self)` on first access
-            // (heap, process-lifetime). The previous Rust expansion stored the
-            // whole `MaybeUninit<$ty>` inline in `.bss`, which for the
-            // resolver's 8 declare sites (2× entry_store_backing at 1.29 MB,
-            // 2× entries_option_map at 64 KB, 4× string lists at 32 KB) came
-            // to ~2.84 MB of static `.bss` vs Zig's 0. That doesn't show on
-            // `bun -e ''` (FileSystem::init isn't reached) but every
-            // `bun run`/`install`/`build` faults the `.bss` pages
-            // unconditionally before init runs. Store an 8-byte heap pointer
-            // instead and allocate on first call, matching the spec.
+            // (heap, process-lifetime). Store an 8-byte heap pointer and
+            // allocate on first call, matching the spec.
+            //
+            // Hot path: this accessor is hit per-append/get from the resolver
+            // (`DirnameStore::append`, `EntriesMap::get`, …). Zig reads a
+            // plain `*Self` global; the previous `Once::call_once` fast-path
+            // is an Acquire load + cmp + branch + Relaxed load that *cannot*
+            // inline across crates (it's a call into `std::sys::sync::once`).
+            // Open-code the double-checked-init so the post-init path is one
+            // Acquire load + null-test inlined into every caller.
             static STORAGE: ::core::sync::atomic::AtomicPtr<$ty> =
                 ::core::sync::atomic::AtomicPtr::new(::core::ptr::null_mut());
-            static ONCE: ::std::sync::Once = ::std::sync::Once::new();
-            // SAFETY: `init_at` writes only through its argument, which is a
-            // fresh exclusively-owned mimalloc allocation. ONCE provides the
-            // happens-before so the post-`call_once` Relaxed read observes the
-            // Relaxed store. The pointer is never null after ONCE completes
-            // (bss_heap_init aborts on OOM). Returns a raw `*mut` (same
-            // contract as Zig's `*Self`) — fabricating `&'static mut` here
-            // would alias on every call (forbidden).
-            ONCE.call_once(|| {
-                STORAGE.store(
-                    $crate::bss_heap_init::<$ty>(<$ty>::init_at).as_ptr(),
-                    ::core::sync::atomic::Ordering::Relaxed,
-                );
-            });
-            STORAGE.load(::core::sync::atomic::Ordering::Relaxed)
+            let p = STORAGE.load(::core::sync::atomic::Ordering::Acquire);
+            if !p.is_null() {
+                return p;
+            }
+            // Cold path: first access. `#[cold]` + `#[inline(never)]` keeps
+            // the mmap/init code out of the hot icache line and lets lld
+            // group it with this module rather than `std::sys::sync`.
+            #[cold]
+            #[inline(never)]
+            fn slow() -> *mut $ty {
+                let p = $crate::bss_heap_init::<$ty>(<$ty>::init_at).as_ptr();
+                // Race: two threads may both reach here. The mmap'd region is
+                // process-lifetime and never freed, so the loser is leaked
+                // (≤ one per declare site, which in practice is single-threaded
+                // — `FileSystem::init` runs once on the main thread). The CAS
+                // is the publication barrier.
+                match STORAGE.compare_exchange(
+                    ::core::ptr::null_mut(),
+                    p,
+                    ::core::sync::atomic::Ordering::AcqRel,
+                    ::core::sync::atomic::Ordering::Acquire,
+                ) {
+                    Ok(_) => p,
+                    Err(winner) => winner,
+                }
+            }
+            slow()
         }
     };
 }
@@ -1296,29 +1312,43 @@ macro_rules! bss_singleton {
 #[doc(hidden)] // Public only for the `bss_singleton!` macro expansion in dependent crates.
 #[inline]
 pub fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
-    // The point of `bss_singleton!` is to behave like Zig's `var foo: T = undefined`
-    // in `.bss`: pages are demand-zero-faulted as the process touches them, so an
-    // 8192-slot `BSSList` only commits the entries it actually fills. `mi_malloc`
-    // (and `Box::new`) commit the whole region up front — for `BSSList<Entry,8192>`
-    // that's ~1.35 MiB of resident pages charged on first access. An anonymous
-    // `mmap(MAP_NORESERVE)` gives back exactly the lazy-fault behaviour we lost by
-    // moving the storage out of `.bss`, while keeping the heap address (so the
-    // binary's own `.bss` stays tiny). The mapping is process-lifetime: never
-    // unmapped, never grown, matching Zig's singleton.
+    let ptr = bss_lazy_bytes(size_of::<T>(), core::mem::align_of::<T>()).cast::<T>();
+    // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned, all-zeros-on-read
+    // allocation; lives for process lifetime (singleton; never freed/unmapped,
+    // matching Zig). `init_at` is therefore free to skip writing any field whose
+    // all-zeros bit pattern is already a valid initial value (e.g. `OverflowList`'s
+    // 32 KiB `[Option<Box<_>>; 4095]` array — `None` is the null niche).
+    unsafe { init_at(ptr.as_ptr()) };
+    ptr
+}
+
+/// Reserve `size` bytes of demand-zero-faulted, process-lifetime storage.
+///
+/// On unix this is `mmap(MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE)`: pages are
+/// not committed until first written to, so a 532 KiB `BSSStringList` backing
+/// buffer that only ever sees a handful of filenames touches one or two pages
+/// instead of all 130. On Windows this falls back to `mi_zalloc_aligned`
+/// (eager commit, but still all-zeros so callers may rely on that uniformly).
+///
+/// The mapping is **never freed** — these are Zig-port `.bss`-semantics
+/// singletons. Do not call from code paths that need to release the storage.
+///
+/// Returned pointer is page-aligned on unix and `align`-aligned on Windows.
+#[doc(hidden)]
+#[inline]
+pub fn bss_lazy_bytes(size: usize, align: usize) -> NonNull<u8> {
+    debug_assert!(size > 0);
     #[cfg(unix)]
     let ptr = {
-        // mmap returns page-aligned memory; every `bss_singleton!` payload is a
-        // plain array of POD entries (`BSSList`/`BSSStringList`/`BSSMap*`) with
-        // alignment ≤ 16, so page alignment is always sufficient.
-        debug_assert!(core::mem::align_of::<T>() <= 4096);
-        // SAFETY: mmap with MAP_ANONYMOUS ignores fd/offset; len is `size_of::<T>()`
-        // (non-zero — the macro is never instantiated with a ZST); on success the
-        // returned region is owned exclusively by this process and zero-filled on
-        // first touch.
+        debug_assert!(align <= 4096);
+        let _ = align;
+        // SAFETY: mmap with MAP_ANONYMOUS ignores fd/offset; len is non-zero; on
+        // success the returned region is owned exclusively by this process and
+        // zero-filled on first touch.
         let p = unsafe {
             libc::mmap(
                 core::ptr::null_mut(),
-                size_of::<T>(),
+                size,
                 libc::PROT_READ | libc::PROT_WRITE,
                 libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
                 -1,
@@ -1328,21 +1358,34 @@ pub fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
         if p == libc::MAP_FAILED {
             crate::out_of_memory();
         }
-        p.cast::<T>()
+        p.cast::<u8>()
     };
     #[cfg(not(unix))]
     let ptr = {
         // Windows: `VirtualAlloc(MEM_RESERVE)`-only would require commit-on-touch
         // plumbing through a guard-page handler. The largest singleton is ~1.3 MiB
         // and Windows already faults `.bss` eagerly per-page on first write anyway,
-        // so the simpler eager allocation is kept.
-        mimalloc::mi_malloc_aligned(size_of::<T>(), core::mem::align_of::<T>()).cast::<T>()
+        // so the simpler eager allocation is kept. Use `mi_zalloc_aligned` (not
+        // `mi_malloc`) so callers can uniformly rely on all-zeros — `init_at`
+        // bodies skip writing zero-valued fields.
+        mimalloc::mi_zalloc_aligned(size, align).cast::<u8>()
     };
-    let ptr = NonNull::new(ptr).expect("OOM");
-    // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
-    // process lifetime (singleton; never freed/unmapped, matching Zig).
-    unsafe { init_at(ptr.as_ptr()) };
-    ptr
+    NonNull::new(ptr).expect("OOM")
+}
+
+/// Reserve `count` elements of `T` as a lazy-faulted slice. See [`bss_lazy_bytes`].
+///
+/// Returns `NonNull<[MaybeUninit<T>]>`: bytes are zero-on-read but treated as
+/// logically uninitialized — callers must gate reads on a separate `used`
+/// counter (Zig leaves the array `undefined` and never reads past `used`).
+#[doc(hidden)]
+#[inline]
+pub fn bss_lazy_slice<T>(count: usize) -> NonNull<[MaybeUninit<T>]> {
+    let p = bss_lazy_bytes(count * size_of::<T>(), core::mem::align_of::<T>())
+        .as_ptr()
+        .cast::<MaybeUninit<T>>();
+    // SAFETY: `p` is non-null (bss_lazy_bytes never returns null).
+    unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(p, count)) }
 }
 
 /// Declare a `BSSList<T, COUNT>` singleton accessor.
@@ -1561,6 +1604,27 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     pub fn zero(&mut self) {
         self.list.zero();
         self.count = 0;
+    }
+
+    /// In-place init of just the three scalar counters (`list.used`,
+    /// `list.allocated`, `count`) into storage that is already all-zeros.
+    ///
+    /// `list.ptrs: [Option<Box<_>>; 4095]` is ~32 KiB; the all-zeros bit
+    /// pattern is `[None; 4095]` via the null-pointer niche, so when `slot`
+    /// lives in a fresh `bss_lazy_bytes`/`bss_heap_init` mapping (always
+    /// zero-on-read) we touch one cache line instead of faulting eight pages.
+    ///
+    /// SAFETY: `slot` must be a valid, exclusive, aligned `*mut Self` whose
+    /// `list.ptrs` bytes are already zero (i.e. obtained from
+    /// `bss_heap_init`/`bss_lazy_bytes`, NOT `mi_malloc`/stack `MaybeUninit`).
+    #[inline]
+    pub unsafe fn init_counters_at(slot: *mut Self) {
+        // SAFETY: caller contract.
+        unsafe {
+            addr_of_mut!((*slot).list.used).write(0);
+            addr_of_mut!((*slot).list.allocated).write(0);
+            addr_of_mut!((*slot).count).write(0);
+        }
     }
 
     #[inline]
@@ -1866,13 +1930,23 @@ pub struct BSSListPair<ValueType> {
 ///
 /// TODO(port): same const-generic-arithmetic and per-type-static caveats as `BSSList`.
 pub struct BSSStringList<const COUNT: usize /* = _COUNT * 2 */, const ITEM_LENGTH: usize /* = _ITEM_LENGTH + 1 */> {
-    // TODO(port): backing_buf len = COUNT * ITEM_LENGTH (generic_const_exprs).
-    pub backing_buf: Box<[u8]>, // logically [u8; COUNT * ITEM_LENGTH]
+    // Zig keeps both arrays *inline* in the struct (`[count*item_length]u8`,
+    // `[count][]const u8`) so they live in the same demand-faulted allocation
+    // as the rest of the singleton and `init()` writes only the four scalar
+    // fields — pages are committed lazily as `append` writes bytes. Stable
+    // Rust can't spell `[u8; COUNT*ITEM_LENGTH]` without `generic_const_exprs`,
+    // so we store fat pointers to *separate* `bss_lazy_bytes` mappings instead.
+    // Same laziness guarantee (MAP_NORESERVE), same lifetime (process-static,
+    // never freed), no eager memset.
+    //
+    // `MaybeUninit` because Zig leaves both arrays `undefined`; only
+    // `[..backing_buf_used]` / `[..slice_buf_used]` are ever read.
+    pub backing_buf: NonNull<[MaybeUninit<u8>]>, // len == COUNT * ITEM_LENGTH
     pub backing_buf_used: u64,
     // TODO(port): Overflow = OverflowList<&'static [u8], COUNT / 4> (generic_const_exprs).
     // Fixed nonzero block size until generic_const_exprs lands; 0 would div-by-zero in at_index.
     pub overflow_list: OverflowList<&'static [u8], BSS_OVERFLOW_BLOCK_SIZE>,
-    pub slice_buf: Box<[&'static [u8]]>, // logically [&[u8]; COUNT]
+    pub slice_buf: NonNull<[MaybeUninit<&'static [u8]>]>, // len == COUNT
     pub slice_buf_used: u16,
     pub mutex: Mutex,
 }
@@ -1928,16 +2002,22 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     /// SAFETY: `slot` must point to writable, properly-aligned, uninitialized
     /// storage of `size_of::<Self>()` bytes that lives for `'static`.
     pub unsafe fn init_at(slot: *mut Self) {
-        // SAFETY: caller contract — `slot` is a valid, exclusive, aligned `*mut Self`.
+        // Zig (`bun_alloc.zig` BSSStringList.init): writes ONLY `allocator`,
+        // `backing_buf_used = 0`, `slice_buf_used = 0`, `overflow_list.zero()`,
+        // `mutex = .{}` — `backing_buf`/`slice_buf` are left `undefined` so the
+        // ~1.4 MiB of array storage stays unfaulted until `append` writes a byte.
+        // Match that exactly: lazy-map the arrays, write the four scalars, and
+        // zero only the three OverflowList counters (its 32 KiB `ptrs` array is
+        // already `[None; 4095]` because `slot` came from `bss_heap_init`).
+        // SAFETY: caller contract — `slot` is a valid, exclusive, aligned
+        // `*mut Self` in all-zeros storage from `bss_heap_init`.
         unsafe {
             addr_of_mut!((*slot).mutex).write(Mutex::new());
-            addr_of_mut!((*slot).backing_buf).write(vec![0u8; COUNT * ITEM_LENGTH].into_boxed_slice());
+            addr_of_mut!((*slot).backing_buf).write(bss_lazy_slice::<u8>(COUNT * ITEM_LENGTH));
             addr_of_mut!((*slot).backing_buf_used).write(0);
-            addr_of_mut!((*slot).slice_buf).write(vec![&[][..]; COUNT].into_boxed_slice());
+            addr_of_mut!((*slot).slice_buf).write(bss_lazy_slice::<&'static [u8]>(COUNT));
             addr_of_mut!((*slot).slice_buf_used).write(0);
-            // SAFETY: `OverflowList` is `{ count: u32, list: { used,allocated: u16, ptrs: [Option<Box<_>>; N] } }`.
-            // `Option<Box<_>>` is null-niche-optimized → all-zeros is `[None; N]`; integers zero is valid.
-            core::ptr::write_bytes(addr_of_mut!((*slot).overflow_list), 0u8, 1);
+            OverflowList::init_counters_at(addr_of_mut!((*slot).overflow_list));
         }
     }
 
@@ -1955,7 +2035,13 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     }
 
     pub fn exists(&self, value: &[u8]) -> bool {
-        is_slice_in_buffer(value, &self.backing_buf)
+        // Pointer-range check against the backing storage. Done with addresses
+        // rather than forming a `&[u8]` over `MaybeUninit<u8>` storage (which
+        // would assert byte-validity of the unwritten tail).
+        let base = self.backing_buf.as_ptr().cast::<u8>() as usize;
+        let end = base + self.backing_buf.len();
+        let p = value.as_ptr() as usize;
+        base <= p && p + value.len() <= end
     }
 
     /// Zig `editableSlice(slice: []const u8) []u8 { return @constCast(slice); }`.
@@ -2093,11 +2179,22 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             self.backing_buf_used += value_len as u64;
             let end = self.backing_buf_used as usize;
 
-            value.copy_into(&mut self.backing_buf[start..end - 1]);
-            self.backing_buf[end - 1] = 0;
+            // SAFETY: `backing_buf` is a process-lifetime mapping of
+            // `COUNT*ITEM_LENGTH` writable bytes owned by this singleton; we
+            // hold `&mut self` so no other live borrow of the region exists.
+            // Forming `&mut [u8]` only over `[start..end]` — these bytes are
+            // about to be fully written (payload + trailing NUL), so no uninit
+            // byte is exposed through the reference.
+            let dst: &mut [u8] = unsafe {
+                core::slice::from_raw_parts_mut(
+                    self.backing_buf.as_ptr().cast::<u8>().add(start),
+                    end - start,
+                )
+            };
+            value.copy_into(&mut dst[..value_len - 1]);
+            dst[value_len - 1] = 0;
 
-            let out = &mut self.backing_buf[start..end - 1];
-            (out_ptr, out_len) = (out.as_mut_ptr(), out.len());
+            (out_ptr, out_len) = (dst.as_mut_ptr(), value_len - 1);
         } else {
             // Zig: `var value_buf = try self.allocator.alloc(u8, value_len);` — propagate OOM.
             // Route through mimalloc directly (PORTING.md forbids `Box::leak`). BSSStringList
@@ -2137,7 +2234,17 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
                 *self.overflow_list.at_index_mut(result) = stored;
             }
         } else {
-            self.slice_buf[result.index() as usize] = stored;
+            // SAFETY: `slice_buf` is a process-lifetime mapping of `COUNT`
+            // `&[u8]`-sized slots owned by this singleton; `result.index() <
+            // slice_buf_used <= COUNT`; we hold `&mut self`. Raw write — slot
+            // may be uninit (Zig leaves it `undefined`).
+            unsafe {
+                self.slice_buf
+                    .as_ptr()
+                    .cast::<MaybeUninit<&'static [u8]>>()
+                    .add(result.index() as usize)
+                    .write(MaybeUninit::new(stored));
+            }
         }
         Ok((out_ptr, out_len))
     }
@@ -2175,13 +2282,16 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     /// storage of `size_of::<Self>()` bytes that lives for `'static`.
     /// `backing_buf` is intentionally left uninitialized; only `[0..used]` is read.
     pub unsafe fn init_at(slot: *mut Self) {
-        // SAFETY: caller contract — `slot` is a valid, exclusive, aligned `*mut Self`.
+        // SAFETY: caller contract — `slot` is a valid, exclusive, aligned
+        // `*mut Self` in all-zeros storage from `bss_heap_init`. The 32 KiB
+        // `overflow_list.list.ptrs` array is already `[None; 4095]` (null
+        // niche), so write only the three counters; `backing_buf` is
+        // intentionally left uninitialized (Zig: `undefined`).
         unsafe {
             addr_of_mut!((*slot).mutex).write(Mutex::new());
             addr_of_mut!((*slot).index).write(IndexMap::default());
             addr_of_mut!((*slot).backing_buf_used).write(0);
-            // SAFETY: `OverflowList` is all-zeros-valid (see BSSStringList::init_at note).
-            core::ptr::write_bytes(addr_of_mut!((*slot).overflow_list), 0u8, 1);
+            OverflowList::init_counters_at(addr_of_mut!((*slot).overflow_list));
         }
     }
 
@@ -2343,12 +2453,18 @@ pub struct BSSMap<
     const ESTIMATED_KEY_LENGTH: usize,
     const REMOVE_TRAILING_SLASHES: bool,
 > {
-    pub map: Box<BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>>,
-    // TODO(port): len = COUNT * ESTIMATED_KEY_LENGTH (generic_const_exprs).
-    pub key_list_buffer: Box<[u8]>,
+    // Inner map lives in its own `bss_heap_init` mapping (lazy-faulted; its
+    // inline `[MaybeUninit<ValueType>; COUNT]` + 32 KiB overflow ptrs stay
+    // uncommitted until written). Process-lifetime → never freed → raw
+    // `NonNull` rather than `Box` (avoids tying mmap storage to the global
+    // allocator's `dealloc`).
+    map: NonNull<BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>>,
+    // Same lazy-fault treatment as `BSSStringList::backing_buf` — see the
+    // struct-level comment there. Zig keeps these inline; we map separately
+    // because `[u8; COUNT*ESTIMATED_KEY_LENGTH]` needs `generic_const_exprs`.
+    pub key_list_buffer: NonNull<[MaybeUninit<u8>]>, // len == COUNT * ESTIMATED_KEY_LENGTH
     pub key_list_buffer_used: usize,
-    // TODO(port): len = COUNT (generic_const_exprs); element type is a raw `*mut [u8]`-ish slice.
-    pub key_list_slices: Box<[&'static [u8]]>,
+    pub key_list_slices: NonNull<[MaybeUninit<&'static [u8]>]>, // len == COUNT
     // TODO(port): Zig declares this as `OverflowList([]u8, count / 4)` but then calls
     // `.items[...]` and `.append(allocator, slice)` on it — those are `std.ArrayListUnmanaged`
     // methods, NOT `OverflowList` methods. Likely dead code or a latent bug upstream.
@@ -2366,15 +2482,13 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
     pub unsafe fn init_at(slot: *mut Self) {
         // SAFETY: caller contract — `slot` is a valid, exclusive, aligned `*mut Self`.
         unsafe {
-            // Inner map: heap via Box<MaybeUninit> + init_at (backing_buf left uninit).
-            let mut inner: Box<MaybeUninit<BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>>> =
-                Box::new_uninit();
-            BSSMapInner::init_at(inner.as_mut_ptr());
-            addr_of_mut!((*slot).map).write(inner.assume_init());
+            // Inner map in its own lazy mapping so its inline backing_buf +
+            // overflow ptrs fault on demand.
+            addr_of_mut!((*slot).map).write(bss_heap_init(BSSMapInner::init_at));
             addr_of_mut!((*slot).key_list_buffer)
-                .write(vec![0u8; COUNT * ESTIMATED_KEY_LENGTH].into_boxed_slice());
+                .write(bss_lazy_slice::<u8>(COUNT * ESTIMATED_KEY_LENGTH));
             addr_of_mut!((*slot).key_list_buffer_used).write(0);
-            addr_of_mut!((*slot).key_list_slices).write(vec![&[][..]; COUNT].into_boxed_slice());
+            addr_of_mut!((*slot).key_list_slices).write(bss_lazy_slice::<&'static [u8]>(COUNT));
             addr_of_mut!((*slot).key_list_overflow).write(Vec::new());
         }
     }
@@ -2385,24 +2499,38 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
         bss_heap_init(Self::init_at)
     }
 
-    // Zig `deinit`: `self.map.deinit()` then free instance — both handled by Drop.
+    /// Borrow the inner map. The mapping is process-lifetime; reborrow lifetime
+    /// is tied to `&self`/`&mut self` so the usual aliasing rules apply.
+    #[inline(always)]
+    pub fn map(&self) -> &BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES> {
+        // SAFETY: `map` was set in `init_at` to a fresh `bss_heap_init` mapping
+        // that lives for process lifetime and is exclusively owned by `*self`.
+        unsafe { self.map.as_ref() }
+    }
+    #[inline(always)]
+    pub fn map_mut(&mut self) -> &mut BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES> {
+        // SAFETY: see `map()`; `&mut self` guarantees exclusive access.
+        unsafe { self.map.as_mut() }
+    }
+
+    // Zig `deinit`: `self.map.deinit()` then free instance — process-lifetime; never freed.
 
     pub fn is_overflowing(instance: &Self) -> bool {
-        instance.map.backing_buf_used as usize >= COUNT
+        instance.map().backing_buf_used as usize >= COUNT
     }
 
     pub fn get_or_put(&mut self, key: &[u8]) -> core::result::Result<Result, AllocError> {
-        self.map.get_or_put(key)
+        self.map_mut().get_or_put(key)
     }
 
     pub fn get(&mut self, key: &[u8]) -> Option<&mut ValueType> {
         // PERF(port): Zig uses @call(bun.callmod_inline, ...) — profile in Phase B
-        self.map.get(key)
+        self.map_mut().get(key)
     }
 
     pub fn at_index(&mut self, index: IndexType) -> Option<&mut ValueType> {
         // PERF(port): Zig uses @call(bun.callmod_inline, ...) — profile in Phase B
-        self.map.at_index(index)
+        self.map_mut().at_index(index)
     }
 
     pub fn key_at_index(&self, index: IndexType) -> Option<&[u8]> {
@@ -2410,7 +2538,16 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
             i if i == UNASSIGNED.index() || i == NOT_FOUND.index() => None,
             _ => {
                 if !index.is_overflow() {
-                    Some(self.key_list_slices[index.index() as usize])
+                    let i = index.index() as usize;
+                    debug_assert!(i < COUNT);
+                    // SAFETY: a non-sentinel non-overflow index was assigned by
+                    // `put` (which bumps `backing_buf_used`) and its key stored
+                    // by `put_key` at this slot before any reader could observe
+                    // the index — the slot is initialized. `key_list_slices` is
+                    // a process-lifetime mapping of `COUNT` slots.
+                    Some(unsafe {
+                        *self.key_list_slices.cast::<&'static [u8]>().as_ptr().add(i)
+                    })
                 } else {
                     // TODO(port): see key_list_overflow note — Zig indexes `.items` here.
                     Some(self.key_list_overflow[index.index() as usize])
@@ -2427,7 +2564,7 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
     ) -> core::result::Result<&mut ValueType, AllocError> {
         // PORT NOTE: reshaped for borrowck — Zig returns `ptr` from map.put then calls put_key;
         // Rust can't hold &mut ValueType across &mut self.put_key. Stash as raw, re-borrow after.
-        let ptr: *mut ValueType = self.map.put(result, value)?;
+        let ptr: *mut ValueType = self.map_mut().put(result, value)?;
         if STORE_KEY {
             self.put_key(key, result)?;
         }
@@ -2438,14 +2575,18 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
     }
 
     pub fn is_key_statically_allocated(&self, key: &[u8]) -> bool {
-        is_slice_in_buffer(key, &self.key_list_buffer)
+        // Pointer-range check; addresses only (no `&[u8]` over uninit tail).
+        let base = self.key_list_buffer.as_ptr().cast::<u8>() as usize;
+        let end = base + self.key_list_buffer.len();
+        let p = key.as_ptr() as usize;
+        base <= p && p + key.len() <= end
     }
 
     // There's two parts to this.
     // 1. Storing the underlying string.
     // 2. Making the key accessible at the index.
     pub fn put_key(&mut self, key: &[u8], result: &mut Result) -> core::result::Result<(), AllocError> {
-        let _guard = self.map.mutex.lock();
+        let _guard = self.map().mutex.lock();
 
         let slice: &'static [u8];
 
@@ -2456,7 +2597,16 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
         } else if self.key_list_buffer_used + key.len() < self.key_list_buffer.len() {
             let start = self.key_list_buffer_used;
             self.key_list_buffer_used += key.len();
-            let dst = &mut self.key_list_buffer[start..self.key_list_buffer_used];
+            // SAFETY: `key_list_buffer` is a process-lifetime mapping of
+            // `COUNT*ESTIMATED_KEY_LENGTH` writable bytes owned by this
+            // singleton; `[start..start+key.len()]` is in-bounds (just checked)
+            // and about to be fully written; we hold `&mut self`.
+            let dst: &mut [u8] = unsafe {
+                core::slice::from_raw_parts_mut(
+                    self.key_list_buffer.as_ptr().cast::<u8>().add(start),
+                    key.len(),
+                )
+            };
             dst.copy_from_slice(key);
             // SAFETY: points into self.key_list_buffer (singleton-static lifetime).
             slice = unsafe { core::slice::from_raw_parts(dst.as_ptr(), dst.len()) };
@@ -2483,7 +2633,18 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
         };
 
         if !result.index.is_overflow() {
-            self.key_list_slices[result.index.index() as usize] = slice;
+            let i = result.index.index() as usize;
+            debug_assert!(i < COUNT);
+            // SAFETY: `key_list_slices` is a process-lifetime mapping of
+            // `COUNT` slots; `i < COUNT`; we hold `&mut self`. Raw write —
+            // slot may be uninit (Zig leaves it `undefined`).
+            unsafe {
+                self.key_list_slices
+                    .as_ptr()
+                    .cast::<MaybeUninit<&'static [u8]>>()
+                    .add(i)
+                    .write(MaybeUninit::new(slice));
+            }
         } else {
             // TODO(port): see key_list_overflow note above re: `.items` / `.append(alloc, _)`.
             let idx = result.index.index() as usize;
@@ -2506,13 +2667,13 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
     }
 
     pub fn mark_not_found(&mut self, result: Result) {
-        self.map.mark_not_found(result);
+        self.map_mut().mark_not_found(result);
     }
 
     /// This does not free the keys.
     /// Returns `true` if an entry had previously existed.
     pub fn remove(&mut self, key: &[u8]) -> bool {
-        self.map.remove(key)
+        self.map_mut().remove(key)
     }
 }
 

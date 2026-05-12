@@ -247,7 +247,7 @@ impl SourceMapFormatCtx for VLQSourceMap {
         prev_state: SourceMapState,
     ) -> Result<(), bun_core::Error> {
         if let Some(b) = &mut self.internal {
-            b.append_mapping(current_state);
+            b.append_mapping(&current_state);
             self.count += 1;
             return Ok(());
         }

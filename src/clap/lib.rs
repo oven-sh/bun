@@ -11,7 +11,7 @@ pub mod args;
 pub mod comptime;
 pub mod streaming;
 
-pub use comptime::ComptimeClap;
+pub use comptime::{ComptimeClap, ConvertedTable};
 pub use streaming::StreamingClap;
 
 // Proc-macro backend — do not call these directly; use `parse_param!` / `param!` /
@@ -55,6 +55,34 @@ macro_rules! concat_params {
         const __ARR: [$crate::Param<$crate::Help>; $crate::__param_slices_len(__PARTS)] =
             $crate::__param_slices_concat::<{ $crate::__param_slices_len(__PARTS) }>(__PARTS);
         &__ARR
+    }};
+}
+
+/// Build a `&'static ConvertedTable` from a const-evaluable
+/// `&[Param<Help>]` at compile time — the Rust analogue of Zig's
+/// `ComptimeClap(Id, params)` type-generator. The converted `[Param<usize>; N]`
+/// array, the three category counts, and the short-name index all land in
+/// rodata; pair with [`comptime::find_param_index`] inside `const { }` to fold
+/// `args.flag(b"--foo")` to a constant slot index.
+///
+/// ```ignore
+/// pub const RUN_PARAMS: &[Param<Help>] = concat_params!(...);
+/// pub static RUN_TABLE: &ConvertedTable = comptime_table!(RUN_PARAMS);
+/// ```
+#[macro_export]
+macro_rules! comptime_table {
+    ($params:expr) => {{
+        const __P: &[$crate::Param<$crate::Help>] = $params;
+        const __N: usize = __P.len();
+        static __CONV: [$crate::Param<usize>; __N] =
+            $crate::comptime::convert_params_array::<$crate::Help, __N>(__P);
+        static __TABLE: $crate::ConvertedTable = $crate::ConvertedTable::from_const(
+            &__CONV,
+            $crate::comptime::count_flags(__P),
+            $crate::comptime::count_single(__P),
+            $crate::comptime::count_multi(__P),
+        );
+        &__TABLE
     }};
 }
 
@@ -388,7 +416,7 @@ impl<Id: 'static> Args<Id> {
 
 /// Same as `parse_ex` but uses the `args::OsIterator` by default.
 pub fn parse<Id: 'static>(
-    params: &[Param<Id>],
+    params: &'static [Param<Id>],
     opt: ParseOptions<'_>,
 ) -> Result<Args<Id>, bun_core::Error> {
     // TODO(port): narrow error set
@@ -412,7 +440,7 @@ pub fn parse<Id: 'static>(
 /// Parses the command line arguments passed into the program based on an
 /// array of `Param`s.
 pub fn parse_ex<Id: 'static, I>(
-    params: &[Param<Id>],
+    params: &'static [Param<Id>],
     iter: &mut I,
     opt: ParseOptions<'_>,
 ) -> Result<ComptimeClap<Id>, bun_core::Error>
@@ -1002,6 +1030,30 @@ mod tests {
         assert_eq!(MACRO_PARAMS_SLICE[0].names.long, Some(b"help" as &[u8]));
         assert_eq!(MACRO_PARAMS_SLICE[1].names.long, Some(b"version" as &[u8]));
         assert_eq!(MACRO_PARAMS_SLICE[2].takes_value, Values::One);
+    }
+
+    // Compile-time check: comptime_table!/find_param_index are const-evaluable.
+    const CT_PARAMS: &[Param<Help>] = concat_params!(
+        &[parse_param!("-h, --help          Display this help")],
+        &[parse_param!("-c, --config <STR>  Config")],
+        &[parse_param!("--define <K=V>...   Define")],
+    );
+    static CT_TABLE: &ConvertedTable = comptime_table!(CT_PARAMS);
+    const CT_HELP_IDX: usize = comptime::find_param_index(CT_TABLE.converted, b"--help");
+    const CT_CONFIG_IDX: usize = comptime::find_param_index(CT_TABLE.converted, b"-c");
+
+    #[test]
+    fn comptime_table_const_eval() {
+        assert_eq!(CT_TABLE.n_flags, 1);
+        assert_eq!(CT_TABLE.n_single, 1);
+        assert_eq!(CT_TABLE.n_multi, 1);
+        assert_eq!(CT_TABLE.converted[CT_HELP_IDX].id, 0);
+        assert_eq!(CT_TABLE.converted[CT_CONFIG_IDX].id, 0);
+        assert_eq!(CT_TABLE.converted[CT_CONFIG_IDX].takes_value, Values::One);
+        // Runtime registry path agrees with const path.
+        let rt = ConvertedTable::for_params(CT_PARAMS);
+        assert_eq!(rt.n_flags, 1);
+        assert_eq!(rt.converted.len(), CT_TABLE.converted.len());
     }
 }
 

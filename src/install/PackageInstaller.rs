@@ -707,7 +707,10 @@ impl<'a> PackageInstaller<'a> {
                     self.lockfile().buffers.trees.as_slice(),
                     self.lockfile().buffers.dependencies.as_slice(),
                     self.lockfile().buffers.string_bytes.as_slice(),
-                    u32::try_from(tree_id).expect("int cast"),
+                    // PERF(port): `tree_id` ranges over `0..self.trees.len()`
+                    // and tree IDs are u32 by construction; avoid the
+                    // `try_from` panic-format path on this per-tree loop.
+                    tree_id as u32,
                     &mut node_modules_rel_path_buf,
                     &mut depth_buf,
                 );
@@ -715,7 +718,7 @@ impl<'a> PackageInstaller<'a> {
                 self.node_modules.path.extend_from_slice(rel_path.as_bytes());
 
                 self.link_tree_bins(
-                    u32::try_from(tree_id).expect("int cast"),
+                    tree_id as u32,
                     link_target_buf.as_mut_slice(),
                     link_dest_buf.as_mut_slice(),
                     link_rel_buf.as_mut_slice(),
@@ -796,7 +799,9 @@ impl<'a> PackageInstaller<'a> {
                 || Self::can_install_package_for_tree(
                     &self.completed_trees,
                     self.lockfile().buffers.trees.as_slice(),
-                    u32::try_from(i).expect("int cast"),
+                    // PERF(port): `i` ranges over `0..self.trees.len()`; tree
+                    // IDs are u32 by construction.
+                    i as u32,
                 )
             {
                 // If installing these packages completes the tree, we don't allow it

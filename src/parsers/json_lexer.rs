@@ -361,7 +361,7 @@ where
 
     // ── stepping ─────────────────────────────────────────────────────────
 
-    #[inline]
+    #[inline(always)]
     fn next_codepoint(&mut self) -> CodePoint {
         if self.current >= self.source.contents.len() {
             self.end = self.source.contents.len();

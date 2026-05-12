@@ -260,9 +260,9 @@ impl Linker {
         fs: *mut Fs::FileSystem,
     ) -> Self {
         // Zig wrote `relative_paths_list = ImportPathsList.init(arena);`
-        // here; the singleton accessor handles that lazily on first use.
-        let _ = relative_paths_list_ptr();
-
+        // here; the `LazyLock` accessor handles that lazily on first
+        // `intern_path()` / `relative_paths_list()` call, so no eager poke
+        // is needed (it was startup overhead for non-bundling code paths).
         Self {
             options,
             fs,

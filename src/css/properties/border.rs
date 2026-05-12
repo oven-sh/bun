@@ -271,11 +271,8 @@ impl BorderSideWidth {
         // PORT NOTE: css.implementDeepClone — Length is value-type; Clone suffices.
         self.clone()
     }
-
-    pub fn eql(&self, other: &Self) -> bool {
-        self == other
-    }
 }
+crate::css_eql_partialeq!(BorderSideWidth);
 
 impl Default for BorderSideWidth {
     fn default() -> Self {

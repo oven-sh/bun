@@ -1180,7 +1180,7 @@ pub enum WebKitScrollbarPseudoClass {
 }
 
 /// A [webkit scrollbar](https://webkit.org/blog/363/styling-scrollbars/) pseudo element.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, CssHash)]
 pub enum WebKitScrollbarPseudoElement {
     /// ::-webkit-scrollbar
     Scrollbar,
@@ -1203,10 +1203,7 @@ impl WebKitScrollbarPseudoElement {
     pub fn eql(&self, rhs: &Self) -> bool {
         *self == *rhs
     }
-    #[inline]
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        hasher.update(&(*self as u32).to_ne_bytes());
-    }
+    // hash — via `#[derive(CssHash)]`.
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1407,9 +1404,8 @@ impl<'a> SelectorParser<'a> {
         name: Str,
         parser: &mut CssParser,
     ) -> CResult<PseudoClass> {
-        // todo_stuff.match_ignore_ascii_case
-        let pseudo_class = 'pseudo_class: {
-            if strings::eql_case_insensitive_ascii_check_length(name, b"lang") {
+        let pseudo_class = crate::match_ignore_ascii_case! { name, {
+            b"lang" => {
                 // PORT NOTE: `expect_ident_or_string` returns `&'_ [u8]`
                 // (lifetime-tied to `&mut self`), which can't satisfy
                 // `parse_comma_separated`'s HRTB. Clone the token to extract
@@ -1423,29 +1419,17 @@ impl<'a> SelectorParser<'a> {
                     }
                 })?;
                 return Ok(PseudoClass::Lang { languages });
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"dir") {
-                break 'pseudo_class PseudoClass::Dir {
-                    direction: Direction::parse(parser)?,
-                };
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"local")
-                && self.options.css_modules.is_some()
-            {
-                break 'pseudo_class PseudoClass::Local {
-                    selector: {
-                        let selector = Selector::parse(self, parser)?;
-                        Box::new(selector)
-                    },
-                };
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"global")
-                && self.options.css_modules.is_some()
-            {
-                break 'pseudo_class PseudoClass::Global {
-                    selector: {
-                        let selector = Selector::parse(self, parser)?;
-                        Box::new(selector)
-                    },
-                };
-            } else {
+            },
+            b"dir" => PseudoClass::Dir {
+                direction: Direction::parse(parser)?,
+            },
+            b"local" if self.options.css_modules.is_some() => PseudoClass::Local {
+                selector: Box::new(Selector::parse(self, parser)?),
+            },
+            b"global" if self.options.css_modules.is_some() => PseudoClass::Global {
+                selector: Box::new(Selector::parse(self, parser)?),
+            },
+            _ => {
                 if !strings::starts_with_char(name, b'-') {
                     self.options.warn(
                         parser.new_custom_error(
@@ -1454,29 +1438,14 @@ impl<'a> SelectorParser<'a> {
                         ),
                     );
                 }
-                // blocked_on: properties::custom (TokenList::parse_raw / TokenOrValue) un-gate.
-                // The stub `properties::custom::TokenList` is a unit struct with no `.v`;
-                // until the real module is wired, drop the unparsed args (matches the
-                // PseudoElement::CustomFunction fallback above).
-
-                {
-                    let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
-                    css::TokenListFns::parse_raw(parser, &mut args, self.options, 0)?;
-                    break 'pseudo_class PseudoClass::CustomFunction {
-                        name,
-                        arguments: TokenList { v: args },
-                    };
+                let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
+                css::TokenListFns::parse_raw(parser, &mut args, self.options, 0)?;
+                PseudoClass::CustomFunction {
+                    name,
+                    arguments: TokenList { v: args },
                 }
-                {
-                    // Consume the function body so the outer parser stays in sync.
-                    while parser.next().is_ok() {}
-                    break 'pseudo_class PseudoClass::CustomFunction {
-                        name,
-                        arguments: TokenList::default(),
-                    };
-                }
-            }
-        };
+            },
+        }};
 
         Ok(pseudo_class)
     }
@@ -2484,7 +2453,7 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
         match self {
             C::Combinator(c) => {
                 tag!(0);
-                c.hash(hasher);
+                CssHash::hash(c, hasher);
             }
             C::ExplicitAnyNamespace => tag!(1),
             C::ExplicitNoNamespace => tag!(2),
@@ -2759,10 +2728,6 @@ impl NthSelectorData {
         }
     }
 
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
-
     pub fn hash(&self, hasher: &mut Wyhash) {
         hasher.update(&(self.ty as u32).to_ne_bytes());
         hasher.update(&[self.is_function as u8]);
@@ -2904,9 +2869,6 @@ pub struct SpecificityAndFlags {
 }
 
 impl SpecificityAndFlags {
-    pub fn eql(&self, other: &Self) -> bool {
-        self == other
-    }
     pub fn has_pseudo_element(&self) -> bool {
         self.flags.contains(SelectorFlags::HAS_PSEUDO)
     }
@@ -2948,7 +2910,7 @@ pub enum NestingRequirement {
     Implicit,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr, CssHash)]
 pub enum Combinator {
     Child,        // >
     Descendant,   // space
@@ -2980,13 +2942,7 @@ pub enum Combinator {
 }
 
 impl Combinator {
-    pub fn eql(&self, rhs: &Self) -> bool {
-        *self == *rhs
-    }
-    #[inline]
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        hasher.update(&(*self as u32).to_ne_bytes());
-    }
+    // hash — via `#[derive(CssHash)]`.
 
     /// Do not call this! Use `serializer::serialize_combinator()` or
     /// `tocss_servo::to_css_combinator()` instead.
@@ -4436,5 +4392,7 @@ pub fn parse_attribute_flags(input: &mut CssParser) -> CResult<AttributeFlags> {
         Err(location.new_basic_unexpected_token_error(token))
     }
 }
+
+crate::css_eql_partialeq!(NthSelectorData, SpecificityAndFlags, Combinator);
 
 // ported from: src/css/selectors/parser.zig

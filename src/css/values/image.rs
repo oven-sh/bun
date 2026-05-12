@@ -113,7 +113,7 @@ impl Image {
         match (self, other) {
             (Image::None, Image::None) => true,
             (Image::Url(a), Image::Url(b)) => a.import_record_idx == b.import_record_idx,
-            (Image::Gradient(a), Image::Gradient(b)) => a.eql(b),
+            (Image::Gradient(a), Image::Gradient(b)) => a == b,
             (Image::ImageSet(a), Image::ImageSet(b)) => a.eql(b),
             _ => false,
         }

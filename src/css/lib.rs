@@ -11,34 +11,33 @@
 // were translated against the crate's public surface and refer to it by name.
 extern crate self as bun_css;
 
-/// ASCII case-insensitive ident dispatch — Rust port of Zig's
-/// `ComptimeStringMap.getAnyCase` / `ComptimeEnumMap.getASCIIICaseInsensitive`
-/// and rust-cssparser's `match_ignore_ascii_case!`.
+/// Case-insensitive ASCII byte-slice dispatch — the fix for Zig's
+/// `css.todo_stuff.match_ignore_ascii_case` sentinel and a drop-in port of
+/// rust-cssparser's `match_ignore_ascii_case!`.
 ///
-/// Expands to a linear `if … else if … else` chain over
-/// [`bun_core::strings::eql_case_insensitive_ascii_check_length`], so it is
-/// **runtime-identical** to every open-coded ladder it replaces (same length
-/// check + libc `strncasecmp` per arm, same short-circuit order). No new deps,
-/// no allocation, no lowercase copy.
+/// Expands to an `if / else if / else` chain over
+/// [`bun_core::strings::eql_case_insensitive_ascii_check_length`] (length-checked,
+/// ASCII-fold only, byte-wise — identical to Zig's
+/// `bun.strings.eqlCaseInsensitiveASCIIICheckLength`). The whole macro is an
+/// expression; arms may `return`, `break 'label`, or yield a value.
 ///
-/// Subject must coerce to `&[u8]`. Arms accept `|`-separated byte-literals.
-/// The `_` fallback is mandatory (preserves the explicit error path every
-/// call-site already had).
+/// Supports `|`-alternation and Rust-style `if` guards on arms; the trailing
+/// `_ =>` fallback is mandatory.
 ///
 /// ```ignore
-/// match_ignore_ascii_case! { unit, {
-///     b"deg"          => Ok(Angle::Deg(value)),
-///     b"grad"         => Ok(Angle::Grad(value)),
-///     b"dppx" | b"x"  => Ok(Resolution::Dppx(value)),
-///     _               => Err(location.new_unexpected_token_error(token)),
+/// crate::match_ignore_ascii_case! { unit, {
+///     b"deg"                       => Ok(Angle::Deg(value)),
+///     b"dppx" | b"x"               => Ok(Resolution::Dppx(value)),
+///     b"local" if mods.is_some()   => PseudoClass::Local { .. },
+///     _                            => Err(location.new_unexpected_token_error(token)),
 /// }}
 /// ```
 // TODO(port): swap body to phf when CI hasher lands.
 #[macro_export]
 macro_rules! match_ignore_ascii_case {
-    ($name:expr, { $( $($lit:literal)|+ => $arm:expr ,)* _ => $fallback:expr $(,)? }) => {{
+    ($name:expr, { $( $($lit:literal)|+ $(if $guard:expr)? => $arm:expr ,)* _ => $fallback:expr $(,)? }) => {{
         let __n: &[u8] = $name;
-        $( if $( ::bun_core::strings::eql_case_insensitive_ascii_check_length(__n, $lit) )||+ { $arm } else )* { $fallback }
+        $( if ($( ::bun_core::strings::eql_case_insensitive_ascii_check_length(__n, $lit) )||+) $(&& ($guard))? { $arm } else )* { $fallback }
     }};
 }
 
@@ -165,7 +164,7 @@ pub use generics as generic;
 pub use generics::{implement_deep_clone, implement_eql, implement_hash};
 // Same-name trait + derive macro re-export so `#[derive(bun_css::DeepClone)]`
 // (and `use bun_css::DeepClone;` at leaf sites) brings both into scope.
-pub use generics::DeepClone;
+pub use generics::{CssEql, DeepClone};
 // Keyword-enum / `union(enum)` derive macros (port of Zig's `DefineEnumProperty`
 // / `DeriveParse` / `DeriveToCss` comptime fns). The `EnumProperty` *trait* is
 // re-exported above from `css_parser`; the *derive* of the same name lives in
@@ -370,6 +369,29 @@ impl VendorPrefix {
 
     pub fn as_bits(self) -> u8 {
         self.bits()
+    }
+
+    /// Detects a leading vendor prefix on `name` (case-insensitive, ASCII) and
+    /// returns it together with the slice that follows the prefix.
+    ///
+    /// Returns `(VendorPrefix::NONE, name)` when no prefix matches. Prefix forms
+    /// are the canonical dash-terminated spellings (`-webkit-`, `-moz-`, `-o-`,
+    /// `-ms-`); callers that previously matched without the trailing dash were
+    /// only correct because their input domain was already constrained.
+    #[inline]
+    pub fn strip_from(name: &[u8]) -> (VendorPrefix, &[u8]) {
+        use bun_core::strings::starts_with_case_insensitive_ascii as has;
+        if has(name, b"-webkit-") {
+            (VendorPrefix::WEBKIT, &name[8..])
+        } else if has(name, b"-moz-") {
+            (VendorPrefix::MOZ, &name[5..])
+        } else if has(name, b"-o-") {
+            (VendorPrefix::O, &name[3..])
+        } else if has(name, b"-ms-") {
+            (VendorPrefix::MS, &name[4..])
+        } else {
+            (VendorPrefix::NONE, name)
+        }
     }
 }
 

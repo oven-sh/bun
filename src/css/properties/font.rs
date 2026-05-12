@@ -35,7 +35,6 @@ use css_values::number::{CSSNumber, CSSNumberFns};
 use css_values::percentage::{DimensionPercentage, Percentage};
 
 use bun_collections::VecExt;
-use bun_core::strings;
 
 use crate::generics::{CssEql, DeepClone};
 use css::CssResult;
@@ -62,13 +61,11 @@ impl FontWeight {
         }
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
-        if strings::eql_case_insensitive_ascii_check_length(ident, b"bolder") {
-            Ok(FontWeight::Bolder)
-        } else if strings::eql_case_insensitive_ascii_check_length(ident, b"lighter") {
-            Ok(FontWeight::Lighter)
-        } else {
-            Err(location.new_unexpected_token_error(crate::Token::Ident(ident)))
-        }
+        crate::match_ignore_ascii_case! { ident, {
+            b"bolder" => Ok(FontWeight::Bolder),
+            b"lighter" => Ok(FontWeight::Lighter),
+            _ => Err(location.new_unexpected_token_error(crate::Token::Ident(ident))),
+        }}
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
@@ -118,13 +115,11 @@ impl AbsoluteFontWeight {
         }
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
-        if strings::eql_case_insensitive_ascii_check_length(ident, b"normal") {
-            Ok(AbsoluteFontWeight::Normal)
-        } else if strings::eql_case_insensitive_ascii_check_length(ident, b"bold") {
-            Ok(AbsoluteFontWeight::Bold)
-        } else {
-            Err(location.new_unexpected_token_error(crate::Token::Ident(ident)))
-        }
+        crate::match_ignore_ascii_case! { ident, {
+            b"normal" => Ok(AbsoluteFontWeight::Normal),
+            b"bold" => Ok(AbsoluteFontWeight::Bold),
+            _ => Err(location.new_unexpected_token_error(crate::Token::Ident(ident))),
+        }}
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {

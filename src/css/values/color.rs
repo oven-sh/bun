@@ -71,10 +71,6 @@ impl RGBA {
 
     #[inline]
     pub fn from_floats(red: f32, green: f32, blue: f32, alpha: f32) -> RGBA {
-        #[inline]
-        fn clamp_unit_f32(val: f32) -> u8 {
-            (val * 255.0).round().clamp(0.0, 255.0) as u8
-        }
         RGBA {
             red: clamp_unit_f32(red),
             green: clamp_unit_f32(green),
@@ -113,22 +109,26 @@ impl RGBA {
     }
 }
 
+/// Convert a unit-interval f32 (nominally 0.0..=1.0) to a u8 in 0..=255.
+///
+/// Whilst scaling by 256 and flooring would provide an equal distribution of
+/// integers to percentage inputs, this is not what Gecko does so we instead
+/// multiply by 255 and round (adding 0.5 and flooring is equivalent to rounding).
+///
+/// Chrome does something similar for the alpha value, but not the rgb values.
+///
+/// See <https://bugzilla.mozilla.org/show_bug.cgi?id=1340484>
+///
+/// Clamping to 256 and rounding after would let 1.0 map to 256, and
+/// `256.0_f32 as u8` saturates (historically UB):
+/// <https://github.com/rust-lang/rust/issues/10184>
+///
+/// NaN → 0 (clamp passes NaN through; `NaN as u8` saturates to 0).
+///
+/// NOTE: this *rounds*. Do **not** use for thumbhash, whose spec truncates
+/// (`thumbhash.zig:256` `@intFromFloat`).
 #[inline]
-fn clamp_unit_f32(val: f32) -> u8 {
-    // Whilst scaling by 256 and flooring would provide
-    // an equal distribution of integers to percentage inputs,
-    // this is not what Gecko does so we instead multiply by 255
-    // and round (adding 0.5 and flooring is equivalent to rounding)
-    //
-    // Chrome does something similar for the alpha value, but not
-    // the rgb values.
-    //
-    // See https://bugzilla.mozilla.org/show_bug.cgi?id=1340484
-    //
-    // Clamping to 256 and rounding after would let 1.0 map to 256, and
-    // `256.0_f32 as u8` is undefined behavior:
-    //
-    // https://github.com/rust-lang/rust/issues/10184
+pub fn clamp_unit_f32(val: f32) -> u8 {
     (val * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
@@ -163,6 +163,92 @@ pub enum FloatColor {
     Hsl(HSL),
     Hwb(HWB),
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Variant dispatch — single source of truth for (Variant ↔ Payload type ↔
+// css-name ↔ hash-ordinal). Every match-over-all-variants in this file is
+// driven from the three `impl_variant_dispatch!` invocations below; do NOT
+// hand-roll a new copy.
+//
+// Mirrors Zig's `switch (color.*) { inline else => |*v| v.into(T) }` shape
+// (color.zig:3213 `ColorspaceConversions`) which the original Rust port
+// regressed into 14 textual copies inside `define_colorspace!`.
+//
+// ROW ORDER IS LOAD-BEARING: ordinals feed `CssColor::hash` (Wyhash).
+// css-name is NOT derivable from the ident: `XyzD65` serializes as `"xyz"`
+// (Safari-15 compat), and `FloatColor::Rgb`'s payload type is `SRGB`.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Marker for any `T` that has the full `From<_>` lattice over every concrete
+/// colorspace payload (every `define_colorspace!` type does, via the handwritten
+/// + generated `From` impls). Lets `convert_to::<T>()` dispatch `v.into()`
+/// uniformly without re-stamping the match per `T`.
+pub trait FromAnyColorspace:
+    From<LAB> + From<LCH> + From<OKLAB> + From<OKLCH>
+    + From<SRGB> + From<SRGBLinear> + From<P3> + From<A98>
+    + From<ProPhoto> + From<Rec2020> + From<XYZd50> + From<XYZd65>
+    + From<HSL> + From<HWB>
+{
+}
+impl<T> FromAnyColorspace for T where
+    T: From<LAB> + From<LCH> + From<OKLAB> + From<OKLCH>
+        + From<SRGB> + From<SRGBLinear> + From<P3> + From<A98>
+        + From<ProPhoto> + From<Rec2020> + From<XYZd50> + From<XYZd65>
+        + From<HSL> + From<HWB>
+{
+}
+
+macro_rules! impl_variant_dispatch {
+    ($Enum:ident { $( $ord:literal => $Var:ident($Payload:ty) = $name:literal ),+ $(,)? }) => {
+        impl $Enum {
+            /// `switch (e) { inline else => |v| v.into(T) }`
+            #[inline]
+            pub fn convert_to<T: FromAnyColorspace>(&self) -> T {
+                match *self { $( $Enum::$Var(v) => v.into(), )+ }
+            }
+            #[inline]
+            pub fn payload_type_id(&self) -> core::any::TypeId {
+                match *self { $( $Enum::$Var(_) => core::any::TypeId::of::<$Payload>(), )+ }
+            }
+            /// Stable per-enum ordinal — feeds `CssColor::hash`. Do NOT reorder rows.
+            #[inline]
+            pub fn ordinal(&self) -> u32 {
+                match *self { $( $Enum::$Var(_) => $ord, )+ }
+            }
+            #[inline]
+            pub fn components(&self) -> (f32, f32, f32, f32) {
+                match *self { $( $Enum::$Var(v) => Colorspace::components(&v), )+ }
+            }
+            #[inline]
+            pub fn css_name(&self) -> &'static str {
+                match *self { $( $Enum::$Var(_) => $name, )+ }
+            }
+        }
+    };
+}
+
+impl_variant_dispatch! { LABColor {
+    0 => Lab(LAB)     = "lab",
+    1 => Lch(LCH)     = "lch",
+    2 => Oklab(OKLAB) = "oklab",
+    3 => Oklch(OKLCH) = "oklch",
+}}
+impl_variant_dispatch! { PredefinedColor {
+    0 => Srgb(SRGB)             = "srgb",
+    1 => SrgbLinear(SRGBLinear) = "srgb-linear",
+    2 => DisplayP3(P3)          = "display-p3",
+    3 => A98(A98)               = "a98-rgb",
+    4 => Prophoto(ProPhoto)     = "prophoto-rgb",
+    5 => Rec2020(Rec2020)       = "rec2020",
+    6 => XyzD50(XYZd50)         = "xyz-d50",
+    // "xyz" has better compatibility (Safari 15) than "xyz-d65", and it is shorter.
+    7 => XyzD65(XYZd65)         = "xyz",
+}}
+impl_variant_dispatch! { FloatColor {
+    0 => Rgb(SRGB) = "rgb",
+    1 => Hsl(HSL)  = "hsl",
+    2 => Hwb(HWB)  = "hwb",
+}}
 
 /// A CSS [system color](https://drafts.csswg.org/css-color/#css-system-colors) keyword.
 /// *NOTE* these are intentionally in flat case
@@ -375,8 +461,7 @@ impl CssColor {
 
                             // Try first with two decimal places, then with three.
                             let mut rounded_alpha = (color.alpha_f32() * 100.0).round() / 100.0;
-                            let clamped: u8 =
-                                (rounded_alpha * 255.0).round().clamp(0.0, 255.0) as u8;
+                            let clamped = clamp_unit_f32(rounded_alpha);
                             if clamped != color.alpha {
                                 rounded_alpha = (color.alpha_f32() * 1000.0).round() / 1000.0;
                             }
@@ -400,20 +485,10 @@ impl CssColor {
                 }
                 Ok(())
             }
-            CssColor::Lab(lab) => match **lab {
-                LABColor::Lab(ref lab) => {
-                    write_components("lab", lab.l, lab.a, lab.b, lab.alpha, dest)
-                }
-                LABColor::Lch(ref lch) => {
-                    write_components("lch", lch.l, lch.c, lch.h, lch.alpha, dest)
-                }
-                LABColor::Oklab(ref oklab) => {
-                    write_components("oklab", oklab.l, oklab.a, oklab.b, oklab.alpha, dest)
-                }
-                LABColor::Oklch(ref oklch) => {
-                    write_components("oklch", oklch.l, oklch.c, oklch.h, oklch.alpha, dest)
-                }
-            },
+            CssColor::Lab(lab) => {
+                let (a, b, c, alpha) = lab.components();
+                write_components(lab.css_name(), a, b, c, alpha, dest)
+            }
             CssColor::Predefined(predefined) => write_predefined(predefined, dest),
             CssColor::Float(float) => {
                 // Serialize as hex.
@@ -614,11 +689,6 @@ impl CssColor {
         self.clone()
     }
 
-    #[inline]
-    pub fn eql(&self, other: &CssColor) -> bool {
-        self == other
-    }
-
     pub fn to_light_dark(&self) -> CssColor {
         match self {
             CssColor::LightDark { .. } => self.clone(),
@@ -742,29 +812,9 @@ impl CssColor {
             ));
             match color {
                 CssColor::Rgba(_) => Some(TypeId::of::<T>() == TypeId::of::<RGBA>()),
-                CssColor::Lab(lab) => Some(match **lab {
-                    LABColor::Lab(_) => TypeId::of::<T>() == TypeId::of::<LAB>(),
-                    LABColor::Lch(_) => TypeId::of::<T>() == TypeId::of::<LCH>(),
-                    LABColor::Oklab(_) => TypeId::of::<T>() == TypeId::of::<OKLAB>(),
-                    LABColor::Oklch(_) => TypeId::of::<T>() == TypeId::of::<OKLCH>(),
-                }),
-                CssColor::Predefined(pre) => Some(match **pre {
-                    PredefinedColor::Srgb(_) => TypeId::of::<T>() == TypeId::of::<SRGB>(),
-                    PredefinedColor::SrgbLinear(_) => {
-                        TypeId::of::<T>() == TypeId::of::<SRGBLinear>()
-                    }
-                    PredefinedColor::DisplayP3(_) => TypeId::of::<T>() == TypeId::of::<P3>(),
-                    PredefinedColor::A98(_) => TypeId::of::<T>() == TypeId::of::<A98>(),
-                    PredefinedColor::Prophoto(_) => TypeId::of::<T>() == TypeId::of::<ProPhoto>(),
-                    PredefinedColor::Rec2020(_) => TypeId::of::<T>() == TypeId::of::<Rec2020>(),
-                    PredefinedColor::XyzD50(_) => TypeId::of::<T>() == TypeId::of::<XYZd50>(),
-                    PredefinedColor::XyzD65(_) => TypeId::of::<T>() == TypeId::of::<XYZd65>(),
-                }),
-                CssColor::Float(f) => Some(match **f {
-                    FloatColor::Rgb(_) => TypeId::of::<T>() == TypeId::of::<SRGB>(),
-                    FloatColor::Hsl(_) => TypeId::of::<T>() == TypeId::of::<HSL>(),
-                    FloatColor::Hwb(_) => TypeId::of::<T>() == TypeId::of::<HWB>(),
-                }),
+                CssColor::Lab(lab) => Some(TypeId::of::<T>() == lab.payload_type_id()),
+                CssColor::Predefined(pre) => Some(TypeId::of::<T>() == pre.payload_type_id()),
+                CssColor::Float(f) => Some(TypeId::of::<T>() == f.payload_type_id()),
                 // System colors cannot be converted to specific color spaces at parse time
                 CssColor::System(_) => None,
                 // We checked these above
@@ -849,33 +899,15 @@ impl CssColor {
             }
             CssColor::Lab(lab) => {
                 hasher.update(&2u32.to_ne_bytes());
-                match **lab {
-                    LABColor::Lab(v) => hash_components(hasher, 0, v.components()),
-                    LABColor::Lch(v) => hash_components(hasher, 1, v.components()),
-                    LABColor::Oklab(v) => hash_components(hasher, 2, v.components()),
-                    LABColor::Oklch(v) => hash_components(hasher, 3, v.components()),
-                }
+                hash_components(hasher, lab.ordinal(), lab.components());
             }
             CssColor::Predefined(p) => {
                 hasher.update(&3u32.to_ne_bytes());
-                match **p {
-                    PredefinedColor::Srgb(v) => hash_components(hasher, 0, v.components()),
-                    PredefinedColor::SrgbLinear(v) => hash_components(hasher, 1, v.components()),
-                    PredefinedColor::DisplayP3(v) => hash_components(hasher, 2, v.components()),
-                    PredefinedColor::A98(v) => hash_components(hasher, 3, v.components()),
-                    PredefinedColor::Prophoto(v) => hash_components(hasher, 4, v.components()),
-                    PredefinedColor::Rec2020(v) => hash_components(hasher, 5, v.components()),
-                    PredefinedColor::XyzD50(v) => hash_components(hasher, 6, v.components()),
-                    PredefinedColor::XyzD65(v) => hash_components(hasher, 7, v.components()),
-                }
+                hash_components(hasher, p.ordinal(), p.components());
             }
             CssColor::Float(fl) => {
                 hasher.update(&4u32.to_ne_bytes());
-                match **fl {
-                    FloatColor::Rgb(v) => hash_components(hasher, 0, v.components()),
-                    FloatColor::Hsl(v) => hash_components(hasher, 1, v.components()),
-                    FloatColor::Hwb(v) => hash_components(hasher, 2, v.components()),
-                }
+                hash_components(hasher, fl.ordinal(), fl.components());
             }
             CssColor::LightDark { light, dark } => {
                 hasher.update(&5u32.to_ne_bytes());
@@ -971,7 +1003,7 @@ use super::color_generated::generated_color_conversions as _;
 /// Trait every colorspace implements. The Zig used `@field(this, "x")` over the
 /// first three struct fields plus `alpha`; here we expose them by index.
 /// `// TODO(port): Phase B may want to derive this with a proc-macro.`
-pub trait Colorspace: Copy + Sized {
+pub trait Colorspace: Copy + Sized + FromAnyColorspace {
     const CHANNEL_NAMES: (&'static [u8], &'static [u8], &'static [u8]);
     const CHANNEL_TYPES: (ChannelType, ChannelType, ChannelType);
 
@@ -1014,9 +1046,22 @@ pub trait Colorspace: Copy + Sized {
         resolved
     }
 
-    fn from_lab_color(color: &LABColor) -> Self;
-    fn from_predefined_color(color: &PredefinedColor) -> Self;
-    fn from_float_color(color: &FloatColor) -> Self;
+    #[inline]
+    fn from_lab_color(c: &LABColor) -> Self {
+        c.convert_to()
+    }
+    #[inline]
+    fn from_predefined_color(c: &PredefinedColor) -> Self {
+        c.convert_to()
+    }
+    #[inline]
+    fn from_float_color(c: &FloatColor) -> Self {
+        c.convert_to()
+    }
+    #[inline]
+    fn from_rgba(rgba: &RGBA) -> Self {
+        rgba.into_srgb().into()
+    }
 
     fn try_from_css_color(color: &CssColor) -> Option<Self> {
         match color {
@@ -1029,8 +1074,6 @@ pub trait Colorspace: Copy + Sized {
             CssColor::System(_) => None,
         }
     }
-
-    fn from_rgba(rgba: &RGBA) -> Self;
 
     fn into_css_color(self) -> CssColor;
 }
@@ -1095,59 +1138,39 @@ pub fn parse_color_function(
 ) -> CssResult<CssColor> {
     let mut parser = ComponentParser::new(true);
 
-    // todo_stuff.match_ignore_ascii_case
-    use strings::eql_case_insensitive_ascii_check_length as eq_ci;
-    if eq_ci(function, b"lab") {
-        return parse_lab::<LAB>(input, &mut parser, |l, a, b, alpha| {
+    crate::match_ignore_ascii_case! { function, {
+        b"lab" => parse_lab::<LAB>(input, &mut parser, |l, a, b, alpha| {
             LABColor::Lab(LAB { l, a, b, alpha })
-        });
-    }
-    if eq_ci(function, b"oklab") {
-        return parse_lab::<OKLAB>(input, &mut parser, |l, a, b, alpha| {
+        }),
+        b"oklab" => parse_lab::<OKLAB>(input, &mut parser, |l, a, b, alpha| {
             LABColor::Oklab(OKLAB { l, a, b, alpha })
-        });
-    }
-    if eq_ci(function, b"lch") {
-        return parse_lch::<LCH>(input, &mut parser, |l, c, h, alpha| {
+        }),
+        b"lch" => parse_lch::<LCH>(input, &mut parser, |l, c, h, alpha| {
             LABColor::Lch(LCH { l, c, h, alpha })
-        });
-    }
-    if eq_ci(function, b"oklch") {
-        return parse_lch::<OKLCH>(input, &mut parser, |l, c, h, alpha| {
+        }),
+        b"oklch" => parse_lch::<OKLCH>(input, &mut parser, |l, c, h, alpha| {
             LABColor::Oklch(OKLCH { l, c, h, alpha })
-        });
-    }
-    if eq_ci(function, b"color") {
-        return parse_predefined(input, &mut parser);
-    }
-    if eq_ci(function, b"hsl") || eq_ci(function, b"hsla") {
-        return parse_hsl_hwb::<HSL>(input, &mut parser, true, |h, s, l, a| {
+        }),
+        b"color" => parse_predefined(input, &mut parser),
+        b"hsl" | b"hsla" => parse_hsl_hwb::<HSL>(input, &mut parser, true, |h, s, l, a| {
             let hsl = HSL { h, s, l, alpha: a };
             if !h.is_nan() && !s.is_nan() && !l.is_nan() && !a.is_nan() {
                 CssColor::Rgba(RGBA::from(hsl))
             } else {
                 CssColor::Float(Box::new(FloatColor::Hsl(hsl)))
             }
-        });
-    }
-    if eq_ci(function, b"hwb") {
-        return parse_hsl_hwb::<HWB>(input, &mut parser, false, |h, w, b, a| {
+        }),
+        b"hwb" => parse_hsl_hwb::<HWB>(input, &mut parser, false, |h, w, b, a| {
             let hwb = HWB { h, w, b, alpha: a };
             if !h.is_nan() && !w.is_nan() && !b.is_nan() && !a.is_nan() {
                 CssColor::Rgba(RGBA::from(hwb))
             } else {
                 CssColor::Float(Box::new(FloatColor::Hwb(hwb)))
             }
-        });
-    }
-    if eq_ci(function, b"rgb") || eq_ci(function, b"rgba") {
-        return parse_rgb(input, &mut parser);
-    }
-    if eq_ci(function, b"color-mix") {
-        return input.parse_nested_block(|i| parse_color_mix(i));
-    }
-    if eq_ci(function, b"light-dark") {
-        return input.parse_nested_block(|i| {
+        }),
+        b"rgb" | b"rgba" => parse_rgb(input, &mut parser),
+        b"color-mix" => input.parse_nested_block(|i| parse_color_mix(i)),
+        b"light-dark" => input.parse_nested_block(|i| {
             let light = match CssColor::parse(i)? {
                 CssColor::LightDark { light, dark } => take_light_free_dark(light, dark),
                 v => Box::new(v),
@@ -1158,9 +1181,9 @@ pub fn parse_color_function(
                 v => Box::new(v),
             };
             Ok(CssColor::LightDark { light, dark })
-        });
-    }
-    Err(location.new_unexpected_token_error(css::Token::Ident(function)))
+        }),
+        _ => Err(location.new_unexpected_token_error(css::Token::Ident(function))),
+    }}
 }
 
 pub fn parse_rgb_components(
@@ -1585,36 +1608,6 @@ macro_rules! define_colorspace {
                 (&mut self.$a, &mut self.$b, &mut self.$c, &mut self.alpha)
             }
 
-            fn from_lab_color(color: &LABColor) -> Self {
-                match *color {
-                    LABColor::Lab(v) => v.into(),
-                    LABColor::Lch(v) => v.into(),
-                    LABColor::Oklab(v) => v.into(),
-                    LABColor::Oklch(v) => v.into(),
-                }
-            }
-            fn from_predefined_color(color: &PredefinedColor) -> Self {
-                match *color {
-                    PredefinedColor::Srgb(v) => v.into(),
-                    PredefinedColor::SrgbLinear(v) => v.into(),
-                    PredefinedColor::DisplayP3(v) => v.into(),
-                    PredefinedColor::A98(v) => v.into(),
-                    PredefinedColor::Prophoto(v) => v.into(),
-                    PredefinedColor::Rec2020(v) => v.into(),
-                    PredefinedColor::XyzD50(v) => v.into(),
-                    PredefinedColor::XyzD65(v) => v.into(),
-                }
-            }
-            fn from_float_color(color: &FloatColor) -> Self {
-                match *color {
-                    FloatColor::Rgb(v) => v.into(),
-                    FloatColor::Hsl(v) => v.into(),
-                    FloatColor::Hwb(v) => v.into(),
-                }
-            }
-            fn from_rgba(rgba: &RGBA) -> Self {
-                rgba.into_srgb().into()
-            }
             fn into_css_color(self) -> CssColor {
                 ($into_css)(&self)
             }
@@ -2397,7 +2390,6 @@ pub fn parse_predefined_relative(
     colorspace: &'static [u8],
     from_: Option<&CssColor>,
 ) -> CssResult<CssColor> {
-    use strings::eql_case_insensitive_ascii_check_length as eq_ci;
     let location = input.current_source_location();
     if let Some(from) = from_ {
         macro_rules! set_from {
@@ -2410,26 +2402,17 @@ pub fn parse_predefined_relative(
                 }
             }};
         }
-        // todo_stuff.match_ignore_ascii_case
-        parser.from = Some(if eq_ci(b"srgb", colorspace) {
-            set_from!(SRGB)
-        } else if eq_ci(b"srgb-linear", colorspace) {
-            set_from!(SRGBLinear)
-        } else if eq_ci(b"display-p3", colorspace) {
-            set_from!(P3)
-        } else if eq_ci(b"a98-rgb", colorspace) {
-            set_from!(A98)
-        } else if eq_ci(b"prophoto-rgb", colorspace) {
-            set_from!(ProPhoto)
-        } else if eq_ci(b"rec2020", colorspace) {
-            set_from!(Rec2020)
-        } else if eq_ci(b"xyz-d50", colorspace) {
-            set_from!(XYZd50)
-        } else if eq_ci(b"xyz", colorspace) || eq_ci(b"xyz-d65", colorspace) {
-            set_from!(XYZd65)
-        } else {
-            return Err(location.new_unexpected_token_error(css::Token::Ident(colorspace)));
-        });
+        parser.from = Some(crate::match_ignore_ascii_case! { colorspace, {
+            b"srgb" => set_from!(SRGB),
+            b"srgb-linear" => set_from!(SRGBLinear),
+            b"display-p3" => set_from!(P3),
+            b"a98-rgb" => set_from!(A98),
+            b"prophoto-rgb" => set_from!(ProPhoto),
+            b"rec2020" => set_from!(Rec2020),
+            b"xyz-d50" => set_from!(XYZd50),
+            b"xyz" | b"xyz-d65" => set_from!(XYZd65),
+            _ => return Err(location.new_unexpected_token_error(css::Token::Ident(colorspace))),
+        }});
     }
 
     // Out of gamut values should not be clamped, i.e. values < 0 or > 1 should be preserved.
@@ -2439,75 +2422,18 @@ pub fn parse_predefined_relative(
     let c = input.try_parse(|i| parse_number_or_percentage(i, parser))?;
     let alpha = parse_alpha(input, parser)?;
 
-    // TODO(port): phf custom hasher (case-insensitive). Zig used ComptimeEnumMap.getAnyCase.
-    let predefined: PredefinedColor = 'predefined: {
-        if eq_ci(b"srgb", colorspace) {
-            break 'predefined PredefinedColor::Srgb(SRGB {
-                r: a,
-                g: b,
-                b: c,
-                alpha,
-            });
-        }
-        if eq_ci(b"srgb-linear", colorspace) {
-            break 'predefined PredefinedColor::SrgbLinear(SRGBLinear {
-                r: a,
-                g: b,
-                b: c,
-                alpha,
-            });
-        }
-        if eq_ci(b"display-p3", colorspace) {
-            break 'predefined PredefinedColor::DisplayP3(P3 {
-                r: a,
-                g: b,
-                b: c,
-                alpha,
-            });
-        }
+    let predefined: PredefinedColor = crate::match_ignore_ascii_case! { colorspace, {
+        b"srgb" => PredefinedColor::Srgb(SRGB { r: a, g: b, b: c, alpha }),
+        b"srgb-linear" => PredefinedColor::SrgbLinear(SRGBLinear { r: a, g: b, b: c, alpha }),
+        b"display-p3" => PredefinedColor::DisplayP3(P3 { r: a, g: b, b: c, alpha }),
         // PORT NOTE: Zig has "a99-rgb" here (typo?); mirrored for behavioral parity.
-        if eq_ci(b"a99-rgb", colorspace) {
-            break 'predefined PredefinedColor::A98(A98 {
-                r: a,
-                g: b,
-                b: c,
-                alpha,
-            });
-        }
-        if eq_ci(b"prophoto-rgb", colorspace) {
-            break 'predefined PredefinedColor::Prophoto(ProPhoto {
-                r: a,
-                g: b,
-                b: c,
-                alpha,
-            });
-        }
-        if eq_ci(b"rec2020", colorspace) {
-            break 'predefined PredefinedColor::Rec2020(Rec2020 {
-                r: a,
-                g: b,
-                b: c,
-                alpha,
-            });
-        }
-        if eq_ci(b"xyz-d50", colorspace) {
-            break 'predefined PredefinedColor::XyzD50(XYZd50 {
-                x: a,
-                y: b,
-                z: c,
-                alpha,
-            });
-        }
-        if eq_ci(b"xyz-d65", colorspace) || eq_ci(b"xyz", colorspace) {
-            break 'predefined PredefinedColor::XyzD65(XYZd65 {
-                x: a,
-                y: b,
-                z: c,
-                alpha,
-            });
-        }
-        return Err(location.new_unexpected_token_error(css::Token::Ident(colorspace)));
-    };
+        b"a99-rgb" => PredefinedColor::A98(A98 { r: a, g: b, b: c, alpha }),
+        b"prophoto-rgb" => PredefinedColor::Prophoto(ProPhoto { r: a, g: b, b: c, alpha }),
+        b"rec2020" => PredefinedColor::Rec2020(Rec2020 { r: a, g: b, b: c, alpha }),
+        b"xyz-d50" => PredefinedColor::XyzD50(XYZd50 { x: a, y: b, z: c, alpha }),
+        b"xyz" | b"xyz-d65" => PredefinedColor::XyzD65(XYZd65 { x: a, y: b, z: c, alpha }),
+        _ => return Err(location.new_unexpected_token_error(css::Token::Ident(colorspace))),
+    }};
 
     Ok(CssColor::Predefined(Box::new(predefined)))
 }
@@ -2788,17 +2714,8 @@ pub fn write_component(c: f32, dest: &mut Printer) -> Result<(), PrintErr> {
 }
 
 pub fn write_predefined(predefined: &PredefinedColor, dest: &mut Printer) -> Result<(), PrintErr> {
-    let (name, a, b, c, alpha) = match *predefined {
-        PredefinedColor::Srgb(ref rgb) => ("srgb", rgb.r, rgb.g, rgb.b, rgb.alpha),
-        PredefinedColor::SrgbLinear(ref rgb) => ("srgb-linear", rgb.r, rgb.g, rgb.b, rgb.alpha),
-        PredefinedColor::DisplayP3(ref rgb) => ("display-p3", rgb.r, rgb.g, rgb.b, rgb.alpha),
-        PredefinedColor::A98(ref rgb) => ("a98-rgb", rgb.r, rgb.g, rgb.b, rgb.alpha),
-        PredefinedColor::Prophoto(ref rgb) => ("prophoto-rgb", rgb.r, rgb.g, rgb.b, rgb.alpha),
-        PredefinedColor::Rec2020(ref rgb) => ("rec2020", rgb.r, rgb.g, rgb.b, rgb.alpha),
-        PredefinedColor::XyzD50(ref xyz) => ("xyz-d50", xyz.x, xyz.y, xyz.z, xyz.alpha),
-        // "xyz" has better compatibility (Safari 15) than "xyz-d65", and it is shorter.
-        PredefinedColor::XyzD65(ref xyz) => ("xyz", xyz.x, xyz.y, xyz.z, xyz.alpha),
-    };
+    let (a, b, c, alpha) = predefined.components();
+    let name = predefined.css_name();
 
     dest.write_str("color(")?;
     dest.write_str(name)?;
@@ -3783,5 +3700,7 @@ pub enum ConvertTo {
 // `impl From<Src> for Dst` blocks above plus `color_generated.rs`. Phase B
 // must ensure every `T: From<U>` pair the macro requires actually exists
 // (the generated file fills the transitive gaps).
+
+crate::css_eql_partialeq!(CssColor);
 
 // ported from: src/css/values/color.zig

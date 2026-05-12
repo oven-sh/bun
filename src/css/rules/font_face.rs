@@ -345,24 +345,11 @@ impl UnicodeRange {
     }
 
     fn consume_hex(text: &mut &[u8]) -> (u32, usize) {
-        use bun_core::strings;
-        let mut value: u32 = 0;
-        let mut digits: usize = 0;
-        while let Some(result) = strings::split_first(*text) {
-            if let Some(digit_value) = Self::to_hex_digit(result.first) {
-                value = value * 0x10 + digit_value;
-                digits += 1;
-                *text = result.rest;
-            } else {
-                break;
-            }
-        }
-        (value, digits)
-    }
-
-    #[inline]
-    fn to_hex_digit(b: u8) -> Option<u32> {
-        bun_core::fmt::hex_digit_value(b).map(u32::from)
+        // Cap at 8: caller validates `<= 6` post-hoc; the unbounded Zig original
+        // panic-overflows u32 in debug on >8 hex chars (malformed input).
+        let (value, n) = bun_core::fmt::parse_hex_prefix(text, 8);
+        *text = &text[n..];
+        (value, n)
     }
 }
 
@@ -462,26 +449,17 @@ pub enum FontFormat {
 
 impl FontFormat {
     pub fn parse(input: &mut css::Parser) -> css::Result<FontFormat> {
-        use bun_core::strings;
         let s = input.expect_ident_or_string_cloned()?;
-
-        if strings::eql_case_insensitive_ascii_check_length(b"woff", s) {
-            Ok(FontFormat::Woff)
-        } else if strings::eql_case_insensitive_ascii_check_length(b"woff2", s) {
-            Ok(FontFormat::Woff2)
-        } else if strings::eql_case_insensitive_ascii_check_length(b"truetype", s) {
-            Ok(FontFormat::Truetype)
-        } else if strings::eql_case_insensitive_ascii_check_length(b"opentype", s) {
-            Ok(FontFormat::Opentype)
-        } else if strings::eql_case_insensitive_ascii_check_length(b"embedded-opentype", s) {
-            Ok(FontFormat::EmbeddedOpentype)
-        } else if strings::eql_case_insensitive_ascii_check_length(b"collection", s) {
-            Ok(FontFormat::Collection)
-        } else if strings::eql_case_insensitive_ascii_check_length(b"svg", s) {
-            Ok(FontFormat::Svg)
-        } else {
-            Ok(FontFormat::String(s))
-        }
+        Ok(crate::match_ignore_ascii_case! { s, {
+            b"woff" => FontFormat::Woff,
+            b"woff2" => FontFormat::Woff2,
+            b"truetype" => FontFormat::Truetype,
+            b"opentype" => FontFormat::Opentype,
+            b"embedded-opentype" => FontFormat::EmbeddedOpentype,
+            b"collection" => FontFormat::Collection,
+            b"svg" => FontFormat::Svg,
+            _ => FontFormat::String(s),
+        }})
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -763,7 +741,6 @@ pub struct FontFaceDeclarationParser;
 const _: () = {
     use crate::css_properties::custom::{CustomProperty, CustomPropertyName};
     use crate::css_properties::font::{FontFamily, FontStretch, FontWeight};
-    use bun_core::strings;
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };
@@ -830,44 +807,37 @@ const _: () = {
             input: &mut Parser,
         ) -> Result<Self::Declaration> {
             let state = input.state();
-            // todo_stuff.match_ignore_ascii_case
-            if strings::eql_case_insensitive_ascii_check_length(name, b"src") {
-                if let Ok(sources) = input.parse_comma_separated(Source::parse) {
+            crate::match_ignore_ascii_case! { name, {
+                b"src" => if let Ok(sources) = input.parse_comma_separated(Source::parse) {
                     return Ok(FontFaceProperty::Source(sources));
-                }
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"font-family") {
-                if let Ok(c) = FontFamily::parse(input) {
+                },
+                b"font-family" => if let Ok(c) = FontFamily::parse(input) {
                     if input.expect_exhausted().is_ok() {
                         return Ok(FontFaceProperty::FontFamily(c));
                     }
-                }
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"font-weight") {
-                if let Ok(c) = Size2D::<FontWeight>::parse(input) {
+                },
+                b"font-weight" => if let Ok(c) = Size2D::<FontWeight>::parse(input) {
                     if input.expect_exhausted().is_ok() {
                         return Ok(FontFaceProperty::FontWeight(c));
                     }
-                }
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"font-style") {
-                if let Ok(c) = FontStyle::parse(input) {
+                },
+                b"font-style" => if let Ok(c) = FontStyle::parse(input) {
                     if input.expect_exhausted().is_ok() {
                         return Ok(FontFaceProperty::FontStyle(c));
                     }
-                }
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"font-stretch") {
-                if let Ok(c) = Size2D::<FontStretch>::parse(input) {
+                },
+                b"font-stretch" => if let Ok(c) = Size2D::<FontStretch>::parse(input) {
                     if input.expect_exhausted().is_ok() {
                         return Ok(FontFaceProperty::FontStretch(c));
                     }
-                }
-            } else if strings::eql_case_insensitive_ascii_check_length(name, b"unicode-range") {
-                if let Ok(c) = input.parse_list(UnicodeRange::parse) {
+                },
+                b"unicode-range" => if let Ok(c) = input.parse_list(UnicodeRange::parse) {
                     if input.expect_exhausted().is_ok() {
                         return Ok(FontFaceProperty::UnicodeRange(c));
                     }
-                }
-            } else {
-                //
-            }
+                },
+                _ => {},
+            }}
 
             input.reset(&state);
             let opts = ParserOptions::default(None);

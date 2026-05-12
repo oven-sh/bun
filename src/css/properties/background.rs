@@ -14,7 +14,6 @@ use crate::{
 };
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-use bun_core::strings;
 
 /// A value for the [background](https://www.w3.org/TR/css-backgrounds-3/#background) shorthand property.
 // PORT NOTE: Clone derive gated on `Image` gaining `Clone` upstream.
@@ -290,10 +289,6 @@ pub struct ExplicitBackgroundSize {
 }
 
 impl ExplicitBackgroundSize {
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
-
     #[inline]
     pub fn deep_clone(&self, _arena: &Bump) -> Self {
         self.clone()
@@ -315,13 +310,11 @@ impl BackgroundSize {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
 
-        if strings::eql_case_insensitive_ascii_check_length(ident, b"cover") {
-            Ok(BackgroundSize::Cover)
-        } else if strings::eql_case_insensitive_ascii_check_length(ident, b"contain") {
-            Ok(BackgroundSize::Contain)
-        } else {
-            Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
-        }
+        crate::match_ignore_ascii_case! { ident, {
+            b"cover" => Ok(BackgroundSize::Cover),
+            b"contain" => Ok(BackgroundSize::Contain),
+            _ => Err(location.new_unexpected_token_error(css::Token::Ident(ident))),
+        }}
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -337,10 +330,6 @@ impl BackgroundSize {
                 Ok(())
             }
         }
-    }
-
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
     }
 
     pub fn default() -> Self {
@@ -379,10 +368,6 @@ impl BackgroundPosition {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let pos = self.into_position();
         pos.to_css(dest)
-    }
-
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
     }
 
     pub fn default() -> Self {
@@ -427,19 +412,17 @@ impl BackgroundRepeat {
         let state = input.state();
         let ident = input.expect_ident_cloned()?;
 
-        if strings::eql_case_insensitive_ascii_check_length(ident, b"repeat-x") {
-            return Ok(BackgroundRepeat {
+        crate::match_ignore_ascii_case! { ident, {
+            b"repeat-x" => return Ok(BackgroundRepeat {
                 x: BackgroundRepeatKeyword::Repeat,
                 y: BackgroundRepeatKeyword::NoRepeat,
-            });
-        } else if strings::eql_case_insensitive_ascii_check_length(ident, b"repeat-y") {
-            return Ok(BackgroundRepeat {
+            }),
+            b"repeat-y" => return Ok(BackgroundRepeat {
                 x: BackgroundRepeatKeyword::NoRepeat,
                 y: BackgroundRepeatKeyword::Repeat,
-            });
-        }
-
-        input.reset(&state);
+            }),
+            _ => input.reset(&state),
+        }}
 
         let x = BackgroundRepeatKeyword::parse(input)?;
         let y = input.try_parse(BackgroundRepeatKeyword::parse).unwrap_or(x);
@@ -464,14 +447,17 @@ impl BackgroundRepeat {
         }
     }
 
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
-
     pub fn deep_clone(&self, _arena: &Bump) -> Self {
         *self
     }
 }
+
+crate::css_eql_partialeq!(
+    ExplicitBackgroundSize,
+    BackgroundSize,
+    BackgroundPosition,
+    BackgroundRepeat,
+);
 
 /// A [`<repeat-style>`](https://www.w3.org/TR/css-backgrounds-3/#typedef-repeat-style) value,
 /// used within the `background-repeat` property to represent how a background image is repeated

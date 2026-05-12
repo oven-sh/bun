@@ -126,11 +126,6 @@ impl Default for TrackSize {
 }
 
 impl TrackSize {
-    pub fn eql(&self, other: &Self) -> bool {
-        // TODO(port): css.implementEql(@This()) — comptime field-iteration equality → #[derive(PartialEq)]
-        self == other
-    }
-
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         if let Some(breadth) = input.try_parse(TrackBreadth::parse).ok() {
             return Ok(TrackSize::TrackBreadth(breadth));
@@ -187,7 +182,7 @@ impl TrackSizeList {
             res.append(size);
         }
 
-        if res.len() == 1 && res.at(0).eql(&TrackSize::default()) {
+        if res.len() == 1 && *res.at(0) == TrackSize::default() {
             res.clear_retaining_capacity();
         }
 
@@ -424,11 +419,6 @@ pub enum RepeatCount {
 }
 
 impl RepeatCount {
-    pub fn eql(&self, other: &Self) -> bool {
-        // TODO(port): css.implementEql(@This()) → #[derive(PartialEq)]
-        self == other
-    }
-
     // PORT NOTE: `css.DeriveParse(@This()).parse` — hand-expanded in declaration
     // order (Number → keyword `auto-fill` → keyword `auto-fit`).
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
@@ -592,5 +582,7 @@ fn is_name_codepoint(c: u8) -> bool {
         || c == b'-'
         || c >= 0x80 // codepoints larger than ascii
 }
+
+crate::css_eql_partialeq!(TrackSize, RepeatCount);
 
 // ported from: src/css/properties/grid.zig

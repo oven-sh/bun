@@ -754,7 +754,9 @@ export function emitStartupOrder(n: Ninja, cfg: Config, rustLibs: string[]): voi
   // (sibling of rust-lld in `${sysroot}/lib/rustlib/<host>/bin/`); fall back
   // to clang's sibling-of-ar otherwise. The script itself further falls back
   // to PATH `nm` if neither path exists.
-  const rustNm = cfg.rustLld ? join(dirname(dirname(cfg.rustLld)), "llvm-nm") : undefined;
+  // rust-lld and llvm-nm are siblings in `${sysroot}/lib/rustlib/<host>/bin/`,
+  // so one dirname (not two — that was the bug at #53609).
+  const rustNm = cfg.rustLld ? join(dirname(cfg.rustLld), "llvm-nm") : undefined;
   const nm = rustNm && existsSync(rustNm) ? rustNm : join(dirname(cfg.ar), "llvm-nm");
 
   // Host is linux here (linux release never cross-builds from non-linux),

@@ -1212,9 +1212,12 @@ impl<'a> Transpiler<'a> {
         // least `process.env.NODE_ENV` via `parse_env_json`, whose `E::String`
         // payload lands in the thread-local Expr store (then a `StoreResetGuard`
         // resets it — which `expect()`s the store exists). So there is no
-        // "transpile nothing" spawn that skips them. The remaining cost is the
-        // ~`BLOCK_SIZE` uninit `Box` per store; making *that* lazy belongs in
-        // `new_store.rs` (lazy first `Block`), not here.
+        // "transpile nothing" spawn that skips them. They are *cheap*, though:
+        // `Store::init()` only allocates the small `Store` header — the first
+        // `~BLOCK_SIZE` `Block` buffer is malloc'd lazily on the first
+        // `append()` (`ast/new_store.rs`), so a store that is `create()`d but
+        // never written to here (the `Stmt` store — `load_defines` only emits
+        // `E::String` expression nodes) costs nothing beyond that header.
         // `store_ast_alloc_heap::enter()` is NOT called here: `--define`
         // object-literal JSON is parsed below (during option setup) and the
         // bundler holds its `StoreRef<E::Object>` across every `reset_store()`,

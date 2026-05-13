@@ -60,7 +60,23 @@ macro_rules! new_store {
             // (declared once at crate level: `bun_output::declare_scope!(Store, hidden);`)
 
             pub struct Store {
-                current: NonNull<Block>,
+                /// Lazily-allocated head of the block chain — `None` until the
+                /// first [`Store::allocate`]. Owns the entire `Box<Block>`
+                /// `next`-linked list; `Store`'s `Drop` walks it iteratively.
+                ///
+                /// PERF(port): Zig co-allocated `Store` + the first `Block` in a
+                /// single `PreAlloc` so `create()` always paid one `~BLOCK_SIZE`
+                /// malloc. Splitting them lets a store that is `create()`d but
+                /// never written to (e.g. the `Stmt` store during
+                /// `Transpiler::configure_defines`, which only emits `E::String`
+                /// expression nodes for `--define` / `NODE_ENV`) cost nothing
+                /// beyond this small header.
+                head: Option<Box<Block>>,
+                /// Bump-pointer target for the active block. Null iff `head` is
+                /// `None` (no allocation has happened on this thread yet);
+                /// otherwise points into the `head` chain and stays valid until
+                /// `destroy()`.
+                current: *mut Block,
                 #[cfg(debug_assertions)]
                 debug_lock: ::core::cell::Cell<bool>,
             }
@@ -141,129 +157,100 @@ macro_rules! new_store {
             // Zig: `pub const Size = std.math.IntFittingRange(0, size + largest_size);`
             type BlockSize = u32;
 
-            /// Zig: `const PreAlloc = struct { metadata: Store, first_block: Block }`
-            #[repr(C)]
-            struct PreAlloc {
-                metadata: Store,
-                first_block: Block,
-            }
-
-            impl PreAlloc {
-                #[inline]
-                fn zero(this: *mut PreAlloc) {
-                    // Avoid initializing the entire struct.
-                    // SAFETY: `this` points to a valid PreAlloc allocation.
-                    unsafe {
-                        Block::zero(addr_of_mut!((*this).first_block));
-                        addr_of_mut!((*this).metadata.current)
-                            .write(NonNull::new_unchecked(addr_of_mut!((*this).first_block)));
+            /// `Store` owns its `Box<Block>` chain (`head` → `next` → …). The
+            /// derived drop glue for `Box<Block>` is recursive (`Block.next:
+            /// Option<Box<Block>>`); a long parse can build a deep chain, so
+            /// dismantle it iteratively here to keep `Drop` O(1)-stack.
+            impl Drop for Store {
+                fn drop(&mut self) {
+                    let mut it = self.head.take();
+                    while let Some(mut block) = it {
                         #[cfg(debug_assertions)]
-                        addr_of_mut!((*this).metadata.debug_lock)
-                            .write(::core::cell::Cell::new(false));
+                        {
+                            // Zig: `@memset(block.buffer, undefined);`
+                            // SAFETY: poisoning a buffer that is being freed.
+                            unsafe {
+                                ::core::ptr::write_bytes(
+                                    block.buffer.as_mut_ptr(),
+                                    0xAA,
+                                    Block::SIZE,
+                                );
+                            }
+                        }
+                        it = block.next.take();
+                        drop(block);
                     }
                 }
             }
 
             impl Store {
-                pub fn first_block(store: &mut Store) -> &mut Block {
-                    // SAFETY: `store` is always the `metadata` field of a `PreAlloc`
-                    // (see `init()`); recover the parent via offset_of.
-                    unsafe {
-                        let prealloc = bun_core::from_field_ptr!(PreAlloc, metadata, core::ptr::from_mut::<Store>(store));
-                        &mut (*prealloc).first_block
-                    }
-                }
-
-                /// Reborrow the active block. Centralises the raw `NonNull`
-                /// deref so `reset`/`allocate` stay safe at every bump.
-                #[inline]
-                fn current_mut(store: &mut Store) -> &mut Block {
-                    // SAFETY: `current` is initialised to `&first_block` in
-                    // `PreAlloc::zero` and every reassignment (`reset`,
-                    // `allocate`) stores a `NonNull` derived from a live block
-                    // in the owned `next` chain; the pointee outlives `store`.
-                    unsafe { store.current.as_mut() }
-                }
-
                 pub fn init() -> *mut Store {
                     /* scoped_log elided — debug_logs feature only */
-                    // Avoid initializing the entire struct.
-                    // Zig: `bun.handleOom(backing_allocator.create(PreAlloc))` — Rust Box aborts on OOM.
-                    let mut prealloc: Box<MaybeUninit<PreAlloc>> = Box::new_uninit();
-                    PreAlloc::zero(prealloc.as_mut_ptr());
-                    // SAFETY: `zero` fully initialized `metadata` and the non-buffer
-                    // fields of `first_block`; `buffer` is MaybeUninit.
-                    let prealloc = bun_core::heap::into_raw(unsafe { prealloc.assume_init() });
-                    // SAFETY: prealloc is a valid leaked Box.
-                    unsafe { addr_of_mut!((*prealloc).metadata) }
+                    // PERF(port): the first `Block`'s ~`BLOCK_SIZE` heap buffer
+                    // is *not* allocated here — only the small `Store` header.
+                    // `allocate()` lazily mallocs the first `Block` on the first
+                    // `append()` (see the `head` field doc). Box aborts on OOM
+                    // (matches Zig `bun.handleOom`).
+                    bun_core::heap::into_raw(Box::new(Store {
+                        head: None,
+                        current: ::core::ptr::null_mut(),
+                        #[cfg(debug_assertions)]
+                        debug_lock: ::core::cell::Cell::new(false),
+                    }))
                 }
 
-                // PORT NOTE: not `impl Drop` — `Store` is a field inside the `PreAlloc`
-                // heap allocation and this frees that enclosing allocation via
-                // `container_of`-style recovery. The caller holds `*mut Store`, not
-                // `Box<Store>`, so per PORTING.md this is the raw-pointer `destroy`
-                // escape hatch rather than `Drop`.
                 /// SAFETY: `store` must have been returned by `Store::init()` and not
                 /// yet destroyed.
                 pub unsafe fn destroy(store: *mut Store) {
                     /* scoped_log elided — debug_logs feature only */
-                    // do not free `store.head`
-                    // SAFETY: caller contract.
-                    let store_ref = unsafe { &mut *store };
-                    let mut it = Store::first_block(store_ref).next.take();
-                    while let Some(mut next) = it {
-                        #[cfg(debug_assertions)]
-                        {
-                            // Zig: `@memset(next.buffer, undefined);`
-                            // SAFETY: poisoning bytes; buffer is MaybeUninit<u8>.
-                            unsafe {
-                                ::core::ptr::write_bytes(
-                                    next.buffer.as_mut_ptr(),
-                                    0xAA,
-                                    Block::SIZE,
-                                );
-                            }
-                        }
-                        it = next.next.take();
-                        drop(next);
-                    }
-
-                    // SAFETY: `store` is the `metadata` field of a leaked `Box<PreAlloc>`.
-                    let prealloc = unsafe {
-                        bun_core::from_field_ptr!(PreAlloc, metadata, store)
-                    };
-                    // TODO(port): Zig source asserts `&prealloc.first_block == store.head`
-                    // but `Store` has no `head` field — lazy-compiled dead assertion
-                    // upstream. Dropping it here.
-                    // SAFETY: reconstitute the Box leaked in `init()`.
-                    drop(unsafe { bun_core::heap::take(prealloc) });
+                    // SAFETY: caller contract — reconstitute the `Box<Store>`
+                    // leaked in `init()`. Its `Drop` (above) walks the block
+                    // chain iteratively, so no deep `Box<Block>` drop recursion.
+                    drop(unsafe { bun_core::heap::take(store) });
                 }
 
                 pub fn reset(store: &mut Store) {
                     /* scoped_log elided — debug_logs feature only */
 
+                    // Nothing was ever allocated on this thread — the first
+                    // `Block` is still un-materialised (`current` is null; the
+                    // next `allocate()` mallocs it). Equivalent to a fresh store.
+                    if store.head.is_none() {
+                        debug_assert!(store.current.is_null());
+                        return;
+                    }
+
                     #[cfg(debug_assertions)]
                     {
                         // `next: Option<Box<Block>>` makes the chain a safe
-                        // singly-linked list; walk it via `&mut` reborrows
-                        // instead of round-tripping through `NonNull`.
-                        let mut it: Option<&mut Block> = Some(Store::first_block(store));
-                        while let Some(next) = it {
-                            // Zig: `next.bytes_used = undefined; @memset(&next.buffer, undefined);`
+                        // singly-linked list; walk it via `&mut` reborrows.
+                        let mut it: Option<&mut Block> = store.head.as_deref_mut();
+                        while let Some(block) = it {
+                            // Zig: `block.bytes_used = undefined; @memset(&block.buffer, undefined);`
                             // SAFETY: poisoning; buffer is MaybeUninit<u8>.
                             unsafe {
                                 ::core::ptr::write_bytes(
-                                    next.buffer.as_mut_ptr(),
+                                    block.buffer.as_mut_ptr(),
                                     0xAA,
                                     Block::SIZE,
                                 );
                             }
-                            it = next.next.as_deref_mut();
+                            it = block.next.as_deref_mut();
                         }
                     }
 
-                    store.current = NonNull::from(Store::first_block(store));
-                    Store::current_mut(store).bytes_used = 0;
+                    // Rewind to the head block; overflow blocks keep their stale
+                    // `bytes_used` until `allocate()` advances onto them and
+                    // zeroes them then (matches the pre-split behaviour).
+                    let head_ptr: *mut Block = {
+                        let head = store
+                            .head
+                            .as_deref_mut()
+                            .expect("head is Some — checked above");
+                        head.bytes_used = 0;
+                        head as *mut Block
+                    };
+                    store.current = head_ptr;
                 }
 
                 fn allocate<T>(store: &mut Store) -> NonNull<T> {
@@ -271,29 +258,44 @@ macro_rules! new_store {
                     // TODO(port): `comptime if (!supportsType(T)) @compileError(...)` —
                     // enforce via a sealed trait generated over `$($T),+`.
 
-                    let current = Store::current_mut(store);
+                    // Lazily materialise the first `Block` on first use — this is
+                    // the only `~BLOCK_SIZE` allocation a never-written store
+                    // would otherwise pay up front (see `init()` / the `head` doc).
+                    if store.current.is_null() {
+                        debug_assert!(store.head.is_none());
+                        let mut first = Block::new_boxed();
+                        store.current = (&mut *first) as *mut Block;
+                        store.head = Some(first);
+                    }
+
+                    // SAFETY: `current` is non-null (ensured just above, or by a
+                    // prior `allocate()`/`reset()`) and points into the owned
+                    // `head`/`next` chain; the pointee outlives `store`.
+                    let current: &mut Block = unsafe { &mut *store.current };
                     if let Some(ptr) = Block::try_alloc::<T>(current) {
                         return ptr;
                     }
 
-                    // a new block is needed
-                    let next_block: NonNull<Block> = match &mut current.next {
+                    // The active block is full — advance to the next one,
+                    // allocating it if the chain ends here.
+                    let next_block: *mut Block = match &mut current.next {
                         Some(next) => {
                             next.bytes_used = 0;
-                            NonNull::from(next.as_mut())
+                            (&mut **next) as *mut Block
                         }
-                        none @ None => {
+                        slot @ None => {
                             let mut new_block = Block::new_boxed();
-                            let ptr = NonNull::from(new_block.as_mut());
-                            *none = Some(new_block);
+                            let ptr = (&mut *new_block) as *mut Block;
+                            *slot = Some(new_block);
                             ptr
                         }
                     };
-
                     store.current = next_block;
 
-                    Block::try_alloc::<T>(Store::current_mut(store))
-                        // newly initialized blocks must have enough space for at least one
+                    // SAFETY: a freshly created/reset block always has room for
+                    // at least one `T` (`assert!(LARGEST_ALIGN <= 16)` plus
+                    // `BLOCK_SIZE = LARGEST_SIZE * count * 2`).
+                    Block::try_alloc::<T>(unsafe { &mut *store.current })
                         .unwrap_or_else(|| unreachable!())
                 }
 
@@ -458,7 +460,8 @@ macro_rules! thread_local_ast_store {
                 if instance().is_null() || !memory_allocator().is_null() {
                     return;
                 }
-                // SAFETY: checked non-null above; destroy frees the PreAlloc.
+                // SAFETY: checked non-null above; `destroy` frees the `Store`
+                // box and its lazily-allocated block chain.
                 unsafe { Backing::destroy(instance()) };
                 INSTANCE.set(::core::ptr::null_mut());
             }

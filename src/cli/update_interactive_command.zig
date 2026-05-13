@@ -429,6 +429,9 @@ pub const UpdateInteractiveCommand = struct {
         var package_updates = std.array_list.Managed(PackageUpdate).init(bun.default_allocator);
         defer package_updates.deinit();
 
+        // Track packages skipped because they're already at target version
+        var skipped_at_target: usize = 0;
+
         // Process selected packages
         for (outdated_packages, selected) |pkg, is_selected| {
             if (!is_selected) continue;
@@ -440,6 +443,7 @@ pub const UpdateInteractiveCommand = struct {
                 pkg.update_version;
 
             if (strings.eql(pkg.current_version, target_version)) {
+                skipped_at_target += 1;
                 continue;
             }
 
@@ -486,8 +490,23 @@ pub const UpdateInteractiveCommand = struct {
         const has_catalog_updates = catalog_updates.count() > 0;
 
         if (!has_package_updates and !has_catalog_updates) {
-            Output.prettyln("<r><yellow>!</r> No packages selected for update", .{});
+            if (skipped_at_target > 0) {
+                Output.prettyln("<r><yellow>!</r> {d} package{s} already at target version (use 'l' to select latest)", .{
+                    skipped_at_target,
+                    if (skipped_at_target == 1) " is" else "s are",
+                });
+            } else {
+                Output.prettyln("<r><yellow>!</r> No packages selected for update", .{});
+            }
             return;
+        }
+
+        // Show info about skipped packages (if any were updated but some skipped)
+        if (skipped_at_target > 0) {
+            Output.prettyln("<r><d>Note: {d} package{s} skipped (already at target version, use 'l' for latest)<r>", .{
+                skipped_at_target,
+                if (skipped_at_target == 1) "" else "s",
+            });
         }
 
         // Actually update the selected packages

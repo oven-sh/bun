@@ -730,11 +730,27 @@ pub fn load(
             {
                 force_registry.token = this.scope.token;
             }
+            const prev_scope = this.scope;
+            const had_scoped_registries = this.registries.count() > 0;
             this.scope = try Npm.Registry.Scope.fromAPI("", force_registry.*, allocator, env);
             // Discard scoped registries so `scopeForPackageName` always falls
             // back to `this.scope` — every package resolves through the
             // forced registry.
             this.registries.clearRetainingCapacity();
+
+            // Surface that the device-level override is active when it's
+            // actually overriding something the project configured, so a
+            // developer isn't confused why their `install.registry`/
+            // `.npmrc`/`--registry`/`install.scopes` isn't taking effect.
+            // No notice when the project was using the default registry
+            // anyway (nothing to be confused about).
+            if (this.log_level != .silent and
+                prev_scope.url_hash != this.scope.url_hash and
+                (prev_scope.url_hash != Npm.Registry.default_url_hash or had_scoped_registries))
+            {
+                Output.note("using forced registry <b>{s}<r> <d>(install.forceRegistry is set on this machine, ignoring project registry configuration)<r>", .{this.scope.url.href});
+                Output.flush();
+            }
         }
     }
 

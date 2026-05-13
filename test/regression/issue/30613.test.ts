@@ -18,15 +18,20 @@
 // unsupported CPU and installs the same stub.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isArm64 } from "harness";
 
-test("fails fast with a clear error when simdutf has no supported implementation", async () => {
+// On arm64 simdutf compiles exactly one kernel (NEON, which is mandatory on
+// aarch64), so SIMDUTF_SINGLE_IMPLEMENTATION == 1 and runtime dispatch is
+// bypassed entirely — SIMDUTF_FORCE_IMPLEMENTATION is ignored and there is
+// no way to reach the unsupported stub from the outside. The startup probe
+// still runs there; it just can never fail on real arm64 hardware.
+test.skipIf(isArm64)("fails fast with a clear error when simdutf has no supported implementation", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", "console.log('unreachable')"],
     env: {
       ...bunEnv,
       // Any name not in simdutf's compiled-in list selects the unsupported
-      // stub — identical to running on a pre-SSE4.2 / pre-NEON host.
+      // stub — identical to running on a pre-SSE4.2 host.
       SIMDUTF_FORCE_IMPLEMENTATION: "none-for-issue-30613",
     },
     stdout: "pipe",

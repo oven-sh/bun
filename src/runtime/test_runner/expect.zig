@@ -34,9 +34,12 @@ pub const Expect = struct {
     /// count; `PendingMatcher` snapshots it at defer time and restores it
     /// before the re-run.
     counted_expect_call: bool = false,
-    /// The caller's source location, captured when a `.resolves`/`.rejects`
-    /// matcher is deferred. `inlineSnapshot()` needs this on the re-run
-    /// because the user's frame is no longer on the stack.
+    /// The caller's source location for the currently-executing deferred
+    /// re-run, borrowed from `PendingMatcher.srcloc_at_defer`. Written by
+    /// `PendingMatcher.rerun()` for the duration of the re-invoked matcher
+    /// call and restored afterwards. `inlineSnapshot()` reads it (gated on
+    /// `is_async_rerun`) because the user's frame is no longer on the stack.
+    /// Owned by the `PendingMatcher`, not by `Expect`.
     async_rerun_srcloc: ?CallFrame.CallerSrcLoc = null,
 
     pub const TestScope = struct {
@@ -219,13 +222,6 @@ pub const Expect = struct {
 
         promise.setHandled(globalThis.vm());
 
-        // Capture the caller's source location now, while the user's frame
-        // is still on the stack. `toMatchInlineSnapshot` /
-        // `toThrowErrorMatchingInlineSnapshot` need it on the re-run to
-        // know which line to write the snapshot back to.
-        if (this.async_rerun_srcloc) |*old| old.str.deref();
-        this.async_rerun_srcloc = callframe.getCallerSrcLoc(globalThis);
-
         const deferred = try PendingMatcher.create(globalThis, thisValue, callframe, value, this.counted_expect_call, this.flags);
         js.resultValueSetCached(thisValue, globalThis, deferred);
         return deferred;
@@ -254,6 +250,13 @@ pub const Expect = struct {
         /// this re-run fires; restore so the re-run observes the flags the
         /// user wrote for *this* matcher call.
         flags_at_defer: Expect.Flags,
+        /// The caller's source location at the time we deferred, captured
+        /// while the user's frame is still on the stack. `inlineSnapshot()`
+        /// needs it on the re-run to know which line to write the snapshot
+        /// back to. Stored per-PendingMatcher (not on the shared `Expect`)
+        /// so two deferred inline-snapshot matchers on the same `expect()`
+        /// instance each write to their own call site.
+        srcloc_at_defer: CallFrame.CallerSrcLoc,
 
         fn create(globalThis: *JSGlobalObject, thisValue: JSValue, callframe: *CallFrame, promise_value: JSValue, was_counted: bool, flags: Expect.Flags) bun.JSError!JSValue {
             const args = callframe.arguments();
@@ -269,6 +272,7 @@ pub const Expect = struct {
                 .deferred = jsc.JSPromise.Strong.init(globalThis),
                 .was_counted_before_defer = was_counted,
                 .flags_at_defer = flags,
+                .srcloc_at_defer = callframe.getCallerSrcLoc(globalThis),
             });
             const deferred_value = pending.deferred.value();
 
@@ -340,16 +344,24 @@ pub const Expect = struct {
             // it and the re-run does. `flags` is restored (and the current
             // value put back afterwards) so a later `.not` on the same
             // reused `expect()` instance doesn't leak into this re-run.
+            // `async_rerun_srcloc` is borrowed to this `PendingMatcher`'s
+            // captured location for the duration of the call and restored
+            // afterwards so two deferred matchers on the same `expect()`
+            // each see their own call site in `inlineSnapshot()`.
             var saved_flags: Expect.Flags = undefined;
+            var saved_srcloc: ?CallFrame.CallerSrcLoc = null;
             if (Expect.fromJS(expect_this)) |expect| {
                 expect.is_async_rerun = true;
                 expect.counted_expect_call = this.was_counted_before_defer;
                 saved_flags = expect.flags;
                 expect.flags = this.flags_at_defer;
+                saved_srcloc = expect.async_rerun_srcloc;
+                expect.async_rerun_srcloc = this.srcloc_at_defer;
             }
             defer if (Expect.fromJS(expect_this)) |expect| {
                 expect.is_async_rerun = false;
                 expect.flags = saved_flags;
+                expect.async_rerun_srcloc = saved_srcloc;
             };
 
             return matcher_fn.call(globalThis, expect_this, args_buf);
@@ -360,6 +372,7 @@ pub const Expect = struct {
             this.matcher_fn.deinit();
             this.matcher_args.deinit();
             this.deferred.deinit();
+            this.srcloc_at_defer.str.deref();
             bun.destroy(this);
         }
 
@@ -529,7 +542,8 @@ pub const Expect = struct {
     ) callconv(.c) void {
         this.custom_label.deref();
         if (this.parent) |parent| parent.deref();
-        if (this.async_rerun_srcloc) |*s| s.str.deref();
+        // `async_rerun_srcloc` is borrowed from `PendingMatcher` for the
+        // duration of a re-run and is not owned here; don't deref.
         VirtualMachine.get().allocator.destroy(this);
     }
 
@@ -962,11 +976,8 @@ pub const Expect = struct {
             // 1. find the src loc of the snapshot
             // When re-running from a deferred `.resolves`/`.rejects`
             // `.then()` callback, the user's frame is no longer on the
-            // stack; use the location captured in `maybeDeferMatcher()`.
-            // Gate on `is_async_rerun` (not just "is the field non-null")
-            // so a stale capture from a previous deferred matcher on the
-            // same `expect()` instance isn't reused for a later synchronous
-            // call, where the real callframe is available and correct.
+            // stack; `PendingMatcher.rerun()` lends its captured location
+            // via `async_rerun_srcloc` for the duration of the call.
             const srcloc: CallFrame.CallerSrcLoc, const owns_srcloc: bool = if (this.is_async_rerun and this.async_rerun_srcloc != null)
                 .{ this.async_rerun_srcloc.?, false }
             else

@@ -966,9 +966,11 @@ export const linkerFlags: Flag[] = [
       // NOTE: --sort-section=name was here historically; lld ignores it
       // for the default `.text` rule and it never partitioned hot/cold —
       // fat-LTO emits all 14k Rust .text.* sections in crate-alphabetical
-      // order, so hot bun_clap shared 64 KB fault-around blocks with cold
-      // bun_install/bun_bundler/bun_css. Replaced by the explicit
-      // --symbol-ordering-file below.
+      // order, so hot bun_clap shares 64 KB fault-around blocks with cold
+      // bun_install/bun_bundler/bun_css. A hand-curated --symbol-ordering-file
+      // recovered ~1.3 MB of cold .text RSS but needed a 2-pass relink to keep
+      // its CGU-mangled entries matching the post-LTO binary — not worth the
+      // extra LTO link per Linux-release build job, so it was dropped.
       "-Wl,--hash-style=both",
       "-Wl,--build-id=sha1",
     ],
@@ -1013,27 +1015,6 @@ export const linkerFlags: Flag[] = [
     when: c => c.linux,
     desc: "Dynamic symbol list + version script",
   },
-  {
-    // Not src/startup.order directly: that file's Rust v0-mangled entries
-    // bake in per-crate `Cs<hash>_` disambiguators, `Ms<n>_` impl indices,
-    // `B<n>_` byte-offset back-refs, and post-ThinLTO `.llvm.<N>` suffixes —
-    // all of which churn independently of call order. emitStartupOrder()
-    // (rust.ts) canonicalises each entry against the just-built staticlib
-    // *and* the previous link's `-Map=` output and writes the live names to
-    // this resolved copy so lld actually matches them.
-    //
-    // --no-warn-symbol-ordering stays for shipping release so genuinely-
-    // removed functions degrade silently instead of failing the link, but
-    // assertions builds keep the warning so future drift the resolver can't
-    // handle is loud in CI rather than a silent +1.3 MB RSS.
-    flag: c => [
-      `-Wl,--symbol-ordering-file=${c.buildDir}/startup.order.resolved`,
-      ...(c.assertions ? [] : ["-Wl,--no-warn-symbol-ordering"]),
-    ],
-    when: c => c.linux && c.release,
-    desc: "Cluster hot startup .text (RSS/iTLB); resolved from src/startup.order at link time",
-  },
-
   // ─── FreeBSD ───
   {
     flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`, "-stdlib=libc++"],
@@ -1106,15 +1087,8 @@ export function linkDepends(cfg: Config): string[] {
   if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
   if (cfg.windows) return [join(cfg.cwd, "src/symbols.def")];
   if (cfg.darwin) return [join(cfg.cwd, "src/symbols.txt")];
-  // linux: ELF dynamic-list + version script + .text ordering
-  const deps = [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
-  if (cfg.release) {
-    // Resolved copy (ninja output of emitStartupOrder in rust.ts), not the
-    // checked-in template — src/startup.order is an input to that step, so
-    // edits to it still relink transitively.
-    deps.push(join(cfg.buildDir, "startup.order.resolved"));
-  }
-  return deps;
+  // linux: ELF dynamic-list + version script
+  return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

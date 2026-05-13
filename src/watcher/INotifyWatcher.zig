@@ -30,8 +30,25 @@ read_ptr: ?struct {
 } = null,
 
 watch_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-/// nanoseconds
-coalesce_interval: isize = 100_000,
+/// After the first `read()` returns events, the watcher repeatedly
+/// `ppoll`s with this timeout and drains any further events that arrive
+/// before it expires. Editors commonly generate several inotify events
+/// for a single logical save (truncate+write, or write+rename, plus
+/// matching events on the parent-directory watch), often spread across
+/// a few milliseconds. If those events land in separate `read()` cycles
+/// the consumer sees multiple `onFileUpdate` calls for one save and, in
+/// `--hot` mode, re-evaluates the entry point once per burst.
+///
+/// Nanoseconds. Overridable via `BUN_INOTIFY_COALESCE_INTERVAL`.
+coalesce_interval: isize = default_coalesce_interval_ns,
+
+pub const default_coalesce_interval_ns = 10_000_000; // 10ms
+/// Safety cap on drain iterations so a file written to faster than the
+/// coalesce interval cannot hold the watch loop indefinitely. In the
+/// common case the loop exits on the first `ppoll` that sees no new
+/// data (one `coalesce_interval` after the final event in a burst);
+/// this bound only bites when writes never stop.
+const max_coalesce_iterations = 32;
 
 pub const EventListIndex = c_int;
 pub const Event = extern struct {
@@ -94,7 +111,7 @@ pub fn init(this: *INotifyWatcher, _: []const u8) !void {
     bun.assert(!this.loaded);
     this.loaded = true;
 
-    this.coalesce_interval = std.math.cast(isize, bun.env_var.BUN_INOTIFY_COALESCE_INTERVAL.get()) orelse 100_000;
+    this.coalesce_interval = std.math.cast(isize, bun.env_var.BUN_INOTIFY_COALESCE_INTERVAL.get()) orelse default_coalesce_interval_ns;
 
     // TODO: convert to bun.sys.Error
     this.fd = .fromNative(try std.posix.inotify_init1(IN.CLOEXEC));
@@ -133,34 +150,48 @@ pub fn read(this: *INotifyWatcher) bun.sys.Maybe([]const *align(1) Event) {
                 log("{f} read {} bytes", .{ this.fd, read_eventlist_bytes.len });
                 if (read_eventlist_bytes.len == 0) return .{ .result = &.{} };
 
-                // IN_MODIFY is very noisy
-                // we do a 0.1ms sleep to try to coalesce events better
-                const double_read_threshold = Event.largest_size * (max_count / 2);
-                if (read_eventlist_bytes.len < double_read_threshold) {
+                // IN_MODIFY is very noisy. Editors typically emit several
+                // events per save (truncate+write, write+rename, plus the
+                // parent-directory watch), often a few ms apart. Keep
+                // draining until the fd goes quiet for `coalesce_interval`
+                // so a single save becomes a single `onFileUpdate` call.
+                //
+                // The loop exits as soon as (a) `ppoll` times out with no
+                // new data, (b) we've accumulated enough bytes that the
+                // parse loop below would set `read_ptr` anyway (more than
+                // `max_count` minimum-size events), or (c) the iteration
+                // cap is hit. (b) and (c) keep a file that is written to
+                // continuously from starving the watch loop while still
+                // letting an ordinary save burst — a few dozen events
+                // over a few ms — collapse into one cycle.
+                var iterations: u32 = 0;
+                while (read_eventlist_bytes.len < @sizeOf(Event) * max_count and
+                    iterations < max_coalesce_iterations) : (iterations += 1)
+                {
+                    const rest = this.eventlist_bytes[read_eventlist_bytes.len..];
+                    if (rest.len < Event.largest_size) break; // buffer nearly full
+
                     var fds = [_]std.posix.pollfd{.{
                         .fd = this.fd.cast(),
                         .events = std.posix.POLL.IN | std.posix.POLL.ERR,
                         .revents = 0,
                     }};
                     var timespec = std.posix.timespec{ .sec = 0, .nsec = this.coalesce_interval };
-                    if ((std.posix.ppoll(&fds, &timespec, null) catch 0) > 0) {
-                        inner: while (true) {
-                            const rest = this.eventlist_bytes[read_eventlist_bytes.len..];
-                            bun.assert(rest.len > 0);
-                            const new_rc = std.posix.system.read(this.fd.cast(), rest.ptr, rest.len);
-                            // Output.warn("wapa {} {} = {}", .{ this.fd, rest.len, new_rc });
-                            const e = std.posix.errno(new_rc);
-                            switch (e) {
-                                .SUCCESS => {
-                                    read_eventlist_bytes.len += @intCast(new_rc);
-                                    break :outer read_eventlist_bytes;
-                                },
-                                .AGAIN, .INTR => continue :inner,
-                                else => return .{ .err = .{
-                                    .errno = @truncate(@intFromEnum(e)),
-                                    .syscall = .read,
-                                } },
-                            }
+                    if ((std.posix.ppoll(&fds, &timespec, null) catch 0) == 0) break; // quiet
+
+                    inner: while (true) {
+                        const new_rc = std.posix.system.read(this.fd.cast(), rest.ptr, rest.len);
+                        const e = std.posix.errno(new_rc);
+                        switch (e) {
+                            .SUCCESS => {
+                                read_eventlist_bytes.len += @intCast(new_rc);
+                                break :inner;
+                            },
+                            .AGAIN, .INTR => continue :inner,
+                            else => return .{ .err = .{
+                                .errno = @truncate(@intFromEnum(e)),
+                                .syscall = .read,
+                            } },
                         }
                     }
                 }

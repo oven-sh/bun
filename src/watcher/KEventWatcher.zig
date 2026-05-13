@@ -8,6 +8,9 @@ eventlist_index: EventListIndex = 0,
 fd: bun.FD.Optional = .none,
 
 const changelist_count = 128;
+/// See `INotifyWatcher.default_coalesce_interval_ns` for rationale.
+const coalesce_interval_ns = 10_000_000; // 10ms
+const max_coalesce_iterations = 5;
 
 pub fn init(this: *KEventWatcher, _: []const u8) !void {
     const fd = try std.posix.kqueue();
@@ -53,18 +56,26 @@ pub fn watchLoopCycle(this: *Watcher) bun.sys.Maybe(void) {
         null, // timeout
     );
 
-    // Give the events more time to coalesce
-    if (count < 128 / 2) {
-        const remain = 128 - count;
+    // A single editor save typically produces several kevents a few ms
+    // apart (e.g. NOTE_WRITE on the file plus NOTE_WRITE on its parent
+    // directory, or the rename/create pair from an atomic save). Keep
+    // draining until the queue stays quiet for `coalesce_interval_ns`
+    // so one save becomes one `onFileUpdate` call instead of several,
+    // which in `--hot` mode would otherwise re-evaluate the entry point
+    // once per burst.
+    var iterations: u32 = 0;
+    while (count < changelist_count and iterations < max_coalesce_iterations) : (iterations += 1) {
+        const remain = changelist_count - count;
         const extra = std.posix.system.kevent(
             fd.native(),
             changelist[@intCast(count)..].ptr,
             0,
             changelist[@intCast(count)..].ptr,
             remain,
-            &.{ .sec = 0, .nsec = 100_000 }, // 0.0001 seconds
+            &.{ .sec = 0, .nsec = coalesce_interval_ns },
         );
 
+        if (extra <= 0) break; // quiet (or error: fall through to existing processing)
         count += extra;
     }
 

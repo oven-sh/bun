@@ -160,3 +160,31 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
   });
   expect(exitCode).toBe(0);
 });
+
+test("stream() open error after the Blob is collected keeps the path alive", async () => {
+  const dir = tempDirWithFiles("bun-file-stream-open-error", {});
+  const path = join(dir, "does-not-exist-🌟");
+
+  function makeStream() {
+    let f: Bun.BunFile | null = Bun.file(path);
+    const s = f.stream();
+    f = null;
+    return s;
+  }
+
+  const stream = makeStream();
+  for (let i = 0; i < 5; i++) {
+    Bun.gc(true);
+    await new Promise(r => setImmediate(r));
+  }
+
+  let caught: any;
+  try {
+    stream.getReader();
+  } catch (e) {
+    caught = e;
+  }
+  expect(caught).toBeDefined();
+  expect(caught.code).toBe("ENOENT");
+  expect(caught.path).toBe(path);
+});

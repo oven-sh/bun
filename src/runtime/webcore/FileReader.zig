@@ -188,16 +188,15 @@ pub fn onStart(this: *FileReader) streams.Start {
         switch (this.lazy.blob.data) {
             .s3, .bytes => @panic("Invalid state in FileReader: expected file "),
             .file => |*file| {
-                defer {
-                    this.lazy.blob.deref();
-                    this.lazy = .none;
-                }
                 switch (Lazy.openFileBlob(file)) {
                     .err => |err| {
                         this.fd = bun.invalid_fd;
+                        // err.path borrows from the store; leave this.lazy for deinit()
                         return .{ .err = err };
                     },
                     .result => |opened| {
+                        this.lazy.blob.deref();
+                        this.lazy = .none;
                         bun.assert(opened.fd.isValid());
                         this.fd = opened.fd;
                         pollable = opened.pollable;

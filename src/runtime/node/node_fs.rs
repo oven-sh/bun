@@ -2928,7 +2928,11 @@ pub mod args {
             if let Some(pos_value) = arguments.next_eat() {
                 if !pos_value.is_undefined_or_null() {
                     if pos_value.is_number() {
-                        position = Some(pos_value.to_int64() as u64);
+                        // Zig: `position = pos_value.to(u52)` ==
+                        // `@truncate(@as(u64, @intCast(@max(this.toInt64(), 0))))`:
+                        // clamp negatives to 0, then truncate to the low 52 bits.
+                        position =
+                            Some((pos_value.to_int64().max(0) as u64) & ((1u64 << 52) - 1));
                     } else {
                         return Err(
                             ctx.throw_invalid_arguments(format_args!("position must be a number"))
@@ -5629,7 +5633,7 @@ impl NodeFS {
     }
 
     pub fn fstat(&mut self, args: &args::Fstat, _: Flavor) -> Maybe<ret::Fstat> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
             return match sys::fstatx(args.fd, sys::STATX_MASK_FOR_STATS) {
                 Ok(result) => Ok(Stats::init(&result, args.big_int)),
@@ -5765,7 +5769,7 @@ impl NodeFS {
 
     pub fn lstat(&mut self, args: &args::Lstat, _: Flavor) -> Maybe<ret::Lstat> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
             return match sys::lstatx(path, sys::STATX_MASK_FOR_STATS) {
                 Ok(result) => Ok(StatOrNotFound::Stats(Stats::init(&result, args.big_int))),
@@ -7869,7 +7873,7 @@ impl NodeFS {
                 )));
             }
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
             return match sys::statx(path, sys::STATX_MASK_FOR_STATS) {
                 Ok(result) => Ok(StatOrNotFound::Stats(Stats::init(&result, args.big_int))),

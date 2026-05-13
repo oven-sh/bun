@@ -73,8 +73,10 @@ impl ReplCommand {
         // Create a virtual path for REPL evaluation
         let repl_path: &'static [u8] = b"[repl]";
 
-        // Validate DNS result order (InitOptions doesn't carry it yet — see TODO below).
-        let _dns_order = DnsOrder::from_string(&ctx.runtime_options.dns_result_order)
+        // Parse DNS result order now; applied to the VM post-init below
+        // (InitOptions doesn't carry it yet — see TODO below). Zig passes
+        // `.dns_result_order` into `jsc.VirtualMachine.init`.
+        let dns_order = DnsOrder::from_string(&ctx.runtime_options.dns_result_order)
             .unwrap_or_else(|| {
                 Output::pretty_errorln("<r><red>error<r><d>:<r> Invalid DNS result order.");
                 Global::exit(1);
@@ -89,6 +91,7 @@ impl ReplCommand {
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
             log: core::ptr::NonNull::new(ctx.log),
             smol: ctx.runtime_options.smol,
+            mini_mode: ctx.runtime_options.smol,
             eval_mode: true,
             is_main_thread: true,
             ..Default::default()
@@ -99,6 +102,10 @@ impl ReplCommand {
         unsafe {
             (*vm).preload = core::mem::take(&mut ctx.preloads);
             (*vm).argv = core::mem::take(&mut ctx.passthrough);
+            // PORT NOTE: `vm.dns_result_order` is a `u8` until the b2-cycle
+            // widens it to `bun_dns::Order`; the enum is `#[repr(u8)]` so
+            // `as u8` is the exact `@intFromEnum` Zig would have done.
+            (*vm).dns_result_order = dns_order as u8;
         }
         // TODO(port): vm.allocator = vm.arena.arena(); — allocator threading dropped in Rust
         // (vm.arena assignment moved below ReplRunner construction to avoid move-after-borrow)

@@ -956,13 +956,27 @@ pub fn wyhash_url_safe<'a>(
 ) -> &'a [u8] {
     use std::io::Write as _;
 
-    // PERF(port): was stack-fallback alloc (StackFallbackAllocator 128B) — profile in Phase B
-    let mut hasher = bun_wyhash::Wyhash11::init(0);
     // PORT NOTE: std.fmt.count + allocPrint collapsed; write into a scratch
     // Vec then hash. Freed immediately (Zig used stack-fallback for this).
+    // PERF(port): was stack-fallback alloc (StackFallbackAllocator 128B) — profile in Phase B
     let mut fmt_str: Vec<u8> = Vec::with_capacity(128);
     write!(&mut fmt_str, "{}", args).expect("unreachable");
-    hasher.update(&fmt_str);
+    wyhash_url_safe_bytes(bump, &fmt_str, at_start)
+}
+
+/// Like [`wyhash_url_safe`] but hashes `input` as raw bytes, with no UTF-8
+/// lossy conversion. Matches Zig's `"{s}"` formatting, which writes a
+/// `[]const u8` verbatim. Use this when `input` may contain non-UTF-8 bytes
+/// (e.g. filesystem paths or `url()` / `@import` targets) so the resulting
+/// placeholder hash stays byte-for-byte identical to the Zig implementation.
+pub fn wyhash_url_safe_bytes<'a>(
+    bump: &'a bun_alloc::Arena,
+    input: &[u8],
+    at_start: bool,
+) -> &'a [u8] {
+    // PERF(port): was stack-fallback alloc (StackFallbackAllocator 128B) — profile in Phase B
+    let mut hasher = bun_wyhash::Wyhash11::init(0);
+    hasher.update(input);
 
     let h: u32 = hasher.final_() as u32; // @truncate
     let h_bytes: [u8; 4] = h.to_le_bytes();

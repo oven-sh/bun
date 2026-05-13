@@ -73,11 +73,9 @@ impl Echo {
                     }
                     // Collapse repeated trailing '\n' to a single one
                     // (matches bun.strings.trimSubsequentLeadingChars).
-                    let mut end = thearg.len();
-                    while end > 1 && thearg[end - 1] == b'\n' && thearg[end - 2] == b'\n' {
-                        end -= 1;
-                    }
-                    out.extend_from_slice(&thearg[..end]);
+                    out.extend_from_slice(bun_core::immutable::trim_subsequent_leading_chars(
+                        thearg, b'\n',
+                    ));
                 } else {
                     out.extend_from_slice(thearg);
                 }
@@ -115,11 +113,15 @@ impl Echo {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(
-            interp,
-            cmd,
-            err.map(|e| e.errno as crate::shell::ExitCode).unwrap_or(0),
-        )
+        // Spec: `defer e.?.deref(); return this.bltn().done(e.?.getErrno());`
+        let code = err
+            .map(|e| {
+                let errno = e.get_errno() as crate::shell::ExitCode;
+                e.deref();
+                errno
+            })
+            .unwrap_or(0);
+        Builtin::done(interp, cmd, code)
     }
 }
 

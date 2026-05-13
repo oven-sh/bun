@@ -287,9 +287,14 @@ impl Mv {
         _: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
+        // Spec: mv.zig `onIOWriterChunk` opens with `defer if (e) |err| err.deref();`.
+        let had_err = e.is_some();
+        if let Some(e) = e {
+            e.deref();
+        }
         match Self::state_mut(interp, cmd).state {
             MvState::WaitingWriteErr { exit_code } => {
-                if e.is_some() {
+                if had_err {
                     Self::state_mut(interp, cmd).state = MvState::Err;
                     return Self::next(interp, cmd);
                 }

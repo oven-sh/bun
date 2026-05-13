@@ -1046,13 +1046,15 @@ impl Interpreter {
                     Ok(id) => id,
                     Err(e) => {
                         self.throw(ShellErr::new_sys(e));
-                        // Spec: Zig's `Binary.makeChild` returns `null` here and
-                        // the caller falls through as if the subshell exited 0
-                        // (Binary.zig:55-61, 130-134); Stmt.zig returns `.failed`
-                        // without touching `currently_executing`. Return `None`
-                        // so callers leave `currently_executing` unset — matches
-                        // the Zig fallthrough exactly (no `NodeId::NONE` sentinel
-                        // needed in `deinit_node`/`free_node` for this path).
+                        // Spec: the error has been recorded; return `None` (and a
+                        // throwaway `Yield::failed()`) so the caller decides how to
+                        // recover. `Stmt::next` propagates the `.failed` yield
+                        // (Stmt.zig returns `.failed`); `Binary::next` falls
+                        // through to the other operand as if the subshell exited 0
+                        // (Binary.zig:55-62, 131-137). Callers leave
+                        // `currently_executing` unset on this path, so no
+                        // `NodeId::NONE` sentinel is needed in
+                        // `deinit_node`/`free_node`.
                         return (None, Yield::failed());
                     }
                 }
@@ -2827,10 +2829,15 @@ impl<P: OutputTaskVTable> OutputTask<P> {
         this: *mut Self,
         interp: &Interpreter,
         _written: usize,
-        _err: Option<bun_sys::SystemError>,
+        err: Option<bun_sys::SystemError>,
     ) -> Yield {
         log!("OutputTask(0x{:x}) onIOWriterChunk", this as usize);
-        // Zig derefs the SystemError; in Rust drop handles it.
+        // Spec: interpreter.zig `if (err) |e| e.deref();` — release the
+        // SystemError's owned BunString fields. `bun_sys::SystemError` has no
+        // `Drop` impl, so dropping `err` here would leak those WTF strings.
+        if let Some(e) = err {
+            e.deref();
+        }
         unsafe { Self::next(this, interp) }
     }
 

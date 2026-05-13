@@ -189,7 +189,10 @@ impl ByteBlobLoader {
             blob.content_type_was_set.set(!ct.is_empty());
             blob.content_type
                 .set(bun_core::heap::into_raw(ct).cast_const());
-            blob.content_type_allocated.set(self.content_type_allocated);
+            // PORT NOTE: unlike Zig (which may *borrow* the originating blob's slice when
+            // `content_type_allocated == false`), `setup` always dupes into an owned
+            // `Box<[u8]>`, so the receiving Blob must own (and free) it.
+            blob.content_type_allocated.set(true);
             self.content_type_allocated = false;
         }
 

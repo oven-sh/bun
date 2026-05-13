@@ -51,9 +51,14 @@ impl<'a> CssModule<'a> {
                 // PORT NOTE: Zig `defer if (alloced) arena.free(source);` — arena-allocated, bulk-freed on bump.reset()
                 let _ = alloced;
                 // PERF(port): was appendAssumeCapacity — profile in Phase B
-                hashes.push(hash(
+                // PORT NOTE: Zig `hash(allocator, "{s}", .{source}, ...)` — `{s}`
+                // writes the `[]const u8` path bytes verbatim. Hash the raw bytes
+                // (paths may be non-UTF-8) so the class-name hash stays
+                // byte-identical to the Zig implementation rather than going
+                // through `bstr::BStr`'s lossy UTF-8 `Display`.
+                hashes.push(hash_bytes(
                     bump,
-                    format_args!("{}", bstr::BStr::new(source)),
+                    source,
                     matches!(config.pattern.segments.at(0), Segment::Hash),
                 ));
             }
@@ -485,6 +490,15 @@ impl<'a> CssModuleReference<'a> {
 #[inline]
 pub fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &'a [u8] {
     bun_base64::wyhash_url_safe(bump, args, at_start)
+}
+
+/// Raw-bytes variant of [`hash`] — hashes `input` verbatim with no UTF-8 lossy
+/// conversion, matching Zig's `"{s}"` formatting of a `[]const u8`. Used by
+/// `dependencies.rs` where the input is built from filesystem paths / `url()`
+/// targets that may contain non-UTF-8 bytes.
+#[inline]
+pub fn hash_bytes<'a>(bump: &'a Bump, input: &[u8], at_start: bool) -> &'a [u8] {
+    bun_base64::wyhash_url_safe_bytes(bump, input, at_start)
 }
 
 // ported from: src/css/css_modules.zig

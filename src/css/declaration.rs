@@ -501,17 +501,16 @@ where
                     );
                 }
                 css::ComposesState::DisallowNotSingleClass(info) => {
-                    // blocked_on: ParserOptions::warn_fmt_with_notes
-                    // (`bun_ast::Log` notes-ownership API). Until that
-                    // lands the note ("The parent selector is not a single
-                    // class selector because of the syntax here:" at
-                    // `info.to_logger_location(options.filename)`) is dropped;
-                    // the primary warning still fires at the right location.
-                    let _ = info;
-                    options.warn_fmt(
+                    options.warn_fmt_with_notes(
                         format_args!("\"composes\" only works inside single class selectors"),
                         source_location.line,
                         source_location.column,
+                        Box::new([bun_ast::Data {
+                            text: std::borrow::Cow::Borrowed(
+                                b"The parent selector is not a single class selector because of the syntax here:",
+                            ),
+                            location: Some(info.to_logger_location(options.filename)),
+                        }]),
                     );
                 }
             }

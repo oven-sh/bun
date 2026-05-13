@@ -191,9 +191,11 @@ impl Start {
                 let mut chunk_size: BlobSizeType = 0;
                 let mut empty = true;
 
-                // TODO(port): Zig used `getOwn`; `bun_jsc::JSValue::get_own` not yet
-                // exported — `get` walks the prototype chain. Swap once available.
-                if let Some(val) = value.get(global_this, b"asUint8Array")? {
+                // Zig (`streams.zig`): `value.getOwn(globalThis, "asUint8Array")` —
+                // own-property only, does NOT walk the prototype chain.
+                if let Some(val) =
+                    value.get_own(global_this, &bun_core::String::static_("asUint8Array"))?
+                {
                     if val.is_boolean() {
                         as_uint8array = val.to_boolean();
                         empty = false;

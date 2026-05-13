@@ -5836,6 +5836,23 @@ impl Token {
         }
     }
 
+    /// CSS-serialization-correct renderer used for parse-error messages —
+    /// a port of Zig `Token.format`. Identical to [`Token::to_css_generic`]
+    /// except for the two tokens where Zig's `format` diverges from
+    /// `toCssGeneric`: `quoted_string` is wrapped in quotes via
+    /// `serialize_string` (not `serialize_name`), and `idhash` is rendered as
+    /// `#` + `serialize_identifier` (not `serialize_name`).
+    pub fn format_for_error<W: WriteAll + ?Sized>(&self, writer: &mut W) -> bun_io::Result<()> {
+        match self {
+            Token::QuotedString(value) => serializer::serialize_string(value, writer),
+            Token::IdHash(value) => {
+                writer.write_all(b"#")?;
+                serializer::serialize_identifier(value, writer)
+            }
+            _ => self.to_css_generic(writer),
+        }
+    }
+
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Token::Ident(value) => dest.serialize_identifier(value),

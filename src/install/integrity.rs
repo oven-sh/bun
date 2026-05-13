@@ -78,7 +78,17 @@ impl Integrity {
         while i < end {
             // npm sha1 strings are always [0-9a-f]; canonical hex_pair_value
             // narrows the original over-broad b'g'..=b'z' acceptance.
-            integrity.value[out_i] = bun_core::fmt::hex_pair_value(buf[i], buf[i + 1])
+            //
+            // Guard the second-nibble read: a malformed registry shasum can be
+            // odd-length and shorter than 40 chars (e.g. "abc"), which would make
+            // `buf[i + 1]` index out of bounds on the final iteration. Zig's
+            // parseSHASum has the same off-by-one but in release builds the OOB
+            // read surfaces as error.InvalidCharacter (swallowed by the caller),
+            // so match that here rather than panicking.
+            let Some(&lo) = buf.get(i + 1) else {
+                return Err(bun_core::err!("InvalidCharacter"));
+            };
+            integrity.value[out_i] = bun_core::fmt::hex_pair_value(buf[i], lo)
                 .ok_or_else(|| bun_core::err!("InvalidCharacter"))?;
             out_i += 1;
             i += 2;

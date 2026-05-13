@@ -1,4 +1,3 @@
-use bstr::BStr;
 use core::fmt;
 
 use crate::{Location, SourceLocation, Token};
@@ -9,9 +8,10 @@ use crate::{Location, SourceLocation, Token};
 use crate::Str;
 
 #[inline(always)]
-fn bs(p: Str) -> &'static BStr {
+fn bs(p: Str) -> bun_core::fmt::Raw<'static> {
     // SAFETY: arena/source slice outlives the error value; only used transiently for Display.
-    BStr::new(unsafe { crate::arena_str(p) })
+    // Matches Zig's `{s}`: emit the bytes verbatim (no lossy U+FFFD substitution).
+    bun_core::fmt::Raw(unsafe { crate::arena_str(p) })
 }
 
 /// A printer error.

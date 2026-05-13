@@ -2218,8 +2218,10 @@ impl PipeReader {
                         }
                         old @ PipeReaderState::Err(_) => {
                             me.state = old;
-                            // PORT NOTE: Zig `e.deref()`; Rust drops the duplicate.
-                            drop(e);
+                            // Mirror Zig `e.deref()`: `bun_sys::SystemError` has no
+                            // `Drop` and `bun_core::String` is `Copy`, so a plain
+                            // `drop(e)` would leak the WTF string refs. Release them.
+                            e.deref();
                         }
                         PipeReaderState::Pending => {
                             // unreachable after is_done() guard; mirror Zig.

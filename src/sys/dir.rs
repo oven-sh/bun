@@ -136,8 +136,12 @@ impl Dir {
                             Ok(()) => break 'handle_entry,
                             Err(e) => match e.get_errno() {
                                 E::ENOENT => break 'handle_entry,
-                                // EISDIR (Linux) / EPERM (POSIX rmdir-required)
-                                E::EISDIR | E::EPERM => {
+                                // EISDIR: the entry is a directory; reopen and recurse.
+                                // Zig only retries on `error.IsDir`; `error.AccessDenied`
+                                // (EPERM/EACCES) is returned as an error. Do NOT treat
+                                // EPERM as a directory — that turns an undeletable regular
+                                // file into an infinite openat(ENOTDIR)/unlinkat(EPERM) loop.
+                                E::EISDIR => {
                                     treat_as_dir = true;
                                     continue 'handle_entry;
                                 }
@@ -206,9 +210,9 @@ impl Dir {
     }
 
     /// Port of `std.fs.Dir.deleteTreeOpenInitialSubpath` — try removing
-    /// `sub_path` as a file; on `EISDIR`/`EPERM` open it as an iterable
-    /// directory and return the fd. Returns `None` when removal succeeded or
-    /// the path doesn't exist.
+    /// `sub_path` as a file; on `EISDIR` open it as an iterable directory and
+    /// return the fd. Returns `None` when removal succeeded or the path doesn't
+    /// exist.
     fn delete_tree_open_initial_subpath(
         &self,
         sub_path: &[u8],
@@ -220,8 +224,10 @@ impl Dir {
                     Ok(()) => return Ok(None),
                     Err(e) => match e.get_errno() {
                         E::ENOENT => return Ok(None),
-                        // Linux: EISDIR. POSIX: EPERM when target is a directory.
-                        E::EISDIR | E::EPERM => treat_as_dir = true,
+                        // Linux: EISDIR when the target is a directory. Zig only retries
+                        // on `error.IsDir`; EPERM is returned, not retried as a directory
+                        // (avoids an infinite openat(ENOTDIR)/unlinkat(EPERM) loop).
+                        E::EISDIR => treat_as_dir = true,
                         _ => return Err(e.into()),
                     },
                 }
@@ -494,7 +500,8 @@ pub trait FdDirExt: Copy {
 impl FdDirExt for Fd {
     #[inline]
     fn make_path(self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
-        mkdir_recursive_at(self, sub_path).map_err(Into::into)
+        // Zig: `FD.makePath(u8, ..)` → `bun.makePath` (dangling-symlink retry).
+        make_path_dangling(self, sub_path).map_err(Into::into)
     }
     #[inline]
     fn make_open_path(self, sub_path: &[u8]) -> core::result::Result<Dir, bun_core::Error> {

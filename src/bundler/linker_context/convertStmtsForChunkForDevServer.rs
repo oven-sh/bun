@@ -277,8 +277,6 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                 Loc::EMPTY,
             ))?;
         // hmr.onUpdate = [ ... ];
-        // PORT NOTE: reshaped for borrowck — capture len before moving esm_callbacks
-        let callbacks_len = esm_callbacks.len();
         stmts
             .inside_wrapper_prefix
             .append_non_dependency(Stmt::alloc(
@@ -298,7 +296,11 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                             right: Expr::init(
                                 E::Array {
                                     items: ExprNodeList::move_from_list(esm_callbacks),
-                                    is_single_line: callbacks_len <= 2,
+                                    // PORT NOTE: Zig writes `.is_single_line = esm_callbacks.items.len <= 2`
+                                    // *after* `.items = .moveFromList(&esm_callbacks)` has already emptied the
+                                    // list (struct-literal fields evaluate in source order), so it always
+                                    // observes len 0 and emits `true`. Match that here.
+                                    is_single_line: true,
                                     ..Default::default()
                                 },
                                 Loc::EMPTY,

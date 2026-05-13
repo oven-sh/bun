@@ -256,14 +256,32 @@ static DECOMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
 };
 
-// TODO(port): phf custom hasher — Zig used `.getWithEql(zig_string, ZigString.eqlComptime)`,
-// which compares a ZigString (possibly UTF-16) against the literal keys. Here we go through
-// `ZigString::as_bytes_if_latin1()` (or equivalent) and look up in the phf map; Phase B should
-// verify UTF-16-backed ZigStrings still match.
+// Zig used `CompressTable.getWithEql(zig_string, ZigString.eqlComptime)`, and
+// `ZigString.eqlComptime` handles UTF-16-backed ZigStrings (e.g. a substring view of a
+// 16-bit JS string whose content is ASCII) via `eqlComptimeUTF16`. `ZigString::slice()` is
+// only valid for 8-bit strings — for a 16-bit string it panics in debug builds and
+// reinterprets the UTF-16 buffer as raw bytes in release builds. So when the ZigString is
+// 16-bit we compare each literal table key against the UTF-16 code units instead.
 fn lookup_zig_string(
     table: &phf::Map<&'static [u8], i32>,
     key: &bun_core::ZigString,
 ) -> Option<i32> {
+    if key.is_16bit() {
+        let units = key.utf16_slice_aligned();
+        for (entry_key, value) in table.entries() {
+            let entry_key: &[u8] = entry_key;
+            if units.len() == entry_key.len()
+                && units
+                    .iter()
+                    .copied()
+                    .zip(entry_key.iter().copied())
+                    .all(|(a, b)| a == u16::from(b))
+            {
+                return Some(*value);
+            }
+        }
+        return None;
+    }
     table.get(key.slice()).copied()
 }
 

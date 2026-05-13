@@ -88,16 +88,19 @@ impl<C: ReaderContext> NewReader<C> {
         Ok(I::from_ne_slice(&data.slice()[..I::SIZE]))
     }
 
-    /// Zig `reader.int(u24)` — read 3 little-endian bytes, zero-extend to u32.
+    /// Zig `reader.int(u24)` — `@sizeOf(u24) == 4`, so this consumes 4 bytes
+    /// from the stream (the MySQL binary protocol encodes MYSQL_TYPE_INT24 in a
+    /// 4-byte slot shared with MYSQL_TYPE_LONG) and reinterprets the low 3 bytes.
     pub fn int_u24(self) -> Result<u32, AnyMySQLError> {
-        let data = self.read(3)?;
+        let data = self.read(4)?;
         let s = data.slice();
         Ok(u32::from_le_bytes([s[0], s[1], s[2], 0]))
     }
 
-    /// Zig `reader.int(i24)` — read 3 little-endian bytes, sign-extend to i32.
+    /// Zig `reader.int(i24)` — `@sizeOf(i24) == 4`, so this consumes 4 bytes
+    /// from the stream and sign-extends the low 3 bytes to i32.
     pub fn int_i24(self) -> Result<i32, AnyMySQLError> {
-        let data = self.read(3)?;
+        let data = self.read(4)?;
         let s = data.slice();
         let u = u32::from_le_bytes([s[0], s[1], s[2], 0]);
         // sign-extend 24 -> 32

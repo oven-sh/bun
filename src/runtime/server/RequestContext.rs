@@ -3452,18 +3452,18 @@ where
             if let Some(filename) = self.blob.get_file_name() {
                 let basename = bun_paths::basename(filename);
                 if !basename.is_empty() {
+                    // Match Zig's `bufPrint("filename=\"{s}\"", ...)`: emit the
+                    // basename bytes verbatim (no lossy UTF-8 substitution).
                     let mut filename_buf = [0u8; 1024];
                     let truncated = &basename[..basename.len().min(1024 - 32)];
-                    let header_value = {
-                        let mut w = &mut filename_buf[..];
-                        if write!(w, "filename=\"{}\"", bstr::BStr::new(truncated)).is_ok() {
-                            let written = 1024 - w.len();
-                            &filename_buf[..written]
-                        } else {
-                            &b""[..]
-                        }
-                    };
-                    resp.write_header(b"content-disposition", header_value);
+                    const PREFIX: &[u8] = b"filename=\"";
+                    const SUFFIX: &[u8] = b"\"";
+                    let end = PREFIX.len() + truncated.len() + SUFFIX.len();
+                    filename_buf[..PREFIX.len()].copy_from_slice(PREFIX);
+                    filename_buf[PREFIX.len()..PREFIX.len() + truncated.len()]
+                        .copy_from_slice(truncated);
+                    filename_buf[PREFIX.len() + truncated.len()..end].copy_from_slice(SUFFIX);
+                    resp.write_header(b"content-disposition", &filename_buf[..end]);
                 }
             }
         }

@@ -153,14 +153,28 @@ impl Mkdir {
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
         let pending = match &mut Self::state_mut(interp, cmd).state {
-            State::WaitingWriteErr => return Builtin::done(interp, cmd, 1),
+            State::WaitingWriteErr => {
+                // Spec: mkdir.zig `onIOWriterChunk` — `if (e) |err| err.deref();`.
+                // `bun_sys::SystemError` has no `Drop`, so dropping `e` would leak
+                // its owned BunString fields.
+                if let Some(e) = e {
+                    e.deref();
+                }
+                return Builtin::done(interp, cmd, 1);
+            }
             State::Exec(exec) => exec.output_queue.pop_front(),
             State::Idle | State::Done => panic!("Invalid state"),
         };
         if let Some(task) = pending {
             // SAFETY: `task` was heap-allocated in `OutputTask::new` and
             // pushed by `write_err`/`write_out`; not yet freed.
+            // `OutputTask::on_io_writer_chunk` derefs the `SystemError` itself.
             return unsafe { OutputTask::<Mkdir>::on_io_writer_chunk(task, interp, written, e) };
+        }
+        // Spec: mkdir.zig `onIOWriterChunk` — release the SystemError's owned
+        // BunString fields (no `Drop` impl, so dropping `e` would leak them).
+        if let Some(e) = e {
+            e.deref();
         }
         Self::next(interp, cmd)
     }

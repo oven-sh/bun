@@ -1326,11 +1326,9 @@ impl PackageJSON {
                                 }
                                 _ => {
                                     // Only print this warning if its not inside node_modules, since node_modules/ is not actionable.
-                                    // PORT NOTE: `bun_paths::fs::Path<'static>` has no `is_node_module`; inline the check.
-                                    if !strings::contains(
-                                        json_source.path.text,
-                                        NODE_MODULES_PATH.as_bytes(),
-                                    ) {
+                                    // Zig: `!json_source.path.isNodeModule()` — checks the parsed dir
+                                    // component (`name.dir`), NOT the full path text.
+                                    if !json_source.path.is_node_module() {
                                         r_log.add_warning(
                                             Some(json_source),
                                             value.loc,

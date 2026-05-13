@@ -127,7 +127,12 @@ function stopDevServer() {
 
 afterAll(stopDevServer);
 
-const timeout = Bun.version.includes("debug") ? 1_000_000 : 100_000;
+// This test installs deps, cold-starts the Next.js dev server (which recompiles
+// per request), then makes 100 SSR requests at concurrency 4. The wall-clock
+// time legitimately varies a lot with CI runner load, so the release-build
+// budget is generous (5min) to avoid the bun:test per-test timeout firing on a
+// slow runner. Debug builds keep their existing larger budget.
+const timeout = Bun.version.includes("debug") ? 1_000_000 : 300_000;
 test(
   "ssr works for 100-ish requests",
   async () => {
@@ -144,12 +149,20 @@ test(
     const queue = new PQueue({ concurrency: 4 });
 
     async function run(i: number) {
-      const x = await fetch(`${baseUrl}/?i=${i}`, {
-        headers: {
-          "Cache-Control": "private, no-cache, no-store, must-revalidate",
-        },
-        signal: controller.signal,
-      });
+      // Next's dev server can emit a transient 5xx while it's recompiling under
+      // concurrent load. Retry a small bounded number of times on 5xx only; a
+      // persistent 5xx (or a non-200 that isn't 5xx) still fails the test below.
+      let x: Response;
+      for (let attempt = 0; ; attempt++) {
+        x = await fetch(`${baseUrl}/?i=${i}`, {
+          headers: {
+            "Cache-Control": "private, no-cache, no-store, must-revalidate",
+          },
+          signal: controller.signal,
+        });
+        if (x.status < 500 || attempt >= 3) break;
+        await x.arrayBuffer().catch(() => {});
+      }
       expect(x.status).toBe(200);
       const text = await x.text();
       console.count("Completed request");

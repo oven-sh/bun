@@ -2702,6 +2702,10 @@ describe("fs/promises", () => {
     // suite in JSC::sortBucketSort. Scale to debug-survivable size while
     // keeping enough concurrency to exercise the work-pool path.
     const iterCount = isDebug || isASAN ? 32 : 200;
+    // The time budget tracks the build, not the host: un-JIT'd / ASAN-instrumented
+    // debug builds under loaded CI can take >10s for the reduced work + 5k-string
+    // sorts + deep equality, even though coverage is unchanged.
+    const timeoutMs = isDebug || isASAN ? 30_000 : 10_000;
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {
@@ -2770,12 +2774,12 @@ describe("fs/promises", () => {
 
     if (withFileTypes) {
       describe("withFileTypes", () => {
-        it("readdir(path, {recursive: true} should work x 100", doIt, 10_000);
-        it("readdir(path, {recursive: true} should fail x 100", fail, 10_000);
+        it("readdir(path, {recursive: true} should work x 100", doIt, timeoutMs);
+        it("readdir(path, {recursive: true} should fail x 100", fail, timeoutMs);
       });
     } else {
-      it("readdir(path, {recursive: true} should work x 100", doIt, 10_000);
-      it("readdir(path, {recursive: true} should fail x 100", fail, 10_000);
+      it("readdir(path, {recursive: true} should work x 100", doIt, timeoutMs);
+      it("readdir(path, {recursive: true} should fail x 100", fail, timeoutMs);
     }
   }
 
@@ -2786,6 +2790,10 @@ describe("fs/promises", () => {
     // recursive walk + 5k-string sort + deep toEqual runs serially. 8 is enough
     // to catch the FD-leak regression this guards.
     const iterCount = isDebug || isASAN ? 8 : 200;
+    // The time budget tracks the build, not the host: serial recursive walks +
+    // 5k-string sorts + deep toEqual on an un-JIT'd / ASAN debug build under
+    // loaded CI can exceed 10s without any change in coverage.
+    const timeoutMs = isDebug || isASAN ? 30_000 : 10_000;
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {
@@ -2819,9 +2827,9 @@ describe("fs/promises", () => {
     };
 
     if (withFileTypes) {
-      it("readdirSync(path, {recursive: true, withFileTypes: true} should work x 100", doIt, 10_000);
+      it("readdirSync(path, {recursive: true, withFileTypes: true} should work x 100", doIt, timeoutMs);
     } else {
-      it("readdirSync(path, {recursive: true} should work x 100", doIt, 10_000);
+      it("readdirSync(path, {recursive: true} should work x 100", doIt, timeoutMs);
     }
   }
 

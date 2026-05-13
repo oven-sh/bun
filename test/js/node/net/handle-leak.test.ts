@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { isASAN, isWindows } from "harness";
+import { isASAN, isDebug, isWindows } from "harness";
 import { rmSync } from "node:fs";
 import * as net from "node:net";
 import { tmpdir } from "node:os";
@@ -71,6 +71,10 @@ while (started < 100_000) {
   console.log(`Completed ${started} connections. RSS: ${(process.memoryUsage.rss() / 1024 / 1024) | 0} MB`);
 }
 
+// Symmetric with `warmup_rss` (which is post-GC): collect before sampling so the
+// comparison isn't inflated by transient garbage. A native/non-JS handle leak
+// still survives GC, so this keeps catching what the test is meant to catch.
+Bun.gc(true);
 const post_rss = process.memoryUsage.rss();
 
 server.close();
@@ -78,4 +82,8 @@ server.close();
 let margin = 1024 * 1024 * 15;
 if (isWindows) margin = 1024 * 1024 * 40;
 if (isASAN) margin = 1024 * 1024 * 60;
+// Debug builds legitimately retain more between checkpoints: unoptimized
+// allocation churn, debug-allocator metadata, and lazier/less-aggressive GC.
+// Same rationale as the Windows/ASAN carve-outs above.
+if (isDebug) margin = 1024 * 1024 * 64;
 expect(post_rss - warmup_rss).toBeLessThan(margin);

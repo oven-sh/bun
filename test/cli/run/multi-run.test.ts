@@ -1589,7 +1589,9 @@ describe.concurrent("dependency chains", () => {
       expect(indices[i]).toBeLessThan(indices[i + 1]);
     }
     expect(r.exitCode).toBe(0);
-  });
+    // Spawns ~10 `bun` processes strictly one after another (3 groups x pre/main/post);
+    // the default 5s timeout is too tight on slow/contended CI runners and debug/ASAN builds.
+  }, 30000);
 
   test("parallel with pre/post: failure in one group's chain doesn't block other groups", async () => {
     using dir = tempDir("mr-chain-partial", {

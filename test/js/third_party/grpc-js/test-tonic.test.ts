@@ -97,9 +97,14 @@ async function startServer(): Promise<Server> {
 describe.skipIf(!cargoBin || !releases[release])("test tonic server", () => {
   let server: Server;
 
+  // `startServer()` does a cold `cargo build` of the tonic example server (plus a
+  // protoc download + unzip) on every run; on a slow CI runner that can take
+  // several minutes, well past the per-test `--timeout`. Give the hook its own
+  // generous budget so it isn't killed mid-build (also covers local runs that
+  // don't go through the CI `--timeout` plumbing).
   beforeAll(async () => {
     server = await startServer();
-  });
+  }, 150_000);
 
   afterAll(() => {
     server.kill();

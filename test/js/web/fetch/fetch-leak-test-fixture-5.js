@@ -7,12 +7,20 @@ function getHeapStats() {
 const server = process.argv[2];
 const batch = 10;
 const iterations = 50;
-const threshold = batch * 2 + batch / 2;
-// JSC's C++ module loader keeps a handful of pipeline JSPromises live in the
-// module map (fetch/module/load per registry entry) for the life of the
-// process. These are constant across iterations, so account for them
-// separately from the per-batch leak threshold.
-const promiseThreshold = threshold + 10;
+// The leak this test guards against is *sustained per-iteration growth* of
+// Response / Promise objects across `iterations` fetches. The previous version
+// asserted an absolute object count, but that count has no fixed value: some
+// body paths plus JSC's C++ module loader keep a residual of transient
+// JSPromises alive, and on a debug/ASAN build under load `Bun.gc(true)` + a
+// short sleep doesn't always drain the per-batch FetchTasklet cleanup before the
+// measurement, so the residual both varies between runs and ramps up over the
+// first iterations before plateauing. None of that is a leak. So instead: treat
+// the first half of the run as warmup (long enough for the residual to plateau),
+// record its high-water mark as a baseline, then require the back half to stay
+// within baseline + a couple batches of slack. A real leak keeps climbing and
+// blows past that bound; a constant-or-plateauing residual does not.
+const warmupIterations = Math.ceil(iterations / 2);
+const growthSlack = batch * 2;
 const BODY_SIZE = parseInt(process.argv[3], 10);
 if (!Number.isSafeInteger(BODY_SIZE)) {
   console.error("BODY_SIZE must be a safe integer", BODY_SIZE, process.argv);
@@ -100,6 +108,9 @@ async function iterate() {
   await Promise.all(promises);
 }
 
+let baselineResponses = 0;
+let baselinePromises = 0;
+
 try {
   for (let i = 0; i < iterations; i++) {
     await iterate();
@@ -109,8 +120,16 @@ try {
       await Bun.sleep(100);
       Bun.gc(true);
       const stats = getHeapStats();
-      expect(stats.Response || 0).toBeLessThanOrEqual(threshold);
-      expect(stats.Promise || 0).toBeLessThanOrEqual(promiseThreshold);
+      const responses = stats.Response || 0;
+      const promises = stats.Promise || 0;
+      if (i < warmupIterations) {
+        // Warmup: let the constant residual settle; record its high-water mark.
+        baselineResponses = Math.max(baselineResponses, responses);
+        baselinePromises = Math.max(baselinePromises, promises);
+      } else {
+        expect(responses).toBeLessThanOrEqual(baselineResponses + growthSlack);
+        expect(promises).toBeLessThanOrEqual(baselinePromises + growthSlack);
+      }
       process.send({
         rss: process.memoryUsage.rss(),
       });

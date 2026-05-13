@@ -584,8 +584,17 @@ describe("spawn stdin ReadableStream", () => {
         await Promise.all([proc.stdout.text(), proc.exited]);
       }
 
-      const promises = Array.from({ length: iterations }, (_, i) => iterate(i));
-      await Promise.all(promises);
+      // Bound concurrency: spawning all `iterations` subprocesses at once is
+      // resource-bound (fds, memory) on busy/ASAN runners and pushes the test
+      // past its timeout. Run in small batches instead.
+      const batchSize = 10;
+      for (let start = 0; start < iterations; start += batchSize) {
+        const batch = [];
+        for (let i = start; i < Math.min(start + batchSize, iterations); i++) {
+          batch.push(iterate(i));
+        }
+        await Promise.all(batch);
+      }
     }
 
     await main();
@@ -597,7 +606,10 @@ describe("spawn stdin ReadableStream", () => {
     // Check that we're not leaking objects
     await expectMaxObjectTypeCount(expect, "ReadableStream", 10);
     await expectMaxObjectTypeCount(expect, "Subprocess", 5);
-  });
+    // Generous timeout: this spawns many `bun` subprocesses; the default 5s
+    // per-test timeout is too tight under concurrency pressure (CI sharding,
+    // ASAN debug builds).
+  }, isASAN ? 60_000 : 30_000);
 
   // Regression: src/runtime/api/bun/subprocess/Writable.zig:115/193
   // (`pipe.assignToStream(...)`) — Zig's `FileSink.create` returns rc=1 which is

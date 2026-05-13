@@ -2,9 +2,23 @@
 #
 # Hot-startup symbol order for `bun <file>` / `bun .` / `bun run <script>` /
 # `bun install` / `bun --version`. lld clusters listed symbols at the front
-# of `.text`, packing all init-array-reachable + CLI-dispatch + JSC-VM-init
-# code into a contiguous fault-around window instead of being interleaved
-# with cold bun_bundler / bun_css / bun_shell code in fat-LTO emission order.
+# of *their* output section, packing all init-array-reachable + CLI-dispatch
+# + JSC-VM-init code into a contiguous fault-around window instead of being
+# interleaved with cold bun_bundler / bun_css / bun_shell code in fat-LTO
+# emission order.
+#
+# lld's `--symbol-ordering-file` reorders input sections in *every* output
+# section, not just `.text` — with rustc's default `-Zfunction-sections`
+# (and `-fdata-sections` on the C++ side) each `static` lands in its own
+# `.rodata.<sym>` / `.data.rel.ro.<sym>` input section, so listing a data
+# symbol here clusters it the same way a function symbol is clustered. The
+# `# hot rodata` block below uses that to pull the `&'static` clap tables
+# that the `--version` / dispatch fast path dereferences onto a couple of
+# shared `.data.rel.ro` pages instead of one minor fault per scattered
+# table. (The residue — anonymous promoted consts, `core::panic::Location`
+# strings emitted at each `expect()` / `panic!()` site — has no symbol to
+# name here; that's what `-Wl,-icf=all` and/or `#[link_section =
+# ".rodata.startup"]` on the hot statics would mop up. See flags.ts.)
 #
 # Generated against the *release* (ICF'd) binary so the kept-representative
 # names match what lld actually links — see -Wl,-icf=safe in flags.ts.
@@ -40,8 +54,8 @@
 # (first-seen order — NOT `sort -u` — so call-order is preserved.)
 #
 # Order: .init_array targets -> mimalloc init -> main -> Rust CLI entry ->
-# arg parse -> resolver/transpiler -> JSC VM init (JSC/WTF/ICU) -> teardown
-# -> npm-script tail -> install tail.
+# arg parse (+ comptime clap tables, .data.rel.ro) -> resolver/transpiler
+# -> JSC VM init (JSC/WTF/ICU) -> teardown -> npm-script tail -> install tail.
 
 # .init_array targets + entry anchors (too small to sample; hand-listed)
 frame_dummy
@@ -60,6 +74,14 @@ mi_free
 main
 _RNvNtCsgYa7AclpnEC_17bun_crash_handler5draft4init
 _RNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli3cli5start
+# `bun --version` / `bun --revision` exit before `Command::start`, and the
+# orphan-watchdog env-var probe runs straight off `main` — all tiny, so the
+# perf-driven regen never samples them and fat-LTO would otherwise scatter
+# them out of the hot cluster. Hand-list them next to `main` (hashes are
+# wildcarded by rewrite-startup-order.ts, only the base names matter).
+_RNvNtCsdUGwqtdHSXW_11bun_runtime3cli22print_version_and_exit
+_RNvNtCsdUGwqtdHSXW_11bun_runtime3cli23print_revision_and_exit
+_RNvNtCse8q7tYnwu66_6bun_io21parent_death_watchdog7install
 _RNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli7command16exec_auto_or_run
 _RNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli7command12exec_install
 _RNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli7command8exec_add
@@ -70,6 +92,41 @@ _RNvNtNtCsaEk8A8rQunB_11bun_runtime3cli7command5start
 _RNvNtNtCsaEk8A8rQunB_11bun_runtime3cli15install_command16install_with_cli
 _RNvMNtCsb0WKtEr3BuM_8bun_clap8comptimeNtB2_14ConvertedTable4find
 _RINvCsb0WKtEr3BuM_8bun_clap5parseNtB2_4HelpECsdUGwqtdHSXW_11bun_runtime
+
+# hot rodata — comptime clap tables (`.data.rel.ro`, no .text)
+#
+# `bun --version` / `bun --revision` / every `bun <cmd>` dispatch deref a
+# `&'static ConvertedTable` (the `*_TABLE` statics in `bun_runtime::cli::
+# arguments`, each built by `bun_clap::comptime_table!` → a `static __CONV:
+# [Param<usize>; N]`, `static __LONG: [LongEntry; M]`, `static __TABLE:
+# ConvertedTable` nested in the table static's initializer). rustc gives
+# each its own `.data.rel.ro.<sym>` section; without an ordering hint fat-LTO
+# scatters them across the segment, so the first arg-parse touch faults a
+# fresh page per table. Cluster them next to the `parse`/`find` code above.
+# (Listed in deref order: --version path hits AUTO/BASE_RUNTIME_TRANSPILER
+# first; hashes wildcarded, only the path + base name matter — dead entries
+# are dropped by rewrite-startup-order.ts.)
+_RNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments10AUTO_TABLE
+_RNvNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments10AUTO_TABLE7__TABLE
+_RNvNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments10AUTO_TABLE6__CONV
+_RNvNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments10AUTO_TABLE6__LONG
+_RNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments29BASE_RUNTIME_TRANSPILER_TABLE
+_RNvNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments29BASE_RUNTIME_TRANSPILER_TABLE7__TABLE
+_RNvNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments29BASE_RUNTIME_TRANSPILER_TABLE6__CONV
+_RNvNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments29BASE_RUNTIME_TRANSPILER_TABLE6__LONG
+_RNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments9RUN_TABLE
+_RNvNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments9RUN_TABLE7__TABLE
+_RNvNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments9RUN_TABLE6__CONV
+_RNvNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments9RUN_TABLE6__LONG
+_RNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments11BUILD_TABLE
+_RNvNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments11BUILD_TABLE7__TABLE
+_RNvNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments11BUILD_TABLE6__CONV
+_RNvNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments11BUILD_TABLE6__LONG
+_RNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments10TEST_TABLE
+_RNvNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments10TEST_TABLE7__TABLE
+_RNvNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments10TEST_TABLE6__CONV
+_RNvNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli9arguments10TEST_TABLE6__LONG
+
 _RNvMs1_NtNtCsdUGwqtdHSXW_11bun_runtime3cli11run_commandNtB5_10RunCommand21configure_env_for_run
 _RNvMs3_NtNtCsdUGwqtdHSXW_11bun_runtime3cli11run_commandNtB5_10RunCommand22__boot_and_handle_error
 _RNvMs1_NtNtCsdUGwqtdHSXW_11bun_runtime3cli11run_commandNtB5_10RunCommand4boot

@@ -36,73 +36,76 @@ async function nextMatching(iter: AsyncGenerator<string>, needle: string) {
   }
 }
 
-describe.todoIf(isBroken && isWindows)("issue #17270: --watch keeps watching files handled by runtime plugin onLoad", () => {
-  test("after onLoad throws", async () => {
-    using dir = tempDir("watch-plugin-throw", {
-      "bunfig.toml": `preload = ["./plugin.js"]\n`,
-      "plugin.js": plugin,
-      "entry.js": `import "./foo.js";\n`,
-      "foo.js": `BAD; console.log("hello v1");\n`,
-    });
-    const fooPath = join(String(dir), "foo.js");
+describe.todoIf(isBroken && isWindows)(
+  "issue #17270: --watch keeps watching files handled by runtime plugin onLoad",
+  () => {
+    test("after onLoad throws", async () => {
+      using dir = tempDir("watch-plugin-throw", {
+        "bunfig.toml": `preload = ["./plugin.js"]\n`,
+        "plugin.js": plugin,
+        "entry.js": `import "./foo.js";\n`,
+        "foo.js": `BAD; console.log("hello v1");\n`,
+      });
+      const fooPath = join(String(dir), "foo.js");
 
-    await using proc = spawn({
-      cmd: [bunExe(), "--watch", "entry.js"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+      await using proc = spawn({
+        cmd: [bunExe(), "--watch", "entry.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
 
-    const iter = forEachLine(proc.stdout);
+      const iter = forEachLine(proc.stdout);
 
-    // First run: plugin throws, emits PLUGIN-ERROR on stdout before throwing.
-    expect(await nextMatching(iter, "PLUGIN-ERROR")).toContain("PLUGIN-ERROR");
+      // First run: plugin throws, emits PLUGIN-ERROR on stdout before throwing.
+      expect(await nextMatching(iter, "PLUGIN-ERROR")).toContain("PLUGIN-ERROR");
 
-    // Fix the file. The watcher should pick this up and reload.
-    writeFileSync(fooPath, `console.log("hello v2");\n`);
-    expect(await nextMatching(iter, "hello v2")).toContain("hello v2");
+      // Fix the file. The watcher should pick this up and reload.
+      writeFileSync(fooPath, `console.log("hello v2");\n`);
+      expect(await nextMatching(iter, "hello v2")).toContain("hello v2");
 
-    // Subsequent edits to a plugin-handled file that previously succeeded
-    // must also be picked up.
-    writeFileSync(fooPath, `console.log("hello v3");\n`);
-    expect(await nextMatching(iter, "hello v3")).toContain("hello v3");
+      // Subsequent edits to a plugin-handled file that previously succeeded
+      // must also be picked up.
+      writeFileSync(fooPath, `console.log("hello v3");\n`);
+      expect(await nextMatching(iter, "hello v3")).toContain("hello v3");
 
-    proc.kill();
-    await proc.exited;
-  });
-
-  test("after onLoad succeeds", async () => {
-    using dir = tempDir("watch-plugin-ok", {
-      "bunfig.toml": `preload = ["./plugin.js"]\n`,
-      "plugin.js": plugin,
-      "entry.js": `import "./foo.js";\n`,
-      "foo.js": `console.log("hello v1");\n`,
-    });
-    const fooPath = join(String(dir), "foo.js");
-
-    await using proc = spawn({
-      cmd: [bunExe(), "--watch", "entry.js"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdio: ["ignore", "pipe", "pipe"],
+      proc.kill();
+      await proc.exited;
     });
 
-    const iter = forEachLine(proc.stdout);
+    test("after onLoad succeeds", async () => {
+      using dir = tempDir("watch-plugin-ok", {
+        "bunfig.toml": `preload = ["./plugin.js"]\n`,
+        "plugin.js": plugin,
+        "entry.js": `import "./foo.js";\n`,
+        "foo.js": `console.log("hello v1");\n`,
+      });
+      const fooPath = join(String(dir), "foo.js");
 
-    expect(await nextMatching(iter, "hello v1")).toContain("hello v1");
+      await using proc = spawn({
+        cmd: [bunExe(), "--watch", "entry.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
 
-    writeFileSync(fooPath, `console.log("hello v2");\n`);
-    expect(await nextMatching(iter, "hello v2")).toContain("hello v2");
+      const iter = forEachLine(proc.stdout);
 
-    // Break it — the plugin should throw, and the watcher must keep
-    // tracking foo.js so that fixing it reloads again.
-    writeFileSync(fooPath, `BAD; console.log("hello v3");\n`);
-    expect(await nextMatching(iter, "PLUGIN-ERROR")).toContain("PLUGIN-ERROR");
+      expect(await nextMatching(iter, "hello v1")).toContain("hello v1");
 
-    writeFileSync(fooPath, `console.log("hello v4");\n`);
-    expect(await nextMatching(iter, "hello v4")).toContain("hello v4");
+      writeFileSync(fooPath, `console.log("hello v2");\n`);
+      expect(await nextMatching(iter, "hello v2")).toContain("hello v2");
 
-    proc.kill();
-    await proc.exited;
-  });
-});
+      // Break it — the plugin should throw, and the watcher must keep
+      // tracking foo.js so that fixing it reloads again.
+      writeFileSync(fooPath, `BAD; console.log("hello v3");\n`);
+      expect(await nextMatching(iter, "PLUGIN-ERROR")).toContain("PLUGIN-ERROR");
+
+      writeFileSync(fooPath, `console.log("hello v4");\n`);
+      expect(await nextMatching(iter, "hello v4")).toContain("hello v4");
+
+      proc.kill();
+      await proc.exited;
+    });
+  },
+);

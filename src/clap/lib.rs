@@ -109,6 +109,8 @@ pub const fn __param_slices_concat<const N: usize>(parts: &[&[Param<Help>]]) -> 
     const DUMMY: Param<Help> = Param {
         id: Help {
             msg: b"",
+            msg_ansi: b"",
+            msg_plain: b"",
             value: b"",
         },
         names: Names {
@@ -371,7 +373,19 @@ fn test_diag(diag: Diagnostic, err: bun_core::Error, expected: &[u8]) {
 
 #[derive(Clone, Copy)]
 pub struct Help {
+    /// The description text exactly as written in the param spec — may still
+    /// contain `<tag>` colour markup. Used by [`help`]/[`help_ex`], which (like
+    /// Zig's `clap.help`) emit it verbatim.
     pub msg: &'static [u8],
+    /// `msg` with `<tag>` colour markup rewritten to ANSI escape sequences.
+    /// Precomputed at compile time by `parse_param!` so the help/usage printers
+    /// don't re-run the `<tag>` state machine on every `bun --help` invocation
+    /// (Zig did this rewrite at `comptime` via `Output.prettyFmt`).
+    pub msg_ansi: &'static [u8],
+    /// `msg` with `<tag>` colour markup stripped — the non-TTY / piped form.
+    /// Counterpart to [`Help::msg_ansi`]; pick between them with
+    /// `Output::enable_ansi_colors_stdout()`.
+    pub msg_plain: &'static [u8],
     pub value: &'static [u8],
 }
 
@@ -379,6 +393,8 @@ impl Default for Help {
     fn default() -> Self {
         Self {
             msg: b"",
+            msg_ansi: b"",
+            msg_plain: b"",
             value: b"",
         }
     }
@@ -403,6 +419,21 @@ impl<'a> Default for ParseOptions<'a> {
 
 fn get_help_simple(param: &Param<Help>) -> &'static [u8] {
     param.id.msg
+}
+
+/// The param description with `<tag>` colour markup already resolved — ANSI
+/// escapes when stdout is a colour-capable TTY, stripped otherwise. Both forms
+/// are baked into rodata by `parse_param!` (see [`Help::msg_ansi`] /
+/// [`Help::msg_plain`]), so this is a single branch instead of the byte-by-byte
+/// `Output::pretty_fmt_runtime` state machine the help printers used to run on
+/// every `bun --help` / `bun run` invocation. (Zig did the same rewrite at
+/// `comptime` via `Output.prettyFmt` inside `clap.simpleHelpBunTopLevel`.)
+fn pretty_help_desc(param: &Param<Help>) -> &'static [u8] {
+    if Output::enable_ansi_colors_stdout() {
+        param.id.msg_ansi
+    } else {
+        param.id.msg_plain
+    }
 }
 
 fn get_value_simple(param: &Param<Help>) -> &'static [u8] {
@@ -741,14 +772,15 @@ pub fn simple_help(params: &[Param<Help>]) {
         // Zig's `Output.pretty("  {s}  {s}", …)` (clap.zig:567) only runs prettyFmt
         // over the comptime template, so `<tag>` markers inside `desc_text` leak
         // through verbatim there. That is observably wrong (`bun run --help` prints
-        // literal `<d>$cwd<r>`); the Rust port routes `desc_text` through the runtime
-        // rewriter — same path `simple_help_bun_top_level` already takes — so `--help`
-        // output is tag-clean regardless of which helper a command uses.
-        let desc = Output::pretty_fmt_runtime(desc_text, Output::enable_ansi_colors_stdout());
+        // literal `<d>$cwd<r>`); the Rust port emits the `<tag>`→ANSI (or tag-strip)
+        // rewrite at compile time — same as Zig's `simpleHelpBunTopLevel` did via
+        // `comptime Output.prettyFmt` — so `--help` output is tag-clean regardless
+        // of which helper a command uses, with no per-invocation re-parse.
+        let desc = pretty_help_desc(param);
         Output::pretty(format_args!(
             "  {}  {}",
             bstr::BStr::new(&spaces_after),
-            bstr::BStr::new(&desc),
+            bstr::BStr::new(desc),
         ));
     }
 }
@@ -781,13 +813,14 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
 
                 // Zig: Output.pretty(space_buf[0..n] ++ desc_text, .{}) — the concat
                 // is the *format string*, so `<tag>` markers inside `desc_text` are
-                // rewritten. Mirror that with the runtime rewriter.
-                let desc =
-                    Output::pretty_fmt_runtime(desc_text, Output::enable_ansi_colors_stdout());
+                // rewritten at `comptime`. Mirror that: `parse_param!` already baked
+                // both the ANSI and tag-stripped forms into rodata, so this is one
+                // branch (not a `pretty_fmt_runtime` re-parse of every byte).
+                let desc = pretty_help_desc(param);
                 Output::pretty(format_args!(
                     "{}{}",
                     bstr::BStr::new(&SPACE_BUF[0..num_spaces_after]),
-                    bstr::BStr::new(&desc),
+                    bstr::BStr::new(desc),
                 ));
             }
         }
@@ -930,6 +963,7 @@ mod tests {
                 id: Help {
                     msg: b"Help text",
                     value: b"value",
+                    ..Default::default()
                 },
                 names: Names {
                     short: Some(b's'),
@@ -946,6 +980,7 @@ mod tests {
                 id: Help {
                     msg: b"Help text",
                     value: b"value",
+                    ..Default::default()
                 },
                 names: Names {
                     short: Some(b's'),
@@ -962,6 +997,7 @@ mod tests {
                 id: Help {
                     msg: b"Help text",
                     value: b"value",
+                    ..Default::default()
                 },
                 names: Names {
                     long: Some(b"long"),
@@ -977,6 +1013,7 @@ mod tests {
                 id: Help {
                     msg: b"Help text",
                     value: b"value",
+                    ..Default::default()
                 },
                 names: Names {
                     short: Some(b's'),
@@ -1038,6 +1075,7 @@ mod tests {
                 id: Help {
                     msg: b"Help text",
                     value: b"A | B",
+                    ..Default::default()
                 },
                 names: Names {
                     long: Some(b"long"),
@@ -1053,6 +1091,7 @@ mod tests {
                 id: Help {
                     msg: b"Help text",
                     value: b"A",
+                    ..Default::default()
                 },
                 names: Names::default(),
                 takes_value: Values::One,
@@ -1065,6 +1104,7 @@ mod tests {
                 id: Help {
                     msg: b"Help text",
                     value: b"A",
+                    ..Default::default()
                 },
                 names: Names::default(),
                 takes_value: Values::Many,

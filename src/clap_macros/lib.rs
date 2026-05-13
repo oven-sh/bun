@@ -260,8 +260,97 @@ fn byte_str(s: &str) -> LitByteStr {
     LitByteStr::new(s.as_bytes(), Span::call_site())
 }
 
+fn byte_str_b(s: &[u8]) -> LitByteStr {
+    LitByteStr::new(s, Span::call_site())
+}
+
+/// 1:1 port of `bun_core::output::pretty_fmt_runtime` — rewrites Bun's `<tag>`
+/// colour markup to ANSI escape sequences when `is_enabled`, or strips it when
+/// not. Run here at macro-expansion time so each param description's two display
+/// forms (`Help::msg_ansi` / `Help::msg_plain`) are `const` byte literals baked
+/// into rodata, instead of being re-derived on every `bun --help` / `bun run`
+/// invocation. (Zig did the equivalent rewrite at `comptime` via
+/// `Output.prettyFmt` inside `clap.simpleHelpBunTopLevel`.)
+fn pretty_rewrite(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
+    use bun_output_tags::{RESET, color_for_bytes};
+    let mut out: Vec<u8> = Vec::with_capacity(fmt.len() * 2);
+    let mut i = 0usize;
+    while i < fmt.len() {
+        match fmt[i] {
+            b'\\' => {
+                i += 1;
+                if i < fmt.len() {
+                    match fmt[i] {
+                        b'<' | b'>' => {
+                            out.push(fmt[i]);
+                            i += 1;
+                        }
+                        _ => {
+                            out.push(b'\\');
+                            out.push(fmt[i]);
+                            i += 1;
+                        }
+                    }
+                }
+            }
+            b'>' => {
+                i += 1;
+            }
+            b'{' => {
+                while i < fmt.len() && fmt[i] != b'}' {
+                    out.push(fmt[i]);
+                    i += 1;
+                }
+            }
+            b'<' => {
+                i += 1;
+                let mut is_reset = i < fmt.len() && fmt[i] == b'/';
+                if is_reset {
+                    i += 1;
+                }
+                let start = i;
+                while i < fmt.len() && fmt[i] != b'>' {
+                    i += 1;
+                }
+                let name = &fmt[start..i];
+                let seq: &str = if let Some(c) = color_for_bytes(name) {
+                    c
+                } else if name == b"r" {
+                    is_reset = true;
+                    ""
+                } else {
+                    // Unknown tag: Zig's comptime `prettyFmt` would `@compileError`
+                    // here, but `pretty_fmt_runtime` (the path this replaces) drops
+                    // it silently and so does Zig's actual `clap.simpleHelp`. Match
+                    // the lenient runtime behaviour — a compile error would be
+                    // stricter than what shipped, and param specs don't carry
+                    // unknown tags anyway.
+                    ""
+                };
+                if is_enabled {
+                    out.extend_from_slice(if is_reset {
+                        RESET.as_bytes()
+                    } else {
+                        seq.as_bytes()
+                    });
+                }
+            }
+            _ => {
+                out.push(fmt[i]);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
 fn emit_param(krate: &Path, p: &Param) -> TokenStream2 {
     let msg = byte_str(&p.id.msg);
+    // Precompute both colour-resolved forms of the description so the help/usage
+    // printers select with a single branch instead of re-running the `<tag>`
+    // state machine on every invocation.
+    let msg_ansi = byte_str_b(&pretty_rewrite(p.id.msg.as_bytes(), true));
+    let msg_plain = byte_str_b(&pretty_rewrite(p.id.msg.as_bytes(), false));
     let value = byte_str(&p.id.value);
 
     let short = match p.names.short {
@@ -301,6 +390,8 @@ fn emit_param(krate: &Path, p: &Param) -> TokenStream2 {
         #krate::Param::<#krate::Help> {
             id: #krate::Help {
                 msg: #msg,
+                msg_ansi: #msg_ansi,
+                msg_plain: #msg_plain,
                 value: #value,
             },
             names: #krate::Names {

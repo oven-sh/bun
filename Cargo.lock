@@ -2194,6 +2194,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
+ "memchr",
  "phf 0.11.3",
  "rustix",
  "scopeguard",

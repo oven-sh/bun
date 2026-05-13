@@ -60,10 +60,15 @@ extern "C" int32_t bun_wic_propbag_write_u8(void* props, const wchar_t* name, ui
 // "advisory, never fail decode" treatment. PROPVARIANT lives here for the same
 // reason VARIANT does — the SDK's own union layout is the source of truth.
 //
-// WIC's metadata-query root differs by container, so we try in order:
-//  - /{ushort=274}            TIFF — frame reader's root *is* IFD0
-//  - /ifd/{ushort=274}        HEIF — EXIF item is mounted under /ifd
-//  - System.Photo.Orientation WIC photo-metadata policy; container-agnostic
+// WIC's frame-level metadata-query reader is rooted at the *container*
+// format with per-format child blocks beneath, so the orientation path
+// differs by container (MSDN "Native Image Format Metadata Queries"):
+//  - /ifd/{ushort=274}         TIFF — IFD0 is mounted at /ifd (NOT at root;
+//                              `/{ushort=N}` is rejected at top level)
+//  - /heifProps/Orientation    HEIF — irot/imir → WICHeifOrientation, VT_UI2,
+//                              same 1..8 numbering as EXIF (Win10 1809+)
+//  - System.Photo.Orientation  policy expression fallback (JPEG/TIFF only —
+//                              HEIF is NOT in the policy mapping)
 // First path that yields a valid 1..8 wins; a SUCCEEDED-but-wrong-vt read
 // falls through to the next path rather than short-circuiting to identity.
 // (#30235)
@@ -75,8 +80,8 @@ extern "C" int32_t bun_wic_read_orientation(void* frame)
         return 1;
     int32_t result = 1;
     static const wchar_t* const paths[] = {
-        L"/{ushort=274}",
         L"/ifd/{ushort=274}",
+        L"/heifProps/Orientation",
         L"System.Photo.Orientation",
     };
     for (auto path : paths) {

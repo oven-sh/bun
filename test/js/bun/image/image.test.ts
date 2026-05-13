@@ -841,18 +841,23 @@ describe("Bun.Image", () => {
     //
     // TIFF is the test vehicle because (a) it routes through the same system
     // backend on macOS/Windows, and (b) it's the only orientation-carrying
-    // format simple enough to hand-craft without a codec. A bug in the system
-    // backend shows up identically for HEIC.
+    // format simple enough to hand-craft without a codec. (Coverage caveat:
+    // WIC reads HEIF orientation via /heifProps, not the IFD path TIFF uses,
+    // so this test exercises the dispatch + applyOrientation glue but not the
+    // Windows HEIF probe specifically.)
     test.skipIf(!isMacOS && !isWindows)("TIFF Orientation=6 auto-rotates via system backend", async () => {
       // Hand-roll a 4×2 uncompressed RGB TIFF with Orientation=6. Little-
-      // endian ("II"), 10 IFD entries, BitsPerSample stored inline at byte
-      // 134 (count=3 * sizeof(SHORT) > 4 → offset), pixels at byte 140.
-      // Tags must be sorted by ID per TIFF §2.
-      const tiff = new Uint8Array(164);
+      // endian ("II"), 13 IFD entries — all twelve TIFF 6.0 §8 baseline-RGB
+      // required tags plus Orientation, since WIC's IFD metadata reader
+      // declines to mount /ifd for a non-baseline IFD even when the pixel
+      // decoder accepts it. Layout: header 0..8, IFD count at 8, 13×12-byte
+      // entries 10..166, next-IFD 166..170, BitsPerSample 170..176,
+      // X/YResolution rationals 176..192, pixels 192..216. Tags sorted by ID.
+      const tiff = new Uint8Array(216);
       const dv = new DataView(tiff.buffer);
       tiff.set([0x49, 0x49, 0x2a, 0x00], 0); // "II" + magic 42
       dv.setUint32(4, 8, true); // IFD0 at byte 8
-      dv.setUint16(8, 10, true); // 10 entries
+      dv.setUint16(8, 13, true); // 13 entries
       const writeEntry = (i: number, tag: number, type: number, count: number, value: number) => {
         const e = 10 + i * 12;
         dv.setUint16(e, tag, true);
@@ -860,22 +865,30 @@ describe("Bun.Image", () => {
         dv.setUint32(e + 4, count, true);
         dv.setUint32(e + 8, value, true);
       };
-      //          tag   type        count  value/offset
+      //             tag   type      count value/offset
       writeEntry(0, 0x0100, 4, 1, 4); //    ImageWidth      = 4
       writeEntry(1, 0x0101, 4, 1, 2); //    ImageLength     = 2
-      writeEntry(2, 0x0102, 3, 3, 134); //  BitsPerSample   → offset 134
+      writeEntry(2, 0x0102, 3, 3, 170); //  BitsPerSample   → offset 170
       writeEntry(3, 0x0103, 3, 1, 1); //    Compression     = none
       writeEntry(4, 0x0106, 3, 1, 2); //    PhotoInterp     = RGB
-      writeEntry(5, 0x0111, 4, 1, 140); //  StripOffsets    → offset 140
+      writeEntry(5, 0x0111, 4, 1, 192); //  StripOffsets    → offset 192
       writeEntry(6, 0x0112, 3, 1, 6); //    Orientation     = 6 (rotate 90° CW)
       writeEntry(7, 0x0115, 3, 1, 3); //    SamplesPerPixel = 3
       writeEntry(8, 0x0116, 4, 1, 2); //    RowsPerStrip    = 2
       writeEntry(9, 0x0117, 4, 1, 24); //   StripByteCounts = 24
-      dv.setUint32(130, 0, true); // next IFD = 0
+      writeEntry(10, 0x011a, 5, 1, 176); // XResolution     → offset 176 (72/1)
+      writeEntry(11, 0x011b, 5, 1, 184); // YResolution     → offset 184 (72/1)
+      writeEntry(12, 0x0128, 3, 1, 2); //   ResolutionUnit  = inch
+      dv.setUint32(166, 0, true); // next IFD = 0
       // BitsPerSample: 3 × u16 = 8, 8, 8
-      dv.setUint16(134, 8, true);
-      dv.setUint16(136, 8, true);
-      dv.setUint16(138, 8, true);
+      dv.setUint16(170, 8, true);
+      dv.setUint16(172, 8, true);
+      dv.setUint16(174, 8, true);
+      // X/YResolution rationals: 72/1
+      dv.setUint32(176, 72, true);
+      dv.setUint32(180, 1, true);
+      dv.setUint32(184, 72, true);
+      dv.setUint32(188, 1, true);
       // 4×2 RGB pixels — distinctive so a misread shows up as a crash or
       // wrong-colour PNG, not a silently equal output.
       const pixels = [
@@ -904,7 +917,7 @@ describe("Bun.Image", () => {
         150,
         200,
       ];
-      for (let i = 0; i < pixels.length; i++) tiff[140 + i] = pixels[i];
+      for (let i = 0; i < pixels.length; i++) tiff[192 + i] = pixels[i];
 
       // Without the fix: reports stored dims 4×2. With it: orientation swaps
       // the axes so dims come back as 2×4.

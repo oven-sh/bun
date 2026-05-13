@@ -86,12 +86,13 @@ pub fn decode(bytes: []const u8, max_pixels: u64) BackendError!codecs.Decoded {
     return .{ .rgba = out, .width = w, .height = h };
 }
 
-// EXIF/TIFF Orientation (tag 0x0112) for the first frame. 1..8 per EXIF spec;
-// 1 (identity) on any failure. The PROPVARIANT marshalling lives in the C++
-// shim for the same reason the IPropertyBag2 writes do — see image_wic_shim.cpp.
-// Called from Image.zig's auto-orient gate for HEIC/TIFF/AVIF, whose containers
-// don't share enough with JPEG markers for exif.zig's APP1 walker to handle
-// (HEIC's Exif item is reached via an ISOBMFF `iloc`/`iinf` walk). (#30235)
+// Orientation (1..8, EXIF numbering) for the first frame; 1 (identity) on any
+// failure. The PROPVARIANT marshalling lives in the C++ shim for the same
+// reason the IPropertyBag2 writes do — see image_wic_shim.cpp. Called from
+// Image.zig's auto-orient gate for HEIC/TIFF/AVIF: TIFF carries it in IFD0
+// tag 274; HEIF carries it as `irot`/`imir` boxes which WIC surfaces as
+// WICHeifOrientation under /heifProps (NOT via the embedded Exif item — that
+// can mismatch the irot value). (#30235)
 extern fn bun_wic_read_orientation(frame: ?*anyopaque) i32;
 
 pub fn orientation(bytes: []const u8) u8 {
@@ -104,9 +105,10 @@ pub fn orientation(bytes: []const u8) u8 {
     if (stream.?.vt.InitializeFromMemory(stream.?, bytes.ptr, @intCast(bytes.len)) < 0) return 1;
 
     var dec: ?*IWICBitmapDecoder = null;
-    // WICDecodeMetadataCacheOnLoad = 1 — eager-read so the metadata block is
-    // populated before we ask for the query reader.
-    if (f.vt.CreateDecoderFromStream(f, @ptrCast(stream), null, 1, &dec) < 0 or dec == null) return 1;
+    // WICDecodeMetadataCacheOnDemand = 0 — match decode()'s value so the two
+    // CreateDecoderFromStream calls behave identically on the same bytes; the
+    // query reader populates lazily either way.
+    if (f.vt.CreateDecoderFromStream(f, @ptrCast(stream), null, 0, &dec) < 0 or dec == null) return 1;
     defer release(dec);
 
     var frame: ?*IWICBitmapSource = null;

@@ -970,10 +970,21 @@ impl DirEntry {
                 )?);
                 // `name_lc` is already ASCII-lowercased, so interning it as-is
                 // is byte-identical to `init_lower_case_append_if_needed(name_slice, ..)`
-                // and skips a second lowercase pass over the basename.
-                addr_of_mut!((*p).base_lowercase_).write(
-                    strings::StringOrTinyString::init_append_if_needed(name_lc, filename_store)?,
-                );
+                // and skips a second lowercase pass over the basename. Moreover,
+                // when the basename has no uppercase bytes (the overwhelmingly
+                // common case on Linux), `copy_lowercase_if_needed` returns the
+                // *input slice unchanged* — so `name_lc` points at the same bytes
+                // `base_` just interned. Detect that and copy `base_` instead of
+                // a second `init_append_if_needed`: `StringOrTinyString` is `Copy`
+                // (a 32-byte memcpy for inline ≤31B names), and for longer names
+                // this reuses the single `FilenameStore` slot rather than
+                // appending the same bytes twice.
+                let base_lowercase = if core::ptr::eq(name_lc.as_ptr(), name_slice.as_ptr()) {
+                    (*p).base_
+                } else {
+                    strings::StringOrTinyString::init_append_if_needed(name_lc, filename_store)?
+                };
+                addr_of_mut!((*p).base_lowercase_).write(base_lowercase);
                 addr_of_mut!((*p).dir).write(self.dir);
                 addr_of_mut!((*p).mutex).write(Mutex::new());
                 // Call "stat" lazily for performance. The "@material-ui/icons" package

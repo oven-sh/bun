@@ -318,10 +318,11 @@ JSPromise* JSWebView::resize(JSGlobalObject* g, uint32_t width, uint32_t height)
 }
 
 // Chrome's goBack/goForward/reload all settle via Page.lifecycleEvent /
-// loadEventFired → same waitUntil + timeout handling as navigate().
-// WebKit's Ack is sync (Misc slot) for these, so waitUntil is moot there;
-// the timeout still applies but will never fire in practice (Ack is
-// immediate). Arming it anyway keeps the two backends symmetric.
+// loadEventFired on the Navigate slot → same waitUntil + timeout handling
+// as navigate(). WebKit's Op::GoBack/GoForward/Reload Ack immediately on
+// the MISC slot (see navSlot in JSWebViewPrototype.cpp), so neither
+// waitUntil nor timeout applies — WK_DISPATCH returns without arming;
+// armNavTimeout's m_pendingNavigate guard would short-circuit anyway.
 JSPromise* JSWebView::goBack(JSGlobalObject* g, NavWaitUntil waitUntil, uint32_t timeoutMs)
 {
     m_navWaitUntil = waitUntil;

@@ -252,14 +252,20 @@ impl S3HttpSimpleTask {
             if !bytes.is_empty() {
                 message = bytes;
                 if let Some(start) = strings::index_of(bytes, b"<Code>") {
+                    let value_start = start + b"<Code>".len();
                     if let Some(end) = strings::index_of(bytes, b"</Code>") {
-                        code = &bytes[start + b"<Code>".len()..end];
-                        has_error_code = true;
+                        if end >= value_start {
+                            code = &bytes[value_start..end];
+                            has_error_code = true;
+                        }
                     }
                 }
                 if let Some(start) = strings::index_of(bytes, b"<Message>") {
+                    let value_start = start + b"<Message>".len();
                     if let Some(end) = strings::index_of(bytes, b"</Message>") {
-                        message = &bytes[start + b"<Message>".len()..end];
+                        if end >= value_start {
+                            message = &bytes[value_start..end];
+                        }
                     }
                 }
             }
@@ -292,13 +298,19 @@ impl S3HttpSimpleTask {
                 if strings::index_of(bytes, b"<Error>").is_some() {
                     has_error = true;
                     if let Some(start) = strings::index_of(bytes, b"<Code>") {
+                        let value_start = start + b"<Code>".len();
                         if let Some(end) = strings::index_of(bytes, b"</Code>") {
-                            code = &bytes[start + b"<Code>".len()..end];
+                            if end >= value_start {
+                                code = &bytes[value_start..end];
+                            }
                         }
                     }
                     if let Some(start) = strings::index_of(bytes, b"<Message>") {
+                        let value_start = start + b"<Message>".len();
                         if let Some(end) = strings::index_of(bytes, b"</Message>") {
-                            message = &bytes[start + b"<Message>".len()..end];
+                            if end >= value_start {
+                                message = &bytes[value_start..end];
+                            }
                         }
                     }
                 }

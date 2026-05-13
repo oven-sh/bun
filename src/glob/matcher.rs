@@ -563,18 +563,14 @@ fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {
 
 /// Decodes the WTF-8 codepoint at `bytes[idx]`, returning `(codepoint, byte_len)`.
 ///
-/// Mirrors the open-coded triple in matcher.zig (`wtf8ByteSequenceLength` + `decodeWTF8RuneT`
-/// over `bytes[idx..].ptr[0..4]`). Centralized so the `[u8; 4]` reinterpret has a single
-/// audit point.
+/// Mirrors the open-coded triple in matcher.zig (`wtf8ByteSequenceLength` + `decodeWTF8RuneT`).
 #[inline(always)]
 fn decode_wtf8_rune_at(bytes: &[u8], idx: usize) -> (u32, u8) {
     let len = strings::wtf8_byte_sequence_length(bytes[idx]);
-    // SAFETY: matches Zig `bytes[idx..].ptr[0..4]` — decode reads only `len` bytes
-    let cp = strings::decode_wtf8_rune_t::<u32>(
-        unsafe { &*bytes.as_ptr().add(idx).cast::<[u8; 4]>() },
-        len,
-        0xFFFD,
-    );
+    let mut buf = [0u8; 4];
+    let n = (bytes.len() - idx).min(4);
+    buf[..n].copy_from_slice(&bytes[idx..idx + n]);
+    let cp = strings::decode_wtf8_rune_t::<u32>(&buf, len, 0xFFFD);
     (cp, len)
 }
 

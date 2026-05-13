@@ -551,7 +551,7 @@ pub fn parse(
                 err: err!("MissingGeneratedColumnValue"),
                 value: generated.columns.zero_based(),
                 loc: Loc {
-                    start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                    start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                 },
             });
         }
@@ -565,7 +565,7 @@ pub fn parse(
                 err: err!("InvalidGeneratedColumnValue"),
                 value: generated.columns.zero_based(),
                 loc: Loc {
-                    start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                    start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                 },
             });
         }
@@ -598,7 +598,7 @@ pub fn parse(
                 msg: b"Invalid source index delta",
                 err: err!("InvalidSourceIndexDelta"),
                 loc: Loc {
-                    start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                    start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                 },
                 ..Default::default()
             });
@@ -611,7 +611,7 @@ pub fn parse(
                 err: err!("InvalidSourceIndexValue"),
                 value: source_index,
                 loc: Loc {
-                    start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                    start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                 },
             });
         }
@@ -624,7 +624,7 @@ pub fn parse(
                 msg: b"Missing original line",
                 err: err!("MissingOriginalLine"),
                 loc: Loc {
-                    start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                    start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                 },
                 ..Default::default()
             });
@@ -637,7 +637,7 @@ pub fn parse(
                 err: err!("InvalidOriginalLineValue"),
                 value: original.lines.zero_based(),
                 loc: Loc {
-                    start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                    start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                 },
             });
         }
@@ -651,7 +651,7 @@ pub fn parse(
                 err: err!("MissingOriginalColumnValue"),
                 value: original.columns.zero_based(),
                 loc: Loc {
-                    start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                    start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                 },
             });
         }
@@ -663,7 +663,7 @@ pub fn parse(
                 err: err!("InvalidOriginalColumnValue"),
                 value: original.columns.zero_based(),
                 loc: Loc {
-                    start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                    start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                 },
             });
         }
@@ -688,7 +688,7 @@ pub fn parse(
                             err: err!("InvalidNameIndexDelta"),
                             value: i32::from(c),
                             loc: Loc {
-                                start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
+                                start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                             },
                         });
                     }
@@ -703,7 +703,7 @@ pub fn parse(
                                     err: err!("OutOfMemory"),
                                     loc: Loc {
                                         start: i32::try_from(bytes.len() - remain.len())
-                                            .expect("int cast"),
+                                            .unwrap_or(i32::MAX),
                                     },
                                     ..Default::default()
                                 });

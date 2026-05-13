@@ -943,7 +943,7 @@ impl CommandLineReporter {
                     if Output::is_github_action() {
                         Output::print_error(format_args!(
                             "::error title=error: Test \"{}\" timed out after {}ms::\n",
-                            bstr::BStr::new(display_label),
+                            bun_fmt::github_action_property(display_label),
                             test_entry.timeout
                         ));
                         Output::flush();

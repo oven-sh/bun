@@ -256,6 +256,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         errors_: Option<&mut DeferredErrors>,
     ) -> Result<Option<G::Property>, bun_core::Error> {
         let p = self;
+        if !p.stack_check.is_safe_to_recurse() {
+            return Err(err!("StackOverflow"));
+        }
         let mut kind = kind_;
         let mut errors = errors_;
         // This while loop exists to conserve stack space by reducing (but not completely eliminating) recursion.

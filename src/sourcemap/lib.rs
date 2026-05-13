@@ -1080,12 +1080,13 @@ pub fn parse_url(
                 match source[DATA_PREFIX.len()] {
                     b';' => {
                         let after = &source[DATA_PREFIX.len() + 1..];
-                        let encoding =
-                            &after[..after.iter().position(|&b| b == b',').unwrap_or(after.len())];
-                        if encoding != b"base64" {
+                        let Some(comma) = after.iter().position(|&b| b == b',') else {
+                            break 'try_data_url;
+                        };
+                        if &after[..comma] != b"base64" {
                             break 'try_data_url;
                         }
-                        let base64_data = &source[DATA_PREFIX.len() + b";base64,".len()..];
+                        let base64_data = &after[comma + 1..];
 
                         let len = bun_base64::decode_len(base64_data);
                         let bytes = arena.alloc_slice_fill_default::<u8>(len);

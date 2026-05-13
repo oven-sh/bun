@@ -1394,6 +1394,10 @@ impl<T> PkgMap<T> {
     ) -> Result<&T, ResolveError> {
         let dep_name = dep.name.slice(string_buf);
 
+        if pkg_path.len() + 1 + dep_name.len() > path_buf.len() {
+            return Err(ResolveError::InvalidPackageKey);
+        }
+
         path_buf[0..pkg_path.len()].copy_from_slice(pkg_path);
         path_buf[pkg_path.len()] = b'/';
         let mut offset = pkg_path.len() + 1;
@@ -2964,12 +2968,24 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     let bundled_pkgs =
                         bundled_pkgs.expect("bundled_pkgs required when CHECK_FOR_BUNDLED");
                     let path_buf = &mut path_buf.as_mut().unwrap()[..];
+                    let bundled_location_len = pkg_path
+                        .len()
+                        .saturating_add(1)
+                        .saturating_add(name_str.len());
+                    if bundled_location_len > path_buf.len() {
+                        log.add_error(
+                            Some(source),
+                            key.loc,
+                            b"Package path and dependency name too long",
+                        );
+                        return Err(ParseError::InvalidPackageKey);
+                    }
                     path_buf[0..pkg_path.len()].copy_from_slice(pkg_path);
                     let remain = &mut path_buf[pkg_path.len()..];
                     remain[0] = b'/';
                     let remain = &mut remain[1..];
                     remain[0..name_str.len()].copy_from_slice(name_str);
-                    let bundled_location = &path_buf[0..pkg_path.len() + 1 + name_str.len()];
+                    let bundled_location = &path_buf[0..bundled_location_len];
                     if bundled_pkgs.contains(bundled_location) {
                         dep.behavior.insert(Behavior::BUNDLED);
                     }

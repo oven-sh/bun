@@ -2072,8 +2072,8 @@ impl PublishCommand {
 
         write!(
             &mut buf,
-            ",\"dist-tags\":{{\"{}\":\"{}\"}}",
-            bstr::BStr::new(tag),
+            ",\"dist-tags\":{{{}:\"{}\"}}",
+            bun_fmt::format_json_string_utf8(tag, Default::default()),
             bstr::BStr::new(version_without_build_tag),
         )
         .ok();

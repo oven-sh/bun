@@ -748,7 +748,10 @@ impl PEFile {
                         .expect("infallible: size matches"),
                 );
 
-                if data_size + size_of::<u64>() as u64 > section.size_of_raw_data as u64 {
+                let total_size = data_size
+                    .checked_add(size_of::<u64>() as u64)
+                    .ok_or(Error::InvalidBunSection)?;
+                if total_size > section.size_of_raw_data as u64 {
                     return Err(Error::InvalidBunSection);
                 }
 

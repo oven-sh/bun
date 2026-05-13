@@ -358,6 +358,9 @@ impl EncodedPattern {
                     i += 1 + expect.len();
                 }
                 Part::Param(name) => {
+                    if i > path.len() {
+                        return false;
+                    }
                     let end = strings::index_of_char_pos(path, b'/', i).unwrap_or(path.len());
                     // Check if we're about to exceed the maximum number of parameters
                     if param_num >= MatchedParams::MAX_COUNT {
@@ -386,12 +389,7 @@ impl EncodedPattern {
                             if segment_start < segment_end {
                                 // Check if we're about to exceed the maximum number of parameters
                                 if param_num >= MatchedParams::MAX_COUNT {
-                                    // TODO: ideally we should throw a nice user message
-                                    Output::panic(format_args!(
-                                        "Route pattern matched more than {} parameters. Path: {}",
-                                        MatchedParams::MAX_COUNT,
-                                        bstr::BStr::new(path)
-                                    ));
+                                    return false;
                                 }
                                 params.params.resize(param_num + 1).unwrap();
                                 params.params.slice()[param_num] = MatchedParamEntry {

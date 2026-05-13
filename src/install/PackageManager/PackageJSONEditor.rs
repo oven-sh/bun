@@ -613,7 +613,7 @@ pub fn edit(
             'loop_: while i < updates.len() {
                 let request = &mut updates[i];
                 // order-insensitive scan: `FOUR` is fine here
-                for list in DependencyGroup::FOUR.map(|g| g.prop) {
+                'dependency_group: for list in DependencyGroup::FOUR.map(|g| g.prop) {
                     if let Some(query) = current_package_json.as_property(list) {
                         if matches!(query.expr.data, bun_ast::ExprData::EObject(_)) {
                             let name = request.get_name();
@@ -745,7 +745,7 @@ pub fn edit(
                                                             .as_ptr(),
                                                     );
                                                     remaining -= 1;
-                                                    break;
+                                                    break 'dependency_group;
                                                 }
                                             }
                                         }

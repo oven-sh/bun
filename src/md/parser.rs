@@ -93,6 +93,7 @@ pub struct Parser<'a> {
 
     // Ref defs
     pub ref_defs: Vec<RefDef>,
+    pub ref_def_labels: std::collections::HashSet<Box<[u8]>>,
 
     // State
     pub last_line_has_list_loosening_effect: bool,
@@ -196,6 +197,7 @@ impl<'a> Parser<'a> {
             table_col_count: 0,
             table_alignments: [Align::Default; TABLE_MAXCOLCOUNT as usize],
             ref_defs: Vec::new(),
+            ref_def_labels: std::collections::HashSet::new(),
             last_line_has_list_loosening_effect: false,
             last_list_item_starts_with_two_blank_lines: false,
             max_ref_def_output: (16 * (size as u64)).min(1024 * 1024).min(u32::MAX as u64),

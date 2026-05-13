@@ -731,19 +731,29 @@ impl NetworkTask {
             return Err(ForTarballError::InvalidURL);
         }
 
+        // Only attach the registry `Authorization` header when the tarball URL
+        // origin matches the configured registry scope origin. The npm manifest
+        // is registry-controlled, so a malicious registry could otherwise point
+        // the tarball at an attacker-controlled host and receive the scope
+        // credentials. The empty-`tarball_url` branch builds the URL from
+        // `scope.url.href()`, so its origin matches and authorized downloads
+        // keep working.
+        let send_auth = matches!(authorization, Authorization::AllowAuthorization)
+            && URL::parse(&self.url_buf).origin == scope.url.url().origin;
+
         self.response_buffer = MutableString::init_empty();
 
         let mut header_builder = HeaderBuilder::default();
         let mut header_buf: &'static [u8] = b"";
 
-        if matches!(authorization, Authorization::AllowAuthorization) {
+        if send_auth {
             count_auth(&mut header_builder, scope);
         }
 
         if header_builder.header_count > 0 {
             header_builder.allocate()?;
 
-            if matches!(authorization, Authorization::AllowAuthorization) {
+            if send_auth {
                 append_auth(&mut header_builder, scope);
             }
 

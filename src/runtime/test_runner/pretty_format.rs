@@ -2246,8 +2246,7 @@ impl<'a> Formatter<'a> {
                         // closure (Ok(true) ⇒ children path printed the closing tag, so the
                         // trailing " />" is skipped) and restore unconditionally afterward.
                         let inner: JsResult<bool> = (|| {
-                        // SAFETY: JSX props are always an object.
-                        let props_obj = props.get_object().unwrap();
+                        let Some(props_obj) = props.get_object() else { return Ok(false); };
                         let mut props_iter = JSPropertyIterator::init(
                             self.global_this,
                             props_obj,

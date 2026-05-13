@@ -191,9 +191,7 @@ pub mod evp {
     new_evp!(SHA384, SHA384_DIGEST_LENGTH, EVP_sha384);
     new_evp!(SHA256, SHA256_DIGEST_LENGTH, EVP_sha256);
     new_evp!(SHA512_256, SHA512_256_DIGEST_LENGTH, EVP_sha512_256);
-    // PORT NOTE: Zig passes `Sha1.digest_length` (20) here, which is faithfully
-    // preserved even though MD5+SHA1 is conventionally 36 bytes.
-    new_evp!(MD5_SHA1, SHA1_DIGEST_LENGTH, EVP_md5_sha1);
+    new_evp!(MD5_SHA1, 36, EVP_md5_sha1); // EVP_md5_sha1 writes MD5(16) || SHA1(20) = 36 bytes
     new_evp!(Blake2, 256 / 8, EVP_blake2b256);
 
     // ──────────────────────────────────────────────────────────────────────

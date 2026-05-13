@@ -1894,7 +1894,7 @@ pub mod pattern {
                         i += 1;
 
                         if matches!(tag, Tag::OptionalCatchAll) {
-                            if input[i as usize] != b']' {
+                            if i > end || input[i as usize] != b']' {
                                 return Err(PatternParseError::PatternMissingClosingBracket);
                             }
                             i += 1;

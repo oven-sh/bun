@@ -220,6 +220,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 is_typescript_declare: opts.is_typescript_declare,
                 ..ParseStatementOptions::default()
             };
+            if !p.stack_check.is_safe_to_recurse() {
+                return Err(err!("StackOverflow"));
+            }
             stmts.push(p.parse_type_script_namespace_stmt(dot_loc, &mut _opts)?);
         } else if opts.is_typescript_declare && p.lexer.token != T::TOpenBrace {
             p.lexer.expect_or_insert_semicolon()?;

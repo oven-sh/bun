@@ -312,7 +312,15 @@ pub mod lcov {
 
         // SF: Source File path
         // For example, `SF:path/to/source.ts`
-        write!(writer, "SF:{}\n", bstr::BStr::new(filename))?;
+        // Sanitize newlines so a crafted source path cannot inject extra LCOV records.
+        writer.write_all(b"SF:")?;
+        for &byte in filename {
+            match byte {
+                b'\n' | b'\r' => writer.write_all(b"?")?,
+                byte => writer.write_all(&[byte])?,
+            }
+        }
+        writer.write_all(b"\n")?;
 
         // ** Per-function coverage not supported yet, since JSC does not support function names yet. **
         // FN: line number,function name
@@ -703,6 +711,9 @@ impl ByteRangeMapping {
 
                         let line: u32 =
                             u32::try_from(point.original.lines.zero_based()).expect("int cast");
+                        if line >= line_count {
+                            continue;
+                        }
 
                         executable_lines.set(line as usize);
                         if has_executed {
@@ -782,6 +793,9 @@ impl ByteRangeMapping {
 
                         let line: u32 =
                             u32::try_from(point.original.lines.zero_based()).expect("int cast");
+                        if line >= line_count {
+                            continue;
+                        }
                         min_line = min_line.min(line);
                         max_line = max_line.max(line);
                     }

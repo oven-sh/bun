@@ -1034,9 +1034,12 @@ impl Runner {
                 }
             }
             ExprData::ETemplate(_) => {
-                // PORT NOTE: faithful port — Zig source is
-                // `@panic("TODO: support template literals in macros");`
-                panic!("TODO: support template literals in macros");
+                log.add_error_fmt(
+                    Some(source),
+                    caller.loc,
+                    format_args!("template literal macro invocations are not supported"),
+                );
+                return Err(MacroError::MacroFailed);
             }
             _ => {
                 panic!("Unexpected caller type");

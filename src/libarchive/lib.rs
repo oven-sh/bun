@@ -756,7 +756,7 @@ pub mod lib {
         ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
             // SAFETY: self.entry is the libarchive-owned entry from read_next_header.
             let size = unsafe { (*self.entry).size() };
-            if size < 0 {
+            if size < 0 || size > 64 * 1024 * 1024 {
                 return Ok(IteratorResult::init_err(
                     archive,
                     b"invalid archive entry size",
@@ -900,7 +900,7 @@ pub mod lib {
             archive: *mut Archive,
         ) -> core::result::Result<IterResult<Vec<u8>>, bun_core::OOM> {
             let size = self.entry().size();
-            if size < 0 {
+            if size < 0 || size > 64 * 1024 * 1024 {
                 return Ok(Err(IteratorError {
                     archive,
                     message: b"invalid archive entry size",

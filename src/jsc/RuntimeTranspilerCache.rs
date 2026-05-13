@@ -473,6 +473,10 @@ impl Entry {
                         return Err(bun_core::err!(MissingData));
                     }
 
+                    if self.metadata.output_hash != 0 && hash(bytes) != self.metadata.output_hash {
+                        return Err(bun_core::err!(InvalidHash));
+                    }
+
                     if bun_core::strings::is_all_ascii(bytes) {
                         // Fast path: ASCII ⊂ Latin-1, so `scratch` is already
                         // the correct `BunString` — hand it straight to the

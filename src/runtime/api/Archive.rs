@@ -1177,13 +1177,14 @@ impl FilesContext {
             let size: usize = usize::try_from(entry_ref.size().max(0)).expect("int cast");
             let mtime: i64 = entry_ref.mtime();
 
-            // Read data first before allocating path
+            // Read data incrementally so untrusted entry sizes don't drive allocation.
             let mut data: Vec<u8> = Vec::new();
             if size > 0 {
-                data = vec![0u8; size];
                 let mut total_read: usize = 0;
+                let mut buf = [0u8; 64 * 1024];
                 while total_read < size {
-                    let read = archive.read_data(&mut data[total_read..]);
+                    let to_read = (size - total_read).min(buf.len());
+                    let read = archive.read_data(&mut buf[..to_read]);
                     if read < 0 {
                         // Read error - returned as a normal Result (not a Zig error), so the
                         // errdefer above won't fire. Free the current buffer and all previously
@@ -1200,7 +1201,11 @@ impl FilesContext {
                     if read == 0 {
                         break;
                     }
-                    total_read += usize::try_from(read).expect("int cast");
+                    let bytes_read = usize::try_from(read).expect("int cast");
+                    data.try_reserve(bytes_read)
+                        .map_err(|_| bun_alloc::AllocError)?;
+                    data.extend_from_slice(&buf[..bytes_read]);
+                    total_read += bytes_read;
                 }
             }
             // errdefer free(data) — handled by Drop

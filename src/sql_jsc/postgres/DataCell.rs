@@ -104,6 +104,8 @@ fn try_slice(slice: &[u8], count: usize) -> &[u8] {
     &slice[count..]
 }
 
+const MAX_ARRAY_NESTING_DEPTH: usize = 100;
+
 // PERF(port): `array_type` and `is_json_sub_array` were `comptime` in Zig (per-variant
 // monomorphization). Demoted to runtime here because they are only used in value
 // position (branch selectors), never type position. Profile in Phase B.
@@ -114,7 +116,11 @@ fn parse_array(
     global_object: &JSGlobalObject,
     offset: Option<&mut usize>,
     is_json_sub_array: bool,
+    depth: usize,
 ) -> Result<SQLDataCell> {
+    if depth > MAX_ARRAY_NESTING_DEPTH {
+        return Err(AnyPostgresError::UnsupportedArrayFormat);
+    }
     let closing_brace: u8 = if is_json_sub_array { b']' } else { b'}' };
     let opening_brace: u8 = if is_json_sub_array { b'[' } else { b'{' };
     if bytes.len() < 2 || bytes[0] != opening_brace {
@@ -177,6 +183,7 @@ fn parse_array(
                 global_object,
                 Some(&mut sub_array_offset),
                 is_json_sub_array,
+                depth + 1,
             )?;
             // errdefer sub_array.deinit() — Vec::push cannot fail in Rust (aborts on OOM)
             array.push(sub_array);
@@ -690,6 +697,7 @@ fn parse_array(
                                         global_object,
                                         Some(&mut sub_array_offset),
                                         true,
+                                        depth + 1,
                                     )?;
                                     array.push(sub_array);
                                     slice = try_slice(slice, sub_array_offset);
@@ -859,14 +867,14 @@ pub fn from_bytes(
             if binary {
                 from_bytes_typed_array::<i32>(T::int4_array, bytes)
             } else {
-                parse_array(bytes, bigint, T::int4_array, global_object, None, false)
+                parse_array(bytes, bigint, T::int4_array, global_object, None, false, 0)
             }
         }
         T::float4_array => {
             if binary {
                 from_bytes_typed_array::<f32>(T::float4_array, bytes)
             } else {
-                parse_array(bytes, bigint, T::float4_array, global_object, None, false)
+                parse_array(bytes, bigint, T::float4_array, global_object, None, false, 0)
             }
         }
         T::int2 => {
@@ -1192,7 +1200,7 @@ pub fn from_bytes(
         | T::timetz_array
         | T::timestamp_array
         | T::timestamptz_array
-        | T::interval_array) => parse_array(bytes, bigint, tag, global_object, None, false),
+        | T::interval_array) => parse_array(bytes, bigint, tag, global_object, None, false, 0),
         _ => Ok(SQLDataCell {
             tag: Tag::String,
             value: Value {

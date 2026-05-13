@@ -1160,6 +1160,10 @@ fn build_expansion_table(
     }
     let mut brace_stack: SmallVec<[BraceState; MAX_NESTED_BRACES]> = SmallVec::new();
 
+    if tokens.len() > u16::MAX as usize {
+        return Err(ParserError::UnexpectedToken);
+    }
+
     let mut i: u16 = 0;
     let mut prev_close = false;
     while (i as usize) < tokens.len() {

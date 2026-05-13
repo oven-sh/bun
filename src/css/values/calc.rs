@@ -431,19 +431,11 @@ impl<V: CalcValue> Calc<V> {
                     }
                 }
 
-                let switch_val: u8 = ((min.is_some() as u8) << 1) | (min.is_some() as u8);
-                // TODO(port): Zig original has a likely bug — both bits derive from `min != null`.
-                // Ported faithfully; Phase B should verify intended `(min, max)` packing.
-                Ok(match switch_val {
-                    0b00 => center,
-                    0b10 => Calc::Function(Box::new(MathFunction::Max(arr2(min.unwrap(), center)))),
-                    0b01 => Calc::Function(Box::new(MathFunction::Min(arr2(max.unwrap(), center)))),
-                    0b11 => Calc::Function(Box::new(MathFunction::Clamp {
-                        min: min.unwrap(),
-                        center,
-                        max: max.unwrap(),
-                    })),
-                    _ => unreachable!(),
+                Ok(match (min, max) {
+                    (None, None) => center,
+                    (Some(min), None) => Calc::Function(Box::new(MathFunction::Max(arr2(min, center)))),
+                    (None, Some(max)) => Calc::Function(Box::new(MathFunction::Min(arr2(max, center)))),
+                    (Some(min), Some(max)) => Calc::Function(Box::new(MathFunction::Clamp { min, center, max })),
                 })
             }
             CalcUnit::Round => input.parse_nested_block(|i| {

@@ -1312,14 +1312,23 @@ impl CreateCommand {
                                     let mut script_property_i: usize = 0;
 
                                     while script_property_i < scripts_properties.len() {
-                                        let script = scripts_properties[script_property_i]
-                                            .value
-                                            .unwrap()
-                                            .data
-                                            .e_string()
-                                            .unwrap()
-                                            .data
-                                            .slice();
+                                        let Some(script_value) =
+                                            scripts_properties[script_property_i].value
+                                        else {
+                                            scripts_properties
+                                                .swap(script_property_out_i, script_property_i);
+                                            script_property_out_i += 1;
+                                            script_property_i += 1;
+                                            continue;
+                                        };
+                                        let Some(script_value) = script_value.data.e_string() else {
+                                            scripts_properties
+                                                .swap(script_property_out_i, script_property_i);
+                                            script_property_out_i += 1;
+                                            script_property_i += 1;
+                                            continue;
+                                        };
+                                        let script = script_value.data.slice();
 
                                         if strings::contains(script, b"react-scripts start")
                                             || strings::contains(script, b"next dev")

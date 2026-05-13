@@ -4343,9 +4343,23 @@ impl H2FrameParser {
                 self.remote_settings.get().unwrap_or_default();
             let mut i: usize = 0;
             let payload = content.data();
+            let end = content.end;
             while i < payload.len() {
                 let mut unit = SettingsPayloadUnit::default();
                 SettingsPayloadUnit::from::<true>(&mut unit, &payload[i..i + setting_byte_size], 0);
+                if SettingsType(unit.type_) == SettingsType::SETTINGS_MAX_FRAME_SIZE
+                    && (unit.value < 16384 || unit.value > MAX_FRAME_SIZE)
+                {
+                    self.read_buffer.with_mut(|rb| rb.reset());
+                    self.send_go_away(
+                        frame.stream_identifier,
+                        ErrorCode::PROTOCOL_ERROR,
+                        b"Invalid SETTINGS_MAX_FRAME_SIZE",
+                        self.last_stream_id.get(),
+                        true,
+                    );
+                    return end;
+                }
                 remote_settings.update_with(unit);
                 let (_ut, _uv) = (unit.type_, unit.value);
                 bun_output::scoped_log!(
@@ -4357,7 +4371,6 @@ impl H2FrameParser {
                 );
                 i += setting_byte_size;
             }
-            let end = content.end;
             self.read_buffer.with_mut(|rb| rb.reset());
             self.remote_settings.set(Some(remote_settings));
             let _iws = remote_settings.initial_window_size;

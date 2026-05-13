@@ -432,24 +432,31 @@ impl MySQLConnection {
                             return Ok(false);
                         }
 
-                        // SAFETY: native handle of a connected TLS socket is `SSL*`.
-                        let ssl_ptr: *mut bun_boringssl_sys::SSL = self
-                            .socket
-                            .get_native_handle()
-                            .map(|h| h.cast())
-                            .unwrap_or(core::ptr::null_mut());
-                        // SAFETY: `ssl_ptr` is a live SSL* (handshake just succeeded).
-                        let servername =
-                            unsafe { bun_boringssl_sys::SSL_get_servername(ssl_ptr, 0) };
-                        if !servername.is_null() {
-                            // SAFETY: SSL_get_servername returns a NUL-terminated C string
-                            // borrowed for the SSL session lifetime.
+                        // VerifyFull additionally requires the certificate identity to
+                        // match the intended host. Absence of a configured server name is
+                        // not a license to skip the check — fail closed.
+                        if self.ssl_mode == SSLMode::VerifyFull {
+                            let servername = self.tls_config.server_name();
+                            if servername.is_null() {
+                                self.tls_status = TLSStatus::SslFailed;
+                                return Ok(false);
+                            }
+                            // SAFETY: native handle of a connected TLS socket is `SSL*`.
+                            let ssl_ptr: *mut bun_boringssl_sys::SSL = self
+                                .socket
+                                .get_native_handle()
+                                .map(|h| h.cast())
+                                .unwrap_or(core::ptr::null_mut());
+                            // SAFETY: `server_name` is a NUL-terminated C string owned by
+                            // `tls_config` for the connection lifetime.
                             let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-                            // SAFETY: `ssl_ptr` is non-null and live (see above).
-                            if !bun_boringssl::check_server_identity(
-                                unsafe { &mut *ssl_ptr },
-                                hostname,
-                            ) {
+                            if ssl_ptr.is_null()
+                                // SAFETY: `ssl_ptr` is non-null and live (handshake just succeeded).
+                                || !bun_boringssl::check_server_identity(
+                                    unsafe { &mut *ssl_ptr },
+                                    hostname,
+                                )
+                            {
                                 self.tls_status = TLSStatus::SslFailed;
                                 return Ok(false);
                             }

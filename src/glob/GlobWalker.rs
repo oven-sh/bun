@@ -2181,6 +2181,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         basename_excluding_special_syntax_component_idx: &mut u32,
     ) -> Result<(), AllocError> {
         let mut start_byte: u32 = 0;
+        let pattern_len: u32 = u32::try_from(pattern.len()).expect("int cast");
 
         let mut prev_is_backslash = false;
         let mut saw_special = false;
@@ -2206,7 +2207,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                     if !saw_special {
                         *basename_excluding_special_syntax_component_idx =
                             u32::try_from(pattern_components.len()).expect("int cast");
-                        *end_byte_of_basename_excluding_special_syntax = i + width;
+                        *end_byte_of_basename_excluding_special_syntax =
+                            (i + width).min(pattern_len);
                     }
                     pattern_components.push(component);
                 }
@@ -2236,13 +2238,15 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             if !saw_special {
                 *basename_excluding_special_syntax_component_idx =
                     u32::try_from(pattern_components.len()).expect("int cast");
-                *end_byte_of_basename_excluding_special_syntax = i + width;
+                *end_byte_of_basename_excluding_special_syntax =
+                    (i + width).min(pattern_len);
             }
             pattern_components.push(component);
         } else if !saw_special {
             *basename_excluding_special_syntax_component_idx =
                 u32::try_from(pattern_components.len()).expect("int cast");
-            *end_byte_of_basename_excluding_special_syntax = i + width;
+            *end_byte_of_basename_excluding_special_syntax =
+                (i + width).min(pattern_len);
         }
 
         Ok(())

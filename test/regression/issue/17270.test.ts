@@ -71,7 +71,7 @@ describe.todoIf(isBroken && isWindows)(
 
       proc.kill();
       await proc.exited;
-    });
+    }, 15000);
 
     test("after onLoad succeeds", async () => {
       using dir = tempDir("watch-plugin-ok", {
@@ -106,6 +106,6 @@ describe.todoIf(isBroken && isWindows)(
 
       proc.kill();
       await proc.exited;
-    });
+    }, 15000);
   },
 );

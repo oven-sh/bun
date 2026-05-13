@@ -335,10 +335,12 @@ pub struct LexerType<
     /// that to a single fat-ptr field load — but a *struct field* load LLVM
     /// still won't hoist out of the token loop (perf-annotate of `next()`
     /// showed `mov 0x80(%rbx),%rsi` at ~7.7% of its samples). The hot paths
-    /// therefore copy this into a local `let contents: &[u8]` once per `next()`
-    /// / `scan_single_line_comment()` call and thread it by value into
-    /// `step_with()` / `next_codepoint_with()`, so the ptr+len stays in a
-    /// register for the whole loop, matching Zig codegen. `source` is kept for
+    /// therefore copy this into a local `let contents: &[u8]` once per
+    /// `next()` / `scan_single_line_comment()` / `parse_string_literal()`
+    /// call and thread it by value into every hot sub-scanner
+    /// (`step_with()`, `next_codepoint_with()`, `parse_string_literal_inner()`,
+    /// `parse_numeric_literal_or_dot()`), so the ptr+len stays in a register
+    /// for the whole token loop, matching Zig codegen. `source` is kept for
     /// error-reporting paths that need `path` / `identifier_name`.
     pub contents: &'a [u8],
     pub current: usize,
@@ -984,6 +986,7 @@ lexer_impl_header! {
     #[inline(never)]
     fn parse_string_literal_inner<const QUOTE: i32>(
         &mut self,
+        contents: &[u8],
     ) -> Result<InnerStringLiteral, Error> {
         let mut suffix_len: u8 = if QUOTE == 0 { 0 } else { 1 };
         let mut needs_decode = false;
@@ -991,22 +994,22 @@ lexer_impl_header! {
             match self.code_point {
                 0x5C => {
                     needs_decode = true;
-                    self.step();
+                    self.step_with(contents);
 
                     // Handle Windows CRLF
                     if self.code_point == 0x0D && !IS_JSON {
-                        self.step();
+                        self.step_with(contents);
                         if self.code_point == 0x0A {
-                            self.step();
+                            self.step_with(contents);
                         }
                         continue 'string_literal;
                     }
 
                     if IS_JSON && IGNORE_TRAILING_ESCAPE_SEQUENCES {
                         if self.code_point == QUOTE
-                            && self.current >= self.contents.len()
+                            && self.current >= contents.len()
                         {
-                            self.step();
+                            self.step_with(contents);
                             break;
                         }
                     }
@@ -1015,7 +1018,7 @@ lexer_impl_header! {
                         // 0 cannot be in this list because it may be a legacy octal literal
                         0x60 | 0x27 | 0x22 | 0x5C =>
                         {
-                            self.step();
+                            self.step_with(contents);
                             continue 'string_literal;
                         }
                         _ => {}
@@ -1054,10 +1057,10 @@ lexer_impl_header! {
 
                 0x24 => {
                     if QUOTE == 0x60 {
-                        self.step();
+                        self.step_with(contents);
                         if self.code_point == 0x7B {
                             suffix_len = 2;
-                            self.step();
+                            self.step_with(contents);
                             self.token = if self.rescan_close_brace_as_template_token {
                                 T::TTemplateMiddle
                             } else {
@@ -1071,7 +1074,7 @@ lexer_impl_header! {
                 // exit condition (const-generic param can't be a pattern; guard is fine —
                 // the literal arms above still lower to a jump table)
                 c if c == QUOTE => {
-                    self.step();
+                    self.step_with(contents);
                     break;
                 }
 
@@ -1084,7 +1087,7 @@ lexer_impl_header! {
                     } else if (QUOTE == 0x22 || QUOTE == 0x27)
                         && Environment::IS_NATIVE
                     {
-                        let remainder = &self.contents[self.current..];
+                        let remainder = &contents[self.current..];
                         if remainder.len() >= 4096 {
                             match index_of_interesting_character_in_string_literal(
                                 remainder,
@@ -1093,11 +1096,11 @@ lexer_impl_header! {
                                 Some(off) => {
                                     self.current += off;
                                     self.end = self.current.saturating_sub(1);
-                                    self.step();
+                                    self.step_with(contents);
                                     continue;
                                 }
                                 None => {
-                                    self.step();
+                                    self.step_with(contents);
                                     continue;
                                 }
                             }
@@ -1106,7 +1109,7 @@ lexer_impl_header! {
                 }
             }
 
-            self.step();
+            self.step_with(contents);
         }
 
         Ok(InnerStringLiteral::new(suffix_len, needs_decode))
@@ -1124,9 +1127,12 @@ lexer_impl_header! {
         }
         // quote is 0 when parsing JSON from .env
         // .env values may not always be quoted.
-        self.step();
+        // PERF: keep the source slice register-resident through the hot string
+        // body loop — see `next_codepoint_with`.
+        let contents: &'a [u8] = self.contents;
+        self.step_with(contents);
 
-        let string_literal_details = self.parse_string_literal_inner::<QUOTE>()?;
+        let string_literal_details = self.parse_string_literal_inner::<QUOTE>(contents)?;
 
         // Reset string literal
         let base = if QUOTE == 0 { self.start } else { self.start + 1 };
@@ -1136,8 +1142,8 @@ lexer_impl_header! {
         } else {
             self.end
         };
-        let slice_end = self.contents.len().min(base.max(end_pos));
-        self.string_literal_raw_content = &self.contents[base..slice_end];
+        let slice_end = contents.len().min(base.max(end_pos));
+        self.string_literal_raw_content = &contents[base..slice_end];
         self.string_literal_raw_format = if string_literal_details.needs_decode() {
             StringLiteralRawFormat::NeedsDecode
         } else {
@@ -2197,7 +2203,7 @@ lexer_impl_header! {
                 }
 
                 0x2E | 0x30..=0x39 => {
-                    self.parse_numeric_literal_or_dot()?;
+                    self.parse_numeric_literal_or_dot(contents)?;
                 }
 
                 _ => {
@@ -3509,10 +3515,10 @@ lexer_impl_header! {
     // the hot `T::TDot` early-return then sits inside `next()`'s jump table
     // with no call overhead.
     #[inline]
-    fn parse_numeric_literal_or_dot(&mut self) -> Result<(), Error> {
+    fn parse_numeric_literal_or_dot(&mut self, contents: &[u8]) -> Result<(), Error> {
         // Number or dot;
         let first = self.code_point;
-        self.step();
+        self.step_with(contents);
 
         // Dot without a digit after it;
         if first == 0x2E
@@ -3520,11 +3526,11 @@ lexer_impl_header! {
         {
             // "..."
             if (self.code_point == 0x2E
-                && self.current < self.contents.len())
-                && self.contents[self.current] == b'.'
+                && self.current < contents.len())
+                && contents[self.current] == b'.'
             {
-                self.step();
-                self.step();
+                self.step_with(contents);
+                self.step_with(contents);
                 self.token = T::TDotDotDot;
                 return Ok(());
             }
@@ -3569,7 +3575,7 @@ lexer_impl_header! {
             let mut is_invalid_legacy_octal_literal = false;
             self.number = 0.0;
             if !self.is_legacy_octal_literal {
-                self.step();
+                self.step_with(contents);
             }
 
             'integer_literal: loop {
@@ -3635,7 +3641,7 @@ lexer_impl_header! {
                     }
                 }
 
-                self.step();
+                self.step_with(contents);
                 is_first = false;
             }
 
@@ -3712,7 +3718,7 @@ lexer_impl_header! {
                     last_underscore_end = self.end;
                     underscore_count += 1;
                 }
-                self.step();
+                self.step_with(contents);
             }
 
             // Fractional digits;
@@ -3724,7 +3730,7 @@ lexer_impl_header! {
                 }
 
                 has_dot_or_exponent = true;
-                self.step();
+                self.step_with(contents);
                 if self.code_point == 0x5F {
                     self.syntax_error()?;
                 }
@@ -3744,7 +3750,7 @@ lexer_impl_header! {
                         last_underscore_end = self.end;
                         underscore_count += 1;
                     }
-                    self.step();
+                    self.step_with(contents);
                 }
             }
 
@@ -3757,9 +3763,9 @@ lexer_impl_header! {
                 }
 
                 has_dot_or_exponent = true;
-                self.step();
+                self.step_with(contents);
                 if self.code_point == 0x2B || self.code_point == 0x2D {
-                    self.step();
+                    self.step_with(contents);
                 }
                 if self.code_point < 0x30 || self.code_point > 0x39 {
                     self.syntax_error()?;
@@ -3780,7 +3786,7 @@ lexer_impl_header! {
                         last_underscore_end = self.end;
                         underscore_count += 1;
                     }
-                    self.step();
+                    self.step_with(contents);
                 }
             }
 
@@ -3845,7 +3851,7 @@ lexer_impl_header! {
         // Handle bigint literals after the underscore-at-end check above;
         if self.code_point == 0x6E && !has_dot_or_exponent {
             self.token = T::TBigIntegerLiteral;
-            self.step();
+            self.step_with(contents);
         }
 
         // Identifiers can't occur immediately after numbers;

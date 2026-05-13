@@ -1789,6 +1789,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
     }
 
+    // Only reached while building diagnostics — keep it off the hot parse path.
+    #[cold]
+    #[inline(never)]
     pub fn key_name_for_error(&mut self, key: &js_ast::Expr) -> &'a [u8] {
         match &key.data {
             js_ast::ExprData::EString(s) => s.string(self.arena).expect("unreachable"),
@@ -3880,6 +3883,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn forbid_lexical_decl(&mut self, loc: bun_ast::Loc) -> Result<(), bun_core::Error> {
         Ok(self.log().add_error(
             Some(self.source),
@@ -4486,6 +4491,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         self.scopes_in_order.truncate(scope_index);
     }
 
+    // TypeScript namespace lowering — never reached when transpiling plain JS
+    // (e.g. node_modules), so keep it out of the hot parse/visit icache window.
+    #[cold]
+    #[inline(never)]
     pub fn define_exported_namespace_binding(
         &mut self,
         exported_members: &mut js_ast::TSNamespaceMemberMap,
@@ -4610,6 +4619,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     // Generate a TypeScript namespace object for this namespace's scope. If this
     // namespace is another block that is to be merged with an existing namespace,
     // use that earlier namespace's object instead.
+    #[cold]
+    #[inline(never)]
     pub fn get_or_create_exported_namespace_members(
         &mut self,
         name: &[u8],
@@ -5179,6 +5190,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Output::panic(format_args!("{}\n{}", fmt, args));
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn panic_loc(
         &mut self,
         fmt: &'static str,
@@ -6345,6 +6358,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn mark_exported_decls_inside_namespace(&mut self, ns_ref: Ref, decls: &[G::Decl]) {
         for decl in decls {
             self.mark_exported_binding_inside_namespace(ns_ref, decl.binding);
@@ -6388,6 +6403,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
+    #[cold]
+    #[inline(never)]
     fn mark_exported_binding_inside_namespace(&mut self, r#ref: Ref, binding: BindingNodeIndex) {
         match binding.data {
             js_ast::b::B::BMissing(_) => {}
@@ -6409,6 +6426,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     // blocked_on: b(); G::Decl::List; E::Arrow.args slice type; S::SExpr/Return; emitted_namespace_vars.put_no_clobber
+    // Large TS namespace/enum lowering body — cold for already-transpiled JS.
+    #[cold]
+    #[inline(never)]
     pub fn generate_closure_for_type_script_namespace_or_enum(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
@@ -6587,6 +6607,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     // These are leaf utilities (no parse_*/visit_* deps) that block
     // handle_identifier / jsx_import / record_usage_of_runtime_require.
 
+    #[cold]
+    #[inline(never)]
     pub fn wrap_inlined_enum(&mut self, value: Expr, comment: &'a [u8]) -> Expr {
         if strings::contains(comment, b"*/") {
             // Don't wrap with a comment
@@ -7248,6 +7270,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     // Helper extracted from lower_class to keep that fn readable.
     // TODO(port): this condenses the Zig per-kind metadata switch (lines 5024-5105).
     // Phase B should diff against Zig to verify exact arg ordering for get/set.
+    #[cold]
+    #[inline(never)]
     fn emit_decorator_metadata_for_prop(
         &mut self,
         prop: &G::Property,
@@ -7572,6 +7596,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         })
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn wrap_identifier_namespace(&mut self, loc: bun_ast::Loc, r#ref: Ref) -> Expr {
         let enclosing_ref = self
             .enclosing_namespace_arg_ref
@@ -8881,6 +8907,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }))
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn compute_ts_enums_map(
         &self,
         _arena: &'a Bump,

@@ -387,7 +387,7 @@ impl IOWriter {
                     s.writer.handle = bun_io::pipes::PollOrFd::Closed;
                     return self.__start();
                 }
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
                     // On linux regular files are not pollable and return EPERM,
                     // so restart if that's the case with polling disabled.

@@ -4019,11 +4019,13 @@ fn is_unconditionally_included_file(filename: &[u8]) -> bool {
 // TODO: should this be case insensitive on all platforms?
 #[inline]
 fn strings_eql(a: &[u8], b: &'static [u8]) -> bool {
-    #[cfg(target_os = "linux")]
+    // PORT NOTE: Zig's `Environment.isLinux` (builtin.target.os.tag == .linux)
+    // is true on Android too; Rust splits these into distinct target_os values.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         a == b
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         strings::eql_case_insensitive_ascii_check_length(a, b)
     }

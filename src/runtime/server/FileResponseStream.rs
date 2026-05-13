@@ -341,7 +341,7 @@ impl FileResponseStream {
             return false;
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         loop {
             let adjusted = self.sendfile.remain.min(i32::MAX as u64);
             let mut off: i64 = i64::try_from(self.sendfile.offset).expect("int cast");
@@ -423,7 +423,7 @@ impl FileResponseStream {
                 }
             }
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
             unreachable!() // can_sendfile gates this
         }

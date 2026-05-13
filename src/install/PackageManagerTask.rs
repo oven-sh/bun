@@ -611,6 +611,14 @@ pub enum Status {
     Fail,
 }
 
+// PORT NOTE: matches Zig — `Task` has no `deinit`; the active `Data`/`Request`
+// payload (`PackageManifest` blob, `ExtractData` paths, `ExtractTarball`
+// name/url) is intentionally leaked per `preallocated_resolve_tasks` put/get
+// cycle (Zig `HiveArray.Fallback.put` is `value.* = undefined` / raw
+// `allocator.destroy`). A Rust `impl Drop for Task` cannot recover this without
+// breaking the `..Task::uninit()` struct-update callers and risking drop of the
+// zeroed-`uninit()` union storage.
+
 /// Bare Zig `union` (untagged). Discriminated externally by `Task.tag`.
 /// // TODO(port): Phase B — consider folding `Tag` + `Request` + `Data` into a
 /// single Rust `enum` (one discriminant instead of tag + 2 untagged unions).

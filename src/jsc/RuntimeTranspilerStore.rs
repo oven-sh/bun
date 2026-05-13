@@ -408,9 +408,8 @@ pub struct TranspilerJob {
     // `ParseOptions.path` / `bun_ast::Source.path` use). The slices borrow the
     // Box'd buffer allocated in `transpile()` and freed in `reset_for_pool()`.
     pub path: bun_paths::fs::Path<'static>,
-    /// RAII: `Drop` derefs the WTF refcount. `reset_for_pool` still does the
-    /// explicit `take()` for symmetry with Zig, but if any path skips it
-    /// (`HiveArray::put` → `drop_in_place`), the strings no longer leak.
+    /// RAII: `Drop` derefs the WTF refcount — torn down by
+    /// `HiveArray::put` → `drop_in_place` (not in `reset_for_pool`).
     pub non_threadsafe_input_specifier: OwnedString,
     pub non_threadsafe_referrer: OwnedString,
     pub loader: Loader,
@@ -497,10 +496,19 @@ fn tls_get_or_leak<T>(
 }
 
 impl TranspilerJob {
-    /// Zig `deinit` — kept as a private inherent fn (not `impl Drop`) because the slot
-    /// is recycled into the HiveArray via `store.put(this)` rather than dropped, and
-    /// several fields are reset to sentinel values for reuse. Only caller is
+    /// Zig `deinit` — kept as a private inherent fn (not `impl Drop`) because the
+    /// slot is recycled into the HiveArray via `store.put(this)`. Only caller is
     /// `run_from_js_thread`.
+    ///
+    /// PORT NOTE: `HiveArrayFallback::put` runs `drop_in_place` on the slot (see
+    /// hive_array.rs PORT NOTE), so the Drop-carrying fields — `OwnedString` ×2,
+    /// `OwnedResolvedSource`, `Log`, `StrongOptional` — are torn down *there*,
+    /// not here. This function handles only the teardown that field drop glue
+    /// does **not** cover: the leaked `path.text` Box, `poll_ref.disable()`,
+    /// and `fetcher.deinit()` (whose payload `bun_core::String` is `Copy` with
+    /// manual `.deref()`). Doing both — explicit `take()` here *and*
+    /// `drop_in_place` in `put()` — would double-drop should any future field's
+    /// `Default` not be trivially droppable.
     fn reset_for_pool(&mut self) {
         // bun.default_allocator.free(this.path.text) — `path.text` was Box-duplicated in
         // `transpile()`; reconstruct the Box and drop it.
@@ -514,21 +522,9 @@ impl TranspilerJob {
 
         self.poll_ref.disable();
         self.fetcher.deinit();
-        self.fetcher = Fetcher::File;
-        self.loader = Loader::File;
-        // OwnedString::Drop derefs the WTF refcount.
-        drop(core::mem::take(&mut self.non_threadsafe_input_specifier));
-        drop(core::mem::take(&mut self.non_threadsafe_referrer));
-        // OwnedResolvedSource::Drop derefs source_code/url/specifier/origin.
-        drop(core::mem::take(&mut self.resolved_source));
-        // self.log.deinit() → Drop via take
-        drop(core::mem::take(&mut self.log));
-        // self.promise.deinit() → Drop via replace
-        drop(core::mem::replace(
-            &mut self.promise,
-            StrongOptional::empty(),
-        ));
-        // self.globalThis = undefined; — no-op in Rust
+        // Remaining fields with Drop glue are handled by `store.put()` →
+        // `drop_in_place`; do NOT `take()` them here (would drop the empty
+        // replacement a second time).
     }
 
     pub fn dispatch_to_main_thread(&mut self) {

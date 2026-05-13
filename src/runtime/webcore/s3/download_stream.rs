@@ -184,20 +184,25 @@ impl S3HttpDownloadStreamingTask {
         // the state is atomic let's load it once
         let state = self_.get_state();
         let has_more = state.has_more();
+        // Zig `defer { this.mutex.unlock(); if (!has_more) this.deinit(); }` — keep as a scopeguard
+        // so any future early-exit / unwind through `report_progress` still unlocks + deinits.
+        let this_ptr = this;
+        scopeguard::defer! {
+            // SAFETY: `this_ptr` was allocated via `Box::new` in `Self::new`; once
+            // `has_more == false` we are the sole owner (HTTP thread will not call back again).
+            unsafe {
+                (*this_ptr).mutex.unlock();
+                if !has_more {
+                    drop(bun_core::heap::take(this_ptr));
+                }
+            }
+        };
 
         // there is no reason to set has_schedule_callback to true if we dont have more data to read
         if has_more {
             self_.has_schedule_callback.store(false, Ordering::Relaxed);
         }
         self_.report_progress(state);
-
-        // Zig `defer { unlock; if (!has_more) deinit; }` — inlined here (no early returns above).
-        self_.mutex.unlock();
-        if !has_more {
-            // SAFETY: `this` was allocated via `Box::new` in `Self::new`; we are the sole owner
-            // once `has_more == false` (HTTP thread will not call back again).
-            unsafe { drop(bun_core::heap::take(this)) };
-        }
     }
 
     /// this function is only called from the http callback in the HTTPThread and returns true if we

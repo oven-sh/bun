@@ -2490,12 +2490,38 @@ pub fn digit_count_u64(x: u64) -> usize {
     }
     if x < (1u64 << 32) {
         const TABLE: [u64; 32] = [
-            4294967296, 8589934582, 8589934582, 8589934582, 12884901788, 12884901788,
-            12884901788, 17179868184, 17179868184, 17179868184, 21474826480, 21474826480,
-            21474826480, 21474826480, 25769703776, 25769703776, 25769703776, 30063771072,
-            30063771072, 30063771072, 34349738368, 34349738368, 34349738368, 34349738368,
-            38554705664, 38554705664, 38554705664, 41949672960, 41949672960, 41949672960,
-            42949672960, 42949672960,
+            4294967296,
+            8589934582,
+            8589934582,
+            8589934582,
+            12884901788,
+            12884901788,
+            12884901788,
+            17179868184,
+            17179868184,
+            17179868184,
+            21474826480,
+            21474826480,
+            21474826480,
+            21474826480,
+            25769703776,
+            25769703776,
+            25769703776,
+            30063771072,
+            30063771072,
+            30063771072,
+            34349738368,
+            34349738368,
+            34349738368,
+            34349738368,
+            38554705664,
+            38554705664,
+            38554705664,
+            41949672960,
+            41949672960,
+            41949672960,
+            42949672960,
+            42949672960,
         ];
         let log2 = 63 - x.leading_zeros() as usize;
         return ((x + TABLE[log2]) >> 32) as usize;
@@ -2674,8 +2700,12 @@ pub fn size_f64(bytes: f64, opts: SizeFormatterOptions) -> SizeFormatter {
     }
 }
 pub fn size_i64(bytes: i64, opts: SizeFormatterOptions) -> SizeFormatter {
+    // PORT NOTE: Zig's `@intCast(bytes)` is unchecked in release (UB-wraps negative);
+    // clamp to 0 instead of panicking so release builds never crash on a transiently
+    // negative size, while keeping the safe-build trap via debug_assert.
+    debug_assert!(bytes >= 0);
     SizeFormatter {
-        value: usize::try_from(bytes).expect("int cast"),
+        value: bytes.max(0) as usize,
         opts,
     }
 }
@@ -2814,7 +2844,10 @@ pub const fn parse_hex4(input: &[u8]) -> Option<u16> {
     if input.len() < 4 {
         return None;
     }
-    match (hex_pair_value(input[0], input[1]), hex_pair_value(input[2], input[3])) {
+    match (
+        hex_pair_value(input[0], input[1]),
+        hex_pair_value(input[2], input[3]),
+    ) {
         (Some(hi), Some(lo)) => Some(((hi as u16) << 8) | lo as u16),
         _ => None,
     }
@@ -3081,8 +3114,15 @@ impl<const PRECISION: usize> Display for TrimmedPrecisionFormatter<PRECISION> {
         let rem = self.num - whole;
         if rem != 0.0 {
             // buf size = "0." + PRECISION digits
-            // TODO(port): Zig used `[2 + precision]u8` stack array; Rust const-generic array
-            // length arithmetic is unstable, so use a small fixed upper bound.
+            // PORT NOTE: Zig used `[2 + precision]u8` stack array; Rust const-generic array
+            // length arithmetic is unstable, so use a small fixed upper bound and
+            // const-assert it suffices (matches Zig's compile-time sizing guarantee).
+            const {
+                assert!(
+                    PRECISION + 3 <= 32,
+                    "TrimmedPrecisionFormatter PRECISION too large for fixed buffer"
+                )
+            };
             let mut buf = [0u8; 32];
             use std::io::Write;
             let mut cursor = std::io::Cursor::new(&mut buf[..]);
@@ -3124,7 +3164,9 @@ impl Default for FormatDurationData {
     }
 }
 
-use crate::time::{NS_PER_DAY, NS_PER_HOUR, NS_PER_MIN, NS_PER_MS, NS_PER_S, NS_PER_US, NS_PER_WEEK};
+use crate::time::{
+    NS_PER_DAY, NS_PER_HOUR, NS_PER_MIN, NS_PER_MS, NS_PER_S, NS_PER_US, NS_PER_WEEK,
+};
 
 /// This is copied from std.fmt.formatDuration, except it will only print one decimal instead of three
 fn format_duration_one_decimal(

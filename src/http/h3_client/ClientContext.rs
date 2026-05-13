@@ -123,11 +123,14 @@ impl ClientContext {
             }
         }
 
-        // Zig: `dupeZ` — owned NUL-terminated buffer. We keep the hostname (no NUL)
-        // in the session and build a CString for the FFI call.
-        let Ok(host_z) = std::ffi::CString::new(hostname) else {
-            return false;
-        };
+        // Zig: `dupeZ` — owned NUL-terminated buffer. `dupeZ` copies bytes
+        // verbatim (interior NUL allowed) then appends a sentinel; lsquic reads
+        // it as a C string so an interior NUL truncates on the C side. Mirror
+        // that here instead of `CString::new`, which would reject interior NUL
+        // and diverge by returning `false` where Zig proceeds.
+        let mut host_buf = hostname.to_vec();
+        host_buf.push(0);
+        let host_z = std::ffi::CStr::from_bytes_until_nul(&host_buf).expect("nul appended above");
         let session = ClientSession::new(hostname.to_vec(), port, reject);
         let _ = H3::live_sessions.fetch_add(1, Ordering::Relaxed);
         // `session` was just allocated by ClientSession::new — `session_mut`
@@ -138,7 +141,7 @@ impl ClientContext {
 
         let result =
             self.qctx_mut()
-                .connect(&host_z, port, &host_z, reject, session.cast::<c_void>());
+                .connect(host_z, port, host_z, reject, session.cast::<c_void>());
         match result {
             ConnectResult::Socket(qs) => {
                 session_mut(session).qsocket = NonNull::new(qs);

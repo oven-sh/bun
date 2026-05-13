@@ -1149,10 +1149,11 @@ impl BlobExt for Blob {
                 );
             }
             // PERF(port): Zig used @truncate to i52 then @intCast to SizeType.
-            recommended_chunk_size = SizeType::try_from(
-                (recommended_chunk_size_value.to_int64() & ((1i64 << 52) - 1)).max(0),
-            )
-            .unwrap();
+            // `(x << 12) >> 12` on i64 reproduces `@as(i52, @truncate(x))` exactly
+            // (arithmetic right-shift sign-extends bit 51), so negatives clamp to 0
+            // via `.max(0)` instead of becoming the 52-bit zero-extended mask.
+            let v = (recommended_chunk_size_value.to_int64() << 12) >> 12;
+            recommended_chunk_size = v.max(0) as SizeType;
         }
         let stream = ReadableStream::from_blob_copy_ref(global_this, self, recommended_chunk_size)?;
 

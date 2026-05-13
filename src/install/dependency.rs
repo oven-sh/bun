@@ -330,6 +330,11 @@ pub trait StringBuilderLike: bun_semver::StringBuilder {
     fn string_bytes(&self) -> &[u8];
 }
 
+// PORT NOTE: single-impl monomorphization is intentional. Every Zig call site
+// of `Dependency.count`/`clone`/`*WithDifferentBuffers` passes
+// `*Lockfile.StringBuilder` (Package.zig, OverrideMap.zig, CatalogMap.zig,
+// install_with_manager.zig) — `semver_string::Builder` is never used here, and
+// its isolated Box<[u8]> can't satisfy `builder.lockfile.buffers.string_bytes`.
 impl<'a> StringBuilderLike for crate::lockfile_real::StringBuilder<'a> {
     #[inline]
     fn string_bytes(&self) -> &[u8] {

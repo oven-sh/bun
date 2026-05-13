@@ -910,7 +910,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if should_deinit_context.get() {
             // SAFETY: see above; `on_response` set the deferred flag instead of
-            // freeing in-place.
+            // freeing in-place. `ctx` is not accessed after this returns.
             unsafe { (*ctx).deinit() };
             return;
         }
@@ -977,7 +977,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if should_deinit_context.get() {
             // SAFETY: `on_response` set the deferred flag instead of freeing
-            // in-place; we own the slot now.
+            // in-place; we own the slot now. `ctx` is not accessed after this.
             unsafe { (*ctx).deinit() };
             return;
         }
@@ -1674,11 +1674,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         let error_instance = match &self.config.address {
             server_config::Address::Tcp { port, hostname } => {
-                #[cfg(target_os = "linux")]
+                // Zig `Environment.isLinux` is `os.tag == .linux`, which is
+                // also true for Android targets (Zig encodes Android as
+                // linux+android-abi). Rust's `target_os = "linux"` excludes
+                // Android, so match both explicitly.
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 if bun_sys::get_errno(-1i32) == bun_sys::E::EACCES {
                     let host = hostname
                         .as_ref()
-                        .map(|h| h.to_bytes())
+                        .map(|h| h.as_bytes())
                         .unwrap_or(b"0.0.0.0");
                     let err = jsc::SystemError {
                         message: bun_core::String::create_format(format_args!(
@@ -2407,8 +2411,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // Lazily materialize the ~816 KB H3 request pool now that
                     // we know an H3 listener will actually exist (Zig:
                     // server.zig:1827-1836, gated on `comptime has_h3`).
-                    (*this).h3_request_pool =
-                        <Self as ServerPools<SSL, DEBUG>>::h3_request_pool();
+                    (*this).h3_request_pool = <Self as ServerPools<SSL, DEBUG>>::h3_request_pool();
                 }
             }
 
@@ -2570,7 +2573,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 server_config::Address::Tcp { port, hostname } => {
                     let mut host: *const c_char = core::ptr::null();
                     if let Some(existing) = hostname.as_deref() {
-                        let bytes = existing.to_bytes();
+                        let bytes = existing.as_bytes();
                         if bytes.len() > 2 && bytes[0] == b'[' {
                             // strip "[" and "]" from IPv6 literal
                             let inner = &bytes[1..bytes.len() - 1];
@@ -3562,7 +3565,7 @@ pub mod http_server_agent {
                 max_id = max_id.max(user_route.id);
                 routes.push(Route {
                     route_id: user_route.id as i32,
-                    path: BunString::init(user_route.route.path.to_bytes()),
+                    path: BunString::init(user_route.route.path.as_bytes()),
                     r#type: RouteType::Api,
                     ..Default::default()
                 });

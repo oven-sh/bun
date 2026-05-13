@@ -803,7 +803,7 @@ pub type OpenPtyFn = unsafe extern "C" fn(
 ) -> c_int;
 
 /// Dynamic loading of openpty on Linux (it's in libutil which may not be linked)
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod lib_util {
     use super::*;
     use bun_core::ZStr;
@@ -866,7 +866,7 @@ fn get_open_pty_fn() -> Option<OpenPtyFn> {
 
     // On Linux, openpty is in libutil, which may not be linked
     // Load it dynamically via dlopen
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         return lib_util::get_open_pty();
     }

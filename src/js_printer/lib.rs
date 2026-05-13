@@ -6865,7 +6865,9 @@ pub mod __gated_printer {
                             self.print(b"\\u");
                             let mut tmp = [0u8; 4];
                             let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                            self.writer.write_reserved(&tmp[..len]).expect("unreachable");
+                            self.writer
+                                .write_reserved(&tmp[..len])
+                                .expect("unreachable");
                         }
                     }
                     continue;
@@ -6874,7 +6876,9 @@ pub mod __gated_printer {
                 {
                     let mut tmp = [0u8; 4];
                     let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                    self.writer.write_reserved(&tmp[..len]).expect("unreachable");
+                    self.writer
+                        .write_reserved(&tmp[..len])
+                        .expect("unreachable");
                 }
             }
             Ok(())
@@ -7189,6 +7193,15 @@ pub trait PrintArg {
 impl PrintArg for u8 {
     fn print_into<W: WriterTrait>(self, w: &mut W) {
         w.print_byte(self);
+    }
+}
+// PORT NOTE: Zig `print(str: anytype)` matched `comptime_int, u16, u8` and narrowed via
+// `@as(u8, @intCast(str))` before `writeByte`. Mirror that for `u16` so wide-int char callers
+// (e.g. UTF-16 iteration) compile and emit one byte identically.
+impl PrintArg for u16 {
+    #[inline]
+    fn print_into<W: WriterTrait>(self, w: &mut W) {
+        w.print_byte(self as u8);
     }
 }
 impl PrintArg for &[u8] {

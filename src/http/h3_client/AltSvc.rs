@@ -159,7 +159,11 @@ fn key<'a>(buf: &'a mut [u8], hostname: &[u8], port: u16) -> &'a [u8] {
     // port is at most 5 digits + ':' — bufPrint cannot overflow.
     use std::io::Write;
     let mut cursor: &mut [u8] = buf;
-    write!(cursor, "{}:{}", bstr::BStr::new(hostname), port).expect("unreachable");
+    // Zig `{s}` writes raw bytes; bstr Display would lossy-expand invalid UTF-8
+    // (1 byte → 3-byte U+FFFD) and could overflow the bound above. Write the
+    // hostname verbatim, then format only the port.
+    cursor.write_all(hostname).expect("unreachable");
+    write!(cursor, ":{}", port).expect("unreachable");
     // PORT NOTE: reshaped for borrowck — capture remaining len before reborrowing buf.
     let remaining = cursor.len();
     let written = buf.len() - remaining;

@@ -217,9 +217,10 @@ impl SourceLocation {
         }
     }
 
-    // TODO(port): Zig used `anytype` + `@TypeOf` to dispatch on
+    // PORT NOTE: Zig used `anytype` + `@TypeOf` to dispatch on
     // `ParserError | BasicParseError | SelectorParseErrorKind`. In Rust this
-    // becomes a trait `IntoParserError` implemented by each. Phase B wires it.
+    // becomes a trait `IntoParserError` implemented by each live variant
+    // (the `BasicParseError` arm is dead/ill-typed in Zig — see note below).
     pub fn new_custom_error(self, err: impl IntoParserError) -> ParseError<ParserError> {
         ParseError {
             kind: errors_::ParserErrorKind::custom(err.into_parser_error()),
@@ -239,8 +240,13 @@ impl IntoParserError for ParserError {
         self
     }
 }
-// TODO(port): impl IntoParserError for BasicParseError /
-// selector::parser::SelectorParseErrorKind in Phase B.
+// PORT NOTE: Zig's `newCustomError` had a third `@TypeOf` arm for
+// `BasicParseError`, but that arm is dead and ill-typed — it wraps
+// `BasicParseError.intoDefaultParseError(err)` (a `ParseError(ParserError)`)
+// in `.custom`, which expects a `ParserError`. No caller ever passes
+// `BasicParseError`, so Zig's lazy comptime never instantiates it. We
+// intentionally do NOT impl `IntoParserError` for `BasicParseError` here.
+// `SelectorParseErrorKind` is impl'd in `selectors/parser.rs`.
 
 pub type Error = Err<ParserError>;
 

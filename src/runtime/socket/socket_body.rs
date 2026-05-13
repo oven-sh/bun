@@ -40,9 +40,7 @@ use bun_uws as uws;
 // handle (same allocation, different-crate newtype — see uws_sys/lib.rs §shim).
 #[inline]
 fn from_duplex<const SSL: bool>(duplex: &mut UpgradedDuplex) -> uws::NewSocketHandler<SSL> {
-    uws::NewSocketHandler::<SSL>::from_duplex(
-        std::ptr::from_mut::<UpgradedDuplex>(duplex).cast(),
-    )
+    uws::NewSocketHandler::<SSL>::from_duplex(std::ptr::from_mut::<UpgradedDuplex>(duplex).cast())
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -871,6 +869,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
         // Ensure the socket is still alive for any defer's we have
         this.ref_();
+        // PORT NOTE: Zig's first `defer this.deref()` is declared here, before
+        // clear_and_free/unrefOnNextTick — keep it as its own guard so the
+        // ref_() above is balanced even if those calls unwind.
+        let _outer_deref = scopeguard::guard(this.as_ctx_ptr(), |p| {
+            // SAFETY: `p` is the live `*mut Self`; shared reborrow, fields celled.
+            unsafe { (*p).deref() };
+        });
         // PORT NOTE: reshaped for borrowck — explicit cleanup at end of fn.
         this.buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());
@@ -883,17 +888,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.poll_ref
             .with_mut(|p| p.unref_on_next_tick(js_loop_ctx()));
 
-        // TODO(port): errdefer — combined `defer markInactive()` + `defer deref()`
-        // moved to a guard so all early-returns run them.
+        // TODO(port): errdefer — `defer markInactive()` + `defer if (needs_deref) deref()`
+        // moved to a guard so all early-returns run them. The outer
+        // `_outer_deref` above owns the final `deref()`; LIFO drop order
+        // (cleanup → _outer_deref) mirrors Zig's three defers exactly.
         let cleanup = scopeguard::guard((this.as_ctx_ptr(), needs_deref), |(p, nd)| {
             // SAFETY: `p` is the live `*mut Self`; shared reborrow, fields celled.
             unsafe {
-                // Zig defer order (reverse-declaration): needs_deref → markInactive → deref.
+                // Zig defer order (reverse-declaration): needs_deref → markInactive.
                 if nd {
                     (*p).deref();
                 }
                 (*p).mark_inactive();
-                (*p).deref();
             }
         });
 

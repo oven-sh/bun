@@ -54,9 +54,11 @@ impl HeadersExt for Headers {
         for header in headers {
             let name = header.name();
             let value = header.value();
-            let name_offset = u32::try_from(result.buf.len()).unwrap();
+            // PORT NOTE: Zig used `@truncate` for offsets/lengths; mirror with `as u32`
+            // (silent wrap on >4GiB aggregate headers) rather than `try_from().unwrap()`.
+            let name_offset = result.buf.len() as u32;
             result.buf.extend_from_slice(name);
-            let value_offset = u32::try_from(result.buf.len()).unwrap();
+            let value_offset = result.buf.len() as u32;
             result.buf.extend_from_slice(value);
 
             // PORT NOTE: Zig pre-set `entries.len = headers.len` then `set(i, ..)`.
@@ -65,11 +67,11 @@ impl HeadersExt for Headers {
             result.entries.append_assume_capacity(Entry {
                 name: api::StringPointer {
                     offset: name_offset,
-                    length: u32::try_from(name.len()).unwrap(),
+                    length: name.len() as u32,
                 },
                 value: api::StringPointer {
                     offset: value_offset,
-                    length: u32::try_from(value.len()).unwrap(),
+                    length: value.len() as u32,
                 },
             });
         }

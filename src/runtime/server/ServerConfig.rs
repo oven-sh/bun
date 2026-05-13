@@ -1,5 +1,6 @@
-use std::ffi::CString;
 use std::io::Write as _;
+
+use bun_core::ZBox;
 
 use bun_collections::{StringHashMap, VecExt};
 use bun_core::strings;
@@ -63,7 +64,7 @@ pub struct ServerConfig {
     pub had_routes_object: bool,
 
     pub static_routes: Vec<StaticRouteEntry>,
-    pub negative_routes: Vec<CString>,
+    pub negative_routes: Vec<ZBox>,
     pub user_routes_to_build: Vec<UserRouteBuilder>,
 
     pub bake: Option<crate::bake::UserOptions>,
@@ -105,10 +106,10 @@ impl Default for ServerConfig {
 pub enum Address {
     Tcp {
         port: u16,
-        hostname: Option<CString>,
+        hostname: Option<ZBox>,
     },
     /// Zig `[:0]const u8` — leading NUL is valid (Linux abstract sockets).
-    Unix(bun_core::ZBox),
+    Unix(ZBox),
 }
 
 impl Default for Address {
@@ -121,7 +122,7 @@ impl Default for Address {
 }
 
 // PORT NOTE: Zig `address.deinit(allocator)` freed hostname/unix and reset to .tcp{}.
-// In Rust, CString frees on Drop; resetting is `*self = Address::default()`.
+// In Rust, ZBox frees on Drop; resetting is `*self = Address::default()`.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DevelopmentOption {
@@ -172,7 +173,7 @@ impl ServerConfig {
 
 // We need to be able to apply the route to multiple Apps even when there is only one RouteList.
 pub struct RouteDeclaration {
-    pub path: CString,
+    pub path: ZBox,
     pub method: RouteMethod,
 }
 
@@ -184,13 +185,13 @@ pub enum RouteMethod {
 impl Default for RouteDeclaration {
     fn default() -> Self {
         Self {
-            path: CString::default(),
+            path: ZBox::default(),
             method: RouteMethod::Any,
         }
     }
 }
 
-// PORT NOTE: Zig `RouteDeclaration.deinit` only freed `path`; CString drops automatically.
+// PORT NOTE: Zig `RouteDeclaration.deinit` only freed `path`; ZBox drops automatically.
 
 // TODO: rename to StaticRoute.Entry
 pub struct StaticRouteEntry {
@@ -566,7 +567,7 @@ impl ServerConfig {
                     let _ = write!(
                         &mut arraylist,
                         "tcp:{}:{}",
-                        bstr::BStr::new(host.to_bytes()),
+                        bstr::BStr::new(host.as_bytes()),
                         port
                     );
                 } else {
@@ -891,7 +892,9 @@ impl ServerConfig {
                 }
 
                 if value == JSValue::FALSE {
-                    let duped = CString::new(&*path).expect("path has no interior NUL");
+                    // Zig: `dupeZ(u8, path)` — appends a sentinel NUL without
+                    // rejecting interior NULs (which already passed `is_all_ascii`).
+                    let duped = ZBox::from_bytes(&*path);
                     args.negative_routes.push(duped);
                     continue;
                 }
@@ -900,7 +903,7 @@ impl ServerConfig {
                     validate_route_name(global, &path)?;
                     args.user_routes_to_build.push(UserRouteBuilder {
                         route: RouteDeclaration {
-                            path: CString::new(&*path).expect("no interior NUL"),
+                            path: ZBox::from_bytes(&*path),
                             method: RouteMethod::Any,
                         },
                         callback: Strong::create(
@@ -933,7 +936,7 @@ impl ServerConfig {
                             if function.is_callable() {
                                 args.user_routes_to_build.push(UserRouteBuilder {
                                     route: RouteDeclaration {
-                                        path: CString::new(&*path).expect("no interior NUL"),
+                                        path: ZBox::from_bytes(&*path),
                                         method: RouteMethod::Specific(method),
                                     },
                                     callback: Strong::create(
@@ -1178,8 +1181,9 @@ impl ServerConfig {
             let host_str = host.to_utf8();
 
             if !host_str.slice().is_empty() {
-                let hostname =
-                    CString::new(host_str.slice()).expect("hostname has no interior NUL");
+                // Zig: `dupeZ(u8, host_str.slice())` — does not reject interior
+                // NUL; the C `bind()` consumer will simply truncate at it.
+                let hostname = ZBox::from_bytes(host_str.slice());
                 if let Address::Tcp { hostname: h, .. } = &mut args.address {
                     *h = Some(hostname);
                 }
@@ -1412,8 +1416,9 @@ impl ServerConfig {
                 );
             }
         } else if !args.h1 {
-            return Err(global
-                .throw_invalid_arguments(format_args!("Cannot disable http1 without enabling http3")));
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Cannot disable http1 without enabling http3"
+            )));
         }
         if !args.h1 && matches!(args.address, Address::Unix(_)) {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -1501,7 +1506,7 @@ impl ServerConfig {
         } else {
             let hostname: &[u8] = if has_hostname {
                 match &args.address {
-                    Address::Tcp { hostname, .. } => hostname.as_ref().unwrap().to_bytes(),
+                    Address::Tcp { hostname, .. } => hostname.as_ref().unwrap().as_bytes(),
                     _ => unreachable!(),
                 }
             } else {

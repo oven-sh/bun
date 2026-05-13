@@ -2046,7 +2046,7 @@ impl PipeReader {
     }
 
     // TODO(port): move to shell_jsc
-    pub const TO_JS: fn(&mut Self, &JSGlobalObject) -> jsc::JsResult<JSValue> =
+    pub const TO_JS: fn(Arc<Self>, &JSGlobalObject) -> jsc::JsResult<JSValue> =
         Self::to_readable_stream;
 
     pub fn on_read_chunk(ptr: *mut c_void, chunk: &[u8], has_more: ReadState) -> bool {
@@ -2295,22 +2295,36 @@ impl PipeReader {
     }
 
     // TODO(port): move to shell_jsc
-    pub fn to_readable_stream(&mut self, global_object: &JSGlobalObject) -> jsc::JsResult<JSValue> {
-        // TODO(port): `defer self.deinit()` — with Arc this is the last-strong-ref drop.
-        // Cannot express on &mut self; Phase B should take Arc<Self> by value.
+    pub fn to_readable_stream(
+        this: Arc<Self>,
+        global_object: &JSGlobalObject,
+    ) -> jsc::JsResult<JSValue> {
+        // PORT NOTE: Zig `defer this.deinit()` — `this: Arc<Self>` dropping at
+        // scope end (all paths, including `?`) is that deref. Consumes the
+        // caller's +1 strong ref.
+        let me = arc_as_mut_ptr(&this);
 
-        match core::mem::replace(&mut self.state, PipeReaderState::Done(Box::default())) {
+        // SAFETY: see `arc_as_mut_ptr`; short-lived `&mut` for the `state`
+        // swap. No `Arc::deref(&this)` overlaps.
+        match core::mem::replace(
+            unsafe { &mut (*me).state },
+            PipeReaderState::Done(Box::default()),
+        ) {
             PipeReaderState::Pending => {
-                let stream = ReadableStream::from_pipe(
-                    global_object,
-                    std::ptr::from_mut::<Self>(self),
-                    &mut self.reader,
-                )?;
-                self.state = PipeReaderState::Done(Box::default());
+                // SAFETY: see `arc_as_mut_ptr`; `from_pipe` reads `reader`
+                // with no overlapping `&Self` via another Arc clone. `me`
+                // carries allocation-level provenance (not borrowed from a
+                // `&mut`), so the pointer escaped into the stream stays
+                // valid past `this`'s drop — `from_pipe` takes its own ref.
+                let stream =
+                    ReadableStream::from_pipe(global_object, me, unsafe { &mut (*me).reader })?;
+                // SAFETY: as above; field write only.
+                unsafe { (*me).state = PipeReaderState::Done(Box::default()) };
                 Ok(stream)
             }
             PipeReaderState::Done(bytes) => {
-                self.state = PipeReaderState::Done(Box::default());
+                // SAFETY: as above; field write only.
+                unsafe { (*me).state = PipeReaderState::Done(Box::default()) };
                 ReadableStream::from_owned_slice(global_object, bytes.into_vec(), 0)
             }
             PipeReaderState::Err(_err) => {

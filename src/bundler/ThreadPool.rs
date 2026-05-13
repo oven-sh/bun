@@ -596,19 +596,30 @@ impl Worker {
         // SAFETY: caller contract.
         let worker = unsafe { &mut *this };
         if worker.has_created {
-            // Drop order: `data` (whose `transpiler.arena` borrows `heap`) and
-            // `ast_memory_store` first, then the arenas they reference.
+            // Drop order: `data` (whose `transpiler.arena` borrows `heap`)
+            // first, then the arenas it references.
             worker.data = None;
-            // SAFETY: `ast_memory_store` is always a valid `ManuallyDrop` (written
-            // in `get_worker`, reset in `create()`); dropped exactly once here.
-            unsafe { ManuallyDrop::drop(&mut worker.ast_memory_store) };
             worker.temporary_arena = None;
             worker.stmt_list = None;
+        }
+        // SAFETY: `ast_memory_store` is always a valid `ManuallyDrop` —
+        // `get_worker` unconditionally writes `ASTMemoryAllocator::default()`
+        // (which owns a live `bumpalo::Bump`), and `create()` may overwrite it
+        // via `*ast_memory_store = ...`. Dropped exactly once here, *outside*
+        // the `has_created` guard so the default-constructed arena is freed
+        // even when `create()` never ran (Zig left it `undefined`; Rust does
+        // not). Ordered before `heap = None` in case the TODO(port) in
+        // `ASTMemoryAllocator::new` ever threads `arena_ref` (= `&self.heap`)
+        // through.
+        unsafe { ManuallyDrop::drop(&mut worker.ast_memory_store) };
+        if worker.has_created {
             worker.heap = None;
         }
-        // SAFETY: caller contract — `this` was heap-allocated. Reclaim the
-        // allocation without running field destructors (handled above).
-        unsafe { bun_core::heap::destroy(this.cast::<MaybeUninit<Worker>>()) };
+        // SAFETY: caller contract — `this` was heap-allocated via `get_worker`.
+        // Runs full field drop glue: remaining `Option` fields are `None`
+        // (no-op), `ast_memory_store` is `ManuallyDrop` (no auto-drop), so no
+        // double-free; defends against future `Drop`-carrying fields.
+        unsafe { bun_core::heap::destroy(this) };
     }
 
     // PORT NOTE: returns `&'static mut` (detached) — the `Worker` is

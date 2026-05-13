@@ -163,7 +163,8 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
                 writer.write_all(name)?;
                 writer.write_all(b"@")?;
                 if version_name.is_empty() {
-                    write!(writer, "^{}", version_formatter)?;
+                    writer.write_all(b"^")?;
+                    version_formatter.write_to(writer)?;
                 } else {
                     writer.write_all(version_name)?;
                 }
@@ -182,14 +183,18 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
             writer.write_all(b"  version ")?;
 
             // Version is always quoted
-            write!(writer, "\"{}\"\n", version_formatter)?;
+            writer.write_all(b"\"")?;
+            version_formatter.write_to(writer)?;
+            writer.write_all(b"\"\n")?;
 
             writer.write_all(b"  resolved ")?;
 
             let url_formatter = resolution.fmt_url(string_buf);
 
             // Resolved URL is always quoted
-            write!(writer, "\"{}\"\n", url_formatter)?;
+            writer.write_all(b"\"")?;
+            url_formatter.write_to(writer)?;
+            writer.write_all(b"\"\n")?;
 
             if meta.integrity.tag != integrity::Tag::UNKNOWN {
                 // Integrity is...never quoted?

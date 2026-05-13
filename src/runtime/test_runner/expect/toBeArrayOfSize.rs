@@ -12,7 +12,7 @@ pub fn to_be_array_of_size(
 ) -> JsResult<JSValue> {
     // Zig: `defer this.postMatch(globalThis);`
     // PORT NOTE: reshaped for borrowck — scopeguard::defer! would hold &mut *this for the whole fn.
-    // TODO(port): ensure post_match runs on every early return (RAII guard on Expect).
+    let this = this.post_match_guard(global);
 
     let this_value = frame.this();
     let _arguments = frame.arguments_old::<1>();

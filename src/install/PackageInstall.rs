@@ -720,10 +720,11 @@ impl UninstallTask {
     fn run(task: *mut WorkPoolTask) {
         // SAFETY: task points to the `task` field of an UninstallTask.
         let uninstall_task: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
-        // SAFETY: heap-allocated in uninstall_before_install; reclaim ownership here.
-        let uninstall_task = unsafe { bun_core::heap::take(uninstall_task) };
 
-        let mut debug_timer = Output::DebugTimer::start();
+        // PORT NOTE: declared *before* the Box is reclaimed so it drops *after* the
+        // Box — Rust drops locals in reverse declaration order. Zig's `defer task.deinit()`
+        // runs before `defer { decrementPendingTasks(); wake() }`, i.e. the task is freed
+        // before the main thread can observe pending_tasks==0.
         scopeguard::defer! {
             let pm = crate::package_manager::get();
             // SAFETY: `pending_tasks` is `AtomicU32`; raw-pointer field projection
@@ -735,6 +736,10 @@ impl UninstallTask {
                 PackageManager::wake_raw(pm);
             }
         }
+
+        // SAFETY: heap-allocated in uninstall_before_install; reclaim ownership here.
+        let uninstall_task = unsafe { bun_core::heap::take(uninstall_task) };
+        let mut debug_timer = Output::DebugTimer::start();
 
         let dirname =
             path::resolve_path::dirname::<path::platform::Auto>(&uninstall_task.absolute_path);

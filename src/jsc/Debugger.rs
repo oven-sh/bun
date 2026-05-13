@@ -417,7 +417,10 @@ impl Debugger {
                 "waitForDebugger: {}",
                 bun_core::Output::ElapsedFormatter {
                     colors: bun_core::Output::enable_ansi_colors_stderr(),
-                    duration_ns: (bun_core::time::nano_timestamp() - bun_core::start_time()) as u64,
+                    duration_ns: u64::try_from(
+                        (bun_core::time::nano_timestamp() - bun_core::start_time()).max(0),
+                    )
+                    .unwrap_or(u64::MAX),
                 }
             );
         }

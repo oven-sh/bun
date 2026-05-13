@@ -226,12 +226,13 @@ pub mod subprocess {
             match self {
                 Source::OwnedBytes(b) => b,
                 Source::Any(s) => s.slice(),
-                Source::Detached => &[],
+                // Zig: `else => @panic("Invalid source")` — slice() after detach() is a bug.
+                Source::Detached => unreachable!("Source::slice on Detached"),
             }
         }
 
         /// Zig: `Source.detach()` — release the payload and flip to
-        /// `.Detached` so subsequent `slice()` returns `&[]`.
+        /// `.Detached`. Calling `slice()` afterwards is invalid (panics).
         pub fn detach(&mut self) {
             if let Source::Any(s) = self {
                 s.detach();

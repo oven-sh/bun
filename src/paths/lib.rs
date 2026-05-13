@@ -389,8 +389,13 @@ pub trait PathLike {
     fn append(&mut self, bytes: &[u8]);
     fn append_fmt(&mut self, args: core::fmt::Arguments<'_>);
 }
-impl<U: PathUnit, const KIND: u8, const SEP: u8, const CHK: u8> PathLike
-    for path::Path<U, KIND, SEP, CHK>
+// PORT NOTE: Bound to `CheckLength::ASSUME` only. In Zig the helpers call
+// `buf.append(x)` with no `try`, so passing a `.check_for_greater_than_max_path`
+// Path is a *compile error* (`Error!void` is not `void`). Mirroring that here
+// prevents check-mode callers from silently swallowing `MaxPathExceeded` through
+// the duck-typed surface; they must use `Path::append`/`?` directly.
+impl<U: PathUnit, const KIND: u8, const SEP: u8> PathLike
+    for path::Path<U, KIND, SEP, { path::options::CheckLength::ASSUME }>
 {
     #[inline]
     fn clear(&mut self) {
@@ -398,11 +403,13 @@ impl<U: PathUnit, const KIND: u8, const SEP: u8, const CHK: u8> PathLike
     }
     #[inline]
     fn append(&mut self, bytes: &[u8]) {
-        let _ = path::Path::append(self, bytes);
+        use path::options::AssumeOk as _;
+        path::Path::append(self, bytes).assume_ok()
     }
     #[inline]
     fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) {
-        let _ = path::Path::append_fmt(self, args);
+        use path::options::AssumeOk as _;
+        path::Path::append_fmt(self, args).assume_ok()
     }
 }
 

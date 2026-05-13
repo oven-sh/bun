@@ -134,9 +134,9 @@ impl Worker {
                 // anything it spawned. PDEATHSIG is the SIGKILL safety net on
                 // Linux for the worker itself.
                 new_process_group: true,
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 linux_pdeathsig: Some(libc::SIGKILL as u8),
-                #[cfg(not(target_os = "linux"))]
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
                 linux_pdeathsig: None,
                 ..Default::default()
             };

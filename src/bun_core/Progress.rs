@@ -634,7 +634,7 @@ impl Progress {
                 need_ellipse = false;
                 if !name.is_empty() || eti > 0 {
                     if !name.is_empty() {
-                        self.buf_write(&mut end, format_args!("{}", bstr::BStr::new(name)));
+                        self.buf_write(&mut end, format_args!("{}", crate::fmt::s(name)));
                         need_ellipse = true;
                     }
                     if eti > 0 {

@@ -897,7 +897,17 @@ impl RuntimeTranspilerCache {
                 // Zig: `std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true })`
                 let dir =
                     sys::Dir::cwd().make_open_path(dirname, sys::OpenDirOptions::default())?;
-                break 'brk dir.fd.make_lib_uv_owned()?;
+                // Zig: `errdefer dir.close()` (brk-scoped). `sys::Dir` has no
+                // `Drop`, so close explicitly on the `make_lib_uv_owned` error
+                // edge (Windows-only failure path) before propagating.
+                let dfd = dir.fd;
+                break 'brk match dfd.make_lib_uv_owned() {
+                    Ok(f) => f,
+                    Err(e) => {
+                        dfd.close();
+                        return Err(e.into());
+                    }
+                };
             }
 
             break 'brk Fd::cwd();

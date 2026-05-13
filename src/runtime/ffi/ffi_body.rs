@@ -15,8 +15,7 @@ use bun_core::{Output, ZBox, env_var, fmt as bun_fmt, zstr};
 use bun_core::{ZStr, ZigString, strings};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsCell, JsClass,
-    JsError, JsResult, ModuleLoader, SystemError, VirtualMachine, ZigStringJsc,
-    host_fn,
+    JsError, JsResult, ModuleLoader, SystemError, VirtualMachine, ZigStringJsc, host_fn,
 };
 use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::fs as Fs;
@@ -79,7 +78,9 @@ fn create_object_2(
 
 /// `bun.String.toJSArray` — local shim over `JSValue::create_array_from_iter`.
 fn strings_to_js_array(global: &JSGlobalObject, strs: &[bun_core::String]) -> JsResult<JSValue> {
-    JSValue::create_array_from_iter(global, strs.iter(), |s| jsc::bun_string_jsc::to_js(s, global))
+    JSValue::create_array_from_iter(global, strs.iter(), |s| {
+        jsc::bun_string_jsc::to_js(s, global)
+    })
 }
 
 // `bun_tcc_sys` is an un-gated workspace crate and a direct dep of
@@ -562,7 +563,7 @@ impl CompileC {
             }
             let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR.set(bun_core::ZBox::from_bytes(trimmed));
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // On Debian/Ubuntu, the lib and include paths are suffixed with {arch}-linux-gnu
             // e.g. x86_64-linux-gnu or aarch64-linux-gnu
@@ -730,7 +731,7 @@ impl CompileC {
                 }
             }
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             if let Some(include_dir) = Self::get_system_include_dir() {
                 if state.add_sys_include_path(include_dir).is_err() {

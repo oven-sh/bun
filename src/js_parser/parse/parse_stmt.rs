@@ -38,11 +38,21 @@ type Result<T> = core::result::Result<T, bun_core::Error>;
 // `t_export`/`t_import`/fallthrough bodies inline (the `_draft_heavy` staging mod is gone).
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+    // PORT NOTE on `#[inline]` / `#[inline(never)]` annotations across the `t_*` arms:
+    // `parse_stmt` is invoked once per leading statement token; profiling showed its
+    // stack-adjust prologue/epilogue dominating because LLVM was hoisting the larger
+    // (and rarely-taken) `t_*` bodies inline, ballooning `parse_stmt`'s frame. Keep the
+    // rare / heavy arms out-of-line so `parse_stmt` stays a thin dispatcher, and fold the
+    // trivial forwarders in so the `parse_stmts_up_to → parse_stmt → t_* → parse_*` chain
+    // loses a hop on the hot statements (`;`, `function`, `var`, `const`, `return`, …).
+
+    #[inline]
     fn t_semicolon(p: &mut Self) -> Result<Stmt> {
         p.lexer.next()?;
         Ok(Stmt::empty())
     }
 
+    #[inline]
     fn t_function(
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
@@ -52,6 +62,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.parse_fn_stmt(loc, opts, None)
     }
 
+    #[cold]
+    #[inline(never)]
     fn t_enum(
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
@@ -64,6 +76,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.parse_typescript_enum_stmt(loc, opts)
     }
 
+    #[cold]
+    #[inline(never)]
     fn t_at(p: &mut Self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
         // Parse decorators before class statements, which are potentially exported
         if Self::IS_TYPESCRIPT_ENABLED || p.options.features.standard_decorators {
@@ -116,6 +130,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Err(err!("SyntaxError"))
     }
 
+    #[inline(never)]
     fn t_class(
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
@@ -128,6 +143,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.parse_class_stmt(loc, opts)
     }
 
+    #[inline]
     fn t_var(
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
@@ -147,6 +163,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         ))
     }
 
+    #[inline]
     fn t_const(
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
@@ -181,6 +198,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         ))
     }
 
+    #[inline(never)]
     fn t_if(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         let mut current_loc = loc;
         let mut root_if: Option<Stmt> = None;
@@ -253,6 +271,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
     }
 
+    #[inline(never)]
     fn t_do(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         let mut stmt_opts = ParseStatementOptions::default();
@@ -270,6 +289,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(p.s(S::DoWhile { body, test_ }, loc))
     }
 
+    #[inline(never)]
     fn t_while(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
 
@@ -283,6 +303,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(p.s(S::While { body, test_ }, loc))
     }
 
+    #[inline(never)]
     fn t_with(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         p.lexer.expect(T::TOpenParen)?;
@@ -308,6 +329,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         ))
     }
 
+    #[inline(never)]
     fn t_switch(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
 
@@ -382,6 +404,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         result
     }
 
+    #[inline(never)]
     fn t_try(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         let body_loc = p.lexer.loc();
@@ -464,6 +487,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         ))
     }
 
+    #[inline(never)]
     fn t_for(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
         // Zig: `defer p.popScope()`. Wrap the body in an inner closure so `pop_scope` runs once on
@@ -673,6 +697,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         result
     }
 
+    #[inline]
     fn t_break(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         let name = p.parse_label_name()?;
@@ -680,6 +705,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(p.s(S::Break { label: name }, loc))
     }
 
+    #[inline]
     fn t_continue(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         let name = p.parse_label_name()?;
@@ -687,6 +713,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(p.s(S::Continue { label: name }, loc))
     }
 
+    #[inline]
     fn t_return(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         if p.fn_or_arrow_data_parse.is_return_disallowed {
             p.log().add_range_error(
@@ -710,6 +737,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(p.s(S::Return { value }, loc))
     }
 
+    #[inline]
     fn t_throw(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         if p.lexer.has_newline_before {
@@ -727,12 +755,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(p.s(S::Throw { value: expr }, loc))
     }
 
+    #[inline]
     fn t_debugger(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         p.lexer.expect_or_insert_semicolon()?;
         Ok(p.s(S::Debugger {}, loc))
     }
 
+    #[inline(never)]
     fn t_open_brace(
         p: &mut Self,
         _: &mut ParseStatementOptions,
@@ -760,6 +790,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     // ─── heavy bodies still blocked ──────────────────────────────────────────
+    #[inline(never)]
     fn t_export(
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
@@ -1306,6 +1337,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
     }
 
+    #[inline(never)]
     fn t_import(
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
@@ -1532,6 +1564,43 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.process_import_statement(stmt, path, loc, was_originally_bare_import)
     }
 
+    /// Out-of-line tail for the (uncommon) `label: stmt` form reached from
+    /// `parse_stmt_fallthrough`. Keeping the nested `ParseStatementOptions` and the
+    /// recursive `parse_stmt` call here keeps `parse_stmt_fallthrough`'s frame small.
+    #[cold]
+    #[inline(never)]
+    fn parse_labeled_stmt(
+        p: &mut Self,
+        opts: &mut ParseStatementOptions<'a>,
+        loc: bun_ast::Loc,
+        label_loc: bun_ast::Loc,
+        label_ref: Ref,
+    ) -> Result<Stmt> {
+        let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Label, loc)?;
+        // Zig: `defer p.popScope();` — pop after parsing the labeled body.
+        // Hand-roll the defer so we can keep `p` exclusively borrowed.
+
+        // Parse a labeled statement
+        p.lexer.next()?;
+
+        let _name = LocRef {
+            loc: label_loc,
+            ref_: Some(label_ref),
+        };
+        let mut nested_opts = ParseStatementOptions::default();
+
+        match opts.lexical_decl {
+            LexicalDecl::AllowAll | LexicalDecl::AllowFnInsideLabel => {
+                nested_opts.lexical_decl = LexicalDecl::AllowFnInsideLabel;
+            }
+            _ => {}
+        }
+        let stmt_result = p.parse_stmt(&mut nested_opts);
+        p.pop_scope();
+        let stmt = stmt_result?;
+        Ok(p.s(S::Label { name: _name, stmt }, loc))
+    }
+
     fn parse_stmt_fallthrough(
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
@@ -1566,176 +1635,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         }
         if is_identifier {
-            match &expr.data {
-                js_ast::ExprData::EIdentifier(ident) => {
-                    if p.lexer.token == T::TColon && !opts.has_decorators() {
-                        let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Label, loc)?;
-                        // Zig: `defer p.popScope();` — pop after parsing the labeled body.
-                        // Hand-roll the defer so we can keep `p` exclusively borrowed.
-
-                        // Parse a labeled statement
-                        p.lexer.next()?;
-
-                        let _name = LocRef {
-                            loc: expr.loc,
-                            ref_: Some(ident.ref_),
-                        };
-                        let mut nested_opts = ParseStatementOptions::default();
-
-                        match opts.lexical_decl {
-                            LexicalDecl::AllowAll | LexicalDecl::AllowFnInsideLabel => {
-                                nested_opts.lexical_decl = LexicalDecl::AllowFnInsideLabel;
-                            }
-                            _ => {}
-                        }
-                        let stmt_result = p.parse_stmt(&mut nested_opts);
-                        p.pop_scope();
-                        let stmt = stmt_result?;
-                        return Ok(p.s(S::Label { name: _name, stmt }, loc));
-                    }
+            if let js_ast::ExprData::EIdentifier(ident) = &expr.data {
+                if p.lexer.token == T::TColon && !opts.has_decorators() {
+                    return Self::parse_labeled_stmt(p, opts, loc, expr.loc, ident.ref_);
                 }
-                _ => {}
             }
 
             if Self::IS_TYPESCRIPT_ENABLED {
                 if let Some(ts_stmt) = js_lexer::TypescriptStmtKeyword::from_bytes(name) {
-                    match ts_stmt {
-                        js_lexer::TypescriptStmtKeyword::TsStmtType => {
-                            if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
-                                // "type Foo = any"
-                                let mut stmt_opts = ParseStatementOptions {
-                                    is_module_scope: opts.is_module_scope,
-                                    ..Default::default()
-                                };
-                                p.skip_type_script_type_stmt(&mut stmt_opts)?;
-                                return Ok(p.s(S::TypeScript {}, loc));
-                            }
-                        }
-                        js_lexer::TypescriptStmtKeyword::TsStmtNamespace
-                        | js_lexer::TypescriptStmtKeyword::TsStmtModule => {
-                            // "namespace Foo {}"
-                            // "module Foo {}"
-                            // "declare module 'fs' {}"
-                            // "declare module 'fs';"
-                            if !p.lexer.has_newline_before
-                                && (opts.is_module_scope || opts.is_namespace_scope)
-                                && (p.lexer.token == T::TIdentifier
-                                    || (p.lexer.token == T::TStringLiteral
-                                        && opts.is_typescript_declare))
-                            {
-                                return p.parse_type_script_namespace_stmt(loc, opts);
-                            }
-                        }
-                        js_lexer::TypescriptStmtKeyword::TsStmtInterface => {
-                            // "interface Foo {}"
-                            let mut stmt_opts = ParseStatementOptions {
-                                is_module_scope: opts.is_module_scope,
-                                ..Default::default()
-                            };
-
-                            p.skip_type_script_interface_stmt(&mut stmt_opts)?;
-                            return Ok(p.s(S::TypeScript {}, loc));
-                        }
-                        js_lexer::TypescriptStmtKeyword::TsStmtAbstract => {
-                            if p.lexer.token == T::TClass || opts.ts_decorators.is_some() {
-                                return p.parse_class_stmt(loc, opts);
-                            }
-                        }
-                        js_lexer::TypescriptStmtKeyword::TsStmtGlobal => {
-                            // "declare module 'fs' { global { namespace NodeJS {} } }"
-                            if opts.is_namespace_scope
-                                && opts.is_typescript_declare
-                                && p.lexer.token == T::TOpenBrace
-                            {
-                                p.lexer.next()?;
-                                let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
-                                p.lexer.next()?;
-                                return Ok(p.s(S::TypeScript {}, loc));
-                            }
-                        }
-                        js_lexer::TypescriptStmtKeyword::TsStmtDeclare => {
-                            opts.lexical_decl = LexicalDecl::AllowAll;
-                            opts.is_typescript_declare = true;
-
-                            // "@decorator declare class Foo {}"
-                            // "@decorator declare abstract class Foo {}"
-                            if opts.ts_decorators.is_some()
-                                && p.lexer.token != T::TClass
-                                && !p.lexer.is_contextual_keyword(b"abstract")
-                            {
-                                p.lexer.expected(T::TClass)?;
-                            }
-
-                            // "declare global { ... }"
-                            if p.lexer.is_contextual_keyword(b"global") {
-                                p.lexer.next()?;
-                                p.lexer.expect(T::TOpenBrace)?;
-                                let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
-                                p.lexer.next()?;
-                                return Ok(p.s(S::TypeScript {}, loc));
-                            }
-
-                            // "declare const x: any"
-                            let stmt = p.parse_stmt(opts)?;
-                            if let Some(decs) = &opts.ts_decorators {
-                                p.discard_scopes_up_to(decs.scope_index);
-                            }
-
-                            // Unlike almost all uses of "declare", statements that use
-                            // "export declare" with "var/let/const" inside a namespace affect
-                            // code generation. They cause any declared bindings to be
-                            // considered exports of the namespace. Identifier references to
-                            // those names must be converted into property accesses off the
-                            // namespace object:
-                            //
-                            //   namespace ns {
-                            //     export declare const x
-                            //     export function y() { return x }
-                            //   }
-                            //
-                            //   (ns as any).x = 1
-                            //   console.log(ns.y())
-                            //
-                            // In this example, "return x" must be replaced with "return ns.x".
-                            // This is handled by replacing each "export declare" statement
-                            // inside a namespace with an "export var" statement containing all
-                            // of the declared bindings. That "export var" statement will later
-                            // cause identifiers to be transformed into property accesses.
-                            if opts.is_namespace_scope && opts.is_export {
-                                let mut decls: G::DeclList = bun_alloc::AstAlloc::vec();
-                                match &stmt.data {
-                                    js_ast::StmtData::SLocal(local) => {
-                                        let mut _decls =
-                                            bun_alloc::ArenaVec::<G::Decl>::with_capacity_in(
-                                                local.decls.len_u32() as usize,
-                                                p.arena,
-                                            );
-                                        for decl in local.decls.slice() {
-                                            Self::extract_decls_for_binding(
-                                                decl.binding,
-                                                &mut _decls,
-                                            )?;
-                                        }
-                                        decls = G::DeclList::from_bump_vec(_decls);
-                                    }
-                                    _ => {}
-                                }
-
-                                if decls.len_u32() > 0 {
-                                    return Ok(p.s(
-                                        S::Local {
-                                            kind: js_ast::LocalKind::KVar,
-                                            is_export: true,
-                                            decls,
-                                            ..Default::default()
-                                        },
-                                        loc,
-                                    ));
-                                }
-                            }
-
-                            return Ok(p.s(S::TypeScript {}, loc));
-                        }
+                    // Hand the cold TS-keyword statement forms (`type`/`interface`/`namespace`/
+                    // `module`/`abstract`/`global`/`declare`) to an out-of-line helper so the
+                    // common `SExpr` fall-through keeps a small stack frame.
+                    if let Some(stmt) =
+                        Self::parse_stmt_fallthrough_ts_keyword(p, opts, loc, ts_stmt)?
+                    {
+                        return Ok(stmt);
                     }
                 }
             }
@@ -1749,6 +1663,154 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             },
             loc,
         ))
+    }
+
+    /// Cold TS-only statement keywords reached from `parse_stmt_fallthrough` once the
+    /// leading identifier has been recognised as one of the contextual statement keywords.
+    /// Returns `Some(stmt)` when the keyword form was consumed; `None` means the caller
+    /// should fall through to treating the already-parsed expression as an `SExpr`.
+    #[cold]
+    #[inline(never)]
+    fn parse_stmt_fallthrough_ts_keyword(
+        p: &mut Self,
+        opts: &mut ParseStatementOptions<'a>,
+        loc: bun_ast::Loc,
+        ts_stmt: js_lexer::TypescriptStmtKeyword,
+    ) -> Result<Option<Stmt>> {
+        match ts_stmt {
+            js_lexer::TypescriptStmtKeyword::TsStmtType => {
+                if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
+                    // "type Foo = any"
+                    let mut stmt_opts = ParseStatementOptions {
+                        is_module_scope: opts.is_module_scope,
+                        ..Default::default()
+                    };
+                    p.skip_type_script_type_stmt(&mut stmt_opts)?;
+                    return Ok(Some(p.s(S::TypeScript {}, loc)));
+                }
+            }
+            js_lexer::TypescriptStmtKeyword::TsStmtNamespace
+            | js_lexer::TypescriptStmtKeyword::TsStmtModule => {
+                // "namespace Foo {}"
+                // "module Foo {}"
+                // "declare module 'fs' {}"
+                // "declare module 'fs';"
+                if !p.lexer.has_newline_before
+                    && (opts.is_module_scope || opts.is_namespace_scope)
+                    && (p.lexer.token == T::TIdentifier
+                        || (p.lexer.token == T::TStringLiteral && opts.is_typescript_declare))
+                {
+                    return Ok(Some(p.parse_type_script_namespace_stmt(loc, opts)?));
+                }
+            }
+            js_lexer::TypescriptStmtKeyword::TsStmtInterface => {
+                // "interface Foo {}"
+                let mut stmt_opts = ParseStatementOptions {
+                    is_module_scope: opts.is_module_scope,
+                    ..Default::default()
+                };
+
+                p.skip_type_script_interface_stmt(&mut stmt_opts)?;
+                return Ok(Some(p.s(S::TypeScript {}, loc)));
+            }
+            js_lexer::TypescriptStmtKeyword::TsStmtAbstract => {
+                if p.lexer.token == T::TClass || opts.ts_decorators.is_some() {
+                    return Ok(Some(p.parse_class_stmt(loc, opts)?));
+                }
+            }
+            js_lexer::TypescriptStmtKeyword::TsStmtGlobal => {
+                // "declare module 'fs' { global { namespace NodeJS {} } }"
+                if opts.is_namespace_scope
+                    && opts.is_typescript_declare
+                    && p.lexer.token == T::TOpenBrace
+                {
+                    p.lexer.next()?;
+                    let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
+                    p.lexer.next()?;
+                    return Ok(Some(p.s(S::TypeScript {}, loc)));
+                }
+            }
+            js_lexer::TypescriptStmtKeyword::TsStmtDeclare => {
+                opts.lexical_decl = LexicalDecl::AllowAll;
+                opts.is_typescript_declare = true;
+
+                // "@decorator declare class Foo {}"
+                // "@decorator declare abstract class Foo {}"
+                if opts.ts_decorators.is_some()
+                    && p.lexer.token != T::TClass
+                    && !p.lexer.is_contextual_keyword(b"abstract")
+                {
+                    p.lexer.expected(T::TClass)?;
+                }
+
+                // "declare global { ... }"
+                if p.lexer.is_contextual_keyword(b"global") {
+                    p.lexer.next()?;
+                    p.lexer.expect(T::TOpenBrace)?;
+                    let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
+                    p.lexer.next()?;
+                    return Ok(Some(p.s(S::TypeScript {}, loc)));
+                }
+
+                // "declare const x: any"
+                let stmt = p.parse_stmt(opts)?;
+                if let Some(decs) = &opts.ts_decorators {
+                    p.discard_scopes_up_to(decs.scope_index);
+                }
+
+                // Unlike almost all uses of "declare", statements that use
+                // "export declare" with "var/let/const" inside a namespace affect
+                // code generation. They cause any declared bindings to be
+                // considered exports of the namespace. Identifier references to
+                // those names must be converted into property accesses off the
+                // namespace object:
+                //
+                //   namespace ns {
+                //     export declare const x
+                //     export function y() { return x }
+                //   }
+                //
+                //   (ns as any).x = 1
+                //   console.log(ns.y())
+                //
+                // In this example, "return x" must be replaced with "return ns.x".
+                // This is handled by replacing each "export declare" statement
+                // inside a namespace with an "export var" statement containing all
+                // of the declared bindings. That "export var" statement will later
+                // cause identifiers to be transformed into property accesses.
+                if opts.is_namespace_scope && opts.is_export {
+                    let mut decls: G::DeclList = bun_alloc::AstAlloc::vec();
+                    match &stmt.data {
+                        js_ast::StmtData::SLocal(local) => {
+                            let mut _decls = bun_alloc::ArenaVec::<G::Decl>::with_capacity_in(
+                                local.decls.len_u32() as usize,
+                                p.arena,
+                            );
+                            for decl in local.decls.slice() {
+                                Self::extract_decls_for_binding(decl.binding, &mut _decls)?;
+                            }
+                            decls = G::DeclList::from_bump_vec(_decls);
+                        }
+                        _ => {}
+                    }
+
+                    if decls.len_u32() > 0 {
+                        return Ok(Some(p.s(
+                            S::Local {
+                                kind: js_ast::LocalKind::KVar,
+                                is_export: true,
+                                decls,
+                                ..Default::default()
+                            },
+                            loc,
+                        )));
+                    }
+                }
+
+                return Ok(Some(p.s(S::TypeScript {}, loc)));
+            }
+        }
+        Ok(None)
     }
 
     pub fn parse_stmt(&mut self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {

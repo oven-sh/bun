@@ -717,11 +717,19 @@ pub fn load(
         }
 
         if (forced) |*force_registry| {
-            // If the forced registry did not supply its own token (env var, or
-            // string form in bunfig), inherit the one already resolved from
-            // `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` / `--token` — same
-            // behaviour as `BUN_CONFIG_REGISTRY`.
-            if (force_registry.token.len == 0) force_registry.token = this.scope.token;
+            // If the forced registry did not supply its own credentials (env
+            // var, or URL-only string in bunfig), inherit the token already
+            // resolved from `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` / `--token`
+            // — same behaviour as `BUN_CONFIG_REGISTRY`. Skip this when the
+            // forced registry carries basic-auth (username/password), since
+            // `Scope.fromAPI` gates basic-auth computation on token being
+            // empty and we'd otherwise clobber it.
+            if (force_registry.token.len == 0 and
+                force_registry.username.len == 0 and
+                force_registry.password.len == 0)
+            {
+                force_registry.token = this.scope.token;
+            }
             this.scope = try Npm.Registry.Scope.fromAPI("", force_registry.*, allocator, env);
             // Discard scoped registries so `scopeForPackageName` always falls
             // back to `this.scope` — every package resolves through the

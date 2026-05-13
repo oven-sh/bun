@@ -2419,16 +2419,16 @@ fn print_command(argv: CommandArgv<'_>, destination: Destination) {
     match argv {
         CommandArgv::List(argv) => {
             pretty_d!("<r><d><magenta>$<r> <d><b>");
-            printf(format_args!("{}", bstr::BStr::new(argv[0])));
+            printf(format_args!("{}", crate::fmt::s(argv[0])));
             if argv.len() > 1 {
                 for arg in &argv[1..] {
-                    printf(format_args!(" {}", bstr::BStr::new(arg)));
+                    printf(format_args!(" {}", crate::fmt::s(arg)));
                 }
             }
             pretty_d!("<r>\n");
         }
         CommandArgv::Single(argv) => {
-            pretty_d!("<r><d><magenta>$<r> <d><b>{}<r>\n", bstr::BStr::new(argv));
+            pretty_d!("<r><d><magenta>$<r> <d><b>{}<r>\n", crate::fmt::s(argv));
         }
     }
     flush();

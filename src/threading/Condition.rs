@@ -346,7 +346,7 @@ impl FutexImpl {
         let mut epoch = self.epoch.load(Ordering::Acquire);
         let mut state = self.state.fetch_add(Self::ONE_WAITER, Ordering::Relaxed);
         debug_assert!(state & Self::WAITER_MASK != Self::WAITER_MASK);
-        state = state.wrapping_add(Self::ONE_WAITER);
+        state += Self::ONE_WAITER;
 
         mutex.unlock();
         // PORT NOTE: Zig `defer mutex.lock()` — re-acquire on every exit path (Ok and Err).

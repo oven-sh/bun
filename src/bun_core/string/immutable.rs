@@ -234,7 +234,9 @@ pub mod unicode {
 
     pub use crate::strings::{wtf8_byte_sequence_length, wtf8_byte_sequence_length_with_invalid};
 
-    pub use super::unicode_draft::{codepoint_size, decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte};
+    pub use super::unicode_draft::{
+        codepoint_size, decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte,
+    };
 
     /// `CodepointIterator` — yields WTF-8 codepoints with byte-width.
     pub struct NewCodePointIterator<'a> {
@@ -501,11 +503,7 @@ pub mod lexer_step {
     /// and survives LTO's IPO inliner.
     #[cold]
     #[inline(never)]
-    pub fn next_codepoint_multibyte(
-        contents: &[u8],
-        current: &mut usize,
-        first: u8,
-    ) -> CodePoint {
+    pub fn next_codepoint_multibyte(contents: &[u8], current: &mut usize, first: u8) -> CodePoint {
         let len = contents.len();
         let cp_len = wtf8_byte_sequence_length_with_invalid(first) as usize;
         let avail = len - *current;
@@ -1930,7 +1928,9 @@ pub fn index_of_space_or_newline_or_non_ascii(slice_: &[u8], offset: u32) -> Opt
     }
 
     let i = highway::index_of_space_or_newline_or_non_ascii(remaining)?;
-    Some(u32::try_from(i).unwrap() + offset)
+    // PORT NOTE: Zig uses @truncate here (immutable.zig:1194); match wrapping semantics
+    // instead of try_from().unwrap() which would panic on >4GB inputs.
+    Some(i as u32 + offset)
 }
 
 pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
@@ -2011,7 +2011,8 @@ pub fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
             || char == b'|'
             || char == b'~'
         {
-            return Some(u32::try_from(i).unwrap());
+            // PORT NOTE: Zig uses @truncate (immutable.zig:1292); match wrapping semantics.
+            return Some(i as u32);
         }
     }
 
@@ -2024,7 +2025,8 @@ pub fn index_of_char_z(slice_z: &crate::string::ZStr, char: u8) -> Option<u64> {
 }
 
 pub fn index_of_char(slice: &[u8], char: u8) -> Option<u32> {
-    index_of_char_usize(slice, char).map(|i| u32::try_from(i).unwrap())
+    // PORT NOTE: Zig uses @truncate (immutable.zig:1304); match wrapping semantics.
+    index_of_char_usize(slice, char).map(|i| i as u32)
 }
 
 pub fn index_of_char_usize(slice: &[u8], char: u8) -> Option<usize> {
@@ -2073,7 +2075,8 @@ pub fn index_of_not_char(slice: &[u8], char: u8) -> Option<u32> {
     // PERF(port): Zig used @Vector(16,u8) != splat + @ctz. Scalar loop here.
     for (i, &current) in slice.iter().enumerate() {
         if current != char {
-            return Some(u32::try_from(i).unwrap());
+            // PORT NOTE: Zig uses @truncate (immutable.zig:1360); match wrapping semantics.
+            return Some(i as u32);
         }
     }
 
@@ -2268,7 +2271,8 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
             // PERF(port): was assume_capacity
             let _ = ranges.push(LineRange {
                 start: 0,
-                end: u32::try_from(text.len()).unwrap(),
+                // PORT NOTE: Zig uses @truncate(text.len) (immutable.zig:1595); match wrapping semantics.
+                end: text.len() as u32,
             }); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         }
         return ranges;
@@ -2305,7 +2309,8 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         }
         let _ = ranges.push(LineRange {
             start: 0,
-            end: u32::try_from(text.len()).unwrap(),
+            // PORT NOTE: Zig uses @truncate(text.len) (immutable.zig:1635); match wrapping semantics.
+            end: text.len() as u32,
         });
         return ranges;
     };
@@ -2397,7 +2402,8 @@ pub fn first_non_ascii16(slice: &[u16]) -> Option<u32> {
     // loop here; Phase B: portable_simd or simdutf utf16 validator.
     for (i, &char) in slice.iter().enumerate() {
         if char > 127 {
-            return Some(u32::try_from(i).unwrap());
+            // PORT NOTE: Zig uses @truncate(i) (immutable.zig:1766); match wrapping semantics.
+            return Some(i as u32);
         }
     }
     None

@@ -350,12 +350,19 @@ impl<'a, C: CodePointZero> NewCodePointIterator<'a, C> {
         let it = self;
         let slice = it.next_codepoint_slice();
 
+        // PORT NOTE: Zig calls std.unicode.utf8Decode{2,3,4}() `catch unreachable`
+        // here, which is UB in ReleaseFast on malformed continuation bytes /
+        // overlong / surrogate sequences. Route through the WTF-8 decoder
+        // instead so non-UTF-8 input (e.g. Latin-1, lone surrogates) yields a
+        // sentinel codepoint rather than aborting the process.
         it.c = match slice.len() {
             0 => C::ZERO_VALUE,
             1 => C::from(slice[0]),
-            2 => C::from_u32(utf8_decode2(slice).expect("unreachable")),
-            3 => C::from_u32(utf8_decode3(slice).expect("unreachable")),
-            4 => C::from_u32(utf8_decode4(slice).expect("unreachable")),
+            2..=4 => {
+                let mut quad = [0u8; 4];
+                quad[..slice.len()].copy_from_slice(slice);
+                decode_wtf8_rune_t_multibyte::<C>(&quad, slice.len() as U3Fast, C::ZERO_VALUE)
+            }
             _ => unreachable!(),
         };
 
@@ -382,48 +389,6 @@ impl<'a, C: CodePointZero> NewCodePointIterator<'a, C> {
         it.i = original_i;
         &bytes[original_i..end_ix]
     }
-}
-
-// std.unicode.utf8Decode2/3/4 equivalents — thin local impls (Zig std).
-// These accept a known-length leading-byte sequence and return None on
-// malformed continuation bytes / overlong encoding.
-fn utf8_decode2(s: &[u8]) -> Option<u32> {
-    debug_assert!(s.len() >= 2);
-    if s[1] & 0xC0 != 0x80 {
-        return None;
-    }
-    let cp = ((u32::from(s[0]) & 0x1F) << 6) | (u32::from(s[1]) & 0x3F);
-    if cp < 0x80 {
-        return None;
-    }
-    Some(cp)
-}
-fn utf8_decode3(s: &[u8]) -> Option<u32> {
-    debug_assert!(s.len() >= 3);
-    if s[1] & 0xC0 != 0x80 || s[2] & 0xC0 != 0x80 {
-        return None;
-    }
-    let cp = ((u32::from(s[0]) & 0x0F) << 12)
-        | ((u32::from(s[1]) & 0x3F) << 6)
-        | (u32::from(s[2]) & 0x3F);
-    if cp < 0x800 {
-        return None;
-    }
-    Some(cp)
-}
-fn utf8_decode4(s: &[u8]) -> Option<u32> {
-    debug_assert!(s.len() >= 4);
-    if s[1] & 0xC0 != 0x80 || s[2] & 0xC0 != 0x80 || s[3] & 0xC0 != 0x80 {
-        return None;
-    }
-    let cp = ((u32::from(s[0]) & 0x07) << 18)
-        | ((u32::from(s[1]) & 0x3F) << 12)
-        | ((u32::from(s[2]) & 0x3F) << 6)
-        | (u32::from(s[3]) & 0x3F);
-    if cp < 0x10000 || cp > 0x10FFFF {
-        return None;
-    }
-    Some(cp)
 }
 
 pub(super) type CodepointIterator<'a> = NewCodePointIterator<'a, CodePoint>;
@@ -821,8 +786,8 @@ pub fn copy_cp1252_into_utf16(buf_: &mut [u16], latin1_: &[u8]) -> EncodeIntoRes
     }
 
     EncodeIntoResult {
-        read: u32::try_from(buf_total - buf.len()).unwrap(),
-        written: u32::try_from(latin1_total - latin1.len()).unwrap(),
+        read: (buf_total - buf.len()) as u32,
+        written: (latin1_total - latin1.len()) as u32,
     }
 }
 
@@ -832,7 +797,7 @@ pub fn copy_latin1_into_utf16(buf_: &mut [u16], latin1_: &[u8]) -> EncodeIntoRes
     for (out, &inp) in buf_[..len].iter_mut().zip(latin1_[..len].iter()) {
         *out = u16::from(inp);
     }
-    let len = u32::try_from(len).unwrap();
+    let len = len as u32;
     EncodeIntoResult {
         read: len,
         written: len,

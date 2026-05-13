@@ -10,16 +10,14 @@ describe("Bun.serve app.bundlerOptions validation", () => {
     ).toThrow("'app.bundlerOptions' must be an object");
   });
 
-  for (const key of ["server", "client", "ssr"] as const) {
-    for (const value of [1073741824, "foo", true]) {
-      test(`throws when bundlerOptions.${key} is ${JSON.stringify(value)}`, () => {
-        expect(() =>
-          Bun.serve({
-            // @ts-expect-error
-            app: { bundlerOptions: { [key]: value } },
-          }),
-        ).toThrow(`'app.bundlerOptions.${key}' must be an object`);
-      });
-    }
-  }
+  describe.each(["server", "client", "ssr"] as const)("bundlerOptions.%s", key => {
+    test.each([1073741824, "foo", true])("throws when value is %p", value => {
+      expect(() =>
+        Bun.serve({
+          // @ts-expect-error
+          app: { bundlerOptions: { [key]: value } },
+        }),
+      ).toThrow(`'app.bundlerOptions.${key}' must be an object`);
+    });
+  });
 });

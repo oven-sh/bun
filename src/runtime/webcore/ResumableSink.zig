@@ -260,7 +260,11 @@ pub fn ResumableSink(
             return this.#js_this != .strong or this.status == .done;
         }
 
-        fn detachJS(this: *ThisSink) void {
+        /// Detach the JS wrapper without running any JS callbacks: clears the
+        /// cached ondrain/oncancel/stream slots and downgrades #js_this so the
+        /// wrapper (and the drainReaderIntoSink closure it caches) becomes
+        /// collectible. Safe to call from teardown/finalizer contexts.
+        pub fn detachJS(this: *ThisSink) void {
             if (this.#js_this.tryGet()) |js_this| {
                 setDrain(js_this, this.globalThis, .zero);
                 setCancel(js_this, this.globalThis, .zero);

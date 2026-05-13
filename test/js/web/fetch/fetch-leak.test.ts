@@ -401,3 +401,61 @@ test("should not leak using readable stream", async () => {
   expect(stdout + stderr).toContain("done");
   expect(exited).toBe(0);
 });
+
+// Regression: POSTing a ReadableStream body whose underlying source's `pull`
+// awaits a timer makes the request-body ResumableSink pause on backpressure
+// (the chunk arrives after the sink went paused). If the server responds
+// without reading the body, the HTTP layer never drains/resumes the sink, so
+// `ondrain` never fires and the JS `drainReaderIntoSink` continuation (which
+// captures the reader/stream graph) plus the FetchTasklet's startRequestStream
+// ref used to leak forever — one ReadableStream/Controller/Reader per fetch.
+test("should not leak request-body ReadableStream when server ignores the body", async () => {
+  const script = `
+    const { heapStats } = require("bun:jsc");
+    const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    const url = "http://localhost:" + server.port;
+
+    function makeBody() {
+      return new ReadableStream({
+        async pull(c) {
+          await Bun.sleep(5);
+          c.enqueue(new Uint8Array(8));
+          c.close();
+        },
+      });
+    }
+    function readableStreamCount() {
+      Bun.gc(true);
+      return heapStats().objectTypeCounts.ReadableStream || 0;
+    }
+
+    for (let i = 0; i < 5; i++) await fetch(url, { method: "POST", body: makeBody() });
+    await Bun.sleep(20);
+    const baseline = readableStreamCount();
+
+    for (let i = 0; i < 25; i++) await fetch(url, { method: "POST", body: makeBody() });
+    await Bun.sleep(50);
+    const after = readableStreamCount();
+
+    server.stop(true);
+    console.log(JSON.stringify({ baseline, after }));
+    // Each leaked fetch retains a ReadableStream; 25 leaked fetches would put
+    // \`after\` ~25 above \`baseline\`. A small slack absorbs in-flight transients.
+    if (after > baseline + 3) {
+      console.error("LEAK: ReadableStream count grew from " + baseline + " to " + after);
+      process.exit(1);
+    }
+    process.exit(0);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout + stderr).toContain('"after"');
+  expect(stderr).not.toContain("LEAK");
+  expect(exitCode).toBe(0);
+});

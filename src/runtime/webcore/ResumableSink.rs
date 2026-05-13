@@ -450,7 +450,14 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         !self.js_this.is_strong() || self.status == Status::Done
     }
 
-    fn detach_js(&mut self) {
+    /// Detach the JS wrapper: clear the cached `ondrain`/`oncancel`/`stream`
+    /// slots and downgrade `js_this` from a strong to a weak handle so the
+    /// wrapper (and the `drainReaderIntoSink` closure it caches, which captures
+    /// the reader/stream graph) becomes collectible. Unlike [`Self::cancel`]
+    /// this does NOT run any JS callbacks or invoke `on_end`, so it is safe to
+    /// call from contexts where executing JS is not allowed (e.g. teardown /
+    /// finalizers).
+    pub fn detach_js(&mut self) {
         if let Some(js_this) = self.js_this.try_get() {
             let global = self.global_this;
             let global = global.get();

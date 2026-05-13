@@ -504,6 +504,7 @@ dependencies = [
 name = "bun_clap_macros"
 version = "0.0.0"
 dependencies = [
+ "bun_output_tags",
  "proc-macro2",
  "quote",
  "syn",

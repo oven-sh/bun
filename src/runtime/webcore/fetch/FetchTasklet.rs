@@ -405,7 +405,16 @@ impl FetchTasklet {
     fn clear_sink(&mut self) {
         if let Some(sink) = self.sink.take() {
             // SAFETY: sink came from init_exact_refs; FetchTasklet holds one ref.
-            unsafe { ResumableFetchSink::deref_(sink) };
+            // Detach the JS side first so that, if the sink's JS wrapper still
+            // holds the other ref (i.e. `deref_` below won't drop the count to 0
+            // and so won't run `Drop`/`detachJS`), the wrapper stops being rooted
+            // by `js_this` and the cached `ondrain` closure (+ stream graph) can
+            // be collected. `detach_js` runs no JS callbacks, so it is safe even
+            // though this runs during `deinit`.
+            unsafe {
+                (*sink).detach_js();
+                ResumableFetchSink::deref_(sink);
+            }
         }
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
             // SAFETY: intrusive-refcounted heap allocation from `ThreadSafeStreamBuffer::new`;
@@ -715,6 +724,19 @@ impl FetchTasklet {
             this.mutex.unlock();
             // if we are not done we wait until the next call
             if is_done {
+                // The HTTP response has been fully received. If the request body
+                // is still being uploaded through a ResumableSink (e.g. the
+                // underlying source's `pull` awaits a timer, so a chunk arrives
+                // after the sink has gone paused on backpressure), the HTTP layer
+                // will never drain/resume it again — `ondrain` never fires, so the
+                // JS `drainReaderIntoSink` continuation (which captures the
+                // reader/stream graph) and the FetchTasklet's `startRequestStream`
+                // ref would leak forever. Cancel the sink so the JS side releases
+                // the reader and `write_end_request` drops that ref. `cancel` is a
+                // no-op if the sink already finished.
+                if let Some(sink) = this.sink_mut() {
+                    sink.cancel(JSValue::UNDEFINED);
+                }
                 let mut poll_ref = core::mem::take(&mut this.poll_ref);
                 let _ = vm;
                 poll_ref.unref(bun_io::js_vm_ctx());
@@ -1487,6 +1509,16 @@ impl FetchTasklet {
 
     fn ignore_remaining_response_body(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "ignoreRemainingResponseBody");
+        // The response is being abandoned. If the request body is still uploading
+        // through a ResumableSink, detach its JS wrapper so the cached
+        // `ondrain` closure (and the reader/stream graph it captures) becomes
+        // collectible instead of leaking. `detach_js` runs no JS callbacks, so it
+        // is safe even on the GC-finalizer caller (`on_response_finalize`); the
+        // sink's own teardown (`Drop`/`finalize`) handles the rest once its refs
+        // drain.
+        if let Some(sink) = self.sink_mut() {
+            sink.detach_js();
+        }
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
         if let Some(http_) = self.http.as_mut() {

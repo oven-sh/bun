@@ -632,7 +632,6 @@ describe("Bun.serve http2: true", () => {
     expect(() =>
       Bun.serve({
         port: 0,
-        // @ts-expect-error http2 is new
         http2: true,
         fetch: () => new Response("x"),
       }),
@@ -646,7 +645,6 @@ describe("Bun.serve http2: true", () => {
       Bun.serve({
         port: 0,
         tls,
-        // @ts-expect-error http2 is new
         http2: true,
         http3: true,
         http1: false,

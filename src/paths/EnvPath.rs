@@ -2,12 +2,6 @@ use bun_alloc::AllocError;
 use bun_core::strings;
 
 use crate::DELIMITER;
-// `AbsPath(.{ .sep = .auto })`
-type AbsPath = crate::Path<
-    u8,
-    { crate::path::options::Kind::ABS },
-    { crate::path::options::PathSeparators::AUTO },
->;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub struct EnvPathOptions {
@@ -57,9 +51,12 @@ impl EnvPathInput for &mut [u8] {
     }
 }
 
-// "assume already trimmed" — the `else` arm in Zig calls `input.slice()`.
-// TODO(port): adjust `AbsPath` const-generic spelling once `AbsPath` is ported.
-impl EnvPathInput for &AbsPath {
+// "assume already trimmed" — the `else` arm in Zig calls `input.slice()` for any
+// `bun.Path(...)` instantiation. Blanket over all const params so callers may pass
+// any `&Path<u8, KIND, SEP, CHECK>` (e.g. `PathComponentBuilder.apply()`).
+impl<const KIND: u8, const SEP_OPT: u8, const CHECK: u8> EnvPathInput
+    for &crate::Path<u8, KIND, SEP_OPT, CHECK>
+{
     fn as_trimmed(&self) -> &[u8] {
         self.slice()
     }
@@ -105,7 +102,7 @@ impl EnvPath {
     pub fn path_component_builder(&mut self) -> PathComponentBuilder<'_> {
         PathComponentBuilder {
             env_path: self,
-            path_buf: AbsPath::init(),
+            path_buf: crate::AutoAbsPath::init(),
         }
     }
 }
@@ -113,8 +110,7 @@ impl EnvPath {
 pub struct PathComponentBuilder<'a> {
     env_path: &'a mut EnvPath,
     // Zig: `AbsPath(.{ .sep = .auto })`
-    // TODO(port): encode `.sep = .auto` as a const generic on `AbsPath` once ported.
-    path_buf: AbsPath,
+    path_buf: crate::AutoAbsPath,
 }
 
 impl<'a> PathComponentBuilder<'a> {

@@ -775,7 +775,12 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// the non-generic [`rebuild_index_from_hashes`] free fn — the body has no
     /// dependence on `K`/`V`/`C`/`A`, so keep it out of the generic impl to
     /// avoid one monomorph per instantiating crate.
-    #[inline]
+    ///
+    /// `#[cold]` (not `#[inline]`): this fires exactly once per map lifetime —
+    /// the threshold-crossing transition — so weighting its arm in `push_entry`
+    /// as unlikely keeps the hot `Some(index)` / `None => {}` arms' codegen
+    /// tight and out of the boot-path `.text` working set.
+    #[cold]
     fn rebuild_index(&mut self) {
         self.index = Some(rebuild_index_from_hashes(&self.hashes, self.keys.capacity()));
     }

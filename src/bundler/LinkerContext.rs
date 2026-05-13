@@ -2400,10 +2400,15 @@ impl<'a> LinkerContext<'a> {
                         // PERF(port): was stack-fallback alloc. The hash itself
                         // is short-lived; use a scratch bump.
                         let scratch = ::bun_alloc::Arena::new();
-                        let path_hash = ::bun_base64::wyhash_url_safe(
+                        // PORT NOTE: Zig `css_modules.hash(..., "{s}", .{source.path.pretty}, ...)`
+                        // — `{s}` writes the `[]const u8` bytes verbatim. Hash the raw
+                        // bytes (paths may be non-UTF-8) so the mangled name stays
+                        // byte-identical to the Zig implementation rather than going
+                        // through `bstr::BStr`'s lossy UTF-8 `Display`.
+                        let path_hash = ::bun_base64::wyhash_url_safe_bytes(
                             &scratch,
                             // use path relative to cwd for determinism
-                            format_args!("{}", bstr::BStr::new(&source.path.pretty)),
+                            source.path.pretty,
                             false,
                         );
 

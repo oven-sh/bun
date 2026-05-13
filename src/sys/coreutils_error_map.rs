@@ -28,22 +28,18 @@ pub static COREUTILS_ERROR_MAP: LazyLock<EnumMap<SystemErrno, &'static str>> =
         map
     });
 
-/// Sentinel default for errnos with no coreutils label. Stored by pointer
-/// identity in `COREUTILS_ERROR_MAP` so `get()` can distinguish "unmapped"
-/// from a real entry.
+/// Default label for errnos with no coreutils table row, matching Zig's
+/// `std.EnumMap(...).initFull("unknown error")`.
 pub const UNKNOWN: &str = "unknown error";
 
-/// Spec: Zig `coreutils_error_map.get(errno)` returns `?[]const u8`. The Rust
-/// `EnumMap` is total, so we treat the `UNKNOWN` sentinel as `None` to preserve
-/// the Zig fallthrough behaviour (callers format `"unknown error {errno}"`).
+/// Spec: Zig `coreutils_error_map.get(errno)` — `coreutils_error_map` is built
+/// with `initFull("unknown error")`, so `get` is *always* `Some(...)` for any
+/// `SystemErrno` value: the coreutils label, or the literal `"unknown error"`
+/// for variants with no table row. Returns `Option` to mirror the Zig API shape
+/// (`?[]const u8`).
 #[inline]
 pub fn get(errno: SystemErrno) -> Option<&'static str> {
-    let s = COREUTILS_ERROR_MAP[errno];
-    if core::ptr::eq(s.as_ptr(), UNKNOWN.as_ptr()) {
-        None
-    } else {
-        Some(s)
-    }
+    Some(COREUTILS_ERROR_MAP[errno])
 }
 
 // ported from: src/sys/coreutils_error_map.zig

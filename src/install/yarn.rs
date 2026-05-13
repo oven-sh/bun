@@ -1,4 +1,5 @@
 use bun_collections::VecExt;
+use std::borrow::Cow;
 use std::io::Write as _;
 
 use bun_collections::{HashMap, StringHashMap};
@@ -44,7 +45,10 @@ pub struct YarnLock<'a> {
 pub struct Entry<'a> {
     pub specs: Vec<&'a [u8]>,
     pub version: &'a [u8],
-    pub resolved: Option<&'a [u8]>,
+    // Usually borrows from the input lockfile bytes; for `github:` shorthand the
+    // Zig migrator rewrites it to an allocPrint'd "https://github.com/{path}",
+    // which we hold as a `Cow::Owned` here (mirrors `ParsedGitUrl::owned_url`).
+    pub resolved: Option<Cow<'a, [u8]>>,
     pub integrity: Option<&'a [u8]>,
     pub dependencies: Option<StringHashMap<&'a [u8]>>,
     pub optional_dependencies: Option<StringHashMap<&'a [u8]>>,
@@ -473,36 +477,32 @@ impl<'a> YarnLock<'a> {
                             );
                         } else if Entry::is_git_dependency(value) {
                             let git_info = Entry::parse_git_url(self, value)?;
-                            // TODO(port): dropped logic — Zig reassigns `url` to the
-                            // allocPrint'd `https://github.com/{path}` buffer for the
-                            // `github:` branch and stores that as `resolved`. Here
-                            // `git_info.url` still borrows the stripped input slice and
-                            // `owned_url` is discarded, so github: URLs resolve INCORRECTLY.
-                            // Phase B must change Entry.resolved to Cow<'a, [u8]> (or store
-                            // the owned buffer on Entry) so `owned_url` can be assigned here.
-                            entry.resolved = Some(git_info.url);
                             entry.commit = git_info.commit;
                             if let Some(repo_name) = git_info.repo {
                                 entry.git_repo_name = Some(Box::<[u8]>::from(repo_name));
                             }
+                            entry.resolved = Some(match git_info.owned_url {
+                                Some(buf) => Cow::Owned(buf),
+                                None => Cow::Borrowed(git_info.url),
+                            });
                         } else if Entry::is_npm_alias(value) {
                             let alias_info = Entry::parse_npm_alias(value);
                             entry.version = alias_info.version;
                         } else if Entry::is_remote_tarball(value) {
-                            entry.resolved = Some(value);
+                            entry.resolved = Some(Cow::Borrowed(value));
                         }
                     } else if key == b"resolved" {
-                        entry.resolved = Some(value);
+                        entry.resolved = Some(Cow::Borrowed(value));
                         if Entry::is_git_dependency(value) {
                             let git_info = Entry::parse_git_url(self, value)?;
-                            // TODO(port): same github: owned_url issue as the `version` branch
-                            // above — Entry.resolved needs Cow<'a, [u8]> to hold the rewritten
-                            // `https://github.com/...` buffer.
-                            entry.resolved = Some(git_info.url);
                             entry.commit = git_info.commit;
                             if let Some(repo_name) = git_info.repo {
                                 entry.git_repo_name = Some(Box::<[u8]>::from(repo_name));
                             }
+                            entry.resolved = Some(match git_info.owned_url {
+                                Some(buf) => Cow::Owned(buf),
+                                None => Cow::Borrowed(git_info.url),
+                            });
                         }
                     } else if key == b"integrity" {
                         entry.integrity = Some(value);
@@ -948,7 +948,7 @@ pub fn migrate_yarn_lockfile<'a>(
         }
 
         let name: &[u8] = if is_npm_alias && entry.resolved.is_some() {
-            Entry::get_package_name_from_resolved_url(entry.resolved.unwrap())
+            Entry::get_package_name_from_resolved_url(entry.resolved.as_deref().unwrap())
                 .unwrap_or_else(|| Entry::get_name_from_spec(entry.specs[0]))
         } else if is_direct_url {
             Entry::get_name_from_spec(entry.specs[0])
@@ -1044,7 +1044,7 @@ pub fn migrate_yarn_lockfile<'a>(
         }
 
         let base_name: &[u8] = if is_npm_alias && entry.resolved.is_some() {
-            Entry::get_package_name_from_resolved_url(entry.resolved.unwrap())
+            Entry::get_package_name_from_resolved_url(entry.resolved.as_deref().unwrap())
                 .unwrap_or_else(|| Entry::get_name_from_spec(entry.specs[0]))
         } else {
             Entry::get_name_from_spec(entry.specs[0])
@@ -1062,7 +1062,7 @@ pub fn migrate_yarn_lockfile<'a>(
         let name_to_use: &[u8] = 'blk: {
             if entry.commit.is_some() && entry.git_repo_name.is_some() {
                 break 'blk entry.git_repo_name.as_deref().unwrap();
-            } else if let Some(resolved) = entry.resolved {
+            } else if let Some(resolved) = entry.resolved.as_deref() {
                 if is_direct_url_dep
                     || Entry::is_remote_tarball(resolved)
                     || resolved.ends_with(b".tgz")
@@ -1110,7 +1110,7 @@ pub fn migrate_yarn_lockfile<'a>(
                     break 'blk Resolution::init(ResolutionValue::Folder(sbuf!().append(file)?));
                 }
             } else if let Some(commit) = entry.commit {
-                if let Some(resolved) = entry.resolved {
+                if let Some(resolved) = entry.resolved.as_deref() {
                     let mut owner_str: &[u8] = b"";
                     let mut repo_str: &[u8] = resolved;
 
@@ -1153,7 +1153,7 @@ pub fn migrate_yarn_lockfile<'a>(
                     }
                 }
                 break 'blk Resolution::default();
-            } else if let Some(resolved) = entry.resolved {
+            } else if let Some(resolved) = entry.resolved.as_deref() {
                 if is_direct_url_dep {
                     break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                         sbuf!().append(resolved)?,
@@ -1714,7 +1714,7 @@ pub fn migrate_yarn_lockfile<'a>(
             continue;
         }
 
-        if let Some(resolved) = entry.resolved {
+        if let Some(resolved) = entry.resolved.as_deref() {
             if let Some(real_name) = Entry::get_package_name_from_resolved_url(resolved) {
                 for spec in entry.specs.iter() {
                     let alias_name = Entry::get_name_from_spec(spec);

@@ -1894,21 +1894,19 @@ impl<'a> Repl<'a> {
         writer: &mut bun_core::io::Writer,
         enable_colors: bool,
     ) {
-        // PORT NOTE: Zig writes straight through `*std.Io.Writer`. The Rust
-        // `bun_core::io::Writer` vtable doesn't implement `bun_io::Write`, so
-        // buffer through a `Vec<u8>` (which does) and flush in one shot — REPL
-        // error output is tiny.
         let Some(global) = self.global else {
             return;
         };
-        let mut buf: Vec<u8> = Vec::new();
-        // Use .Error level for proper error formatting with Bun.inspect
+        // Use .Error level for proper error formatting with Bun.inspect.
+        // Write straight through the process writer (like Zig): if formatting
+        // throws partway through, the partial output stays in the stream and the
+        // fallback line is appended after it.
         if jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Error,
             global,
             &raw const error_value,
             1,
-            &mut buf,
+            writer,
             jsc::ConsoleObject::FormatOptions {
                 enable_colors,
                 add_newline: true,
@@ -1924,9 +1922,7 @@ impl<'a> Repl<'a> {
             // Formatting the error itself threw — clear it to avoid recursion and show a fallback.
             global_clear_exception(global);
             let _ = writer.write_all(b"error: [failed to format error]\n");
-            return;
         }
-        let _ = writer.write_all(&buf);
     }
 
     /// Format and print a JS value using Bun's console formatter (same as console.log)
@@ -1934,16 +1930,15 @@ impl<'a> Repl<'a> {
         let Some(global) = self.global else {
             return;
         };
-        let writer = Output::writer();
-        // PORT NOTE: see `print_js_error_to` — buffer because
-        // `bun_core::io::Writer` doesn't implement `bun_io::Write`.
-        let mut buf: Vec<u8> = Vec::new();
+        // Write straight through the process writer (like Zig) so output
+        // produced as a side effect during inspection is interleaved with the
+        // formatted value rather than emitted before it.
         if let Err(err) = jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Log,
             global,
             &raw const value,
             1,
-            &mut buf,
+            Output::writer(),
             jsc::ConsoleObject::FormatOptions {
                 enable_colors: self.use_colors,
                 add_newline: true,
@@ -1958,9 +1953,7 @@ impl<'a> Repl<'a> {
             let exc = global.take_exception(err);
             self.set_last_error(exc);
             self.print_js_error(exc);
-            return;
         }
-        let _ = writer.write_all(&buf);
     }
 
     // ========================================================================

@@ -498,7 +498,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // function jsxDEV(type, config, maybeKey, source, self) {
                 else if runtime == options::JSX::Runtime::Automatic {
                     // --- These must be done in all cases --
-                    let maybe_key_value: Option<ExprNodeIndex> = if e_.key_prop_index > -1 {
+                    // PORT NOTE: `key_prop_index` can be recorded as larger than
+                    // `properties.len()` for malformed JSX where a warned-and-skipped bare
+                    // `key` attribute precedes a real `key=...` (the parser's attribute
+                    // counter advances without pushing a property). Zig's ReleaseFast build
+                    // does an unchecked OOB read here; Rust's `Vec::remove` would panic. Guard
+                    // the index so the parse just leaves the `key` prop in place instead.
+                    let maybe_key_value: Option<ExprNodeIndex> = if e_.key_prop_index > -1
+                        && (e_.key_prop_index as u32 as usize) < e_.properties.len_u32() as usize
+                    {
                         let idx = e_.key_prop_index as u32 as usize;
                         e_.properties.ordered_remove(idx).value
                     } else {

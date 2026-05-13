@@ -623,14 +623,17 @@ impl DateTime {
         let minute = ts.div_euclid(60);
         let second = ts.rem_euclid(60);
 
-        let date = gregorian_date(i32::try_from(days).expect("int cast"));
+        // Zig uses `@intCast` here, which truncates rather than panics in release
+        // builds; mirror that with wrapping casts so a pre-1970 timestamp produces
+        // a (garbage) value instead of aborting the process.
+        let date = gregorian_date(days as i32);
         DateTime {
             year: date.year,
             month: date.month,
             day: date.day,
-            hour: u8::try_from(hour).expect("int cast"),
-            minute: u8::try_from(minute).expect("int cast"),
-            second: u8::try_from(second).expect("int cast"),
+            hour: hour as u8,
+            minute: minute as u8,
+            second: second as u8,
             microsecond: microseconds,
         }
     }
@@ -651,6 +654,15 @@ impl DateTime {
         if value.is_date() {
             // this is actually ms not seconds
             let total_ms = value.get_unix_timestamp();
+            // Zig uses `@intFromFloat` here, which is illegal behavior for a
+            // non-finite input (e.g. `new Date(NaN)`); Rust's `as` casts would
+            // instead silently saturate to 0 and bind the Unix epoch. Reject the
+            // value explicitly so we never bind a bogus date.
+            if !total_ms.is_finite() {
+                return Err(js_error_to_mysql(global_object.throw_invalid_arguments(
+                    format_args!("Invalid Date"),
+                )));
+            }
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
             return Ok(DateTime::from_unix_timestamp(ts, ms * 1000));
@@ -658,6 +670,11 @@ impl DateTime {
 
         if value.is_number() {
             let total_ms = value.as_number();
+            if !total_ms.is_finite() {
+                return Err(js_error_to_mysql(global_object.throw_invalid_arguments(
+                    format_args!("Invalid Date"),
+                )));
+            }
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
             return Ok(DateTime::from_unix_timestamp(ts, ms * 1000));
@@ -687,11 +704,23 @@ impl Time {
         // TODO(port): narrow error set
         if value.is_date() {
             let total_ms = value.get_unix_timestamp();
+            // See `DateTime::from_js`: reject non-finite values (e.g. `new
+            // Date(NaN)`) rather than silently binding the Unix epoch.
+            if !total_ms.is_finite() {
+                return Err(js_error_to_mysql(global_object.throw_invalid_arguments(
+                    format_args!("Invalid Date"),
+                )));
+            }
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
             Ok(Time::from_unix_timestamp(ts, ms * 1000))
         } else if value.is_number() {
             let total_ms = value.as_number();
+            if !total_ms.is_finite() {
+                return Err(js_error_to_mysql(global_object.throw_invalid_arguments(
+                    format_args!("Invalid Date"),
+                )));
+            }
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
             Ok(Time::from_unix_timestamp(ts, ms * 1000))
@@ -707,12 +736,15 @@ impl Time {
         let hours = timestamp.rem_euclid(86400).div_euclid(3600);
         let minutes = timestamp.rem_euclid(3600).div_euclid(60);
         let seconds = timestamp.rem_euclid(60);
+        // Zig uses `@intCast` here, which truncates rather than panics in release
+        // builds; mirror that with wrapping casts so a negative timestamp produces
+        // a (garbage) value instead of aborting the process.
         Time {
             negative: timestamp < 0,
-            days: u32::try_from(days).expect("int cast"),
-            hours: u8::try_from(hours).expect("int cast"),
-            minutes: u8::try_from(minutes).expect("int cast"),
-            seconds: u8::try_from(seconds).expect("int cast"),
+            days: days as u32,
+            hours: hours as u8,
+            minutes: minutes as u8,
+            seconds: seconds as u8,
             microseconds,
         }
     }
@@ -876,7 +908,11 @@ fn gregorian_date(days: i32) -> Date {
     Date {
         year: y,
         month: m,
-        day: u8::try_from(d + 1).expect("int cast"),
+        // Zig uses `@intCast(d + 1)`, which in release builds truncates (rather
+        // than panics) for an out-of-range `d` — e.g. a pre-1970 timestamp where
+        // the year/month loops never run and `d` stays negative. Match that with
+        // a wrapping cast so binding a pre-epoch Date doesn't abort the process.
+        day: (d + 1) as u8,
     }
 }
 

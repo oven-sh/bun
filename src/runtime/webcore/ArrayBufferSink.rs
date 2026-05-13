@@ -53,8 +53,12 @@ impl ArrayBufferSink {
         } = stream_start
         {
             if chunk_size > 0 {
-                self.bytes
-                    .ensure_total_capacity_precise(chunk_size as usize);
+                // Zig: `ensureTotalCapacityPrecise(...) catch return .{ .err = Syscall.Error.oom }`
+                // — a failed precise reservation is turned into a graceful OOM error rather than
+                // aborting the process (which the infallible `reserve_exact` would do).
+                if self.bytes.try_reserve_exact(chunk_size as usize).is_err() {
+                    return Err(syscall::Error::oom());
+                }
             }
 
             self.as_uint8array = as_uint8array;

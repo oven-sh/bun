@@ -108,8 +108,11 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Output::flush();
 
     // 6. Pause until the user responds either positively or negatively.
-    // Zig: `std.fs.File.stdin().readerStreaming(&[1024]u8)` — byte reader.
-    let mut reader = Output::stdin_reader();
+    // Zig: `var stdin_buf: [1024]u8 = undefined; stdin.readerStreaming(&stdin_buf)`
+    // — a *buffered* reader, so the first `takeByte()` pulls up to 1024 bytes off
+    // the OS stdin pipe and anything past the consumed response line is dropped
+    // when this reader goes out of scope (rather than left in the pipe).
+    let mut reader = Output::buffered_stdin_reader_1k();
 
     let Ok(first_byte) = reader.take_byte() else {
         return Ok(JSValue::FALSE);

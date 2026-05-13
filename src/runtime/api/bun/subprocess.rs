@@ -1316,20 +1316,22 @@ impl Subprocess<'_> {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_signal_code(&self, global: &JSGlobalObject) -> JSValue {
-        if let Some(signal) = self.process().signal_code() {
-            // `process.signal_code()` returns the tier-0 `bun_core::SignalCode`
-            // (bare `#[repr(u8)]` discriminant); name/exit-code helpers live on
-            // `bun_sys::SignalCode`.
-            let sys_sig = bun_sys::SignalCode(signal as u8);
-            if let Some(name) = sys_sig.name() {
-                use bun_jsc::ZigStringJsc as _;
-                return bun_jsc::zig_string::ZigString::init(name.as_bytes()).to_js(global);
-            } else {
-                return JSValue::js_number(signal as u32 as f64);
-            }
+        // Mirror Zig's non-exhaustive `bun.SignalCode` (`enum(u8) { …, _ }`): use
+        // the raw `WTERMSIG` byte so a child killed by a Linux real-time signal
+        // (32..=64) reports the numeric signal value rather than `null`.
+        // `signal_code()` narrows to the closed `bun_core::SignalCode` (1..=31)
+        // and would drop those.
+        let raw: u8 = match &self.process().status {
+            Status::Signaled(sig) => *sig,
+            Status::Exited(exit) if exit.signal != 0 => exit.signal,
+            _ => return JSValue::NULL,
+        };
+        let sys_sig = bun_sys::SignalCode(raw);
+        if let Some(name) = sys_sig.name() {
+            use bun_jsc::ZigStringJsc as _;
+            return bun_jsc::zig_string::ZigString::init(name.as_bytes()).to_js(global);
         }
-
-        JSValue::NULL
+        JSValue::js_number(raw as u32 as f64)
     }
 
     pub fn handle_ipc_message(&self, message: IPC::DecodedIPCMessage, handle: JSValue) {

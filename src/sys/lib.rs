@@ -876,9 +876,9 @@ pub fn lstatat(fd: Fd, path: &ZStr) -> Result<Stat> {
         } else {
             libc::AT_FDCWD
         };
-        // sys.zig:877 — `lstatat` tags as `.fstatat`.
+        // sys.zig:877 — `lstatat` tags as `.fstatat`; `errnoSysFP` attaches both `.fd` and `.path`.
         linux_syscall::fstatat(dirfd, path, libc::AT_SYMLINK_NOFOLLOW)
-            .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()))
+            .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_fd(fd).with_path(path.as_bytes()))
     }
     #[cfg(all(unix, not(target_os = "linux")))]
     {
@@ -901,8 +901,8 @@ pub fn lstatat(fd: Fd, path: &ZStr) -> Result<Stat> {
         if rc == 0 {
             Ok(unsafe { st.assume_init() })
         } else {
-            // sys.zig:877 — `lstatat` tags as `.fstatat`.
-            Err(Error::from_code_int(last_errno(), Tag::fstatat).with_path(path.as_bytes()))
+            // sys.zig:877 — `lstatat` tags as `.fstatat`; `errnoSysFP` attaches both `.fd` and `.path`.
+            Err(Error::from_code_int(last_errno(), Tag::fstatat).with_fd(fd).with_path(path.as_bytes()))
         }
     }
     #[cfg(windows)]
@@ -1931,6 +1931,31 @@ mod posix_impl {
             rc
         }};
     }
+    // `errnoSysFd` (sys.zig) — attaches the failing `.fd` to the error.
+    macro_rules! check_f {
+        ($rc:expr, $tag:expr, $fd:expr) => {{
+            loop {
+                let rc = $rc;
+                if rc < 0 {
+                    let e = last_errno();
+                    if e == libc::EINTR {
+                        continue;
+                    }
+                    return Err(Error::from_code_int(e, $tag).with_fd($fd));
+                }
+                break rc;
+            }
+        }};
+    }
+    macro_rules! check_once_f {
+        ($rc:expr, $tag:expr, $fd:expr) => {{
+            let rc = $rc;
+            if rc < 0 {
+                return Err(Error::from_code_int(last_errno(), $tag).with_fd($fd));
+            }
+            rc
+        }};
+    }
 
     #[inline]
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
@@ -1996,22 +2021,24 @@ mod posix_impl {
         // sys.zig:2138-2147 — .mac arm: single `read$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
         {
-            let n = check_once!(
+            let n = check_once_f!(
                 unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) },
-                Tag::read
+                Tag::read,
+                fd
             );
             Ok(n as usize)
         }
         #[cfg(target_os = "linux")]
         {
             super::linux_syscall::read(fd, &mut buf[..len])
-                .map_err(|e| Error::from_code_int(e, Tag::read))
+                .map_err(|e| Error::from_code_int(e, Tag::read).with_fd(fd))
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
-            let n = check!(
+            let n = check_f!(
                 unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) },
-                Tag::read
+                Tag::read,
+                fd
             );
             Ok(n as usize)
         }
@@ -2021,22 +2048,24 @@ mod posix_impl {
         // sys.zig:1851-1860 — .mac arm: single `write$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
         {
-            let n = check_once!(
+            let n = check_once_f!(
                 unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) },
-                Tag::write
+                Tag::write,
+                fd
             );
             Ok(n as usize)
         }
         #[cfg(target_os = "linux")]
         {
             super::linux_syscall::write(fd, &buf[..len])
-                .map_err(|e| Error::from_code_int(e, Tag::write))
+                .map_err(|e| Error::from_code_int(e, Tag::write).with_fd(fd))
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
-            let n = check!(
+            let n = check_f!(
                 unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) },
-                Tag::write
+                Tag::write,
+                fd
             );
             Ok(n as usize)
         }
@@ -2046,13 +2075,14 @@ mod posix_impl {
         #[cfg(target_os = "linux")]
         {
             return super::linux_syscall::pread(fd, &mut buf[..len], off)
-                .map_err(|e| Error::from_code_int(e, Tag::pread));
+                .map_err(|e| Error::from_code_int(e, Tag::pread).with_fd(fd));
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let n = check!(
+            let n = check_f!(
                 unsafe { sys_pread(fd.native(), buf.as_mut_ptr().cast(), len, off) },
-                Tag::pread
+                Tag::pread,
+                fd
             );
             Ok(n as usize)
         }
@@ -2062,13 +2092,14 @@ mod posix_impl {
         #[cfg(target_os = "linux")]
         {
             return super::linux_syscall::pwrite(fd, &buf[..len], off)
-                .map_err(|e| Error::from_code_int(e, Tag::pwrite));
+                .map_err(|e| Error::from_code_int(e, Tag::pwrite).with_fd(fd));
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let n = check!(
+            let n = check_f!(
                 unsafe { sys_pwrite(fd.native(), buf.as_ptr().cast(), len, off) },
-                Tag::pwrite
+                Tag::pwrite,
+                fd
             );
             Ok(n as usize)
         }
@@ -2094,14 +2125,15 @@ mod posix_impl {
         #[cfg(target_os = "linux")]
         {
             return super::linux_syscall::fstat(fd)
-                .map_err(|e| Error::from_code_int(e, Tag::fstat));
+                .map_err(|e| Error::from_code_int(e, Tag::fstat).with_fd(fd));
         }
         #[cfg(not(target_os = "linux"))]
         {
             let mut st = core::mem::MaybeUninit::<Stat>::uninit();
-            check!(
+            check_f!(
                 unsafe { libc::fstat(fd.native(), st.as_mut_ptr()) },
-                Tag::fstat
+                Tag::fstat,
+                fd
             );
             Ok(unsafe { st.assume_init() })
         }
@@ -2136,7 +2168,7 @@ mod posix_impl {
     // hand-rolled struct + raw-`syscall(SYS_statx, …)` wrapper. The kernel ABI
     // (struct layout, `STATX_*` bits) is identical across libcs.
     // ──────────────────────────────────────────────────────────────────────
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     mod linux_statx {
         // glibc / Android: libc 0.2.x exposes the full surface directly.
         #[cfg(not(target_env = "musl"))]
@@ -2230,17 +2262,17 @@ mod posix_impl {
         #[cfg(target_env = "musl")]
         pub(super) use musl::*;
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     use linux_statx as lx;
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub static SUPPORTS_STATX_ON_LINUX: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(true);
 
     /// `STATX_*` request mask covering every field `node:fs Stats` consumes
     /// (sys.zig:614 `StatxField` — all variants OR'd, the only mask the Zig
     /// callers ever pass).
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub const STATX_MASK_FOR_STATS: u32 = lx::STATX_TYPE
         | lx::STATX_MODE
         | lx::STATX_NLINK
@@ -2255,7 +2287,7 @@ mod posix_impl {
         | lx::STATX_BLOCKS;
 
     /// Linux kernel makedev encoding (glibc sys/sysmacros.h / <linux/kdev_t.h>).
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     const fn statx_makedev(major: u32, minor: u32) -> u64 {
         let maj: u64 = (major & 0xFFF) as u64;
@@ -2263,7 +2295,7 @@ mod posix_impl {
         (maj << 8) | (min & 0xFF) | ((min & 0xFFF00) << 12)
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn statx_fallback(fd: Fd, path: Option<&ZStr>, flags: c_int) -> Maybe<PosixStat> {
         if let Some(p) = path {
             let r = if flags & libc::AT_SYMLINK_NOFOLLOW != 0 {
@@ -2277,7 +2309,7 @@ mod posix_impl {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn statx_impl(fd: Fd, path: Option<&ZStr>, flags: c_int, mask: u32) -> Maybe<PosixStat> {
         use core::sync::atomic::Ordering;
         let mut buf = core::mem::MaybeUninit::<lx::statx>::uninit();
@@ -2361,15 +2393,15 @@ mod posix_impl {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn fstatx(fd: Fd, mask: u32) -> Maybe<PosixStat> {
         statx_impl(fd, None, libc::AT_EMPTY_PATH, mask)
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn statx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
         statx_impl(Fd::from_native(libc::AT_FDCWD), Some(path), 0, mask)
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn lstatx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
         statx_impl(
             Fd::from_native(libc::AT_FDCWD),
@@ -2794,15 +2826,17 @@ mod posix_impl {
         };
         #[cfg(target_os = "linux")]
         {
+            // sys.zig:851 — `errnoSysFP` attaches both `.fd` and `.path`.
             return super::linux_syscall::fstatat(dirfd, path, 0)
-                .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()));
+                .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_fd(fd).with_path(path.as_bytes()));
         }
         #[cfg(not(target_os = "linux"))]
         {
             let mut st = core::mem::MaybeUninit::<Stat>::uninit();
-            check_p!(
+            check_fp!(
                 unsafe { libc::fstatat(dirfd, path.as_ptr(), st.as_mut_ptr(), 0) },
                 Tag::fstatat,
+                fd,
                 path
             );
             Ok(unsafe { st.assume_init() })
@@ -2960,15 +2994,18 @@ mod posix_impl {
     pub fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
         // sys.zig:2252-2262 — isMac arm: single `recvfrom$NOCANCEL`, no EINTR retry.
+        // sys.zig:2323/2335 — `errnoSysFd` attaches the failing `.fd`.
         #[cfg(target_os = "macos")]
-        let n = check_once!(
+        let n = check_once_f!(
             unsafe { sys_recv(fd.native(), buf.as_mut_ptr().cast(), len, flags) },
-            Tag::recv
+            Tag::recv,
+            fd
         );
         #[cfg(not(target_os = "macos"))]
-        let n = check!(
+        let n = check_f!(
             unsafe { sys_recv(fd.native(), buf.as_mut_ptr().cast(), len, flags) },
-            Tag::recv
+            Tag::recv,
+            fd
         );
         Ok(n as usize)
     }
@@ -2976,15 +3013,18 @@ mod posix_impl {
         // sys.zig:2294-2322 — passes `buf.len` un-clamped (only `recv` clamps via
         // `adjusted_len`); forward the full length and let the kernel decide.
         // isMac arm: single `sendto$NOCANCEL`, no EINTR retry.
+        // sys.zig:2367/2380 — `errnoSysFd` attaches the failing `.fd`.
         #[cfg(target_os = "macos")]
-        let n = check_once!(
+        let n = check_once_f!(
             unsafe { sys_send(fd.native(), buf.as_ptr().cast(), buf.len(), flags) },
-            Tag::send
+            Tag::send,
+            fd
         );
         #[cfg(not(target_os = "macos"))]
-        let n = check!(
+        let n = check_f!(
             unsafe { sys_send(fd.native(), buf.as_ptr().cast(), buf.len(), flags) },
-            Tag::send
+            Tag::send,
+            fd
         );
         Ok(n as usize)
     }
@@ -4374,7 +4414,7 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
                 )
             };
             if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), Tag::pwritev));
+                return Err(Error::from_code_int(last_errno(), Tag::pwritev).with_fd(fd));
             }
             return Ok(rc as usize);
         }
@@ -4384,7 +4424,7 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
             return unsafe {
                 linux_syscall::pwritev(fd, vecs.as_ptr().cast::<libc::iovec>(), vecs.len(), offset)
             }
-            .map_err(|e| Error::from_code_int(e, Tag::pwritev));
+            .map_err(|e| Error::from_code_int(e, Tag::pwritev).with_fd(fd));
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         loop {
@@ -4401,7 +4441,7 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
                 if e == libc::EINTR {
                     continue;
                 }
-                return Err(Error::from_code_int(e, Tag::pwritev));
+                return Err(Error::from_code_int(e, Tag::pwritev).with_fd(fd));
             }
             return Ok(rc as usize);
         }
@@ -7533,7 +7573,60 @@ pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
 /// `bun.makePath` — free-fn form taking a `Dir` (Zig: `bun.makePath(dir, sub)`).
 #[inline]
 pub fn make_path(dir: Dir, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
-    mkdir_recursive_at(dir.fd, sub_path).map_err(Into::into)
+    make_path_dangling(dir.fd, sub_path).map_err(Into::into)
+}
+
+/// `bun.makePath` (bun.zig:2288) — like [`mkdir_recursive_at`], but instead of
+/// infinite-looping when a path component is a dangling symlink, it `lstat`s the
+/// component on `PathAlreadyExists` and, if it is not a directory, `deleteTree`s
+/// it and retries the `mkdir`. This is what Zig's `FD.makePath(u8/u16, ..)`
+/// dispatches to (src/sys/fd.zig:490 → `bun.makePath` / `bun.makePathW`).
+#[cfg(not(windows))]
+pub fn make_path_dangling(dir: Fd, sub_path: &[u8]) -> Maybe<()> {
+    use bun_paths::{ComponentIterator, MakePathStep, PathFormat};
+    // POSIX `init` is infallible (matches `mkdir_recursive_at_mode`).
+    let it = ComponentIterator::init(sub_path, PathFormat::Posix).unwrap();
+    let mut buf = [0u8; bun_core::MAX_PATH_BYTES];
+    let mode: Mode = 0o755;
+    bun_paths::make_path_with(it, |p| {
+        if p.len() >= buf.len() {
+            return Err(
+                Error::from_code_int(E::ENAMETOOLONG as _, Tag::mkdir).with_path(sub_path)
+            );
+        }
+        buf[..p.len()].copy_from_slice(p);
+        buf[p.len()] = 0;
+        let zpath = ZStr::from_buf(&buf[..], p.len());
+        match mkdirat(dir, zpath, mode) {
+            Ok(()) => Ok(MakePathStep::Created),
+            Err(e) if e.get_errno() == E::EEXIST => {
+                // bun.makePath: a directory means "already there, keep going";
+                // anything else is a dangling symlink — delete it and retry the
+                // `mkdir` so we don't infinite-loop on it.
+                let st = lstat(zpath)?;
+                if S::ISDIR(st.st_mode as _) {
+                    Ok(MakePathStep::Exists)
+                } else {
+                    let _ = Dir::from_fd(dir).delete_tree(p);
+                    match mkdirat(dir, zpath, mode) {
+                        Ok(()) => Ok(MakePathStep::Created),
+                        Err(e) if e.get_errno() == E::EEXIST => Ok(MakePathStep::Exists),
+                        Err(e) if e.get_errno() == E::ENOENT => Ok(MakePathStep::NotFound(e)),
+                        Err(e) => Err(e),
+                    }
+                }
+            }
+            Err(e) if e.get_errno() == E::ENOENT => Ok(MakePathStep::NotFound(e)),
+            Err(e) => Err(e),
+        }
+    })
+}
+/// Windows keeps the plain `mkdir -p` walk; the dangling-symlink delete-and-retry
+/// is the POSIX `bun.makePath` behavior (`bun.makePathW` transcodes and delegates
+/// to it on POSIX, but the Windows arm uses `mkdir_recursive_at`).
+#[cfg(windows)]
+pub fn make_path_dangling(dir: Fd, sub_path: &[u8]) -> Maybe<()> {
+    mkdir_recursive_at(dir, sub_path)
 }
 /// `bun.mkdirRecursive` — like `make_path` but cwd-relative, taking a slice.
 #[inline]
@@ -7541,14 +7634,14 @@ pub fn mkdir_recursive(sub_path: &[u8]) -> Maybe<()> {
     mkdir_recursive_at(Fd::cwd(), sub_path)
 }
 /// bun.zig:2319 — Windows-only `makePath` over UTF-16. On POSIX, transcodes
-/// to UTF-8 and delegates to `mkdir_recursive_at`.
+/// to UTF-8 and delegates to `make_path_dangling` (Zig: `bun.makePathW`).
 pub fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
     // bun.zig:2319-2324 — "was going to copy/paste makePath and use all W
     // versions but they didn't all exist and this buffer was needed anyway":
-    // transcode UTF-16 → UTF-8, then call `makePath` (`mkdir_recursive_at`).
+    // transcode UTF-16 → UTF-8, then call `makePath`.
     let mut buf = bun_paths::PathBuffer::default();
     let utf8 = bun_paths::strings::from_w_path(&mut buf.0[..], sub_path);
-    mkdir_recursive_at(dir, utf8.as_bytes())
+    make_path_dangling(dir, utf8.as_bytes())
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -8405,7 +8498,7 @@ pub mod make_path {
     impl MakePathUnit for u8 {
         #[inline]
         fn make_path_at(dir: Fd, sub: &[u8]) -> core::result::Result<(), bun_core::Error> {
-            mkdir_recursive_at(dir, sub).map_err(Into::into)
+            make_path_dangling(dir, sub).map_err(Into::into)
         }
     }
     impl MakePathUnit for u16 {

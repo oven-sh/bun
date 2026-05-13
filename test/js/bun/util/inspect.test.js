@@ -734,6 +734,19 @@ it("MessageEvent", () => {
   `);
 });
 
+it("WeakMap/WeakSet with user-defined size property", () => {
+  const wm = new WeakMap();
+  wm.size = 1000;
+  expect(Bun.inspect(wm)).toBe("WeakMap {}");
+
+  const ws = new WeakSet();
+  ws.size = 1000;
+  expect(Bun.inspect(ws)).toBe("WeakSet {}");
+
+  expect(() => expect(wm).toEqual({})).toThrow();
+  expect(() => expect(ws).toEqual({})).toThrow();
+});
+
 it("CustomEvent", () => {
   const customEvent = new CustomEvent("custom", {
     detail: { value: 42, name: "test" },

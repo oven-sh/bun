@@ -1,5 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
+import { totalmem } from "os";
 import { join } from "path";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 describe("FormData", () => {
   it("should be able to append a string", () => {
@@ -783,3 +785,88 @@ describe("Content-Type header propagation", () => {
     });
   });
 });
+
+// https://github.com/oven-sh/bun/issues/21490
+//
+// The multipart parser stored part metadata (name, filename, content-type) as
+// `bun.Semver.String`, which packs offset/length into 32-bit fields. For a
+// part whose header sits past 4 GiB in the body, the offset wrapped and the
+// parser read garbage.
+//
+// Needs ~10 GiB of working set in a subprocess, so skip on small machines and
+// on Windows (where ArrayBuffer backing commits eagerly).
+it.skipIf(isWindows || totalmem() < 16 * 1024 * 1024 * 1024)(
+  "multipart parser handles parts at offsets > 4 GiB",
+  async () => {
+    const fixture = `
+      const boundary = "----bun-issue-21490";
+      const GiB = 1024 * 1024 * 1024;
+
+      const head = Buffer.from(
+        "--" + boundary + "\\r\\n" +
+        'Content-Disposition: form-data; name="big_upload"; filename="big.bin"\\r\\n' +
+        "Content-Type: application/octet-stream\\r\\n\\r\\n",
+        "utf8",
+      );
+      const mid = Buffer.from(
+        "\\r\\n--" + boundary + "\\r\\n" +
+        'Content-Disposition: form-data; name="description_field"\\r\\n\\r\\n' +
+        "this part lives past the 4 GiB mark\\r\\n",
+        "utf8",
+      );
+      const mid2 = Buffer.from(
+        "--" + boundary + "\\r\\n" +
+        'Content-Disposition: form-data; name="second_attachment"; filename="also_past_4gb.txt"\\r\\n\\r\\n' +
+        "file contents\\r\\n",
+        "utf8",
+      );
+      const tail = Buffer.from("--" + boundary + "--\\r\\n", "utf8");
+
+      // 4 GiB + 256 bytes so the trailing parts' headers sit above 2**32.
+      let chunk = new Uint8Array(GiB);
+      const fileBody = new Blob([chunk, chunk, chunk, chunk, new Uint8Array(256)]);
+      chunk = null;
+      const fileSize = fileBody.size;
+
+      const body = new Blob([head, fileBody, mid, mid2, tail]);
+
+      const request = new Request("http://localhost/", {
+        method: "POST",
+        headers: { "content-type": "multipart/form-data; boundary=" + boundary },
+        body,
+      });
+
+      const form = await request.formData();
+      const big = form.get("big_upload");
+      const second = form.get("second_attachment");
+      const result = {
+        keys: [...form.keys()],
+        big: { name: big?.name, size: big?.size, type: big?.type },
+        description_field: form.get("description_field"),
+        second: { name: second?.name, size: second?.size, text: second ? await second.text() : null },
+        expectedFileSize: fileSize,
+      };
+      console.log(JSON.stringify(result));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout.trim());
+    expect(result).toEqual({
+      keys: ["big_upload", "description_field", "second_attachment"],
+      big: { name: "big.bin", size: result.expectedFileSize, type: "application/octet-stream" },
+      description_field: "this part lives past the 4 GiB mark",
+      second: { name: "also_past_4gb.txt", size: "file contents".length, text: "file contents" },
+      expectedFileSize: 4 * 1024 * 1024 * 1024 + 256,
+    });
+    expect(exitCode).toBe(0);
+  },
+  120_000,
+);

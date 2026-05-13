@@ -94,12 +94,15 @@ pub const FormData = struct {
     }
 
     pub const Field = struct {
-        /// Raw slice into the input buffer. Not using `bun.Semver.String` because
-        /// file bodies are binary data that can contain null bytes, which
-        /// Semver.String's inline storage treats as terminators.
+        /// Raw slices into the input buffer. Not using `bun.Semver.String`
+        /// because it stores the offset/length as `u32` (with the top bit
+        /// of length stolen as a tag), which silently corrupts any part
+        /// located past 4GB in the body or whose value exceeds 2GB. It also
+        /// treats inline null bytes as terminators, which is wrong for file
+        /// bodies.
         value: []const u8 = "",
-        filename: bun.Semver.String = .{},
-        content_type: bun.Semver.String = .{},
+        filename: []const u8 = "",
+        content_type: []const u8 = "",
         is_file: bool = false,
         zero_count: u8 = 0,
 
@@ -208,19 +211,19 @@ pub const FormData = struct {
             globalThis: *jsc.JSGlobalObject,
             form: *jsc.DOMFormData,
 
-            pub fn onEntry(wrap: *@This(), name: bun.Semver.String, field: Field, buf: []const u8) void {
+            pub fn onEntry(wrap: *@This(), name: []const u8, field: Field) void {
                 const value_str = field.value;
-                var key = jsc.ZigString.initUTF8(name.slice(buf));
+                var key = jsc.ZigString.initUTF8(name);
 
                 if (field.is_file) {
-                    const filename_str = field.filename.slice(buf);
+                    const filename_str = field.filename;
 
                     var blob = jsc.WebCore.Blob.create(value_str, bun.default_allocator, wrap.globalThis, false);
                     defer blob.detach();
                     var filename = jsc.ZigString.initUTF8(filename_str);
                     const content_type: []const u8 = brk: {
-                        if (!field.content_type.isEmpty()) {
-                            break :brk field.content_type.slice(buf);
+                        if (field.content_type.len > 0) {
+                            break :brk field.content_type;
                         }
                         if (filename_str.len > 0) {
                             const extension = std.fs.path.extension(filename_str);
@@ -239,7 +242,7 @@ pub const FormData = struct {
                     };
 
                     if (content_type.len > 0) {
-                        if (!field.content_type.isEmpty()) {
+                        if (field.content_type.len > 0) {
                             blob.content_type_allocated = true;
                             blob.content_type = bun.default_allocator.dupe(u8, content_type) catch @panic("failed to allocate memory for blob content type");
                             blob.content_type_was_set = true;
@@ -289,13 +292,11 @@ pub const FormData = struct {
         ctx: Ctx,
         comptime iterator: fn (
             Ctx,
-            bun.Semver.String,
+            []const u8,
             Field,
-            string,
         ) void,
     ) !void {
         var slice = input;
-        var subslicer = bun.Semver.SlicedString.init(input, input);
 
         var buf: [76]u8 = undefined;
         {
@@ -324,11 +325,11 @@ pub const FormData = struct {
             remain = remain[header_end + 4 ..];
 
             var field = Field{};
-            var name: bun.Semver.String = .{};
-            var filename: ?bun.Semver.String = null;
+            var name: []const u8 = "";
+            var filename: ?[]const u8 = null;
             var header_chunk = header;
             var is_file = false;
-            while (header_chunk.len > 0 and (filename == null or name.len() == 0)) {
+            while (header_chunk.len > 0 and (filename == null or name.len == 0)) {
                 const line_end = strings.indexOf(header_chunk, "\r\n") orelse return error.@"is missing header line end";
                 const line = header_chunk[0..line_end];
                 header_chunk = header_chunk[line_end + 2 ..];
@@ -370,13 +371,13 @@ pub const FormData = struct {
                         }
 
                         if (strings.eqlCaseInsensitiveASCII(eql_key, "name", true)) {
-                            name = subslicer.sub(field_value).value();
+                            name = field_value;
                         } else if (strings.eqlCaseInsensitiveASCII(eql_key, "filename", true)) {
-                            filename = subslicer.sub(field_value).value();
+                            filename = field_value;
                             is_file = true;
                         }
 
-                        if (!name.isEmpty() and filename != null) {
+                        if (name.len > 0 and filename != null) {
                             break;
                         }
 
@@ -386,12 +387,12 @@ pub const FormData = struct {
                             break;
                         }
                     }
-                } else if (value.len > 0 and field.content_type.isEmpty() and strings.eqlCaseInsensitiveASCII(key, "content-type", true)) {
-                    field.content_type = subslicer.sub(strings.trim(value, "; \t")).value();
+                } else if (value.len > 0 and field.content_type.len == 0 and strings.eqlCaseInsensitiveASCII(key, "content-type", true)) {
+                    field.content_type = strings.trim(value, "; \t");
                 }
             }
 
-            if (name.len() + @as(usize, field.zero_count) == 0) {
+            if (name.len + @as(usize, field.zero_count) == 0) {
                 continue;
             }
 
@@ -400,15 +401,13 @@ pub const FormData = struct {
                 body = body[0 .. body.len - 2];
             }
             field.value = body;
-            field.filename = filename orelse .{};
+            field.filename = filename orelse "";
             field.is_file = is_file;
 
-            iterator(ctx, name, field, input);
+            iterator(ctx, name, field);
         }
     }
 };
-
-const string = []const u8;
 
 const std = @import("std");
 

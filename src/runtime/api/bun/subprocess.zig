@@ -491,16 +491,30 @@ pub fn getStdio(this: *Subprocess, global: *JSGlobalObject) bun.JSError!JSValue 
     try array.push(global, .null); // TODO: align this with options
     try array.push(global, .null); // TODO: align this with options
 
-    for (this.stdio_pipes.items) |item| {
+    for (this.stdio_pipes.items) |*item| {
         if (Environment.isWindows) {
-            if (item == .buffer) {
+            if (item.* == .buffer) {
                 const fdno: usize = @intFromPtr(item.buffer.fd().cast());
                 try array.push(global, JSValue.jsNumber(fdno));
             } else {
                 try array.push(global, .null);
             }
-        } else switch (item) {
-            .owned_fd, .unowned_fd => |fd| try array.push(global, JSValue.jsNumber(fd.cast())),
+        } else switch (item.*) {
+            .owned_fd => |fd| {
+                // Once the fd number is exposed to JS, the caller owns it:
+                // node:child_process wraps it in a net.Socket via
+                // net.connect({fd}), which adopts the fd directly (no dup)
+                // and will close it on destroy(). If we kept .owned_fd here,
+                // finalizeStreams() would close it a second time — by which
+                // point the kernel may have recycled the number for an
+                // unrelated socket (e.g. a later http.Server listen fd).
+                // Downgrade to .unowned_fd so subsequent getStdio() calls
+                // still return the number but finalizeStreams() skips it.
+                // Mirrors the IPC-channel handoff in js_bun_spawn_bindings.zig.
+                item.* = .{ .unowned_fd = fd };
+                try array.push(global, JSValue.jsNumber(fd.cast()));
+            },
+            .unowned_fd => |fd| try array.push(global, JSValue.jsNumber(fd.cast())),
             .unavailable => try array.push(global, .null),
         }
     }

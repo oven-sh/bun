@@ -470,3 +470,70 @@ it("spawnSync(does-not-exist)", () => {
   expect(x.stdout).toEqual(null);
   expect(x.stderr).toEqual(null);
 });
+
+// Extra stdio pipes (index >= 3) are exposed to JS as raw fd numbers and
+// wrapped in a net.Socket, which adopts the fd and closes it on destroy().
+// Subprocess.finalizeStreams() must not close that fd a second time when the
+// Subprocess is later GC'd — by then the kernel may have recycled the number
+// for an unrelated socket (here, a net.Server listen fd), which would get
+// closed out from under it. Windows routes extra pipes through libuv handles
+// instead of raw fds, so this is POSIX-only.
+it.if(!isWindows)("extra stdio pipe fd is not double-closed after destroy + kill + GC", async () => {
+  const fixture = /* js */ `
+    const { spawn } = require("node:child_process");
+    const { once } = require("node:events");
+    const net = require("node:net");
+
+    // The children must go fully out of scope before Bun.gc() or JSC's
+    // conservative stack scan keeps them alive and the finalizers never run.
+    await (async () => {
+      async function spawnOne() {
+        const proc = spawn("/bin/sh", ["-c", "echo x >&3; exec sleep 99999"], {
+          stdio: ["ignore", "ignore", "ignore", "pipe"],
+        });
+        const pipe = proc.stdio[3];
+        await once(pipe, "data");
+        pipe.destroy();
+        return proc;
+      }
+      const procs = [];
+      for (let i = 0; i < 4; i++) procs.push(await spawnOne());
+      for (const p of procs) p.kill("SIGKILL");
+      await Promise.all(procs.map(p => once(p, "exit")));
+    })();
+
+    // Each pipe.destroy() above closed the same recycled fd number. Grab it
+    // for the listener, then force the Subprocess finalizers. Pre-fix,
+    // finalizeStreams() would close that fd number again, tearing the
+    // listener out from under us (and tripping the debug EBADF assert).
+    const server = net.createServer();
+    await new Promise((resolve, reject) => {
+      server.on("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    Bun.gc(true);
+    await new Promise(r => setImmediate(r));
+    Bun.gc(true);
+    await new Promise(r => setImmediate(r));
+    Bun.gc(true);
+    const addr = server.address();
+    console.log(JSON.stringify({ addr }));
+    server.close();
+    if (!addr || typeof addr !== "object" || typeof addr.port !== "number") {
+      process.exit(1);
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    addr: { address: "127.0.0.1", family: "IPv4", port: expect.any(Number) },
+  });
+  expect(exitCode).toBe(0);
+});

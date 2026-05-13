@@ -1,5 +1,5 @@
 pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
-    const object = JSValue.createEmptyObject(globalThis, 4);
+    const object = JSValue.createEmptyObject(globalThis, if (bun.Environment.isDebug) 5 else 3);
     const fields = comptime .{
         .gcAggressionLevel = gcAggressionLevel,
         .arrayBufferToString = arrayBufferToString,
@@ -17,6 +17,11 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
             globalThis,
             comptime ZigString.static("simulateMemoryPressure"),
             jsc.JSFunction.create(globalThis, "simulateMemoryPressure", simulateMemoryPressure, 0, .{}),
+        );
+        object.put(
+            globalThis,
+            comptime ZigString.static("testMemoryPressureUninstallBarrier"),
+            jsc.JSFunction.create(globalThis, "testMemoryPressureUninstallBarrier", testMemoryPressureUninstallBarrier, 0, .{}),
         );
     }
     return object;
@@ -81,6 +86,15 @@ pub fn simulateMemoryPressure(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame
     if (comptime !bun.Environment.isDebug) return .js_undefined;
     const count = bun.MemoryPressureWatcher.simulate(globalThis.bunVM());
     return JSValue.jsNumber(@as(i64, @intCast(count)));
+}
+
+/// Debug-only red/green seam for the Darwin `uninstall()` barrier. See
+/// `MemoryPressureWatcher.Darwin.testUninstallBarrier` — returns `true` iff
+/// `uninstall()` blocked until an in-flight libdispatch event handler
+/// finished. Trivially `true` off macOS.
+pub fn testMemoryPressureUninstallBarrier(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    if (comptime !bun.Environment.isDebug) return .js_undefined;
+    return JSValue.jsBoolean(bun.MemoryPressureWatcher.testUninstallBarrier(globalThis.bunVM()));
 }
 
 const bun = @import("bun");

@@ -101,4 +101,29 @@ describe.concurrent("MemoryPressureWatcher", () => {
     expect(debug).not.toContain("installed");
     expect(exitCode).toBe(0);
   });
+
+  // Red/green for the Darwin uninstall() barrier: dispatch_source_cancel()
+  // is async, so without a barrier in Darwin.uninstall() an in-flight
+  // onPressureDispatch can be between its shutting_down.load() and
+  // enqueueTaskConcurrent() while uninstall() returns and
+  // VirtualMachine.deinit() proceeds to has_terminated=true — which makes
+  // that enqueue panic under allow_assert. The seam installs a
+  // DISPATCH_SOURCE_TYPE_DATA_ADD source through the same install/handler/
+  // cancel/uninstall path, fires it via dispatch_source_merge_data, parks
+  // the libdispatch worker in the race window, runs uninstall(), and
+  // reports whether the worker had completed before uninstall() returned.
+  // RED ⇒ { blocked: false }, GREEN ⇒ { blocked: true }.
+  test.skipIf(!isDebug || !isMacOS)("Darwin.uninstall() blocks until in-flight event handler drains", async () => {
+    // Flag OFF so the real MEMORYPRESSURE source isn't installed; the seam
+    // does its own DATA_ADD install and asserts state == null on entry.
+    const env = { ...flagOn };
+    delete env.BUN_FEATURE_FLAG_EXPERIMENTAL_MEMORY_PRESSURE_HANDLER;
+    const { out, stderr, exitCode } = await run(
+      env,
+      `process.stdout.write(JSON.stringify({ blocked: Bun.unsafe.testMemoryPressureUninstallBarrier() }))`,
+    );
+    expect(stderr).not.toContain("error");
+    expect(JSON.parse(out.trim())).toEqual({ blocked: true });
+    expect(exitCode).toBe(0);
+  });
 });

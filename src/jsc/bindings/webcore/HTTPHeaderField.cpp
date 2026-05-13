@@ -41,7 +41,7 @@ namespace {
 // tokenCharacterTable[c] is true iff c is a tchar.
 constexpr std::array<bool, 256> makeTokenCharacterTable()
 {
-    std::array<bool, 256> table { };
+    std::array<bool, 256> table {};
     for (unsigned c = '0'; c <= '9'; ++c)
         table[c] = true;
     for (unsigned c = 'A'; c <= 'Z'; ++c)

@@ -12,7 +12,7 @@ import {
   writeFileSync,
   writeSync,
 } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, isIntelMacOS, isWindows, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -343,7 +343,11 @@ it(
   timeout,
 );
 
-it(
+// Intel macOS CI runners stretch `sleepSync(2)` well past the 10 ms
+// coalesce window (timer coalescing + scheduler load), so the burst
+// below splits into several watch-loop cycles there. The reported bug
+// (#13511) was Windows + Linux; arm64 macOS lanes pass this test.
+it.skipIf(isIntelMacOS)(
   "coalesces a burst of writes into a single reload",
   async () => {
     // https://github.com/oven-sh/bun/issues/13511

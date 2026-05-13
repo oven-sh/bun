@@ -224,10 +224,24 @@ pub type Poll = IOWriter;
 // `StreamingWriter<P>` requires `P: PosixStreamingWriterParent` (POSIX) /
 // `WindowsStreamingWriterParent` (Windows). The vtable methods forward to the
 // FileSink state-machine handlers below.
+// `borrow = shared`: PipeWriter callbacks must NOT form `&mut FileSink` from
+// the parent backref. `WindowsStreamingWriter::on_write_complete(&mut self)`
+// holds a `*mut Self` derived from its `&mut self` (writer-only provenance).
+// The callback chain `r_on_write → Parent::on_write(parent_ptr) → @borrow mut
+// → &mut *parent_ptr` would place a Unique tag on the WHOLE FileSink (which
+// contains the writer), popping the writer's `*mut Self` SB tag. The
+// scopeguard's later `r_deref(this)` then reads `(*this).parent` through an
+// invalidated pointer, and with `&mut self`'s `noalias` LLVM may mis-optimize
+// — this is the #53265 Windows fs-promises UAF root cause (probe v6 STATE
+// shows `must_be_kept_alive=true` at deinit, which is impossible under
+// balanced rc accounting). With `@borrow shared` → `&*parent_ptr`
+// (SharedReadOnly), no pop. The four callback methods + their callees are
+// `&self`-clean (Cell/JsCell everywhere); see the `as_mut_ptr_for_rc` helper
+// for the one cast they need.
 bun_io::impl_streaming_writer_parent! {
     FileSink;
     poll_tag   = bun_io::posix_event_loop::poll_tag::FILE_SINK,
-    borrow     = mut,
+    borrow     = shared,
     on_write   = on_write,
     on_error   = on_error,
     on_ready   = on_ready,
@@ -392,9 +406,28 @@ impl FileSink {
         self.clear_keep_alive_ref();
     }
 
-    fn run_pending(&mut self) {
-        // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
-        let _guard = unsafe { FileSinkRef::new_ref(std::ptr::from_mut::<FileSink>(self)) };
+    /// Recover a `*mut FileSink` for the intrusive `ref_()`/`deref()` from a
+    /// `&self` callback. The R-2 callback chain enters via `&*parent_ptr`
+    /// (SharedReadOnly), so `&mut self` is unavailable, but the underlying
+    /// `parent_ptr` (set by `init`/`create*` via `set_parent`) carries
+    /// write+dealloc provenance over the heap allocation. `ref_()`/`deref()`
+    /// only touch `ref_count: Cell<u32>` (interior mutability) and `deref()`'s
+    /// terminal `deinit` runs `heap::take` on the original allocation pointer,
+    /// not on a `&self`-derived one, so address identity here is sufficient.
+    ///
+    /// # Safety
+    /// The returned pointer must only be passed to `FileSink::ref_` /
+    /// `FileSink::deref` / `FileSinkRef::new_ref`. Forming a `&mut FileSink`
+    /// from it (or writing fields outside `Cell`/`JsCell`) is UB — `&self`'s
+    /// SharedReadOnly tag does not grant Unique permission.
+    #[inline(always)]
+    unsafe fn as_mut_ptr_for_rc(&self) -> *mut FileSink {
+        core::ptr::from_ref(self).cast_mut()
+    }
+
+    fn run_pending(&self) {
+        // SAFETY: see `as_mut_ptr_for_rc` — guard only bumps `Cell<u32>`.
+        let _guard = unsafe { FileSinkRef::new_ref(self.as_mut_ptr_for_rc()) };
 
         self.run_pending_later.has.set(false);
 
@@ -410,15 +443,15 @@ impl FileSink {
         self.js_sink_ref.with_mut(|r| r.deinit());
     }
 
-    pub fn on_write(&mut self, amount: usize, status: WriteStatus) {
+    pub fn on_write(&self, amount: usize, status: WriteStatus) {
         bun_core::scoped_log!(FileSink, "onWrite({}, {})", amount, status as u8);
 
         // `runPending()` below drains microtasks and may drop the JS wrapper's
         // ref, and `writer.end()`/`writer.close()` re-enter `onClose` which
         // releases the keep-alive ref. Hold a local ref so `this` stays valid
         // for the rest of this function (same pattern as `runPending`/`onAutoFlush`).
-        // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
-        let _guard = unsafe { FileSinkRef::new_ref(std::ptr::from_mut::<FileSink>(self)) };
+        // SAFETY: see `as_mut_ptr_for_rc` — guard only bumps `Cell<u32>`.
+        let _guard = unsafe { FileSinkRef::new_ref(self.as_mut_ptr_for_rc()) };
 
         self.written.set(self.written.get() + amount);
 
@@ -432,16 +465,7 @@ impl FileSink {
             .with_mut(|w| w.update_ref(self.io_evtloop(), has_pending_data));
 
         if has_pending_data {
-            // PORT NOTE: inline `js_vm()` to avoid holding an immutable borrow of
-            // `self` (via the returned `&VirtualMachine`) across the `&mut self`
-            // needed by `register_deferred_microtask_with_type`.
-            let vm_ptr = self
-                .event_loop_handle
-                .bun_vm()
-                .cast::<bun_jsc::VirtualMachineRef>();
-            if !vm_ptr.is_null() {
-                // SAFETY: `bun_vm()` non-null implies the per-thread VM; never aliased here.
-                let vm = unsafe { &*vm_ptr };
+            if let Some(vm) = self.js_vm() {
                 if !vm.is_inside_deferred_task_queue.get() {
                     AutoFlusher::register_deferred_microtask_with_type::<Self>(self, vm);
                 }
@@ -488,7 +512,7 @@ impl FileSink {
         }
     }
 
-    pub fn on_error(&mut self, err: sys::Error) {
+    pub fn on_error(&self, err: sys::Error) {
         bun_core::scoped_log!(FileSink, "onError({:?})", err);
         if self.pending.get().state == streams::PendingState::Pending {
             self.pending
@@ -519,12 +543,12 @@ impl FileSink {
         self.clear_keep_alive_ref();
     }
 
-    pub fn on_ready(&mut self) {
+    pub fn on_ready(&self) {
         bun_core::scoped_log!(FileSink, "onReady()");
         self.signal.with_mut(|s| s.ready(None, None));
     }
 
-    pub fn on_close(&mut self) {
+    pub fn on_close(&self) {
         bun_core::scoped_log!(FileSink, "onClose()");
         // SAFETY(JsCell): `Strong::has`/`get` are read-only on the GC root.
         if unsafe { self.readable_stream.get_mut() }.has() {
@@ -546,12 +570,13 @@ impl FileSink {
     /// Release the ref taken in `toResult`/`end`/`endFromJS` when a write
     /// returned `.pending` and we needed to stay alive until it completed.
     /// Idempotent via the flag check. May free `this`.
-    fn clear_keep_alive_ref(&mut self) {
+    fn clear_keep_alive_ref(&self) {
         if self.must_be_kept_alive_until_eof.get() {
             self.must_be_kept_alive_until_eof.set(false);
-            // SAFETY: `&mut self` carries write provenance over the whole
-            // allocation; this is the last use of `self` in this fn.
-            unsafe { FileSink::deref(std::ptr::from_mut::<Self>(self)) };
+            // SAFETY: see `as_mut_ptr_for_rc` — `deref` only touches the
+            // `Cell<u32>` and (on rc→0) `deinit` reconstructs the Box from the
+            // original allocation pointer; this is the last use of `self`.
+            unsafe { FileSink::deref(self.as_mut_ptr_for_rc()) };
         }
     }
 
@@ -819,7 +844,7 @@ impl FileSink {
         sys::Result::Ok(())
     }
 
-    pub fn run_pending_later(&mut self) {
+    pub fn run_pending_later(&self) {
         if self.run_pending_later.has.get() {
             return;
         }
@@ -829,9 +854,13 @@ impl FileSink {
             // `jsc.Task.init(&this.run_pending_later)` — the comptime type→tag
             // map lives in `crate::dispatch`; the resolved tag for
             // `*FlushPendingTask` is `task_tag::FlushPendingFileSinkTask`.
+            // Ptr identity only — `run_from_js_thread` recovers `*mut FileSink`
+            // via `from_field_ptr!` and never forms `&mut FileSink`.
             let task = bun_event_loop::Task::new(
                 bun_event_loop::task_tag::FlushPendingFileSinkTask,
-                (&raw mut self.run_pending_later).cast::<()>(),
+                core::ptr::from_ref(&self.run_pending_later)
+                    .cast_mut()
+                    .cast::<()>(),
             );
             owner.enqueue_task(task);
         }
@@ -840,7 +869,7 @@ impl FileSink {
     pub fn on_auto_flush(&mut self) -> bool {
         if self.done.get() || !self.writer.get().has_pending_data() {
             self.update_ref(false);
-            self.auto_flusher.with_mut(|a| a.registered = false);
+            self.auto_flusher.with_mut(|a| a.registered.set(false));
             return false;
         }
 
@@ -868,7 +897,8 @@ impl FileSink {
         }
 
         let is_registered = !self.writer.get().has_pending_data();
-        self.auto_flusher.with_mut(|a| a.registered = is_registered);
+        self.auto_flusher
+            .with_mut(|a| a.registered.set(is_registered));
         is_registered
     }
 

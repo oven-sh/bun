@@ -2998,14 +2998,14 @@ impl H2FrameParser {
     }
 
     fn register_auto_flush(&self) {
-        if self.auto_flusher.get().registered {
+        if self.auto_flusher.get().registered.get() {
             return;
         }
         self.ref_();
-        // R-2: `HasAutoFlusher` requires `&mut self`; inline the registration
-        // so the whole path is `&self` (matches NodeHTTPResponse f1e506c8).
-        debug_assert!(!self.auto_flusher.get().registered);
-        self.auto_flusher.with_mut(|af| af.registered = true);
+        // R-2: inlined so the path is `&self` + extra `self.ref_()` (matches
+        // NodeHTTPResponse f1e506c8). `HasAutoFlusher` is now `&self` too.
+        debug_assert!(!self.auto_flusher.get().registered.get());
+        self.auto_flusher.get().registered.set(true);
         let ctx = NonNull::new(self.as_ctx_ptr().cast::<c_void>());
         let found_existing = self
             .global_this
@@ -3017,10 +3017,10 @@ impl H2FrameParser {
     }
 
     fn unregister_auto_flush(&self) {
-        if !self.auto_flusher.get().registered {
+        if !self.auto_flusher.get().registered.get() {
             return;
         }
-        debug_assert!(self.auto_flusher.get().registered);
+        debug_assert!(self.auto_flusher.get().registered.get());
         let ctx = NonNull::new(self.as_ctx_ptr().cast::<c_void>());
         let removed = self
             .global_this
@@ -3029,7 +3029,7 @@ impl H2FrameParser {
             .deferred_tasks
             .unregister_task(ctx);
         debug_assert!(removed);
-        self.auto_flusher.with_mut(|af| af.registered = false);
+        self.auto_flusher.get().registered.set(false);
         self.deref();
     }
 

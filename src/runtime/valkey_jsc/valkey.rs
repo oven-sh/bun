@@ -443,16 +443,16 @@ impl ValkeyClient {
 
     // ** Auto-pipelining **
     fn register_auto_flusher(&mut self, vm: &VirtualMachine) {
-        if !self.auto_flusher.registered {
+        if !self.auto_flusher.registered.get() {
             AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(self, vm);
-            self.auto_flusher.registered = true;
+            self.auto_flusher.registered.set(true);
         }
     }
 
     fn unregister_auto_flusher(&mut self) {
-        if self.auto_flusher.registered {
+        if self.auto_flusher.registered.get() {
             AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self, self.vm);
-            self.auto_flusher.registered = false;
+            self.auto_flusher.registered.set(false);
         }
     }
 
@@ -460,7 +460,7 @@ impl ValkeyClient {
     pub fn on_auto_flush(&mut self) -> bool {
         // Don't process if not connected or already processing
         if self.status != Status::Connected {
-            self.auto_flusher.registered = false;
+            self.auto_flusher.registered.set(false);
             return false;
         }
 
@@ -511,7 +511,7 @@ impl ValkeyClient {
         let _ = self.flush_data();
 
         have_more = self.queue.readable_length() > 0;
-        self.auto_flusher.registered = have_more;
+        self.auto_flusher.registered.set(have_more);
 
         self.deref();
 
@@ -1556,11 +1556,11 @@ use crate::webcore::{AutoFlusher, HasAutoFlusher};
 
 impl HasAutoFlusher for ValkeyClient {
     #[inline]
-    fn auto_flusher(&mut self) -> &mut AutoFlusher {
-        &mut self.auto_flusher
+    fn auto_flusher(&self) -> &AutoFlusher {
+        &self.auto_flusher
     }
     fn on_auto_flush(this: *mut Self) -> bool {
-        // SAFETY: `this` was registered as `&mut ValkeyClient` cast to `*mut c_void`;
+        // SAFETY: `this` was registered as `&ValkeyClient` cast to `*mut c_void`;
         // `DeferredTaskQueue::run` is single-threaded (drained on the JS thread after
         // microtasks), so no aliasing across the call.
         unsafe { (*this).on_auto_flush() }

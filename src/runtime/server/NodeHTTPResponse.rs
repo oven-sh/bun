@@ -1706,23 +1706,22 @@ impl NodeHTTPResponse {
                 raw_response.uncork();
             }
         }
-        self.auto_flusher.with_mut(|af| af.registered = false);
+        self.auto_flusher.get().registered.set(false);
         self.deref();
         false
     }
 
     // R-2: inlined `AutoFlusher::register_deferred_microtask_with_type_unchecked`
-    // — that helper takes `&mut T` (via the `HasAutoFlusher` trait), but the
-    // body only needs `self`'s address (passed to `DeferredTaskQueue`) and a
-    // write to `auto_flusher.registered` (now `JsCell`). Doing it locally lets
-    // the whole path be `&self`.
+    // — that helper now takes `&T`, but this type has its own
+    // `on_auto_flush_trampoline` (extra `self.ref_()`) so the inline body
+    // stays.
     fn register_auto_flush(&self) {
-        if self.auto_flusher.get().registered {
+        if self.auto_flusher.get().registered.get() {
             return;
         }
         self.ref_();
-        debug_assert!(!self.auto_flusher.get().registered);
-        self.auto_flusher.with_mut(|af| af.registered = true);
+        debug_assert!(!self.auto_flusher.get().registered.get());
+        self.auto_flusher.get().registered.set(true);
         let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
         let found_existing = vm_get()
             .event_loop_ref()
@@ -1732,17 +1731,17 @@ impl NodeHTTPResponse {
     }
 
     fn unregister_auto_flush(&self) {
-        if !self.auto_flusher.get().registered {
+        if !self.auto_flusher.get().registered.get() {
             return;
         }
-        debug_assert!(self.auto_flusher.get().registered);
+        debug_assert!(self.auto_flusher.get().registered.get());
         let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
         let removed = vm_get()
             .event_loop_ref()
             .deferred_tasks
             .unregister_task(ctx);
         debug_assert!(removed);
-        self.auto_flusher.with_mut(|af| af.registered = false);
+        self.auto_flusher.get().registered.set(false);
         self.deref();
     }
 

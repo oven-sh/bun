@@ -126,13 +126,15 @@ use bun_event_loop::deferred_task_queue::DeferredRepeatingTask;
 
 #[derive(Debug, Default)]
 pub struct AutoFlusher {
-    pub registered: bool,
+    /// `Cell` so register/unregister can be called from `&self` callbacks
+    /// (R-2 §provenance — see `FileSink::on_write`).
+    pub registered: core::cell::Cell<bool>,
 }
 
 /// Zig duck-types on `this.auto_flusher` + `Type.onAutoFlush`; modeled as a
 /// trait. Implemented below for `FileSink` and `HTTPServerWritable<_, _>`.
 pub trait HasAutoFlusher: Sized {
-    fn auto_flusher(&mut self) -> &mut AutoFlusher;
+    fn auto_flusher(&self) -> &AutoFlusher;
     /// `Type.onAutoFlush` — `DeferredRepeatingTask` ABI after `@ptrCast`
     /// erasure: `fn(*anyopaque) bool`.
     fn on_auto_flush(this: *mut Self) -> bool;
@@ -140,8 +142,11 @@ pub trait HasAutoFlusher: Sized {
 
 impl AutoFlusher {
     #[inline]
-    fn erased_ctx<T>(this: &mut T) -> Option<NonNull<core::ffi::c_void>> {
-        NonNull::new(std::ptr::from_mut::<T>(this).cast::<core::ffi::c_void>())
+    fn erased_ctx<T>(this: &T) -> Option<NonNull<core::ffi::c_void>> {
+        // Ctx is opaque ptr identity only; `cast_mut()` does not assert write
+        // provenance (no `&mut T` formed) — the trampoline recovers `*mut T`
+        // and the impl decides how to borrow.
+        NonNull::new(core::ptr::from_ref::<T>(this).cast_mut().cast::<core::ffi::c_void>())
     }
 
     #[inline]
@@ -159,10 +164,10 @@ impl AutoFlusher {
 
     #[inline]
     pub fn register_deferred_microtask_with_type<T: HasAutoFlusher>(
-        this: &mut T,
+        this: &T,
         vm: &jsc::VirtualMachine,
     ) {
-        if this.auto_flusher().registered {
+        if this.auto_flusher().registered.get() {
             return;
         }
         Self::register_deferred_microtask_with_type_unchecked(this, vm);
@@ -170,10 +175,10 @@ impl AutoFlusher {
 
     #[inline]
     pub fn unregister_deferred_microtask_with_type<T: HasAutoFlusher>(
-        this: &mut T,
+        this: &T,
         vm: &jsc::VirtualMachine,
     ) {
-        if !this.auto_flusher().registered {
+        if !this.auto_flusher().registered.get() {
             return;
         }
         Self::unregister_deferred_microtask_with_type_unchecked(this, vm);
@@ -181,10 +186,10 @@ impl AutoFlusher {
 
     #[inline]
     pub fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
-        this: &mut T,
+        this: &T,
         vm: &jsc::VirtualMachine,
     ) {
-        debug_assert!(this.auto_flusher().registered);
+        debug_assert!(this.auto_flusher().registered.get());
         // PORT NOTE: Zig `bun.assert(expr)` evaluates `expr` unconditionally;
         // only the *check* is debug-gated. Do not wrap the side-effecting call
         // in `debug_assert!`.
@@ -193,16 +198,16 @@ impl AutoFlusher {
             .deferred_tasks
             .unregister_task(Self::erased_ctx(this));
         debug_assert!(removed);
-        this.auto_flusher().registered = false;
+        this.auto_flusher().registered.set(false);
     }
 
     #[inline]
     pub fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
-        this: &mut T,
+        this: &T,
         vm: &jsc::VirtualMachine,
     ) {
-        debug_assert!(!this.auto_flusher().registered);
-        this.auto_flusher().registered = true;
+        debug_assert!(!this.auto_flusher().registered.get());
+        this.auto_flusher().registered.set(true);
         let found_existing = vm
             .event_loop_ref()
             .deferred_tasks
@@ -217,15 +222,12 @@ impl AutoFlusher {
 
 impl HasAutoFlusher for file_sink::FileSink {
     #[inline]
-    fn auto_flusher(&mut self) -> &mut AutoFlusher {
-        // R-2: `auto_flusher` is `JsCell` for the `&self` host-fn paths;
-        // `HasAutoFlusher`'s `register_*` helpers still take `&mut Self`, so a
-        // direct `&mut` projection is sound here (no aliased `&` exists).
-        // SAFETY: `&mut self` proves the `JsCell` is uniquely borrowed.
-        unsafe { self.auto_flusher.get_mut() }
+    fn auto_flusher(&self) -> &AutoFlusher {
+        // R-2: `auto_flusher` is `JsCell`; `JsCell::get` yields `&T`.
+        self.auto_flusher.get()
     }
     fn on_auto_flush(this: *mut Self) -> bool {
-        // SAFETY: `this` was registered as `&mut FileSink` cast to `*mut c_void`;
+        // SAFETY: `this` was registered as `&FileSink` cast to `*mut c_void`;
         // `DeferredTaskQueue::run` is single-threaded (drained on the JS thread
         // after microtasks), so no aliasing across the call.
         unsafe { (*this).on_auto_flush() }
@@ -240,8 +242,8 @@ impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
     for streams::HTTPServerWritable<SSL, HTTP3>
 {
     #[inline]
-    fn auto_flusher(&mut self) -> &mut AutoFlusher {
-        &mut self.auto_flusher
+    fn auto_flusher(&self) -> &AutoFlusher {
+        &self.auto_flusher
     }
     fn on_auto_flush(this: *mut Self) -> bool {
         // SAFETY: see FileSink impl above.

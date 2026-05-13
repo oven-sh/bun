@@ -1876,7 +1876,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     fn unregister_auto_flusher(&mut self) {
-        if self.auto_flusher.registered {
+        if self.auto_flusher.registered.get() {
             let vm = self.global_this().bun_vm();
             AutoFlusher::unregister_deferred_microtask_with_type_unchecked::<Self>(self, vm);
         }
@@ -1886,7 +1886,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         let Some(res) = self.any_res() else { return };
         // if we enqueue data we should reset the timeout
         res.reset_timeout();
-        if !self.auto_flusher.registered {
+        if !self.auto_flusher.registered.get() {
             let vm = self.global_this().bun_vm();
             AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(self, vm);
         }
@@ -1895,22 +1895,22 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     pub fn on_auto_flush(&mut self) -> bool {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAutoFlush()");
         if self.done {
-            self.auto_flusher.registered = false;
+            self.auto_flusher.registered.set(false);
             return false;
         }
 
         let readable_len = self.readable_slice().len();
 
         if self.has_backpressure_and_is_try_end() || readable_len == 0 {
-            self.auto_flusher.registered = false;
+            self.auto_flusher.registered.set(false);
             return false;
         }
 
         if !self.send_readable_without_auto_flusher(0) {
-            self.auto_flusher.registered = true;
+            self.auto_flusher.registered.set(true);
             return true;
         }
-        self.auto_flusher.registered = false;
+        self.auto_flusher.registered.set(false);
         false
     }
 

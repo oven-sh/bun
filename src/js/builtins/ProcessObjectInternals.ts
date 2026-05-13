@@ -105,6 +105,15 @@ export function getStdioWriteStream(
   stream._isStdio = true;
   stream.fd = fd;
 
+  // For `bun --hot`: drop any listeners user code attached on the previous
+  // load so a fresh module evaluation doesn't stack duplicate handlers
+  // (e.g. node:readline's 'resize' listener). Called from
+  // GlobalObject::reload(). There are no internal listeners to preserve on
+  // the write-side stdio streams. (#15027)
+  stream.$resetStdioForHotReload = function () {
+    stream.removeAllListeners();
+  };
+
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
   $assert(underlyingSink);
   return [stream, underlyingSink];
@@ -261,17 +270,15 @@ export function getStdinStream(
   }
   stream._read = triggerRead;
 
-  stream.on("resume", () => {
+  function onStreamResume() {
     if (stream.isPaused()) return; // fake resume
     $debug('on("resume");');
     own();
     stream._undestroy();
     stream_destroyed = false;
-  });
+  }
 
-  stream._readableState.reading = false;
-
-  stream.on("pause", () => {
+  function onStreamPause() {
     process.nextTick(() => {
       // Only disown if the stream is still paused (not resumed in the meantime)
       if (!stream.readableFlowing) {
@@ -279,9 +286,9 @@ export function getStdinStream(
         disown();
       }
     });
-  });
+  }
 
-  stream.on("close", () => {
+  function onStreamClose() {
     if (!stream_destroyed) {
       stream_destroyed = true;
       process.nextTick(() => {
@@ -289,7 +296,27 @@ export function getStdinStream(
         disown();
       });
     }
-  });
+  }
+
+  stream.on("resume", onStreamResume);
+  stream.on("pause", onStreamPause);
+  stream.on("close", onStreamClose);
+
+  stream._readableState.reading = false;
+
+  // For `bun --hot`: the process object (and this stream) survive module
+  // registry reloads. User code (e.g. node:readline) that attached 'data',
+  // 'keypress', etc. listeners on the previous load must be detached so the
+  // fresh module evaluation doesn't stack a second set of handlers on the
+  // same native fd. Called from GlobalObject::reload(). (#15027)
+  stream.$resetStdioForHotReload = function () {
+    disown();
+    stream.removeAllListeners();
+    stream.on("resume", onStreamResume);
+    stream.on("pause", onStreamPause);
+    stream.on("close", onStreamClose);
+    stream._readableState.reading = false;
+  };
 
   return stream;
 }

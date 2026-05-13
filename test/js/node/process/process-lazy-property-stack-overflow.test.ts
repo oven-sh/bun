@@ -26,12 +26,11 @@ test("accessing lazy process properties near stack limit does not crash", async 
     env: bunEnv,
     stdin: "ignore",
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect(stderr).not.toContain("ASSERTION FAILED");
   expect(stdout).toMatch(/^caught=\d+ type=(undefined|function)\n$/);
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);

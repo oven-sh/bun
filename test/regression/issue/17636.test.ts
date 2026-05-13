@@ -142,14 +142,19 @@ test("signal-exit pattern rejects a pending TLA prompt on stdin close (inquirer 
   expect(exitCode).toBe(0);
 });
 
-test("microtasks queued from an 'exit' listener run before the process dies", async () => {
-  // Node drains microtasks after the 'exit' event so that shutdown-time
-  // promise reactions observe the exit. Needed for the signal-exit ->
-  // inquirer rejection to reach its .catch().
+test("Promise microtasks queued from an 'exit' listener run, but nextTick does not", async () => {
+  // Node drains Promise microtasks once more after the 'exit' event so
+  // that shutdown-time promise reactions observe the exit (needed for
+  // the signal-exit -> inquirer rejection to reach its .catch()).
+  // process.nextTick, however, is a no-op once _exiting is set and
+  // anything already queued is dropped — running it would break
+  // callbacks that guard on process._exiting (e.g. Node's
+  // common.mustCall()).
   const source = `
     process.on("exit", code => {
       console.log("exit-listener:" + code);
       Promise.resolve().then(() => console.log("microtask:" + process.exitCode));
+      process.nextTick(() => console.log("nexttick:SHOULD-NOT-RUN"));
     });
     process.exitCode = 5;
   `;

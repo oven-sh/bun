@@ -349,13 +349,26 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
         emitter.emit(event, arguments);
     }
 
-    // Node drains microtasks once more after the 'exit' event so that a
-    // promise rejected from an 'exit' listener (signal-exit -> inquirer's
-    // ExitPromptError) can reach its .catch()/.finally() before the
-    // process dies. Without this, @inquirer/prompts never runs its
-    // `.catch(() => process.exit(0))` on stdin close (#17636).
+    // Node drains Promise microtasks once more after the 'exit' event so
+    // that a promise rejected from an 'exit' listener (signal-exit ->
+    // inquirer's ExitPromptError) can reach its .catch()/.finally()
+    // before the process dies. Without this, @inquirer/prompts never
+    // runs its `.catch(() => process.exit(0))` on stdin close (#17636).
+    //
+    // Node does NOT drain process.nextTick here — nextTick() itself is a
+    // no-op once _exiting is set, and anything already queued is dropped.
+    // Running previously-queued nextTick callbacks after _exiting would
+    // break test/js/node/test/parallel/test-event-capture-rejections.js
+    // whose common.mustCall() guards on process._exiting.
     if (!vm.hasTerminationRequest()) {
-        defaultGlobalObject(globalObject)->drainMicrotasks();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        vm.drainMicrotasks();
+        if (auto* exception = scope.exception()) {
+            (void)scope.tryClearException();
+            if (!vm.hasPendingTerminationException()) {
+                Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            }
+        }
     }
 }
 
@@ -889,15 +902,21 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     auto* process = globalObject->processObject();
     Bun__VirtualMachine__exitDuringUncaughtException(bunVM(vm));
 
-    bool fired;
+    bool shouldDrainNextTick;
     if (JSC::JSValue userEmit = userEmitOverride(vm, process)) {
-        fired = callUserEmitOverride(globalObject, process, userEmit, "beforeExit"_s, jsNumber(exitCode));
+        callUserEmitOverride(globalObject, process, userEmit, "beforeExit"_s, jsNumber(exitCode));
+        // A user override's return value is not a reliable "had
+        // listeners" signal — it may have enqueued nextTick work and
+        // still returned false/undefined. Drain unconditionally so
+        // that work (and any pending TLA continuation) can run before
+        // the loop decides to shut down.
+        shouldDrainNextTick = true;
     } else {
         MarkedArgumentBuffer arguments;
         arguments.append(jsNumber(exitCode));
-        fired = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
+        shouldDrainNextTick = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
     }
-    if (fired) {
+    if (shouldDrainNextTick) {
         if (globalObject->m_nextTickQueue) {
             auto nextTickQueue = globalObject->m_nextTickQueue.get();
             nextTickQueue->drain(vm, globalObject);

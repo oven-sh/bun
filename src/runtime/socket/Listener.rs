@@ -413,10 +413,14 @@ impl Listener {
         let mut errno: c_int = 0;
         let listen_socket: *mut uws_sys::ListenSocket = match &mut connection {
             UnixOrHost::Host { host, port } => {
-                // NUL-terminate for the C `&CStr` parameter.
-                let mut hostz = host.to_vec();
-                hostz.push(0);
-                let host_cstr = bun_core::ZStr::from_slice_with_nul(&hostz).as_cstr();
+                // NUL-terminate for the C `const char*` parameter. Zig used
+                // `dupeZ` + raw `.ptr`, which tolerates interior NULs (the C
+                // side just truncates at the first one). Build the `&CStr` via
+                // `from_ptr` so we match that instead of asserting via
+                // `ZStr::as_cstr()`.
+                let hostz = bun_core::ZBox::from_bytes(&host[..]);
+                // SAFETY: `hostz` is NUL-terminated and outlives `host_cstr`.
+                let host_cstr = unsafe { core::ffi::CStr::from_ptr(hostz.as_ptr()) };
                 let ls = this_ref.group.with_mut(|g| {
                     g.listen(
                         kind,
@@ -648,10 +652,15 @@ impl Listener {
                 global.throw_invalid_arguments(format_args!("hostname pattern cannot be empty"))
             );
         }
-        // NUL-terminate for the C `&CStr` parameter.
-        let mut server_name_buf = server_name_bytes.to_vec();
-        server_name_buf.push(0);
-        let server_name = bun_core::ZStr::from_slice_with_nul(&server_name_buf).as_cstr();
+        // NUL-terminate for the C `const char*` parameter. Zig used
+        // `dupeZ` + raw `.ptr` (Listener.zig:377), which tolerates interior
+        // NULs — the C SNI tree just truncates at the first one. Build the
+        // `&CStr` via `from_ptr` to match that instead of asserting via
+        // `ZStr::as_cstr()`. `server_name_z` must outlive the
+        // remove_server_name/add_server_name calls below.
+        let server_name_z = bun_core::ZBox::from_bytes(server_name_bytes);
+        // SAFETY: `server_name_z` is NUL-terminated and lives to end of scope.
+        let server_name = unsafe { core::ffi::CStr::from_ptr(server_name_z.as_ptr()) };
 
         let ListenerType::Uws(ls) = this.listener.get() else {
             return Ok(JSValue::UNDEFINED);

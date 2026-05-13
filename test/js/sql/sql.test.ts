@@ -17,6 +17,104 @@ function rel(filename: string) {
 import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
 
+// Issue #30632: `new Bun.SQL({ max: N })` must grow the pool lazily on demand,
+// not open all N connections up-front. These tests use a bare TCP listener so
+// they run in every lane (no docker / real Postgres needed).
+describe("connection pool grows lazily (#30632)", () => {
+  test("a single query only opens one TCP connection, not `max`", async () => {
+    let openedSockets = 0;
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {
+          openedSockets++;
+        },
+        data() {},
+        close() {},
+        error() {},
+      },
+    });
+
+    await using sql = new SQL({
+      adapter: "postgres",
+      host: "127.0.0.1",
+      port: server.port,
+      username: "x",
+      database: "x",
+      max: 50,
+      connectionTimeout: 1,
+    });
+
+    // We expect the query itself to fail (nothing is speaking Postgres on
+    // the other end) — we only care about how many sockets Bun opened.
+    await sql`SELECT 1`.catch(() => {});
+    expect(openedSockets).toBe(1);
+  });
+
+  test("the pool grows to serve concurrent queries, capped at `max`", async () => {
+    let openedSockets = 0;
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {
+          openedSockets++;
+        },
+        data() {},
+        close() {},
+        error() {},
+      },
+    });
+
+    await using sql = new SQL({
+      adapter: "postgres",
+      host: "127.0.0.1",
+      port: server.port,
+      username: "x",
+      database: "x",
+      max: 5,
+      connectionTimeout: 1,
+    });
+
+    // 20 concurrent queries against a pool of 5: we should see exactly 5
+    // sockets open — one per slot, never more.
+    const queries = Array.from({ length: 20 }, (_, i) => sql`SELECT ${i}`.catch(() => {}));
+    await Promise.all(queries);
+    expect(openedSockets).toBe(5);
+  });
+
+  test("constructing Bun.SQL without running a query opens no connections", async () => {
+    let openedSockets = 0;
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {
+          openedSockets++;
+        },
+        data() {},
+        close() {},
+        error() {},
+      },
+    });
+
+    await using sql = new SQL({
+      adapter: "postgres",
+      host: "127.0.0.1",
+      port: server.port,
+      username: "x",
+      database: "x",
+      max: 10,
+      connectionTimeout: 1,
+    });
+
+    // Give any would-be eager connector a chance to misbehave.
+    await new Promise(r => setTimeout(r, 50));
+    expect(openedSockets).toBe(0);
+  });
+});
+
 if (isDockerEnabled()) {
   describe("PostgreSQL tests", async () => {
     let container: { port: number; host: string };

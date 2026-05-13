@@ -445,7 +445,13 @@ class MySQLAdapter
 {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
 
+  /// Live pool entries. Grown lazily on demand up to `maxPoolSize`. Slots are
+  /// only nulled out during shutdown (#close) — the rest of the code can
+  /// assume every index < connections.length is a valid connection.
   public readonly connections: PooledMySQLConnection[];
+  /// Hard cap on the number of connections this pool is allowed to open.
+  /// `connections.length` is the CURRENT size and grows from 0 up to this.
+  public readonly maxPoolSize: number;
   public readonly readyConnections: Set<PooledMySQLConnection> = new Set();
 
   public waitingQueue: Array<(err: Error | null, result: any) => void> = [];
@@ -458,7 +464,8 @@ class MySQLAdapter
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
-    this.connections = new Array(connectionInfo.max);
+    this.connections = [];
+    this.maxPoolSize = connectionInfo.max;
   }
 
   escapeIdentifier(str: string) {
@@ -593,8 +600,36 @@ class MySQLAdapter
 
   maxDistribution() {
     if (!this.waitingQueue.length) return 0;
-    const result = Math.ceil((this.waitingQueue.length + this.totalQueries) / this.connections.length);
+    // Target distribution against the pool ceiling, not the current size.
+    // With lazy pool growth `connections.length` starts small and would
+    // collapse every queued query onto the first connection.
+    const result = Math.ceil((this.waitingQueue.length + this.totalQueries) / this.maxPoolSize);
     return result ? result : 1;
+  }
+
+  /// Open a new connection and append it to the pool if we have room. The
+  /// new connection starts connecting immediately and will enter
+  /// `readyConnections` via `release()` once its TCP/auth handshake finishes.
+  /// Returns the new connection, or null if we're already at `maxPoolSize`.
+  #tryGrowPool(): PooledMySQLConnection | null {
+    if (this.closed) return null;
+    if (this.connections.length >= this.maxPoolSize) return null;
+    const connection = new PooledMySQLConnection(this.connectionInfo, this);
+    this.connections.push(connection);
+    return connection;
+  }
+
+  /// Count connections that are still completing their handshake. A pending
+  /// connection will soon join `readyConnections`, so we don't need to grow
+  /// the pool further just because no connection is ready *right now*.
+  #pendingConnectionsCount(): number {
+    let count = 0;
+    const len = this.connections.length;
+    for (let i = 0; i < len; i++) {
+      const c = this.connections[i];
+      if (c && c.state === PooledConnectionState.pending) count++;
+    }
+    return count;
   }
 
   flushConcurrentQueries() {
@@ -608,6 +643,14 @@ class MySQLAdapter
         c => !(c.flags & PooledConnectionFlags.preReserved) && c.queryCount < maxDistribution,
       );
       if (nonReservedConnections.length === 0) {
+        // No idle connection can take another query. Grow the pool only if
+        // the number of still-handshaking connections is less than the
+        // backlog — otherwise those pending connections will drain the
+        // queue on their own once they become ready.
+        const unservedWaiters = this.waitingQueue.length - this.#pendingConnectionsCount();
+        if (unservedWaiters > 0 && this.connections.length < this.maxPoolSize) {
+          this.#tryGrowPool();
+        }
         return;
       }
       const orderedConnections = nonReservedConnections.sort((a, b) => a.queryCount - b.queryCount);
@@ -888,9 +931,26 @@ class MySQLAdapter
           } else {
             this.waitingQueue.push(onConnected);
           }
+          // Caller is waiting behind in-flight connections. If the pool is
+          // not at max yet, open another connection in parallel rather than
+          // letting everyone pile up behind the first socket.
+          this.#tryGrowPool();
         } else if (!retry_in_progress) {
-          // impossible to connect or retry
-          onConnected(storedError ?? this.connectionClosedError(), null);
+          // Nothing retryable in the existing slots. If we haven't hit the
+          // pool ceiling yet, try to open a fresh connection instead of
+          // failing — the earlier slots may be permanently broken but a
+          // brand-new one can still succeed.
+          const grown = this.#tryGrowPool();
+          if (grown) {
+            if (reserved) {
+              this.reservedQueue.push(onConnected);
+            } else {
+              this.waitingQueue.push(onConnected);
+            }
+          } else {
+            // impossible to connect or retry
+            onConnected(storedError ?? this.connectionClosedError(), null);
+          }
         }
         return;
       }
@@ -901,15 +961,12 @@ class MySQLAdapter
         this.waitingQueue.push(onConnected);
       }
       this.poolStarted = true;
-      const pollSize = this.connections.length;
-      // pool is always at least 1 connection
-      const firstConnection = new PooledMySQLConnection(this.connectionInfo, this);
-      this.connections[0] = firstConnection;
-      if (reserved) {
+      // Only open one connection for the first query. Further connections
+      // are opened lazily by `flushConcurrentQueries()` as demand grows,
+      // up to `maxPoolSize`.
+      const firstConnection = this.#tryGrowPool();
+      if (reserved && firstConnection) {
         firstConnection.flags |= PooledConnectionFlags.preReserved; // lets pre reserve the first connection
-      }
-      for (let i = 1; i < pollSize; i++) {
-        this.connections[i] = new PooledMySQLConnection(this.connectionInfo, this);
       }
       return;
     }
@@ -940,8 +997,10 @@ class MySQLAdapter
         connectionWithLeastQueries.flags |= PooledConnectionFlags.preReserved;
       }
 
-      // no connection available to be reserved lets wait for a connection to be released
+      // No ready connection can be reserved. Grow the pool if we still can,
+      // so the caller isn't stuck waiting behind the currently-open sockets.
       this.reservedQueue.push(onConnected);
+      this.#tryGrowPool();
     } else {
       this.waitingQueue.push(onConnected);
       this.flushConcurrentQueries();

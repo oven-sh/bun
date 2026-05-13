@@ -187,6 +187,8 @@ test("disconnect() on a cluster.Worker built around a plain object does not abor
 });
 
 // https://github.com/oven-sh/bun/issues/14727
+// Each test spawns a primary that forks two workers: three debug+ASAN bun
+// processes, so the default 5s per-test budget is not enough.
 describe("net.Server in cluster worker", () => {
   test("workers listening on port: 0 agree on a single port", async () => {
     // Previously each worker would bind its own random port because the
@@ -241,17 +243,19 @@ if (cluster.isPrimary) {
     expect(result.ports).toHaveLength(2);
     expect(result.ports[0]).toBe(result.ports[1]);
     expect(exitCode).toBe(0);
-  });
+  }, 20_000);
 
   // SO_REUSEPORT load-balancing only works on Linux; on other platforms
   // multiple workers still bind but one socket wins. The important part
   // (no EADDRINUSE crash) is covered by the port: 0 test above.
-  test.skipIf(!isLinux)("workers listening on a fixed port share it without EADDRINUSE", async () => {
-    // Previously the primary's RoundRobinHandle bound the port exclusively
-    // and the worker's own Bun.listen() on the same port failed with
-    // "Failed to listen at ::".
-    using dir = tempDir("cluster-net-fixed-port", {
-      "index.ts": `
+  test.skipIf(!isLinux)(
+    "workers listening on a fixed port share it without EADDRINUSE",
+    async () => {
+      // Previously the primary's RoundRobinHandle bound the port exclusively
+      // and the worker's own Bun.listen() on the same port failed with
+      // "Failed to listen at ::".
+      using dir = tempDir("cluster-net-fixed-port", {
+        "index.ts": `
 import cluster from "node:cluster";
 import net from "node:net";
 
@@ -278,9 +282,11 @@ if (cluster.isPrimary) {
           if (msg === "listening") {
             ready++;
             if (ready === 2) {
-              // Make several connections; SO_REUSEPORT should distribute them.
+              // Make enough connections that SO_REUSEPORT hashing is
+              // effectively guaranteed to hit both workers (P(all-same)
+              // with 64 conns and 2 listeners is ~1e-19).
               let done = 0;
-              const total = 16;
+              const total = 64;
               for (let j = 0; j < total; j++) {
                 const c = net.connect(port, "127.0.0.1");
                 c.on("data", (d) => {
@@ -315,20 +321,22 @@ if (cluster.isPrimary) {
   });
 }
 `,
-    });
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "index.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const result = JSON.parse(stdout.trim());
-    // Both workers should have handled at least one connection.
-    expect(result.responders).toEqual(["worker-1", "worker-2"]);
-    expect(exitCode).toBe(0);
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const result = JSON.parse(stdout.trim());
+      // Both workers should have handled at least one connection.
+      expect(result.responders).toEqual(["worker-1", "worker-2"]);
+      expect(exitCode).toBe(0);
+    },
+    20_000,
+  );
 });

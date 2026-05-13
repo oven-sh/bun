@@ -52,9 +52,7 @@ public:
     bool m_isExitCodeObservable = false;
     bool m_sourceMapsEnabled = false;
 
-    static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable | OverridesGetOwnPropertySlot;
-
-    static bool getOwnPropertySlot(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
+    static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     JSValue constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject);
     void queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& args);

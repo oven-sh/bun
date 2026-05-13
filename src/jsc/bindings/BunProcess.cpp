@@ -2724,14 +2724,17 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
     auto* globalObject = processObject->globalObject();
     if (Bun__GlobalObject__hasIPC(globalObject)) {
         auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
         JSC::JSFunction* getControl = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetChannelCodeGenerator(vm), globalObject);
         JSC::MarkedArgumentBuffer args;
         JSC::CallData callData = JSC::getCallData(getControl);
 
         auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getControl, callData, globalObject->globalThis(), args);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return jsUndefined();
+        }
         return result;
     } else {
         return jsUndefined();
@@ -3897,22 +3900,42 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
 // return require.cache.get(Bun.main)
 static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // PropertyCallback initializers must not leave an exception pending or
+    // return an empty JSValue: JSC's setUpStaticFunctionSlot will putDirect
+    // the result and report the slot as found regardless, which violates the
+    // !scope.exception() || !hasSlot invariant in JSValue::get.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(processObject->globalObject());
+    auto clear = [&]() -> JSValue {
+        (void)scope.tryClearException();
+        return jsUndefined();
+    };
     auto* bun = globalObject->bunObject();
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]]
+        return clear();
     auto& builtinNames = Bun::builtinNames(vm);
     JSValue mainValue = bun->get(globalObject, builtinNames.mainPublicName());
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]]
+        return clear();
     auto* requireMap = globalObject->requireMap();
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]]
+        return clear();
     JSValue mainModule = requireMap->get(globalObject, mainValue);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]]
+        return clear();
     return mainModule;
 }
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
+    // PropertyCallback initializers must not leave an exception pending or
+    // return an empty JSValue: JSC's setUpStaticFunctionSlot will putDirect
+    // the result and report the slot as found regardless, which violates the
+    // !scope.exception() || !hasSlot invariant in JSValue::get. On stack
+    // overflow profiledCall returns the Exception cell itself, so also avoid
+    // caching that into m_nextTickFunction.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
     JSNextTickQueue* nextTickQueueObject;
     if (!globalObject->m_nextTickQueue) {
         nextTickQueueObject = JSNextTickQueue::create(globalObject);
@@ -3930,8 +3953,10 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
 
     JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
-    if (vm.exceptionForInspection()) [[unlikely]]
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
         return jsUndefined();
+    }
     if (nextTickFunction && nextTickFunction.isObject()) {
         this->m_nextTickFunction.set(vm, this, nextTickFunction.getObject());
     }
@@ -4359,41 +4384,6 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
 const JSC::ClassInfo Process::s_info
     = { "Process"_s, &Base::s_info, &processObjectTable, nullptr,
           CREATE_METHOD_TABLE(Process) };
-
-bool Process::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
-{
-    VM& vm = JSC::getVM(globalObject);
-    auto* thisObject = uncheckedDowncast<Process>(object);
-    bool hadException = !!vm.exceptionForInspection();
-    unsigned attributes;
-    bool wasDirect = isValidOffset(thisObject->getDirectOffset(vm, propertyName, attributes));
-
-    bool result = Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
-    if (result) [[likely]] {
-        // Several lazy PropertyCallback initializers in this class (nextTick,
-        // mainModule, channel, stdin/stdout/stderr, ...) call into JavaScript
-        // and can throw (e.g. stack overflow, termination). JSC's
-        // setUpStaticFunctionSlot does not check for exceptions and will both
-        // putDirect the callback result (which on throw may be empty or the
-        // Exception cell returned from executeCallImpl) and report the slot as
-        // found, violating the !scope.exception() || !hasSlot invariant in
-        // JSValue::get. If that happened, replace the bogus reified value with
-        // undefined and report the slot as not found so the exception
-        // propagates to the caller. Only do this when the exception originated
-        // from this lookup and the property was not already a direct own
-        // property, so a pre-existing exception or user-assigned value is
-        // never clobbered.
-        if (!hadException && vm.exceptionForInspection()) [[unlikely]] {
-            if (!wasDirect) {
-                PropertyOffset offset = thisObject->getDirectOffset(vm, propertyName, attributes);
-                if (isValidOffset(offset))
-                    thisObject->putDirectOffset(vm, offset, jsUndefined());
-            }
-            return false;
-        }
-    }
-    return result;
-}
 
 void Process::finishCreation(JSC::VM& vm)
 {

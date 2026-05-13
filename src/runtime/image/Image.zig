@@ -955,6 +955,13 @@ pub const PipelineTask = struct {
             break :blk owned_file.?;
         } else this.input.slice();
 
+        this.result = this.runInner(input) catch |e| .{ .err = e };
+    }
+
+    /// Body of `run()` once the encoded bytes are in memory. Split out so the
+    /// five decode/transform/encode stages can use plain `try` and the caller
+    /// folds any `codecs.Error` into `Result.err` once.
+    fn runInner(this: *PipelineTask, input: []const u8) codecs.Error!Result {
         // Header-only fast path for `.metadata()` — Sharp parses just the
         // IHDR/SOF/VP8 header; we used to decode the full RGBA buffer first
         // (~70× slower on a 1920×1080 PNG). EXIF orientation only swaps the
@@ -967,16 +974,12 @@ pub const PipelineTask = struct {
                     const t = readOrientation(input, p.format).transform();
                     if (t.rotate == 90 or t.rotate == 270) std.mem.swap(u32, &w, &h);
                 }
-                this.result = .{ .meta = .{ .w = w, .h = h, .format = p.format } };
-                return;
+                return .{ .meta = .{ .w = w, .h = h, .format = p.format } };
             } else |e| switch (e) {
                 // HEIC/AVIF have no header probe — fall through to full decode
                 // via the system backend.
                 error.UnsupportedOnPlatform => {},
-                else => {
-                    this.result = .{ .err = e };
-                    return;
-                },
+                else => return e,
             }
         }
 
@@ -1005,10 +1008,7 @@ pub const PipelineTask = struct {
             break :blk .{ .target_w = tw, .target_h = th };
         } else .{};
 
-        var decoded = codecs.decode(input, this.max_pixels, hint) catch |e| {
-            this.result = .{ .err = e };
-            return;
-        };
+        var decoded = try codecs.decode(input, this.max_pixels, hint);
         defer decoded.deinit();
 
         // .metadata on HEIC/AVIF/TIFF reaches here because probe() has no
@@ -1022,8 +1022,7 @@ pub const PipelineTask = struct {
             var w = decoded.width;
             var h = decoded.height;
             if (orient_swaps_axes) std.mem.swap(u32, &w, &h);
-            this.result = .{ .meta = .{ .w = w, .h = h, .format = src_format } };
-            return;
+            return .{ .meta = .{ .w = w, .h = h, .format = src_format } };
         }
 
         // EXIF auto-orient: applied BEFORE any user op so resize targets and
@@ -1031,20 +1030,12 @@ pub const PipelineTask = struct {
         // Covers JPEG via the Zig APP1 walker and HEIC/TIFF/AVIF via the
         // system backend (ImageIO on macOS, WIC on Windows), whose decoders
         // hand back pixels in their *stored* orientation. (#30235)
-        if (orient != .normal) applyOrientation(&decoded, orient) catch |e| {
-            this.result = .{ .err = e };
-            return;
-        };
+        if (orient != .normal) try applyOrientation(&decoded, orient);
 
-        if (this.kind == .placeholder) {
-            this.result = makePlaceholder(decoded.rgba, decoded.width, decoded.height) catch |e| .{ .err = e };
-            return;
-        }
+        if (this.kind == .placeholder)
+            return try makePlaceholder(decoded.rgba, decoded.width, decoded.height);
 
-        this.applyPipeline(&decoded) catch |e| {
-            this.result = .{ .err = e };
-            return;
-        };
+        try this.applyPipeline(&decoded);
 
         // No format method chained ⇒ re-encode in the source format. For
         // decode-only sources (bmp/tiff/gif) that would dead-end in the
@@ -1064,12 +1055,8 @@ pub const PipelineTask = struct {
         // Jpegli XYB) as sRGB and visibly shifts the colours — see #30197.
         // JPEG/PNG/WebP embed it; HEIC/AVIF via the system backend do not.
         if (enc.icc_profile == null) enc.icc_profile = decoded.icc_profile;
-        const out = codecs.encode(decoded.rgba, decoded.width, decoded.height, enc) catch |e| {
-            this.result = .{ .err = e };
-            return;
-        };
-
-        this.result = .{ .encoded = .{ .out = out, .format = enc.format, .w = decoded.width, .h = decoded.height } };
+        const out = try codecs.encode(decoded.rgba, decoded.width, decoded.height, enc);
+        return .{ .encoded = .{ .out = out, .format = enc.format, .w = decoded.width, .h = decoded.height } };
     }
 
     /// `.placeholder()` body — runs on the worker. Input is the decoded RGBA

@@ -4292,7 +4292,7 @@ extern "C" void Bun__ConsoleObject__onStdioWriteError(Zig::GlobalObject* global,
     JSValue listenerCountFn = streamObj->get(global, Identifier::fromString(vm, "listenerCount"_s));
     if (scope.exception()) [[unlikely]]
         (void)scope.tryClearException();
-    if (listenerCountFn.isCallable()) {
+    else if (listenerCountFn.isCallable()) {
         auto lcCallData = JSC::getCallData(listenerCountFn);
         JSC::MarkedArgumentBuffer lcArgs;
         lcArgs.append(errorString);
@@ -4308,7 +4308,7 @@ extern "C" void Bun__ConsoleObject__onStdioWriteError(Zig::GlobalObject* global,
         JSValue onceFn = streamObj->get(global, Identifier::fromString(vm, "once"_s));
         if (scope.exception()) [[unlikely]]
             (void)scope.tryClearException();
-        if (onceFn.isCallable()) {
+        else if (onceFn.isCallable()) {
             auto callData = JSC::getCallData(onceFn);
             JSC::MarkedArgumentBuffer onceArgs;
             onceArgs.append(errorString);

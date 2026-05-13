@@ -21,7 +21,11 @@ fs: *bun.fs.FileSystem,
 allocator: std.mem.Allocator,
 watchloop_handle: ?std.Thread.Id = null,
 cwd: string,
-thread: std.Thread = undefined,
+/// Non-null once `start()` has been called. Set synchronously by the
+/// thread that calls `start()`, so `deinit()` can reliably tell whether a
+/// watcher thread was spawned without racing against the spawned thread
+/// writing `watchloop_handle`.
+thread: ?std.Thread = null,
 running: bool = true,
 close_descriptors: bool = false,
 
@@ -112,17 +116,31 @@ pub fn writeTraceEvents(this: *Watcher, events: []WatchEvent, changed_files: []?
 }
 
 pub fn start(this: *Watcher) !void {
-    bun.assert(this.watchloop_handle == null);
+    bun.assert(this.thread == null);
     this.thread = try std.Thread.spawn(.{}, threadMain, .{this});
 }
 
 pub fn deinit(this: *Watcher, close_descriptors: bool) void {
-    if (this.watchloop_handle != null) {
+    if (this.thread != null) {
+        // A watcher thread has been spawned. It may not have begun running
+        // yet (on Windows especially, `watchloop_handle` can still be null
+        // here), so we must not free `this` synchronously — the thread owns
+        // cleanup once spawned. Previously this branch keyed off
+        // `watchloop_handle`, which is written by the spawned thread; that
+        // raced with `start()` and caused a use-after-free in `threadMain`
+        // when the dev server was torn down immediately after creation
+        // (e.g. listen failure). See #21017.
         this.mutex.lock();
         defer this.mutex.unlock();
         this.close_descriptors = close_descriptors;
         this.running = false;
+        // Wake the thread out of its blocking wait so it can observe
+        // `running == false` and exit. Without this, the thread (and this
+        // Watcher) leak until the next filesystem event — which may never
+        // come if nothing is being watched yet.
+        this.platform.wake();
     } else {
+        // start() was never called; no thread can be using `this`.
         if (close_descriptors and this.running) {
             const fds = this.watchlist.items(.fd);
             for (fds) |fd| {

@@ -30,6 +30,10 @@ read_ptr: ?struct {
 } = null,
 
 watch_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+/// Set by `wake()` so the watcher thread can exit its read loop without
+/// blocking in the inotify `read()` syscall. Checked immediately after
+/// `Futex.waitForever` returns.
+shutdown_requested: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 /// nanoseconds
 coalesce_interval: isize = 100_000,
 
@@ -116,10 +120,12 @@ pub fn read(this: *INotifyWatcher) bun.sys.Maybe([]const *align(1) Event) {
     var i: u32 = 0;
     const read_eventlist_bytes = if (this.read_ptr) |ptr| brk: {
         Futex.waitForever(&this.watch_count, 0);
+        if (this.shutdown_requested.load(.acquire)) return .{ .result = &.{} };
         i = ptr.i;
         break :brk this.eventlist_bytes[0..ptr.len];
     } else outer: while (true) {
         Futex.waitForever(&this.watch_count, 0);
+        if (this.shutdown_requested.load(.acquire)) return .{ .result = &.{} };
 
         const rc = std.posix.system.read(
             this.fd.cast(),
@@ -222,6 +228,17 @@ pub fn stop(this: *INotifyWatcher) void {
         this.fd.close();
         this.fd = bun.invalid_fd;
     }
+}
+
+/// Wake the watcher thread from `Futex.waitForever` so it can observe
+/// `Watcher.running == false` and exit instead of blocking forever on an
+/// inotify fd with nothing to watch. Best-effort: if the thread is already
+/// inside the blocking `read()` (i.e. there are active watches), it will
+/// not be woken until the next filesystem event — no worse than before.
+pub fn wake(this: *INotifyWatcher) void {
+    this.shutdown_requested.store(true, .release);
+    _ = this.watch_count.fetchAdd(1, .release);
+    Futex.wake(&this.watch_count, std.math.maxInt(u32));
 }
 
 /// Repeatedly called by the main watcher until the watcher is terminated.

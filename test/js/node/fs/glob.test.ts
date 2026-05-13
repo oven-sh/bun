@@ -212,23 +212,25 @@ describe("fs.promises.glob", () => {
   it("can filter out files", async () => {
     const exclude = (path: string) => path.endsWith(".js");
     const expected = isWindows ? ["a\\bar.txt"] : ["a/bar.txt"];
-    expect(Array.fromAsync(fs.promises.glob("a/*", { cwd: tmp, exclude }))).resolves.toStrictEqual(expected);
+    await expect(Array.fromAsync(fs.promises.glob("a/*", { cwd: tmp, exclude }))).resolves.toStrictEqual(expected);
   });
 
   it("can filter out files (2)", async () => {
     const exclude = ["**/*.js"];
     const expected = isWindows ? ["a\\bar.txt"] : ["a/bar.txt"];
-    expect(Array.fromAsync(fs.promises.glob("a/*", { cwd: tmp, exclude }))).resolves.toStrictEqual(expected);
+    await expect(Array.fromAsync(fs.promises.glob("a/*", { cwd: tmp, exclude }))).resolves.toStrictEqual(expected);
 
     const exclude2 = ["folder.test/another-folder"];
     const expected2 = isWindows ? ["folder.test\\file.txt"] : ["folder.test/file.txt"];
-    expect(
+    await expect(
       Array.fromAsync(fs.promises.glob("folder.test/**/*", { cwd: tmp, exclude: exclude2 })),
     ).resolves.toStrictEqual(expected2);
   });
 
   it("supports arrays of patterns", async () => {
     const expected = isWindows ? ["a\\bar.txt", "a\\baz.js"] : ["a/bar.txt", "a/baz.js"];
-    expect(Array.fromAsync(fs.promises.glob(["a/bar.txt", "a/baz.js"], { cwd: tmp }))).resolves.toStrictEqual(expected);
+    await expect(Array.fromAsync(fs.promises.glob(["a/bar.txt", "a/baz.js"], { cwd: tmp }))).resolves.toStrictEqual(
+      expected,
+    );
   });
 }); // </fs.promises.glob>

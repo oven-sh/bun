@@ -2294,7 +2294,7 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
         const tunnel_poolable = if (this.proxy_tunnel) |t|
             this.state.request_stage == .done and
                 t.write_buffer.isEmpty() and
-                if (t.wrapper) |*w| !w.isShutdown() else false
+                if (t.wrapper) |*w| !w.isShutdown() and !w.flags.fatal_error else false
         else
             true;
 

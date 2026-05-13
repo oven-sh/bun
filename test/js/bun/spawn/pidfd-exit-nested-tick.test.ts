@@ -52,6 +52,13 @@ test.skipIf(!isLinux)(
           // sibling pidfd events queued after this one in the outer batch
           // are dropped. With EPOLLONESHOT those pidfds are now disarmed in
           // the kernel with no re-arm path.
+          //
+          // Note: since #30595, `.resolves` on a still-pending promise no
+          // longer calls `waitForPromise`, so this line no longer forces
+          // the synchronous nested tick that originally triggered the bug.
+          // The test still validates that every child fires onExit (the
+          // level-triggered pidfd registration makes that robust regardless
+          // of whether the nested-tick drop path is exercised).
           if (!nested) {
             nested = true;
             expect(Bun.sleep(1)).resolves.toBe(undefined);

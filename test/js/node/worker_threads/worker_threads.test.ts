@@ -443,9 +443,9 @@ describe("getHeapSnapshot", () => {
     });
   });
 
-  test("returns a rejected promise if the worker is not running", () => {
+  test("returns a rejected promise if the worker is not running", async () => {
     const worker = new Worker("", { eval: true });
-    expect(worker.getHeapSnapshot()).rejects.toMatchObject({
+    await expect(worker.getHeapSnapshot()).rejects.toMatchObject({
       name: "Error",
       code: "ERR_WORKER_NOT_RUNNING",
       message: "Worker instance not running",

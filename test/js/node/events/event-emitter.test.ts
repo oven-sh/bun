@@ -859,7 +859,7 @@ test("addAbortListener", async () => {
   const mocked = mock();
   EventEmitter.addAbortListener(controller.signal, mocked);
   controller.abort();
-  expect(promise).rejects.toThrow("aborted");
+  await expect(promise).rejects.toThrow("aborted");
   expect(mocked).toHaveBeenCalled();
 });
 
@@ -872,7 +872,7 @@ test("using addAbortListener", async () => {
     using aborty = EventEmitter.addAbortListener(controller.signal, mocked);
   }
   controller.abort();
-  expect(promise).rejects.toThrow("aborted");
+  await expect(promise).rejects.toThrow("aborted");
   expect(mocked).not.toHaveBeenCalled();
 });
 

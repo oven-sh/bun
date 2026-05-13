@@ -489,7 +489,7 @@ describe("streaming", () => {
         const response = await fetch(url);
         expect(response.status).toBe(402);
         expect(response.headers.get("X-Hey")).toBe("123");
-        expect(response.text()).resolves.toBe("");
+        await expect(response.text()).resolves.toBe("");
         subprocess.kill();
       });
 
@@ -514,7 +514,7 @@ describe("streaming", () => {
         const response = await fetch(url);
         expect(response.status).toBe(402);
         expect(response.headers.get("X-Hey")).toBe("123");
-        expect(response.text()).resolves.toBe("");
+        await expect(response.text()).resolves.toBe("");
         subprocess.kill();
       });
 
@@ -1650,7 +1650,7 @@ it("should support promise returned from error", async () => {
   {
     const resp = await fetch(new URL("async-fulfilled", url));
     expect(resp.status).toBe(200);
-    expect(resp.text()).resolves.toBe("Async fulfilled");
+    await expect(resp.text()).resolves.toBe("Async fulfilled");
   }
 
   {
@@ -1661,7 +1661,7 @@ it("should support promise returned from error", async () => {
   {
     const resp = await fetch(new URL("async-pending", url));
     expect(resp.status).toBe(200);
-    expect(resp.text()).resolves.toBe("Async pending");
+    await expect(resp.text()).resolves.toBe("Async pending");
   }
 
   {
@@ -1787,7 +1787,7 @@ it.concurrent("should work with dispose keyword", async () => {
     url = server.url;
     expect((await fetch(url)).status).toBe(200);
   }
-  expect(fetch(url)).rejects.toThrow();
+  await expect(fetch(url)).rejects.toThrow();
 });
 
 // prettier-ignore
@@ -2059,9 +2059,9 @@ it.concurrent(
       const res = await fetch(new URL(pathname, server.url.origin));
       expect(res.status).toBe(200);
       if (success) {
-        expect(res.text()).resolves.toBe("Hello, World!");
+        await expect(res.text()).resolves.toBe("Hello, World!");
       } else {
-        expect(res.text()).rejects.toThrow(/The socket connection was closed unexpectedly./);
+        await expect(res.text()).rejects.toThrow(/The socket connection was closed unexpectedly./);
       }
     }
     await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);
@@ -2157,7 +2157,7 @@ it.concurrent(
     expect(server.timeout).toBeFunction();
     const res = await fetch(new URL("/long-timeout", server.url.origin));
     expect(res.status).toBe(200);
-    expect(res.text()).resolves.toBe("Hello, World!");
+    await expect(res.text()).resolves.toBe("Hello, World!");
   },
   20_000,
 );

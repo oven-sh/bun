@@ -108,7 +108,15 @@ pub const NapiHandleScope = opaque {
     /// callbacks, as the value must remain alive as long as the handle scope is active, even if the
     /// native module doesn't keep it visible on the stack.
     pub fn append(env: *NapiEnv, value: jsc.JSValue) void {
-        NapiHandleScope__append(env, @intFromEnum(value));
+        // Only cells need to be kept alive by the handle scope. Non-cell values (numbers,
+        // booleans, null, undefined) are immediate values encoded directly in the JSValue and
+        // cannot be garbage collected, so tracking them wastes memory. This matches the isCell()
+        // check in the C++ toNapi() helper (napi.h). Without this, napi_create_int64 and friends
+        // would grow the handle scope's storage vector for every number returned, which is
+        // significant for native modules that return large arrays of numbers.
+        if (value.isCell()) {
+            NapiHandleScope__append(env, @intFromEnum(value));
+        }
     }
 
     /// Move a value from the current handle scope (which must be escapable) to the reserved escape

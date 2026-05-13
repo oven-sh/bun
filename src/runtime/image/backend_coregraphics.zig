@@ -44,14 +44,13 @@ pub fn orientation(bytes: []const u8) u8 {
 }
 
 const CG_OK = 0;
-const CG_UNAVAILABLE = 1;
 const CG_DECODE_FAILED = 2;
 const CG_ENCODE_FAILED = 3;
 const CG_TOO_MANY_PIXELS = 4;
 
-fn mapErr(rc: i32) BackendError {
+inline fn check(rc: i32) BackendError!void {
     return switch (rc) {
-        CG_UNAVAILABLE => error.BackendUnavailable,
+        CG_OK => {},
         CG_DECODE_FAILED => error.DecodeFailed,
         CG_ENCODE_FAILED => error.EncodeFailed,
         CG_TOO_MANY_PIXELS => error.TooManyPixels,
@@ -64,19 +63,13 @@ pub fn decode(bytes: []const u8, max_pixels: u64) BackendError!codecs.Decoded {
     var h: u32 = 0;
     // Phase 1: dimensions only (out=null) so we can allocate in
     // bun.default_allocator like every other decode path.
-    switch (bun_coregraphics_decode(bytes.ptr, bytes.len, max_pixels, &w, &h, null)) {
-        CG_OK => {},
-        else => |rc| return mapErr(rc),
-    }
+    try check(bun_coregraphics_decode(bytes.ptr, bytes.len, max_pixels, &w, &h, null));
     const out = try bun.default_allocator.alloc(u8, @as(usize, w) * h * 4);
     errdefer bun.default_allocator.free(out);
     // Phase 2: render. The C side re-creates the CGImageSource (cheap — the
     // header parse is the only repeated work) so we don't have to thread an
     // opaque handle across the boundary.
-    switch (bun_coregraphics_decode(bytes.ptr, bytes.len, max_pixels, &w, &h, out.ptr)) {
-        CG_OK => {},
-        else => |rc| return mapErr(rc),
-    }
+    try check(bun_coregraphics_decode(bytes.ptr, bytes.len, max_pixels, &w, &h, out.ptr));
     return .{ .rgba = out, .width = w, .height = h };
 }
 
@@ -88,17 +81,11 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
     const fmt: i32 = @intFromEnum(opts.format);
     var len: usize = 0;
     // Phase 1: encode into a thread-local CFData inside the shim, return size.
-    switch (bun_coregraphics_encode(rgba.ptr, width, height, fmt, opts.quality, null, &len)) {
-        CG_OK => {},
-        else => |rc| return mapErr(rc),
-    }
+    try check(bun_coregraphics_encode(rgba.ptr, width, height, fmt, opts.quality, null, &len));
     const out = try bun.default_allocator.alloc(u8, len);
     errdefer bun.default_allocator.free(out);
     // Phase 2: copy out and release the CFData.
-    switch (bun_coregraphics_encode(rgba.ptr, width, height, fmt, opts.quality, out.ptr, &len)) {
-        CG_OK => {},
-        else => |rc| return mapErr(rc),
-    }
+    try check(bun_coregraphics_encode(rgba.ptr, width, height, fmt, opts.quality, out.ptr, &len));
     return out[0..len];
 }
 
@@ -118,24 +105,21 @@ pub fn scale(src: []const u8, sw: u32, sh: u32, dw: u32, dh: u32, filter: codecs
     if (filter != .lanczos3) return error.BackendUnavailable;
     const out = try bun.default_allocator.alloc(u8, @as(usize, dw) * dh * 4);
     errdefer bun.default_allocator.free(out);
-    if (bun_coregraphics_scale(src.ptr, sw, sh, out.ptr, dw, dh) != CG_OK)
-        return error.BackendUnavailable;
+    try check(bun_coregraphics_scale(src.ptr, sw, sh, out.ptr, dw, dh));
     return out;
 }
 
 pub fn rotate(src: []const u8, w: u32, h: u32, quarters: u32) BackendError![]u8 {
     const out = try bun.default_allocator.alloc(u8, @as(usize, w) * h * 4);
     errdefer bun.default_allocator.free(out);
-    if (bun_coregraphics_rotate90(src.ptr, w, h, out.ptr, quarters) != CG_OK)
-        return error.BackendUnavailable;
+    try check(bun_coregraphics_rotate90(src.ptr, w, h, out.ptr, quarters));
     return out;
 }
 
 pub fn flip(src: []const u8, w: u32, h: u32, horizontal: bool) BackendError![]u8 {
     const out = try bun.default_allocator.alloc(u8, @as(usize, w) * h * 4);
     errdefer bun.default_allocator.free(out);
-    if (bun_coregraphics_reflect(src.ptr, w, h, out.ptr, @intFromBool(horizontal)) != CG_OK)
-        return error.BackendUnavailable;
+    try check(bun_coregraphics_reflect(src.ptr, w, h, out.ptr, @intFromBool(horizontal)));
     return out;
 }
 

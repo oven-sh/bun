@@ -2643,13 +2643,13 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, Encod
 // builtin JS (`$requireESM`, `$loadEsmIntoCjs`, `$internalRequire`), never via
 // `getDirect`, so a custom accessor is a transparent substitute. (`@create*ReadableStream`
 // next to these *do* have `getDirect` callers and must stay eager.)
-#define BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getterName, codeGenerator, attributes)                              \
-    JSC_DEFINE_CUSTOM_GETTER(getterName, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName name)) \
-    {                                                                                                            \
-        auto& vm = JSC::getVM(lexicalGlobalObject);                                                              \
-        auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);                          \
+#define BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getterName, codeGenerator, attributes)                                           \
+    JSC_DEFINE_CUSTOM_GETTER(getterName, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName name))            \
+    {                                                                                                                          \
+        auto& vm = JSC::getVM(lexicalGlobalObject);                                                                            \
+        auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);                                        \
         JSC::JSFunction* fn = globalObject->putDirectBuiltinFunction(vm, globalObject, name, codeGenerator(vm), (attributes)); \
-        return JSValue::encode(fn);                                                                              \
+        return JSValue::encode(fn);                                                                                            \
     }
 BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getRequireESMBuiltin, commonJSRequireESMCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
 BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getLoadEsmIntoCjsBuiltin, commonJSLoadEsmIntoCjsCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)

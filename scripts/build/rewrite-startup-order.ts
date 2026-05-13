@@ -211,8 +211,7 @@ function definitionIdents(mangled: string): { path: string[]; withArg: string[] 
   let allowArgCapture = s[0] === "I"; // only the outermost instantiation counts
 
   const isLower = (c: string) => c >= "a" && c <= "z";
-  const isB62 = (c: string) =>
-    (c >= "0" && c <= "9") || (c >= "a" && c <= "z") || (c >= "A" && c <= "Z");
+  const isB62 = (c: string) => (c >= "0" && c <= "9") || (c >= "a" && c <= "z") || (c >= "A" && c <= "Z");
   const isDigit = (c: string) => c >= "0" && c <= "9";
   const isHex = (c: string) => (c >= "0" && c <= "9") || (c >= "a" && c <= "f") || (c >= "A" && c <= "F");
   const bail = (): never => {
@@ -420,7 +419,8 @@ function definitionIdents(mangled: string): { path: string[]; withArg: string[] 
     if (s[i] === "U") i++; // unsafe
     if (s[i] === "K") {
       i++;
-      if (s[i] === "C") i++; // extern "C"
+      if (s[i] === "C")
+        i++; // extern "C"
       else undisambiguatedIdent(null); // extern "<abi>"
     }
     while (s[i] !== "E") {

@@ -1,6 +1,17 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { closeSync, copyFileSync, cpSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync, writeSync } from "fs";
+import {
+  closeSync,
+  copyFileSync,
+  cpSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "fs";
 import { bunEnv, bunExe, isDebug, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 

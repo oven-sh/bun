@@ -663,7 +663,13 @@ impl NodeHTTPResponse {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_undef::<3>();
+        // PORT NOTE: `arguments_undef::<3>()` returns `Arguments<3>` — a 32-byte
+        // `[JSValue; 3]` + `len` aggregate — *by value*, which `cargo asm` shows
+        // lowered to a per-`writeHead` `vmovups` stack copy on the node:http hot
+        // path. The borrowed `arguments()` slice (ptr+len, 16 bytes) carries the
+        // same information; missing / `null` slots are padded to `undefined`
+        // inline below exactly as the `Arguments<3>` form did.
+        let arguments = callframe.arguments();
 
         if self.is_requested_completed_or_ended() {
             return err_throw(
@@ -686,23 +692,16 @@ impl NodeHTTPResponse {
         let state = raw_response.state();
         handle_ended_if_necessary(state, global_object)?;
 
-        let status_code_value: JSValue = if arguments.len > 0 {
-            arguments.ptr[0]
-        } else {
-            JSValue::UNDEFINED
+        let status_code_value: JSValue =
+            arguments.first().copied().unwrap_or(JSValue::UNDEFINED);
+        let status_message_value: JSValue = match arguments.get(1).copied() {
+            Some(v) if v != JSValue::NULL => v,
+            _ => JSValue::UNDEFINED,
         };
-        let status_message_value: JSValue =
-            if arguments.len > 1 && arguments.ptr[1] != JSValue::NULL {
-                arguments.ptr[1]
-            } else {
-                JSValue::UNDEFINED
-            };
-        let headers_object_value: JSValue =
-            if arguments.len > 2 && arguments.ptr[2] != JSValue::NULL {
-                arguments.ptr[2]
-            } else {
-                JSValue::UNDEFINED
-            };
+        let headers_object_value: JSValue = match arguments.get(2).copied() {
+            Some(v) if v != JSValue::NULL => v,
+            _ => JSValue::UNDEFINED,
+        };
 
         let status_code: i32 = if !status_code_value.is_undefined() {
             global_object.validate_integer_range::<i32>(
@@ -1805,16 +1804,19 @@ impl NodeHTTPResponse {
     }
 
     pub fn cork(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
-        if arguments.len == 0 {
+        // PORT NOTE: borrow the `arguments()` slice (ptr+len) instead of
+        // materialising `Arguments<1>` by value — `cork` runs on every
+        // `res.end()`, so the small-aggregate copy + bounds branch are pure
+        // per-request overhead with no upstream equivalent.
+        let Some(&corked_fn) = callframe.arguments().first() else {
             return Err(global_object.throw_not_enough_arguments("cork", 1, 0));
-        }
+        };
 
-        if !arguments.ptr[0].is_callable() {
+        if !corked_fn.is_callable() {
             return Err(global_object.throw_invalid_argument_type_value(
                 b"cork",
                 b"function",
-                arguments.ptr[0],
+                corked_fn,
             ));
         }
 
@@ -1833,14 +1835,14 @@ impl NodeHTTPResponse {
         let mut result: JSValue = JSValue::ZERO;
         let mut is_exception: bool = false;
 
-        // R-2: this method now takes `&self`, so the `noalias` miscompile
+        // R-2: this method takes `&self`, so the `noalias` miscompile
         // (b818e70e1c57) is structurally impossible — `&T` is `readonly`, not
         // `noalias`, so re-entrant writes through other `&self` views are
-        // sound. The `black_box` launder is KEPT as defense-in-depth until
-        // Phase 1 (codegen `sharedThis`) lands and the outer thunk stops
-        // emitting `&mut NodeHTTPResponse`. `BackRef` is `repr(transparent)`
-        // over `NonNull<Self>` so the laundered pointer escapes identically.
-        let this = bun_ptr::BackRef::from(core::hint::black_box(ptr::NonNull::from(self)));
+        // sound. No `black_box` launder is needed; it was a hard optimization
+        // barrier on the node:http hot path (`cork` runs on every `res.end()`)
+        // that forced `self` to memory and blocked inlining/regalloc of the
+        // cork prologue, with no equivalent in upstream Zig.
+        let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
         // BACKREF: `this` is the live `m_ctx` heap payload; `ref_()` keeps it
         // alive across re-entry.
         this.ref_();
@@ -1853,20 +1855,10 @@ impl NodeHTTPResponse {
                 // Capture `this` so a `self`-derived pointer reaches the FFI
                 // closure-data slot (see PORT NOTE above).
                 let _escape = this;
-                handle_corked(
-                    global_object,
-                    arguments.ptr[0],
-                    &mut result,
-                    &mut is_exception,
-                )
+                handle_corked(global_object, corked_fn, &mut result, &mut is_exception)
             });
         } else {
-            handle_corked(
-                global_object,
-                arguments.ptr[0],
-                &mut result,
-                &mut is_exception,
-            );
+            handle_corked(global_object, corked_fn, &mut result, &mut is_exception);
         }
 
         let ret: JsResult<JSValue> = if is_exception {

@@ -578,7 +578,7 @@ registry = "https://username:password@registry.npmjs.org"
 
 Force **every** package to resolve through a single registry, overriding all other registry configuration on the machine — `install.registry`, `install.scopes`, `.npmrc`, `NPM_CONFIG_REGISTRY`, and the `--registry` flag.
 
-This is intended for centrally-managed devices: set it once in the global `~/.bunfig.toml` (or via the `BUN_CONFIG_FORCE_REGISTRY` environment variable) and `bun install` will always use that registry regardless of what any project checks in.
+This is intended for centrally-managed devices: set it once in the global `~/.bunfig.toml` (or via the `BUN_CONFIG_FORCE_REGISTRY` environment variable) and `bun install` will route all registry resolution through it regardless of per-project configuration.
 
 ```toml title="~/.bunfig.toml" icon="settings"
 [install]
@@ -588,6 +588,8 @@ forceRegistry = { url = "https://npm.corp.example.com/", token = "$CORP_NPM_TOKE
 ```
 
 Once set in the global bunfig, a project-level `bunfig.toml` cannot change or unset it.
+
+`forceRegistry` governs where package manifests and tarballs are resolved from. It does not rewrite non-registry dependency specifiers (e.g. `git:` / `github:` / direct-URL dependencies), nor tarball URLs already baked into an existing `bun.lock` — delete the lockfile to regenerate it against the forced registry.
 
 ### `install.linkWorkspacePackages`
 

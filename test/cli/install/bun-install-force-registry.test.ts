@@ -290,4 +290,27 @@ describe.concurrent("install.forceRegistry", () => {
     });
     expect(forced.auth).toEqual(["Bearer corp-token-456"]);
   });
+
+  test("forceRegistry with basic-auth is not clobbered by an unrelated token", async () => {
+    const forced = makeRegistry();
+    await using _f = forced.server;
+
+    using dir = tempDir("force-registry-basic-auth", {
+      "home/.bunfig.toml": `[install]\nforceRegistry = { url = "${forced.url}", username = "corpuser", password = "corppass" }\n`,
+      // Project config carries a bearer token for a different host — must
+      // NOT be inherited by the forced registry's basic-auth.
+      "project/bunfig.toml": `[install]\ncache = false\nregistry = { url = "http://localhost:1/", token = "project-token" }\n`,
+      "project/package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
+    });
+
+    await runInstall(
+      String(dir),
+      makeEnv(String(dir), {
+        BUN_CONFIG_TOKEN: "developer-npmjs-token",
+      }),
+    );
+
+    expect(forced.hits).toEqual(["/no-deps"]);
+    expect(forced.auth).toEqual(["Basic " + Buffer.from("corpuser:corppass").toString("base64")]);
+  });
 });

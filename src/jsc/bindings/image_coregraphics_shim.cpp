@@ -283,6 +283,23 @@ inline CFRef generalPasteboard(const Syms* s)
     return msg<CFRef>(s, cls, s->sel_registerName("generalPasteboard"));
 }
 
+// Two-phase result hand-off shared by encode/clipboard: each call site keeps
+// its own thread-local `pending` CFData. If `out` is set, copy the stashed
+// bytes there and signal the caller to return CG_OK; otherwise just drop a
+// stale pending result so a fresh probe starts clean.
+inline bool drainPending(const Syms* s, CFRef& pending, uint8_t* out, size_t* out_len)
+{
+    if (!pending) return false;
+    if (out) {
+        long n = s->CFDataGetLength(pending);
+        std::memcpy(out, s->CFDataGetBytePtr(pending), static_cast<size_t>(n));
+        *out_len = static_cast<size_t>(n);
+    }
+    s->CFRelease(pending);
+    pending = nullptr;
+    return out != nullptr;
+}
+
 } // namespace
 
 extern "C" {
@@ -402,18 +419,7 @@ int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t he
     // encode. Safe: each WorkPool thread runs at most one PipelineTask at a
     // time, and the two calls are back-to-back in codecs.zig.
     thread_local CFRef pending = nullptr;
-    if (out && pending) {
-        long n = s->CFDataGetLength(pending);
-        std::memcpy(out, s->CFDataGetBytePtr(pending), static_cast<size_t>(n));
-        *out_len = static_cast<size_t>(n);
-        s->CFRelease(pending);
-        pending = nullptr;
-        return CG_OK;
-    }
-    if (pending) {
-        s->CFRelease(pending);
-        pending = nullptr;
-    }
+    if (drainPending(s, pending, out, out_len)) return CG_OK;
 
     static const char* kUti[] = {
         "public.jpeg", "public.png", "org.webmproject.webp",
@@ -568,19 +574,7 @@ int32_t bun_coregraphics_clipboard(uint8_t* out, size_t* out_len, int32_t probe_
     if (!s) return CG_UNAVAILABLE;
     Pool pool(s);
     thread_local CFRef pending = nullptr;
-
-    if (out && pending) {
-        long n = s->CFDataGetLength(pending);
-        std::memcpy(out, s->CFDataGetBytePtr(pending), static_cast<size_t>(n));
-        *out_len = static_cast<size_t>(n);
-        s->CFRelease(pending);
-        pending = nullptr;
-        return CG_OK;
-    }
-    if (pending) {
-        s->CFRelease(pending);
-        pending = nullptr;
-    }
+    if (drainPending(s, pending, out, out_len)) return CG_OK;
 
     CFRef pb = generalPasteboard(s);
     if (!pb) return CG_UNAVAILABLE;

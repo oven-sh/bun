@@ -776,6 +776,26 @@ pub const RunCommand = struct {
         log_errors: bool,
         store_root_fd: bool,
     ) !*DirInfo {
+        return configureEnvForRunWithOptions(ctx, this_transpiler, env, log_errors, store_root_fd, .{});
+    }
+
+    pub const ConfigureEnvForRunOptions = struct {
+        /// Whether to probe `tsconfig.json` in every ancestor directory while
+        /// reading the directory tree. This is only useful when we're going to
+        /// resolve/transpile a TypeScript entry point; for named package.json
+        /// scripts (the common `bun run <script>` case) it is pure startup
+        /// overhead (extra file reads + JSON parsing per ancestor directory).
+        load_tsconfig_json: bool = true,
+    };
+
+    pub fn configureEnvForRunWithOptions(
+        ctx: Command.Context,
+        this_transpiler: *transpiler.Transpiler,
+        env: ?*DotEnv.Loader,
+        log_errors: bool,
+        store_root_fd: bool,
+        opts: ConfigureEnvForRunOptions,
+    ) !*DirInfo {
         const args = ctx.args;
         this_transpiler.* = try transpiler.Transpiler.init(ctx.allocator, ctx.log, args, env);
         this_transpiler.options.env.behavior = api.DotEnvBehavior.load_all;
@@ -786,8 +806,8 @@ pub const RunCommand = struct {
         this_transpiler.resolver.care_about_scripts = true;
         this_transpiler.resolver.store_fd = store_root_fd;
 
-        this_transpiler.resolver.opts.load_tsconfig_json = true;
-        this_transpiler.options.load_tsconfig_json = true;
+        this_transpiler.resolver.opts.load_tsconfig_json = opts.load_tsconfig_json;
+        this_transpiler.options.load_tsconfig_json = opts.load_tsconfig_json;
 
         this_transpiler.configureLinker();
 
@@ -1694,7 +1714,17 @@ pub const RunCommand = struct {
         const force_using_bun = ctx.debug.run_in_bun;
         var ORIGINAL_PATH: string = "";
         var this_transpiler: transpiler.Transpiler = undefined;
-        const root_dir_info = try configureEnvForRun(ctx, &this_transpiler, null, log_errors, false);
+        // Only probe tsconfig.json across the directory tree when the run target
+        // is a TypeScript entry point we'll actually resolve. Named scripts and
+        // binaries don't need it, and it's a measurable chunk of `bun run`
+        // startup (extra file reads + JSON parsing per ancestor directory).
+        const target_is_typescript = brk: {
+            if (target_name.len == 0) break :brk false;
+            const ext = std.fs.path.extension(target_name);
+            const loader = options.defaultLoaders.get(ext) orelse break :brk false;
+            break :brk loader.isTypeScript();
+        };
+        const root_dir_info = try configureEnvForRunWithOptions(ctx, &this_transpiler, null, log_errors, false, .{ .load_tsconfig_json = target_is_typescript });
         try configurePathForRun(ctx, root_dir_info, &this_transpiler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
         this_transpiler.env.map.put("npm_command", "run-script") catch unreachable;
 

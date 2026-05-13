@@ -740,8 +740,13 @@ pub fn write_module_id(writer: &mut impl core::fmt::Write, module_id: u32) {
 }
 
 // PERF(port): was comptime monomorphization (`comptime CodePointType: type`) — Zig
-// instantiated per code-unit type; Rust callers widen to i32 at the boundary. Profile.
-pub fn can_print_without_escape<const ASCII_ONLY: bool>(c: i32) -> bool {
+// instantiated per code-unit type; Rust callers widen to i32 at the boundary.
+// PERF(port): `ascii_only` is a *runtime* arg (was `const ASCII_ONLY`) so the large
+// callers (`write_pre_quoted_string_inner`, `estimate_length_for_utf8`) collapse to a
+// single monomorphization instead of one per (ascii_only × quote_char × …) combo —
+// see the comment on `write_pre_quoted_string`.
+#[inline]
+pub fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
     if c <= LAST_ASCII as i32 {
         c >= FIRST_ASCII as i32
             && c != i32::from(b'\\')
@@ -750,7 +755,7 @@ pub fn can_print_without_escape<const ASCII_ONLY: bool>(c: i32) -> bool {
             && c != i32::from(b'`')
             && c != i32::from(b'$')
     } else {
-        !ASCII_ONLY
+        !ascii_only
             && c != 0xFEFF
             && c != 0x2028
             && c != 0x2029
@@ -858,13 +863,13 @@ macro_rules! ws {
     }};
 }
 
-pub fn estimate_length_for_utf8<const ASCII_ONLY: bool, const QUOTE_CHAR: u8>(
-    input: &[u8],
-) -> usize {
+// PERF(port): `ascii_only`/`quote_char` are runtime args (were `const`) — collapses
+// the monomorphization fan-out; the inner branches are cheap and well-predicted.
+pub fn estimate_length_for_utf8(input: &[u8], ascii_only: bool, quote_char: u8) -> usize {
     let mut remaining = input;
     let mut len: usize = 2; // for quotes
 
-    while let Some(i) = strings::index_of_needs_escape_for_java_script_string(remaining, QUOTE_CHAR)
+    while let Some(i) = strings::index_of_needs_escape_for_java_script_string(remaining, quote_char)
     {
         let i = i as usize;
         len += i;
@@ -879,7 +884,7 @@ pub fn estimate_length_for_utf8<const ASCII_ONLY: bool, const QUOTE_CHAR: u8>(
             _ => unreachable!(),
         };
         let c = strings::decode_wtf8_rune_t::<i32>(&bytes, char_len, 0);
-        if can_print_without_escape::<ASCII_ONLY>(c) {
+        if can_print_without_escape(c, ascii_only) {
             len += char_len as usize;
         } else if c <= 0xFFFF {
             len += 6;
@@ -900,6 +905,14 @@ pub fn estimate_length_for_utf8<const ASCII_ONLY: bool, const QUOTE_CHAR: u8>(
     len + remaining.len()
 }
 
+/// Thin const-generic facade kept for source-stable call sites (and external
+/// callers in other crates that pass literal const args). It forwards to the
+/// single non-generic-over-(quote/ascii/json) [`write_pre_quoted_string_inner`]
+/// so the large escaping loop is monomorphized once per `(W, ENCODING)` instead
+/// of once per `(W, QUOTE_CHAR, ASCII_ONLY, JSON, ENCODING)` — that fan-out was a
+/// meaningful slice of this crate's `.text`. `#[inline]` so the wrapper itself
+/// (a single tail call) costs nothing.
+#[inline]
 pub fn write_pre_quoted_string<
     W,
     const QUOTE_CHAR: u8,
@@ -913,10 +926,29 @@ pub fn write_pre_quoted_string<
 where
     W: Write + ?Sized,
 {
+    write_pre_quoted_string_inner::<W, ENCODING>(text_in, writer, QUOTE_CHAR, ASCII_ONLY, JSON)
+}
+
+/// `quote_char` / `ascii_only` / `json` are runtime args (were `const`): the
+/// branches on them are cheap and well-predicted, and collapsing the
+/// monomorphizations keeps the hot transpile pages dense (see the facade above).
+/// `ENCODING` stays `const` — it changes the code-unit indexing structure of the
+/// loop, so a per-encoding copy is genuinely different code.
+#[inline(never)]
+pub fn write_pre_quoted_string_inner<W, const ENCODING: Encoding>(
+    text_in: &[u8],
+    writer: &mut W,
+    quote_char: u8,
+    ascii_only: bool,
+    json: bool,
+) -> Result<(), bun_core::Error>
+where
+    W: Write + ?Sized,
+{
     // TODO(port): for ENCODING == Utf16, Zig reinterprets `text_in` as []const u16 via bytesAsSlice.
     // In Rust we keep `text_in: &[u8]` and index by code-unit width below.
     debug_assert!(
-        !(JSON && QUOTE_CHAR != b'"'),
+        !(json && quote_char != b'"'),
         "for json, quote_char must be '\"'"
     );
 
@@ -973,12 +1005,12 @@ where
             }
         };
 
-        if can_print_without_escape::<ASCII_ONLY>(c) {
+        if can_print_without_escape(c, ascii_only) {
             match ENCODING {
                 Encoding::Ascii | Encoding::Utf8 => {
                     let remain = &text[i + clamped_width..];
                     if let Some(j) =
-                        strings::index_of_needs_escape_for_java_script_string(remain, QUOTE_CHAR)
+                        strings::index_of_needs_escape_for_java_script_string(remain, quote_char)
                     {
                         let j = j as usize;
                         let text_chunk = &text[i..i + clamped_width];
@@ -1015,7 +1047,7 @@ where
                 i += 1;
             }
             0x0A => {
-                if QUOTE_CHAR == b'`' {
+                if quote_char == b'`' {
                     writer.write_all(b"\n")?;
                 } else {
                     writer.write_all(b"\\n")?;
@@ -1037,7 +1069,7 @@ where
                 i += 1;
             }
             0x22 => {
-                if QUOTE_CHAR == b'"' {
+                if quote_char == b'"' {
                     writer.write_all(b"\\\"")?;
                 } else {
                     writer.write_all(b"\"")?;
@@ -1045,7 +1077,7 @@ where
                 i += 1;
             }
             0x27 => {
-                if QUOTE_CHAR == b'\'' {
+                if quote_char == b'\'' {
                     writer.write_all(b"\\'")?;
                 } else {
                     writer.write_all(b"'")?;
@@ -1053,7 +1085,7 @@ where
                 i += 1;
             }
             0x60 => {
-                if QUOTE_CHAR == b'`' {
+                if quote_char == b'`' {
                     writer.write_all(b"\\`")?;
                 } else {
                     writer.write_all(b"`")?;
@@ -1061,7 +1093,7 @@ where
                 i += 1;
             }
             0x24 => {
-                if QUOTE_CHAR == b'`' {
+                if quote_char == b'`' {
                     let next = if i + clamped_width < n {
                         Some(code_unit_at!(i + clamped_width))
                     } else {
@@ -1078,7 +1110,7 @@ where
                 i += 1;
             }
             0x09 => {
-                if QUOTE_CHAR == b'`' {
+                if quote_char == b'`' {
                     writer.write_all(b"\t")?;
                 } else {
                     writer.write_all(b"\\t")?;
@@ -1088,7 +1120,7 @@ where
             _ => {
                 i += width as usize;
 
-                if c <= 0xFF && !JSON {
+                if c <= 0xFF && !json {
                     let h = hex2_upper(c as u8);
                     writer.write_all(&[b'\\', b'x', h[0], h[1]])?;
                 } else if c <= 0xFFFF {
@@ -1107,17 +1139,11 @@ pub fn quote_for_json(
     bytes: &mut MutableString,
     ascii_only: bool,
 ) -> Result<(), bun_core::Error> {
-    // Zig: `comptime ascii_only: bool`. Downstream callers (bundler) pass a literal
-    // at each site, so dispatch to the const-generic helpers here.
-    if ascii_only {
-        bytes.grow_if_needed(estimate_length_for_utf8::<true, b'"'>(text))?;
-        bytes.append_char(b'"')?;
-        write_pre_quoted_string::<_, b'"', true, true, { Encoding::Utf8 }>(text, bytes)?;
-    } else {
-        bytes.grow_if_needed(estimate_length_for_utf8::<false, b'"'>(text))?;
-        bytes.append_char(b'"')?;
-        write_pre_quoted_string::<_, b'"', false, true, { Encoding::Utf8 }>(text, bytes)?;
-    }
+    // Zig: `comptime ascii_only: bool`. We now thread `ascii_only` at runtime so
+    // the heavy escaper isn't monomorphized per ascii_only/quote-char combo.
+    bytes.grow_if_needed(estimate_length_for_utf8(text, ascii_only, b'"'))?;
+    bytes.append_char(b'"')?;
+    write_pre_quoted_string_inner::<_, { Encoding::Utf8 }>(text, bytes, b'"', ascii_only, true)?;
     bytes.append_char(b'"').expect("unreachable");
     Ok(())
 }
@@ -1127,7 +1153,7 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
     writer: &mut W,
 ) -> Result<(), bun_core::Error> {
     writer.write_all(b"\"")?;
-    write_pre_quoted_string::<_, b'"', false, true, ENCODING>(input, writer)?;
+    write_pre_quoted_string_inner::<_, ENCODING>(input, writer, b'"', false, true)?;
     writer.write_all(b"\"")?;
     Ok(())
 }
@@ -1713,6 +1739,8 @@ pub mod __gated_printer {
     }
 
     impl<'ast> Default for BinaryExpressionVisitor<'ast> {
+        #[cold]
+        #[inline(never)]
         fn default() -> Self {
             // TODO(port): `entry` defaulted to `undefined` in Zig; we need a sentinel &'static OpInfo.
             unreachable!("construct via fields")
@@ -2664,46 +2692,28 @@ pub mod __gated_printer {
         }
 
         pub fn print_string_characters_utf8(&mut self, text: &[u8], quote: u8) {
+            debug_assert!(matches!(quote, b'\'' | b'"' | b'`'));
             let mut writer = self.writer.std_writer();
-            let _ = match quote {
-                b'\'' => {
-                    write_pre_quoted_string::<_, b'\'', ASCII_ONLY, false, { Encoding::Utf8 }>(
-                        text,
-                        &mut writer,
-                    )
-                }
-                b'"' => write_pre_quoted_string::<_, b'"', ASCII_ONLY, false, { Encoding::Utf8 }>(
-                    text,
-                    &mut writer,
-                ),
-                b'`' => write_pre_quoted_string::<_, b'`', ASCII_ONLY, false, { Encoding::Utf8 }>(
-                    text,
-                    &mut writer,
-                ),
-                _ => unreachable!(),
-            };
+            let _ = write_pre_quoted_string_inner::<_, { Encoding::Utf8 }>(
+                text,
+                &mut writer,
+                quote,
+                ASCII_ONLY,
+                false,
+            );
         }
 
         pub fn print_string_characters_utf16(&mut self, text: &[u16], quote: u8) {
+            debug_assert!(matches!(quote, b'\'' | b'"' | b'`'));
             let slice: &[u8] = bytemuck::cast_slice(text);
             let mut writer = self.writer.std_writer();
-            let _ = match quote {
-                b'\'' => {
-                    write_pre_quoted_string::<_, b'\'', ASCII_ONLY, false, { Encoding::Utf16 }>(
-                        slice,
-                        &mut writer,
-                    )
-                }
-                b'"' => write_pre_quoted_string::<_, b'"', ASCII_ONLY, false, { Encoding::Utf16 }>(
-                    slice,
-                    &mut writer,
-                ),
-                b'`' => write_pre_quoted_string::<_, b'`', ASCII_ONLY, false, { Encoding::Utf16 }>(
-                    slice,
-                    &mut writer,
-                ),
-                _ => unreachable!(),
-            };
+            let _ = write_pre_quoted_string_inner::<_, { Encoding::Utf16 }>(
+                slice,
+                &mut writer,
+                quote,
+                ASCII_ONLY,
+                false,
+            );
         }
 
         pub fn is_unbound_eval_identifier(&self, value: Expr) -> bool {
@@ -2743,6 +2753,10 @@ pub mod __gated_printer {
             unsafe { &*p }
         }
 
+        // Emitting a `throw` shim is a diagnostic/error path — keep it out of the
+        // hot `.text` so it lands in `.text.unlikely` even without PGO.
+        #[cold]
+        #[inline(never)]
         pub fn print_require_error(&mut self, text: &[u8]) {
             self.print(b"(()=>{throw new Error(\"Cannot require module \"+");
             self.print_string_literal_utf8(text, false);

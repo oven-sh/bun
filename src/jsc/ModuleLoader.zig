@@ -1119,9 +1119,27 @@ pub export fn Bun__transpileFile(
     return promise;
 }
 
+/// When a runtime plugin's onLoad handler matches a file, the normal transpile
+/// path (which is what registers the file with the watcher) is bypassed — the
+/// source text comes from the plugin, so the transpiler never opens the file
+/// and `input_file_fd` stays invalid. This helper ensures the underlying
+/// on-disk file still ends up in the watch list so that editing it triggers a
+/// reload, regardless of whether the plugin succeeded or threw.
+fn addPluginHandledPathToWatcher(jsc_vm: *VirtualMachine, namespace: []const u8, path: []const u8) void {
+    if (!jsc_vm.isWatcherEnabled()) return;
+    // Only watch real files in the default/"file" namespace. Virtual
+    // namespaces (e.g. "my-plugin:foo") have no on-disk backing file.
+    if (namespace.len > 0 and !strings.eqlComptime(namespace, "file")) return;
+    if (!std.fs.path.isAbsolute(path)) return;
+    if (strings.contains(path, "node_modules")) return;
+    const loader = jsc_vm.transpiler.options.loader(std.fs.path.extension(path));
+    _ = jsc_vm.bun_watcher.addFileByPathSlow(path, loader);
+}
+
 export fn Bun__runVirtualModule(globalObject: *JSGlobalObject, specifier_ptr: *const bun.String) JSValue {
     jsc.markBinding(@src());
-    if (globalObject.bunVM().plugin_runner == null) return JSValue.zero;
+    const jsc_vm = globalObject.bunVM();
+    if (jsc_vm.plugin_runner == null) return JSValue.zero;
 
     const specifier_slice = specifier_ptr.toUTF8(bun.default_allocator);
     defer specifier_slice.deinit();
@@ -1137,9 +1155,22 @@ export fn Bun__runVirtualModule(globalObject: *JSGlobalObject, specifier_ptr: *c
     else
         specifier[@min(namespace.len + 1, specifier.len)..];
 
-    return globalObject.runOnLoadPlugins(bun.String.init(namespace), bun.String.init(after_namespace), .bun) catch {
+    const result = globalObject.runOnLoadPlugins(bun.String.init(namespace), bun.String.init(after_namespace), .bun) catch {
+        // A plugin matched and threw. The file still needs to be watched so
+        // fixing the underlying source triggers a reload.
+        addPluginHandledPathToWatcher(jsc_vm, namespace, after_namespace);
         return JSValue.zero;
-    } orelse return .zero;
+    } orelse {
+        // No plugin matched — fall through to the normal transpile path,
+        // which handles the watcher itself.
+        return .zero;
+    };
+
+    // A plugin matched and returned a result (source text, an object, or a
+    // promise). The normal transpile path will be bypassed, so register the
+    // file here.
+    addPluginHandledPathToWatcher(jsc_vm, namespace, after_namespace);
+    return result;
 }
 
 fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded: HardcodedModule) ?ResolvedSource {

@@ -134,7 +134,14 @@ impl<'a> Iterator for MemberListIter<'a> {
         self.i += 1;
         Some(r)
     }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let rem = self.list.len().saturating_sub(self.i);
+        (rem, Some(rem))
+    }
 }
+
+impl<'a> ExactSizeIterator for MemberListIter<'a> {}
 
 /// Port of `options.JSX.ImportSource` (options.zig:1208).
 ///

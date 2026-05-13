@@ -350,6 +350,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 .with_was_originally_identifier(true),
         );
     }
+    // PERF(port:frame): keep these large, infrequently-taken arms out of the
+    // `visit_expr_in_out` dispatcher frame. Without `inline(never)` LLVM folds the
+    // big match arms into the recursive dispatcher, inflating its stack frame to
+    // ~968B; deep ASTs then thrash L1d on the spill/reload (the spill into that
+    // frame is the #2 hottest bun-native instruction under `bun --bun lint`).
+    // Mirrors Zig's switch-with-helper-fns layout.
+    #[inline(never)]
     fn e_jsx_element(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         use crate::parser::{JSXImport, JSXTransformType, options};
@@ -374,16 +381,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // `P` and dropped when `Parser::parse` returns — but the parts are
                         // stored in symbols / `E::Dot.name` and read later by the printer.
                         // Dupe each part into the arena (which backs the AST) to restore
-                        // the spec's lifetime invariant.
-                        let parts: Vec<&'a [u8]> = p
-                            .options
-                            .jsx
-                            .fragment
-                            .iter()
-                            .map(|b| -> &'a [u8] { p.arena.alloc_slice_copy(b) })
-                            .collect();
+                        // the spec's lifetime invariant. Build the `&[&'a [u8]]` slice
+                        // directly in the AST arena instead of a throwaway global-heap
+                        // `Vec` — keeps the visitor off the `#[global_allocator]`.
+                        let arena = p.arena;
+                        let parts: &[&'a [u8]] = arena.alloc_slice_fill_iter(
+                            p.options
+                                .jsx
+                                .fragment
+                                .iter()
+                                .map(|b| -> &'a [u8] { arena.alloc_slice_copy(b) }),
+                        );
                         break 'tagger p
-                            .jsx_strings_to_member_expression(expr.loc, &parts)
+                            .jsx_strings_to_member_expression(expr.loc, parts)
                             .expect("unreachable");
                     }
                     break 'tagger p.jsx_import(JSXImport::Fragment, expr.loc);
@@ -453,14 +463,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // PORT NOTE: see fragment note above — `options.jsx.factory` is
                         // owned by `P` and freed when the parser drops; dupe each part
                         // into the arena so the symbol/E::Dot names outlive the printer.
-                        let parts: Vec<&'a [u8]> = p
-                            .options
-                            .jsx
-                            .factory
-                            .iter()
-                            .map(|b| -> &'a [u8] { p.arena.alloc_slice_copy(b) })
-                            .collect();
-                        p.jsx_strings_to_member_expression(expr.loc, &parts)
+                        // Build the parts slice in the AST arena (no global-heap `Vec`).
+                        let arena = p.arena;
+                        let parts: &[&'a [u8]] = arena.alloc_slice_fill_iter(
+                            p.options
+                                .jsx
+                                .factory
+                                .iter()
+                                .map(|b| -> &'a [u8] { arena.alloc_slice_copy(b) }),
+                        );
+                        p.jsx_strings_to_member_expression(expr.loc, parts)
                             .expect("unreachable")
                     } else {
                         // Spec (visitExpr.zig:257) calls jsxStringsToMemberExpression(factory)
@@ -697,6 +709,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             _ => unreachable!(),
         }
     }
+    #[inline(never)] // PERF(port:frame): see e_jsx_element.
     fn e_template(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let _ = in_;
@@ -1549,6 +1562,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
     }
 
+    #[inline(never)] // PERF(port:frame): see e_jsx_element.
     fn e_array(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let mut e_ = e.data.e_array().expect("infallible: variant checked");
         if in_.assign_target != js_ast::AssignTarget::None {
@@ -1657,6 +1671,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
     }
 
+    #[inline(never)] // PERF(port:frame): see e_jsx_element.
     fn e_object(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let mut e_ = e.data.e_object().expect("infallible: variant checked");
         if in_.assign_target != js_ast::AssignTarget::None {
@@ -1819,6 +1834,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
         let _ = has_spread;
     }
+    #[inline(never)] // PERF(port:frame): see e_jsx_element.
     fn e_import(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let _ = in_;
         let mut e_ = e.data.e_import().expect("infallible: variant checked");
@@ -2360,6 +2376,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
     }
 
+    #[inline(never)] // PERF(port:frame): see e_jsx_element.
     fn e_new(p: &mut Self, e: &mut Expr, _: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_new().expect("infallible: variant checked");
@@ -2463,6 +2480,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             loc,
         })
     }
+    #[inline(never)] // PERF(port:frame): see e_jsx_element.
     fn e_arrow(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let _ = in_;
@@ -2552,6 +2570,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
         e_.body.stmts = bun_ast::StoreSlice::new_mut(stmts_list.into_bump_slice_mut());
     }
+    #[inline(never)] // PERF(port:frame): see e_jsx_element.
     fn e_function(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let _ = in_;
@@ -2622,6 +2641,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             *e = final_expr;
         }
     }
+    #[inline(never)] // PERF(port:frame): see e_jsx_element.
     fn e_class(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let _ = in_;

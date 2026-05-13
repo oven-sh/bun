@@ -76,11 +76,27 @@ macro_rules! comptime_table {
     ($params:expr) => {{
         const __P: &[$crate::Param<$crate::Help>] = $params;
         const __N: usize = __P.len();
+        // `.rodata.startup`: every `comptime_table!` table is a CLI-param table
+        // dereferenced on the `bun <file>` / `bun run` / `bun install` /
+        // `bun --version` hot path. With `-Zfunction-sections` each `static`
+        // otherwise lands in its own `.rodata.<sym>` input section that fat-LTO
+        // emits in crate-alphabetical order — one minor fault per scattered
+        // table on first touch. Clustering the converted arrays, long-name
+        // index, and `ConvertedTable` headers into a single `.rodata.startup`
+        // (placed contiguously by `src/sections.lds`, alongside `.text.startup`)
+        // packs them onto a couple of shared fault-around pages. Non-PIE `bun`
+        // has zero runtime relocations, so these stay in plain rodata even with
+        // the `&'static [u8]` help strings they point at. Linux-only: the
+        // section-name syntax is ELF-specific (mirrors `bun_core::err!`'s
+        // `.bun_err` clustering).
+        #[cfg_attr(target_os = "linux", unsafe(link_section = ".rodata.startup"))]
         static __CONV: [$crate::Param<usize>; __N] =
             $crate::comptime::convert_params_array::<$crate::Help, __N>(__P);
         const __M: usize = $crate::comptime::count_long_entries(__P);
+        #[cfg_attr(target_os = "linux", unsafe(link_section = ".rodata.startup"))]
         static __LONG: [$crate::comptime::LongEntry; __M] =
             $crate::comptime::build_long_index::<$crate::Help, __M>(__P);
+        #[cfg_attr(target_os = "linux", unsafe(link_section = ".rodata.startup"))]
         static __TABLE: $crate::ConvertedTable = $crate::ConvertedTable::from_const(
             &__CONV,
             $crate::comptime::count_flags(__P),
@@ -109,7 +125,6 @@ pub const fn __param_slices_concat<const N: usize>(parts: &[&[Param<Help>]]) -> 
     const DUMMY: Param<Help> = Param {
         id: Help {
             msg: b"",
-            msg_ansi: b"",
             msg_plain: b"",
             value: b"",
         },
@@ -375,16 +390,13 @@ fn test_diag(diag: Diagnostic, err: bun_core::Error, expected: &[u8]) {
 pub struct Help {
     /// The description text exactly as written in the param spec — may still
     /// contain `<tag>` colour markup. Used by [`help`]/[`help_ex`], which (like
-    /// Zig's `clap.help`) emit it verbatim.
+    /// Zig's `clap.help`) emit it verbatim, and as the source for the ANSI form
+    /// built lazily by [`pretty_help_desc`] on the `bun --help` colour path.
     pub msg: &'static [u8],
-    /// `msg` with `<tag>` colour markup rewritten to ANSI escape sequences.
-    /// Precomputed at compile time by `parse_param!` so the help/usage printers
-    /// don't re-run the `<tag>` state machine on every `bun --help` invocation
-    /// (Zig did this rewrite at `comptime` via `Output.prettyFmt`).
-    pub msg_ansi: &'static [u8],
-    /// `msg` with `<tag>` colour markup stripped — the non-TTY / piped form.
-    /// Counterpart to [`Help::msg_ansi`]; pick between them with
-    /// `Output::enable_ansi_colors_stdout()`.
+    /// `msg` with `<tag>` colour markup stripped — the non-TTY / piped help form.
+    /// Precomputed at compile time by `parse_param!` (the strip is the only
+    /// transform that needs to be ready without a TTY); the ANSI-coloured form is
+    /// derived from `msg` on demand instead of being baked into rodata.
     pub msg_plain: &'static [u8],
     pub value: &'static [u8],
 }
@@ -393,7 +405,6 @@ impl Default for Help {
     fn default() -> Self {
         Self {
             msg: b"",
-            msg_ansi: b"",
             msg_plain: b"",
             value: b"",
         }
@@ -421,18 +432,23 @@ fn get_help_simple(param: &Param<Help>) -> &'static [u8] {
     param.id.msg
 }
 
-/// The param description with `<tag>` colour markup already resolved — ANSI
-/// escapes when stdout is a colour-capable TTY, stripped otherwise. Both forms
-/// are baked into rodata by `parse_param!` (see [`Help::msg_ansi`] /
-/// [`Help::msg_plain`]), so this is a single branch instead of the byte-by-byte
-/// `Output::pretty_fmt_runtime` state machine the help printers used to run on
-/// every `bun --help` / `bun run` invocation. (Zig did the same rewrite at
-/// `comptime` via `Output.prettyFmt` inside `clap.simpleHelpBunTopLevel`.)
-fn pretty_help_desc(param: &Param<Help>) -> &'static [u8] {
+/// The param description with `<tag>` colour markup resolved — ANSI escapes when
+/// stdout is a colour-capable TTY, stripped otherwise.
+///
+/// The tag-stripped form ([`Help::msg_plain`]) is precomputed in rodata; the
+/// ANSI form is *not* — it is rewritten from [`Help::msg`] here, only when colour
+/// output is actually requested. That `<tag>`→ANSI rewrite only ever runs on
+/// `bun --help` / `bun run --help`; `--print` and ordinary runs never reach this
+/// path, so they pay neither the per-invocation reparse nor the extra rodata a
+/// baked-in `msg_ansi` array would cost on every flag and subcommand. (Zig did
+/// the rewrite at `comptime` via `Output.prettyFmt` inside
+/// `clap.simpleHelpBunTopLevel`; the colour case is rare enough that doing it
+/// lazily at runtime is the better trade for binary size.)
+fn pretty_help_desc(param: &Param<Help>) -> std::borrow::Cow<'static, [u8]> {
     if Output::enable_ansi_colors_stdout() {
-        param.id.msg_ansi
+        std::borrow::Cow::Owned(bun_core::output::pretty_fmt_runtime(param.id.msg, true))
     } else {
-        param.id.msg_plain
+        std::borrow::Cow::Borrowed(param.id.msg_plain)
     }
 }
 
@@ -772,15 +788,14 @@ pub fn simple_help(params: &[Param<Help>]) {
         // Zig's `Output.pretty("  {s}  {s}", …)` (clap.zig:567) only runs prettyFmt
         // over the comptime template, so `<tag>` markers inside `desc_text` leak
         // through verbatim there. That is observably wrong (`bun run --help` prints
-        // literal `<d>$cwd<r>`); the Rust port emits the `<tag>`→ANSI (or tag-strip)
-        // rewrite at compile time — same as Zig's `simpleHelpBunTopLevel` did via
-        // `comptime Output.prettyFmt` — so `--help` output is tag-clean regardless
-        // of which helper a command uses, with no per-invocation re-parse.
+        // literal `<d>$cwd<r>`); `pretty_help_desc` resolves the `<tag>` markup
+        // (ANSI on a colour TTY, stripped otherwise) so `--help` output is
+        // tag-clean regardless of which helper a command uses.
         let desc = pretty_help_desc(param);
         Output::pretty(format_args!(
             "  {}  {}",
             bstr::BStr::new(&spaces_after),
-            bstr::BStr::new(desc),
+            bstr::BStr::new(desc.as_ref()),
         ));
     }
 }
@@ -813,14 +828,13 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
 
                 // Zig: Output.pretty(space_buf[0..n] ++ desc_text, .{}) — the concat
                 // is the *format string*, so `<tag>` markers inside `desc_text` are
-                // rewritten at `comptime`. Mirror that: `parse_param!` already baked
-                // both the ANSI and tag-stripped forms into rodata, so this is one
-                // branch (not a `pretty_fmt_runtime` re-parse of every byte).
+                // rewritten at `comptime`. Mirror that via `pretty_help_desc`, which
+                // resolves the markup (ANSI on a colour TTY, stripped otherwise).
                 let desc = pretty_help_desc(param);
                 Output::pretty(format_args!(
                     "{}{}",
                     bstr::BStr::new(&SPACE_BUF[0..num_spaces_after]),
-                    bstr::BStr::new(desc),
+                    bstr::BStr::new(desc.as_ref()),
                 ));
             }
         }

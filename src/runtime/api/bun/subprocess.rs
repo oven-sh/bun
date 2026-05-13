@@ -745,11 +745,11 @@ impl Subprocess<'_> {
     }
 
     fn close_process(&self) {
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             return;
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             self.process_mut().close();
         }

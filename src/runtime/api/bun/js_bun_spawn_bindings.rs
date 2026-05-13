@@ -893,7 +893,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
         }
     }
-    let mut should_close_memfd = cfg!(target_os = "linux");
+    let mut should_close_memfd = bun_core::env::IS_LINUX;
 
     let mut memfd_guard = scopeguard::guard(
         (&mut should_close_memfd, &mut stdio),

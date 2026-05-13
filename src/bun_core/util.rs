@@ -4807,10 +4807,10 @@ pub fn maybe_handle_panic_during_process_reload() {
 
 /// Port of `bun.reloadProcess`. Allocator param dropped (uses libc malloc via
 /// `dupe_z`). `may_return == true` → returns on failure; `false` → panics.
-/// Linux/FreeBSD re-exec via `execve` after the `on_before_reload_process_linux`
-/// hook (CLOEXEC sweep + sigprocmask reset); macOS re-execs via `posix_spawn`
-/// with POSIX_SPAWN_CLOEXEC_DEFAULT|SETEXEC|SETSIGDEF|SETSIGMASK since Darwin
-/// has no /proc-style CLOEXEC sweep.
+/// macOS posix_spawn path is deferred to bun_spawn (tier-4); tier-0 falls
+/// back to plain `execve` on all POSIX which is correct on Linux/BSD and
+/// best-effort on macOS (CLOEXEC handled by `on_before_reload_process_linux`
+/// hook on Linux; Darwin gets the simpler path until tier-4 wires spawn).
 pub fn reload_process(clear_terminal: bool, may_return: bool) {
     RELOAD_IN_PROGRESS.store(true, AOrdering::Relaxed);
     RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.set(true));
@@ -4854,6 +4854,14 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
 
     #[cfg(unix)]
     unsafe {
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        {
+            unsafe extern "C" {
+                safe fn on_before_reload_process_linux();
+            }
+            on_before_reload_process_linux();
+        }
+
         // We clone argv so that the memory address isn't the same as the libc one
         // (mirrors Zig `allocator.dupeZ` per entry).
         let args = argv_storage();
@@ -4880,85 +4888,9 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         // we must clone selfExePath in case argv[0] was not an absolute path
         let exec_path = self_exe_path().expect("unreachable").as_ptr();
 
-        // macOS has no /proc-style CLOEXEC sweep, so a plain `execve` would leak
-        // every non-FD_CLOEXEC descriptor (server sockets, log files, ...) and
-        // the inherited signal mask into the reloaded process. Mirror Zig's
-        // `reloadProcess` macOS branch: re-exec via `posix_spawn` with
-        // POSIX_SPAWN_CLOEXEC_DEFAULT (closes all fds except those with an
-        // explicit file action) + POSIX_SPAWN_SETEXEC (behaves like a more
-        // featureful `execve` instead of returning a pid) + SETSIGDEF/SETSIGMASK
-        // (reset signal dispositions and clear the inherited mask).
-        #[cfg(target_os = "macos")]
-        let errno: i32 = {
-            // `posix_spawn_file_actions_addinherit_np` is an Apple extension not
-            // bound by the `libc` crate.
-            unsafe extern "C" {
-                fn posix_spawn_file_actions_addinherit_np(
-                    actions: *mut libc::posix_spawn_file_actions_t,
-                    filedes: libc::c_int,
-                ) -> libc::c_int;
-            }
-
-            let mut actions =
-                core::mem::MaybeUninit::<libc::posix_spawn_file_actions_t>::uninit();
-            // INVAL/NOMEM from these init/add calls would mean a corrupted or
-            // exhausted process; Zig `catch unreachable`s. Best-effort: ignore
-            // and fall through to the spawn call, which then fails and is
-            // reported below.
-            let _ = libc::posix_spawn_file_actions_init(actions.as_mut_ptr());
-            let mut actions = actions.assume_init();
-            // Keep stdin/stdout/stderr open (CLOEXEC_DEFAULT closes them otherwise).
-            let _ = posix_spawn_file_actions_addinherit_np(&raw mut actions, 0);
-            let _ = posix_spawn_file_actions_addinherit_np(&raw mut actions, 1);
-            let _ = posix_spawn_file_actions_addinherit_np(&raw mut actions, 2);
-
-            let mut attr = core::mem::MaybeUninit::<libc::posix_spawnattr_t>::uninit();
-            let _ = libc::posix_spawnattr_init(attr.as_mut_ptr());
-            let mut attr = attr.assume_init();
-            // `attrs.resetSignals()`: sigdefault = all signals, sigmask = empty.
-            let mut sigset: libc::sigset_t = core::mem::zeroed();
-            libc::sigfillset(&raw mut sigset);
-            let _ = libc::posix_spawnattr_setsigdefault(&raw mut attr, &raw const sigset);
-            libc::sigemptyset(&raw mut sigset);
-            let _ = libc::posix_spawnattr_setsigmask(&raw mut attr, &raw const sigset);
-            let _ = libc::posix_spawnattr_setflags(
-                &raw mut attr,
-                (libc::POSIX_SPAWN_CLOEXEC_DEFAULT
-                    | libc::POSIX_SPAWN_SETEXEC
-                    | libc::POSIX_SPAWN_SETSIGDEF
-                    | libc::POSIX_SPAWN_SETSIGMASK) as libc::c_short,
-            );
-
-            // posix_spawn returns 0 on success and an errno on failure; with
-            // POSIX_SPAWN_SETEXEC it only returns on error.
-            let rc = libc::posix_spawn(
-                core::ptr::null_mut(),
-                exec_path,
-                &raw const actions,
-                &raw const attr,
-                newargv.as_ptr() as *const *mut libc::c_char,
-                envp.as_ptr() as *const *mut libc::c_char,
-            );
-            libc::posix_spawn_file_actions_destroy(&raw mut actions);
-            libc::posix_spawnattr_destroy(&raw mut attr);
-            rc
-        };
-
-        #[cfg(not(target_os = "macos"))]
-        let errno: i32 = {
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-            {
-                unsafe extern "C" {
-                    safe fn on_before_reload_process_linux();
-                }
-                on_before_reload_process_linux();
-            }
-
-            libc::execve(exec_path, newargv.as_ptr().cast(), envp.as_ptr().cast());
-            // execve only returns on error.
-            std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
-        };
-
+        libc::execve(exec_path, newargv.as_ptr().cast(), envp.as_ptr().cast());
+        // execve only returns on error.
+        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
         if may_return {
             crate::output::pretty_errorln(&format_args!(
                 "error: Failed to reload process: errno {}",

@@ -55,9 +55,14 @@ impl Which {
                 let arg = Self::arg(interp, cmd, i);
                 match Self::resolve(&path_env, &cwd, &arg) {
                     Some(resolved) => {
-                        // Match Zig: the synchronous (captured-output) path writes
-                        // the resolved path with NO trailing newline.
-                        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &resolved);
+                        let buf = Builtin::fmt_error_arena(
+                            interp,
+                            cmd,
+                            None,
+                            format_args!("{}\n", bstr::BStr::new(&resolved)),
+                        )
+                        .to_vec();
+                        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                     }
                     None => {
                         had_not_found = true;
@@ -178,11 +183,7 @@ impl Which {
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
         if let Some(err) = e {
-            // `bun_sys::SystemError.errno` is stored negated (Node convention);
-            // Zig's `which.zig` does `done(err.getErrno())` with the positive errno.
-            let exit_code = err.errno.unsigned_abs() as crate::shell::ExitCode;
-            err.deref();
-            return Builtin::done(interp, cmd, exit_code);
+            return Builtin::done(interp, cmd, err.errno as crate::shell::ExitCode);
         }
         match Self::state_mut(interp, cmd).state {
             State::OneArg => Builtin::done(interp, cmd, 1),
@@ -196,16 +197,11 @@ impl Which {
     /// Look up `$PATH` from the export env and the cwd from the shell env.
     fn path_and_cwd(interp: &Interpreter, cmd: NodeId) -> (Vec<u8>, Vec<u8>) {
         let shell = Builtin::shell(interp, cmd);
-        // `EnvMap::get` returns the `EnvStr` with a +1 ref; mirror Zig's
-        // `defer PATH.deref();` so the refcount on the `$PATH` entry is released.
-        let path = match shell.export_env.get(EnvStr::init_slice(b"PATH")) {
-            Some(s) => {
-                let path = s.slice().to_vec();
-                s.deref();
-                path
-            }
-            None => Vec::new(),
-        };
+        let path = shell
+            .export_env
+            .get(EnvStr::init_slice(b"PATH"))
+            .map(|s| s.slice().to_vec())
+            .unwrap_or_default();
         (path, shell.cwd().to_vec())
     }
 

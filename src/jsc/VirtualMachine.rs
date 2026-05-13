@@ -2747,13 +2747,10 @@ pub struct Options {
     // forward-dep crate; callers pass it as the resolver's trait object so
     // both VM and resolver can hold it without the cycle.
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
-    /// Spec VirtualMachine.zig:1215 `Options.debugger` —
-    /// `bun.cli.Command.Debugger` (now `bun_options_types::context::Debugger`).
-    /// Forwarded into [`InitOptions::debugger`] by `init_with_module_graph` so
-    /// `configureDebugger` honors the `--inspect*` CLI flags on the standalone
-    /// (`bun build --compile`) path, matching Zig's `bootStandalone`
-    /// (`.debugger = ctx.runtime_options.debugger`).
-    pub debugger: bun_options_types::context::Debugger,
+    // PORT NOTE: Zig `debugger: bun.cli.Command.Debugger` dropped — debugger
+    // configuration is plumbed through `RuntimeHooks::ensure_debugger` (the
+    // CLI option struct lives in `bun_cli`, a forward dep). See
+    // `runtime/jsc_hooks.rs` for the spec :1321 `configureDebugger` call site.
     pub is_main_thread: bool,
     pub destruct_main_thread_on_exit: bool,
 }
@@ -2769,7 +2766,6 @@ impl Default for Options {
             dns_result_order: 0,
             eval: false,
             graph: None,
-            debugger: Default::default(),
             is_main_thread: false,
             destruct_main_thread_on_exit: false,
         }
@@ -3548,12 +3544,8 @@ impl VirtualMachine {
     /// transpiler is built without `Config::configureTransformOptionsForBunVM`,
     /// (b) `standalone_module_graph` is mandatory and propagated into the
     /// resolver, (c) `configureLinkerWithAutoJSX(false)` instead of
-    /// `configureLinker()`, (d) `vm.smol` / `mini_mode` stay `false` regardless
-    /// of `opts.smol` — the Zig original (VirtualMachine.zig:1180-1187, :50)
-    /// calls `JSGlobalObject.create(.., false, false, null)` and never assigns
-    /// `vm.smol`; only the process-global `is_smol_mode` tracks `opts.smol`.
-    /// Rather than re-open-code the 80-line struct init, we route through
-    /// [`init`] and patch the deltas.
+    /// `configureLinker()`. Rather than re-open-code the 80-line struct init,
+    /// we route through [`init`] and patch the deltas.
     pub fn init_with_module_graph(opts: Options) -> Result<*mut VirtualMachine, bun_core::Error> {
         let graph = opts.graph.expect("init_with_module_graph requires graph");
         let init_opts = InitOptions {
@@ -3561,7 +3553,8 @@ impl VirtualMachine {
             graph: Some(graph),
             log: opts.log,
             env_loader: opts.env_loader,
-            debugger: opts.debugger,
+            smol: opts.smol,
+            mini_mode: opts.smol,
             eval_mode: false,
             is_main_thread: opts.is_main_thread,
             ..Default::default()

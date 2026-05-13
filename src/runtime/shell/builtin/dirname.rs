@@ -32,6 +32,7 @@ impl Dirname {
         for i in 0..argc {
             let path = bltn.arg_bytes(i);
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(path);
+            let dir: &[u8] = if dir.is_empty() { b"." } else { dir };
             buf.extend_from_slice(dir);
             buf.push(b'\n');
         }
@@ -60,8 +61,7 @@ impl Dirname {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(e) = err {
-            e.deref();
+        if err.is_some() {
             Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }

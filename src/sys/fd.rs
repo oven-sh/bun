@@ -279,9 +279,8 @@ impl FdExt for Fd {
     }
 
     fn make_path_u8(self, subpath: &[u8]) -> sys::Maybe<()> {
-        // Port of `bun.makePath` — `mkdirat` walking up parents on ENOENT, with
-        // dangling-symlink delete-and-retry (Zig: `FD.makePath(u8, ..)`).
-        sys::make_path_dangling(self, subpath)
+        // Port of `bun.makePath` — `mkdirat` walking up parents on ENOENT.
+        sys::mkdir_recursive_at(self, subpath)
     }
 
     fn delete_tree(self, subpath: &[u8]) -> Result<(), bun_core::Error> {

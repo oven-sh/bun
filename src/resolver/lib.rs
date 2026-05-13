@@ -3046,15 +3046,10 @@ pub mod __phase_a_body {
             /// Port of `options.zig` `ResolveFileExtensions.kind`. Returns the
             /// [`ExtOrder`] tag; resolve to a slice via
             /// [`BundleOptions::ext_order_slice`].
-            ///
-            /// Like Zig, only `.stmt` / `.entry_point_build` / `.entry_point_run` /
-            /// `.dynamic` map to the esm group; every other kind (including `.url`,
-            /// `.at`, `.at_conditional`) falls through to the `default` group.
-            /// Callers that need the CSS extension order for those kinds special-case
-            /// them before calling this.
             pub fn kind(&self, kind: bun_ast::ImportKind, is_node_modules: bool) -> ExtOrder {
                 use bun_ast::ImportKind as K;
                 match kind {
+                    K::Url | K::AtConditional | K::At => ExtOrder::Css,
                     K::Stmt | K::EntryPointBuild | K::EntryPointRun | K::Dynamic => {
                         if is_node_modules {
                             ExtOrder::NodeModulesEsm
@@ -8410,10 +8405,8 @@ pub mod __phase_a_body {
                     bstr::BStr::new(import_path),
                     bstr::BStr::new(package_json.source.path.text)
                 ));
-                // Spec resolver.zig:3182-3189: `debug.increaseIndent(); defer debug.decreaseIndent();`
-                // are BOTH inside the `if (r.debug_logs)` block, so the net indent change is zero.
                 debug.increase_indent();
-                debug.decrease_indent();
+                // defer debug.decreaseIndent() — TODO(port): missing matching decrease in Zig too
             }
             let imports_map = package_json.imports.as_ref().unwrap();
 

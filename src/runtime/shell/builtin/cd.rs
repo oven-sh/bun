@@ -119,11 +119,8 @@ impl Cd {
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
-        e: Option<bun_sys::SystemError>,
+        _err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(err) = e {
-            return Builtin::done(interp, cmd, err.errno as crate::shell::ExitCode);
-        }
         Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, 1)
     }

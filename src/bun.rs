@@ -984,6 +984,9 @@ impl<T> DebugOnlyDisabler<T> {
 // ─── reload process ───────────────────────────────────────────────────────────
 // Canonical impl lives in bun_core (tier-0) so crash_handler can read the same
 // RELOAD_IN_PROGRESS atomic. A second copy here was a split-brain hazard.
+// TODO(port): bun_core::reload_process currently uses plain execve on macOS;
+// the spec-faithful posix_spawn(SETEXEC|CLOEXEC_DEFAULT) path should be ported
+// into bun_core using raw libc::posix_spawn* (libc is a tier-0 dep).
 pub use bun_core::{
     auto_reload_on_crash, exit_thread, is_process_reload_in_progress_on_another_thread,
     maybe_handle_panic_during_process_reload, reload_process, set_auto_reload_on_crash,

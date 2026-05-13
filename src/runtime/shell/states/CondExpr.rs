@@ -258,23 +258,13 @@ impl CondExpr {
         exit_code: ExitCode,
     ) -> Yield {
         // Child is always an Expansion that produced one arg.
-        // Spec: CondExpr.zig `childDone` — on nonzero, pull the expansion's
-        // error out, deinit the child, then `writeFailingError("{f}\n", err)`
-        // (which ultimately finishes with exit 1); otherwise collect the
-        // expanded word and advance.
+        // Spec: CondExpr.zig `childDone` — on nonzero, write the failing
+        // error and finish; otherwise collect the expanded word and advance.
         if exit_code != 0 {
-            let err = Expansion::take_err(interp, child);
+            // TODO(port): writeFailingError("{f}\n", err) — IOWriter path.
             interp.deinit_node(child);
-            if let Some(err) = err {
-                let y = Self::write_failing_error(interp, this, format_args!("{}\n", err));
-                err.deinit();
-                return y;
-            }
-            // No stored ShellErr (e.g. a failing `$(...)` substitution inside
-            // the operand): still finish with exit 1, matching the spec's
-            // `childDone` which always routes nonzero through `writeFailingError`.
             let parent = interp.as_condexpr(this).base.parent;
-            return interp.child_done(parent, this, 1);
+            return interp.child_done(parent, this, exit_code);
         }
         let out = Expansion::take_out(interp, child);
         interp.deinit_node(child);
@@ -286,45 +276,6 @@ impl CondExpr {
             }
         }
         Yield::Next(this)
-    }
-
-    /// Spec: CondExpr.zig `writeFailingError` / `ShellExecEnv.writeFailingErrorFmt`
-    /// — write `args` to the conditional expression's stderr. On an fd target
-    /// it transitions to `WaitingWriteErr` and enqueues an async write whose
-    /// completion (`on_io_writer_chunk`) finishes with exit 1; on a pipe/ignore
-    /// target it appends to the captured stderr buffer and finishes with exit 1
-    /// synchronously.
-    fn write_failing_error(
-        interp: &Interpreter,
-        this: NodeId,
-        args: core::fmt::Arguments<'_>,
-    ) -> Yield {
-        use crate::shell::io::OutKind;
-        use crate::shell::io_writer::{ChildPtr, WriterTag};
-        use std::io::Write as _;
-
-        let mut buf = Vec::new();
-        let _ = buf.write_fmt(args);
-        if interp.as_condexpr(this).io.stderr.needs_io().is_some() {
-            // Spec: `enqueueCb(ctx)` — only the `.fd` arm transitions state.
-            interp.as_condexpr_mut(this).state = CondExprState::WaitingWriteErr;
-            let child = ChildPtr::new(this, WriterTag::CondExpr);
-            if let OutKind::Fd(fd) = &interp.as_condexpr(this).io.stderr {
-                return fd.writer.enqueue(child, fd.captured, &buf);
-            }
-            unreachable!()
-        }
-        // No-IO path: append to the shell env's captured stderr (pipe) or drop
-        // (ignore), then finish with exit 1.
-        if matches!(interp.as_condexpr(this).io.stderr, OutKind::Pipe) {
-            // SAFETY: single trampoline frame; no other borrow of the env's
-            // (or its parent's) stderr buffer is live.
-            let stderr =
-                unsafe { interp.as_condexpr_mut(this).base.shell_mut().buffered_stderr_mut() };
-            stderr.extend_from_slice(&buf);
-        }
-        let parent = interp.as_condexpr(this).base.parent;
-        interp.child_done(parent, this, 1)
     }
 
     pub fn deinit(interp: &Interpreter, this: NodeId) {

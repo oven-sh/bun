@@ -1423,27 +1423,19 @@ impl DirectoryWatchStore {
             }
         });
 
-        // Zig duplicates `dir_name_to_watch`, uses the *same* heap allocation as
-        // both the hashmap key and the un-cloned (`clone_file_path=false`) path
-        // retained by the watch list — so it lives exactly as long as the watch
-        // entry. `StringArrayHashMap::get_or_put` already owns the key
-        // allocation at `gop_index` here; hand that same allocation to
-        // `add_directory::<false>` so the `WatchItem`'s borrowed `file_path`
-        // points into storage owned by the watch entry (freed in `free_entry`
-        // only after the `WatchItem` is removed via `remove_at_index`).
-        //
-        // SAFETY: the key Box at `gop_index` is not dropped until `free_entry`
-        // calls `swap_remove_at`, which it does *after* `remove_at_index` drops
-        // the corresponding `WatchItem`. So the `Cow::Borrowed` the watcher
-        // retains never outlives the allocation. Detaching the lifetime is
-        // required only to satisfy the borrow checker (`dev_bun_watcher()` needs
-        // `&mut self`); it matches the `clone_file_path=false` SAFETY contract.
-        let key: &'static [u8] = unsafe {
-            bun_collections::detach_lifetime(&self.watches.keys()[gop_index][..])
-        };
-        let key_hash = bun_watcher::Watcher::get_hash(key);
+        let dir_name: Box<[u8]> = Box::<[u8]>::from(dir_name_to_watch);
+        // errdefer free(dir_name) — handled by Drop.
 
-        let watch_index = match self.dev_bun_watcher().add_directory::<false>(fd, key, key_hash) {
+        // PORT NOTE: Zig sets `key_ptr` to a sub-slice of `dir_name` (trailing
+        // slash trimmed) sharing its allocation. `StringArrayHashMap` already
+        // boxed the trimmed key on insert above, so the reassignment is a
+        // no-op here; `dir_name` is kept solely for `add_directory`/`get_hash`.
+
+        let watch_index = match self.dev_bun_watcher().add_directory::<false>(
+            fd,
+            &dir_name,
+            bun_watcher::Watcher::get_hash(&dir_name),
+        ) {
             Err(_) => return Err(DirectoryWatchInsertError::Ignore),
             Ok(id) => id,
         };
@@ -1463,6 +1455,7 @@ impl DirectoryWatchStore {
             first_dep: dep,
             watch_index,
         };
+        let _ = dir_name; // keep alive past add_directory; dropped here
         Ok(())
     }
 

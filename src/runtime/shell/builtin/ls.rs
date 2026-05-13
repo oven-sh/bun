@@ -197,12 +197,6 @@ impl Ls {
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
         if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
-            // Spec: ls.zig `onIOWriterChunk` — `if (e) |err| err.deref();`.
-            // `bun_sys::SystemError` has no `Drop`, so dropping `e` here would
-            // leak its owned BunString fields.
-            if let Some(e) = e {
-                e.deref();
-            }
             return Builtin::done(interp, cmd, 1);
         }
         let pending = if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -213,12 +207,7 @@ impl Ls {
         if let Some(task) = pending {
             // SAFETY: `task` was heap-allocated in `OutputTask::new` and
             // pushed by `write_err`/`write_out`; not yet freed.
-            // `OutputTask::on_io_writer_chunk` derefs `e` itself.
             return unsafe { OutputTask::<Ls>::on_io_writer_chunk(task, interp, written, e) };
-        }
-        // Spec: ls.zig `onIOWriterChunk` — `if (e) |err| err.deref();`.
-        if let Some(e) = e {
-            e.deref();
         }
         Self::next(interp, cmd)
     }
@@ -766,24 +755,16 @@ fn format_time(timestamp: i64, now_secs: u64) -> [u8; 12] {
     if is_recent {
         let hours = secs_of_day / 3600;
         let minutes = (secs_of_day / 60) % 60;
-        if bun_core::fmt::buf_print(
+        let _ = bun_core::fmt::buf_print(
             &mut buf[..],
             format_args!("{} {:02} {:02}:{:02}", month_name, day, hours, minutes),
-        )
-        .is_err()
-        {
-            buf = *b"??? ?? ??:??";
-        }
+        );
     } else {
         // Show year for old files.
-        if bun_core::fmt::buf_print(
+        let _ = bun_core::fmt::buf_print(
             &mut buf[..],
             format_args!("{} {:02}  {:4}", month_name, day, year),
-        )
-        .is_err()
-        {
-            buf = *b"??? ??  ????";
-        }
+        );
     }
     buf
 }

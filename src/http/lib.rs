@@ -4192,12 +4192,9 @@ impl<'a> HTTPClient<'a> {
         for (header_i, header) in response.headers.list.iter().enumerate() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
-                    // byte-level parse — header.value() is network bytes, not &str.
-                    // Mirrors Zig `std.fmt.parseInt(usize, header.value, 10) catch 0`,
-                    // which strips an optional leading `+`/`-` sign (so e.g.
-                    // `Content-Length: +1234` parses as 1234).
+                    // byte-level parse — header.value() is network bytes, not &str
                     let content_length =
-                        bun_core::parse_int::<usize>(header.value(), 10).unwrap_or(0);
+                        bun_core::parse_unsigned::<usize>(header.value(), 10).unwrap_or(0);
                     if self.method.has_body() {
                         self.state.content_length = Some(content_length);
                     } else {

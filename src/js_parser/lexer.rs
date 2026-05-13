@@ -3311,10 +3311,6 @@ lexer_impl_header! {
             let length = length as usize;
             let end = cursor.width as usize + cursor.i as usize;
             let entity = &text[end..end + length];
-            // PORT NOTE: an empty entity (`&;`) makes `entity[0]` an out-of-bounds read in the
-            // Zig original; ReleaseFast elides the check so it harmlessly reads `;` (!= '#') and
-            // falls through to a (failing) hashmap lookup, leaving `&;` as literal text. Rust
-            // always bounds-checks, so guard explicitly to preserve that behavior.
             if entity.is_empty() {
                 return;
             }
@@ -3380,19 +3376,7 @@ lexer_impl_header! {
                 self.maybe_decode_jsx_entity(text, &mut cursor);
             }
 
-            // Zig parity (`decodeJSXEntities`): open-code the UTF-16 split with
-            // truncating casts rather than going through `push_codepoint_utf16`
-            // /`u16_lead`. JSX numeric entities like `&#x7FFFFFFF;` parse cleanly
-            // as i32 and reach here with a value above U+10FFFF; the ICU-style
-            // `u16_lead` helper has a `<= 0x10FFFF` precondition (asserts in
-            // debug, wraps differently in release), so use the explicit form.
-            if cursor.c <= 0xFFFF {
-                out.push(cursor.c as u16);
-            } else {
-                let c = cursor.c - 0x10000;
-                out.push((0xD800i32 + ((c >> 10) & 0x3FF)) as u32 as u16);
-                out.push((0xDC00i32 + (c & 0x3FF)) as u32 as u16);
-            }
+            strings::push_codepoint_utf16(out, cursor.c as u32);
         }
         Ok(())
     }

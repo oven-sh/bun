@@ -1026,7 +1026,7 @@ pub mod package_manifest {
             #[cfg(not(windows))]
             let _ = &mut realpath_buf;
 
-            #[cfg(any(target_os = "linux", target_os = "android"))]
+            #[cfg(target_os = "linux")]
             let mut is_using_o_tmpfile = false;
 
             let file: File = 'brk: {
@@ -1039,7 +1039,7 @@ pub mod package_manifest {
                 // Do our best to use O_TMPFILE, so that if this process is interrupted, we don't leave a temporary file behind.
                 // O_TMPFILE is Linux-only. Not all filesystems support O_TMPFILE.
                 // https://manpages.debian.org/testing/manpages-dev/openat.2.en.html#O_TMPFILE
-                #[cfg(any(target_os = "linux", target_os = "android"))]
+                #[cfg(target_os = "linux")]
                 {
                     match File::openat(
                         cache_dir,
@@ -1116,7 +1116,7 @@ pub mod package_manifest {
                 return Ok(());
             }
 
-            #[cfg(any(target_os = "linux", target_os = "android"))]
+            #[cfg(target_os = "linux")]
             if is_using_o_tmpfile {
                 let _close = CloseOnDrop::file(&file);
                 // Attempt #1.

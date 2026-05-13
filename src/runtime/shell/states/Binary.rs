@@ -60,37 +60,12 @@ impl Binary {
             }
             let io = interp.as_binary(this).io.clone();
             let (child, y) = interp.spawn_expr(shell, &n.right, this, io);
-            if child.is_none() {
-                // The right operand is a subshell and `dupeForSubshell` failed;
-                // the error was already recorded via `throw`. Match Binary.zig
-                // `childDone` (Binary.zig:131-137): treat the right operand as
-                // exit 0 and finish the binary, rather than aborting the script.
-                interp.as_binary_mut(this).right = Some(0);
-                return interp.child_done(parent, this, 0);
-            }
             interp.as_binary_mut(this).currently_executing = child;
             return y;
         }
 
         let io = interp.as_binary(this).io.clone();
         let (child, y) = interp.spawn_expr(shell, &n.left, this, io);
-        if child.is_none() {
-            // The left operand is a subshell and `dupeForSubshell` failed; the
-            // error was already recorded via `throw`. Match Binary.zig `start`
-            // (Binary.zig:55-62): set `left = 0` and run the right operand
-            // unconditionally (no short-circuit), rather than aborting.
-            interp.as_binary_mut(this).left = Some(0);
-            let io = interp.as_binary(this).io.clone();
-            let (child, y) = interp.spawn_expr(shell, &n.right, this, io);
-            if child.is_none() {
-                // The right operand's subshell dup also failed. Zig asserts here
-                // (Binary.zig:60); finish with exit 0 instead of crashing.
-                interp.as_binary_mut(this).right = Some(0);
-                return interp.child_done(parent, this, 0);
-            }
-            interp.as_binary_mut(this).currently_executing = child;
-            return y;
-        }
         interp.as_binary_mut(this).currently_executing = child;
         y
     }

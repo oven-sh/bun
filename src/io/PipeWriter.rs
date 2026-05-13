@@ -22,11 +22,11 @@ use crate::source::Source;
 
 bun_core::define_scoped_log!(log, PipeWriter, hidden);
 
-// `bun.sys.Error.oom` — `ENOMEM` with syscall tag `.read` (matches Zig's
-// `src/sys/Error.zig`'s `pub const oom = fromCode(E.NOMEM, .read)`).
+// TODO(b2-blocked): bun_sys::Error::oom — `oom()` is a private free fn in
+// `bun_sys::error`; promote to assoc fn or re-export, then drop this shim.
 #[inline]
 fn oom_err() -> sys::Error {
-    sys::Error::oom()
+    sys::Error::from_code(sys::E::ENOMEM, sys::Tag::write)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

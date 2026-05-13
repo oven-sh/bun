@@ -833,7 +833,7 @@ impl Cmd {
                     Ok(f) => f,
                     Err(e) => {
                         let sys_err = e.to_shell_system_error();
-                        let ret = Builtin::cmd_write_failing_error(
+                        return Ok(Some(Builtin::cmd_write_failing_error(
                             interp,
                             this,
                             format_args!(
@@ -841,9 +841,7 @@ impl Cmd {
                                 sys_err.message,
                                 bstr::BStr::new(path.as_bytes())
                             ),
-                        );
-                        sys_err.deref();
-                        return Ok(Some(ret));
+                        )));
                     }
                 };
                 interp.as_cmd_mut(this).redirection_fd = Some(CowFd::init(redirfd));
@@ -981,10 +979,6 @@ impl Cmd {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stdout");
         if let Some(e) = err {
-            // Spec: Cmd.zig `defer e.deref()` — we are the sole owner of this
-            // `SystemError` (moved out of `PipeReaderState::Err` by
-            // `try_signal_done_to_cmd`), so release its WTF-string refs.
-            e.deref();
             self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
         }
         let redirect = self.ast_node().redirect;
@@ -1023,10 +1017,6 @@ impl Cmd {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stderr");
         if let Some(e) = err {
-            // Spec: Cmd.zig `defer e.deref()` — we are the sole owner of this
-            // `SystemError` (moved out of `PipeReaderState::Err` by
-            // `try_signal_done_to_cmd`), so release its WTF-string refs.
-            e.deref();
             self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
         }
         let redirect = self.ast_node().redirect;

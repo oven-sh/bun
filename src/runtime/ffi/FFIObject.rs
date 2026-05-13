@@ -278,14 +278,11 @@ pub mod reader {
             return Err(global_object.throw_invalid_arguments(format_args!("Expected a pointer")));
         }
         let off = if arguments.len() > 1 {
-            // Sign-extend a (possibly negative) i32 offset to pointer width and
-            // wrap, matching the Zig reference (`ptr + @as(usize, @intCast(i32))`
-            // in ReleaseFast): a negative offset reads bytes before `ptr`.
-            arguments[1].to_int32() as isize as usize
+            usize::try_from(arguments[1].to_int32()).expect("int cast")
         } else {
             0usize
         };
-        Ok(arguments[0].as_ptr_address().wrapping_add(off))
+        Ok(arguments[0].as_ptr_address() + off)
     }
 
     /// Read a `T` from a user-supplied raw address (unaligned, `*align(1)` in Zig).
@@ -436,10 +433,8 @@ pub mod reader {
         raw_addr: i64,
         offset: i32,
     ) -> JSValue {
-        // Sign-extend a (possibly negative) i32 offset to pointer width and wrap,
-        // matching the Zig reference (`@as(usize, @intCast(raw_addr)) + @as(usize,
-        // @intCast(offset))` in ReleaseFast): a negative offset reads before `raw_addr`.
-        let addr = (raw_addr as usize).wrapping_add(offset as isize as usize);
+        let addr = usize::try_from(raw_addr).expect("int cast")
+            + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
         let value = unsafe { read_unaligned_at::<u8>(addr) };
         JSValue::js_number(value as f64)
@@ -451,10 +446,8 @@ pub mod reader {
         raw_addr: i64,
         offset: i32,
     ) -> JSValue {
-        // Sign-extend a (possibly negative) i32 offset to pointer width and wrap,
-        // matching the Zig reference (`@as(usize, @intCast(raw_addr)) + @as(usize,
-        // @intCast(offset))` in ReleaseFast): a negative offset reads before `raw_addr`.
-        let addr = (raw_addr as usize).wrapping_add(offset as isize as usize);
+        let addr = usize::try_from(raw_addr).expect("int cast")
+            + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
         let value = unsafe { read_unaligned_at::<u16>(addr) };
         JSValue::js_number(value as f64)
@@ -466,10 +459,8 @@ pub mod reader {
         raw_addr: i64,
         offset: i32,
     ) -> JSValue {
-        // Sign-extend a (possibly negative) i32 offset to pointer width and wrap,
-        // matching the Zig reference (`@as(usize, @intCast(raw_addr)) + @as(usize,
-        // @intCast(offset))` in ReleaseFast): a negative offset reads before `raw_addr`.
-        let addr = (raw_addr as usize).wrapping_add(offset as isize as usize);
+        let addr = usize::try_from(raw_addr).expect("int cast")
+            + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
         let value = unsafe { read_unaligned_at::<u32>(addr) };
         JSValue::js_number(value as f64)
@@ -481,10 +472,8 @@ pub mod reader {
         raw_addr: i64,
         offset: i32,
     ) -> JSValue {
-        // Sign-extend a (possibly negative) i32 offset to pointer width and wrap,
-        // matching the Zig reference (`@as(usize, @intCast(raw_addr)) + @as(usize,
-        // @intCast(offset))` in ReleaseFast): a negative offset reads before `raw_addr`.
-        let addr = (raw_addr as usize).wrapping_add(offset as isize as usize);
+        let addr = usize::try_from(raw_addr).expect("int cast")
+            + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
         let value = unsafe { read_unaligned_at::<u64>(addr) };
         JSValue::js_number(value as f64)
@@ -496,10 +485,8 @@ pub mod reader {
         raw_addr: i64,
         offset: i32,
     ) -> JSValue {
-        // Sign-extend a (possibly negative) i32 offset to pointer width and wrap,
-        // matching the Zig reference (`@as(usize, @intCast(raw_addr)) + @as(usize,
-        // @intCast(offset))` in ReleaseFast): a negative offset reads before `raw_addr`.
-        let addr = (raw_addr as usize).wrapping_add(offset as isize as usize);
+        let addr = usize::try_from(raw_addr).expect("int cast")
+            + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
         let value = unsafe { read_unaligned_at::<i8>(addr) };
         JSValue::js_number(value as f64)
@@ -511,10 +498,8 @@ pub mod reader {
         raw_addr: i64,
         offset: i32,
     ) -> JSValue {
-        // Sign-extend a (possibly negative) i32 offset to pointer width and wrap,
-        // matching the Zig reference (`@as(usize, @intCast(raw_addr)) + @as(usize,
-        // @intCast(offset))` in ReleaseFast): a negative offset reads before `raw_addr`.
-        let addr = (raw_addr as usize).wrapping_add(offset as isize as usize);
+        let addr = usize::try_from(raw_addr).expect("int cast")
+            + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
         let value = unsafe { read_unaligned_at::<i16>(addr) };
         JSValue::js_number(value as f64)
@@ -526,10 +511,8 @@ pub mod reader {
         raw_addr: i64,
         offset: i32,
     ) -> JSValue {
-        // Sign-extend a (possibly negative) i32 offset to pointer width and wrap,
-        // matching the Zig reference (`@as(usize, @intCast(raw_addr)) + @as(usize,
-        // @intCast(offset))` in ReleaseFast): a negative offset reads before `raw_addr`.
-        let addr = (raw_addr as usize).wrapping_add(offset as isize as usize);
+        let addr = usize::try_from(raw_addr).expect("int cast")
+            + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
         let value = unsafe { read_unaligned_at::<i32>(addr) };
         JSValue::js_number(value as f64)
@@ -541,10 +524,8 @@ pub mod reader {
         raw_addr: i64,
         offset: i32,
     ) -> JSValue {
-        // Sign-extend a (possibly negative) i32 offset to pointer width and wrap,
-        // matching the Zig reference (`@as(usize, @intCast(raw_addr)) + @as(usize,
-        // @intCast(offset))` in ReleaseFast): a negative offset reads before `raw_addr`.
-        let addr = (raw_addr as usize).wrapping_add(offset as isize as usize);
+        let addr = usize::try_from(raw_addr).expect("int cast")
+            + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
         let value = unsafe { read_unaligned_at::<i64>(addr) };
         JSValue::js_number(value as f64)
@@ -556,10 +537,8 @@ pub mod reader {
         raw_addr: i64,
         offset: i32,
     ) -> JSValue {
-        // Sign-extend a (possibly negative) i32 offset to pointer width and wrap,
-        // matching the Zig reference (`@as(usize, @intCast(raw_addr)) + @as(usize,
-        // @intCast(offset))` in ReleaseFast): a negative offset reads before `raw_addr`.
-        let addr = (raw_addr as usize).wrapping_add(offset as isize as usize);
+        let addr = usize::try_from(raw_addr).expect("int cast")
+            + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
         let value = unsafe { read_unaligned_at::<f32>(addr) };
         JSValue::js_number(value as f64)
@@ -571,10 +550,8 @@ pub mod reader {
         raw_addr: i64,
         offset: i32,
     ) -> JSValue {
-        // Sign-extend a (possibly negative) i32 offset to pointer width and wrap,
-        // matching the Zig reference (`@as(usize, @intCast(raw_addr)) + @as(usize,
-        // @intCast(offset))` in ReleaseFast): a negative offset reads before `raw_addr`.
-        let addr = (raw_addr as usize).wrapping_add(offset as isize as usize);
+        let addr = usize::try_from(raw_addr).expect("int cast")
+            + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
         let value = unsafe { read_unaligned_at::<f64>(addr) };
         JSValue::js_number(value)
@@ -586,10 +563,8 @@ pub mod reader {
         raw_addr: i64,
         offset: i32,
     ) -> JSValue {
-        // Sign-extend a (possibly negative) i32 offset to pointer width and wrap,
-        // matching the Zig reference (`@as(usize, @intCast(raw_addr)) + @as(usize,
-        // @intCast(offset))` in ReleaseFast): a negative offset reads before `raw_addr`.
-        let addr = (raw_addr as usize).wrapping_add(offset as isize as usize);
+        let addr = usize::try_from(raw_addr).expect("int cast")
+            + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
         let value = unsafe { read_unaligned_at::<u64>(addr) };
         JSValue::from_uint64_no_truncate(global, value)
@@ -601,10 +576,8 @@ pub mod reader {
         raw_addr: i64,
         offset: i32,
     ) -> JSValue {
-        // Sign-extend a (possibly negative) i32 offset to pointer width and wrap,
-        // matching the Zig reference (`@as(usize, @intCast(raw_addr)) + @as(usize,
-        // @intCast(offset))` in ReleaseFast): a negative offset reads before `raw_addr`.
-        let addr = (raw_addr as usize).wrapping_add(offset as isize as usize);
+        let addr = usize::try_from(raw_addr).expect("int cast")
+            + usize::try_from(offset).expect("int cast");
         // SAFETY: see `read_unaligned_at` (JIT-validated address).
         let value = unsafe { read_unaligned_at::<i64>(addr) };
         JSValue::from_int64_no_truncate(global, value)

@@ -99,89 +99,6 @@ impl Default for ExecCfg {
 
 pub struct RunCommand;
 
-/// Resolve the host IANA timezone id cheaply (without walking
-/// `/usr/share/zoneinfo/**`) and seed it as JSC's default timezone via
-/// `set_time_zone()`. Called only when `$TZ` is unset.
-///
-/// Resolution order matches the common Unix conventions:
-///   1. `/etc/localtime` symlink target containing `.../zoneinfo/<id>`
-///   2. `/etc/timezone` (Debian/Ubuntu) — file content is the IANA id
-///   3. `ZONE="..."` in `/etc/sysconfig/clock` (older RHEL/CentOS)
-///
-/// If none resolve, do nothing and let JSC/ICU auto-detect lazily.
-/// Zig: `seedHostTimeZone` in `src/bun.js.zig`.
-#[cfg(unix)]
-fn seed_host_time_zone(global: &JSGlobalObject) {
-    use bun_jsc::zig_string::ZigString;
-    use std::os::unix::ffi::OsStrExt as _;
-
-    const ZONEINFO_MARKER: &[u8] = b"zoneinfo/";
-
-    let apply = |id: &[u8]| -> bool {
-        if id.is_empty() {
-            return false;
-        }
-        let _ = global.set_time_zone(&ZigString::init(id));
-        true
-    };
-
-    // 1) /etc/localtime -> .../zoneinfo/<id>
-    if let Ok(target) = std::fs::read_link("/etc/localtime") {
-        let bytes = target.as_os_str().as_bytes();
-        if let Some(pos) = bytes
-            .windows(ZONEINFO_MARKER.len())
-            .rposition(|w| w == ZONEINFO_MARKER)
-        {
-            if apply(&bytes[pos + ZONEINFO_MARKER.len()..]) {
-                return;
-            }
-        }
-    }
-
-    // 2) /etc/timezone (Debian/Ubuntu) — file content is the IANA id
-    if let Ok(contents) = std::fs::read("/etc/timezone") {
-        if apply(contents.trim_ascii()) {
-            return;
-        }
-    }
-
-    // 3) ZONE="..." in /etc/sysconfig/clock (older RHEL/CentOS)
-    if let Ok(contents) = std::fs::read("/etc/sysconfig/clock") {
-        for line in contents.split(|&b| b == b'\r' || b == b'\n') {
-            let trimmed = line.trim_ascii();
-            let Some(rest) = trimmed.strip_prefix(b"ZONE") else {
-                continue;
-            };
-            let rest = rest.trim_ascii_start();
-            let Some(rest) = rest.strip_prefix(b"=") else {
-                continue;
-            };
-            // Zig: `std.mem.trim(u8, rest, " \t")` then `std.mem.trim(u8, rest, "\"'")`.
-            let mut value = rest.trim_ascii();
-            while let Some((&first, tail)) = value.split_first() {
-                if first == b'"' || first == b'\'' {
-                    value = tail;
-                } else {
-                    break;
-                }
-            }
-            while let Some((&last, head)) = value.split_last() {
-                if last == b'"' || last == b'\'' {
-                    value = head;
-                } else {
-                    break;
-                }
-            }
-            if apply(value) {
-                return;
-            }
-        }
-    }
-}
-
-#[cfg(not(unix))]
-fn seed_host_time_zone(_global: &JSGlobalObject) {}
-
 impl RunCommand {
     /// `bun run --help` body.
     pub fn print_help(package_json: Option<&PackageJSON>) {
@@ -1140,16 +1057,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     .global()
                     .set_time_zone(&bun_jsc::zig_string::ZigString::init(tz));
             }
-        } else {
-            // No $TZ in the environment: eagerly seed the default timezone from
-            // the host configuration before the entry point runs. Otherwise ICU
-            // lazily auto-detects the host zone the first time a Date is
-            // constructed, and on systems where /etc/localtime is a regular file
-            // (rather than a symlink into /usr/share/zoneinfo) that detection
-            // content-matches every zone file under /usr/share/zoneinfo/** —
-            // thousands of openat/read/lseek/fstat syscalls.
-            // Zig: `seedHostTimeZone(vm.global)` in `src/bun.js.zig`.
-            seed_host_time_zone(vm.global());
         }
         vm.env_loader().load_tracy();
 
@@ -1248,10 +1155,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             log: std::ptr::NonNull::new(ctx.log),
             args: ctx.args.clone(),
             graph: Some(graph_dyn),
-            // Zig `bootStandalone`: `.debugger = ctx.runtime_options.debugger`
-            // — forward the parsed `--inspect*` CLI flags so compiled
-            // executables can attach an inspector.
-            debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
             is_main_thread: true,
             smol: ctx.runtime_options.smol,
             // PORT NOTE: `Options::dns_result_order` is `u8` until the

@@ -1038,11 +1038,15 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     signal_code.fmt(Output::enable_ansi_colors_stderr()),
                 ));
 
-                // Re-raise the exact signal that killed the script (Zig:
-                // `Global.raiseIgnoringPanicHandler(signal)` with the raw `WTERMSIG` byte).
-                // `bun_core::SignalCode::from_raw` only maps 1..=31, so use the raw variant
-                // to preserve real-time signals (>31, e.g. SIGRTMIN).
-                Global::raise_ignoring_panic_handler_raw(::core::ffi::c_int::from(signal));
+                // `Status::signal_code()` range-checks 1..=31 (`bun_core::SignalCode` is
+                // exhaustive); RT signals (>31) fall back to SIGTERM so the diverging
+                // `raise_ignoring_panic_handler` path is preserved. Zig's `SignalCode` is a
+                // non-exhaustive `enum(u8)` so it had no such constraint.
+                Global::raise_ignoring_panic_handler(
+                    Status::Signaled(signal)
+                        .signal_code()
+                        .unwrap_or(bun_core::SignalCode::SIGTERM),
+                );
             }
             Status::Err(err) => {
                 if self.optional {

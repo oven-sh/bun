@@ -141,12 +141,7 @@ impl Expansion {
                     return Yield::suspended();
                 }
                 ExpansionState::BraceExpand => {
-                    if Self::do_brace_expand(me) {
-                        // Spec: Expansion.zig `.braces` arm sets `state = .glob`
-                        // when the atom also has glob syntax, so the original
-                        // pattern still runs through the glob walker.
-                        return Self::transition_to_glob_state(interp, this);
-                    }
+                    Self::do_brace_expand(me);
                     continue;
                 }
                 ExpansionState::Done | ExpansionState::Err(_) => break,
@@ -260,12 +255,7 @@ impl Expansion {
     /// Spec: Expansion.zig `.braces` arm. Re-tokenize `current_out` (the
     /// fully-expanded word with `{`/`,`/`}` markers preserved by
     /// `expand_simple_no_io`) and push each variant as a separate argv word.
-    ///
-    /// Returns `true` if the atom also has glob syntax, in which case the caller
-    /// must transition to the glob state (Spec: Expansion.zig `.braces` ->
-    /// `.glob`); `current_out` is left intact so the glob walker can run on the
-    /// original pattern (the walker brace-expands the pattern itself).
-    fn do_brace_expand(me: &mut Expansion) -> bool {
+    fn do_brace_expand(me: &mut Expansion) {
         use bun_shell_parser::braces;
         let brace_str = &me.current_out[..];
         let mut lexer_output = if bun_core::is_all_ascii(brace_str) {
@@ -292,14 +282,10 @@ impl Expansion {
 
         // Spec lines 268-279: push each variant as its own word. The Zig
         // version NUL-terminated then `out.pushResult`; the NodeId port
-        // records word boundaries via `bounds` instead. A boundary is
-        // recorded before every variant except the first, so an empty
-        // leading variant (`{,b}` → `["", "b"]`) still becomes its own
-        // argv word — matching Zig, which pushes every variant including
-        // empty ones (a `!buf.is_empty()` guard would silently merge a
-        // leading empty variant into the next word).
-        for (i, s) in expanded.into_iter().enumerate() {
-            if i > 0 {
+        // records word boundaries via `bounds` instead.
+        me.current_out.clear();
+        for s in expanded {
+            if !me.out.buf.is_empty() {
                 me.out.bounds.push(me.out.buf.len() as u32);
             }
             me.out.buf.extend_from_slice(&s);
@@ -307,17 +293,15 @@ impl Expansion {
 
         let node = me.node;
         let atom = node.get();
-        if atom.has_glob_expansion() {
-            // Spec: brace+glob composes — Zig's `.braces` arm sets `state = .glob`
-            // and runs the glob walker on `current_out` (still the original
-            // pattern, e.g. `{a,b}*.txt`, which the walker brace-expands itself).
-            // Leave `current_out` intact for the caller's `transition_to_glob_state`.
-            true
+        me.state = if atom.has_glob_expansion() {
+            // Spec: brace+glob composes — re-enter via the glob arm. The
+            // NodeId port currently routes glob through `current_out`, so
+            // brace-produced multi-word + glob is left as a TODO (matches the
+            // Zig "weird behaviour" note above the spec).
+            ExpansionState::Done
         } else {
-            me.current_out.clear();
-            me.state = ExpansionState::Done;
-            false
-        }
+            ExpansionState::Done
+        };
     }
 
     /// Spec: Expansion.zig `transitionToGlobState`. Kick off an off-thread

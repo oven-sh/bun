@@ -102,9 +102,9 @@ pub const O_DSYNC: i32 = O::DSYNC;
 /// Constant for fs.open(). Flag indicating to open the symbolic link itself rather than the resource it is pointing to.
 pub const O_SYMLINK: i32 = O::SYMLINK;
 /// Constant for fs.open(). When set, an attempt will be made to minimize caching effects of file I/O.
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(target_os = "linux")]
 pub const O_DIRECT: i32 = libc::O_DIRECT;
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
+#[cfg(not(target_os = "linux"))]
 pub const O_DIRECT: i32 = 0;
 /// Constant for fs.open(). Flag indicating to open the file in nonblocking mode when possible.
 pub const O_NONBLOCK: i32 = O::NONBLOCK;

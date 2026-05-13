@@ -108,15 +108,16 @@ impl ImportDependency {
             None
         };
 
-        // PORT NOTE: Zig: css.css_modules.hash(allocator, "{s}_{s}", .{ filename, rule.url }, false)
-        // — `{s}` writes the raw `[]const u8` bytes verbatim. Build the hash
-        // input from raw bytes (filenames / `@import` targets may be non-UTF-8)
-        // so the placeholder stays byte-identical to the Zig implementation.
-        let mut hash_input: Vec<u8> = Vec::with_capacity(filename.len() + 1 + rule.url.len());
-        hash_input.extend_from_slice(filename);
-        hash_input.push(b'_');
-        hash_input.extend_from_slice(rule.url);
-        let placeholder = crate::css_modules::hash_bytes(bump, &hash_input, false);
+        let placeholder = crate::css_modules::hash(
+            bump,
+            // PORT NOTE: Zig "{s}_{s}", .{ filename, rule.url } → fmt::Arguments
+            format_args!(
+                "{}_{}",
+                bstr::BStr::new(filename),
+                bstr::BStr::new(rule.url)
+            ),
+            false,
+        );
 
         ImportDependency {
             // TODO(zack): should we clone this? lightningcss does that
@@ -162,15 +163,11 @@ impl UrlDependency {
             .at(url.import_record_idx as usize)
             .path
             .pretty;
-        // PORT NOTE: Zig: css.css_modules.hash(allocator, "{s}_{s}", .{ filename, rule.url }, false)
-        // — `{s}` writes the raw `[]const u8` bytes verbatim. Build the hash
-        // input from raw bytes (filenames / `url()` targets may be non-UTF-8)
-        // so the placeholder stays byte-identical to the Zig implementation.
-        let mut hash_input: Vec<u8> = Vec::with_capacity(filename.len() + 1 + theurl.len());
-        hash_input.extend_from_slice(filename);
-        hash_input.push(b'_');
-        hash_input.extend_from_slice(theurl);
-        let placeholder = crate::css_modules::hash_bytes(bump, &hash_input, false);
+        let placeholder = crate::css_modules::hash(
+            bump,
+            format_args!("{}_{}", bstr::BStr::new(filename), bstr::BStr::new(theurl)),
+            false,
+        );
         UrlDependency {
             url: std::ptr::from_ref::<[u8]>(theurl),
             placeholder: std::ptr::from_ref::<[u8]>(placeholder),

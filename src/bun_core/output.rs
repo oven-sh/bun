@@ -2919,47 +2919,10 @@ impl StdinReader {
 }
 
 /// `std.fs.File.stdin().readerStreaming(&buf)` — fresh, unbuffered stdin
-/// reader. Used by `alert()` which reads a handful of bytes.
+/// reader. Used by `alert()`/`confirm()` which read a handful of bytes.
 #[inline]
 pub fn stdin_reader() -> StdinReader {
     StdinReader { fd: Fd::stdin() }
-}
-
-/// Locally-buffered stdin byte reader matching Zig `confirm`'s
-/// `var stdin_buf: [1024]u8 = undefined; stdin.readerStreaming(&stdin_buf)` — a
-/// *buffered* reader whose first `take_byte` pulls up to 1024 bytes off the OS
-/// stdin pipe into this owned buffer. Bytes past the consumed response line stay
-/// in the buffer and are discarded when the reader is dropped (i.e. when
-/// `confirm` returns), rather than being left in the OS pipe for a later read.
-pub struct BufferedStdinReader {
-    fd: Fd,
-    buf: [u8; 1024],
-    start: usize,
-    end: usize,
-}
-
-impl BufferedStdinReader {
-    /// Zig `Reader.takeByte` over a streaming reader — refills with a single
-    /// `read(2)` when the local buffer is empty; `Err` on I/O error *or* EOF.
-    pub fn take_byte(&mut self) -> Result<u8, crate::Error> {
-        if self.start >= self.end {
-            self.end = output_sink().read(self.fd, &mut self.buf)?;
-            self.start = 0;
-            if self.end == 0 {
-                return Err(crate::err!(EndOfStream));
-            }
-        }
-        let b = self.buf[self.start];
-        self.start += 1;
-        Ok(b)
-    }
-}
-
-/// `std.fs.File.stdin().readerStreaming(&[1024]u8)` — a fresh stdin reader with
-/// a 1024-byte owned buffer. Used by `confirm()`.
-#[inline]
-pub fn buffered_stdin_reader_1k() -> BufferedStdinReader {
-    BufferedStdinReader { fd: Fd::stdin(), buf: [0; 1024], start: 0, end: 0 }
 }
 
 /// `bun.Output.buffered_stdin` — raw pointer to the process-global 4 KiB

@@ -824,9 +824,7 @@ impl Value {
 
     pub fn memory_cost(&self) -> usize {
         match self {
-            // Zig `Body.Value.memoryCost` reports the InternalBlob byte *length*
-            // (`bytes.items.len`), not the Vec capacity, so mirror that here.
-            Value::InternalBlob(b) => b.slice_const().len(),
+            Value::InternalBlob(b) => b.memory_cost(),
             Value::WTFStringImpl(s) => wtf_impl(s).memory_cost(),
             Value::Locked(l) => l.size_hint() as usize,
             // Value::InlineBlob(b) => b.slice_const().len(),

@@ -121,9 +121,13 @@ impl Signature {
         } else {
             use std::io::Write;
             let mut v: Vec<u8> = Vec::new();
-            v.push(b'P');
-            v.extend_from_slice(&name[..name.len().min(40)]);
-            write!(&mut v, "${}", prepared_statement_id).expect("unreachable");
+            write!(
+                &mut v,
+                "P{}${}",
+                bstr::BStr::new(&name[..name.len().min(40)]),
+                prepared_statement_id,
+            )
+            .expect("unreachable");
             v.into_boxed_slice()
         };
 

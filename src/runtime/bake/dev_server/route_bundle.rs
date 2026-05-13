@@ -175,39 +175,8 @@ impl RouteBundle {
     }
 }
 
-impl Drop for RouteBundle {
-    /// `RouteBundle.deinit` (RouteBundle.zig:97).
-    ///
-    /// Field-`Drop` covers some of the work (`Framework`'s `jsc::StrongOptional`
-    /// fields → `.deinit()`; `Html::bundled_html_text` `Box<[u8]>` → free), but
-    /// the intrusive refs held in `BackRef` / raw-pointer fields are non-owning
-    /// and must be released explicitly, mirroring the Zig `deinit` body.
-    fn drop(&mut self) {
-        // Zig: `if (rb.client_bundle) |blob| blob.deref();`
-        if let Some(blob) = self.client_bundle {
-            // SAFETY: `client_bundle` was produced by `StaticRoute::init_*`
-            // (heap::alloc) and the slot holds its own ref; teardown holds no
-            // other borrow into it.
-            unsafe { StaticRoute::deref_(blob.as_ptr()) };
-        }
-        match &mut self.data {
-            Data::Framework(_) => {
-                // `jsc::StrongOptional` fields are released by field-Drop;
-                // `evaluate_failure` is not owned.
-            }
-            Data::Html(html) => {
-                // `bundled_html_text` (`Box<[u8]>`) is released by field-Drop.
-                // Zig: `if (html.cached_response) |cr| cr.deref();`
-                if let Some(cached) = html.cached_response {
-                    // SAFETY: see `client_bundle` note above.
-                    unsafe { StaticRoute::deref_(cached.as_ptr()) };
-                }
-                // Zig: `html.html_bundle.deref();` — release the intrusive ref
-                // taken via `RefCount::<HTMLBundleRoute>::ref_` when the bundle
-                // was stored (DevServer `get_or_put_route_bundle`).
-                // SAFETY: that store-time ref keeps `html_bundle` live until here.
-                unsafe { bun_ptr::RefCount::<HTMLBundleRoute>::deref(html.html_bundle) };
-            }
-        }
-    }
-}
+// `deinit` is fully subsumed by Drop:
+//   - client_bundle / cached_response: Option<Arc<StaticRoute>> drop = .deref()
+//   - Framework: StrongOptional fields drop = .deinit()
+//   - Html: bundled_html_text Box<[u8]> drop = allocator.free()
+//           html_bundle RefPtr drop = .deref()

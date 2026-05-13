@@ -493,12 +493,44 @@ pub enum Token {
 
 impl core::fmt::Display for Token {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Render via the CSS-serialization-correct path (port of Zig
-        // `Token.format`): quotes strings, keeps `@` on at-keywords / `(` on
-        // functions / `#` on hashes, and formats numbers with `writeNumeric`.
-        // Writing to a `Vec<u8>` is infallible.
-        let mut buf: Vec<u8> = Vec::new();
-        let _ = self.format_for_error(&mut buf);
-        f.write_str(&String::from_utf8_lossy(&buf))
+        // B-2: minimal rendering for error messages. The full Zig
+        // `Token.format` (CSS serialization) lives in `css_parser.rs` and
+        // depends on `serializer::*`; that impl supersedes this when un-gated.
+        use bstr::BStr;
+        match self {
+            Token::Ident(v)
+            | Token::Function(v)
+            | Token::AtKeyword(v)
+            | Token::UnrestrictedHash(v)
+            | Token::IdHash(v)
+            | Token::QuotedString(v)
+            | Token::BadString(v)
+            | Token::UnquotedUrl(v)
+            | Token::BadUrl(v)
+            | Token::Whitespace(v)
+            | Token::Comment(v) => {
+                write!(f, "{}", BStr::new(v))
+            }
+            Token::Delim(c) => write!(f, "{}", char::from_u32(*c).unwrap_or('\u{FFFD}')),
+            Token::Number(n) => write!(f, "{}", n.value),
+            Token::Percentage { unit_value, .. } => write!(f, "{}%", *unit_value * 100.0),
+            Token::Dimension(d) => write!(f, "{}{}", d.num.value, BStr::new(d.unit)),
+            Token::Cdo => f.write_str("<!--"),
+            Token::Cdc => f.write_str("-->"),
+            Token::IncludeMatch => f.write_str("~="),
+            Token::DashMatch => f.write_str("|="),
+            Token::PrefixMatch => f.write_str("^="),
+            Token::SuffixMatch => f.write_str("$="),
+            Token::SubstringMatch => f.write_str("*="),
+            Token::Colon => f.write_str(":"),
+            Token::Semicolon => f.write_str(";"),
+            Token::Comma => f.write_str(","),
+            Token::OpenSquare => f.write_str("["),
+            Token::CloseSquare => f.write_str("]"),
+            Token::OpenParen => f.write_str("("),
+            Token::CloseParen => f.write_str(")"),
+            Token::OpenCurly => f.write_str("{"),
+            Token::CloseCurly => f.write_str("}"),
+        }
     }
 }

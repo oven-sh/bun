@@ -2281,7 +2281,6 @@ impl TestCommand {
                 // rely on the dir fd yields a performance improvement
                 store_fd: true,
                 smol: ctx.runtime_options.smol,
-                mini_mode: ctx.runtime_options.smol,
                 is_main_thread: true,
                 ..Default::default()
             })?

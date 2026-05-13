@@ -717,8 +717,8 @@ describe.concurrent("bun pm version", () => {
         stdout: "ignore",
       }).exited;
 
-      expect(Bun.file(join(testDir2, "event.log")).exists()).resolves.toBe(true);
-      expect(Bun.file(join(testDir2, "script.log")).exists()).resolves.toBe(true);
+      await expect(Bun.file(join(testDir2, "event.log")).exists()).resolves.toBe(true);
+      await expect(Bun.file(join(testDir2, "script.log")).exists()).resolves.toBe(true);
 
       const eventContent = await Bun.file(join(testDir2, "event.log")).text();
       const scriptContent = await Bun.file(join(testDir2, "script.log")).text();
@@ -777,8 +777,8 @@ describe.concurrent("bun pm version", () => {
         stdout: "ignore",
       }).exited;
 
-      expect(Bun.file(join(testDir4, "version-output.txt")).exists()).resolves.toBe(true);
-      expect(Bun.file(join(testDir4, "build")).exists()).resolves.toBe(false);
+      await expect(Bun.file(join(testDir4, "version-output.txt")).exists()).resolves.toBe(true);
+      await expect(Bun.file(join(testDir4, "build")).exists()).resolves.toBe(false);
 
       const content = await Bun.file(join(testDir4, "version-output.txt")).text();
       expect(content.trim()).toBe("built");

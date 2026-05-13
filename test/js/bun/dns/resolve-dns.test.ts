@@ -96,17 +96,17 @@ describe("dns", () => {
         }
       });
     });
-    test.each(invalidHostnames)("%s", hostname => {
+    test.each(invalidHostnames)("%s", async hostname => {
       // @ts-expect-error
-      expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
+      await expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
         code: "DNS_ENOTFOUND",
         name: "DNSException",
       });
     });
 
-    test.each(malformedHostnames)("'%s'", hostname => {
+    test.each(malformedHostnames)("'%s'", async hostname => {
       // @ts-expect-error
-      expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
+      await expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
         code: expect.stringMatching(/^DNS_ENOTFOUND|DNS_ESERVFAIL|DNS_ENOTIMP$/),
         name: "DNSException",
       });

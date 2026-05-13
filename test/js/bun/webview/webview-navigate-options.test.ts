@@ -33,15 +33,30 @@ import { bunEnv, bunExe } from "harness";
 //     should resolve; default navigate() should time out.
 //   - "load": frameNavigated + loadEventFired. Default navigate resolves.
 //   - "silent": nothing. navigate() hangs until timeout.
+//   - "stale-load": first navigate → DCL only (settles). Second
+//     navigate → emit the FIRST nav's trailing lifecycleEvent(load) +
+//     loadEventFired BEFORE the second nav commits, then never emit
+//     anything for the second nav. Proves beginChromeNavigation()'s
+//     m_loaderId clear stops stale events from settling a later
+//     navigate.
 //
-// frameId "F" / loaderId "L" are the main frame; the mock ALSO emits a
-// subframe lifecycleEvent (frameId "SUB", loaderId "SL") to prove the
-// frameId/loaderId gate filters it out.
+// frameId "F" / loaderId "L<n>" are the main frame; the mock ALSO emits
+// a subframe lifecycleEvent (frameId "SUB") to prove the frameId/
+// loaderId gate filters it out.
 const mockCDP = `
 function startMockCDP(behavior) {
   const sid = "SESS";
+  let navN = 0;
   const send = (ws, obj) => ws.send(JSON.stringify(obj));
   const ev = (ws, method, params) => send(ws, { method, params, sessionId: sid });
+  const frameNavigated = (ws, loaderId, url) =>
+    ev(ws, "Page.frameNavigated", {
+      frame: { id: "F", loaderId, url,
+               domainAndRegistry: "", securityOrigin: "null", mimeType: "text/html",
+               adFrameStatus: { adFrameType: "none" }, secureContextType: "Secure",
+               crossOriginIsolatedContextType: "NotIsolated", gatedAPIFeatures: [] },
+      type: "Navigation",
+    });
 
   return Bun.serve({
     port: 0,
@@ -70,32 +85,53 @@ function startMockCDP(behavior) {
             return reply({});
           case "Page.reload":
           case "Page.navigate": {
-            reply({ frameId: "F", loaderId: "L" });
+            const n = ++navN;
+            const L = "L" + n;
+            const url = msg.params?.url ?? "about:blank";
+            reply({ frameId: "F", loaderId: L });
             // Subframe DCL FIRST — must be ignored by the frameId gate.
             // If the handler matched on name alone, this would settle
             // the navigate before the main document committed.
             ev(ws, "Page.lifecycleEvent", {
               frameId: "SUB", loaderId: "SL", name: "DOMContentLoaded", timestamp: 1,
             });
+
+            if (behavior === "stale-load") {
+              if (n === 1) {
+                // First nav: DCL-only so the user settles and can
+                // start a second navigate.
+                frameNavigated(ws, L, url);
+                ev(ws, "Page.lifecycleEvent", {
+                  frameId: "F", loaderId: L, name: "DOMContentLoaded", timestamp: 2,
+                });
+              } else {
+                // Second nav: emit the FIRST nav's trailing load
+                // events (loaderId L1) BEFORE this nav commits. With
+                // the stale-gate, m_loaderId is empty here so both
+                // the lifecycleEvent loaderId check and
+                // loadEventFired's isEmpty() guard drop them.
+                ev(ws, "Page.lifecycleEvent", {
+                  frameId: "F", loaderId: "L1", name: "load", timestamp: 3,
+                });
+                ev(ws, "Page.loadEventFired", { timestamp: 3 });
+                // Never commit url2 — the test asserts it stays pending.
+              }
+              return;
+            }
+
             // Main-frame commit: sets m_frameId/m_loaderId.
-            ev(ws, "Page.frameNavigated", {
-              frame: { id: "F", loaderId: "L", url: msg.params?.url ?? "about:blank",
-                       domainAndRegistry: "", securityOrigin: "null", mimeType: "text/html",
-                       adFrameStatus: { adFrameType: "none" }, secureContextType: "Secure",
-                       crossOriginIsolatedContextType: "NotIsolated", gatedAPIFeatures: [] },
-              type: "Navigation",
-            });
+            frameNavigated(ws, L, url);
             if (behavior === "dcl-only") {
               ev(ws, "Page.lifecycleEvent", {
-                frameId: "F", loaderId: "L", name: "DOMContentLoaded", timestamp: 2,
+                frameId: "F", loaderId: L, name: "DOMContentLoaded", timestamp: 2,
               });
               // No loadEventFired — the page "never finishes loading".
             } else if (behavior === "load") {
               ev(ws, "Page.lifecycleEvent", {
-                frameId: "F", loaderId: "L", name: "DOMContentLoaded", timestamp: 2,
+                frameId: "F", loaderId: L, name: "DOMContentLoaded", timestamp: 2,
               });
               ev(ws, "Page.lifecycleEvent", {
-                frameId: "F", loaderId: "L", name: "load", timestamp: 3,
+                frameId: "F", loaderId: L, name: "load", timestamp: 3,
               });
               ev(ws, "Page.loadEventFired", { timestamp: 3 });
             }
@@ -115,7 +151,7 @@ function startMockCDP(behavior) {
 }
 `;
 
-async function run(behavior: "dcl-only" | "load" | "silent", body: string) {
+async function run(behavior: "dcl-only" | "load" | "silent" | "stale-load", body: string) {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -203,6 +239,42 @@ test("reload({waitUntil:'domcontentloaded'}) settles on lifecycleEvent", async (
   );
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("ok title=mock-title");
+  expect(exitCode).toBe(0);
+});
+
+test("stale loadEventFired from a prior 'domcontentloaded' navigate does not settle the next one", async () => {
+  // Regression: navigate(url1, {waitUntil:'domcontentloaded'}) settles
+  // before url1's window `load` fires. A second navigate() can then
+  // start, and url1's trailing lifecycleEvent(load)+loadEventFired
+  // arrive while nav2 is pending. Without the m_loaderId clear in
+  // beginChromeNavigation(), those stale events pass the gate (the
+  // old loaderId is still cached) and chainTitle() settles nav2's
+  // promise before its own document committed.
+  //
+  // The mock's "stale-load" arm emits exactly that: nav1 → DCL only;
+  // nav2 → stale lifecycleEvent(load,L1) + loadEventFired, then
+  // nothing for nav2. With the fix, nav2 stays pending.
+  const { stdout, stderr, exitCode } = await run(
+    "stale-load",
+    `
+    await view.navigate("http://example/one", { waitUntil: "domcontentloaded" });
+    // nav1 settled on DCL; its load hasn't fired. nav2 starts and
+    // clears m_loaderId. The mock then sends nav1's trailing load
+    // events — they must NOT settle nav2.
+    const nav2 = view.navigate("http://example/two", { waitUntil: "load", timeout: 0 });
+    let settled = "pending";
+    nav2.then(() => settled = "resolved", e => settled = "rejected:" + e.message);
+    await Bun.sleep(300);
+    // url should still be nav1's — nav2 never committed in the mock.
+    console.log("nav2=" + settled + " url=" + view.url);
+    // And with waitUntil:'domcontentloaded' on nav2 the stale
+    // lifecycleEvent(load, L1) must ALSO be rejected by the loaderId
+    // check (m_loaderId empty). Close the view to reject nav2 so the
+    // process exits; the test only cares it was still pending.
+    `,
+  );
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("nav2=pending url=http://example/one");
   expect(exitCode).toBe(0);
 });
 

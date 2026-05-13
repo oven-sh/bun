@@ -8961,9 +8961,9 @@ declare module "bun" {
     resize(width: number, height: number): Promise<void>;
 
     /** Navigate back in session history. */
-    back(options?: WebView.NavigateOptions): Promise<void>;
+    goBack(options?: WebView.NavigateOptions): Promise<void>;
     /** Navigate forward in session history. */
-    forward(options?: WebView.NavigateOptions): Promise<void>;
+    goForward(options?: WebView.NavigateOptions): Promise<void>;
     /** Reload the current page. */
     reload(options?: WebView.NavigateOptions): Promise<void>;
 

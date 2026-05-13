@@ -1163,7 +1163,10 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         if (!(name.size() == 16 && memcmp(name.data(), "DOMContentLoaded", 16) == 0)
             && !(name.size() == 4 && memcmp(name.data(), "load", 4) == 0))
             return;
-        if (view->m_frameId.isEmpty()) return; // frameNavigated hasn't committed yet
+        // beginChromeNavigation() cleared m_loaderId; frameNavigated for
+        // THIS navigation repopulates it. Empty → the event is for the
+        // previous document (or the setLifecycleEventsEnabled replay).
+        if (view->m_loaderId.isEmpty()) return;
         auto frameId = jsonString(jsonField(params, { "frameId", 7 }));
         auto loaderId = jsonString(jsonField(params, { "loaderId", 8 }));
         auto fUtf = view->m_frameId.utf8();
@@ -1179,15 +1182,18 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     // always flips here regardless of waitUntil — it tracks the REAL
     // load state, not the user's chosen milestone.
     //
-    // chainTitle() runs unconditionally so m_title tracks uninitiated
-    // navigations (window.location, meta refresh) too. If the Navigate
-    // slot already settled (domcontentloaded earlier), PageTitle's
-    // settleSlot sees an empty slot and no-ops — one extra ~1ms
-    // roundtrip for 'domcontentloaded' navigates, but m_title then
-    // reflects any <title> mutation between DCL and load.
+    // chainTitle() is gated on m_loaderId: beginChromeNavigation()
+    // clears it and frameNavigated repopulates it. A stale
+    // loadEventFired for the PREVIOUS document (possible after a
+    // 'domcontentloaded' navigate settled and a new one started)
+    // arrives with m_loaderId empty → skip; otherwise PageTitle would
+    // settle the NEW navigate's promise with the OLD page's title
+    // before it committed. m_pendingNavigate must also be set so an
+    // idle loadEventFired (uninitiated window.location) doesn't enqueue
+    // a PageTitle that could race a later navigate() the same way.
     if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
         view->m_loading = false;
-        chainTitle();
+        if (view->m_pendingNavigate && !view->m_loaderId.isEmpty()) chainTitle();
         return;
     }
 

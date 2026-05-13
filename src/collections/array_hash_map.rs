@@ -313,15 +313,38 @@ fn index_insert_unique(index: &mut hashbrown::HashTable<u32>, hashes: &[u32], i:
     index.insert_unique(spread_hash(h), i, index_rehasher(hashes));
 }
 
-/// Build a fresh `hash → entry index` accelerator from a cached-hash column.
+/// Grow a live accelerator so it can hold `target` entries without a further
+/// `RawTable<u32>` rehash. Outlined for the same reason as
+/// [`index_insert_unique`] — keep the `reserve_rehash` monomorph in this crate
+/// rather than re-emitting it per `<K,V,C,A>` instantiation. Called from the
+/// `reserve` / `ensure_*_capacity` paths so a caller that pre-sizes the map
+/// (the Zig originals' `ensureTotalCapacityContext`, which also sizes the index
+/// header) pays the SwissTable grow once instead of `O(log n)` times across the
+/// following `push_entry` loop.
+#[inline(never)]
+fn index_reserve(index: &mut hashbrown::HashTable<u32>, hashes: &[u32], target: usize) {
+    let extra = target.saturating_sub(index.len());
+    if extra != 0 {
+        index.reserve(extra, index_rehasher(hashes));
+    }
+}
+
+/// Build a fresh `hash → entry index` accelerator from a cached-hash column,
+/// pre-sized to `capacity` (clamped up to the number of entries already
+/// present). Passing the owning map's *column capacity* here — not just
+/// `hashes.len()` — means a map that was `reserve()`d up front gets an index
+/// big enough for its final size the moment it first crosses
+/// [`INDEX_THRESHOLD`], so the per-`push_entry` SwissTable grow path never
+/// runs again.
+///
 /// Free fn (no `K`/`V`/`C`/`A` in scope) + `#[inline(never)]` so this — and
 /// the `HashTable::with_capacity` / grow path inside it — is one symbol shared
 /// by every `ArrayHashMap` instantiation. Boxed so the caller can store it as
 /// `Option<Box<…>>` (8 B header vs the 32 B inline `HashTable`).
 #[cold]
 #[inline(never)]
-fn rebuild_index_from_hashes(hashes: &[u32]) -> Box<hashbrown::HashTable<u32>> {
-    let mut table = hashbrown::HashTable::with_capacity(hashes.len());
+fn rebuild_index_from_hashes(hashes: &[u32], capacity: usize) -> Box<hashbrown::HashTable<u32>> {
+    let mut table = hashbrown::HashTable::with_capacity(capacity.max(hashes.len()));
     for (i, &h) in hashes.iter().enumerate() {
         table.insert_unique(spread_hash(h), i as u32, index_rehasher(hashes));
     }
@@ -479,6 +502,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.keys.reserve(need);
         self.values.reserve(need);
         self.hashes.reserve(need);
+        self.reserve_index_to_capacity();
         Ok(())
     }
 
@@ -548,6 +572,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.keys.reserve(additional);
         self.values.reserve(additional);
         self.hashes.reserve(additional);
+        self.reserve_index_to_capacity();
         Ok(())
     }
 
@@ -557,6 +582,21 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.keys.reserve(additional);
         self.values.reserve(additional);
         self.hashes.reserve(additional);
+        self.reserve_index_to_capacity();
+    }
+
+    /// If the accelerator is already live, grow it to the current column
+    /// capacity so a `reserve()` / `ensure_*_capacity()` call also right-sizes
+    /// the index — keeping its SwissTable grow path off the subsequent
+    /// `push_entry` loop. No-op when the index hasn't materialised yet (it will
+    /// be built at the right size by [`rebuild_index`] when the map first
+    /// crosses [`INDEX_THRESHOLD`], since that reads `self.keys.capacity()`).
+    #[inline]
+    fn reserve_index_to_capacity(&mut self) {
+        let cap = self.keys.capacity();
+        if let Some(index) = self.index.as_deref_mut() {
+            index_reserve(index, &self.hashes, cap);
+        }
     }
 
     /// Zig: `shrinkAndFree(new_len)` — truncate to `new_len` entries (dropping
@@ -737,7 +777,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// avoid one monomorph per instantiating crate.
     #[inline]
     fn rebuild_index(&mut self) {
-        self.index = Some(rebuild_index_from_hashes(&self.hashes));
+        self.index = Some(rebuild_index_from_hashes(&self.hashes, self.keys.capacity()));
     }
 
     /// Invalidate the accelerator. Called by operations that permute entry

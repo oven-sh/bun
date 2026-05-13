@@ -1180,6 +1180,29 @@ impl<'a> Transpiler<'a> {
         opts: api::TransformOptions,
         env_loader_: Option<*mut dot_env::Loader<'static>>,
     ) -> Result<Transpiler<'a>, bun_core::Error> {
+        let mut slot = core::mem::MaybeUninit::<Transpiler<'a>>::uninit();
+        Self::init_in_place(&mut slot, arena, log, opts, env_loader_)?;
+        // SAFETY: `init_in_place` returned `Ok`, so every field of `slot` was
+        // written exactly once.
+        Ok(unsafe { slot.assume_init() })
+    }
+
+    /// In-place sibling of [`Self::init`]: builds the `Transpiler` directly into
+    /// `dst` rather than returning it by value, so callers that already own its
+    /// final storage — most importantly `VirtualMachine.transpiler`, written by
+    /// [`init_runtime_state`](../runtime/jsc_hooks.rs) once per VM — avoid the
+    /// multi-KB `stack temporary → return slot → final home` double `memcpy`.
+    ///
+    /// On `Ok(())`, every field of `dst` is initialised. On `Err`, `dst` is
+    /// untouched (all fallible work happens before the first field write), so the
+    /// caller must not `assume_init` it.
+    pub fn init_in_place(
+        dst: &mut core::mem::MaybeUninit<Transpiler<'a>>,
+        arena: &'a Arena,
+        log: *mut bun_ast::Log,
+        opts: api::TransformOptions,
+        env_loader_: Option<*mut dot_env::Loader<'static>>,
+    ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         bun_ast::expr::data::Store::create();
         bun_ast::stmt::data::Store::create();
@@ -1276,44 +1299,53 @@ impl<'a> Transpiler<'a> {
 
         let outbase = bundle_options.output_dir.clone();
         let resolve_results = Box::new(ResolveResults::default());
-        Ok(Transpiler {
-            fs,
-            arena,
-            timer: SystemTimer::start().expect("Timer fail"),
-            resolver: Resolver::init1(log, fs, resolver_opts),
-            log,
+
+        // Construct directly into the caller-owned storage instead of building a
+        // stack temporary and returning it. All fallible work is done; every
+        // field below is written exactly once. `Linker::init` gets null
+        // back-pointers (Zig used `undefined`) — `core::mem::zeroed()` is NOT a
+        // valid analogue (`Linker.hashed_filenames: HashMap` carries a `NonNull`
+        // niche, so all-zeroes is instant UB); the value fields get their proper
+        // defaults and `configure_linker_with_auto_jsx` overwrites the
+        // self-referential pointers before any deref.
+        let p = dst.as_mut_ptr();
+        // SAFETY: `dst` is an exclusively-borrowed, currently-uninitialised
+        // `MaybeUninit<Transpiler>`; each `write` initialises a distinct field
+        // and no field is read before it is written. `env_loader.cast()` matches
+        // the field's `*mut Loader<'a>` (raw-pointer lifetime reinterpretation —
+        // the pointee is the process-lifetime singleton or caller-supplied
+        // loader, as in the original struct literal).
+        unsafe {
+            core::ptr::addr_of_mut!((*p).options).write(bundle_options);
+            core::ptr::addr_of_mut!((*p).log).write(log);
+            core::ptr::addr_of_mut!((*p).arena).write(arena);
+            core::ptr::addr_of_mut!((*p).result).write(options::TransformResult {
+                outbase,
+                ..Default::default()
+            });
+            core::ptr::addr_of_mut!((*p).resolver).write(Resolver::init1(log, fs, resolver_opts));
+            core::ptr::addr_of_mut!((*p).fs).write(fs);
+            core::ptr::addr_of_mut!((*p).output_files).write(Vec::new());
+            core::ptr::addr_of_mut!((*p).resolve_results).write(resolve_results);
+            core::ptr::addr_of_mut!((*p).resolve_queue).write(ResolveQueue::default());
+            core::ptr::addr_of_mut!((*p).elapsed).write(0);
+            core::ptr::addr_of_mut!((*p).needs_runtime).write(false);
+            core::ptr::addr_of_mut!((*p).router).write(None);
+            core::ptr::addr_of_mut!((*p).source_map).write(options::SourceMapOption::None);
             // .thread_pool = pool,
-            // PORT NOTE: Zig used `undefined`; `configure_linker` assigns later.
-            // `core::mem::zeroed()` is NOT a valid analogue here —
-            // `Linker.hashed_filenames: HashMap` carries a `NonNull` (niche),
-            // so the all-zeroes bit pattern is instant UB. Construct via
-            // `Linker::init` with null back-pointers instead; the value fields
-            // (`hashed_filenames`, `tagged_resolutions`, …) get their proper
-            // defaults and `configure_linker_with_auto_jsx` overwrites the
-            // self-referential pointers before any deref.
-            linker: crate::linker::Linker::init(
+            core::ptr::addr_of_mut!((*p).linker).write(crate::linker::Linker::init(
                 log,
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 fs,
-            ),
-            result: options::TransformResult {
-                outbase,
-                ..Default::default()
-            },
-            resolve_results,
-            resolve_queue: ResolveQueue::default(),
-            output_files: Vec::new(),
-            env: env_loader.cast(),
-            elapsed: 0,
-            needs_runtime: false,
-            router: None,
-            source_map: options::SourceMapOption::None,
-            macro_context: None,
-            options: bundle_options,
-        })
+            ));
+            core::ptr::addr_of_mut!((*p).timer).write(SystemTimer::start().expect("Timer fail"));
+            core::ptr::addr_of_mut!((*p).env).write(env_loader.cast());
+            core::ptr::addr_of_mut!((*p).macro_context).write(None);
+        }
+        Ok(())
     }
 
     pub fn parse(
@@ -2566,6 +2598,34 @@ impl<'a> Transpiler<'a> {
             writer,
             format,
             Some(handler),
+            result.runtime_transpiler_cache,
+            module_info,
+        )
+    }
+
+    // PERF: like `print` (no `SourceMapHandler`, `ENABLE_SOURCE_MAP = false`, so
+    // the printer skips every per-token `add_source_mapping` /
+    // `update_generated_line_and_column` and never builds/flushes a VLQ chunk)
+    // but still threads `result.runtime_transpiler_cache` so the transpiled
+    // output is written to the on-disk cache. Used by the runtime module loader
+    // when no inspector is attached: `Bun__remapStackFramePositions` degrades
+    // gracefully (keeps the raw transpiled position) when a path has no entry in
+    // `SavedSourceMap`, so eagerly building a per-module source map nothing will
+    // consume is pure overhead. See jsc_hooks.rs `transpile_source_code_inner`.
+    #[inline(never)]
+    pub fn print_skip_source_map(
+        &mut self,
+        result: ParseResult,
+        writer: &mut js_printer::BufferPrinter,
+        format: js_printer::Format,
+        module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+    ) -> Result<usize, bun_core::Error> {
+        self.print_with_source_map_maybe::<false>(
+            result.ast,
+            &result.source,
+            writer,
+            format,
+            None,
             result.runtime_transpiler_cache,
             module_info,
         )

@@ -147,8 +147,12 @@ pub fn init(this: *WindowsWatcher, root: []const u8) !void {
     this.coalesce_interval_ms = std.math.cast(w.DWORD, ns / std.time.ns_per_ms) orelse default_coalesce_interval_ms;
 }
 
-/// See `INotifyWatcher.max_coalesce_iterations` for rationale.
-const max_coalesce_iterations = 5;
+/// See `INotifyWatcher.max_coalesce_iterations` for rationale. Kept in
+/// step with the other backends so the same save burst collapses into
+/// one cycle everywhere; `ReadDirectoryChangesW` batches all buffered
+/// notifications per completion, so in practice far fewer iterations
+/// are consumed than on inotify/kqueue.
+const max_coalesce_iterations = 32;
 
 /// `timeout_ms` is passed straight to `GetQueuedCompletionStatus`:
 /// `w.INFINITE` for the first blocking wait, then `coalesce_interval_ms`

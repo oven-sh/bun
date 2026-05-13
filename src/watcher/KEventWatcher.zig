@@ -13,7 +13,13 @@ coalesce_interval_ns: isize = default_coalesce_interval_ns,
 
 const changelist_count = 128;
 const default_coalesce_interval_ns = 10_000_000; // 10ms
-const max_coalesce_iterations = 5;
+/// `kevent()` returns as soon as one event is ready rather than waiting
+/// the full timeout, so a burst of N writes a few ms apart consumes ~N
+/// drain iterations. Keep this in step with
+/// `INotifyWatcher.max_coalesce_iterations` so the same save burst
+/// collapses into one cycle on both backends; the quiet-timeout `break`
+/// still terminates the common case after one idle interval.
+const max_coalesce_iterations = 32;
 
 pub fn init(this: *KEventWatcher, _: []const u8) !void {
     const fd = try std.posix.kqueue();

@@ -4284,19 +4284,39 @@ extern "C" void Bun__ConsoleObject__onStdioWriteError(Zig::GlobalObject* global,
     if (!stream.isObject())
         return;
     JSObject* streamObj = stream.getObject();
+    JSValue errorString = jsString(vm, String("error"_s));
 
-    // stream.once('error', noop)
-    JSValue onceFn = streamObj->get(global, Identifier::fromString(vm, "once"_s));
+    // Only add the noop if no one else is listening for 'error' (same gate as Node's
+    // createWriteErrorHandler and Bun's user-created Console at src/js/builtins/ConsoleObject.ts).
+    bool hasErrorListener = false;
+    JSValue listenerCountFn = streamObj->get(global, Identifier::fromString(vm, "listenerCount"_s));
     if (scope.exception()) [[unlikely]]
         (void)scope.tryClearException();
-    if (onceFn.isCallable()) {
-        auto callData = JSC::getCallData(onceFn);
-        JSC::MarkedArgumentBuffer onceArgs;
-        onceArgs.append(jsString(vm, String("error"_s)));
-        onceArgs.append(JSC::JSFunction::create(vm, global, 0, String(), Process_stubEmptyFunction, JSC::ImplementationVisibility::Public));
-        JSC::call(global, onceFn, callData, stream, onceArgs);
+    if (listenerCountFn.isCallable()) {
+        auto lcCallData = JSC::getCallData(listenerCountFn);
+        JSC::MarkedArgumentBuffer lcArgs;
+        lcArgs.append(errorString);
+        JSValue count = JSC::call(global, listenerCountFn, lcCallData, stream, lcArgs);
         if (scope.exception()) [[unlikely]]
             (void)scope.tryClearException();
+        else if (count.isNumber())
+            hasErrorListener = count.asNumber() > 0;
+    }
+
+    // if (stream.listenerCount('error') === 0) stream.once('error', noop)
+    if (!hasErrorListener) {
+        JSValue onceFn = streamObj->get(global, Identifier::fromString(vm, "once"_s));
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+        if (onceFn.isCallable()) {
+            auto callData = JSC::getCallData(onceFn);
+            JSC::MarkedArgumentBuffer onceArgs;
+            onceArgs.append(errorString);
+            onceArgs.append(JSC::JSFunction::create(vm, global, 0, String(), Process_stubEmptyFunction, JSC::ImplementationVisibility::Public));
+            JSC::call(global, onceFn, callData, stream, onceArgs);
+            if (scope.exception()) [[unlikely]]
+                (void)scope.tryClearException();
+        }
     }
 
     // stream.destroy(err) — queues 'error' on nextTick; process.stdout/stderr's overridden

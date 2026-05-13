@@ -39,6 +39,13 @@ rl.on("line", line => {
 // the previous evaluation (e.g. node:readline) must be dropped so the fresh
 // one doesn't stack a second set of handlers on the same stream, causing
 // every keystroke / line to be processed twice.
+//
+// The Windows file watcher can fire multiple events for a single
+// writeFileSync, so a single "reload trigger" below may advance the load
+// counter by more than one. The assertions therefore don't pin exact load
+// numbers — they verify that (a) every LISTENERS line reports exactly one
+// listener per event, and (b) each input line produces exactly one ECHO
+// from the current load (never from a previous one).
 it(
   "should not leak process.stdin listeners across --hot reloads",
   async () => {
@@ -64,7 +71,7 @@ it(
         buf += new TextDecoder().decode(chunk);
         let nl: number;
         while ((nl = buf.indexOf("\n")) !== -1) {
-          const line = buf.slice(0, nl);
+          const line = buf.slice(0, nl).replace(/\r$/, "");
           buf = buf.slice(nl + 1);
           lines.push(line);
           for (let i = waiters.length - 1; i >= 0; i--) {
@@ -89,45 +96,61 @@ it(
       return new Promise(resolve => waiters.push({ test, resolve }));
     };
 
+    // Wait until a LISTENERS line with a load count strictly greater than
+    // `afterLoad` appears, then return its load number. Asserts every
+    // LISTENERS line seen along the way reports exactly one listener per
+    // event (the core invariant of this fix).
+    const waitForLoadAfter = async (afterLoad: number): Promise<number> => {
+      let newest = afterLoad;
+      await waitForLine(l => {
+        const m = /^LISTENERS (\d+) (\d+) (\d+) (\d+) (\d+)$/.exec(l);
+        if (!m) return false;
+        const load = Number(m[1]);
+        if (load > newest) newest = load;
+        return load > afterLoad;
+      });
+      return newest;
+    };
+
     try {
       // First load: readline attaches one data/error/end listener to stdin.
-      const first = await waitForLine(l => l.startsWith("LISTENERS 1 "));
-      expect(first).toBe("LISTENERS 1 1 1 1 0");
+      let load = await waitForLoadAfter(0);
+      expect(load).toBeGreaterThanOrEqual(1);
 
       runner.stdin.write("hello\n");
       runner.stdin.flush();
-      const echo1 = await waitForLine(l => l.startsWith("ECHO "));
-      expect(echo1).toBe("ECHO 1 hello");
+      const echo1 = await waitForLine(l => l.startsWith("ECHO ") && l.endsWith(" hello"));
+      expect(echo1).toMatch(/^ECHO \d+ hello$/);
 
-      // Trigger a reload.
-      writeFileSync(fixture, readFileSync(fixture, "utf-8"));
+      for (let i = 0; i < 2; i++) {
+        // Trigger a reload (may cause 1+ reloads on Windows).
+        const prev = load;
+        writeFileSync(fixture, readFileSync(fixture, "utf-8"));
+        load = await waitForLoadAfter(prev);
+        expect(load).toBeGreaterThan(prev);
 
-      // After reload the previous listeners must have been cleared, so the
-      // new readline interface sees a clean stdin and counts stay at 1.
-      const second = await waitForLine(l => l.startsWith("LISTENERS 2 "));
-      expect(second).toBe("LISTENERS 2 1 1 1 0");
+        // Send one line; exactly one ECHO from the current load, and none
+        // from any previous load's leaked handler.
+        const tag = `round${i}`;
+        runner.stdin.write(`${tag}\n`);
+        runner.stdin.flush();
+        const echo = await waitForLine(l => l.startsWith("ECHO ") && l.endsWith(` ${tag}`));
+        const echoLoad = Number(/^ECHO (\d+) /.exec(echo)![1]);
+        // The echo must come from the current (or a newer, if another reload
+        // raced in) load — never from a load that existed before the reset.
+        expect(echoLoad).toBeGreaterThan(prev);
+        // Exactly one handler saw the input.
+        expect(lines.filter(l => l.startsWith("ECHO ") && l.endsWith(` ${tag}`))).toHaveLength(1);
+      }
 
-      // Send one more line; exactly one ECHO from the current load, and no
-      // ECHO from the previous load's leaked handler.
-      lines.length = 0;
-      runner.stdin.write("world\n");
-      runner.stdin.flush();
-      const echo2 = await waitForLine(l => l.startsWith("ECHO ") && l.endsWith(" world"));
-      expect(echo2).toBe("ECHO 2 world");
-      expect(lines.filter(l => l.startsWith("ECHO "))).toEqual(["ECHO 2 world"]);
-
-      // Trigger another reload.
-      writeFileSync(fixture, readFileSync(fixture, "utf-8"));
-
-      const third = await waitForLine(l => l.startsWith("LISTENERS 3 "));
-      expect(third).toBe("LISTENERS 3 1 1 1 0");
-
-      lines.length = 0;
-      runner.stdin.write("again\n");
-      runner.stdin.flush();
-      const echo3 = await waitForLine(l => l.startsWith("ECHO ") && l.endsWith(" again"));
-      expect(echo3).toBe("ECHO 3 again");
-      expect(lines.filter(l => l.startsWith("ECHO "))).toEqual(["ECHO 3 again"]);
+      // Every LISTENERS line observed over the whole run must show exactly
+      // one data/error/end listener on stdin and zero resize listeners on
+      // stdout — i.e. listeners never accumulated across reloads.
+      const listenerLines = lines.filter(l => l.startsWith("LISTENERS "));
+      expect(listenerLines.length).toBeGreaterThanOrEqual(3);
+      for (const l of listenerLines) {
+        expect(l).toMatch(/^LISTENERS \d+ 1 1 1 0$/);
+      }
     } catch (e) {
       console.error("stdout lines so far:", lines, "buf:", buf);
       console.error("stderr:", stderrText);

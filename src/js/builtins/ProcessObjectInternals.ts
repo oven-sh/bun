@@ -320,6 +320,10 @@ export function getStdinStream(
     // the addChunk fast path and is emitted to zero listeners instead of
     // buffered. unpipe() also clears state.pipes so destinations from the
     // previous load aren't pinned for the process lifetime.
+    // setRawMode(false) restores cooked mode: raw mode clears ISIG, and
+    // once the keypress handler that translated ^C is gone Ctrl+C would be
+    // dead if the new load doesn't re-enter raw mode itself.
+    if (stream.isRaw) stream.setRawMode?.(false);
     stream.unpipe();
     for (const fn of stream.listeners("data")) stream.removeListener("data", fn);
     originalPause.$call(stream);

@@ -133,11 +133,11 @@ describe.skipIf(isASAN)("ucontext-aware fault handler", () => {
     return { ver: m!.groups!.ver, body: m!.groups!.body };
   }
 
-  test("trace string uses v3/v4 format with register block", async () => {
+  test("trace string uses v3 format with register block", async () => {
     const segv = await crash("segfault");
-    // Older builds emit '1'/'2' here; '3'/'4' means the encoder appends the
-    // GP register set after the fault address.
-    expect(segv.ver).toMatch(/^[34]$/);
+    // Older builds emit '1'/'2' here; '3' means a TraceFlags VLQ follows the
+    // sha and the encoder appends the GP register set after the fault address.
+    expect(segv.ver).toBe("3");
   });
 
   test("segfault trace string is longer than panic (encodes registers)", async () => {

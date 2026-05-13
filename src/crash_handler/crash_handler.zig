@@ -1330,15 +1330,27 @@ const Platform = enum(u8) {
 ///
 /// '1' - original. uses 7 char hash with VLQ encoded stack-frames
 /// '2' - same as '1' but this build is known to be a canary build
-/// '3' - same as '1' but for fault reasons (segfault/SIGILL/SIGBUS/SIGFPE)
-///       a register block follows the fault address: one VLQ count `n`, then
+/// '3' - after the 7-char sha: one meta-flags VLQ (`TraceFlags`), then the
+///       v1 body. For fault reasons (segfault/SIGILL/SIGBUS/SIGFPE) a
+///       register block follows the fault address: one VLQ count `n`, then
 ///       `n` u64 values each as two VLQs, in `FaultRegisters.gp_names` order
-///       followed by pc.
-/// '4' - same as '3' but this build is known to be a canary build
-const version_char = if (bun.Environment.is_canary)
-    "4"
-else
-    "3";
+///       followed by pc. The canary bit moves into `TraceFlags` so each
+///       future format change costs one version slot, not two.
+const version_char = "3";
+
+/// Single VLQ of build-shape flags emitted right after the sha in v3+
+/// trace strings. Append-only; bun.report ignores unknown high bits.
+const TraceFlags = packed struct(u32) {
+    /// This build was produced by the canary pipeline. A given commit can
+    /// produce both a canary and a release binary (different comptime
+    /// `is_canary` branches), so the sha alone can't recover this.
+    is_canary: bool,
+    _reserved: u31 = 0,
+
+    const current: TraceFlags = .{
+        .is_canary = bun.Environment.is_canary,
+    };
+};
 
 const git_sha = if (bun.Environment.git_sha.len > 0) bun.Environment.git_sha[0..7] else "unknown";
 
@@ -1542,6 +1554,7 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
     try writer.writeByte(if (bun.cli.Cli.cmd) |cmd| cmd.char() else '_');
 
     try writer.writeAll(version_char ++ git_sha);
+    try VLQ.encode(@bitCast(TraceFlags.current)).writeTo(writer);
 
     const packed_features = bun.analytics.packedFeatures();
     try writeU64AsTwoVLQs(writer, @bitCast(packed_features));

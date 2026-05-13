@@ -110,6 +110,18 @@ export const profiles = {
    * (CallFrame::setCurrentVPC, Dependency::loadAndFence) stay outlined —
    * the bench suite then reports a ~6-8% time / ~1 MB RSS "regression"
    * that is pure binary layout, not src/ code.
+   *
+   * One gap this profile does NOT close by itself: the shipped upstream `bun`
+   * is additionally PGO+BOLT-ordered, so its cold-start working set is packed
+   * into a contiguous run of `.text`; the plain `btg` link is not, leaving
+   * ~+1.3 MB resident `.text` (hot fns scattered across the ~54 MB `.text`,
+   * each dragging in a 64 KB fault-around window of cold neighbours). To close
+   * it, use the two-stage PGO build: `bun run build:btg:pgo` (driver:
+   * scripts/build-pgo.ts) builds an instrumented `bun`, trains it, runs
+   * `llvm-profdata merge`, then relinks `build/btg/bun` with `--pgo-use` (which
+   * also flips on `-z keep-text-section-prefix`; see scripts/build/flags.ts).
+   * The hand-authored src/startup.order clustering is the non-PGO fallback for
+   * the same goal and becomes redundant once a real profile is in play.
    */
   btg: {
     buildType: "Release",

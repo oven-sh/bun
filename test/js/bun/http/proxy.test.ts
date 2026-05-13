@@ -240,7 +240,7 @@ for (const server_tls of [false, true]) {
 }
 
 test("unsupported protocol", async () => {
-  expect(
+  await expect(
     fetch("https://httpbin.org/get", {
       proxy: "ftp://asdf.com",
     }),

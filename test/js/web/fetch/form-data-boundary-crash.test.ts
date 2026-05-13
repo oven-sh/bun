@@ -8,7 +8,7 @@ test('Response.formData() rejects on boundary=" (lone double-quote)', async () =
   const response = new Response("body", {
     headers: { "content-type": 'multipart/form-data; boundary="' },
   });
-  expect(response.formData()).rejects.toThrow();
+  await expect(response.formData()).rejects.toThrow();
 });
 
 test('Request.formData() rejects on boundary=" (lone double-quote)', async () => {
@@ -17,24 +17,24 @@ test('Request.formData() rejects on boundary=" (lone double-quote)', async () =>
     body: "body",
     headers: { "content-type": 'multipart/form-data; boundary="' },
   });
-  expect(request.formData()).rejects.toThrow();
+  await expect(request.formData()).rejects.toThrow();
 });
 
 test('Blob.formData() rejects on boundary=" (lone double-quote)', async () => {
   const blob = new Blob(["body"], { type: 'multipart/form-data; boundary="' });
-  expect(blob.formData()).rejects.toThrow();
+  await expect(blob.formData()).rejects.toThrow();
 });
 
 test('Response.formData() rejects on boundary="abc (unclosed double-quote)', async () => {
   const response = new Response("body", {
     headers: { "content-type": 'multipart/form-data; boundary="abc' },
   });
-  expect(response.formData()).rejects.toThrow();
+  await expect(response.formData()).rejects.toThrow();
 });
 
 test('Response.formData() rejects on boundary="; (lone double-quote before semicolon)', async () => {
   const response = new Response("body", {
     headers: { "content-type": 'multipart/form-data; boundary="; charset=utf-8' },
   });
-  expect(response.formData()).rejects.toThrow();
+  await expect(response.formData()).rejects.toThrow();
 });

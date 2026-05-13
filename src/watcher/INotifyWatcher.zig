@@ -228,6 +228,10 @@ pub fn stop(this: *INotifyWatcher) void {
         this.fd.close();
         this.fd = bun.invalid_fd;
     }
+    if (this.loaded) {
+        bun.default_allocator.free(@as(*[1]EventListBytes, @ptrCast(this.eventlist_bytes)));
+        this.loaded = false;
+    }
 }
 
 /// Wake the watcher thread from `Futex.waitForever` so it can observe

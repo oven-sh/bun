@@ -1,5 +1,5 @@
 import html from "./index-fixture.html";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, readlinkSync } from "node:fs";
 
 function threadCount(): number {
   if (process.platform !== "linux") return -1;
@@ -7,6 +7,21 @@ function threadCount(): number {
     const status = readFileSync("/proc/self/status", "utf8");
     const m = status.match(/Threads:\s*(\d+)/);
     return m ? parseInt(m[1], 10) : -1;
+  } catch {
+    return -1;
+  }
+}
+
+function inotifyFdCount(): number {
+  if (process.platform !== "linux") return -1;
+  try {
+    let n = 0;
+    for (const name of readdirSync("/proc/self/fd")) {
+      try {
+        if (readlinkSync(`/proc/self/fd/${name}`).startsWith("anon_inode:inotify")) n++;
+      } catch {}
+    }
+    return n;
   } catch {
     return -1;
   }
@@ -23,6 +38,7 @@ const iterations = 40;
 let threw = 0;
 
 const threadsBefore = threadCount();
+const inotifyBefore = inotifyFdCount();
 
 for (let i = 0; i < iterations; i++) {
   try {
@@ -46,6 +62,7 @@ if (threw !== iterations) {
 }
 
 let threadsAfter = threadCount();
+let inotifyAfter = inotifyFdCount();
 if (process.platform === "linux") {
   // The watcher thread is signalled to exit asynchronously; give any
   // still-winding-down threads a brief moment to finish, polling rather
@@ -53,11 +70,13 @@ if (process.platform === "linux") {
   // immediately; without it, it never converges (threads are parked on a
   // futex forever), so a short deadline is enough.
   const deadline = Date.now() + 2000;
-  while (threadsAfter - threadsBefore >= 10 && Date.now() < deadline) {
+  while ((threadsAfter - threadsBefore >= 10 || inotifyAfter - inotifyBefore >= 10) && Date.now() < deadline) {
     await Bun.sleep(20);
     threadsAfter = threadCount();
+    inotifyAfter = inotifyFdCount();
   }
   console.log(`THREAD_DELTA=${threadsAfter - threadsBefore}`);
+  console.log(`INOTIFY_DELTA=${inotifyAfter - inotifyBefore}`);
 }
 
 console.log("PASS");

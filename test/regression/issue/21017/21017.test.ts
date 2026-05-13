@@ -39,16 +39,20 @@ test("Watcher is cleaned up when DevServer fails to start", async () => {
   });
 
   if (isLinux) {
-    // On Linux we can observe the watcher-thread leak directly via
-    // /proc/self/status. Without the fix, every failed `Bun.serve` leaves a
-    // File Watcher thread parked on a futex, so the thread count grows by
-    // roughly `iterations`.
-    const m = stdout.match(/THREAD_DELTA=(-?\d+)/);
-    expect(m).not.toBeNull();
-    const delta = parseInt(m![1], 10);
-    // Allow a little slack for unrelated background threads, but a leak of
-    // one thread per iteration would be >= `iterations` (currently 40).
-    expect(delta).toBeLessThan(10);
+    // On Linux we can observe the watcher-thread and inotify-fd leaks
+    // directly via /proc. Without the fix, every failed `Bun.serve` leaves
+    // a File Watcher thread parked on a futex and/or an open inotify
+    // instance behind.
+    const threadMatch = stdout.match(/THREAD_DELTA=(-?\d+)/);
+    const inotifyMatch = stdout.match(/INOTIFY_DELTA=(-?\d+)/);
+    expect(threadMatch).not.toBeNull();
+    expect(inotifyMatch).not.toBeNull();
+    const threadDelta = parseInt(threadMatch![1], 10);
+    const inotifyDelta = parseInt(inotifyMatch![1], 10);
+    // Allow a little slack for unrelated background threads/fds, but a
+    // leak of one per iteration would be >= `iterations` (currently 40).
+    expect(threadDelta).toBeLessThan(10);
+    expect(inotifyDelta).toBeLessThan(10);
   }
 
   expect(exitCode).toBe(0);

@@ -141,6 +141,7 @@ pub fn deinit(this: *Watcher, close_descriptors: bool) void {
         this.platform.wake();
     } else {
         // start() was never called; no thread can be using `this`.
+        this.platform.stop();
         if (close_descriptors and this.running) {
             const fds = this.watchlist.items(.fd);
             for (fds) |fd| {
@@ -148,6 +149,7 @@ pub fn deinit(this: *Watcher, close_descriptors: bool) void {
             }
         }
         this.watchlist.deinit(this.allocator);
+        this.allocator.free(this.watch_events);
         const allocator = this.allocator;
         allocator.destroy(this);
     }
@@ -255,13 +257,18 @@ fn threadMain(this: *Watcher) !void {
     switch (this.watchLoop()) {
         .err => |err| {
             this.watchloop_handle = null;
-            this.platform.stop();
             if (this.running) {
                 this.onError(this.ctx, err);
             }
         },
         .result => {},
     }
+
+    // Release platform resources (inotify fd, kqueue fd, IOCP handle).
+    // This must run on both the `.err` and `.result` arms: `deinit()`'s
+    // wake path exits via `.result` on Linux/macOS, and skipping stop()
+    // there would trade the former thread leak for an fd leak.
+    this.platform.stop();
 
     // deinit and close descriptors if needed
     if (this.close_descriptors) {
@@ -271,6 +278,7 @@ fn threadMain(this: *Watcher) !void {
         }
     }
     this.watchlist.deinit(this.allocator);
+    this.allocator.free(this.watch_events);
 
     // Close trace file if open
     WatcherTrace.deinit();

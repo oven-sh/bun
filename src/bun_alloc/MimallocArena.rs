@@ -221,6 +221,14 @@ impl MimallocArena {
     /// callers that reuse one arena per work item.
     ///
     /// Any pointers previously returned by this arena are invalidated.
+    ///
+    /// `#[cold]` + `#[inline(never)]`: `mi_heap_destroy` does per-page
+    /// free-list/bitmap teardown (and, when mimalloc's stats are compiled in,
+    /// an `_mi_stats_merge_from` walk over `mi_stats_t`), so this is the slow
+    /// path. The hot path is `reset_retain_with_limit`'s retain branch — keep
+    /// that lean by not letting this body inline up into it.
+    #[cold]
+    #[inline(never)]
     pub fn reset(&mut self) {
         debug_assert!(
             self.owns,
@@ -280,6 +288,21 @@ impl MimallocArena {
     /// decommitted by the time the next cycle touches it, so the round-trip
     /// re-commits and re-zeroes it — exactly the cost `.retain_with_limit`
     /// exists to avoid. Hence the cap-gated retain.)
+    ///
+    /// **Why `mi_heap_collect` is not an alternative to the cap.** When the
+    /// caller's allocations are individually freed before the cycle ends (most
+    /// `Vec<T, &MimallocArena>` users — the bundler, renamer, installer), the
+    /// heap footprint is already near zero at this point, so the limit is never
+    /// hit and the heap is retained for free. The one caller where the limit
+    /// *does* fire is the transpiler's per-module AST arena (`jsc_hooks`): it
+    /// also backs `AstAlloc`, whose `deallocate` is a deliberate no-op (the AST
+    /// graph is abandoned, not freed), so that heap's footprint only ever
+    /// grows. `mi_heap_collect(force=true)` cannot reclaim it — it returns only
+    /// *empty* pages, and the dead AST blocks pin every page. The only bulk
+    /// reclaim is `mi_heap_destroy` (the `reset()` path). So for that caller the
+    /// `limit` is purely a "how much dead AST do we tolerate before paying a
+    /// `mi_heap_destroy`" knob; raising it trades steady-state RSS for fewer
+    /// destroys per transpile batch.
     #[inline]
     pub fn reset_retain_with_limit(&mut self, limit: usize) -> bool {
         // `borrowing_default()` arenas (`!owns`) wrap `mi_heap_main()`, whose

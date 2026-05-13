@@ -4,6 +4,15 @@
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
 
+const getHeapStatisticsArray = $newCppFunction("NodeV8.cpp", "jsGetHeapStatisticsArray", 0) as () => [
+  heapSize: number,
+  heapCapacity: number,
+  extraMemorySize: number,
+  globalObjectCount: number,
+  currentRSS: number,
+  peakRSS: number,
+];
+
 function notimpl(message) {
   throwNotImplemented("node:v8 " + message);
 }
@@ -56,8 +65,9 @@ function totalmem() {
 }
 
 function getHeapStatistics() {
-  const stats = jsc.heapStats();
-  const memory = jsc.memoryUsage();
+  // getHeapStatisticsArray() reads the heap counters directly without walking the
+  // heap or serializing mimalloc stats, so this stays O(1) when called in a loop.
+  const [heapSize, , extraMemorySize, globalObjectCount, , peakRSS] = getHeapStatisticsArray();
 
   // These numbers need to be plausible, even if incorrect
   // From npm's codebase:
@@ -65,24 +75,24 @@ function getHeapStatistics() {
   // > static #heapLimit = Math.floor(getHeapStatistics().heap_size_limit)
   //
   return {
-    total_heap_size: stats.heapSize,
-    total_heap_size_executable: stats.heapSize >> 1,
-    total_physical_size: memory.peak,
-    total_available_size: totalmem() - stats.heapSize,
-    used_heap_size: stats.heapSize,
-    heap_size_limit: Math.min(memory.peak * 10, totalmem()),
-    malloced_memory: stats.heapSize,
-    peak_malloced_memory: memory.peak,
+    total_heap_size: heapSize,
+    total_heap_size_executable: heapSize >> 1,
+    total_physical_size: peakRSS,
+    total_available_size: totalmem() - heapSize,
+    used_heap_size: heapSize,
+    heap_size_limit: Math.min(peakRSS * 10, totalmem()),
+    malloced_memory: heapSize,
+    peak_malloced_memory: peakRSS,
 
     // -- Copied from Node:
     does_zap_garbage: 0,
-    number_of_native_contexts: stats.globalObjectCount,
+    number_of_native_contexts: globalObjectCount,
     number_of_detached_contexts: 0,
     total_global_handles_size: 8192,
     used_global_handles_size: 2208,
     // ---- End of copied from Node
 
-    external_memory: stats.extraMemorySize,
+    external_memory: extraMemorySize,
   };
 }
 function getHeapSpaceStatistics() {

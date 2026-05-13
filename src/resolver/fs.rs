@@ -2416,12 +2416,22 @@ pub fn read_file_contents_in_arena(
         return Ok((core::ptr::NonNull::dangling(), 0));
     }
 
-    // `arena.alloc_slice(size + 1)` instead of `vec![0u8; size + 1]` — this is
+    // `arena.alloc_slice(cap + 1)` instead of `vec![0u8; size + 1]` — this is
     // the load-bearing change vs. `read_file_with_handle_impl::<false, _>`.
-    let buf = arena.alloc_slice_fill_copy::<u8>(size + 1, 0);
+    //
+    // The file can grow or shrink between `get_end_pos()` above and the read
+    // below — a hot-reload writes a file while it is being parsed. Size the
+    // buffer for whichever of {stat size, bytes already read} is larger so the
+    // `initial_buf` copy can never overflow, and read only into `buf[..cap]`
+    // (leaving `buf[cap]` for the trailing NUL) so a file that grew mid-read is
+    // truncated to the stat'd size instead of overrunning the NUL slot — which
+    // otherwise made `finish_arena_contents`'s `buf[total] = 0` a bounds-check
+    // panic (observed crashing `bun --hot` on large source maps).
+    let cap = size.max(initial_len);
+    let buf = arena.alloc_slice_fill_copy::<u8>(cap + 1, 0);
     buf[..initial_len].copy_from_slice(&initial_buf[..initial_len]);
 
-    let read_count = match file.read_all(&mut buf[initial_len..]) {
+    let read_count = match file.read_all(&mut buf[initial_len..cap]) {
         Ok(n) => n,
         Err(err) => return Err(err.into()),
     };

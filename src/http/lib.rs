@@ -924,7 +924,7 @@ pub fn configure_http_client_with_alpn(
     // SAFETY: caller passes a live *mut SSL for a just-opened socket; `hostname`
     // is either null or a NUL-terminated buffer that outlives this call.
     unsafe {
-        if !hostname.is_null() {
+        if !hostname.is_null() && *hostname != 0 {
             boringssl::c::SSL_set_tlsext_host_name(ssl, hostname);
         }
         boringssl::c::SSL_clear_options(ssl, boringssl::c::SSL_OP_LEGACY_SERVER_CONNECT);
@@ -2110,8 +2110,10 @@ impl<'a> HTTPClient<'a> {
                 h if h == hash_header_const(b"Upgrade") => {
                     if will_append {
                         let value = self.header_str(header_values[i]);
-                        if !bun_core::strings::eql_any_case_insensitive_ascii(value, &[b"h2", b"h2c"])
-                        {
+                        if !bun_core::strings::eql_any_case_insensitive_ascii(
+                            value,
+                            &[b"h2", b"h2c"],
+                        ) {
                             self.flags.upgrade_state = HTTPUpgradeState::Pending;
                         }
                     }

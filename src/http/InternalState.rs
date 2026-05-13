@@ -141,8 +141,10 @@ impl<'a> InternalState<'a> {
         if let Some(body) = body_msg {
             crate::body_out::as_mut(body).reset();
         }
-        // Decompressor::deinit → handled by Drop on assignment below
-        // TODO(port): Decompressor may need explicit deinit if it holds FFI handles not freed by Drop
+        // PORT NOTE: Zig calls `this.decompressor.deinit()` here. The boxed
+        // Zlib/Brotli/Zstd readers all impl Drop calling end()/destroy_instance
+        // (see Decompressor.rs PORT NOTE), so the `*self = ...` assignment below
+        // frees the FFI handle via drop glue — no explicit reset needed.
 
         // just in case we check and free to avoid leaks
         // (Option<HTTPResponseMetadata> drops on assignment; allocator param removed)

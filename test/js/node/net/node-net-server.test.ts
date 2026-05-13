@@ -1,13 +1,12 @@
-import { realpathSync } from "fs";
+import { tmpdirSync } from "harness";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
-import { tmpdir } from "os";
 import { join } from "path";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
-const socket_domain = join(realpathSync(tmpdir()), "node-net-server.sock");
+const socket_domain = join(tmpdirSync(), "node-net-server.sock");
 
 describe("net.createServer listen", () => {
   it("should throw when no port or path when using options", done => {
@@ -548,7 +547,7 @@ describe("net.createServer events", () => {
 
   it("#8374", async () => {
     const server = createServer();
-    const socketPath = join(tmpdir(), "test-unix-socket");
+    const socketPath = join(tmpdirSync(), "test-unix-socket");
 
     server.listen({ path: socketPath });
     await once(server, "listening");

@@ -608,11 +608,12 @@ describe("spawn stdin ReadableStream", () => {
       // Check that we're not leaking objects
       await expectMaxObjectTypeCount(expect, "ReadableStream", 10);
       await expectMaxObjectTypeCount(expect, "Subprocess", 5);
-      // Generous timeout: this spawns many `bun` subprocesses; the default 5s
-      // per-test timeout is too tight under concurrency pressure (CI sharding,
-      // ASAN debug builds).
+      // Generous timeout: even the non-ASAN path spawns 50 `bun` subprocesses
+      // (in batches of 10), which consumes a meaningful fraction of the budget
+      // on an idle fast box; under CI sharding a 2-3x slowdown can blow past a
+      // 30s timeout. Use a flat 60s so this leak-detection test doesn't flake.
     },
-    isASAN ? 60_000 : 30_000,
+    60_000,
   );
 
   // Regression: src/runtime/api/bun/subprocess/Writable.zig:115/193

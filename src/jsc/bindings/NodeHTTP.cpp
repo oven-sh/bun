@@ -128,23 +128,36 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         args.append(methodString);
     }
 
-    // Skip the extra O(headers) counting pass that used to size the inline
-    // capacity hint. Using a constant capacity keeps every request's headers
-    // object on a single cached structure (structureCache keys on prototype +
-    // inline capacity), so the putDirect transitions below stay on the fast
-    // path request-to-request instead of churning a fresh structure for every
-    // distinct header count. The default inline capacity covers the typical
-    // request without over-allocating; rarer header-heavy requests spill to a
-    // butterfly, same as any other object.
+    // Count headers up front so the rawHeaders array (2 entries per header) can
+    // be allocated with its butterfly already sized: putDirectIndex below then
+    // never reshapes it, and we avoid the temporary MarkedArgumentBuffer +
+    // second copy pass the old code used. The walk is just an in-memory iterator
+    // over the already-parsed request, so it's cheap.
+    //
+    // The `headers` object intentionally keeps a constant inline capacity
+    // (defaultInlineCapacity) rather than being sized from this count:
+    // structureCache keys on prototype + inline capacity, so a constant keeps
+    // every request's headers object on a single cached structure and the
+    // putDirect transitions below stay on the fast path request-to-request
+    // instead of churning a fresh structure for every distinct header count.
+    // The default inline capacity covers the typical request without
+    // over-allocating; rarer header-heavy requests spill to a butterfly, same
+    // as any other object.
+    size_t headerCount = 0;
+    for (auto it = request->begin(); it != request->end(); ++it)
+        headerCount++;
+
     JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), JSFinalObject::defaultInlineCapacity);
+    RETURN_IF_EXCEPTION(scope, void());
+    JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, headerCount * 2);
     RETURN_IF_EXCEPTION(scope, void());
     JSC::JSArray* setCookiesHeaderArray = nullptr;
     JSC::JSString* setCookiesHeaderString = nullptr;
-    MarkedArgumentBuffer arrayValues;
     HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
 
     args.append(headersObject);
 
+    unsigned arrayIndex = 0;
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
         StringView nameView = StringView(std::span { reinterpret_cast<const Latin1Character*>(pair.first.data()), pair.first.length() });
@@ -177,33 +190,20 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
                 headersObject->putDirect(vm, nameIdentifier, setCookiesHeaderArray, 0);
                 RETURN_IF_EXCEPTION(scope, void());
             }
-            arrayValues.append(setCookiesHeaderString);
-            arrayValues.append(jsValue);
+            array->putDirectIndex(globalObject, arrayIndex++, setCookiesHeaderString);
+            RETURN_IF_EXCEPTION(scope, void());
+            array->putDirectIndex(globalObject, arrayIndex++, jsValue);
+            RETURN_IF_EXCEPTION(scope, void());
             setCookiesHeaderArray->push(globalObject, jsValue);
             RETURN_IF_EXCEPTION(scope, void());
 
         } else {
             headersObject->putDirectMayBeIndex(globalObject, nameIdentifier, jsValue);
             RETURN_IF_EXCEPTION(scope, void());
-            arrayValues.append(nameString);
-            arrayValues.append(jsValue);
+            array->putDirectIndex(globalObject, arrayIndex++, nameString);
             RETURN_IF_EXCEPTION(scope, void());
-        }
-    }
-
-    JSC::JSArray* array;
-    {
-
-        ObjectInitializationScope initializationScope(vm);
-        if ((array = JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), arrayValues.size()))) [[likely]] {
-            EncodedJSValue* data = arrayValues.data();
-            for (size_t i = 0, size = arrayValues.size(); i < size; ++i) {
-                array->initializeIndex(initializationScope, i, JSValue::decode(data[i]));
-            }
-        } else {
-            RETURN_IF_EXCEPTION(scope, );
-            array = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), arrayValues);
-            RETURN_IF_EXCEPTION(scope, );
+            array->putDirectIndex(globalObject, arrayIndex++, jsValue);
+            RETURN_IF_EXCEPTION(scope, void());
         }
     }
 

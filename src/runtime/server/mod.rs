@@ -230,6 +230,13 @@ bitflags::bitflags! {
 }
 
 // ─── NewServer ───────────────────────────────────────────────────────────────
+/// Number of HTTP method tokens — must match the variant count of
+/// `bun_http_types::Method::Method` (`ACL`..`UNSUBSCRIBE`). Sizes
+/// [`NewServer::method_name_cache`]; the lookup falls back to a fresh intern if
+/// a future variant ever pushes the index past the end, so this is a perf knob,
+/// not a correctness invariant.
+const N_HTTP_METHODS: usize = 36;
+
 /// `fn NewServer(protocol_enum, development_kind) type` — Zig type-generator.
 /// `SSL = (protocol == .https)`, `DEBUG = (development_kind == .debug)`, `HAS_H3 = SSL`.
 pub struct NewServer<const SSL: bool, const DEBUG: bool> {
@@ -248,6 +255,22 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     // `Deref` while keeping the struct `'static` (process-lifetime VM).
     pub vm: bun_ptr::BackRef<jsc::VirtualMachine>,
     pub global_this: *const jsc::JSGlobalObject,
+    /// Packed `bun.ptr.TaggedPointerUnion` wire-format `AnyServer` for this
+    /// server (`u49` heap addr | `u15` variant tag), computed once in
+    /// [`Self::init`]. The C++ `node:http` request path needs it on every
+    /// request to reconstruct `AnyServer`; it's a pure function of the (stable)
+    /// heap address and the const variant tag, so cache it rather than
+    /// recompute `AnyServer::from(self).to_packed()` in the per-request prologue.
+    pub any_server_packed: usize,
+    /// Lazily-filled cache of the interned JS method-name string per HTTP
+    /// method token. The `node:http` request prologue reads this so each request
+    /// after the first for a given method skips the FFI hop into
+    /// `Bun__HTTPMethod__toJS`. Indexed by `Method as usize`; a slot holds
+    /// [`JSValue::ZERO`] until filled. The cached value is one of the global
+    /// object's GC-rooted common strings (visited by `CommonStrings::visit`), so
+    /// it stays live for as long as this server's global object — which always
+    /// outlives the server itself.
+    pub method_name_cache: [core::cell::Cell<jsc::JSValue>; N_HTTP_METHODS],
     pub base_url_string_for_joining: Box<[u8]>,
     pub config: ServerConfig,
     pub pending_requests: usize,
@@ -1149,8 +1172,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // Compute the JS method-name string up front so the FFI closure
         // doesn't need to reborrow `req` (it's already `&mut`-borrowed below).
+        // Memoised per-method on the server: `Method::to_js` returns the global
+        // object's GC-rooted common string, which is the same JSValue for every
+        // request, so only the first request for a given method pays the FFI hop
+        // into `Bun__HTTPMethod__toJS`. (`get(..)` falls back to a fresh intern
+        // if a future method variant ever indexes past the cache.)
         let method_string = match bun_http::Method::find(req.method()) {
-            Some(m) => m.to_js(global),
+            Some(m) => match this_ref.method_name_cache.get(m as usize) {
+                Some(slot) => {
+                    let cached = slot.get();
+                    if cached == JSValue::ZERO {
+                        let v = m.to_js(global);
+                        slot.set(v);
+                        v
+                    } else {
+                        cached
+                    }
+                }
+                None => m.to_js(global),
+            },
             None => JSValue::UNDEFINED,
         };
         // Zig: `this.config.onNodeHTTPRequest` (raw JSValue, may be `.zero`).
@@ -1163,8 +1203,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // C++ forwards `any_server` to `NodeHTTPResponse::create`, which
         // unpacks it via `any_server_from_packed` (bits 49..64 = variant tag);
         // a raw `*mut Self` would zero those bits and trip the dispatch
-        // `unreachable!`, so re-pack into the `TaggedPointerUnion` wire format.
-        let any_server_packed = AnyServer::from(this.cast_const()).to_packed() as usize;
+        // `unreachable!`, so the `TaggedPointerUnion` wire format is needed.
+        // Computed once in `init()` (stable heap address) — just load it.
+        let any_server_packed = this_ref.any_server_packed;
 
         let mut node_http_response: *mut NodeHTTPResponse = core::ptr::null_mut();
         let mut is_async = false;
@@ -1204,14 +1245,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
 
             if let Some(promise) = result.as_any_promise() {
-                if promise.status() == jsc::js_promise::Status::Pending {
+                // One `status()` read; only re-read after `drain_microtasks`
+                // (which can settle a pending promise) actually runs.
+                let mut status = promise.status();
+                if status == jsc::js_promise::Status::Pending {
                     strong_promise.set(global, result);
                     needs_to_drain = false;
                     // SAFETY: `vm` is the process-static VirtualMachine.
                     unsafe { (*vm).drain_microtasks() };
+                    status = promise.status();
                 }
 
-                match promise.status() {
+                match status {
                     jsc::js_promise::Status::Fulfilled => {
                         global.handle_rejected_promises();
                         break 'brk HttpResult::Success;
@@ -1807,6 +1852,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         let server = bun_core::heap::into_raw(Box::new(Self {
             global_this: std::ptr::from_ref(global),
+            // Set below, once the server has its final (stable) heap address.
+            any_server_packed: 0,
+            method_name_cache: [const { core::cell::Cell::new(JSValue::ZERO) }; N_HTTP_METHODS],
             config: core::mem::take(config),
             base_url_string_for_joining: base_url,
             vm: bun_ptr::BackRef::new(jsc::VirtualMachine::get()),
@@ -1836,6 +1884,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             on_clienterror: jsc::StrongOptional::empty(),
             inspector_server_id: jsc::DebuggerId::init(0),
         }));
+
+        // The packed `AnyServer` is a pure function of the (now-stable) heap
+        // address and the const variant tag; cache it so the per-request
+        // `node:http` prologue is a plain field load instead of a tag match +
+        // `TaggedPointer::init`.
+        // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
+        unsafe {
+            (*server).any_server_packed = AnyServer::from(server.cast_const()).to_packed() as usize;
+        }
 
         // PORT NOTE: Zig captured `&config.bake.?` then did `.config = config.*`,
         // so the bake options (and the arena that backs `root`) live in

@@ -556,65 +556,61 @@ describe("spawn stdin ReadableStream", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test(
-    "ReadableStream object type count",
-    async () => {
-      const iterations =
-        isASAN && isCI
-          ? // With ASAN, entire process gets killed, including the test runner in CI. Likely an OOM or out of file descriptors.
-            10
-          : 50;
+  test("ReadableStream object type count", async () => {
+    const iterations =
+      isASAN && isCI
+        ? // With ASAN, entire process gets killed, including the test runner in CI. Likely an OOM or out of file descriptors.
+          10
+        : 50;
 
-      async function main() {
-        async function iterate(i: number) {
-          const stream = new ReadableStream({
-            async pull(controller) {
-              await Bun.sleep(0);
-              controller.enqueue(`iteration ${i}`);
-              controller.close();
-            },
-          });
+    async function main() {
+      async function iterate(i: number) {
+        const stream = new ReadableStream({
+          async pull(controller) {
+            await Bun.sleep(0);
+            controller.enqueue(`iteration ${i}`);
+            controller.close();
+          },
+        });
 
-          await using proc = spawn({
-            cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
-            stdin: stream,
-            stdout: "pipe",
-            stderr: "inherit",
-            env: bunEnv,
-          });
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+          stdin: stream,
+          stdout: "pipe",
+          stderr: "inherit",
+          env: bunEnv,
+        });
 
-          await Promise.all([proc.stdout.text(), proc.exited]);
-        }
-
-        // Bound concurrency: spawning all `iterations` subprocesses at once is
-        // resource-bound (fds, memory) on busy/ASAN runners and pushes the test
-        // past its timeout. Run in small batches instead.
-        const batchSize = 10;
-        for (let start = 0; start < iterations; start += batchSize) {
-          const batch = [];
-          for (let i = start; i < Math.min(start + batchSize, iterations); i++) {
-            batch.push(iterate(i));
-          }
-          await Promise.all(batch);
-        }
+        await Promise.all([proc.stdout.text(), proc.exited]);
       }
 
-      await main();
+      // Bound concurrency: spawning all `iterations` subprocesses at once is
+      // resource-bound (fds, memory) on busy/ASAN runners and pushes the test
+      // past its timeout. Run in small batches instead.
+      const batchSize = 10;
+      for (let start = 0; start < iterations; start += batchSize) {
+        const batch = [];
+        for (let i = start; i < Math.min(start + batchSize, iterations); i++) {
+          batch.push(iterate(i));
+        }
+        await Promise.all(batch);
+      }
+    }
 
-      await Bun.sleep(1);
-      Bun.gc(true);
-      await Bun.sleep(1);
+    await main();
 
-      // Check that we're not leaking objects
-      await expectMaxObjectTypeCount(expect, "ReadableStream", 10);
-      await expectMaxObjectTypeCount(expect, "Subprocess", 5);
-      // Generous timeout: even the non-ASAN path spawns 50 `bun` subprocesses
-      // (in batches of 10), which consumes a meaningful fraction of the budget
-      // on an idle fast box; under CI sharding a 2-3x slowdown can blow past a
-      // 30s timeout. Use a flat 60s so this leak-detection test doesn't flake.
-    },
-    60_000,
-  );
+    await Bun.sleep(1);
+    Bun.gc(true);
+    await Bun.sleep(1);
+
+    // Check that we're not leaking objects
+    await expectMaxObjectTypeCount(expect, "ReadableStream", 10);
+    await expectMaxObjectTypeCount(expect, "Subprocess", 5);
+    // Generous timeout: even the non-ASAN path spawns 50 `bun` subprocesses
+    // (in batches of 10), which consumes a meaningful fraction of the budget
+    // on an idle fast box; under CI sharding a 2-3x slowdown can blow past a
+    // 30s timeout. Use a flat 60s so this leak-detection test doesn't flake.
+  }, 60_000);
 
   // Regression: src/runtime/api/bun/subprocess/Writable.zig:115/193
   // (`pipe.assignToStream(...)`) — Zig's `FileSink.create` returns rc=1 which is

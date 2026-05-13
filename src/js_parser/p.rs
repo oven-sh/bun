@@ -1654,6 +1654,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     /// Zig: `p.b(t, loc)` — bump-allocate a binding payload and wrap it in `Binding`.
     /// `BindingAlloc` (Binding.rs round-G2) replaces the Zig `@TypeOf(t)` switch.
+    ///
+    /// PORT NOTE: Zig's `p.b(t: anytype)` had a `@typeInfo == .pointer` arm that
+    /// dispatched to `Binding.init(t, loc)` (wrap-existing-allocation) instead of
+    /// `Binding.alloc`. That arm is intentionally dropped here: every Zig caller
+    /// passes `t` by value, so only the alloc path was ever exercised. If a future
+    /// caller needs to wrap an already-stored payload, call `Binding::init` directly.
     #[inline]
     pub fn b<T>(&mut self, t: T, loc: bun_ast::Loc) -> Binding
     where

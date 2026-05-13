@@ -166,8 +166,8 @@ impl SymbolTable for Vec<symbol::Symbol> {
     }
 }
 
-// TODO(port): `impl SymbolTable for ast::Symbol::Map` lives next to `Symbol::Map`
-// (it calls `.get(ref).unwrap()`); add it when that type is ported.
+// `impl SymbolTable for symbol::Map` (the bundler's 2-D table arm) lives next
+// to `Map` in `symbol.rs` — it does the `source_index + inner_index` lookup.
 
 /// `Ref` methods that need `Symbol` / JSON writer.
 impl Ref {

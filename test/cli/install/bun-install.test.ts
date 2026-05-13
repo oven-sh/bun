@@ -62,6 +62,25 @@ async function withContext(
 // Default context options for most tests
 const defaultOpts = { linker: "hoisted" as const };
 
+// Re-read a JSON file until it parses successfully. Works around a transient
+// filesystem visibility race (seen on Windows under concurrent test execution)
+// where a freshly-written file can briefly read back empty/truncated. Only JSON
+// parse failures are retried, and only for a bounded window, so a genuinely
+// wrong/missing file still fails the test.
+async function readJsonWithRetry(path: string, timeoutMs = 5000): Promise<any> {
+  const deadline = Date.now() + timeoutMs;
+  let lastErr: unknown;
+  for (;;) {
+    try {
+      return await file(path).json();
+    } catch (err) {
+      lastErr = err;
+      if (Date.now() >= deadline) throw lastErr;
+      await Bun.sleep(50);
+    }
+  }
+}
+
 describe.concurrent("bun-install", () => {
   for (let input of ["abcdef", "65537", "-1"]) {
     it(`bun install --network-concurrency=${input} fails`, async () => {
@@ -2386,7 +2405,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
         name: "bar",
         version: "0.0.2",
       });

@@ -134,7 +134,8 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
         },
       });
 
-      await process.exited;
+      const exitCode = await process.exited;
+      expect(exitCode).toBe(0);
 
       const first = rss[0];
       const last = rss[rss.length - 1];
@@ -143,7 +144,10 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
       }
       expect(last).toBeLessThan(first * 10);
     },
-    20 * 1000,
+    // 50 iterations of (batch of 10 streamed 2 MiB POSTs + 2x full GC + a 100ms
+    // settle sleep) is slow on a debug build under CI load; 20s was tight enough
+    // to flake as a timeout. The fixture itself runs in ~2-5s when unloaded.
+    60 * 1000,
   );
 });
 

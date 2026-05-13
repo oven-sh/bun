@@ -874,7 +874,9 @@ const server = serve({
       .cwd(dir)
       .env(bunEnv)
       .throws(true);
-  }, 30_000);
+    // `bun build --compile` on Linux clones+rewrites the entire bun executable
+    // (~500MB release / ~965MB debug), so this is slow on loaded/ASAN CI runners.
+  }, 120_000);
 
   // Verify ESM bytecode is actually loaded from the cache at runtime, not just generated.
   // Uses regex matching on stderr (not itBundled) since we don't know the exact
@@ -922,7 +924,9 @@ const server = serve({
     expect(exeStdout).toContain("esm bytecode loaded");
     expect(exeStderr).toMatch(/\[Disk Cache\].*Cache hit/i);
     expect(exeExitCode).toBe(0);
-  }, 30_000);
+    // `bun build --compile` on Linux clones+rewrites the entire bun executable
+    // (~500MB release / ~965MB debug), so this is slow on loaded/ASAN CI runners.
+  }, 120_000);
 
   // When compiling with 8+ entry points, the main entry point should still run correctly.
   test("compile with 8+ entry points runs main entry correctly", async () => {
@@ -942,5 +946,7 @@ const server = serve({
 
     const result = await Bun.$`./app`.cwd(dir).env(bunEnv).nothrow();
     expect(result.stdout.toString().trim()).toBe("IT WORKS");
-  }, 30_000);
+    // `bun build --compile` on Linux clones+rewrites the entire bun executable
+    // (~500MB release / ~965MB debug), so this is slow on loaded/ASAN CI runners.
+  }, 120_000);
 });

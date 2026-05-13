@@ -207,7 +207,15 @@ pub fn onOpen(
     // in bsd_socket_keepalive. The kernel default TCP_KEEPIDLE is 7200s, so
     // bare SO_KEEPALIVE without the delay would be ineffective; 60 here sets
     // TCP_KEEPIDLE=60s.
-    _ = socket.setKeepAlive(true, 60);
+    //
+    // `disable_keepalive` is set when fetch is called with `keepalive: false`,
+    // which is what `node:http`/`node:https` pass through from
+    // `agent.keepAlive` (see _http_client.ts) — so requests through
+    // `http.globalAgent` (`keepAlive: true`) get TCP keepalive and requests
+    // through a non-keepalive Agent or `agent: false` skip it, matching Node.
+    if (!client.flags.disable_keepalive) {
+        _ = socket.setKeepAlive(true, 60);
+    }
 
     if (client.signals.get(.aborted)) {
         client.closeAndAbort(comptime is_ssl, socket);

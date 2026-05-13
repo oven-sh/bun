@@ -1,13 +1,21 @@
 // Verifies that fetch() enables TCP keepalive (SO_KEEPALIVE + TCP_KEEPIDLE)
-// on its client sockets, matching Node/undici behavior. Without it, a
-// half-open connection (peer silently gone — NAT timeout, network break)
-// hangs until an application-level timeout instead of failing at ~70s.
+// on its client sockets, matching Node/undici behavior, and that
+// `keepalive: false` (the existing RequestInit option that also disables
+// HTTP connection pooling) skips it. node:http forwards `agent.keepAlive`
+// to fetch's `keepalive`, so the same gate covers Node compat.
 //
 // Linux-only: reads /proc/<pid>/net/tcp for the kernel's view of the
 // socket's keepalive timer. Other platforms skip.
 import { expect, test } from "bun:test";
+import http from "node:http";
 
-test.skipIf(process.platform !== "linux")("fetch sockets have TCP keepalive enabled", async () => {
+const linuxOnly = test.skipIf(process.platform !== "linux");
+
+// Spin up a server that holds the response open, run the request via
+// `startRequest`, and return the kernel timer field for the client
+// socket. The server is fresh per call so the connection pool can't
+// reuse a socket from a previous test (different port → different key).
+async function probeClientSocket(startRequest: (url: string) => Promise<{ drain: () => Promise<void> }>) {
   // Server that holds the connection open so the client socket stays
   // ESTABLISHED long enough to inspect.
   await using server = Bun.serve({
@@ -28,13 +36,7 @@ test.skipIf(process.platform !== "linux")("fetch sockets have TCP keepalive enab
   });
 
   const port = server.port;
-  // Await headers + first chunk so the socket is ESTABLISHED and the
-  // client's outbound GET has been ACKed (piggybacked on the response)
-  // before we read /proc — otherwise a retransmit timer (01) could mask
-  // the keepalive timer (02) in the kernel's timer field.
-  const resp = await fetch(`http://127.0.0.1:${port}/`);
-  const reader = resp.body!.getReader();
-  await reader.read();
+  const { drain } = await startRequest(`http://127.0.0.1:${port}/`);
 
   // Parse /proc/self/net/tcp: find ESTABLISHED (state 01) socket with
   // remote port = server.port. Column 5 is the timer field
@@ -61,10 +63,66 @@ test.skipIf(process.platform !== "linux")("fetch sockets have TCP keepalive enab
     }
   }
 
-  // Drain the fetch so the server can clean up
-  await reader.cancel();
-
+  await drain();
   expect(found).toBe(true);
+  return timerActive;
+}
+
+// Await headers + first chunk so the socket is ESTABLISHED and the
+// client's outbound GET has been ACKed (piggybacked on the response)
+// before we read /proc — otherwise a retransmit timer (01) could mask
+// the keepalive timer (02) in the kernel's timer field.
+async function fetchAndHold(url: string, init?: RequestInit) {
+  const resp = await fetch(url, init);
+  const reader = resp.body!.getReader();
+  await reader.read();
+  return { drain: () => reader.cancel() };
+}
+
+linuxOnly("fetch sockets have TCP keepalive enabled", async () => {
+  const timerActive = await probeClientSocket(url => fetchAndHold(url));
   // Without SO_KEEPALIVE: "00". With it: "02" (sk_timer / keepalive armed).
+  expect(timerActive).toBe("02");
+});
+
+linuxOnly("fetch keepalive: false skips SO_KEEPALIVE (matches undici options.keepAlive)", async () => {
+  const timerActive = await probeClientSocket(url => fetchAndHold(url, { keepalive: false }));
+  expect(timerActive).toBe("00");
+});
+
+linuxOnly("node:http with non-keepalive Agent skips SO_KEEPALIVE", async () => {
+  // `agent: false` constructs a fresh `new Agent()` whose `keepAlive`
+  // defaults to false; _http_client.ts forwards that as fetch
+  // `keepalive: false`.
+  const timerActive = await probeClientSocket(async url => {
+    const { promise, resolve, reject } = Promise.withResolvers<http.IncomingMessage>();
+    const req = http.get(url, { agent: false }, resolve);
+    req.on("error", reject);
+    const res = await promise;
+    await new Promise<void>(r => res.once("data", () => r()));
+    return {
+      drain: async () => {
+        res.destroy();
+        req.destroy();
+      },
+    };
+  });
+  expect(timerActive).toBe("00");
+});
+
+linuxOnly("node:http globalAgent (keepAlive: true) enables SO_KEEPALIVE", async () => {
+  const timerActive = await probeClientSocket(async url => {
+    const { promise, resolve, reject } = Promise.withResolvers<http.IncomingMessage>();
+    const req = http.get(url, resolve);
+    req.on("error", reject);
+    const res = await promise;
+    await new Promise<void>(r => res.once("data", () => r()));
+    return {
+      drain: async () => {
+        res.destroy();
+        req.destroy();
+      },
+    };
+  });
   expect(timerActive).toBe("02");
 });

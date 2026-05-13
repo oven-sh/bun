@@ -365,11 +365,16 @@ pub fn crashHandler(
                         }
                     }
 
-                    // Prepend the faulting instruction as frame 0. The unwinder
-                    // above walks from inside the signal handler, so without
-                    // this the trace begins at the libc trampoline and the
-                    // actual crash site is missing from the report.
-                    if (fault_registers) |fr| if (fr.pc != 0) {
+                    // Prepend the faulting instruction as frame 0. On POSIX the
+                    // unwinder above walks from inside the signal handler, so
+                    // without this the trace begins at the libc trampoline and
+                    // the actual crash site is missing from the report. On
+                    // Windows `captureStackTrace(ExceptionAddress, …)` may
+                    // already yield it as frame 0 (or an empty trace), so skip
+                    // the prepend if it's already there.
+                    if (fault_registers) |fr| if (fr.pc != 0 and
+                        (trace_buf.index == 0 or addr_buf[0] != fr.pc))
+                    {
                         const n = @min(trace_buf.index, addr_buf.len - 1);
                         std.mem.copyBackwards(usize, addr_buf[1 .. n + 1], addr_buf[0..n]);
                         addr_buf[0] = fr.pc;

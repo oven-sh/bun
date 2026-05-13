@@ -1075,7 +1075,14 @@ pub mod command {
     /// because CLI dispatch is single-threaded and this is the sole live
     /// borrow at the time of return; callers thread it down via the `ctx`
     /// parameter rather than re-deriving (Zig: `Context = *ContextData`).
+    ///
+    /// `#[inline(never)]`: this is the `init` step of the `bun run <script>`
+    /// dispatch chain (`exec_auto_or_run → init → RunCommand::exec_with_cfg`)
+    /// and must stay a concrete symbol so `src/startup.order` can place it —
+    /// and the argv→Context parsing it pulls in — contiguously. `#[track_caller]`
+    /// would otherwise make it an inlining candidate, scattering those callees.
     #[track_caller]
+    #[inline(never)]
     pub fn create_context_data(
         cmd: Tag,
         log: &mut bun_ast::Log,
@@ -1166,6 +1173,25 @@ pub mod command {
         // cannot diverge from the post-parse fall-through.
         if tag == Tag::AutoCommand {
             let argv = bun::argv();
+
+            // Fast path: `bun -v` / `bun --version` / `bun --revision`. Zig's
+            // AutoCommand arm reaches `print_version_and_exit` only after
+            // `arguments::parse` has run `clap::parse_with_table::<Help>` (which
+            // forces the `AUTO_PARAMS` `LazyLock` + `concat_params!` table) and
+            // built-then-dropped a full `api::TransformOptions`. Short-circuit
+            // before `create_context_data` for the *exact* argv shape `len == 2`
+            // — that keeps it from intercepting `bun <bin> --version`, where the
+            // flag belongs to `<bin>` (the bug the old Phase-C argv-scan shim
+            // had; see the NOTE below). Same outcome as the post-parse checks in
+            // `Arguments.rs`, just without the clap/table/TransformOptions cost.
+            if argv.len() == 2 {
+                match argv.get(1).map(bun_core::ZStr::as_bytes) {
+                    Some(b"-v" | b"--version") => print_version_and_exit(),
+                    Some(b"--revision") => print_revision_and_exit(),
+                    _ => {}
+                }
+            }
+
             let empty_eval = match argv.len() {
                 2 => matches!(
                     argv.get(1).map(bun_core::ZStr::as_bytes),

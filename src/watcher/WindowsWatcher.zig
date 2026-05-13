@@ -7,6 +7,15 @@ iocp: w.HANDLE = undefined,
 watcher: DirWatcher = undefined,
 buf: bun.PathBuffer = undefined,
 base_idx: usize = 0,
+/// See `INotifyWatcher.coalesce_interval` for rationale. Honours the same
+/// env var (despite its Linux-centric name) so tests can pin the window
+/// uniformly across platforms. Milliseconds, because that's what
+/// `GetQueuedCompletionStatus` takes; note Windows' default timer
+/// resolution is ~15.6 ms, so small non-zero values round up to roughly
+/// that in practice.
+coalesce_interval_ms: w.DWORD = default_coalesce_interval_ms,
+
+const default_coalesce_interval_ms = 10;
 
 pub const EventListIndex = c_int;
 
@@ -131,28 +140,20 @@ pub fn init(this: *WindowsWatcher, root: []const u8) !void {
         this.buf[root.len] = '\\';
     }
     this.base_idx = if (needs_slash) root.len + 1 else root.len;
-}
 
-const Timeout = enum(w.DWORD) {
-    infinite = w.INFINITE,
-    /// After the first (infinite) wait returns, subsequent waits use this
-    /// timeout to sweep up the remaining events from a single editor save
-    /// (which on Windows typically produces several `Modified` notifications
-    /// a few ms apart). Without this, each notification lands in its own
-    /// `watchLoopCycle` and `--hot` re-evaluates the entry point once per
-    /// notification. Windows' default timer resolution is ~15.6 ms, so the
-    /// effective wait is usually closer to that than to the nominal 10 ms;
-    /// that's fine for this purpose.
-    coalesce = 10,
-    minimal = 1,
-    none = 0,
-};
+    // Env var is in nanoseconds; convert to the millisecond granularity
+    // `GetQueuedCompletionStatus` expects.
+    const ns = bun.env_var.BUN_INOTIFY_COALESCE_INTERVAL.get();
+    this.coalesce_interval_ms = std.math.cast(w.DWORD, ns / std.time.ns_per_ms) orelse default_coalesce_interval_ms;
+}
 
 /// See `INotifyWatcher.max_coalesce_iterations` for rationale.
 const max_coalesce_iterations = 5;
 
-// wait until new events are available
-pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.sys.Maybe(?EventIterator) {
+/// `timeout_ms` is passed straight to `GetQueuedCompletionStatus`:
+/// `w.INFINITE` for the first blocking wait, then `coalesce_interval_ms`
+/// to sweep up trailing events from the same logical save.
+pub fn next(this: *WindowsWatcher, timeout_ms: w.DWORD) bun.sys.Maybe(?EventIterator) {
     switch (this.watcher.prepare()) {
         .err => |err| {
             log("prepare() returned error", .{});
@@ -165,7 +166,7 @@ pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.sys.Maybe(?EventIterato
     var key: w.ULONG_PTR = 0;
     var overlapped: ?*w.OVERLAPPED = null;
     while (true) {
-        const rc = w.kernel32.GetQueuedCompletionStatus(this.iocp, &nbytes, &key, &overlapped, @intFromEnum(timeout));
+        const rc = w.kernel32.GetQueuedCompletionStatus(this.iocp, &nbytes, &key, &overlapped, timeout_ms);
         if (rc == 0) {
             const err = w.kernel32.GetLastError();
             if (err == .TIMEOUT or err == .WAIT_TIMEOUT) {
@@ -216,16 +217,19 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
     var event_id: usize = 0;
 
     // first wait has infinite timeout - we're waiting for the next event and don't want to spin
-    var timeout = WindowsWatcher.Timeout.infinite;
+    var timeout_ms: w.DWORD = w.INFINITE;
     var iterations: u32 = 0;
     while (iterations <= max_coalesce_iterations) : (iterations += 1) {
-        var iter = switch (this.platform.next(timeout)) {
+        var iter = switch (this.platform.next(timeout_ms)) {
             .err => |err| return .{ .err = err },
             .result => |iter| iter orelse break,
         };
-        // After the first wait, briefly wait for trailing events from the
-        // same logical save so they coalesce into a single `onFileUpdate`.
-        timeout = WindowsWatcher.Timeout.coalesce;
+        // After the first (infinite) wait, briefly wait for trailing
+        // events from a single editor save — Windows typically produces
+        // several `Modified` notifications a few ms apart — so they
+        // coalesce into a single `onFileUpdate` instead of `--hot`
+        // re-evaluating the entry point once per notification.
+        timeout_ms = this.platform.coalesce_interval_ms;
         const item_paths = this.watchlist.items(.file_path);
         log("number of watched items: {d}", .{item_paths.len});
         while (iter.next()) |event| {

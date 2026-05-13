@@ -1035,12 +1035,39 @@ impl Builder {
         });
 
         let n_deltas: usize = n as usize - 1;
+
+        // PERF: worst-case capacity assuming *every* optional section is present
+        // and every varint is maximal. This equals the previous "all flags set"
+        // bound, so it is still a sound upper bound on the write cursor `w`; the
+        // win is that it needs no `flags` pre-scan, so we can `reserve` and grab
+        // `buf_ptr` *before* the delta loop. That collapses what used to be two
+        // walks over the window (one to materialize `deltas`/compute `flags`,
+        // then a re-walk to set the three equality masks and emit the `gen_col`
+        // lane — re-reading `d_gen_col` out of the buffer) into a single pass.
+        // `w <= cap` and `w + MAX_VARINT_LEN <= cap` hold at every `write_varint`
+        // because each section emits at most `n_deltas` varints of `<=
+        // MAX_VARINT_LEN` bytes and `cap` reserves room for all of them; the
+        // trailing `commit_spare(w)` exposes only the written prefix, so
+        // over-reserving costs nothing committed.
+        let cap: usize = win_hdr::GEN_COL_LANE_OFF
+            + n_deltas * (3 * MAX_VARINT_LEN)     // gen_col lane + orig_line + orig_col exceptions
+            + n_deltas * (1 + MAX_VARINT_LEN) + 1 // gen_line exceptions: (idx u8, varint) per delta + 0xFF
+            + 8 + n_deltas * MAX_VARINT_LEN; // src_idx: 8-byte mask + one varint per delta
+        let buf_ptr: *mut u8 = self.win_stream.reserve_spare(cap).as_mut_ptr().cast();
+        // SAFETY: `cap >= GEN_COL_LANE_OFF` bytes were just reserved as spare.
+        unsafe { buf_ptr.write_bytes(0, win_hdr::GEN_COL_LANE_OFF) };
+        // SAFETY: COUNT_OFF is within the zeroed 32-byte header.
+        unsafe { *buf_ptr.add(win_hdr::COUNT_OFF) = n };
+
         // Zig: `undefined` — every slot in [0..n_deltas] is filled by the loop
         // below before any read; Delta is Copy/POD so assume_init is sound.
+        // `d_gen_col`/`d_gen_line` are emitted/masked inline below but also kept
+        // here because the later orig_line/orig_col passes compare against them.
         let mut deltas_buf: [MaybeUninit<Delta>; SYNC_INTERVAL - 1] =
             [MaybeUninit::uninit(); SYNC_INTERVAL - 1];
         let mut flags: u8 = 0;
         let mut prev = seed;
+        let mut w: usize = win_hdr::GEN_COL_LANE_OFF;
         for (k, cur) in pending[1..].iter().enumerate() {
             let d_gen_line = cur.generated_line - prev.generated_line;
             let d_gen_col = if d_gen_line != 0 {
@@ -1051,10 +1078,29 @@ impl Builder {
             let d_orig_line = cur.original_line - prev.original_line;
             let d_orig_col = cur.original_column - prev.original_column;
             let d_src_idx = cur.source_index - prev.source_index;
-            // SAFETY: k ranges over 0..pending.len()-1 == 0..n_deltas, and
-            // n_deltas <= SYNC_INTERVAL-1 == deltas_buf.len(). Elides the
-            // per-delta bounds check so this loop matches Zig's unchecked
-            // `deltas[k] = .{...}` and stays vectorizable.
+
+            let bit = 1u8 << (k & 7);
+            // SAFETY: k < n_deltas <= SYNC_INTERVAL-1 == 63, so `k >> 3 <= 7`
+            // and every mask byte offset is within the zeroed 32-byte header.
+            unsafe {
+                if d_gen_line >= 1 {
+                    *buf_ptr.add(win_hdr::GEN_LINE_MASK_OFF + (k >> 3)) |= bit;
+                }
+                if d_orig_line == d_gen_line {
+                    *buf_ptr.add(win_hdr::ORIG_LINE_EQ_MASK_OFF + (k >> 3)) |= bit;
+                }
+                if d_orig_col == d_gen_col {
+                    *buf_ptr.add(win_hdr::ORIG_COL_EQ_MASK_OFF + (k >> 3)) |= bit;
+                }
+            }
+            // SAFETY: `w` starts at GEN_COL_LANE_OFF and grows by `<=
+            // MAX_VARINT_LEN` per delta, so after the at-most-`n_deltas` calls
+            // `w <= GEN_COL_LANE_OFF + n_deltas*MAX_VARINT_LEN <= cap`; every
+            // call still has `>= MAX_VARINT_LEN` reserved bytes ahead of it.
+            w += write_varint(unsafe { buf_ptr.add(w) }, d_gen_col);
+
+            // SAFETY: k ranges over 0..n_deltas, n_deltas <= deltas_buf.len().
+            // Elides the per-delta bounds check (Zig: unchecked `deltas[k] = …`).
             unsafe { deltas_buf.get_unchecked_mut(k) }.write(Delta {
                 d_gen_line,
                 d_gen_col,
@@ -1074,44 +1120,8 @@ impl Builder {
         let deltas: &[Delta] =
             unsafe { core::slice::from_raw_parts(deltas_buf.as_ptr().cast::<Delta>(), n_deltas) };
 
-        let mut cap: usize = win_hdr::GEN_COL_LANE_OFF + 3 * n_deltas * MAX_VARINT_LEN;
-        if flags & FLAG_HAS_GEN_LINE_EXCEPTIONS != 0 {
-            cap += n_deltas * (1 + MAX_VARINT_LEN) + 1;
-        }
-        if flags & FLAG_HAS_SRC_IDX != 0 {
-            cap += 8 + n_deltas * MAX_VARINT_LEN;
-        }
-
-        // `cap` bytes are reserved past `len()`. All writes below go through
-        // `buf_ptr` into spare capacity. The cursor `w` is bounded by
-        // construction: `cap` is the worst-case sum of every section's max length
-        // (each varint <= MAX_VARINT_LEN, each optional section gated on `flags`),
-        // so `w <= cap` and `w + MAX_VARINT_LEN <= cap` at every `write_varint`
-        // call. The trailing `commit_spare(w)` exposes only the written prefix.
-        let buf_ptr: *mut u8 = self.win_stream.reserve_spare(cap).as_mut_ptr().cast();
-        unsafe { buf_ptr.write_bytes(0, win_hdr::GEN_COL_LANE_OFF) };
-
-        unsafe {
-            *buf_ptr.add(win_hdr::COUNT_OFF) = n;
-            *buf_ptr.add(win_hdr::FLAGS_OFF) = flags;
-        }
-
-        let mut w: usize = win_hdr::GEN_COL_LANE_OFF;
-        for (k, d) in deltas.iter().enumerate() {
-            let bit = 1u8 << (k & 7);
-            unsafe {
-                if d.d_gen_line >= 1 {
-                    *buf_ptr.add(win_hdr::GEN_LINE_MASK_OFF + (k >> 3)) |= bit;
-                }
-                if d.d_orig_line == d.d_gen_line {
-                    *buf_ptr.add(win_hdr::ORIG_LINE_EQ_MASK_OFF + (k >> 3)) |= bit;
-                }
-                if d.d_orig_col == d.d_gen_col {
-                    *buf_ptr.add(win_hdr::ORIG_COL_EQ_MASK_OFF + (k >> 3)) |= bit;
-                }
-            }
-            w += write_varint(unsafe { buf_ptr.add(w) }, d.d_gen_col);
-        }
+        // SAFETY: FLAGS_OFF is within the zeroed 32-byte header.
+        unsafe { *buf_ptr.add(win_hdr::FLAGS_OFF) = flags };
         // PERF(port): @intCast — n_deltas <= 63, MAX_VARINT_LEN == 5, so each
         // section is <= 315 bytes < u16::MAX. Drop the panic edge so the hot
         // window-emit path has no unwind landing pads.

@@ -68,33 +68,33 @@ macro_rules! concat_params {
 /// [`comptime::find_param_index`] inside `const { }`).
 ///
 /// ```ignore
-/// pub const RUN_PARAMS: &[Param<Help>] = concat_params!(...);
-/// pub static RUN_TABLE: &ConvertedTable = comptime_table!(RUN_PARAMS);
+/// pub const AUTO_PARAMS: &[Param<Help>] = concat_params!(...);
+/// pub static AUTO_TABLE: &ConvertedTable = comptime_table!(AUTO_PARAMS);
 /// ```
 ///
-/// Pass `, cold` for subcommand tables off the trivial-script cold-start path
-/// (`bun build` / `bun test` / `bun install` / `bun pm` / `bun x` / …) so they
-/// stay in plain `.rodata` instead of padding the contiguous `.rodata.startup`
-/// run (see the per-arm notes below):
+/// Pass `, cold` for every table off the trivial-script / `bun --version`
+/// cold-start path (`bun run` / `bun build` / `bun test` / `bun install` /
+/// `bun pm` / `bun x` / …) so it stays in plain `.rodata` instead of padding
+/// the contiguous `.rodata.startup` run (see the per-arm notes below):
 ///
 /// ```ignore
-/// pub static TEST_TABLE: &ConvertedTable = comptime_table!(TEST_PARAMS, cold);
+/// pub static RUN_TABLE: &ConvertedTable = comptime_table!(RUN_PARAMS, cold);
 /// ```
 #[macro_export]
 macro_rules! comptime_table {
-    // Hot tables — the run/default-command param tables that `bun <file>` and
-    // `bun run` dereference on cold start. Cluster every nested `__CONV` /
+    // Hot table — the default-command param table that `bun <file>` and
+    // `bun --version` dereference on cold start. Cluster every nested `__CONV` /
     // `__LONG` / `__TABLE` static into `.rodata.startup`: with
     // `-Zfunction-sections` each `static` otherwise lands in its own
     // `.rodata.<sym>` input section that fat-LTO emits in crate-alphabetical
-    // order — one minor fault per scattered table on first touch. The cluster is
-    // placed contiguously by `src/sections.lds` (alongside `.text.startup`), so
-    // the trivial-script cold path faults the converted arrays, long-name index,
-    // and `ConvertedTable` headers in with a couple of shared fault-around
-    // pages. Non-PIE `bun` has zero runtime relocations, so these stay in plain
-    // rodata even with the `&'static [u8]` help strings they point at.
-    // Linux-only: the section-name syntax is ELF-specific (mirrors
-    // `bun_core::err!`'s `.bun_err` clustering).
+    // order — one minor fault per scattered table on first touch. Pinning them
+    // adjacent lets the trivial-script cold path fault the converted arrays,
+    // long-name index, and `ConvertedTable` header in with one shared
+    // fault-around window. Non-PIE `bun` has zero runtime relocations, so these
+    // stay in plain rodata even with the `&'static [u8]` help strings they point
+    // at. Linux-only: the section-name syntax is ELF-specific (mirrors
+    // `bun_core::err!`'s `.bun_err` clustering). Use sparingly — only
+    // `AUTO_TABLE` should take this arm; everything else passes `, cold`.
     ($params:expr) => {
         $crate::comptime_table!(
             @build
@@ -102,11 +102,12 @@ macro_rules! comptime_table {
             $params
         )
     };
-    // Cold tables — `bun build` / `bun test` / `bun install` / `bun pm` /
-    // `bun x` and friends. `.rodata.startup` is deliberately one contiguous
-    // block so cold start faults it in with a single read-around; padding it
-    // with param tables those rare subcommands need (and `bun <file>` / `bun
-    // run` never touch) only grows that run. Leave these in plain `.rodata`.
+    // Cold tables — `bun run` / `bun build` / `bun test` / `bun install` /
+    // `bun pm` / `bun x` and friends. `.rodata.startup` is deliberately one
+    // contiguous block faulted in with a single read-around on every cold start
+    // (including `bun --version`); padding it with param tables those paths
+    // never touch only grows that run. Leave these in plain `.rodata` —
+    // `src/startup.order` still clusters the ones a sampled cold path hits.
     ($params:expr, cold) => {
         $crate::comptime_table!(@build { } $params)
     };

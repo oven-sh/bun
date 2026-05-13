@@ -225,18 +225,22 @@ describe("expect().resolves / .rejects on a still-pending promise", () => {
 
   // https://github.com/oven-sh/bun/issues/25181
   // With the blocking `waitForPromise()`, each concurrent test's
-  // `.resolves` serialized the whole group. Ten 1s-sleeps took ~10s;
-  // now they overlap.
+  // `.resolves` serialized the whole group. Assert overlap directly
+  // via an in-flight counter rather than wall-clock timing.
   test("does not serialize test.concurrent tests", async () => {
     const { out, exitCode, timedOut } = await runFixture(
       "concurrent",
       /* js */ `
         import { test, expect, afterAll } from "bun:test";
 
-        const start = Date.now();
+        let inFlight = 0;
+        let maxInFlight = 0;
 
         async function slow() {
-          await new Promise(r => setTimeout(r, 1000));
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise(r => setTimeout(r, 500));
+          inFlight--;
           return { ok: true };
         }
 
@@ -245,7 +249,7 @@ describe("expect().resolves / .rejects on a still-pending promise", () => {
         });
 
         afterAll(() => {
-          console.log("ELAPSED=" + (Date.now() - start));
+          console.log("MAX_INFLIGHT=" + maxInFlight);
         });
       `,
     );
@@ -253,11 +257,11 @@ describe("expect().resolves / .rejects on a still-pending promise", () => {
     expect(timedOut).toBe(false);
     expect(out).toContain("10 pass");
     expect(out).toContain("0 fail");
-    const elapsed = Number(out.match(/ELAPSED=(\d+)/)?.[1]);
-    // Ten 1s-sleeps: concurrent ≈ 1s, serialized ≈ 10s. Allow generous
-    // slack for slow CI — anything under 5s proves they overlapped.
-    expect(elapsed).toBeGreaterThan(900);
-    expect(elapsed).toBeLessThan(5000);
+    // If `.resolves` blocks, each test runs to completion before the
+    // next starts and maxInFlight stays at 1. With the deferred path
+    // all ten are in flight at once.
+    const maxInFlight = Number(out.match(/MAX_INFLIGHT=(\d+)/)?.[1]);
+    expect(maxInFlight).toBe(10);
     expect(exitCode).toBe(0);
   }, 40_000);
 });

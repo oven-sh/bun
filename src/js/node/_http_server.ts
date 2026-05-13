@@ -1015,8 +1015,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
         if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
           emitServerSocketEOFNT(this, req);
         }
-        if (req) {
-          req.push(resumed);
+        if (req && !req.push(resumed)) {
+          // The buffered-while-paused chunk overshot the Readable's
+          // highWaterMark; re-pause so the next _read() drives the cycle
+          // instead of letting the next network chunk land on a full buffer.
+          response.pause();
         }
         this.push(resumed);
       }

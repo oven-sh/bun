@@ -34,6 +34,18 @@
 #   bun run startup-order:sync -- --write # rewrite this file; commit the diff
 # (`bun run startup-order:sync -- --check` is the CI guard.)
 #
+# Do NOT list `compiler_builtins` intrinsics here (`memcpy`/`memmove`/`memset`/
+# `memcmp`/`__multi3`/`__udivti3`/`__float*`/…). The cold-start profile never
+# calls into that crate from bun's own code — on Linux the live `mem*` copies
+# are libc's (`__memmove_avx512_unaligned_erms`/`__memcmp_evex_movbe`), and the
+# int128/float bodies that *are* referenced from the Rust graph are already
+# placed where their callers live by LTO crate-order. `-Zbuild-std` builds
+# `compiler_builtins` with `codegen-units = 10000` (one object per intrinsic;
+# see rustlib `library/Cargo.toml`), so `--gc-sections` (flags.ts) drops the
+# unreferenced ones at section granularity — there is no whole-CGU blob to
+# pull forward, and pulling the survivors to the hot front of `.text` next to
+# `_start`/`.init_array` would only widen the cold-start fault-around window.
+#
 # Linux release only (see flags.ts).
 
 # ── .init_array / libc / mimalloc init (run before perf's first sample) ──

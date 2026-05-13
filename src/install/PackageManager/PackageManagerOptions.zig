@@ -741,19 +741,25 @@ pub fn load(
             // forced registry.
             this.registries.clearRetainingCapacity();
 
-            // Surface that the device-level override is active when it's
-            // actually overriding something the project configured, so a
+            // Surface that the device-level override is active whenever the
+            // project configured a custom registry of any kind, so the
             // developer isn't confused why their `install.registry`/
             // `.npmrc`/`--registry`/`install.scopes` isn't taking effect.
-            // No notice when the project was using the default registry
-            // anyway (nothing to be confused about).
+            // No notice when the project was on the default registry with
+            // no scopes and no `--registry` (nothing to be confused about).
             if (this.log_level != .silent and
-                prev_scope.url_hash != this.scope.url_hash and
                 (prev_scope.url_hash != Npm.Registry.default_url_hash or
                     had_scoped_registries or
                     had_cli_registry))
             {
-                Output.note("using forced registry <b>{s}<r> <d>(install.forceRegistry is set on this machine, ignoring project registry configuration)<r>", .{this.scope.url.href});
+                // Rebuild without userinfo so credentials embedded in the
+                // env-var URL (e.g. `https://user:pass@host/`) don't end up
+                // in terminal/CI logs.
+                Output.note("using forced registry <b>{s}://{f}{s}<r> <d>(install.forceRegistry is set on this machine, ignoring project registry configuration)<r>", .{
+                    this.scope.url.displayProtocol(),
+                    this.scope.url.displayHost(),
+                    this.scope.url.pathname,
+                });
                 Output.flush();
             }
         }

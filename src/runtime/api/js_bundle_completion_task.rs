@@ -891,7 +891,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         };
         transpiler.options.no_macros = config.no_macros;
         transpiler.options.loaders =
-            options::loaders_from_transform_options(config.loaders.clone(), config.target)?;
+            options::loaders_from_transform_options(config.loaders.as_ref(), config.target)?;
         transpiler.options.entry_naming = config.names.entry_point.data.clone();
         transpiler.options.chunk_naming = config.names.chunk.data.clone();
         transpiler.options.asset_naming = config.names.asset.data.clone();

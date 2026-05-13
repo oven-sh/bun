@@ -1151,10 +1151,13 @@ impl Default for ResolveFileExtensionsGroup {
 }
 
 pub fn loaders_from_transform_options(
-    _loaders: Option<api::LoaderMap>,
+    loaders: Option<&api::LoaderMap>,
     target: Target,
 ) -> Result<StringArrayHashMap<Loader>, bun_alloc::AllocError> {
-    let input_loaders = _loaders.unwrap_or_default();
+    // Borrow the caller's `LoaderMap` (a `Vec<u8>` + `Vec<Box<[u8]>>`); this fn
+    // only reads from it, so there's no need to clone it on every call.
+    let empty = api::LoaderMap::default();
+    let input_loaders = loaders.unwrap_or(&empty);
     let mut loader_values: Vec<Loader> = Vec::with_capacity(input_loaders.loaders.len());
 
     for input in &input_loaders.loaders {
@@ -1756,8 +1759,14 @@ impl<'a> BundleOptions<'a> {
     ) -> Result<BundleOptions<'a>, bun_core::Error> {
         use core::sync::atomic::Ordering;
 
+        // Keep `transform` behind an `Arc` so stashing it in `transform_options`
+        // is a refcount bump rather than a deep clone of ~30 heap fields, and so
+        // dropping the local at the end of this fn is a refcount decrement rather
+        // than recursive `drop_in_place` over every `Box<[u8]>`/`Vec`.
+        let transform = std::sync::Arc::new(transform);
+
         let target = <Target as bun_options_types::TargetExt>::from_api(transform.target);
-        let loaders = loaders_from_transform_options(transform.loaders.clone(), target)?;
+        let loaders = loaders_from_transform_options(transform.loaders.as_ref(), target)?;
         let bundler_feature_flags = Runtime::Features::init_bundler_feature_flags(
             &transform
                 .feature_flags
@@ -1787,7 +1796,7 @@ impl<'a> BundleOptions<'a> {
             entry_points: transform.entry_points.clone().into_boxed_slice(),
             out_extensions: StringHashMap::default(), // filled below
             env: Env::init(),
-            transform_options: std::sync::Arc::new(transform.clone()),
+            transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,

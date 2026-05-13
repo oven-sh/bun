@@ -77,12 +77,33 @@ describe.concurrent("install.forceRegistry", () => {
       "project/package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
     });
 
-    await runInstall(String(dir), makeEnv(String(dir)));
+    const { stderr } = await runInstall(String(dir), makeEnv(String(dir)));
 
     expect({ forced: forced.hits, other: other.hits }).toEqual({
       forced: ["/no-deps"],
       other: [],
     });
+    // Surface that the device-level override is active so the developer
+    // isn't confused why their project `install.registry` didn't apply.
+    expect(stderr).toContain(`using forced registry ${forced.url}`);
+    expect(stderr).toContain("install.forceRegistry is set on this machine");
+  });
+
+  test("no notice when forceRegistry is not overriding anything", async () => {
+    const forced = makeRegistry();
+    await using _f = forced.server;
+
+    using dir = tempDir("force-registry-no-override", {
+      "home/.bunfig.toml": `[install]\nforceRegistry = "${forced.url}"\n`,
+      // Project has no custom registry — nothing is being overridden.
+      "project/bunfig.toml": `[install]\ncache = false\n`,
+      "project/package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
+    });
+
+    const { stderr } = await runInstall(String(dir), makeEnv(String(dir)));
+
+    expect(forced.hits).toEqual(["/no-deps"]);
+    expect(stderr).not.toContain("using forced registry");
   });
 
   test("global bunfig forceRegistry cannot be changed by project bunfig forceRegistry", async () => {

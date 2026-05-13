@@ -14,6 +14,59 @@ pub fn applyStandaloneRuntimeFlags(b: *bun.Transpiler, graph: *const bun.Standal
     b.resolver.opts.load_package_json = !graph.flags.disable_autoload_package_json;
 }
 
+/// Resolve the host IANA timezone id cheaply (without walking
+/// /usr/share/zoneinfo/**) and seed it as JSC's default timezone via
+/// `setTimeZone()`. Called only when `$TZ` is unset. See the call site for why.
+///
+/// Resolution order matches the common Unix conventions:
+///   1. `/etc/localtime` symlink target containing `.../zoneinfo/<id>`
+///   2. `/etc/timezone` (Debian/Ubuntu) — file content is the IANA id
+///   3. `ZONE="..."` in `/etc/sysconfig/clock` (older RHEL/CentOS)
+/// If none resolve, do nothing and let JSC/ICU auto-detect lazily.
+fn seedHostTimeZone(global: *jsc.JSGlobalObject) void {
+    if (comptime !bun.Environment.isPosix) return;
+
+    const zoneinfo_marker = "zoneinfo/";
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+
+    // 1) /etc/localtime -> .../zoneinfo/<id>
+    if (std.fs.readLinkAbsolute("/etc/localtime", &buf)) |target| {
+        if (std.mem.lastIndexOf(u8, target, zoneinfo_marker)) |idx| {
+            const id = target[idx + zoneinfo_marker.len ..];
+            if (id.len > 0 and id.len < buf.len) {
+                _ = global.setTimeZone(&jsc.ZigString.init(id));
+                return;
+            }
+        }
+    } else |_| {}
+
+    // 2) /etc/timezone (Debian/Ubuntu) — file content is the IANA id
+    if (std.fs.cwd().readFile("/etc/timezone", &buf)) |contents| {
+        const id = std.mem.trim(u8, contents, " \t\r\n");
+        if (id.len > 0) {
+            _ = global.setTimeZone(&jsc.ZigString.init(id));
+            return;
+        }
+    } else |_| {}
+
+    // 3) ZONE="..." in /etc/sysconfig/clock (older RHEL/CentOS)
+    if (std.fs.cwd().readFile("/etc/sysconfig/clock", &buf)) |contents| {
+        var lines = std.mem.tokenizeAny(u8, contents, "\r\n");
+        while (lines.next()) |line| {
+            const trimmed = std.mem.trim(u8, line, " \t");
+            if (!std.mem.startsWith(u8, trimmed, "ZONE")) continue;
+            var rest = std.mem.trim(u8, trimmed["ZONE".len..], " \t");
+            if (rest.len == 0 or rest[0] != '=') continue;
+            rest = std.mem.trim(u8, rest[1..], " \t");
+            rest = std.mem.trim(u8, rest, "\"'");
+            if (rest.len > 0) {
+                _ = global.setTimeZone(&jsc.ZigString.init(rest));
+                return;
+            }
+        }
+    } else |_| {}
+}
+
 pub const Run = struct {
     ctx: Command.Context,
     vm: *VirtualMachine,
@@ -288,6 +341,16 @@ pub const Run = struct {
             if (tz.len > 0) {
                 _ = vm.global.setTimeZone(&jsc.ZigString.init(tz));
             }
+        } else {
+            // No $TZ in the environment: eagerly seed the default timezone from the
+            // host configuration before the entry point runs. Otherwise ICU lazily
+            // auto-detects the host zone the first time a Date is constructed, and on
+            // systems where /etc/localtime is a regular file (rather than a symlink
+            // into /usr/share/zoneinfo) that detection content-matches every zone
+            // file under /usr/share/zoneinfo/** — thousands of openat/read/lseek/fstat
+            // syscalls. setTimeZone() goes through ucal_setDefaultTimeZone(), which
+            // short-circuits that scan entirely.
+            seedHostTimeZone(vm.global);
         }
 
         vm.transpiler.env.loadTracy();

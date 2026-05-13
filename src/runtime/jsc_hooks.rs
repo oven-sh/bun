@@ -3186,9 +3186,11 @@ fn transpile_source_code_inner(
                 // not the absolute filesystem path.
                 let mut buf = std::string::String::new();
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                // `URL<'static>` is a view struct; clone borrows the same
-                // process-lifetime `href`.
-                let origin = unsafe { &*jsc_vm }.origin.clone();
+                // `URL<'static>` is a view struct; borrow it in place — no
+                // `&mut *jsc_vm` aliases through the call below, so there is no
+                // need to copy the ~12 borrowed slices out (perf: was a
+                // per-asset-import `url::URL::clone`).
+                let origin = unsafe { &(*jsc_vm).origin };
                 // PORT NOTE: `jsc.API.Bun.getPublicPath` is gated behind a
                 // private `_jsc_gated` mod in BunObject.rs; it is a thin
                 // wrapper over `get_public_path_with_asset_prefix` with
@@ -3198,7 +3200,7 @@ fn transpile_source_code_inner(
                 crate::api::bun_object::get_public_path_with_asset_prefix(
                     specifier,
                     top_level_dir,
-                    &origin,
+                    origin,
                     b"",
                     &mut buf,
                     bun_paths::Platform::Loose,

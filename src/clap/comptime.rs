@@ -399,7 +399,25 @@ impl ConvertedTable {
                 });
             }
         }
-        long.sort_unstable_by_key(|e| e.hash);
+        // Insertion sort by hash (matches the const-eval `build_long_index`
+        // path). `long.len()` is bounded by the per-command flag count (~tens),
+        // and this is a one-shot cold operation, so an O(n²) insertion sort is
+        // free — and it avoids dragging the generic `slice::sort_unstable`
+        // (pdqsort) instantiation onto the `bun install` / `bun create` arg
+        // path, which is the only place this `#[cold]` builder runs.
+        {
+            let mut j = 1;
+            while j < long.len() {
+                let key = long[j];
+                let mut k = j;
+                while k > 0 && long[k - 1].hash > key.hash {
+                    long[k] = long[k - 1];
+                    k -= 1;
+                }
+                long[k] = key;
+                j += 1;
+            }
+        }
         let long_index: &'static [LongEntry] = Box::leak(long.into_boxed_slice());
 
         Box::leak(Box::new(ConvertedTable {
@@ -516,6 +534,14 @@ impl<Id> ComptimeClap<Id> {
     ///
     /// `params` must be `'static` (every in-tree table is a `static`/`const`
     /// item); the converted form is interned once per unique slice.
+    ///
+    /// **Cold path** — the startup hot set goes through
+    /// [`comptime_table!`](crate::comptime_table) + [`parse_with_table`]
+    /// (`bun --version`, `bun run …`). Only non-startup callers that still hand a
+    /// raw `&'static [Param<Id>]` (`bun install`, `bun create`) reach this, so
+    /// it's marked `#[cold]` to keep the runtime-conversion machinery
+    /// (`for_params` registry, `build`) out of the startup hot cluster.
+    #[cold]
     pub fn parse<I>(
         params: &'static [Param<Id>],
         iter: &mut I,

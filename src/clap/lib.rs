@@ -519,6 +519,12 @@ impl<Id: 'static> Args<Id> {
 }
 
 /// Same as `parse_ex` but uses the `args::OsIterator` by default.
+///
+/// **Cold path** — the startup hot set uses [`parse_with_table`] against a
+/// rodata [`comptime_table!`]. This entry point performs a runtime conversion
+/// (`ConvertedTable::for_params`) and is only used by non-startup commands
+/// (`bun install`, `bun create`), so it's `#[cold]`.
+#[cold]
 pub fn parse<Id: 'static>(
     params: &'static [Param<Id>],
     opt: ParseOptions<'_>,
@@ -563,6 +569,9 @@ pub fn parse_with_table<Id: 'static>(
 
 /// Parses the command line arguments passed into the program based on an
 /// array of `Param`s.
+///
+/// **Cold path** — see [`parse`]; the startup hot path is [`parse_with_table`].
+#[cold]
 pub fn parse_ex<Id: 'static, I>(
     params: &'static [Param<Id>],
     iter: &mut I,

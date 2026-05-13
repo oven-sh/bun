@@ -15,9 +15,11 @@ describe("Intl.DateTimeFormat timeZone option", () => {
   // resolvedOptions().timeZone.
   const legacyPrimaryZones = ["CET", "CST6CDT", "EET", "EST5EDT", "MET", "MST7MDT", "PST8PDT", "WET"] as const;
 
-  test.each(legacyPrimaryZones)("%s is a valid IANA primary zone", zone => {
-    const fmt = new Intl.DateTimeFormat("en-US", { timeZone: zone });
-    expect(fmt.resolvedOptions().timeZone).toBe(zone);
+  describe.each(legacyPrimaryZones)("%s", zone => {
+    test("is accepted as a valid IANA primary zone", () => {
+      const fmt = new Intl.DateTimeFormat("en-US", { timeZone: zone });
+      expect(fmt.resolvedOptions().timeZone).toBe(zone);
+    });
   });
 
   test("legacy primary zones are case-insensitive and normalize to the canonical casing", () => {

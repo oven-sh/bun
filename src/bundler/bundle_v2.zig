@@ -3229,7 +3229,7 @@ pub const BundleV2 = struct {
                         }
                     },
                     error.InvalidDataURL => {
-                        if (!import_record.flags.handles_import_errors) {
+                        if (!import_record.flags.handles_import_errors and !this.transpiler.options.ignore_module_resolution_errors) {
                             last_error = err;
                             Logger.Log.addResolveErrorWithTextDupe(
                                 log,

@@ -120,6 +120,10 @@ fn maybeEmitStdioWriteError(
     // Always clear the recorded error so a later successful write doesn't see a stale one.
     backing.err = null;
     if (emitted.*) return;
+    // Don't call into JS with a pending exception — the C++ handler's exception
+    // scopes would clear it, swallowing the user's original throw. The pipe stays
+    // broken, so the next console.* call will hit EPIPE again and retry.
+    if (global.hasException()) return;
 
     // The underlying writer is a `bun.sys.File` whose write failures go through
     // `Maybe.unwrap()` → `bun.errnoToZigErr(errno)`, producing errors named after

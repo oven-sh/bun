@@ -176,7 +176,14 @@ pub fn read(this: *INotifyWatcher) bun.sys.Maybe([]const *align(1) Event) {
                         .events = std.posix.POLL.IN | std.posix.POLL.ERR,
                         .revents = 0,
                     }};
-                    var timespec = std.posix.timespec{ .sec = 0, .nsec = this.coalesce_interval };
+                    // POSIX requires tv_nsec < 10^9; split so a
+                    // user-supplied interval ≥ 1 s doesn't make `ppoll`
+                    // fail with EINVAL (which the `catch 0` would
+                    // silently turn into "quiet" and disable coalescing).
+                    var timespec = std.posix.timespec{
+                        .sec = @divTrunc(this.coalesce_interval, std.time.ns_per_s),
+                        .nsec = @rem(this.coalesce_interval, std.time.ns_per_s),
+                    };
                     if ((std.posix.ppoll(&fds, &timespec, null) catch 0) == 0) break; // quiet
 
                     inner: while (true) {

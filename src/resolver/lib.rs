@@ -3293,6 +3293,7 @@ pub mod __phase_a_body {
     use bun_threading::Mutex;
 
     use crate::fs as Fs;
+    use crate::fs::FilenameStoreAppender;
     use crate::node_fallbacks as NodeFallbackModules;
     use crate::package_json::{BrowserMap, ESModule, PackageJSON};
     use crate::tsconfig_json::TSConfigJSON;
@@ -7007,12 +7008,16 @@ pub mod __phase_a_body {
                 );
 
                 let mut dir_iterator = bun_sys::iterate_dir(open_dir);
+                // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
+                // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
+                let mut filename_store = FilenameStoreAppender::new();
                 while let Ok(Some(_value)) = dir_iterator.next() {
                     new_entry
-                        .add_entry(
+                        .add_entry_with_store(
                             // SAFETY: see block-wide note above.
                             in_place.map(|existing| unsafe { &mut (*existing).data }),
                             &_value,
+                            &mut filename_store,
                             (),
                         )
                         .expect("unreachable");
@@ -8079,6 +8084,9 @@ pub mod __phase_a_body {
                     // `.unwrap()` was on the inner `Maybe(?Entry)`; the Rust `WrappedIterator::next`
                     // is already flattened to `Result<Option<IteratorResult>>`, so the `.unwrap()`
                     // moved to `?`-style break-on-error.
+                    // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
+                    // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
+                    let mut filename_store = FilenameStoreAppender::new();
                     loop {
                         let _value = match dir_iterator.next() {
                             Ok(Some(v)) => v,
@@ -8086,10 +8094,11 @@ pub mod __phase_a_body {
                             Err(_) => break,
                         };
                         new_entry
-                            .add_entry(
+                            .add_entry_with_store(
                                 // SAFETY: see block-wide note above.
                                 in_place.map(|existing| unsafe { &mut (*existing).data }),
                                 &_value,
+                                &mut filename_store,
                                 (),
                             )
                             .expect("unreachable");

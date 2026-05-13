@@ -484,6 +484,58 @@ pub fn flip(src: []const u8, w: u32, h: u32, horizontal: bool) Error![]u8 {
     return out;
 }
 
+/// Extract a `cw × ch` rectangle starting at `(x, y)` from `src`. The caller
+/// is expected to have range-checked `x + cw <= sw` and `y + ch <= sh` —
+/// `resolveResize` does this for `fit:'cover'`. Plain per-row `@memcpy`; no
+/// kernel needed since there's no resampling.
+pub fn crop(src: []const u8, sw: u32, sh: u32, x: u32, y: u32, cw: u32, ch: u32) Error![]u8 {
+    bun.debugAssert(@as(u64, x) + cw <= sw);
+    bun.debugAssert(@as(u64, y) + ch <= sh);
+    const out = try bun.default_allocator.alloc(u8, @as(usize, cw) * ch * 4);
+    errdefer bun.default_allocator.free(out);
+    const src_stride: usize = @as(usize, sw) * 4;
+    const dst_stride: usize = @as(usize, cw) * 4;
+    const row_bytes: usize = dst_stride;
+    const x_bytes: usize = @as(usize, x) * 4;
+    for (0..ch) |row| {
+        const s_off = (@as(usize, y) + row) * src_stride + x_bytes;
+        const d_off = row * dst_stride;
+        @memcpy(out[d_off .. d_off + row_bytes], src[s_off .. s_off + row_bytes]);
+    }
+    return out;
+}
+
+/// Place the `sw × sh` image at `(ox, oy)` inside a fresh `dw × dh` canvas
+/// painted with `bg`. Used by `fit:'contain'` to letterbox. The caller is
+/// expected to have range-checked `ox + sw <= dw` and `oy + sh <= dh`.
+pub fn pad(src: []const u8, sw: u32, sh: u32, dw: u32, dh: u32, ox: u32, oy: u32, bg: [4]u8) Error![]u8 {
+    bun.debugAssert(@as(u64, ox) + sw <= dw);
+    bun.debugAssert(@as(u64, oy) + sh <= dh);
+    const out = try bun.default_allocator.alloc(u8, @as(usize, dw) * dh * 4);
+    errdefer bun.default_allocator.free(out);
+    // Fill every pixel with the background first, then blit the image over
+    // the center. Simpler than writing only the border strips and avoids a
+    // branch per row (one tight pattern fill, then one memcpy per image row).
+    // A solid-colour fill at RGBA8 auto-vectorises on the platforms we ship.
+    var i: usize = 0;
+    while (i < out.len) : (i += 4) {
+        out[i + 0] = bg[0];
+        out[i + 1] = bg[1];
+        out[i + 2] = bg[2];
+        out[i + 3] = bg[3];
+    }
+    const src_stride: usize = @as(usize, sw) * 4;
+    const dst_stride: usize = @as(usize, dw) * 4;
+    const row_bytes: usize = src_stride;
+    const x_bytes: usize = @as(usize, ox) * 4;
+    for (0..sh) |row| {
+        const s_off = row * src_stride;
+        const d_off = (@as(usize, oy) + row) * dst_stride + x_bytes;
+        @memcpy(out[d_off .. d_off + row_bytes], src[s_off .. s_off + row_bytes]);
+    }
+    return out;
+}
+
 // ───────────────────────────── format codecs ────────────────────────────────
 // Per-format implementations live in their own files; codecs.zig is the
 // dispatch surface only.

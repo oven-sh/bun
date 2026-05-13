@@ -90,8 +90,6 @@ pub fn messageWithTypeAndLevel(
     vals: [*]const JSValue,
     len: usize,
 ) callconv(jsc.conv) void {
-    messageWithTypeAndLevel_(ctype, message_type, level, global, vals, len) catch |err| bun.jsc.host_fn.voidFromJSError(err, global);
-
     // Node.js routes console.log/console.error through process.stdout.write() /
     // process.stderr.write(), so a write failure (EPIPE when piped to `head`, etc.)
     // surfaces as an 'error' event on the corresponding stream. Bun's console.* writes
@@ -100,17 +98,25 @@ pub fn messageWithTypeAndLevel(
     // See https://github.com/oven-sh/bun/issues/7251.
     var console = global.bunVM().console;
     const is_stderr = level == .Warning or level == .Error or message_type == .Assert;
-    if (is_stderr) {
-        maybeEmitStdioWriteError(console, global, 2, &console.error_writer_backing, &console.stderr_write_error_emitted);
-    } else {
-        maybeEmitStdioWriteError(console, global, 1, &console.writer_backing, &console.stdout_write_error_emitted);
-    }
+    const backing = if (is_stderr) &console.error_writer_backing else &console.writer_backing;
+    const emitted = if (is_stderr) &console.stderr_write_error_emitted else &console.stdout_write_error_emitted;
+
+    messageWithTypeAndLevel_(ctype, message_type, level, global, vals, len) catch |err| {
+        // A JS exception is now pending (voidFromJSError leaves it for the C++ caller).
+        // Don't call into JS to forward the stdio write error — the C++ handler's
+        // exception scopes would clear the user's throw. Just drop the recorded write
+        // error; the pipe stays broken, so the next console.* call will hit EPIPE again
+        // and retry the emit with no exception pending.
+        backing.err = null;
+        return bun.jsc.host_fn.voidFromJSError(err, global);
+    };
+
+    maybeEmitStdioWriteError(global, if (is_stderr) 2 else 1, backing, emitted);
 }
 
 extern fn Bun__ConsoleObject__onStdioWriteError(global: *JSGlobalObject, fd: i32, err: JSValue) void;
 
 fn maybeEmitStdioWriteError(
-    _: *ConsoleObject,
     global: *JSGlobalObject,
     fd: i32,
     backing: *@TypeOf(Output.Source.StreamType.quietWriter(undefined)).Adapter,
@@ -120,10 +126,6 @@ fn maybeEmitStdioWriteError(
     // Always clear the recorded error so a later successful write doesn't see a stale one.
     backing.err = null;
     if (emitted.*) return;
-    // Don't call into JS with a pending exception — the C++ handler's exception
-    // scopes would clear it, swallowing the user's original throw. The pipe stays
-    // broken, so the next console.* call will hit EPIPE again and retry.
-    if (global.hasException()) return;
 
     // The underlying writer is a `bun.sys.File` whose write failures go through
     // `Maybe.unwrap()` → `bun.errnoToZigErr(errno)`, producing errors named after
@@ -134,8 +136,7 @@ fn maybeEmitStdioWriteError(
         .syscall = .write,
     };
     const js_err = sys_err.toJS(global) catch {
-        // toJS only fails if a JS exception is already pending; leave `emitted` unset
-        // so a subsequent failed write can retry.
+        // Leave `emitted` unset so a subsequent failed write can retry.
         return;
     };
     // Mark emitted before calling into JS so a re-entrant console.* from inside the

@@ -11,7 +11,7 @@
 // These tests cover the observable behaviour without depending on the
 // @inquirer/prompts package itself.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("unsettled top-level await exits 13 once the event loop is idle instead of hanging", async () => {

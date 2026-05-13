@@ -16,7 +16,7 @@ use bun_core::strings;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    ExprIn, FnOrArrowDataVisit, IdentifierOpts, JsxT, PrependTempRefsOpts, ReactRefresh, Ref,
+    ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
     StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts, float_to_int32, prefill,
 };
 use crate::scan::scan_side_effects::SideEffects;
@@ -42,7 +42,7 @@ use js_ast::OpCode as Op;
 // a direct `impl P` block. The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
 // `visit_expr_in_out` are surfaced.
 
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // PERF(port:noalias): `e: &mut Expr` is lowered to a `noalias` LLVM param, so reads
     // through `e` can be cached in registers across child recursion. The by-value
     // `Expr -> Expr` shape moved 24B in + 24B out per frame; the in-place form moves 8B
@@ -365,8 +365,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             .data
             .e_jsx_element()
             .expect("infallible: variant checked");
-        // Zig: `switch (comptime jsx_transform_type)` — const-generic enum dispatch.
-        match J::KIND {
+        // Zig: `switch (comptime jsx_transform_type)`; JSX is no longer a
+        // type parameter — dispatch on the runtime `P::jsx_transform` field.
+        match p.jsx_transform {
             JSXTransformType::React => {
                 let tag: Expr = 'tagger: {
                     if let Some(mut _tag) = e_.tag {

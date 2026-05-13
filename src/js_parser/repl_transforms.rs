@@ -18,9 +18,8 @@ use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
 // — file-split mixin pattern. Round-D lowered to direct `impl P` block.
 
 use crate::p::P;
-use crate::parser::JsxT;
 
-impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
+impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Apply REPL-mode transforms to the AST.
     /// This transforms code for interactive evaluation:
     /// - Wraps the last expression in { value: expr } for result capture

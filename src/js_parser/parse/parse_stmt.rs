@@ -21,7 +21,7 @@ use js_lexer::T;
 
 use crate::parser::fs;
 use crate::parser::{
-    AwaitOrYield, DeferredTsDecorators, JsxT, LexicalDecl, ParseStatementOptions, ParsedPath, Ref,
+    AwaitOrYield, DeferredTsDecorators, LexicalDecl, ParseStatementOptions, ParsedPath, Ref,
     StmtList,
 };
 use crate::typescript;
@@ -37,14 +37,24 @@ type Result<T> = core::result::Result<T, bun_core::Error>;
 // surfaced. Round-G un-gated the simpler `t_*` bodies; phase-d ported the remaining
 // `t_export`/`t_import`/fallthrough bodies inline (the `_draft_heavy` staging mod is gone).
 
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
-    // PORT NOTE on `#[inline]` / `#[inline(never)]` annotations across the `t_*` arms:
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+    // PORT NOTE on `#[inline]` / `#[inline(never)]` / `#[cold]` annotations across the `t_*` arms:
     // `parse_stmt` is invoked once per leading statement token; profiling showed its
     // stack-adjust prologue/epilogue dominating because LLVM was hoisting the larger
     // (and rarely-taken) `t_*` bodies inline, ballooning `parse_stmt`'s frame. Keep the
     // rare / heavy arms out-of-line so `parse_stmt` stays a thin dispatcher, and fold the
     // trivial forwarders in so the `parse_stmts_up_to → parse_stmt → t_* → parse_*` chain
     // loses a hop on the hot statements (`;`, `function`, `var`, `const`, `return`, …).
+    //
+    // `P` is monomorphized over `(TYPESCRIPT, SCAN_ONLY)` (JSX is a runtime field, not a
+    // type parameter — see `parser.rs`), so every `#[inline(never)]`
+    // `t_*` becomes 2-3 sibling symbols that the linker would otherwise interleave with the
+    // hot ones. Anything that can't fire on a plain `bun run` of a `.js`/`.ts` script — the
+    // TS-only keyword forms (`enum`, `@decorator`, `type`/`namespace`/`module`/`declare`),
+    // `with` (illegal in strict/module code), `do … while`, `debugger`, and `label:` — is
+    // additionally `#[cold]` so LLVM parks all of those instantiations together in
+    // `.text.unlikely`, leaving the bytes that actually execute on startup dense instead of
+    // spread across sibling monomorphizations that fault-around drags in.
 
     #[inline]
     fn t_semicolon(p: &mut Self) -> Result<Stmt> {
@@ -271,6 +281,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
     }
 
+    #[cold]
     #[inline(never)]
     fn t_do(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
@@ -303,6 +314,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(p.s(S::While { body, test_ }, loc))
     }
 
+    #[cold]
     #[inline(never)]
     fn t_with(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
@@ -755,7 +767,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(p.s(S::Throw { value: expr }, loc))
     }
 
-    #[inline]
+    #[cold]
+    #[inline(never)]
     fn t_debugger(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         p.lexer.expect_or_insert_semicolon()?;

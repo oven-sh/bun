@@ -13,7 +13,7 @@ use bun_core::strings;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    self as js_parser, IdentifierOpts, JsxT, RelocateVars, RelocateVarsMode, SideEffects,
+    self as js_parser, IdentifierOpts, RelocateVars, RelocateVarsMode, SideEffects,
 };
 use bun_ast::G::{Decl, Property};
 use bun_ast::ast_result::CommonJSNamedExport;
@@ -62,7 +62,7 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
 
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn maybe_relocate_vars_to_top_level(
         &mut self,
         decls: &[G::Decl],

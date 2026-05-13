@@ -1,7 +1,6 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 #![warn(unused_must_use)]
 use crate::p::P;
-use crate::parser::JsxT;
 use bun_alloc::Arena as Bump;
 use bun_ast::e::CallUnwrap;
 use bun_ast::symbol;
@@ -10,7 +9,7 @@ use bun_collections::VecExt;
 
 // PORT NOTE: round-E un-gate. SideEffects in Zig is an enum with associated fns that
 // take `p: anytype`. Round-E converts the unbounded `<P>` generic to concrete
-// `P<'a, TS, J, SCAN>`. Method bodies gated; the `Result` type and enum surface are real.
+// `P<'a, TS, SCAN>`. Method bodies gated; the `Result` type and enum surface are real.
 
 #[repr(u8)] // Zig: enum(u1) — Rust has no u1 repr; u8 is the smallest
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -52,8 +51,8 @@ impl SideEffects {
             && left != bun_ast::expr::PrimitiveType::Mixed
     }
 
-    pub fn simplify_boolean<'a, const TS: bool, J: JsxT, const SCAN: bool>(
-        p: &P<'a, TS, J, SCAN>,
+    pub fn simplify_boolean<'a, const TS: bool, const SCAN: bool>(
+        p: &P<'a, TS, SCAN>,
         expr: Expr,
     ) -> Expr {
         if !p.options.features.dead_code_elimination {
@@ -64,8 +63,8 @@ impl SideEffects {
         result
     }
 
-    fn _simplify_boolean<'a, const TS: bool, J: JsxT, const SCAN: bool>(
-        p: &P<'a, TS, J, SCAN>,
+    fn _simplify_boolean<'a, const TS: bool, const SCAN: bool>(
+        p: &P<'a, TS, SCAN>,
         expr: &mut Expr,
     ) {
         loop {
@@ -142,8 +141,8 @@ impl SideEffects {
         )
     }
 
-    pub fn simplify_unused_expr<'a, const TS: bool, J: JsxT, const SCAN: bool>(
-        p: &mut P<'a, TS, J, SCAN>,
+    pub fn simplify_unused_expr<'a, const TS: bool, const SCAN: bool>(
+        p: &mut P<'a, TS, SCAN>,
         expr: Expr,
     ) -> Option<Expr> {
         if !p.options.features.dead_code_elimination {
@@ -485,8 +484,8 @@ impl SideEffects {
     /// Inline equivalent of `Expr::join_all_with_comma_callback(slice, p, simplify_unused_expr, _)`.
     /// Hand-rolled because that helper takes `fn(&C, _)` and we need `&mut P` for the
     /// recursive `simplify_unused_expr` call.
-    fn join_all_simplified<'a, const TS: bool, J: JsxT, const SCAN: bool>(
-        p: &mut P<'a, TS, J, SCAN>,
+    fn join_all_simplified<'a, const TS: bool, const SCAN: bool>(
+        p: &mut P<'a, TS, SCAN>,
         items: &[Expr],
     ) -> Option<Expr> {
         let len = items.len();
@@ -515,8 +514,8 @@ impl SideEffects {
     }
 
     ///
-    fn simplify_unused_binary_comma_expr<'a, const TS: bool, J: JsxT, const SCAN: bool>(
-        p: &mut P<'a, TS, J, SCAN>,
+    fn simplify_unused_binary_comma_expr<'a, const TS: bool, const SCAN: bool>(
+        p: &mut P<'a, TS, SCAN>,
         expr: Expr,
     ) -> Option<Expr> {
         let ExprData::EBinary(root_bin) = expr.data else {
@@ -784,8 +783,8 @@ impl SideEffects {
         }
     }
 
-    pub fn to_null_or_undefined<'a, const TS: bool, J: JsxT, const SCAN: bool>(
-        p: &P<'a, TS, J, SCAN>,
+    pub fn to_null_or_undefined<'a, const TS: bool, const SCAN: bool>(
+        p: &P<'a, TS, SCAN>,
         exp: &ExprData,
     ) -> Result {
         if !p.options.features.dead_code_elimination {
@@ -871,8 +870,8 @@ impl SideEffects {
         }
     }
 
-    pub fn to_boolean<'a, const TS: bool, J: JsxT, const SCAN: bool>(
-        p: &P<'a, TS, J, SCAN>,
+    pub fn to_boolean<'a, const TS: bool, const SCAN: bool>(
+        p: &P<'a, TS, SCAN>,
         exp: &ExprData,
     ) -> Result {
         if !p.options.features.dead_code_elimination {

@@ -2,7 +2,7 @@
 #![warn(unused_must_use)]
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
-use crate::parser::{JSXTag, JSXTagData, JsxT, options};
+use crate::parser::{JSXTag, JSXTagData, options};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::flags;
 use bun_ast::op::Level;
@@ -15,7 +15,7 @@ use bun_core::strings;
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`
 // (sealed trait + ZST), so this becomes a direct `impl` on `P` instead of a wrapper struct.
 
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn parse_jsx_element(&mut self, loc: bun_ast::Loc) -> Result<Expr, bun_core::Error> {
         let p = self;
         if SCAN_ONLY {

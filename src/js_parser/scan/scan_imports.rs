@@ -8,7 +8,7 @@
 #![warn(unused_must_use)]
 use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
 use crate::p::P;
-use crate::parser::{ImportItemForNamespaceMap, JsxT, Ref};
+use crate::parser::{ImportItemForNamespaceMap, Ref};
 use bun_ast::{self as js_ast, Binding, Expr, G, LocRef, S, Stmt, Symbol};
 use bun_ast::{ImportRecord, import_record};
 use bun_collections::VecExt;
@@ -33,18 +33,17 @@ fn raw_str(s: &'static [u8]) -> js_ast::StoreStr {
 
 impl<'a> ImportScanner<'a> {
     // TODO(port): narrow error set
-    // PORT NOTE: round-E un-gate — `<P>` unbounded generic → concrete `P<'a, TS, J, SCAN>`.
+    // PORT NOTE: round-E un-gate — `<P>` unbounded generic → concrete `P<'a, TS, SCAN>`.
     // TODO(b2-ast-E): the Zig also accepts `bun.bundle_v2.AstBuilder` as P (comptime
     //   `P != AstBuilder` check). Round-E only handles the parser P; AstBuilder path
     //   needs a `ParserLike` trait or a separate monomorphization.
     pub fn scan<
         'p,
         const TYPESCRIPT: bool,
-        J: JsxT,
         const SCAN_ONLY: bool,
         const HOT_MODULE_RELOADING_TRANSFORMATIONS: bool,
     >(
-        p: &mut P<'p, TYPESCRIPT, J, SCAN_ONLY>,
+        p: &mut P<'p, TYPESCRIPT, SCAN_ONLY>,
         stmts: &'a mut [Stmt],
         will_transform_to_common_js: bool,
         // PORT NOTE: Zig used `if (comptime_bool) *T else void` for this param's

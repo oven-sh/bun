@@ -9,7 +9,7 @@ use bun_core::{self, err};
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    AwaitOrYield, DeferredErrors, FnOrArrowDataParse, JsxT, ParseStatementOptions, PropertyOpts,
+    AwaitOrYield, DeferredErrors, FnOrArrowDataParse, ParseStatementOptions, PropertyOpts,
     SkipTypeParameterResult, TypeParameterFlag,
 };
 use bun_ast as js_ast;
@@ -29,7 +29,7 @@ use js_lexer::T;
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
 
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     fn parse_method_expression(
         &mut self,
         kind: PropertyKind,

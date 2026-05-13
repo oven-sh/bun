@@ -1,15 +1,14 @@
 use crate::js_lexer::T;
 use crate::p::P;
-use crate::parser::JsxT;
 
 // Zig: `p: anytype` for the generic parser instance. Round-C lowered NewParser_ →
-// `P<'a, const TS, J: JsxT, const SCAN>`. The Phase-A draft used unbounded `<P>` which
+// `P<'a, const TS, const SCAN>`. The Phase-A draft used unbounded `<P>` which
 // can't access fields; convert to `impl P` methods. The `Metadata::*` methods that need
 // `p.load_name_from_ref` take a closure to avoid the impl-on-foreign-type problem.
 
 // This function is taken from the official TypeScript compiler source code:
 // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
-impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
+impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     pub fn can_follow_type_arguments_in_expression(&mut self) -> bool {
         let p = self;
         match p.lexer.token {
@@ -43,7 +42,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
     }
 } // end impl P (can_follow_type_arguments_in_expression)
 
-impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
+impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     // TODO(port): narrow error set — only `lexer.next()` is fallible here.
     pub fn is_ts_arrow_fn_jsx(&mut self) -> Result<bool, bun_core::Error> {
         let p = self;

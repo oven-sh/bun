@@ -10,7 +10,7 @@ pub mod visit_stmt;
 use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
-    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, JsxT,
+    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap,
     PrependTempRefsOpts, Ref, RelocateVarsMode, RuntimeFeatures, ScopeOrder, StmtsKind,
     StrictModeFeature, StringVoidMap, TempRef, VisitArgsOpts, is_eval_or_arguments,
 };
@@ -42,7 +42,7 @@ type ListManaged<'bump, T> = BumpVec<'bump, T>;
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
 
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
     fn vis_scope(&mut self) -> &mut js_ast::Scope {

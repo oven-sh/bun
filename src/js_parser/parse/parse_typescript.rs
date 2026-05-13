@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
-use crate::parser::{JsxT, ParseStatementOptions, Ref, ScopeOrder};
+use crate::parser::{ParseStatementOptions, Ref, ScopeOrder};
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::EFlags;
 use bun_ast::flags;
@@ -37,7 +37,7 @@ fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
 
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // TODO(port): narrow error set
     pub fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
         let p = self;

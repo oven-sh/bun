@@ -10,7 +10,7 @@
 use crate::lexer as js_lexer;
 use crate::p::{P, ReactRefreshExportKind, null_expr_data};
 use crate::parser::{
-    JsxT, PrependTempRefsOpts, ReactRefresh, Ref, RelocateVars, RelocateVarsMode, SideEffects,
+    PrependTempRefsOpts, ReactRefresh, Ref, RelocateVars, RelocateVarsMode, SideEffects,
     StmtsKind, statement_cares_about_scope,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
@@ -40,8 +40,8 @@ use bun_ast::StmtNodeList;
 // slice into a fresh arena-backed Vec, visit (which may grow/shrink it), then
 // leak the result back into the bump arena and return the new view.
 #[inline]
-fn visit_stmt_slice<'a, const TS: bool, J: JsxT, const SO: bool>(
-    p: &mut P<'a, TS, J, SO>,
+fn visit_stmt_slice<'a, const TS: bool, const SO: bool>(
+    p: &mut P<'a, TS, SO>,
     slice: StmtNodeList,
     kind: StmtsKind,
 ) -> StmtNodeList {
@@ -71,7 +71,7 @@ fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
 // a direct `impl P` block. The 30+ per-variant `s_*` helpers are private; only
 // `visit_and_append_stmt` is surfaced. Full draft body preserved under  mod _draft below.
 
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
     fn cur_scope(&mut self) -> &mut js_ast::Scope {

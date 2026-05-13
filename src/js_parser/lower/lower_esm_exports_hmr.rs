@@ -6,15 +6,15 @@ use bun_collections::StringArrayHashMap;
 use bun_collections::VecExt;
 
 use crate::p::P;
-use crate::parser::{JsxT, ReactRefresh, Ref, TempRef};
+use crate::parser::{ReactRefresh, Ref, TempRef};
 use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
 
 // PORT NOTE: `P::generate_temp_ref` is ``-gated in P.rs (round-6
 // re-gate); replicate it here so this file can un-gate independently. Body is
 // a 1:1 port of P.zig `generateTempRefWithScope` with `scope = current_scope`.
 // `P::will_use_renamer` is private — its body is inlined.
-fn generate_temp_ref<'p, const TS: bool, J: JsxT, const SCAN: bool>(
-    p: &mut P<'p, TS, J, SCAN>,
+fn generate_temp_ref<'p, const TS: bool, const SCAN: bool>(
+    p: &mut P<'p, TS, SCAN>,
     default_name: Option<&'p [u8]>,
 ) -> Ref {
     let will_use_renamer = p.options.bundle || p.options.features.minify_identifiers;
@@ -67,12 +67,12 @@ pub struct DeduplicatedImportResult {
 }
 
 impl<'a> ConvertESMExportsForHmr<'a> {
-    // PORT NOTE: round-E un-gate — `<P>` unbounded generic → concrete `P<'p, TS, J, SCAN>`.
+    // PORT NOTE: round-E un-gate — `<P>` unbounded generic → concrete `P<'p, TS, SCAN>`.
     // TODO(b2-ast-E): Zig `p: anytype` also accepts AstBuilder; add `ParserLike` trait bound
     //   when bundle_v2 lands.
-    pub fn convert_stmt<'p, const TS: bool, J: JsxT, const SCAN: bool>(
+    pub fn convert_stmt<'p, const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, TS, J, SCAN>,
+        p: &mut P<'p, TS, SCAN>,
         stmt: Stmt,
     ) -> Result<(), AllocError> {
         let new_stmt: Stmt = match stmt.data {
@@ -455,9 +455,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
     /// Deduplicates imports, returning a previously used Ref and import record
     /// index if present.
-    fn deduplicated_import<'p, const TS: bool, J: JsxT, const SCAN: bool>(
+    fn deduplicated_import<'p, const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, TS, J, SCAN>,
+        p: &mut P<'p, TS, SCAN>,
         import_record_index: u32,
         namespace_ref: Ref,
         items: js_ast::StoreSlice<js_ast::ClauseItem>,
@@ -574,9 +574,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         })
     }
 
-    fn visit_binding_to_export<'p, const TS: bool, J: JsxT, const SCAN: bool>(
+    fn visit_binding_to_export<'p, const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, TS, J, SCAN>,
+        p: &mut P<'p, TS, SCAN>,
         binding: Binding,
     ) -> Result<(), AllocError> {
         match binding.data {
@@ -598,9 +598,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         Ok(())
     }
 
-    fn visit_ref_to_export<'p, const TS: bool, J: JsxT, const SCAN: bool>(
+    fn visit_ref_to_export<'p, const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, TS, J, SCAN>,
+        p: &mut P<'p, TS, SCAN>,
         ref_: Ref,
         export_symbol_name: Option<js_ast::StoreStr>,
         loc: bun_ast::Loc,
@@ -695,9 +695,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         Ok(())
     }
 
-    pub fn finalize<'p, const TS: bool, J: JsxT, const SCAN: bool>(
+    pub fn finalize<'p, const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, TS, J, SCAN>,
+        p: &mut P<'p, TS, SCAN>,
         // PORT NOTE: Zig took `all_parts: []Part` and freely re-derived
         // `&mut all_parts[len-1]` while `ctx.last_part` aliased the same slot.
         // Rust forbids that aliasing (Stacked Borrows: `&mut [Part]` asserts

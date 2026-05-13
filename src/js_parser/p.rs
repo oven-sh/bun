@@ -26,7 +26,7 @@ use crate::{
     DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
     FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, FunctionKind,
     IdentifierOpts, ImportItemForNamespaceMap, ImportNamespaceCallOrConstruct, InvalidLoc,
-    JSXImport, JSXTransformType, Jest, JsxT, LOC_MODULE_SCOPE as loc_module_scope, LocList,
+    JSXImport, JSXTransformType, Jest, LOC_MODULE_SCOPE as loc_module_scope, LocList,
     MacroState, ParseStatementOptions, ParsedPath, PrependTempRefsOpts, ReactRefresh, Ref, RefMap,
     RefRefMap, RuntimeImports, ScopeOrder, ScopeOrderList, SideEffects, StrictModeFeature,
     StringBoolMap, Substitution, TempRef, ThenCatchChain, TransposeState, WrapMode, fs,
@@ -51,7 +51,7 @@ type List<'a, T> = BumpVec<'a, T>;
 type ListManaged<'a, T> = BumpVec<'a, T>;
 type Map<K, V> = HashMap<K, V>;
 
-/// Erases `P<'a, TS, J, SCAN>`'s const-generics so helpers like `JSXTag::parse`
+/// Erases `P<'a, TS, SCAN>`'s const-generics so helpers like `JSXTag::parse`
 /// (which Zig wrote as `comptime P: type`) can take any instantiation. Only the
 /// surface those helpers actually touch is exposed; round-D widens this as the
 /// parse_* / visit_* sibling files un-gate.
@@ -67,7 +67,7 @@ pub trait ParserLike<'a> {
 // bodies forward to the (currently-gated) inherent impls; until those un-gate
 // in round-D, calling through ParserLike panics — which is fine since no live
 // code does so yet (callers are in parse_*/visit_* which are also gated).
-impl<'a, const TS: bool, J: JsxT, const SCAN: bool> ParserLike<'a> for P<'a, TS, J, SCAN> {
+impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
     #[inline]
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a> {
         &mut self.lexer
@@ -103,8 +103,8 @@ pub struct ParserFeatures {
 
 // workaround for https://github.com/ziglang/zig/issues/10903 — not needed in Rust;
 // `NewParser` is just an alias for the generic struct.
-pub type NewParser<'a, const TYPESCRIPT: bool, J, const SCAN_ONLY: bool> =
-    P<'a, TYPESCRIPT, J, SCAN_ONLY>;
+pub type NewParser<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> =
+    P<'a, TYPESCRIPT, SCAN_ONLY>;
 // TODO(port): the Zig `NewParser(features)` call sites pass a struct literal; in Rust callers
 // must spell out the three const params directly.
 
@@ -234,8 +234,13 @@ pub enum ReactRefreshExportKind {
 // P — the parser struct.
 // `'a` covers borrowed init() params (log/define/source) AND the arena (`bump`).
 // ─────────────────────────────────────────────────────────────────────────────
-pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
-    _jsx: core::marker::PhantomData<J>,
+pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
+    /// Runtime JSX transform mode. Was the `<J: JsxT>` const-generic type
+    /// parameter; demoted to a field because JSX only affects a handful of
+    /// expression arms (see the `bun .` startup note in `parser.rs`) and the
+    /// 4× monomorphization (TYPESCRIPT × JSX) faulted in four copies of every
+    /// parser / visitor / lowerer body at startup.
+    pub jsx_transform: JSXTransformType,
     pub macro_: MacroState<'a>,
     pub arena: &'a Bump,
     pub options: ParserOptions<'a>,
@@ -573,9 +578,9 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
     //     Expression , AssignmentExpression
     //
     pub after_arrow_body_loc: bun_ast::Loc,
-    pub import_transposer: ImportTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>,
-    pub require_transposer: RequireTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>,
-    pub require_resolve_transposer: RequireResolveTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>,
+    pub import_transposer: ImportTransposer<'a, TYPESCRIPT, SCAN_ONLY>,
+    pub require_transposer: RequireTransposer<'a, TYPESCRIPT, SCAN_ONLY>,
+    pub require_resolve_transposer: RequireResolveTransposer<'a, TYPESCRIPT, SCAN_ONLY>,
 
     pub const_values: bun_ast::ast_result::ConstValuesMap,
 
@@ -637,66 +642,66 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
 // later `&mut self` retag (entering any visit method) invalidated it, so the
 // shim's `&mut *(stored as *mut P)` was UB. Call sites now invoke the inherent
 // `P::maybe_transpose_if_*` / `P::transpose_known_to_be_if_*` methods directly.
-pub struct ImportTransposer<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
-    core::marker::PhantomData<(&'a (), fn() -> J)>,
+pub struct ImportTransposer<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    core::marker::PhantomData<&'a ()>,
 );
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> Clone
-    for ImportTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Clone
+    for ImportTransposer<'a, TYPESCRIPT, SCAN_ONLY>
 {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> Copy
-    for ImportTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Copy
+    for ImportTransposer<'a, TYPESCRIPT, SCAN_ONLY>
 {
 }
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
-    ImportTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>
+    ImportTransposer<'a, TYPESCRIPT, SCAN_ONLY>
 {
     const fn dangling() -> Self {
         Self(core::marker::PhantomData)
     }
 }
 
-pub struct RequireTransposer<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
-    core::marker::PhantomData<(&'a (), fn() -> J)>,
+pub struct RequireTransposer<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    core::marker::PhantomData<&'a ()>,
 );
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> Clone
-    for RequireTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Clone
+    for RequireTransposer<'a, TYPESCRIPT, SCAN_ONLY>
 {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> Copy
-    for RequireTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Copy
+    for RequireTransposer<'a, TYPESCRIPT, SCAN_ONLY>
 {
 }
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
-    RequireTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>
+    RequireTransposer<'a, TYPESCRIPT, SCAN_ONLY>
 {
     const fn dangling() -> Self {
         Self(core::marker::PhantomData)
     }
 }
 
-pub struct RequireResolveTransposer<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
-    core::marker::PhantomData<(&'a (), fn() -> J)>,
+pub struct RequireResolveTransposer<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    core::marker::PhantomData<&'a ()>,
 );
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> Clone
-    for RequireResolveTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Clone
+    for RequireResolveTransposer<'a, TYPESCRIPT, SCAN_ONLY>
 {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> Copy
-    for RequireResolveTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Copy
+    for RequireResolveTransposer<'a, TYPESCRIPT, SCAN_ONLY>
 {
 }
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
-    RequireResolveTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>
+    RequireResolveTransposer<'a, TYPESCRIPT, SCAN_ONLY>
 {
     const fn dangling() -> Self {
         Self(core::marker::PhantomData)
@@ -717,17 +722,22 @@ pub type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
 // The full method-body impl block below is gated wholesale — 600+ type errors
 // from method bodies referencing not-yet-real Expr/Symbol/Log surface; round-D
 // un-gates method-groups (scope mgmt → allocate → error reporting → predicates).
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
-    pub const IS_JSX_ENABLED: bool = J::ENABLED;
     pub const ONLY_SCAN_IMPORTS_AND_DO_NOT_VISIT: bool = SCAN_ONLY;
     pub const TRACK_SYMBOL_USAGE_DURING_PARSE_PASS: bool = SCAN_ONLY && TYPESCRIPT;
-    pub const PARSER_FEATURES: ParserFeatures = ParserFeatures {
-        typescript: TYPESCRIPT,
-        jsx: J::KIND,
-        scan_only: SCAN_ONLY,
-    };
-    pub const JSX_TRANSFORM_TYPE: JSXTransformType = J::KIND;
+
+    /// Runtime replacement for the former `IS_JSX_ENABLED` associated const
+    /// (JSX is no longer a const-generic type parameter — see `jsx_transform`).
+    #[inline]
+    pub fn is_jsx_enabled(&self) -> bool {
+        self.jsx_transform.is_enabled()
+    }
+
+    #[inline]
+    pub fn parser_features(&self) -> ParserFeatures {
+        ParserFeatures { typescript: TYPESCRIPT, jsx: self.jsx_transform, scan_only: SCAN_ONLY }
+    }
 
     /// Reborrow the shared `Log`. The `&self` receiver lets call sites pass
     /// other `self.*` fields as arguments (`self.log().add_error(Some(self.source), …)`)
@@ -877,7 +887,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 // touch unfinished E/S/ts surface or call into parse_*/visit_* sibling files
 // stay individually ` // blocked_on:` below.
 // ═══════════════════════════════════════════════════════════════════════════
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub const ALLOW_MACROS: bool = true /* TODO(b2-blocked): feature_flag::IS_MACRO_ENABLED */;
 
     /// use this instead of checking p.source.index
@@ -3033,13 +3043,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // SAFETY: `ctx` was derived from the caller's live `&mut P`
                     // immediately before `Binding::to_expr`; no other `&mut P`
                     // borrow is active for the duration of this call.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, J, SCAN_ONLY>>() };
+                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
                     p.wrap_identifier_namespace(loc, ref_)
                 });
             self.to_expr_wrapper_hoisted =
                 bun_ast::binding::ToExprWrapper::new(self.arena, |ctx, loc, ref_| {
                     // SAFETY: same as above.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, J, SCAN_ONLY>>() };
+                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
                     p.wrap_identifier_hoisting(loc, ref_)
                 });
         }
@@ -3140,7 +3150,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             generated_symbols_count += 3;
         }
 
-        if Self::IS_JSX_ENABLED {
+        if self.is_jsx_enabled() {
             generated_symbols_count += 7;
             if self.options.jsx.development {
                 generated_symbols_count += 1;
@@ -6827,7 +6837,7 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
 // lower_class + emit_decorator_metadata_for_prop + serialize_metadata are
 // un-gated and compile against the full bun_ast::ts::Metadata variant set.
 // Remaining individually-gated methods carry their own `blocked_on:` tags.
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
         use js_ast::g::PropertyKind;
         match stmtorexpr {
@@ -8318,7 +8328,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 // `apply_repl_transforms`) are wired to their real signatures and un-gated in
 // their own rounds. `compute_character_frequency` is fully un-gated
 // (lexer.all_comments + CharFreq.scan live).
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn to_ast(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -8380,7 +8390,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             for part in head_parts.iter() {
                 // Bake does not care about 'import =', as it handles it on it's own
-                let _ = ImportScanner::scan::<TYPESCRIPT, J, SCAN_ONLY, true>(
+                let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
                     self,
                     part.stmts.slice_mut(),
                     wrap_mode != WrapMode::None,
@@ -8390,7 +8400,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Re-run for the last part (Zig iterated all `parts.items` including last).
             {
                 let last_stmts = hmr_transform_ctx.last_part.stmts;
-                let _ = ImportScanner::scan::<TYPESCRIPT, J, SCAN_ONLY, true>(
+                let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
                     self,
                     last_stmts.slice_mut(),
                     wrap_mode != WrapMode::None,
@@ -8425,7 +8435,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     self.import_records_for_current_part.clear();
                     self.declared_symbols.clear_retaining_capacity();
 
-                    let result = match ImportScanner::scan::<TYPESCRIPT, J, SCAN_ONLY, false>(
+                    let result = match ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, false>(
                         self,
                         part.stmts.slice_mut(),
                         wrap_mode != WrapMode::None,
@@ -9022,7 +9032,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 // the only blockers and are now seeded with arena-unit placeholders inside the
 // struct literal (Phase B wires the real `*P` back-pointer). `Parser::_parse`
 // is blocked on this being callable — DO NOT re-gate.
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Construct a `P` in place at `out` (matching Zig's `init(..., this: *P) !void`).
     ///
     /// PERF(port): the previous shape returned `Result<Self, _>` by value. `P`
@@ -9129,6 +9139,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         let mut symbol_uses = SymbolUseMap::default();
         let _ = symbol_uses.ensure_total_capacity(estimated_symbol_count);
+
+        // JSX transform mode — was the `<J: JsxT>` const-generic parameter,
+        // now a runtime field (matches `Parser::parse`'s own `if jsx.parse`
+        // dispatch). Computed before the literal so it can still read `opts`.
+        let jsx_transform = JSXTransformType::from_parse_flag(opts.jsx.parse);
 
         // Single placement write — no separate stack temp for `Self`.
         // `MaybeUninit::write` is safe; it overwrites without dropping.
@@ -9273,10 +9288,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             nearest_stmt_list: None,
             decorator_class_name: None,
 
+            jsx_transform,
+
             // Moved-in last so the field expressions above can still read `opts.*`.
             options: opts,
-
-            _jsx: core::marker::PhantomData,
         });
 
         // PORT NOTE: Zig wires `ImportTransposer.init(this)` etc. here. In Rust
@@ -9312,8 +9327,8 @@ pub struct LowerUsingDeclarationsContext {
 // `generate_temp_ref` is real (round-G, see ~6407). DO NOT re-gate — `visit.rs`
 // calls these via `should_lower_using_declarations` path.
 impl LowerUsingDeclarationsContext {
-    pub fn init<'a, const T: bool, J: JsxT, const S_: bool>(
-        p: &mut P<'a, T, J, S_>,
+    pub fn init<'a, const T: bool, const S_: bool>(
+        p: &mut P<'a, T, S_>,
     ) -> Result<Self, bun_core::Error> {
         Ok(Self {
             first_using_loc: bun_ast::Loc::EMPTY,
@@ -9322,9 +9337,9 @@ impl LowerUsingDeclarationsContext {
         })
     }
 
-    pub fn scan_stmts<'a, const T: bool, J: JsxT, const S_: bool>(
+    pub fn scan_stmts<'a, const T: bool, const S_: bool>(
         &mut self,
-        p: &mut P<'a, T, J, S_>,
+        p: &mut P<'a, T, S_>,
         stmts: &mut [Stmt],
     ) {
         for stmt in stmts.iter_mut() {
@@ -9390,9 +9405,9 @@ impl LowerUsingDeclarationsContext {
         }
     }
 
-    pub fn finalize<'a, const T: bool, J: JsxT, const S_: bool>(
+    pub fn finalize<'a, const T: bool, const S_: bool>(
         &mut self,
-        p: &mut P<'a, T, J, S_>,
+        p: &mut P<'a, T, S_>,
         stmts: &'a mut [Stmt],
         should_hoist_fns: bool,
     ) -> ListManaged<'a, Stmt> {

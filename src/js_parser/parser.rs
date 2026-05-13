@@ -2049,27 +2049,27 @@ pub enum JSXTransformType {
     React,
 }
 
-/// adt_const_params lowering: `<const JSX: JSXTransformType>` → `<J: JsxT>`.
-/// Same sealed-trait+ZST pattern as `paths::PlatformT`. Monomorphizes
-/// identically to the Zig `comptime jsx: JSXTransformType` param.
-mod jsx_seal {
-    pub trait Sealed {}
-}
-pub trait JsxT: jsx_seal::Sealed + Copy + Default + 'static {
-    const KIND: JSXTransformType;
-    const ENABLED: bool = matches!(Self::KIND, JSXTransformType::React);
-}
-#[derive(Copy, Clone, Default)]
-pub struct JsxNone;
-impl jsx_seal::Sealed for JsxNone {}
-impl JsxT for JsxNone {
-    const KIND: JSXTransformType = JSXTransformType::None;
-}
-#[derive(Copy, Clone, Default)]
-pub struct JsxReact;
-impl jsx_seal::Sealed for JsxReact {}
-impl JsxT for JsxReact {
-    const KIND: JSXTransformType = JSXTransformType::React;
+impl JSXTransformType {
+    /// Was the `JsxT::ENABLED` associated const back when JSX was a
+    /// `<J: JsxT>` type parameter. The parser is no longer monomorphized on
+    /// JSX (it only affects a handful of expr arms — see the `bun .` startup
+    /// note in `p.rs`), so this is now a plain runtime predicate.
+    #[inline]
+    pub const fn is_enabled(self) -> bool {
+        matches!(self, JSXTransformType::React)
+    }
+
+    /// Derive the transform mode from parser options the way the Zig
+    /// `NewParser(.{ .jsx = ... })` instantiation did (`if (jsx.parse) .react
+    /// else .none`).
+    #[inline]
+    pub const fn from_parse_flag(parse: bool) -> JSXTransformType {
+        if parse {
+            JSXTransformType::React
+        } else {
+            JSXTransformType::None
+        }
+    }
 }
 
 pub type ImportItemForNamespaceMap = StringArrayHashMap<LocRef>;

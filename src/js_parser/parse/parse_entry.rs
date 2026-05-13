@@ -16,7 +16,7 @@ use crate::defines::Define;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    Jest, JsxNone, JsxReact, JsxT, ParseStatementOptions, Runtime, RuntimeFeatures, RuntimeImports,
+    Jest, ParseStatementOptions, Runtime, RuntimeFeatures, RuntimeImports,
     ScanPassResult, SideEffects, WrapMode,
 };
 use bun_ast as js_ast;
@@ -24,16 +24,16 @@ use bun_ast::g::Decl;
 use bun_ast::{B, E, Expr, G, S, Stmt, Symbol};
 use bun_ast::{DeclaredSymbol, StmtList};
 
-// Named instantiations of `P<'_, TS, J, SCAN>` matching the Zig
+// Named instantiations of `P<'_, TS, SCAN>` matching the Zig
 // `JavaScriptParser`/`TypeScriptParser`/etc. comptime aliases.
-pub type JavaScriptParser<'a> = P<'a, false, JsxNone, false>;
-pub type JSXParser<'a> = P<'a, false, JsxReact, false>;
-pub type TypeScriptParser<'a> = P<'a, true, JsxNone, false>;
-pub type TSXParser<'a> = P<'a, true, JsxReact, false>;
-pub type JavaScriptImportScanner<'a> = P<'a, false, JsxNone, true>;
-pub type JSXImportScanner<'a> = P<'a, false, JsxReact, true>;
-pub type TypeScriptImportScanner<'a> = P<'a, true, JsxNone, true>;
-pub type TSXImportScanner<'a> = P<'a, true, JsxReact, true>;
+pub type JavaScriptParser<'a> = P<'a, false, false>;
+pub type JSXParser<'a> = P<'a, false, false>;
+pub type TypeScriptParser<'a> = P<'a, true, false>;
+pub type TSXParser<'a> = P<'a, true, false>;
+pub type JavaScriptImportScanner<'a> = P<'a, false, true>;
+pub type JSXImportScanner<'a> = P<'a, false, true>;
+pub type TypeScriptImportScanner<'a> = P<'a, true, true>;
+pub type TSXImportScanner<'a> = P<'a, true, true>;
 
 // In AST crates, ListManaged(T) backed by the arena → bumpalo Vec.
 type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
@@ -363,45 +363,41 @@ impl<'a> Parser<'a> {
         {
             self.options.ts = true;
             self.options.jsx.parse = true;
-            return self._parse::<true, JsxReact>();
+            return self._parse::<true>();
         }
 
+        // JSX is no longer part of the parser's monomorphization (it only
+        // affects a few expr arms — see `parser.rs`); `P::init` reads the
+        // transform mode off `options.jsx.parse` at runtime, so the only
+        // remaining comptime split is TypeScript.
         #[cfg(not(target_arch = "wasm32"))]
         {
-            if self.options.ts && self.options.jsx.parse {
-                self._parse::<true, JsxReact>()
-            } else if self.options.ts {
-                self._parse::<true, JsxNone>()
-            } else if self.options.jsx.parse {
-                self._parse::<false, JsxReact>()
+            if self.options.ts {
+                self._parse::<true>()
             } else {
-                self._parse::<false, JsxNone>()
+                self._parse::<false>()
             }
         }
     }
 
     /// Bundler-only scan pass (see `bundler/cache.rs`). Never reached from
-    /// `bun run`, so keep the four `_scan_imports` monomorphizations out of
-    /// the hot `.text` between the lexer and the live `_parse` bodies.
+    /// `bun run`, so keep the `_scan_imports` monomorphizations out of the hot
+    /// `.text` between the lexer and the live `_parse` bodies.
     #[cold]
     pub fn scan_imports(&mut self, scan_pass: &'a mut ScanPassResult) -> Result<(), Error> {
-        if self.options.ts && self.options.jsx.parse {
-            self._scan_imports::<true, JsxReact>(scan_pass)
-        } else if self.options.ts {
-            self._scan_imports::<true, JsxNone>(scan_pass)
-        } else if self.options.jsx.parse {
-            self._scan_imports::<false, JsxReact>(scan_pass)
+        if self.options.ts {
+            self._scan_imports::<true>(scan_pass)
         } else {
-            self._scan_imports::<false, JsxNone>(scan_pass)
+            self._scan_imports::<false>(scan_pass)
         }
     }
 
     #[cold]
-    fn _scan_imports<const TS: bool, JX: JsxT>(
+    fn _scan_imports<const TS: bool>(
         &mut self,
         scan_pass: &'a mut ScanPassResult,
     ) -> Result<(), Error> {
-        type Pi<'a, const TS: bool, JX> = P<'a, TS, JX, true>;
+        type Pi<'a, const TS: bool> = P<'a, TS, true>;
         // Zig moves lexer/options by value into `P` (Parser.zig) and only
         // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
         // on `Parser.lexer`. In Rust, `Lexer` owns `Vec`s and `Options` owns
@@ -425,10 +421,10 @@ impl<'a> Parser<'a> {
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
-        let mut __p = init_p!(Pi<'_, TS, JX>;
+        let mut __p = init_p!(Pi<'_, TS>;
             self.bump, self.log, self.source, self.define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut Pi<'_, TS, JX> = unsafe { __p.assume_init_mut() };
+        let p: &mut Pi<'_, TS> = unsafe { __p.assume_init_mut() };
         p.import_records = crate::p::ImportRecordList::Borrowed(&mut scan_pass.import_records);
         p.named_imports = crate::p::NamedImportsType::Borrowed(&mut scan_pass.named_imports);
 
@@ -738,7 +734,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn _parse<const TS: bool, JX: JsxT>(self) -> Result<crate::Result, Error> {
+    fn _parse<const TS: bool>(self) -> Result<crate::Result, Error> {
         // TODO(port): narrow error set
         // TODO(b2-blocked): bun_crash_handler::current_action — `Action` stores
         // `&'static [u8]` but `self.source.path.text` is `'a`; Phase B widens
@@ -767,10 +763,10 @@ impl<'a> Parser<'a> {
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
-        let mut __p = init_p!(P<'_, TS, JX, false>;
+        let mut __p = init_p!(P<'_, TS, false>;
             bump, log, source, define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut P<'_, TS, JX, false> = unsafe { __p.assume_init_mut() };
+        let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
 
         if p.options.features.hot_module_reloading {
             debug_assert!(!p.options.tree_shaking);

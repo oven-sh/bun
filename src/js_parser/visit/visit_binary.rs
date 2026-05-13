@@ -4,7 +4,7 @@ use bun_collections::VecExt;
 use core::cmp::Ordering;
 
 use crate::p::P;
-use crate::parser::{ExprIn, JsxT, float_to_int32, prefill};
+use crate::parser::{ExprIn, float_to_int32, prefill};
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition};
 use bun_ast::{
@@ -22,9 +22,9 @@ use bun_ast::{
 
 /// Try to optimize "typeof x === 'undefined'" to "typeof x > 'u'" or similar
 /// Returns the optimized expression if successful, None otherwise
-fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
+fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     e_: &mut E::Binary,
-    p: &mut P<'a, TYPESCRIPT, J, SCAN_ONLY>,
+    p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
     replacement_op: js_ast::op::Code,
 ) -> Option<Expr> {
     // Check if this is a typeof comparison with "undefined"
@@ -86,10 +86,10 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN
 // canonical `ExprData::eql<P, K: EqlKindT>` (Expr.rs). Kept as a free fn so
 // the call sites don't each repeat the `LooseEql`/`StrictEql` type-select.
 #[inline]
-fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
+fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     left: &ExprData,
     right: &ExprData,
-    p: &mut P<'a, TYPESCRIPT, J, SCAN_ONLY>,
+    p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
 ) -> Equality {
     if STRICT {
         ExprData::eql::<_, StrictEql>(left, right, p)
@@ -116,9 +116,9 @@ pub struct BinaryExpressionVisitor {
 }
 
 impl BinaryExpressionVisitor {
-    pub fn visit_right_and_finish<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
+    pub fn visit_right_and_finish<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
         v: &mut Self,
-        p: &mut P<'a, TYPESCRIPT, J, SCAN_ONLY>,
+        p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
     ) -> Expr {
         // `v.e: StoreRef<E::Binary>` is the safe arena back-reference (Copy).
         // Snapshot the handle for the identity check / tail re-wrap, then take
@@ -239,7 +239,7 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinLooseEq => {
                 let equality =
-                    data_eql::<false, TYPESCRIPT, J, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
+                    data_eql::<false, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
                 if equality.ok {
                     if equality.is_require_main_and_module {
                         p.ignore_usage_of_runtime_require();
@@ -275,7 +275,7 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinStrictEq => {
                 let equality =
-                    data_eql::<true, TYPESCRIPT, J, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
+                    data_eql::<true, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
                 if equality.ok {
                     if equality.is_require_main_and_module {
                         p.ignore_usage(p.module_ref);
@@ -304,7 +304,7 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinLooseNe => {
                 let equality =
-                    data_eql::<false, TYPESCRIPT, J, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
+                    data_eql::<false, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
                 if equality.ok {
                     if equality.is_require_main_and_module {
                         p.ignore_usage(p.module_ref);
@@ -337,7 +337,7 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinStrictNe => {
                 let equality =
-                    data_eql::<true, TYPESCRIPT, J, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
+                    data_eql::<true, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
                 if equality.ok {
                     if equality.is_require_main_and_module {
                         p.ignore_usage(p.module_ref);
@@ -774,9 +774,9 @@ impl BinaryExpressionVisitor {
         }
     }
 
-    pub fn check_and_prepare<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>(
+    pub fn check_and_prepare<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
         v: &mut Self,
-        p: &mut P<'a, TYPESCRIPT, J, SCAN_ONLY>,
+        p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
     ) -> Option<Expr> {
         // Snapshot the `Copy` arena handle before taking the working `&mut`
         // via `StoreRef::DerefMut`, so the early-return re-wrap below does not

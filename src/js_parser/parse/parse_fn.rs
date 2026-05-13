@@ -5,7 +5,7 @@ use crate::js_lexer;
 use crate::js_lexer::T;
 use crate::p::P;
 use crate::parser::{
-    ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, FunctionKind, JsxT,
+    ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, FunctionKind,
     LexicalDecl, ParseStatementOptions, TypeParameterFlag,
 };
 use bun_ast as js_ast;
@@ -18,7 +18,7 @@ type Error = bun_core::Error;
 // Zig: `pub fn ParseFn(comptime typescript, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // Zig: `const is_typescript_enabled = P.is_typescript_enabled;`
     // (PORT NOTE: P.rs already defines `IS_TYPESCRIPT_ENABLED`; reuse it.)
 

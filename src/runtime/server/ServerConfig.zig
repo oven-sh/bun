@@ -891,7 +891,6 @@ pub fn fromJS(
         if (try arg.get(global, "http2")) |v| {
             args.http2 = v.toBoolean();
         }
-        if (global.hasException()) return error.JSError;
 
         if (try arg.get(global, "http1")) |v| {
             args.http1 = v.toBoolean();

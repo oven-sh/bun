@@ -1391,7 +1391,6 @@ pub mod parse_worker {
         file_path: &mut Fs::Path,
         loader: Loader,
     ) -> core::result::Result<CacheEntry, AnyError> {
-        let _ = bump; // TODO(port): arena routing for read_file_with_allocator
         match &task.contents_or_fd {
             ContentsOrFd::Fd { dir, file } => 'brk: {
                 let contents_dir = *dir;
@@ -1452,11 +1451,19 @@ pub mod parse_worker {
                 }
 
                 // TODO: this arena may be wrong for native plugins
-                // TODO(port): bun.default_allocator vs bump distinction — Zig passed
-                // `bun.default_allocator` for copy-for-bundling and the worker arena
-                // otherwise; the Rust `read_file_with_allocator` always allocates
-                // from the global heap (see resolver/lib.rs PORT NOTE).
-                let _ = loader.should_copy_for_bundling();
+                //
+                // Zig (`ParseTask.zig:707-711`): pass `bun.default_allocator`
+                // when the loader copies its contents into the `OutputFile`
+                // (that memory must outlive the per-file worker arena), else the
+                // worker arena. Routing the non-copy case through `bump` keeps
+                // the source bytes in the bulk-reset worker arena instead of
+                // churning the global allocator's large-object free list one
+                // `Vec<u8>` per file.
+                let read_arena: Option<&Bump> = if loader.should_copy_for_bundling() {
+                    None
+                } else {
+                    Some(bump)
+                };
                 // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`;
                 // `(*transpiler).fs` is a live `*mut FileSystem` BACKREF.
                 let fs_ref = unsafe { &mut *(*transpiler).fs };
@@ -1468,9 +1475,7 @@ pub mod parse_worker {
                     contents_dir,
                     false,
                     contents_file.unwrap_valid(),
-                    // TODO(port): thread `bump` once `should_copy_for_bundling`
-                    // routing matches Zig (`bun.default_allocator` vs worker arena).
-                    None,
+                    read_arena,
                 ) {
                     Ok(e) => {
                         // PORT NOTE: `bun_resolver::cache::Entry` ↔ `crate::cache::Entry`

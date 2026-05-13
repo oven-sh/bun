@@ -77,24 +77,28 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.parse_paren_expr(loc, level, ParenExprOpts::default())
     }
 
+    #[inline]
     fn pfx_t_false(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         Ok(p.new_expr(E::Boolean { value: false }, loc))
     }
 
+    #[inline]
     fn pfx_t_true(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         Ok(p.new_expr(E::Boolean { value: true }, loc))
     }
 
+    #[inline]
     fn pfx_t_null(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         Ok(p.new_expr(E::Null {}, loc))
     }
 
+    #[inline]
     fn pfx_t_this(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         if p.fn_or_arrow_data_parse.is_this_disallowed {
@@ -130,13 +134,23 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     fn pfx_t_identifier(p: &mut Self, level: Level) -> PResult<Expr> {
         let loc = p.lexer.loc();
         let name = p.lexer.identifier;
-        let name_range = p.lexer.range();
-        let raw = p.lexer.raw();
+
+        // Fast path: only `async` / `await` / `yield` need `name_range` and the raw
+        // (possibly escaped) token text. For every other identifier — the vast
+        // majority of identifier-prefix expressions — skip the bounds-checked
+        // `raw()` slice and the `range()` construction. Both must be read before
+        // `lexer.next()` advances past the token, so compute them here when needed.
+        let async_kind = AsyncPrefixExpression::find(name);
+        let (name_range, raw) = if async_kind == AsyncPrefixExpression::None {
+            (bun_ast::Range::NONE, name)
+        } else {
+            (p.lexer.range(), p.lexer.raw())
+        };
 
         p.lexer.next()?;
 
         // Handle async and await expressions
-        match AsyncPrefixExpression::find(name) {
+        match async_kind {
             AsyncPrefixExpression::IsAsync => {
                 if (raw.as_ptr() == name.as_ptr() && raw.len() == name.len())
                     || AsyncPrefixExpression::find(raw) == AsyncPrefixExpression::IsAsync
@@ -296,6 +310,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         ))
     }
 
+    #[inline]
     fn pfx_t_numeric_literal(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         let value = p.new_expr(
@@ -309,6 +324,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(value)
     }
 
+    #[inline]
     fn pfx_t_big_integer_literal(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         let value = E::Str::new(p.lexer.identifier);
@@ -529,6 +545,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         ))
     }
 
+    #[inline]
     fn pfx_t_function(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.parse_fn_expr(loc, false, bun_ast::Range::NONE)
@@ -1011,6 +1028,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Err(bun_core::err!("SyntaxError"))
     }
 
+    #[inline]
     fn pfx_t_import(p: &mut Self, level: Level) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;

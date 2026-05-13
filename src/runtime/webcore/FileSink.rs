@@ -912,40 +912,56 @@ impl FileSink {
         }
     }
 
-    pub fn on_auto_flush(&mut self) -> bool {
-        if self.done.get() || !self.writer.get().has_pending_data() {
-            self.update_ref(false);
-            self.auto_flusher.with_mut(|a| a.registered.set(false));
-            return false;
-        }
-
-        // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
-        let _guard = unsafe { FileSinkRef::new_ref(std::ptr::from_mut::<FileSink>(self)) };
-
-        let amount_buffered = self.writer.get().outgoing.size();
-
-        // SAFETY(JsCell): `IOWriter::flush` is pure I/O; the `on_write`
-        // callback it may trigger goes via the stored `*mut FileSink` backref.
-        match self.writer.with_mut(|w| w.flush()) {
-            WriteResult::Err(_) | WriteResult::Done(_) => {
-                self.update_ref(false);
-                self.run_pending_later();
+    /// `AutoFlusher` deferred-microtask tick. Takes the canonical `*mut
+    /// FileSink` (not `&mut self`) for the same reason as the PipeWriter
+    /// callbacks and `on_attached_process_exit`: `writer.flush()` re-enters
+    /// `on_write` via the writer backref, and `run_pending_later()` enqueues a
+    /// task that drains a promise — either may drop the last ref and free
+    /// `this`. A `&mut self` held across those calls would carry a `noalias`
+    /// LLVM attribute the re-entry violates and place a Unique Stacked-Borrows
+    /// tag on the whole struct, popping the writer's own `*mut Self` tag. The
+    /// body reborrows `(*this).field` per-statement only.
+    ///
+    /// # Safety
+    /// `this` must be the canonical heap-allocation pointer (see
+    /// [`on_attached_process_exit`](Self::on_attached_process_exit)): live,
+    /// with write+dealloc provenance over the allocation.
+    pub unsafe fn on_auto_flush(this: *mut FileSink) -> bool {
+        unsafe {
+            if (*this).done.get() || !(*this).writer.get().has_pending_data() {
+                (*this).update_ref(false);
+                (*this).auto_flusher.with_mut(|a| a.registered.set(false));
+                return false;
             }
-            WriteResult::Wrote(amount_drained) => {
-                if amount_drained == amount_buffered {
-                    self.update_ref(false);
-                    self.run_pending_later();
+
+            let _guard = FileSinkRef::new_ref(this);
+
+            let amount_buffered = (*this).writer.get().outgoing.size();
+
+            // SAFETY(JsCell): `IOWriter::flush` is pure I/O; the `on_write`
+            // callback it may trigger goes via the stored `*mut FileSink` backref.
+            match (*this).writer.with_mut(|w| w.flush()) {
+                WriteResult::Err(_) | WriteResult::Done(_) => {
+                    (*this).update_ref(false);
+                    (*this).run_pending_later();
+                }
+                WriteResult::Wrote(amount_drained) => {
+                    if amount_drained == amount_buffered {
+                        (*this).update_ref(false);
+                        (*this).run_pending_later();
+                    }
+                }
+                _ => {
+                    return true;
                 }
             }
-            _ => {
-                return true;
-            }
-        }
 
-        let is_registered = !self.writer.get().has_pending_data();
-        self.auto_flusher
-            .with_mut(|a| a.registered.set(is_registered));
-        is_registered
+            let is_registered = !(*this).writer.get().has_pending_data();
+            (*this)
+                .auto_flusher
+                .with_mut(|a| a.registered.set(is_registered));
+            is_registered
+        }
     }
 
     pub fn flush(&self) -> sys::Result<()> {

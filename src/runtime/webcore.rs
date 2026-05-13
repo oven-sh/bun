@@ -217,8 +217,10 @@ impl AutoFlusher {
 }
 
 // ─── HasAutoFlusher impls ────────────────────────────────────────────────────
-// Both types expose `pub auto_flusher: AutoFlusher` and an inherent
-// `pub fn on_auto_flush(&mut self) -> bool`; the trait impl is just a thunk.
+// `HTTPServerWritable` exposes an inherent `pub fn on_auto_flush(&mut self) ->
+// bool`; the trait impl is just a thunk. `FileSink::on_auto_flush` instead
+// takes the canonical `*mut FileSink` directly (no `&mut self` — see its doc
+// comment / the `borrow = ptr` note on `impl_streaming_writer_parent!`).
 
 impl HasAutoFlusher for file_sink::FileSink {
     #[inline]
@@ -227,10 +229,12 @@ impl HasAutoFlusher for file_sink::FileSink {
         self.auto_flusher.get()
     }
     fn on_auto_flush(this: *mut Self) -> bool {
-        // SAFETY: `this` was registered as `&FileSink` cast to `*mut c_void`;
-        // `DeferredTaskQueue::run` is single-threaded (drained on the JS thread
-        // after microtasks), so no aliasing across the call.
-        unsafe { (*this).on_auto_flush() }
+        // SAFETY: `this` was registered as the canonical `*mut FileSink` cast to
+        // `*mut c_void` (`AutoFlusher::erased_ctx`); `DeferredTaskQueue::run` is
+        // single-threaded (drained on the JS thread after microtasks), so no
+        // aliasing across the call. `FileSink::on_auto_flush` takes the raw ptr
+        // directly (no `&mut self`).
+        unsafe { file_sink::FileSink::on_auto_flush(this) }
     }
 }
 

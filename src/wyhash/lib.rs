@@ -57,19 +57,29 @@ fn read_8bytes_swapped(data: &[u8]) -> u64 {
     (read_bytes::<4>(data) << 32) | read_bytes::<4>(&data[4..])
 }
 
-#[inline]
+// `#[inline(always)]`, not just `#[inline]`: these 4 helpers (`mum` + the two
+// `mix*` wrappers, alongside the already-`always` `read_8bytes_swapped`) are the
+// entire body of the short-key (`0..=16` byte) hash that `StringHashMap` /
+// hashbrown runs per identifier / keyword / module-path key while parsing every
+// module. `#[inline]` (hint) was being declined across the bun_wyhash →
+// bun_collections / bun_js_parser crate boundary, leaving an out-of-line `mum`
+// (and a `call` per mix step) inside the hashbrown probe loop. Force the 4 mix
+// steps to fold in with no call/ret — same reasoning the surrounding `final_*`
+// helpers are `#[inline(always)]` / `#[cold]`-split for. Zig force-inlines the
+// equivalent `mum`/`mix0`/`mix1` via `@call(bun.callmod_inline, ...)`.
+#[inline(always)]
 fn mum(a: u64, b: u64) -> u64 {
     let mut r = (a as u128) * (b as u128);
     r = (r >> 64) ^ r;
     r as u64
 }
 
-#[inline]
+#[inline(always)]
 fn mix0(a: u64, b: u64, seed: u64) -> u64 {
     mum(a ^ seed ^ PRIMES[0], b ^ seed ^ PRIMES[1])
 }
 
-#[inline]
+#[inline(always)]
 fn mix1(a: u64, b: u64, seed: u64) -> u64 {
     mum(a ^ seed ^ PRIMES[2], b ^ seed ^ PRIMES[3])
 }

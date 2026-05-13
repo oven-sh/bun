@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ptr;
 
 use bun_alloc::Arena;
@@ -6,13 +7,53 @@ use crate::expr;
 use crate::stmt;
 
 // PERF(port): Zig used `std.heap.StackFallbackAllocator(@min(8192, std.heap.page_size_min))`
-// — a small inline stack buffer with heap fallback. `bun_alloc::Arena` (bumpalo::Bump)
-// heap-allocates its first chunk instead; profile.
+// — a small inline stack buffer with heap fallback. `bun_alloc::Arena`
+// (`MimallocArena`) has no stack buffer; instead the owned arena is recycled
+// per thread via `ARENA_POOL` below so the per-module callers don't pay a fresh
+// `mi_heap_new` + first-segment page faults every file. (A real inline
+// stack-fallback would still avoid the heap entirely for small modules — left
+// for a follow-up.)
 
 // TODO(port): `Expr.Data.Store.memory_allocator` / `Stmt.Data.Store.memory_allocator` are
 // `threadlocal var ?*ASTMemoryAllocator` in Zig, read/written directly. Phase B must expose
 // `memory_allocator() -> *mut ASTMemoryAllocator`, `set_memory_allocator(*mut ASTMemoryAllocator)`,
 // and `begin()` on the Rust `expr::data::Store` / `stmt::data::Store` (thread_local! + Cell).
+
+// ── Thread-local arena pool ──────────────────────────────────────────────
+//
+// Zig's `ASTMemoryAllocator` was a `StackFallbackAllocator(8192, fallback)`:
+// the 8 KB stack buffer absorbed most per-module AST scratch without touching
+// the heap, and the spill went to a long-lived `fallback` arena whose pages
+// stayed resident across modules. The Rust port collapsed that to one owned
+// `MimallocArena` per `ASTMemoryAllocator`, so a fresh per-module instance
+// (`RuntimeTranspilerStore::run`, `Bun.Transpiler.*`, the dev server) paid a
+// fresh `mi_heap_new` + first-segment page faults every file, and `enter()`'s
+// reset then destroyed-and-recreated that just-created heap before it was even
+// used.
+//
+// Instead, recycle one `MimallocArena` per thread: `Drop` cleans the arena
+// (`reset()` bulk-frees this module's nodes — leaving it pristine) and parks
+// it here; the next `ASTMemoryAllocator` on this thread reclaims it, reusing
+// its committed pages. The pool holds at most one arena (nested scopes — rare
+// — fall back to a fresh `Arena::new()`). `#[thread_local]` (not the
+// `thread_local!` macro) so there is no destructor: a parked arena at thread
+// exit is reclaimed by mimalloc's own thread-teardown, avoiding an unspecified
+// destructor-ordering hazard with `mi_heap_destroy`.
+#[thread_local]
+static ARENA_POOL: Cell<Option<Arena>> = Cell::new(None);
+
+#[inline]
+fn take_pooled_arena() -> Arena {
+    ARENA_POOL.take().unwrap_or_else(Arena::new)
+}
+
+/// Park a *clean* (reset) arena for reuse by the next `ASTMemoryAllocator` on
+/// this thread. If the slot is already occupied (nested scopes), the surplus
+/// arena is dropped here (`mi_heap_destroy`).
+#[inline]
+fn return_pooled_arena(arena: Arena) {
+    drop(ARENA_POOL.replace(Some(arena)));
+}
 
 pub struct ASTMemoryAllocator {
     // Zig fields `stack_arena: SFA` + `bump_std.mem.Allocator param` (the vtable into
@@ -21,6 +62,13 @@ pub struct ASTMemoryAllocator {
     // TODO(port): if any caller passed a non-default arena into `enter` /
     // `init_without_stack`, that routing is lost here; revisit.
     arena: Arena,
+    /// `true` once a scope on this instance armed `arena` for allocation (via
+    /// [`Self::enter`] / [`Self::push`]) since the last reset. Lets
+    /// [`Self::enter`] / [`Self::reset`] skip the `mi_heap_destroy` +
+    /// `mi_heap_new` churn when `arena` is already pristine — the common case
+    /// for the per-module callers, each of which takes a freshly-pooled (clean)
+    /// arena and arms it exactly once.
+    arena_dirty: bool,
     previous: *mut ASTMemoryAllocator,
     previous_logger: *const Arena,
     previous_heap: *mut bun_alloc::mimalloc::Heap,
@@ -29,11 +77,33 @@ pub struct ASTMemoryAllocator {
 impl Default for ASTMemoryAllocator {
     fn default() -> Self {
         Self {
-            arena: Arena::new(),
+            arena: take_pooled_arena(),
+            arena_dirty: false,
             previous: ptr::null_mut(),
             previous_logger: ptr::null(),
             previous_heap: ptr::null_mut(),
         }
+    }
+}
+
+impl Drop for ASTMemoryAllocator {
+    fn drop(&mut self) {
+        // Recycle the arena for the next `ASTMemoryAllocator` on this thread
+        // (see `ARENA_POOL`). Clean it first so a pooled arena is always
+        // pristine — `push()` callers (the bundler workers) allocate straight
+        // into it with no intervening `reset()`. By the time this runs nothing
+        // aliases `self.arena`: `enter()`'s returned `Scope` borrows `&mut
+        // self`, so it drops first and `Scope::exit()` has already restored the
+        // `Expr/Stmt.Data.Store.memory_allocator` / `data_store_override` /
+        // `ast_alloc` thread-locals; `push()` callers pair with `pop()` before
+        // teardown.
+        if self.arena_dirty {
+            self.arena.reset();
+        }
+        // Move the (now-clean) owned arena out; leave a no-op `borrowing_default`
+        // arena behind so the field's own `Drop` does nothing.
+        let arena = core::mem::replace(&mut self.arena, Arena::borrowing_default());
+        return_pooled_arena(arena);
     }
 }
 
@@ -74,7 +144,16 @@ impl ASTMemoryAllocator {
         // but `AstAlloc` bypasses `track_alloc` (raw `mi_heap_malloc`), so
         // the limit never trips and every previous import's AST data leaks.
         // See `store_ast_alloc_heap::reset` for the full analysis.
-        self.arena.reset();
+        //
+        // ...but a *pristine* arena (fresh from `new()` / the thread-local
+        // pool, or just `reset()`) has nothing to discard, so the
+        // `mi_heap_destroy` + `mi_heap_new` round-trip is skipped in that case
+        // (the common one — per-module callers create a fresh instance,
+        // `enter()` once, and drop it).
+        if self.arena_dirty {
+            self.arena.reset();
+        }
+        self.arena_dirty = true;
         self.previous = ptr::null_mut();
         let mut ast_scope = Scope {
             current: Some(self),
@@ -89,7 +168,11 @@ impl ASTMemoryAllocator {
     pub fn reset(&mut self) {
         // Zig rebuilt the SFA against the stored fallback arena; Arena::reset is equivalent.
         // PERF(port): was stack-fallback — profile
-        self.arena.reset();
+        // Skip the `mi_heap_destroy` + `mi_heap_new` when already pristine.
+        if self.arena_dirty {
+            self.arena.reset();
+            self.arena_dirty = false;
+        }
     }
 
     /// Per-iteration reset for hot reuse paths (`initialize_mini_store`'s
@@ -98,10 +181,16 @@ impl ASTMemoryAllocator {
     /// (`bundler::ThreadPool::Worker::init`, `BundleThread::generate_in_new_
     /// thread`) keep calling [`Self::reset`].
     pub fn reset_retain_with_limit(&mut self, limit: usize) {
-        self.arena.reset_retain_with_limit(limit);
+        if self.arena_dirty {
+            self.arena.reset_retain_with_limit(limit);
+            self.arena_dirty = false;
+        }
     }
 
     pub fn push(&mut self) {
+        // `push()` arms `arena` for allocation (the bundler workers allocate
+        // directly into it across many modules with no intervening `reset()`).
+        self.arena_dirty = true;
         self.previous_logger = crate::data_store_override();
         self.previous_heap = bun_alloc::ast_alloc::thread_heap();
         let arena: *const Arena = &self.arena;
@@ -151,6 +240,7 @@ impl ASTMemoryAllocator {
         // `arena`. With bumpalo there is no stack buffer either way; just (re)initialize.
         // PERF(port): was stack-fallback — profile
         self.arena = Arena::new();
+        self.arena_dirty = false;
     }
 }
 

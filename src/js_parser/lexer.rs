@@ -1898,27 +1898,9 @@ lexer_impl_header! {
                             self.step_with(contents);
 
                             if self.code_point == 0x3E && self.has_newline_before {
-                                self.step_with(contents);
-                                self.log()
-                                    .add_range_warning(
-                                        Some(self.source),
-                                        self.range(),
-                                        b"Treating \"-->\" as the start of a legacy HTML single-line comment",
-                                    );
-
-                                'single_line_html_close_comment: loop {
-                                    match self.code_point {
-                                        0x0D | 0x0A | 0x2028 | 0x2029 =>
-                                        {
-                                            break 'single_line_html_close_comment;
-                                        }
-                                        -1 => {
-                                            break 'single_line_html_close_comment;
-                                        }
-                                        _ => {}
-                                    }
-                                    self.step_with(contents);
-                                }
+                                // Genuinely almost-never taken — kept out of `next()`'s
+                                // body so it doesn't share I-cache with the hot arms.
+                                self.scan_legacy_html_close_comment();
                                 continue;
                             }
 
@@ -1979,57 +1961,13 @@ lexer_impl_header! {
                             continue;
                         }
                         0x2A => {
-                            self.step_with(contents);
-
-                            'multi_line_comment: loop {
-                                match self.code_point {
-                                    0x2A => {
-                                        self.step_with(contents);
-                                        if self.code_point == 0x2F {
-                                            self.step_with(contents);
-                                            break 'multi_line_comment;
-                                        }
-                                    }
-                                    0x0D | 0x0A | 0x2028 | 0x2029 =>
-                                    {
-                                        self.step_with(contents);
-                                        self.has_newline_before = true;
-                                    }
-                                    -1 => {
-                                        self.start = self.end;
-                                        self.add_syntax_error(
-                                            self.start,
-                                            format_args!(
-                                                "Expected \"*/\" to terminate multi-line comment"
-                                            ),
-                                        )?;
-                                    }
-                                    _ => {
-                                        if Environment::ENABLE_SIMD {
-                                            if self.code_point < 128 {
-                                                let remainder =
-                                                    &contents[self.current..];
-                                                if remainder.len() >= 512 {
-                                                    match skip_to_interesting_character_in_multiline_comment(remainder) {
-                                                        Some(off) => {
-                                                            self.current += off as usize;
-                                                            self.end = self.current.saturating_sub(1);
-                                                            self.step_with(contents);
-                                                            continue;
-                                                        }
-                                                        None => {
-                                                            self.step_with(contents);
-                                                            continue;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        self.step_with(contents);
-                                    }
-                                }
-                            }
+                            // The `/* ... */` scan loop + its SIMD skip is pulled
+                            // out of line so it doesn't bloat the hot ASCII
+                            // identifier / whitespace / punctuator arms of
+                            // `next()` (`scan_single_line_comment` is outlined the
+                            // same way). The JSON-comments error path stays here
+                            // because it must `return` from `next()`.
+                            self.scan_multi_line_comment_body()?;
                             if IS_JSON {
                                 if !ALLOW_COMMENTS {
                                     self.add_range_error(
@@ -2445,6 +2383,97 @@ lexer_impl_header! {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// Scans the body of a `/* ... */` block comment, starting with
+    /// `self.code_point` positioned on the `*` of the opening `/*`. On a
+    /// successful close (`*/`) it returns with the iterator just past the `/`.
+    ///
+    /// PERF: pulled out of `next()` (which is the single largest non-JSC symbol)
+    /// so the multi-line body + its SIMD skip don't share I-cache with the hot
+    /// ASCII identifier / whitespace / punctuator arms. `#[inline(never)]`
+    /// (not `#[cold]`) because block comments, while rare per-token, are common
+    /// enough in real source that we don't want the branch pessimized.
+    #[inline(never)]
+    fn scan_multi_line_comment_body(&mut self) -> Result<(), Error> {
+        // PERF: keep the source slice register-resident — see `next_codepoint_with`.
+        let contents: &[u8] = self.contents;
+        // Consume the `*` of the opening `/*`.
+        self.step_with(contents);
+
+        loop {
+            match self.code_point {
+                0x2A => {
+                    self.step_with(contents);
+                    if self.code_point == 0x2F {
+                        self.step_with(contents);
+                        return Ok(());
+                    }
+                }
+                0x0D | 0x0A | 0x2028 | 0x2029 => {
+                    self.step_with(contents);
+                    self.has_newline_before = true;
+                }
+                -1 => {
+                    self.start = self.end;
+                    self.add_syntax_error(
+                        self.start,
+                        format_args!("Expected \"*/\" to terminate multi-line comment"),
+                    )?;
+                }
+                _ => {
+                    if Environment::ENABLE_SIMD {
+                        if self.code_point < 128 {
+                            let remainder = &contents[self.current..];
+                            if remainder.len() >= 512 {
+                                match skip_to_interesting_character_in_multiline_comment(
+                                    remainder,
+                                ) {
+                                    Some(off) => {
+                                        self.current += off as usize;
+                                        self.end = self.current.saturating_sub(1);
+                                        self.step_with(contents);
+                                        continue;
+                                    }
+                                    None => {
+                                        self.step_with(contents);
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    self.step_with(contents);
+                }
+            }
+        }
+    }
+
+    /// Handles the legacy `-->` HTML single-line close comment: emits the
+    /// warning and consumes the rest of the line. Entered with `self.code_point`
+    /// on the `>` of `-->`.
+    ///
+    /// PERF: this is essentially never taken in real code — keep it fully out of
+    /// `next()`'s body so it never costs the hot arms any I-cache.
+    #[cold]
+    #[inline(never)]
+    fn scan_legacy_html_close_comment(&mut self) {
+        // Consume the `>` of `-->`.
+        self.step();
+        self.log().add_range_warning(
+            Some(self.source),
+            self.range(),
+            b"Treating \"-->\" as the start of a legacy HTML single-line comment",
+        );
+
+        loop {
+            match self.code_point {
+                0x0D | 0x0A | 0x2028 | 0x2029 | -1 => break,
+                _ => {}
+            }
+            self.step();
         }
     }
 

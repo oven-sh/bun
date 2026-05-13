@@ -7567,8 +7567,6 @@ pub struct BufferWriter {
     pub sentinel: &'static bun_core::ZStr, // TODO(port): lifetime — Zig stored a sentinel slice into `buffer`
     pub append_null_byte: bool,
     pub append_newline: bool,
-    pub approximate_newline_count: usize,
-    pub last_bytes: [u8; 2],
 }
 
 impl BufferWriter {
@@ -7596,8 +7594,6 @@ impl BufferWriter {
             sentinel: bun_core::ZStr::EMPTY,
             append_null_byte: false,
             append_newline: false,
-            approximate_newline_count: 0,
-            last_bytes: [0, 0],
         }
     }
 
@@ -7613,8 +7609,6 @@ impl BufferWriter {
             sentinel: bun_core::ZStr::EMPTY,
             append_null_byte: false,
             append_newline: false,
-            approximate_newline_count: 0,
-            last_bytes: [0, 0],
         }
     }
 
@@ -7634,23 +7628,12 @@ impl BufferWriter {
     #[inline]
     pub fn write_byte(&mut self, byte: u8) -> Result<usize, bun_core::Error> {
         self.buffer.append_char(byte)?;
-        self.approximate_newline_count += (byte == b'\n') as usize;
-        self.last_bytes = [self.last_bytes[1], byte];
         Ok(1)
     }
 
     #[inline]
     pub fn write_all(&mut self, bytes: &[u8]) -> Result<usize, bun_core::Error> {
         self.buffer.append(bytes)?;
-        self.approximate_newline_count +=
-            (!bytes.is_empty() && bytes[bytes.len() - 1] == b'\n') as usize;
-
-        if bytes.len() >= 2 {
-            self.last_bytes = [bytes[bytes.len() - 2], bytes[bytes.len() - 1]];
-        } else if bytes.len() >= 1 {
-            self.last_bytes = [self.last_bytes[1], bytes[bytes.len() - 1]];
-        }
-
         Ok(bytes.len())
     }
 
@@ -7659,13 +7642,20 @@ impl BufferWriter {
         self.buffer.list.as_slice()
     }
 
+    /// `prev_char` for the printer. The 2-byte window the printer queries is
+    /// derived lazily from the tail of `buffer` here (a rare query site) rather
+    /// than maintained after every `write_byte`/`write_all` (the hot path).
     #[inline]
     pub fn get_last_byte(&self) -> u8 {
-        self.last_bytes[1]
+        let list = &self.buffer.list;
+        let len = list.len();
+        if len >= 1 { list[len - 1] } else { 0 }
     }
     #[inline]
     pub fn get_last_last_byte(&self) -> u8 {
-        self.last_bytes[0]
+        let list = &self.buffer.list;
+        let len = list.len();
+        if len >= 2 { list[len - 2] } else { 0 }
     }
 
     pub fn reserve_next(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> {
@@ -7678,18 +7668,10 @@ impl BufferWriter {
         let count_usize = usize::try_from(count).expect("int cast");
         // SAFETY: reserve_next reserved and the caller initialized [len..len+count).
         unsafe { bun_core::vec::commit_spare(&mut self.buffer.list, count_usize) };
-
-        let len = self.buffer.list.len();
-        if count >= 2 {
-            self.last_bytes = [self.buffer.list[len - 2], self.buffer.list[len - 1]];
-        } else if count >= 1 {
-            self.last_bytes = [self.last_bytes[1], self.buffer.list[len - 1]];
-        }
     }
 
     pub fn reset(&mut self) {
         self.buffer.reset();
-        self.approximate_newline_count = 0;
         self.written_len = 0;
     }
 
@@ -7839,7 +7821,8 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
         return SourceMap::chunk::Builder::default();
     }
 
-    SourceMap::chunk::Builder {
+    let precomputed = opts.line_offset_tables.take();
+    let mut builder = SourceMap::chunk::Builder {
         source_map: SourceMap::chunk::SourceMapFormat::init(
             // opts.source_map_allocator orelse opts.allocator — allocator dropped
             IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
@@ -7852,29 +7835,31 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
         // `Options.line_offset_tables` is now a borrow into shared linker
         // state; mirror Zig's bitwise copy via `ptr::read` into a
         // `ManuallyDrop` so dropping the `Builder` never frees borrowed
-        // storage. The `print_ast` path (which generates a fresh table) frees
-        // it explicitly to match Zig's `defer ... .deinit()`.
-        line_offset_tables: core::mem::ManuallyDrop::new(match opts.line_offset_tables.take() {
+        // storage. When no table is supplied (the runtime/transpiler path) we
+        // leave this `EMPTY` and let the builder build it lazily on the first
+        // mapping (see `set_deferred_line_offset_table` below) — matching the
+        // Zig transpiler, which only builds the table on demand.
+        line_offset_tables: core::mem::ManuallyDrop::new(match precomputed {
             // SAFETY: `borrowed` points to a valid `List` owned by the caller
             // (e.g. `LinkerGraph.files[i].line_offset_table`). The bitwise
             // copy aliases that storage; it is wrapped in `ManuallyDrop` and
             // never dropped, so ownership stays with the caller.
             Some(borrowed) => unsafe { core::ptr::read(borrowed) },
-            None => 'brk: {
-                if generate_source_map == GenerateSourceMap::Lazy {
-                    break 'brk bun_crash_handler::handle_oom::handle_oom(
-                        SourceMap::LineOffsetTable::generate(
-                            // allocator dropped
-                            &source.contents,
-                            i32::try_from(tree.approximate_newline_count).expect("int cast"),
-                        ),
-                    );
-                }
-                break 'brk SourceMap::line_offset_table::List::EMPTY;
-            }
+            None => SourceMap::line_offset_table::List::EMPTY,
         }),
         ..Default::default()
+    };
+    if precomputed.is_none() && generate_source_map == GenerateSourceMap::Lazy {
+        // Defer table construction to the first `add_source_mapping` call:
+        // modules that emit no mappings (asset/JSON shims, empty modules,
+        // fully-stripped files) never pay the full-source scan + allocation.
+        builder.set_deferred_line_offset_table(
+            // allocator dropped
+            &source.contents,
+            i32::try_from(tree.approximate_newline_count).expect("int cast"),
+        );
     }
+    builder
 }
 
 // ───────────────────────────────────────────────────────────────────────────

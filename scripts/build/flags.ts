@@ -958,19 +958,15 @@ export const linkerFlags: Flag[] = [
       // (no --pack-dyn-relocs=relr: DT_RELR needs glibc ≥ 2.36 to load,
       // and we wrap symbols for portability down to 2.17. With -no-pie
       // there are <500 R_*_RELATIVE entries anyway — not worth the compat
-      // break. The .data.rel.ro RW-segment cost is handled by the
-      // sections.lds overlay below instead.)
+      // break.)
       "-Wl,-O2",
       "-Wl,--gdb-index",
       "-Wl,-z,combreloc",
       // NOTE: --sort-section=name was here historically; lld ignores it
-      // for the default `.text` rule and it never partitioned hot/cold —
-      // fat-LTO emits all 14k Rust .text.* sections in crate-alphabetical
-      // order, so hot bun_clap shares 64 KB fault-around blocks with cold
-      // bun_install/bun_bundler/bun_css. A hand-curated --symbol-ordering-file
-      // recovered ~1.3 MB of cold .text RSS but needed a 2-pass relink to keep
-      // its CGU-mangled entries matching the post-LTO binary — not worth the
-      // extra LTO link per Linux-release build job, so it was dropped.
+      // for the default `.text` rule. Hot/cold partitioning of `.text` is
+      // handled by -z keep-text-section-prefix (release entry below): it
+      // keeps LLVM's per-function .text.hot/.startup/.unlikely prefixes as
+      // distinct output sections so cold code doesn't share startup pages.
       "-Wl,--hash-style=both",
       "-Wl,--build-id=sha1",
     ],
@@ -981,6 +977,24 @@ export const linkerFlags: Flag[] = [
     flag: "-Wl,--gc-sections",
     when: c => c.linux && c.release,
     desc: "Garbage-collect unused sections (release only; debug keeps Zig dbHelper symbols)",
+  },
+  {
+    // Keep LLVM's per-function `.text.hot.` / `.text.startup.` /
+    // `.text.unlikely.` / `.text.exit.` prefixes as separate output
+    // sections instead of merging everything into one `.text`. Fat-LTO
+    // otherwise lays out all ~14k Rust `.text.*` sections in CGU /
+    // crate-alphabetical order, so hot CLI-dispatch + VM-init code (the
+    // `bun <file>` startup path) ends up sharing 4 KB / 64 KB fault-around
+    // pages with cold panic/format/bounds-check machinery and the cold
+    // bundler/install/css bodies — ~2.7 MB of extra .text faulted in at
+    // startup vs. a layout that packs the startup path together. LLVM
+    // already tags panic/EH/bounds paths (and `#[cold]` fns) `.unlikely`
+    // and C++ static-init ctors `.startup`; this makes lld actually
+    // segregate them so steady-state RSS doesn't carry them. LTO-safe and
+    // needs no second link (unlike --symbol-ordering-file). gold/lld only.
+    flag: "-Wl,-z,keep-text-section-prefix",
+    when: c => c.linux && c.release,
+    desc: "Segregate .text.hot/.startup/.unlikely sections (packs startup path, evicts cold code)",
   },
   {
     // Always icf=safe in release. The stripped `bun` shares its build-id
@@ -1015,6 +1029,7 @@ export const linkerFlags: Flag[] = [
     when: c => c.linux,
     desc: "Dynamic symbol list + version script",
   },
+
   // ─── FreeBSD ───
   {
     flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`, "-stdlib=libc++"],
@@ -1065,6 +1080,13 @@ export const linkerFlags: Flag[] = [
     flag: "-Wl,--gc-sections",
     when: c => c.freebsd && c.release,
     desc: "Garbage-collect unused sections",
+  },
+  {
+    // Same as the Linux entry: keep .text.hot/.startup/.unlikely prefixes
+    // as distinct output sections so cold code doesn't share startup pages.
+    flag: "-Wl,-z,keep-text-section-prefix",
+    when: c => c.freebsd && c.release,
+    desc: "Segregate .text.hot/.startup/.unlikely sections",
   },
   {
     flag: c => [

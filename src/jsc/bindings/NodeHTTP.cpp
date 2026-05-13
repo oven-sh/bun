@@ -128,36 +128,23 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         args.append(methodString);
     }
 
-    // Count headers up front so the rawHeaders array (2 entries per header) can
-    // be allocated with its butterfly already sized: putDirectIndex below then
-    // never reshapes it, and we avoid the temporary MarkedArgumentBuffer +
-    // second copy pass the old code used. The walk is just an in-memory iterator
-    // over the already-parsed request, so it's cheap.
-    //
-    // The `headers` object intentionally keeps a constant inline capacity
-    // (defaultInlineCapacity) rather than being sized from this count:
-    // structureCache keys on prototype + inline capacity, so a constant keeps
-    // every request's headers object on a single cached structure and the
-    // putDirect transitions below stay on the fast path request-to-request
-    // instead of churning a fresh structure for every distinct header count.
-    // The default inline capacity covers the typical request without
-    // over-allocating; rarer header-heavy requests spill to a butterfly, same
-    // as any other object.
-    size_t headerCount = 0;
-    for (auto it = request->begin(); it != request->end(); ++it)
-        headerCount++;
-
+    // Skip the extra O(headers) counting pass that used to size the inline
+    // capacity hint. Using a constant capacity keeps every request's headers
+    // object on a single cached structure (structureCache keys on prototype +
+    // inline capacity), so the putDirect transitions below stay on the fast
+    // path request-to-request instead of churning a fresh structure for every
+    // distinct header count. The default inline capacity covers the typical
+    // request without over-allocating; rarer header-heavy requests spill to a
+    // butterfly, same as any other object.
     JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), JSFinalObject::defaultInlineCapacity);
-    RETURN_IF_EXCEPTION(scope, void());
-    JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, headerCount * 2);
     RETURN_IF_EXCEPTION(scope, void());
     JSC::JSArray* setCookiesHeaderArray = nullptr;
     JSC::JSString* setCookiesHeaderString = nullptr;
+    MarkedArgumentBuffer arrayValues;
     HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
 
     args.append(headersObject);
 
-    unsigned arrayIndex = 0;
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
         StringView nameView = StringView(std::span { reinterpret_cast<const Latin1Character*>(pair.first.data()), pair.first.length() });
@@ -196,20 +183,33 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
                 headersObject->putDirect(vm, nameIdentifier, setCookiesHeaderArray, 0);
                 RETURN_IF_EXCEPTION(scope, void());
             }
-            array->putDirectIndex(globalObject, arrayIndex++, setCookiesHeaderString);
-            RETURN_IF_EXCEPTION(scope, void());
-            array->putDirectIndex(globalObject, arrayIndex++, jsValue);
-            RETURN_IF_EXCEPTION(scope, void());
+            arrayValues.append(setCookiesHeaderString);
+            arrayValues.append(jsValue);
             setCookiesHeaderArray->push(globalObject, jsValue);
             RETURN_IF_EXCEPTION(scope, void());
 
         } else {
             headersObject->putDirectMayBeIndex(globalObject, nameIdentifier, jsValue);
             RETURN_IF_EXCEPTION(scope, void());
-            array->putDirectIndex(globalObject, arrayIndex++, nameString);
+            arrayValues.append(nameString);
+            arrayValues.append(jsValue);
             RETURN_IF_EXCEPTION(scope, void());
-            array->putDirectIndex(globalObject, arrayIndex++, jsValue);
-            RETURN_IF_EXCEPTION(scope, void());
+        }
+    }
+
+    JSC::JSArray* array;
+    {
+
+        ObjectInitializationScope initializationScope(vm);
+        if ((array = JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), arrayValues.size()))) [[likely]] {
+            EncodedJSValue* data = arrayValues.data();
+            for (size_t i = 0, size = arrayValues.size(); i < size; ++i) {
+                array->initializeIndex(initializationScope, i, JSValue::decode(data[i]));
+            }
+        } else {
+            RETURN_IF_EXCEPTION(scope, );
+            array = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), arrayValues);
+            RETURN_IF_EXCEPTION(scope, );
         }
     }
 
@@ -896,8 +896,23 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
             RETURN_IF_EXCEPTION(scope, {});
             const auto name = nameString->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            if (WTF::equalIgnoringASCIICase(name, "set-cookie"_s)) {
-                RELEASE_AND_RETURN(scope, fetchHeadersGetSetCookie(globalObject, vm, impl));
+
+            // Resolve the name to its known header enum once. A known name then
+            // takes the HTTPHeaderName fast path (HTTPHeaderMap::get) and skips
+            // the isValidHTTPToken scan plus the second findHTTPHeaderName
+            // lookup that FetchHeaders::get(StringView) would otherwise perform.
+            WebCore::HTTPHeaderName headerName;
+            if (WebCore::findHTTPHeaderName(name, headerName)) {
+                if (headerName == WebCore::HTTPHeaderName::SetCookie) {
+                    RELEASE_AND_RETURN(scope, fetchHeadersGetSetCookie(globalObject, vm, impl));
+                }
+
+                String value = impl->fastGet(headerName);
+                if (value.isEmpty()) {
+                    return JSValue::encode(jsUndefined());
+                }
+
+                return JSC::JSValue::encode(jsString(vm, value));
             }
 
             WebCore::ExceptionOr<String> res = impl->get(name);
@@ -938,6 +953,20 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
             if (valueValue.isUndefined())
                 return JSValue::encode(jsUndefined());
 
+            // Resolve the header name to its known enum once. Known names then
+            // take the HTTPHeaderName overload of FetchHeaders::set, which skips
+            // the isValidHTTPToken scan (an enum name is a valid token by
+            // construction) and the second findHTTPHeaderName lookup that
+            // HTTPHeaderMap::set(const String&, ...) would otherwise perform.
+            WebCore::HTTPHeaderName headerName;
+            const bool isKnownHeaderName = WebCore::findHTTPHeaderName(StringView(name), headerName);
+            const auto setHeader = [&](const String& value) {
+                if (isKnownHeaderName)
+                    impl->set(headerName, value);
+                else
+                    impl->set(name, value);
+            };
+
             // Note: isArray() accepts Proxy->Array, but jsDynamicCast returns null for Proxy.
             // Fall through to the single-value path in that case.
             if (auto* array = dynamicDowncast<JSArray>(valueValue)) {
@@ -947,7 +976,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                     RETURN_IF_EXCEPTION(scope, {});
                     auto value = item.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
-                    impl->set(name, value);
+                    setHeader(value);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 for (unsigned i = 1; i < length; ++i) {
@@ -964,7 +993,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
 
             auto value = valueValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            impl->set(name, value);
+            setHeader(value);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(jsUndefined());
         }

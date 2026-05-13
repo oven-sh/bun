@@ -4,7 +4,9 @@
 #include <wtf/StackCheck.h>
 #include <wtf/StackTrace.h>
 #include <wtf/dtoa.h>
+#include <wtf/DateMath.h>
 #include <wtf/NumberOfCores.h>
+#include <wtf/text/StringView.h>
 #include <atomic>
 
 #include "wtf/SIMDUTF.h"
@@ -210,6 +212,14 @@ extern "C" double WTF__parseES5Date(const Latin1Character* string, size_t length
 {
     bool isLocalTime;
     return WTF::parseES5Date({ string, length }, isLocalTime);
+}
+
+// Pin the process-global default timezone (ICU's ucal_setDefaultTimeZone). Used
+// by the Zig runtime to seed the host timezone before a JSGlobalObject exists,
+// so ICU never falls back to its slow lazy host-zone auto-detection.
+extern "C" bool WTF__setTimeZoneOverride(const Latin1Character* string, size_t length)
+{
+    return WTF::setTimeZoneOverride(WTF::StringView::fromLatin1({ string, length }));
 }
 
 namespace Bun {

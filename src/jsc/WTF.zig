@@ -47,6 +47,20 @@ pub const WTF = struct {
         return error.InvalidDate;
     }
 
+    extern fn WTF__setTimeZoneOverride(bytes: [*]const u8, length: usize) bool;
+
+    /// Override the process-global default timezone via `WTF::setTimeZoneOverride`
+    /// (which calls `ucal_setDefaultTimeZone`). Returns whether ICU accepted the
+    /// id; an empty id is a no-op returning `false`. Safe to call before any
+    /// `JSGlobalObject` exists, as long as `bun.jsc.initialize` has run. Note
+    /// this does not reset JSC's date cache — callers that may already have
+    /// constructed a `Date` should use `JSGlobalObject.setTimeZone` instead.
+    pub fn setTimeZoneOverride(time_zone: []const u8) bool {
+        jsc.markBinding(@src());
+        if (time_zone.len == 0) return false;
+        return WTF__setTimeZoneOverride(time_zone.ptr, time_zone.len);
+    }
+
     extern fn Bun__writeHTTPDate(buffer: *[32]u8, length: usize, timestampMs: u64) c_int;
 
     pub fn writeHTTPDate(buffer: *[32]u8, timestampMs: u64) []u8 {

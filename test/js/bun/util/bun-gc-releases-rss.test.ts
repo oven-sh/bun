@@ -49,11 +49,12 @@ test.skipIf(!isLinux)("Bun.gc(true) returns freed libpas/mimalloc pages to the O
     const final = process.memoryUsage().rss;
     const growth = peak - start;
     const released = peak - final;
-    const pct = growth > 0 ? (released / growth) * 100 : 100;
+    const pct = (released / growth) * 100;
     console.log(JSON.stringify({
       startMB: (start / 1048576).toFixed(1),
       peakMB: (peak / 1048576).toFixed(1),
       finalMB: (final / 1048576).toFixed(1),
+      growthMB: (growth / 1048576).toFixed(1),
       releasedPct: pct.toFixed(1),
     }));
   `;
@@ -67,8 +68,12 @@ test.skipIf(!isLinux)("Bun.gc(true) returns freed libpas/mimalloc pages to the O
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  const { startMB, peakMB, finalMB, releasedPct } = JSON.parse(stdout);
-  console.log({ startMB, peakMB, finalMB, releasedPct });
+  const { startMB, peakMB, finalMB, growthMB, releasedPct } = JSON.parse(stdout);
+  console.log({ startMB, peakMB, finalMB, growthMB, releasedPct });
+
+  // 8 rounds live * ~4MB each = ~32MB minimum working set; RSS growth must
+  // be meaningful or the released% assertion below proves nothing.
+  expect(Number(growthMB)).toBeGreaterThan(20);
 
   // Without the fix: ~0% released (libpas/mimalloc keep the pages until the
   // background pas_scavenger / mimalloc purge timer runs, which never gets

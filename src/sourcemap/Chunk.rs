@@ -418,6 +418,23 @@ impl NewBuilder<VLQSourceMap> {
     // generated line and column numbers
     pub fn update_generated_line_and_column(&mut self, output: &[u8]) {
         let slice = &output[self.last_generated_update as usize..];
+
+        // ASCII fast path: the window between two source mappings is almost
+        // always pure printable ASCII with no `\r`/`\n` (e.g. eslint and most
+        // JS sources). `index_of_newline_or_non_ascii` flags any byte `< 0x20`
+        // (except `\t`) or `> 127`, so a `None` result means every byte in the
+        // window — including any `\t` — advances the generated column by exactly
+        // 1 and never crosses a line boundary. Skip the per-rune WTF-8 decode
+        // (`wtf8_byte_sequence_length_with_invalid` + `decode_wtf8_rune_t` per
+        // rune) entirely in that case; fall to the rune loop only when a
+        // newline or non-ASCII byte actually exists in the window.
+        if strings::index_of_newline_or_non_ascii(slice, 0).is_none() {
+            debug_assert!(slice.len() <= i32::MAX as usize);
+            self.generated_column += slice.len() as i32;
+            self.last_generated_update = output.len() as u32;
+            return;
+        }
+
         let mut needs_mapping = self.cover_lines_without_mappings
             && !self.line_starts_with_mapping
             && self.has_prev_state;

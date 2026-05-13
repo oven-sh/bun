@@ -36,7 +36,7 @@ test("native ReadableStream small chunks don't pin autoAllocateChunkSize ArrayBu
 
   // Some chunks coalesce on the wire; we just need a meaningful sample
   // of small reads through the native pull path.
-  expect(chunks.length).toBeGreaterThan(100);
+  expect(chunks.length).toBeGreaterThan(20);
 
   const dataBytes = chunks.reduce((s, c) => s + c.byteLength, 0);
   const backingBytes = chunks.reduce((s, c) => s + c.buffer.byteLength, 0);

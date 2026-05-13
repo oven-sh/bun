@@ -673,6 +673,19 @@ pub const BundleV2 = struct {
                         }
                     }
                 },
+                error.InvalidDataURL => {
+                    if (!handles_import_errors and !this.transpiler.options.ignore_module_resolution_errors) {
+                        Logger.Log.addResolveErrorWithTextDupe(
+                            log,
+                            source,
+                            import_record.range,
+                            this.allocator(),
+                            "Could not resolve data URL: \"{s}\"",
+                            .{import_record.specifier},
+                            import_record.kind,
+                        ) catch unreachable;
+                    }
+                },
                 // assume other errors are already in the log
                 else => {},
             }

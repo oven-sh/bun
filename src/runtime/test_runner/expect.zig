@@ -950,8 +950,12 @@ pub const Expect = struct {
             // When re-running from a deferred `.resolves`/`.rejects`
             // `.then()` callback, the user's frame is no longer on the
             // stack; use the location captured in `maybeDeferMatcher()`.
-            const srcloc: CallFrame.CallerSrcLoc, const owns_srcloc: bool = if (this.async_rerun_srcloc) |s|
-                .{ s, false }
+            // Gate on `is_async_rerun` (not just "is the field non-null")
+            // so a stale capture from a previous deferred matcher on the
+            // same `expect()` instance isn't reused for a later synchronous
+            // call, where the real callframe is available and correct.
+            const srcloc: CallFrame.CallerSrcLoc, const owns_srcloc: bool = if (this.is_async_rerun and this.async_rerun_srcloc != null)
+                .{ this.async_rerun_srcloc.?, false }
             else
                 .{ callFrame.getCallerSrcLoc(globalThis), true };
             defer if (owns_srcloc) srcloc.str.deref();
@@ -1316,8 +1320,6 @@ pub const Expect = struct {
     /// Function that is run for either `expect.myMatcher()` call or `expect().myMatcher` call,
     /// and we can known which case it is based on if the `callFrame.this()` value is an instance of Expect
     pub fn applyCustomMatcher(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!jsc.JSValue {
-        defer globalThis.bunVM().autoGarbageCollect();
-
         // retrieve the user-provided matcher function (matcher_fn)
         const func: JSValue = callFrame.callee();
         var matcher_fn: JSValue = getCustomMatcherFn(func, globalThis) orelse .js_undefined;
@@ -1329,9 +1331,13 @@ pub const Expect = struct {
         // try to retrieve the Expect instance
         const thisValue: JSValue = callFrame.this();
         const expect: *Expect = Expect.fromJS(thisValue) orelse {
+            defer globalThis.bunVM().autoGarbageCollect();
             // if no Expect instance, assume it is a static call (`expect.myMatcher()`), so create an ExpectCustomAsymmetricMatcher instance
             return ExpectCustomAsymmetricMatcher.create(globalThis, callFrame, matcher_fn);
         };
+        // Use the shared cleanup so `counted_expect_call` is reset the same
+        // way built-in matchers do via `defer this.postMatch(...)`.
+        defer expect.postMatch(globalThis);
 
         // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
         // so now execute the symmetric matching

@@ -2150,11 +2150,14 @@ impl DevServer {
                                 // Zig: `catch return` — abort the deferral on failure.
                                 None => {
                                     // SAFETY: `deferred_ptr` is a hive slot from
-                                    // `get()` above; `pool::Node<T>` has no drop
-                                    // glue (`data` is `MaybeUninit`), so `put`'s
-                                    // in-place drop is a no-op even though `data`
-                                    // was never written on this error path.
-                                    unsafe { self.deferred_request_pool.put(deferred_ptr) };
+                                    // `get()` above; `deferred.data.write()` has
+                                    // not run on this branch (we're still inside
+                                    // the struct-literal initializer), so the slot
+                                    // does not satisfy `put()`'s "fully-initialized
+                                    // T" contract. `put_raw` recycles/frees without
+                                    // `drop_in_place`, matching Zig's `pool.put`
+                                    // (no destructor).
+                                    unsafe { self.deferred_request_pool.put_raw(deferred_ptr) };
                                     return Ok(());
                                 }
                             }
@@ -6002,7 +6005,12 @@ impl DevServer {
                     ev.append_file(file_path);
                 }
                 bun_watcher::Kind::Directory => {
-                    #[cfg(target_os = "linux")]
+                    // PORT NOTE: Zig's `Environment.isLinux` is `os.tag == .linux`,
+                    // which is *true* on Android (Zig encodes Android via the ABI
+                    // tag, not the OS tag). Rust's `target_os = "linux"` is false
+                    // on Android, so include `target_os = "android"` explicitly to
+                    // keep forwarding inotify sub-path names there.
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
                     {
                         // INotifyWatcher stores sub paths into `changed_files`
                         let names = event.names(changed_files);
@@ -6014,7 +6022,7 @@ impl DevServer {
                             ev.append_dir(file_path, None);
                         }
                     }
-                    #[cfg(not(target_os = "linux"))]
+                    #[cfg(not(any(target_os = "linux", target_os = "android")))]
                     {
                         let _ = changed_files;
                         ev.append_dir(file_path, None);

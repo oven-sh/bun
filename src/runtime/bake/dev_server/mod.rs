@@ -405,6 +405,12 @@ impl HmrSocket {
 }
 
 /// `DevServer.HotReloadEvent` — produced by the watcher thread.
+// PORT NOTE: Zig's `_: u0 align(std.atomic.cache_line) = 0` first-field trick gives the whole
+// struct cache-line alignment so each inline `WatcherAtomics.events: [3]` element occupies its
+// own cache line, avoiding false sharing on `contention_indicator` between watcher and dev-server
+// threads. 128 matches `std.atomic.cache_line` on x86_64/aarch64 (Bun's tier-1 targets) and
+// absorbs Intel adjacent-line prefetch.
+#[repr(align(128))]
 pub struct HotReloadEvent {
     /// BACKREF (LIFETIMES.tsv): inline element of `WatcherAtomics.events: [3]`.
     /// `*mut` (not `*const`) because `run` mutates the owning DevServer; Zig

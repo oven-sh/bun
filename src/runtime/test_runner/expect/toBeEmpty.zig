@@ -2,7 +2,7 @@ pub fn toBeEmpty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
     defer this.postMatch(globalThis);
 
     const thisValue = callFrame.this();
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeEmpty", "");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeEmpty", "")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

@@ -16,7 +16,7 @@ pub fn toStartWith(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallF
         return globalThis.throw("toStartWith() requires the first argument to be a string", .{});
     }
 
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toStartWith", "<green>expected<r>");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toStartWith", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

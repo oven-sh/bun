@@ -9,7 +9,7 @@ pub fn toBeWithin(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
         return globalThis.throwInvalidArguments("toBeWithin() requires 2 arguments", .{});
     }
 
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeWithin", "<green>start<r><d>, <r><green>end<r>");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeWithin", "<green>start<r><d>, <r><green>end<r>")) orelse return this.deferredResult(thisValue);
 
     const startValue = arguments[0];
     startValue.ensureStillAlive();

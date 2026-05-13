@@ -2,7 +2,7 @@ pub fn toBeTrue(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFram
     defer this.postMatch(globalThis);
 
     const thisValue = callFrame.this();
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeTrue", "");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeTrue", "")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

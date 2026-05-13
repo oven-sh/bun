@@ -50,7 +50,7 @@ pub fn toMatchSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *C
     var hint = hint_string.toSlice(default_allocator);
     defer hint.deinit();
 
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toMatchSnapshot", "<green>properties<r><d>, <r>hint");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toMatchSnapshot", "<green>properties<r><d>, <r>hint")) orelse return this.deferredResult(thisValue);
 
     return this.snapshot(globalThis, value, property_matchers, hint.slice(), "toMatchSnapshot");
 }

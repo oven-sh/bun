@@ -16,7 +16,7 @@ pub fn toContainAnyKeys(
 
     const expected = arguments[0];
     expected.ensureStillAlive();
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toContainAnyKeys", "<green>expected<r>");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toContainAnyKeys", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
 
     if (!expected.jsType().isArray()) {
         return globalThis.throwInvalidArgumentType("toContainAnyKeys", "expected", "array");

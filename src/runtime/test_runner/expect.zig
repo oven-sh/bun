@@ -24,6 +24,10 @@ pub const Expect = struct {
     flags: Flags = .{},
     parent: ?*bun.jsc.Jest.bun_test.BunTest.RefData,
     custom_label: bun.String = bun.String.empty,
+    /// Set to true while re-invoking a matcher from a `.resolves`/`.rejects`
+    /// `.then()` callback so we don't double-count the expectation or defer
+    /// again.
+    is_async_rerun: bool = false,
 
     pub const TestScope = struct {
         test_id: TestRunner.Test.ID,
@@ -31,6 +35,7 @@ pub const Expect = struct {
     };
 
     pub fn incrementExpectCallCounter(this: *Expect) void {
+        if (this.is_async_rerun) return; // already counted on the first (deferred) call
         const parent = this.parent orelse return; // not in bun:test
         var buntest_strong = parent.bunTest() orelse return; // the test file this expect() call was for is no longer
         defer buntest_strong.deinit();
@@ -158,17 +163,158 @@ pub const Expect = struct {
         return thisValue;
     }
 
-    pub fn getValue(this: *Expect, globalThis: *JSGlobalObject, thisValue: JSValue, matcher_name: string, comptime matcher_params_fmt: string) bun.JSError!JSValue {
+    /// Retrieves the captured value passed to `expect(...)`, processing
+    /// `.resolves`/`.rejects` if set.
+    ///
+    /// Returns `null` when the captured value is a still-pending promise.
+    /// In that case the matcher is deferred: a `.then()` is attached that
+    /// re-invokes the matcher once the promise settles, and the matcher
+    /// must immediately return the promise from `deferredResult()`.
+    pub fn getValue(this: *Expect, globalThis: *JSGlobalObject, thisValue: JSValue, callframe: *CallFrame, matcher_name: string, comptime matcher_params_fmt: string) bun.JSError!?JSValue {
         const value = js.capturedValueGetCached(thisValue) orelse {
             return globalThis.throw("Internal error: the expect(value) was garbage collected but it should not have been!", .{});
         };
         value.ensureStillAlive();
 
+        if (try this.maybeDeferMatcher(globalThis, thisValue, callframe, value)) |_| {
+            return null;
+        }
+
         const matcher_params = switch (Output.enable_ansi_colors_stderr) {
             inline else => |colors| comptime Output.prettyFmt(matcher_params_fmt, colors),
         };
-        return processPromise(this.custom_label, this.flags, globalThis, value, matcher_name, matcher_params, false);
+        return try processPromise(this.custom_label, this.flags, globalThis, value, matcher_name, matcher_params, false);
     }
+
+    /// Returns the promise that a deferred matcher should return to its caller.
+    /// Only valid when `getValue()` returned `null`.
+    pub fn deferredResult(_: *Expect, thisValue: JSValue) JSValue {
+        return js.resultValueGetCached(thisValue) orelse .js_undefined;
+    }
+
+    /// If `.resolves`/`.rejects` is set and `value` is a still-pending promise,
+    /// sets up a `.then()` callback to re-invoke the current matcher once the
+    /// promise settles, stores the returned-to-caller promise in the
+    /// `resultValue` slot, and returns it. Returns `null` otherwise.
+    ///
+    /// This replaces the old synchronous `waitForPromise()` which would hang
+    /// forever if the promise could only be resolved by JavaScript sitting
+    /// above the matcher on the call stack (#14950).
+    fn maybeDeferMatcher(this: *Expect, globalThis: *JSGlobalObject, thisValue: JSValue, callframe: *CallFrame, value: JSValue) bun.JSError!?JSValue {
+        if (this.flags.promise == .none) return null;
+        if (this.is_async_rerun) return null;
+        const promise = value.asAnyPromise() orelse return null;
+        if (promise.status() != .pending) return null;
+
+        promise.setHandled(globalThis.vm());
+        const deferred = try PendingMatcher.create(globalThis, thisValue, callframe, value);
+        js.resultValueSetCached(thisValue, globalThis, deferred);
+        return deferred;
+    }
+
+    /// State for a `.resolves`/`.rejects` matcher call whose promise hasn't
+    /// settled yet. When it does, we re-invoke the matcher and resolve/reject
+    /// `deferred` with the outcome.
+    const PendingMatcher = struct {
+        /// The `Expect` JS instance (also keeps capturedValue alive).
+        expect_this: jsc.Strong.Optional,
+        /// The native matcher function being called (e.g. `toBe`).
+        matcher_fn: jsc.Strong.Optional,
+        /// JSArray of the arguments the matcher was called with.
+        matcher_args: jsc.Strong.Optional,
+        /// The promise returned to the caller of the matcher.
+        deferred: jsc.JSPromise.Strong,
+
+        fn create(globalThis: *JSGlobalObject, thisValue: JSValue, callframe: *CallFrame, promise_value: JSValue) bun.JSError!JSValue {
+            const args = callframe.arguments();
+            const args_array = try JSValue.createEmptyArray(globalThis, args.len);
+            for (args, 0..) |arg, i| {
+                try args_array.putIndex(globalThis, @intCast(i), arg);
+            }
+
+            const pending = bun.new(PendingMatcher, .{
+                .expect_this = .create(thisValue, globalThis),
+                .matcher_fn = .create(callframe.callee(), globalThis),
+                .matcher_args = .create(args_array, globalThis),
+                .deferred = jsc.JSPromise.Strong.init(globalThis),
+            });
+            const deferred_value = pending.deferred.value();
+
+            promise_value.then(globalThis, pending, onResolve, onReject) catch {
+                // JSTerminated: the VM is shutting down. Clean up and return
+                // the (never-to-settle) promise; the caller will unwind.
+                pending.deinit();
+            };
+
+            return deferred_value;
+        }
+
+        pub export const Bun__Expect__PendingMatcher__onResolve = jsc.toJSHostFn(onResolve);
+        pub export const Bun__Expect__PendingMatcher__onReject = jsc.toJSHostFn(onReject);
+
+        fn onResolve(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+            _, const ctx = callframe.argumentsAsArray(2);
+            if (ctx.isEmptyOrUndefinedOrNull()) return .js_undefined;
+            const this: *PendingMatcher = ctx.asPromisePtr(PendingMatcher);
+            this.settle(globalThis);
+            return .js_undefined;
+        }
+
+        fn onReject(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
+            _, const ctx = callframe.argumentsAsArray(2);
+            if (ctx.isEmptyOrUndefinedOrNull()) return .js_undefined;
+            const this: *PendingMatcher = ctx.asPromisePtr(PendingMatcher);
+            this.settle(globalThis);
+            return .js_undefined;
+        }
+
+        fn settle(this: *PendingMatcher, globalThis: *JSGlobalObject) void {
+            defer this.deinit();
+
+            const expect_this = this.expect_this.get() orelse return;
+            const matcher_fn = this.matcher_fn.get() orelse return;
+            const args_array = this.matcher_args.get() orelse return;
+
+            // Extract the original arguments back out of the array.
+            const args_len: u32 = @intCast(@min(
+                args_array.getLength(globalThis) catch return,
+                max_matcher_args,
+            ));
+            var args_buf: [max_matcher_args]JSValue = @splat(.js_undefined);
+            for (0..args_len) |i| {
+                args_buf[i] = args_array.getIndex(globalThis, @intCast(i)) catch return;
+            }
+
+            // Mark the re-run so we don't increment the expectation counter
+            // again or try to defer a second time. The captured promise is
+            // now settled, so `processPromise` will extract its result
+            // synchronously.
+            if (Expect.fromJS(expect_this)) |expect| expect.is_async_rerun = true;
+            defer if (Expect.fromJS(expect_this)) |expect| {
+                expect.is_async_rerun = false;
+            };
+
+            const result = matcher_fn.call(globalThis, expect_this, args_buf[0..args_len]) catch {
+                const exception = globalThis.tryTakeException() orelse JSValue.js_undefined;
+                this.deferred.reject(globalThis, exception) catch {};
+                return;
+            };
+            this.deferred.resolve(globalThis, result) catch {};
+        }
+
+        fn deinit(this: *PendingMatcher) void {
+            this.expect_this.deinit();
+            this.matcher_fn.deinit();
+            this.matcher_args.deinit();
+            this.deferred.deinit();
+            bun.destroy(this);
+        }
+
+        /// Maximum number of positional arguments any matcher accepts. The
+        /// largest today is 2 (e.g. `toBeCloseTo(number, precision)`), but
+        /// custom matchers via `expect.extend()` can take more.
+        const max_matcher_args = 32;
+    };
 
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
@@ -1155,6 +1301,9 @@ pub const Expect = struct {
         var value = js.capturedValueGetCached(thisValue) orelse {
             return globalThis.throw("Internal consistency error: failed to retrieve the captured value", .{});
         };
+        if (try expect.maybeDeferMatcher(globalThis, thisValue, callFrame, value)) |deferred| {
+            return deferred;
+        }
         value = try processPromise(expect.custom_label, expect.flags, globalThis, value, matcher_name, matcher_params, false);
         value.ensureStillAlive();
 

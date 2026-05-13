@@ -2,7 +2,7 @@ pub fn toHaveNthReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callfra
     jsc.markBinding(@src());
     const thisValue = callframe.this();
     defer this.postMatch(globalThis);
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callframe, "toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>")) orelse return this.deferredResult(thisValue);
 
     const nth_arg, const expected = callframe.argumentsAsArray(2);
 

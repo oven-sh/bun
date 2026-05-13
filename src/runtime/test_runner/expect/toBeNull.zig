@@ -2,7 +2,7 @@ pub fn toBeNull(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFram
     defer this.postMatch(globalThis);
 
     const thisValue = callFrame.this();
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeNull", "");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeNull", "")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

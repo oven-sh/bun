@@ -47,7 +47,7 @@ pub fn toMatchInlineSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFra
 
     const expected_slice: ?[]const u8 = if (has_expected) expected.slice() else null;
 
-    const value = try this.getValue(globalThis, thisValue, "toMatchInlineSnapshot", "<green>properties<r><d>, <r>hint");
+    const value = (try this.getValue(globalThis, thisValue, callFrame, "toMatchInlineSnapshot", "<green>properties<r><d>, <r>hint")) orelse return this.deferredResult(thisValue);
     return this.inlineSnapshot(globalThis, callFrame, value, property_matchers, expected_slice, "toMatchInlineSnapshot");
 }
 

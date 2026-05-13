@@ -15,7 +15,7 @@ pub fn toHaveLength(
     this.incrementExpectCallCounter();
 
     const expected: JSValue = arguments[0];
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveLength", "<green>expected<r>");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callframe, "toHaveLength", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
 
     if (!value.isObject() and !value.isString()) {
         var fmt = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };

@@ -4,7 +4,7 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
     const thisValue = callframe.this();
     defer this.postMatch(globalThis);
 
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveReturnedWith", "<green>expected<r>");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callframe, "toHaveReturnedWith", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
 
     const expected = callframe.argumentsAsArray(1)[0];
     this.incrementExpectCallCounter();

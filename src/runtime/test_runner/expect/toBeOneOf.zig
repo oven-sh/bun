@@ -14,7 +14,7 @@ pub fn toBeOneOf(
 
     this.incrementExpectCallCounter();
 
-    const expected = try this.getValue(globalThis, thisValue, "toBeOneOf", "<green>expected<r>");
+    const expected = (try this.getValue(globalThis, thisValue, callFrame, "toBeOneOf", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
     const list_value: JSValue = arguments[0];
 
     const not = this.flags.not;

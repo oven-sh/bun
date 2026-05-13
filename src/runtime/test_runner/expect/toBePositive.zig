@@ -2,7 +2,7 @@ pub fn toBePositive(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Call
     defer this.postMatch(globalThis);
 
     const thisValue = callFrame.this();
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBePositive", "");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBePositive", "")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

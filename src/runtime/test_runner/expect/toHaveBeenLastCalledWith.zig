@@ -4,7 +4,7 @@ pub fn toHaveBeenLastCalledWith(this: *Expect, globalThis: *JSGlobalObject, call
     const thisValue = callframe.this();
     const arguments = callframe.arguments();
     defer this.postMatch(globalThis);
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenLastCalledWith", "<green>...expected<r>");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callframe, "toHaveBeenLastCalledWith", "<green>...expected<r>")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

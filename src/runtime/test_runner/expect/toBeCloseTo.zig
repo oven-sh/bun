@@ -26,7 +26,7 @@ pub fn toBeCloseTo(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallF
         precision = precision_.asNumber();
     }
 
-    const received_: JSValue = try this.getValue(globalThis, thisValue, "toBeCloseTo", "<green>expected<r>, precision");
+    const received_: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeCloseTo", "<green>expected<r>, precision")) orelse return this.deferredResult(thisValue);
     if (!received_.isNumber()) {
         return globalThis.throwInvalidArgumentType("expect", "received", "number");
     }

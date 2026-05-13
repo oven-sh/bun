@@ -52,7 +52,7 @@ describe.todoIf(isBroken && isWindows)(
         cmd: [bunExe(), "--watch", "entry.js"],
         cwd: String(dir),
         env: bunEnv,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["ignore", "pipe", "inherit"],
       });
 
       const iter = forEachLine(proc.stdout);
@@ -86,7 +86,7 @@ describe.todoIf(isBroken && isWindows)(
         cmd: [bunExe(), "--watch", "entry.js"],
         cwd: String(dir),
         env: bunEnv,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["ignore", "pipe", "inherit"],
       });
 
       const iter = forEachLine(proc.stdout);

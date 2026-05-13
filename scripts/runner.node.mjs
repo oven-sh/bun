@@ -79,6 +79,7 @@ const integrationTimeout = 5 * 60_000;
 
 function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) return 60_000;
+  if (testPath.includes("test-cluster-")) return 60_000; // cluster IPC + socket-handle passing is process-heavy under runner concurrency
   if (testPath.includes("-docker-")) return 60_000;
   if (!isCI) return 60_000; // everything slower in debug mode
   if (options["step"]?.includes("-asan-")) return 60_000;

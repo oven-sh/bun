@@ -431,6 +431,22 @@ pub fn start_time() -> i128 {
 pub static Bun__Node__ProcessTitle: bun_threading::Guarded<Option<Box<[u8]>>> =
     bun_threading::Guarded::new(None);
 
+/// Backing storage for [`cli_arena`]. Written exactly once in [`Cli::start`]
+/// during single-threaded process startup (before `Command::start`, hence
+/// before any `cli_arena()` / `cli_dupe` caller), then read freely — same
+/// "init once in `start()`" shape as `cli::LOG_` and [`CMD`].
+///
+/// `RacyCell<MaybeUninit<…>>`, **not** `std::sync::LazyLock`: `LazyLock`'s init
+/// thunk and the `std::sync::Once` poison/slow path it forces are `#[cold]`, and
+/// fat-LTO parks them tens of MB away from the startup symbol cluster (the same
+/// pathology documented for `OnceLock::set` on [`CMD`]). `cli_arena()` is on the
+/// hot `bun <file>` / `bun run <script>` path (via `cli_dupe` / `cli_dupe_z` /
+/// `runner_arena`), so a `LazyLock` there faults a fresh cold page on every
+/// `bun` invocation. Zig's analogue was just a `default_allocator` handle / a
+/// never-`deinit`'d `ArenaAllocator` — a plain cell is the correct shape.
+pub(crate) static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc::Arena>> =
+    bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
+
 /// Process-lifetime arena for one-shot CLI commands. Zig passed
 /// `bun.default_allocator` (or a per-command `ArenaAllocator` never `deinit`'d)
 /// and let allocations live until exit.
@@ -438,13 +454,16 @@ pub static Bun__Node__ProcessTitle: bun_threading::Guarded<Option<Box<[u8]>>> =
 /// **Main-thread only.** `MimallocArena`'s `Sync` impl is *contract-only*:
 /// `mi_heap_*` allocation calls are thread-local, and
 /// `MimallocArena::assert_owning_thread()` debug-panics on cross-thread alloc.
-/// The heap is pinned to whichever thread first touches `cli_arena()` (the CLI
-/// dispatch thread). Do not call from worker/watcher threads.
+/// The heap is pinned to the thread that ran [`Cli::start`] (the CLI dispatch /
+/// main thread, which is where the arena is constructed). Do not call from
+/// worker/watcher threads.
 #[inline]
 pub fn cli_arena() -> &'static bun_alloc::Arena {
-    static ARENA: std::sync::LazyLock<bun_alloc::Arena> =
-        std::sync::LazyLock::new(bun_alloc::Arena::new);
-    &ARENA
+    // SAFETY: `CLI_ARENA` is written exactly once in `Cli::start` during
+    // single-threaded startup, before `Command::start` runs and therefore
+    // before any caller of `cli_arena()` / `cli_dupe` / `cli_dupe_z` exists.
+    // Read-only for the rest of the process lifetime.
+    unsafe { (*CLI_ARENA.get()).assume_init_ref() }
 }
 
 /// Dupe `s` into the process-lifetime CLI arena. Replaces ad-hoc
@@ -551,6 +570,12 @@ pub mod cli {
         bun_core::set_start_time(bun_core::time::nano_timestamp());
         // SAFETY: single-threaded process startup
         unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
+        // Init the process-lifetime CLI arena here (not via `LazyLock` on first
+        // use) — see `super::CLI_ARENA`. The write happens before any worker
+        // thread is spawned and before `Command::start` (the first
+        // `cli_arena()` caller), so a plain `RacyCell` is sound.
+        // SAFETY: single-threaded process startup; `mimalloc` is already init.
+        unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
         // TODO(b2-blocked): MainPanicHandler wiring.
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
@@ -867,6 +892,58 @@ pub mod command {
         }
     }
 
+    /// Cheap argv prescan for the dominant `bun <path>` / `bun .` shape.
+    ///
+    /// `which()` classifies any first positional that isn't one of the ~40
+    /// subcommand keywords as [`Tag::AutoCommand`] — but it pays for the
+    /// `RootCommandMatcher` packed-u96 keyword table (and its rodata) to find
+    /// that out, and `start()` then walks the full per-tag dispatch `match`.
+    /// For a first positional that *looks* like a path — `.`/`..`, a `./`,
+    /// `../`, `/` (or, on Windows, `\`, `.\`, `..\`, `X:\`) prefix, or
+    /// anything whose basename carries a `.` (a file extension) — none of
+    /// which can ever spell a subcommand keyword, so it is unambiguously
+    /// `AutoCommand` and we can jump straight to the run path. Anything
+    /// ambiguous (bare name like `run`/`x`, a leading `-flag`, a `node`/`bunx`
+    /// shim, no args at all) falls through to `which()` unchanged.
+    #[inline]
+    pub(super) fn looks_like_run_entrypoint(arg: &[u8]) -> bool {
+        // Empty or option-like: let `which()`'s leading-flag skip loop handle it.
+        let Some(&first) = arg.first() else {
+            return false;
+        };
+        if first == b'-' {
+            return false;
+        }
+        if arg == b"." || arg == b".." {
+            return true;
+        }
+        // Unix relative/absolute path prefixes.
+        if first == b'/' || arg.starts_with(b"./") || arg.starts_with(b"../") {
+            return true;
+        }
+        #[cfg(windows)]
+        {
+            if first == b'\\' || arg.starts_with(b".\\") || arg.starts_with(b"..\\") {
+                return true;
+            }
+            // Drive-letter root: `C:\…` / `C:/…`.
+            if arg.len() >= 3
+                && first.is_ascii_alphabetic()
+                && arg[1] == b':'
+                && (arg[2] == b'\\' || arg[2] == b'/')
+            {
+                return true;
+            }
+        }
+        // Has a `.` in the basename — `foo.js`, `dir/foo.ts`, `.dotfile`, …
+        // (no subcommand keyword contains a `.`).
+        let basename = match arg.iter().rposition(|&b| b == b'/' || b == b'\\') {
+            Some(i) => &arg[i + 1..],
+            None => arg,
+        };
+        basename.contains(&b'.')
+    }
+
     pub fn which() -> Tag {
         let argv = bun::argv();
         let mut iter = argv.iter();
@@ -1161,15 +1238,17 @@ pub mod command {
             }
         }
 
-        // Fast path: `bun -v` / `bun --version` / `bun --revision`, plus the
+        // Fast path: `bun -v` / `bun --version` / `bun --revision`, the
         // empty-eval forms `bun -e ''` / `bun -p ''` (and the `--eval=` /
-        // `--print=` spellings). Hoisted ABOVE `which()` and the per-tag
-        // `match` so `bun --version` never decodes the subcommand-name
-        // classifier (`which()` + its `RootCommandMatcher` name table) or
-        // pays for `create_context_data` (`arguments::parse` builds-and-drops
+        // `--print=` spellings), and the dominant `bun <path>` / `bun .` run
+        // shape. Hoisted ABOVE `which()` and the per-tag `match` so these
+        // common invocations never decode the subcommand-name classifier
+        // (`which()` + its `RootCommandMatcher` name table / rodata) or walk
+        // the per-tag dispatch `match`. `bun --version` also skips
+        // `create_context_data` entirely (`arguments::parse` builds-and-drops
         // a full `api::TransformOptions` and forces two `LazyLock`s for what
         // is a no-op). Keeps `command::which`'s code/rodata and `arguments`'s
-        // clap tables out of the `--version` working set.
+        // clap tables out of the `--version` / `bun <file>` working set.
         //
         // Correctness guards:
         //  * argv0 must be a plain `bun` invocation — a `node` / `bunx` shim
@@ -1215,6 +1294,23 @@ pub mod command {
                 if empty_eval {
                     Output::flush();
                     return HelpCommand::exec();
+                }
+
+                // `bun <path>` / `bun .` — the dominant run shape. argv[1] is
+                // path-shaped (`looks_like_run_entrypoint`), which no
+                // subcommand keyword can be, so `which()` would unambiguously
+                // return `Tag::AutoCommand`; short-circuit straight to that
+                // arm so a plain `bun <file>` never decodes the subcommand
+                // classifier (`which()` + its `RootCommandMatcher` keyword
+                // table / rodata) or walks the per-tag dispatch `match` below.
+                // Dispatches to exactly the arm `which()` would have selected,
+                // so config loading / arg parsing / passthrough are unchanged.
+                if argv
+                    .get(1)
+                    .map(bun_core::ZStr::as_bytes)
+                    .is_some_and(looks_like_run_entrypoint)
+                {
+                    return exec_auto_or_run(Tag::AutoCommand, log);
                 }
             }
         }

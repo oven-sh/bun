@@ -46,6 +46,16 @@ fn splat_byte_all(
 pub struct BuildCommand;
 
 impl BuildCommand {
+    /// `bun build` subcommand entry point.
+    ///
+    /// Marked `#[cold]` + `#[inline(never)]` so the linker keeps this large
+    /// body out of the hot run of `.text` that the cold-start arg-parse /
+    /// dispatch working set lives in. `bun .` (the default `run` command)
+    /// never reaches here, so paging this in on startup is pure waste; this
+    /// finishes what `perf(clap): mark cold-command param tables cold` started
+    /// (those moved the tables, not the bodies).
+    #[cold]
+    #[inline(never)]
     pub fn exec(
         ctx: Context,
         fetcher: Option<&mut bundle_v2::DependenciesScanner>,

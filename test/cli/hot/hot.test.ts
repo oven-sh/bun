@@ -803,11 +803,11 @@ it(
           }
         }
       }
-    })();
+    })().catch(() => {});
     let stderrText = "";
     (async () => {
       for await (const chunk of runner.stderr) stderrText += new TextDecoder().decode(chunk);
-    })();
+    })().catch(() => {});
     runner.exited.then(() => {
       for (const w of waiters.splice(0)) w.resolve("<process exited>");
     });

@@ -173,6 +173,44 @@ describe("expect().resolves / .rejects on a still-pending promise", () => {
     expect(out).toContain("1 pass");
     expect(out).toContain("0 fail");
   }, 40_000);
+
+  // https://github.com/oven-sh/bun/issues/25181
+  // With the blocking `waitForPromise()`, each concurrent test's
+  // `.resolves` serialized the whole group. Ten 1s-sleeps took ~10s;
+  // now they overlap.
+  test("does not serialize test.concurrent tests", async () => {
+    const { out, exitCode, timedOut } = await runFixture(
+      "concurrent",
+      /* js */ `
+        import { test, expect, afterAll } from "bun:test";
+
+        const start = Date.now();
+
+        async function slow() {
+          await new Promise(r => setTimeout(r, 1000));
+          return { ok: true };
+        }
+
+        test.concurrent.each([...Array(10).keys()])("concurrent %i", async () => {
+          await expect(slow()).resolves.toEqual({ ok: true });
+        });
+
+        afterAll(() => {
+          console.log("ELAPSED=" + (Date.now() - start));
+        });
+      `,
+    );
+
+    expect(timedOut).toBe(false);
+    expect(out).toContain("10 pass");
+    expect(out).toContain("0 fail");
+    const elapsed = Number(out.match(/ELAPSED=(\d+)/)?.[1]);
+    // Ten 1s-sleeps: concurrent ≈ 1s, serialized ≈ 10s. Allow generous
+    // slack for slow CI — anything under 5s proves they overlapped.
+    expect(elapsed).toBeGreaterThan(900);
+    expect(elapsed).toBeLessThan(5000);
+    expect(exitCode).toBe(0);
+  }, 40_000);
 });
 
 // Already-settled promises took the synchronous path before and after the

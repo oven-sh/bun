@@ -893,18 +893,36 @@ impl DirEntry {
             | DK::EventPort => return Ok(()),
         };
 
+        // Lowercase the entry basename once. The same bytes drive the
+        // previous-generation case-insensitive probe, the new entry's
+        // lowercased key, *and* the insert into `self.data` — and the hash is
+        // computed once here (`name_hash`) rather than re-derived by the probe
+        // and again by the insert. A stack scratch covers the common short
+        // case (matches `DirEntry::get`); only a basename longer than
+        // `MAX_PATH_BYTES` — which `getdents`/`FindNextFile` can't produce —
+        // would touch the heap.
+        let mut name_lc_buf = PathBuffer::uninit();
+        let name_lc_heap: Option<bun_collections::StringHashMapContext::PrehashedCaseInsensitive> =
+            if name_slice.len() <= MAX_PATH_BYTES {
+                None
+            } else {
+                Some(bun_collections::StringHashMapContext::PrehashedCaseInsensitive::init(
+                    name_slice,
+                ))
+            };
+        let name_lc: &[u8] = match &name_lc_heap {
+            Some(p) => &p.input[..],
+            None => strings::copy_lowercase_if_needed(name_slice, &mut name_lc_buf[..]),
+        };
+        let name_hash = self.data.hash_key(name_lc);
+
         let stored: *mut Entry = 'brk: {
             if let Some(map) = prev_map {
-                // PERF(port): was stack-fallback alloc — profile in Phase B
-                let prehashed =
-                    bun_collections::StringHashMapContext::PrehashedCaseInsensitive::init(
-                        name_slice,
-                    );
-                // PORT NOTE: `StringHashMap::get_adapted` ignores the adapter and looks up by the
-                // raw key; pass the already-lowercased `prehashed.input` so the case-insensitive
-                // lookup matches the lowercased keys stored in `data` (Zig: `getAdapted` lowercases
-                // for both hash and eql).
-                if let Some(&existing_ptr) = map.get_adapted(&prehashed.input, &prehashed) {
+                // `data` keys are the lowercased basenames (Zig's `getAdapted`
+                // lowercases for both hash and eql), so an exact match on
+                // `name_lc` is the case-insensitive match — and reuses
+                // `name_hash` instead of re-hashing.
+                if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc) {
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
                     let existing = unsafe { &mut *existing_ptr };
                     // `MutexGuard` stores a `BackRef<Mutex>` (lifetime-erased), so
@@ -950,11 +968,11 @@ impl DirEntry {
                     name_slice,
                     filename_store,
                 )?);
+                // `name_lc` is already ASCII-lowercased, so interning it as-is
+                // is byte-identical to `init_lower_case_append_if_needed(name_slice, ..)`
+                // and skips a second lowercase pass over the basename.
                 addr_of_mut!((*p).base_lowercase_).write(
-                    strings::StringOrTinyString::init_lower_case_append_if_needed(
-                        name_slice,
-                        filename_store,
-                    )?,
+                    strings::StringOrTinyString::init_append_if_needed(name_lc, filename_store)?,
                 );
                 addr_of_mut!((*p).dir).write(self.dir);
                 addr_of_mut!((*p).mutex).write(Mutex::new());
@@ -989,7 +1007,10 @@ impl DirEntry {
         // `base_lowercase_` is never mutated after construction.
         let key: &'static [u8] =
             unsafe { &*core::ptr::from_ref::<[u8]>((*stored).base_lowercase()) };
-        self.data.put_static_key(key, stored)?;
+        // `(*stored).base_lowercase()` equals `name_lc` byte-for-byte (a fresh
+        // entry interned `name_lc`; a recycled one matched it exactly above), so
+        // `name_hash` is its hash too — insert without re-hashing.
+        self.data.put_static_key_hashed(name_hash, key, stored)?;
 
         if !I::IS_VOID {
             iterator.next(stored_ref, self.fd);
@@ -2398,7 +2419,10 @@ pub fn read_file_contents_in_arena(
     };
     if read_count + 1 < initial_buf.len() {
         // allocator.dupeZ — own the buffer in `arena`; trailing NUL not in len.
-        let buf = arena.alloc_slice_fill_copy::<u8>(read_count + 1, 0);
+        // Allocate UNINITIALIZED (no zero-fill), like Zig's `allocator.alloc(u8,
+        // size + 1)`: `copy_from_slice` initializes `[..read_count]` and
+        // `finish_arena_contents` writes the trailing NUL at `[read_count]`.
+        let buf = arena_alloc_uninit_bytes(arena, read_count + 1);
         buf[..read_count].copy_from_slice(&initial_buf[..read_count]);
         return Ok(finish_arena_contents(arena, buf, read_count));
     }
@@ -2416,8 +2440,11 @@ pub fn read_file_contents_in_arena(
         return Ok((core::ptr::NonNull::dangling(), 0));
     }
 
-    // `arena.alloc_slice(cap + 1)` instead of `vec![0u8; size + 1]` — this is
-    // the load-bearing change vs. `read_file_with_handle_impl::<false, _>`.
+    // Arena-owned `[u8; cap + 1]` instead of `vec![0u8; size + 1]` — this is
+    // the load-bearing change vs. `read_file_with_handle_impl::<false, _>`. Like
+    // Zig's `allocator.alloc(u8, size + 1)` the buffer is UNINITIALIZED; the
+    // `copy_from_slice` + `read_all` below cover `[..total]` and
+    // `finish_arena_contents` writes the trailing NUL at `[total]`.
     //
     // The file can grow or shrink between `get_end_pos()` above and the read
     // below — a hot-reload writes a file while it is being parsed. Size the
@@ -2428,7 +2455,7 @@ pub fn read_file_contents_in_arena(
     // otherwise made `finish_arena_contents`'s `buf[total] = 0` a bounds-check
     // panic (observed crashing `bun --hot` on large source maps).
     let cap = size.max(initial_len);
-    let buf = arena.alloc_slice_fill_copy::<u8>(cap + 1, 0);
+    let buf = arena_alloc_uninit_bytes(arena, cap + 1);
     buf[..initial_len].copy_from_slice(&initial_buf[..initial_len]);
 
     let read_count = match file.read_all(&mut buf[initial_len..cap]) {
@@ -2439,6 +2466,26 @@ pub fn read_file_contents_in_arena(
     debug!("read({}, {}) = {}", file.handle(), size, read_count);
 
     Ok(finish_arena_contents(arena, buf, total))
+}
+
+/// Allocate `len` bytes from `arena` left **uninitialized** (no zero-fill —
+/// matches Zig's `allocator.alloc(u8, len)`), returned as a raw `&mut [u8]`.
+///
+/// The caller must write every byte before reading it; the file-content readers
+/// do (`copy_from_slice` of the already-read prefix + `File::read_all` for the
+/// rest + a trailing NUL written by [`finish_arena_contents`]). Skipping the
+/// memset is the point: this buffer is the per-transpiled-module file-content
+/// allocation, and zeroing a fresh mimalloc arena page for every module showed
+/// up as the single largest `memset` callchain in the transpiler profile.
+#[inline]
+#[allow(clippy::mut_from_ref)]
+fn arena_alloc_uninit_bytes(arena: &bun_alloc::Arena, len: usize) -> &mut [u8] {
+    let slot = arena.alloc_uninit_slice::<u8>(len);
+    // SAFETY: `u8` has no invalid bit patterns and `slot` is storage owned
+    // exclusively by this fresh arena allocation, so forming a `&mut [u8]` view
+    // over it is sound provided every byte is written before being read (the
+    // doc-comment contract, upheld by all callers).
+    unsafe { core::slice::from_raw_parts_mut(slot.as_mut_ptr().cast::<u8>(), len) }
 }
 
 /// Strip BOM in-place (UTF-8) or via a fresh arena copy (UTF-16), write the
@@ -2616,7 +2663,15 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
                 // PORT NOTE: Zig returned an allocator-owned `[:0]u8` and the caller freed it
                 // later; Rust returns `Cow::Owned` so the caller's drop frees it. The trailing
                 // NUL sentinel is not part of `contents` (matches Zig `[:0]`).
-                let mut allocation = vec![0u8; read_count + 1];
+                // Allocate UNINITIALIZED (no zero-fill), like Zig's
+                // `allocator.alloc(u8, size + 1)`: the copy + the explicit NUL
+                // below initialize all `read_count + 1` bytes before any read,
+                // then `truncate` drops the sentinel from the logical length.
+                let mut allocation: Vec<u8> = Vec::with_capacity(read_count + 1);
+                // SAFETY: capacity is `read_count + 1`; every element is written
+                // (`copy_from_slice` + `allocation[read_count] = 0`) before it is
+                // read, and `truncate` only shrinks the length.
+                unsafe { allocation.set_len(read_count + 1) };
                 allocation[..read_count].copy_from_slice(&buf[..read_count]);
                 allocation[read_count] = 0;
                 allocation.truncate(read_count);
@@ -2647,7 +2702,16 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
         };
         debug!("stat({}) = {}", file.handle(), size);
 
-        let mut buf = vec![0u8; size + 1];
+        // Allocate UNINITIALIZED (no zero-fill), like Zig's `allocator.alloc(u8,
+        // size + 1)`: the `copy_from_slice` + `read_all` + the explicit NUL
+        // below write every byte of `buf[..total]` and `buf[size]` before any is
+        // read, then `truncate` drops the sentinel from the logical length.
+        let mut buf: Vec<u8> = Vec::with_capacity(size + 1);
+        // SAFETY: capacity is `size + 1`. Bytes are written (`copy_from_slice`,
+        // `File::read_all`, `buf[size] = 0`) before being read; bytes past
+        // `total` are dropped by `truncate` and never observed; `read_all` only
+        // writes into the slice it is given.
+        unsafe { buf.set_len(size + 1) };
         buf[..initial_read.len()].copy_from_slice(initial_read);
 
         if size == 0 {

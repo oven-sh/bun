@@ -56,14 +56,21 @@ const { width, height, format } = await new Bun.Image(input).metadata();
 img.resize(800); // width 800, keep aspect ratio
 img.resize(800, 600); // exactly 800×600 (stretch)
 img.resize(800, 600, { fit: "inside" }); // fit within 800×600
+img.resize(800, 600, { fit: "cover" }); // fill 800×600, center-crop the rest
+img.resize(800, 600, { fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 1 } }); // letterbox with white
 img.resize(800, 600, { withoutEnlargement: true }); // never upscale
 img.resize(800, 600, { filter: "mitchell" });
 ```
 
-| `fit`              | Behavior                                            |
-| ------------------ | --------------------------------------------------- |
-| `"fill"` (default) | Stretch to exactly `width × height`                 |
-| `"inside"`         | Preserve aspect ratio; result fits _within_ the box |
+| `fit`              | Behavior                                                       |
+| ------------------ | -------------------------------------------------------------- |
+| `"fill"` (default) | Stretch to exactly `width × height`                            |
+| `"inside"`         | Preserve aspect ratio; result fits _within_ the box            |
+| `"outside"`        | Preserve aspect ratio; result _contains_ the box (no crop)     |
+| `"cover"`          | Preserve aspect ratio; fill the box and center-crop the rest   |
+| `"contain"`        | Preserve aspect ratio; letterbox with `background` to fill box |
+
+For `fit: "contain"`, pass `background: { r, g, b, alpha }` to set the letterbox colour (RGB 0–255, alpha 0–1). The default is transparent black — renders as black in JPEG (alpha dropped) and a transparent letterbox in PNG/WebP, so callers can composite the output without an extra step.
 
 `filter` selects the resampling kernel. The default `"lanczos3"` is the right choice for photographs.
 

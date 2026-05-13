@@ -8240,13 +8240,28 @@ declare module "bun" {
       /** Resampling kernel. @default "lanczos3" */
       filter?: Filter;
       /**
-       * `"fill"` stretches to exactly width×height. `"inside"` preserves
-       * aspect ratio so the result fits *within* width×height.
+       * How to reconcile the requested box with the source's aspect ratio.
+       * All modes preserve aspect ratio except `"fill"`.
+       *
+       * - `"fill"` — stretch to exactly width×height.
+       * - `"inside"` — scale so the result fits *within* width×height.
+       * - `"outside"` — scale so the result *contains* width×height.
+       * - `"cover"` — scale like `"outside"` then center-crop to width×height.
+       * - `"contain"` — scale like `"inside"` then letterbox with
+       *   {@link ResizeOptions.background | `background`} to width×height.
+       *
        * @default "fill"
        */
-      fit?: "fill" | "inside";
+      fit?: "fill" | "inside" | "outside" | "cover" | "contain";
       /** Never upscale — if the source is already smaller, leave it. */
       withoutEnlargement?: boolean;
+      /**
+       * Letterbox colour for `fit:"contain"`. Each channel defaults to `0`;
+       * `alpha` is `0..1` (Sharp convention). Default is transparent black —
+       * renders as black in JPEG (alpha dropped) and as a transparent
+       * letterbox in PNG/WebP. Ignored for other fit modes.
+       */
+      background?: { r?: number; g?: number; b?: number; alpha?: number };
     }
 
     interface ModulateOptions {

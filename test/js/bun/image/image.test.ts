@@ -1010,6 +1010,73 @@ describe("Bun.Image", () => {
       expect(h).toBe(8);
     });
 
+    test("fit:'outside' preserves aspect ratio with the box as a lower bound", async () => {
+      const out = await new Bun.Image(gradientPng) // 16×16
+        .resize(8, 32, { fit: "outside" })
+        .png()
+        .bytes();
+      const { w, h } = decodePngRaw(out);
+      // 16×16 into an 8×32 box → scale = max(8/16, 32/16) = 2 → 32×32.
+      expect(w).toBe(32);
+      expect(h).toBe(32);
+    });
+
+    test("fit:'cover' matches the box exactly and center-crops overflow", async () => {
+      // 4×2 stripes so the crop is observable: column 0 = red, 1 = green,
+      // 2 = blue, 3 = white. A 4×2 → box 2×2 cover scales to 4×2 (max scale
+      // = max(2/4, 2/2) = 1) then crops the middle 2×2 → columns 1..2 of
+      // the source should survive.
+      const stripes = makePng(4, 2, x => {
+        if (x === 0) return [255, 0, 0, 255];
+        if (x === 1) return [0, 255, 0, 255];
+        if (x === 2) return [0, 0, 255, 255];
+        return [255, 255, 255, 255];
+      });
+      const out = await new Bun.Image(stripes).resize(2, 2, { fit: "cover" }).png().bytes();
+      const { w, h, data } = decodePngRaw(out);
+      expect(w).toBe(2);
+      expect(h).toBe(2);
+      // Center columns (1 and 2 in source) land in the crop.
+      expect(rgbaAt(data, 2, 0, 0)).toEqual([0, 255, 0, 255]);
+      expect(rgbaAt(data, 2, 1, 0)).toEqual([0, 0, 255, 255]);
+    });
+
+    test("fit:'contain' matches the box exactly and letterboxes with background", async () => {
+      // 2×2 all-red source into a 4×2 box → contain scales to 2×2 (min
+      // scale = min(4/2, 2/2) = 1) then pads 1 px on each side horizontally
+      // with the requested background.
+      const red = makePng(2, 2, () => [255, 0, 0, 255]);
+      const out = await new Bun.Image(red)
+        .resize(4, 2, { fit: "contain", background: { r: 0, g: 255, b: 0, alpha: 1 } })
+        .png()
+        .bytes();
+      const { w, h, data } = decodePngRaw(out);
+      expect(w).toBe(4);
+      expect(h).toBe(2);
+      // Left strip = green pad, middle = red source, right strip = green pad.
+      expect(rgbaAt(data, 4, 0, 0)).toEqual([0, 255, 0, 255]);
+      expect(rgbaAt(data, 4, 1, 0)).toEqual([255, 0, 0, 255]);
+      expect(rgbaAt(data, 4, 2, 0)).toEqual([255, 0, 0, 255]);
+      expect(rgbaAt(data, 4, 3, 0)).toEqual([0, 255, 0, 255]);
+    });
+
+    test("fit:'contain' default background is transparent black", async () => {
+      const red = makePng(2, 2, () => [255, 0, 0, 255]);
+      const out = await new Bun.Image(red).resize(4, 2, { fit: "contain" }).png().bytes();
+      const { data } = decodePngRaw(out);
+      // Untouched letterbox pixels → alpha = 0, RGB = 0.
+      expect(rgbaAt(data, 4, 0, 0)).toEqual([0, 0, 0, 0]);
+      expect(rgbaAt(data, 4, 3, 0)).toEqual([0, 0, 0, 0]);
+    });
+
+    test("fit:'cover'/'contain' with square-into-square is a no-op on dims", async () => {
+      for (const fit of ["cover", "contain"] as const) {
+        const out = await new Bun.Image(gradientPng).resize(8, 8, { fit }).png().bytes();
+        const { w, h } = decodePngRaw(out);
+        expect({ fit, w, h }).toEqual({ fit, w: 8, h: 8 });
+      }
+    });
+
     test("modulate({saturation:0}) greyscales: R=G=B per pixel", async () => {
       const out = await new Bun.Image(cornersPng).modulate({ saturation: 0 }).png().bytes();
       const { data } = decodePngRaw(out);

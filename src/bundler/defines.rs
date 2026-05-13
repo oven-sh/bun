@@ -314,6 +314,34 @@ impl DefineExt for Define {
     }
 }
 
+/// Pre-built `ExprData` for the literal define *values* Bun auto-injects on
+/// every transpiler init: `"development"` / `"production"` / `"test"` (the
+/// `process.env.NODE_ENV` & `process.env.BUN_ENV` defaults) and `true` /
+/// `false` (the `process.browser` default). The `E::EString` payloads live in
+/// process-lifetime `static`s — producing one is allocation-free and never
+/// touches the thread-local AST store `json_parser::parse_env_json` writes into.
+/// Returns `None` for everything else (user `--define` values, env-file
+/// `NODE_ENV` overrides like `staging`, JSON object/array literals, …), which
+/// falls through to the general `parse_env_json` path in `DefineData::parse`.
+fn const_default_define_value(value_str: &[u8]) -> Option<ExprData> {
+    static DEVELOPMENT: bun_ast::E::EString = bun_ast::E::EString::from_static(b"development");
+    static PRODUCTION: bun_ast::E::EString = bun_ast::E::EString::from_static(b"production");
+    static TEST: bun_ast::E::EString = bun_ast::E::EString::from_static(b"test");
+    if value_str == b"\"development\"" {
+        Some(ExprData::EString(bun_ast::StoreRef::from_static(&DEVELOPMENT)))
+    } else if value_str == b"\"production\"" {
+        Some(ExprData::EString(bun_ast::StoreRef::from_static(&PRODUCTION)))
+    } else if value_str == b"\"test\"" {
+        Some(ExprData::EString(bun_ast::StoreRef::from_static(&TEST)))
+    } else if value_str == b"true" {
+        Some(ExprData::EBoolean(bun_ast::E::Boolean { value: true }))
+    } else if value_str == b"false" {
+        Some(ExprData::EBoolean(bun_ast::E::Boolean { value: false }))
+    } else {
+        None
+    }
+}
+
 /// Extension surface for the canonical `DefineData` — `parse` / `from_input`
 /// need `bun_parsers::json_parser` / `js_lexer::Keywords`.
 pub trait DefineDataExt: Sized {
@@ -447,10 +475,47 @@ impl DefineDataExt for DefineData {
                 ),
             });
         }
+
+        // Fast path for the compile-time-constant literal define *values* that
+        // Bun auto-injects on every transpiler init (`"development"` /
+        // `"production"` / `"test"` for `process.env.NODE_ENV` & `BUN_ENV`, and
+        // `true` / `false` for `process.browser`) — the entire default define
+        // set on the `bun run` path. Build the `DefineData` straight from
+        // process-lifetime statics: skips the `bump.alloc_slice_copy` +
+        // `json_parser::parse_env_json` + `Expr::deep_clone` round-trip and,
+        // crucially, never touches the thread-local AST `Expr`/`Stmt` stores
+        // (created lazily below only when a value really needs JSON parsing).
+        if let Some(value) = const_default_define_value(value_str) {
+            let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(value.tag());
+            return Ok(DefineData {
+                value,
+                original_name: if !value_str.is_empty() {
+                    Some(Box::<[u8]>::from(value_str))
+                } else {
+                    None
+                },
+                flags: Flags::new(
+                    /* valueless: */ value_is_undefined,
+                    /* can_be_removed_if_unused: */ can_be_removed_if_unused,
+                    /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
+                    /* method_call_must_be_replaced_with_undefined: */
+                    method_call_must_be_replaced_with_undefined_,
+                ),
+            });
+        }
+
         // Zig parsed against a stack-local `Source` then `Expr.Data.deepClone`d
         // into the arena. We dupe `value_str` into `bump` first so every string
         // slice the JSON lexer hands back already points into the long-lived
         // arena (the `E::String.data` bytes survive without per-string dup).
+        //
+        // `parse_env_json` builds `E::String`/`E::Object` nodes in the
+        // thread-local AST `Expr`/`Stmt` stores, so create them now — done
+        // lazily here (idempotent no-ops once created) instead of eagerly in
+        // `Transpiler::configure_defines`, since most inits resolve every define
+        // through the fast path above and never need an AST store.
+        bun_ast::Expr::data_store_create();
+        bun_ast::Stmt::data_store_create();
         let arena_value: &[u8] = bump.alloc_slice_copy(value_str);
         let source = bun_ast::Source {
             // `Source.contents` is typed `&'static [u8]` as a Phase-A stand-in

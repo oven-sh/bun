@@ -3933,7 +3933,11 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     // the result and report the slot as found regardless, which violates the
     // !scope.exception() || !hasSlot invariant in JSValue::get. On stack
     // overflow profiledCall returns the Exception cell itself, so also avoid
-    // caching that into m_nextTickFunction.
+    // caching that into m_nextTickFunction. Unlike constructStdin /
+    // constructStdioWriteStream we do not reportUncaughtExceptionAtEventLoop
+    // here: that handler re-enters JS to emit 'uncaughtException', which
+    // fails again near the stack limit and trips the re-entrancy guard in
+    // VirtualMachine.uncaughtException -> process.exit(7).
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSNextTickQueue* nextTickQueueObject;

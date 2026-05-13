@@ -6,19 +6,21 @@ import { bunEnv, bunExe } from "harness";
 // that JS call throws (e.g. RangeError from stack exhaustion), JSC's
 // setUpStaticFunctionSlot would still putDirect the bogus result and report the
 // slot as found with the exception still pending, triggering
-// EXCEPTION_ASSERT(!scope.exception() || !hasSlot) in JSValue::get.
+// EXCEPTION_ASSERT(!scope.exception() || !hasSlot) in JSValue::get. The
+// initializers now clear the exception and return undefined, so the property
+// read does not throw and the slot is reified as undefined instead of the
+// Exception cell.
 test("accessing lazy process properties near stack limit does not crash", async () => {
   const src = `
-    let caught = 0;
     function recurse() {
       try { recurse(); } catch {}
-      try { process.nextTick; } catch { caught++; }
-      try { process.mainModule; } catch { caught++; }
+      try { process.nextTick; } catch {}
+      try { process.mainModule; } catch {}
     }
     recurse();
     // process.nextTick may have been reified as undefined if its initializer
-    // threw; use Bun.write directly for output.
-    Bun.write(Bun.stdout, "caught=" + caught + " type=" + typeof process.nextTick + "\\n");
+    // threw near the stack limit; use Bun.write directly for output.
+    Bun.write(Bun.stdout, "type=" + typeof process.nextTick + "\\n");
   `;
 
   await using proc = Bun.spawn({
@@ -31,7 +33,7 @@ test("accessing lazy process properties near stack limit does not crash", async 
 
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect(stdout).toMatch(/^caught=\d+ type=(undefined|function)\n$/);
+  expect(stdout).toMatch(/^type=(undefined|function)\n$/);
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 });

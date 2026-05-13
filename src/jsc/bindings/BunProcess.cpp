@@ -3930,6 +3930,8 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
 
     JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
+    if (vm.exceptionForInspection()) [[unlikely]]
+        return jsUndefined();
     if (nextTickFunction && nextTickFunction.isObject()) {
         this->m_nextTickFunction.set(vm, this, nextTickFunction.getObject());
     }
@@ -4357,6 +4359,33 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
 const JSC::ClassInfo Process::s_info
     = { "Process"_s, &Base::s_info, &processObjectTable, nullptr,
           CREATE_METHOD_TABLE(Process) };
+
+bool Process::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
+{
+    bool result = Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
+    if (result) [[likely]] {
+        VM& vm = JSC::getVM(globalObject);
+        // Several lazy PropertyCallback initializers in this class (nextTick,
+        // mainModule, channel, stdin/stdout/stderr, ...) call into JavaScript
+        // and can throw (e.g. stack overflow, termination). JSC's
+        // setUpStaticFunctionSlot does not check for exceptions and will both
+        // putDirect the callback result (which on throw may be empty or the
+        // Exception cell returned from executeCallImpl) and report the slot as
+        // found, violating the !scope.exception() || !hasSlot invariant in
+        // JSValue::get. If that happened, replace the bogus reified value with
+        // undefined and report the slot as not found so the exception
+        // propagates to the caller.
+        if (vm.exceptionForInspection()) [[unlikely]] {
+            auto* thisObject = uncheckedDowncast<Process>(object);
+            unsigned attributes;
+            PropertyOffset offset = thisObject->getDirectOffset(vm, propertyName, attributes);
+            if (isValidOffset(offset))
+                thisObject->putDirectOffset(vm, offset, jsUndefined());
+            return false;
+        }
+    }
+    return result;
+}
 
 void Process::finishCreation(JSC::VM& vm)
 {

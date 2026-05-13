@@ -316,7 +316,7 @@ pub const Expect = struct {
             const args_len: u32 = @intCast(try args_array.getLength(globalThis));
             var sfa = std.heap.stackFallback(inline_matcher_args * @sizeOf(JSValue), bun.default_allocator);
             const allocator = sfa.get();
-            const args_buf = allocator.alloc(JSValue, args_len) catch bun.outOfMemory();
+            const args_buf = bun.handleOom(allocator.alloc(JSValue, args_len));
             defer allocator.free(args_buf);
             for (0..args_len) |i| {
                 args_buf[i] = try args_array.getIndex(globalThis, @intCast(i));

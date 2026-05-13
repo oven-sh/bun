@@ -1782,7 +1782,7 @@ registry = "${mockRegistryUrl}"`,
         stderr: "pipe",
       });
 
-      expect(proc.exited).resolves.toBe(0);
+      await expect(proc.exited).resolves.toBe(0);
 
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
       // Scoped package should be filtered (1.5.0 not 2.0.0)

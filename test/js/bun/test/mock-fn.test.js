@@ -794,6 +794,63 @@ describe("mock()", () => {
 
     expect(bar()()).toBe(true);
   });
+
+  describe("as a constructor", () => {
+    test("Reflect.construct on jest.fn() with no implementation", () => {
+      const fn = jest.fn();
+      const inst = Reflect.construct(fn, []);
+      expect(typeof inst).toBe("object");
+      expect(inst).not.toBeNull();
+      expect(fn.mock.instances).toHaveLength(1);
+      expect(fn.mock.instances[0]).toBe(inst);
+    });
+
+    test("Reflect.construct on jest.fn() with mockReturnValue(primitive)", () => {
+      const fn = jest.fn().mockReturnValue("hello");
+      const inst = Reflect.construct(fn, []);
+      expect(typeof inst).toBe("object");
+      expect(fn()).toBe("hello");
+    });
+
+    test("Reflect.construct on jest.fn() with mockReturnValue(object)", () => {
+      const obj = { a: 1 };
+      const fn = jest.fn().mockReturnValue(obj);
+      const inst = Reflect.construct(fn, []);
+      expect(inst).toBe(obj);
+    });
+
+    test("Reflect.construct on jest.fn() with implementation returning a primitive", () => {
+      const fn = jest.fn(() => 42);
+      const inst = Reflect.construct(fn, []);
+      expect(typeof inst).toBe("object");
+      expect(fn()).toBe(42);
+    });
+
+    test("new on jest.fn() returns an object and records the instance", () => {
+      const fn = jest.fn(function () {
+        this.x = 123;
+      });
+      const inst = new fn();
+      expect(typeof inst).toBe("object");
+      expect(inst.x).toBe(123);
+      expect(fn.mock.instances).toHaveLength(1);
+      expect(fn.mock.instances[0]).toBe(inst);
+      expect(fn.mock.contexts[0]).toBe(inst);
+    });
+
+    test("Reflect.construct respects new.target prototype", () => {
+      class MyClass {}
+      const fn = jest.fn();
+      const inst = Reflect.construct(fn, [], MyClass);
+      expect(inst instanceof MyClass).toBe(true);
+    });
+
+    test("calling as a function does not populate instances", () => {
+      const fn = jest.fn().mockReturnValue(1);
+      expect(fn()).toBe(1);
+      expect(fn.mock.instances).toHaveLength(0);
+    });
+  });
 });
 
 describe("spyOn", () => {

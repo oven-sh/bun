@@ -11,10 +11,9 @@ pub fn to_throw_error_matching_snapshot(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // TODO(port): `defer this.postMatch(globalThis)` — needs &mut self at scope exit on every
-    // path; raw-pointer scopeguard is forbidden (PORTING.md borrowck rule). For now post_match
-    // is invoked only on the fall-through success path below; restructure in Phase B so it
-    // also runs on the early-return error paths.
+    // PORT NOTE: Zig `defer this.postMatch(globalThis)` — guard runs post_match on Drop for every
+    // exit path (early `return Err`, `?`, fall-through), matching Zig semantics.
+    let this = this.post_match_guard(global);
 
     let this_value = frame.this();
     let _arguments = frame.arguments_old::<2>();
@@ -92,11 +91,7 @@ pub fn to_throw_error_matching_snapshot(
         );
     };
 
-    // PORT NOTE: reshaped for borrowck — Zig deferred post_match to scope exit; here we run it
-    // explicitly after computing the result on the success path (see TODO above for error paths).
-    let result = Expect::snapshot(this, global, value, None, hint.slice(), "toThrowErrorMatchingSnapshot");
-    this.post_match(global);
-    result
+    this.snapshot(global, value, None, hint.slice(), "toThrowErrorMatchingSnapshot")
 }
 
 // ported from: src/test_runner/expect/toThrowErrorMatchingSnapshot.zig

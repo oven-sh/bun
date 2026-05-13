@@ -14,7 +14,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-test("unsettled top-level await exits 13 once the event loop is idle instead of hanging", async () => {
+test.concurrent("unsettled top-level await exits 13 once the event loop is idle instead of hanging", async () => {
   // Reduced from inquirer's search() prompt: stdin closes, readline closes,
   // nothing is left to settle the awaited promise. Node prints a warning
   // and exits 13. Bun previously busy-looped in waitForPromise forever.
@@ -47,7 +47,7 @@ test("unsettled top-level await exits 13 once the event loop is idle instead of 
   expect(exitCode).toBe(13);
 });
 
-test("monkey-patched process.emit observes 'beforeExit' and 'exit' on natural shutdown", async () => {
+test.concurrent("monkey-patched process.emit observes 'beforeExit' and 'exit' on natural shutdown", async () => {
   // signal-exit's mechanism: replace process.emit to intercept the 'exit'
   // event. Bun was calling the internal C++ EventEmitter directly, so the
   // override never ran and signal-exit never fired its callbacks.
@@ -75,7 +75,7 @@ test("monkey-patched process.emit observes 'beforeExit' and 'exit' on natural sh
   expect(exitCode).toBe(0);
 });
 
-test("signal-exit pattern rejects a pending TLA prompt on stdin close (inquirer flow)", async () => {
+test.concurrent("signal-exit pattern rejects a pending TLA prompt on stdin close (inquirer flow)", async () => {
   // End-to-end reduction of issue #17636: a prompt library awaits a promise
   // at top level that is only settled by user input or by signal-exit's
   // onExit hook. When stdin closes, Node runs beforeExit -> detects the
@@ -142,7 +142,7 @@ test("signal-exit pattern rejects a pending TLA prompt on stdin close (inquirer 
   expect(exitCode).toBe(0);
 });
 
-test("Promise microtasks queued from an 'exit' listener run, but nextTick does not", async () => {
+test.concurrent("Promise microtasks queued from an 'exit' listener run, but nextTick does not", async () => {
   // Node drains Promise microtasks once more after the 'exit' event so
   // that shutdown-time promise reactions observe the exit (needed for
   // the signal-exit -> inquirer rejection to reach its .catch()).
@@ -171,7 +171,7 @@ test("Promise microtasks queued from an 'exit' listener run, but nextTick does n
   expect(exitCode).toBe(5);
 });
 
-test("explicit process.exitCode suppresses the unsettled-TLA warning and exit 13", async () => {
+test.concurrent("explicit process.exitCode suppresses the unsettled-TLA warning and exit 13", async () => {
   // Node: if user code set an exit code, the TLA-unsettled path respects it
   // and does not overwrite with 13 or print the warning.
   const source = `
@@ -191,7 +191,7 @@ test("explicit process.exitCode suppresses the unsettled-TLA warning and exit 13
   expect(exitCode).toBe(7);
 });
 
-test("beforeExit listener that settles the TLA lets execution resume (no exit 13)", async () => {
+test.concurrent("beforeExit listener that settles the TLA lets execution resume (no exit 13)", async () => {
   // Node parity: a beforeExit handler can resolve the pending top-level
   // await, after which module evaluation continues past the await.
   const source = `

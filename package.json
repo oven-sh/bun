@@ -47,7 +47,6 @@
     "build:btg": "bun scripts/build-pgo.ts",
     "build:btg:plain": "bun scripts/build.ts --profile=btg",
     "build:btg:pgo": "bun scripts/build-pgo.ts",
-    "startup-order:sync": "bun scripts/build/sync-startup-order-suffixes.ts",
     "build:ci": "bun scripts/build.ts --profile=ci-release --build-dir=build/release-ci",
     "build:assert": "bun scripts/build.ts --profile=release-assertions --build-dir=build/release-assert",
     "build:asan": "bun scripts/build.ts --profile=release-asan --build-dir=build/release-asan",

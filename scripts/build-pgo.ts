@@ -18,8 +18,7 @@
  * vs the PGO+BOLT'd shipped `bun`). A real profile lets clang AND rustc emit
  * `.text.hot` / `.text.unlikely` from *measured* counts, and `--pgo-use`
  * flips on `-z keep-text-section-prefix` (see scripts/build/flags.ts) so lld
- * keeps that split — the hot run of `.text` then clusters contiguously. This
- * supersedes the hand-authored src/startup.order approximation.
+ * keeps that split — the hot run of `.text` then clusters contiguously.
  *
  * What it does
  * ────────────

@@ -1006,7 +1006,7 @@ export const linkerFlags: Flag[] = [
     // one contiguous run of pages instead of being scattered across the ~54 MB
     // `.text` (each hot fn otherwise drags in a 64 KB fault-around window of
     // cold neighbours: ~+1.3 MB resident `.text` vs the PGO+BOLT'd shipped
-    // binary). This SUPERSEDES the hand-authored src/startup.order clustering.
+    // binary).
     // Gated strictly on `pgoUse`: without a real profile this flag is harmful
     // (the static `.unlikely` heuristic is wrong for our startup path — see
     // the linker-tuning block above).
@@ -1038,23 +1038,6 @@ export const linkerFlags: Flag[] = [
     when: c => c.linux,
     desc: "Dynamic symbol list + version script",
   },
-  {
-    // Cluster the cold-start working set (clap arg-parse -> CLI dispatch ->
-    // module loader -> transpiler/js_parser+js_printer bring-up -> JSC
-    // ZigGlobalObject/VM init) into one contiguous run of `.text` pages
-    // instead of letting fat-LTO scatter it across the ~50 MB `.text` blob
-    // (Rust CGUs land in arbitrary order). Single-pass, best-effort: the
-    // file is human-authored and `--no-warn-symbol-ordering` lets lld drop
-    // entries whose Rust v0-mangled `Cs<hash>_` disambiguators / `.llvm.<N>`
-    // suffixes have drifted — a slightly-stale list just loses a little
-    // clustering and costs zero extra link time (no 2-pass relink). See
-    // src/startup.order; linkDepends() lists the same path so ninja relinks
-    // when it changes.
-    flag: c => [`-Wl,--symbol-ordering-file=${c.cwd}/src/startup.order`, "-Wl,--no-warn-symbol-ordering"],
-    when: c => c.linux && c.release && !c.asan && !c.valgrind,
-    desc: "Cluster hot cold-start .text (RSS/iTLB) from src/startup.order",
-  },
-
   // ─── FreeBSD ───
   {
     flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`, "-stdlib=libc++"],
@@ -1127,10 +1110,8 @@ export function linkDepends(cfg: Config): string[] {
   if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
   if (cfg.windows) return [join(cfg.cwd, "src/symbols.def")];
   if (cfg.darwin) return [join(cfg.cwd, "src/symbols.txt")];
-  // linux: ELF dynamic-list + version script (+ .text ordering hint in release)
-  const deps = [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
-  if (cfg.release && !cfg.asan && !cfg.valgrind) deps.push(join(cfg.cwd, "src/startup.order"));
-  return deps;
+  // linux: ELF dynamic-list + version script
+  return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -117,17 +117,14 @@ export const profiles = {
    * leaving ~+1.3 MB resident `.text` and (at `bun --version`) ~+0.7-1.2 MB
    * peak RSS — hot fns scattered across the ~54 MB `.text`, each dragging in a
    * 64 KB fault-around window of cold neighbours, including the WebKit/ICU/JSC
-   * C++ global-ctor bodies `.init_array` runs before `print_version_and_exit`
-   * that no single-pass `--symbol-ordering-file` can cluster. So `bun run
-   * build:btg` runs the two-stage PGO build (driver: scripts/build-pgo.ts):
-   * build an instrumented `bun`, train it, `llvm-profdata merge`, then relink
-   * `build/btg/bun` with `--pgo-use` (which also flips on
-   * `-z keep-text-section-prefix`; see scripts/build/flags.ts) — that is the
-   * apples-to-apples binary for PORT-vs-SYS. `bun run build:btg:plain` does the
-   * fast profile-less link (faster iteration, but its layout is not comparable
-   * to a BOLT/PGO'd release); the hand-authored src/startup.order clustering is
-   * the best-effort fallback for that path and becomes redundant once a real
-   * profile is in play.
+   * C++ global-ctor bodies `.init_array` runs before `print_version_and_exit`.
+   * So `bun run build:btg` runs the two-stage PGO build (driver:
+   * scripts/build-pgo.ts): build an instrumented `bun`, train it,
+   * `llvm-profdata merge`, then relink `build/btg/bun` with `--pgo-use` (which
+   * also flips on `-z keep-text-section-prefix`; see scripts/build/flags.ts) —
+   * that is the apples-to-apples binary for PORT-vs-SYS. `bun run
+   * build:btg:plain` does the fast profile-less link (faster iteration, but its
+   * layout is not comparable to a BOLT/PGO'd release).
    */
   btg: {
     buildType: "Release",

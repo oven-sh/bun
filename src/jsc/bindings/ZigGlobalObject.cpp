@@ -271,11 +271,11 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
 extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 #endif
 
-extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode)
+extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup)
 {
     static std::once_flag jsc_init_flag;
     // NOLINTBEGIN
-    std::call_once(jsc_init_flag, [evalMode, envp, envc, onCrash]() {
+    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, envp, envc, onCrash]() {
         JSC::Config::enableRestrictedOptions();
 
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
@@ -312,6 +312,21 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 #ifdef BUN_DEBUG
             JSC::Options::showPrivateScriptsInStackTraces() = true;
 #endif
+
+            if (oneShotStartup) {
+                // One-shot invocations (`bun -e ...` / `bun --print ...`) run a
+                // trivial amount of JavaScript and then exit; they never reach a
+                // long-running event loop. Creating the JSC worker threads that
+                // VM construction otherwise spawns eagerly — the concurrent JIT
+                // worklist thread and the Heap parallel-marking helpers — is pure
+                // overhead here (clone3 + faulting fresh thread stacks) and none
+                // of those threads do useful work before the process exits. Run
+                // the DFG/FTL on the executing thread and use a single GC marker.
+                // A `BUN_JSC_<option>` environment override below can still flip
+                // either knob back on for debugging.
+                JSC::Options::useConcurrentJIT() = false;
+                JSC::Options::numberOfGCMarkers() = 1;
+            }
 
             if (envc > 0) [[likely]] {
                 auto envc_copy = envc;

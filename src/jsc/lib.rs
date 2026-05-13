@@ -594,10 +594,40 @@ pub fn initialize(eval_mode: bool) {
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
     let env = bun_sys::environ();
+    // One-shot eval invocations (`bun -e ...` / `bun --print ...`) exit before
+    // any long-running event loop; tell JSC to skip the worker threads it
+    // otherwise spawns eagerly at VM creation (see `JSCInitialize`).
+    let one_shot = is_one_shot_eval_invocation();
     // SAFETY: `env` borrows the libc `environ` global for the duration of the
     // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
     // it is handed. JSCInitialize is called exactly once at startup.
-    unsafe { JSCInitialize(env.as_ptr(), env.len(), on_jsc_invalid_env_var, eval_mode) };
+    unsafe { JSCInitialize(env.as_ptr(), env.len(), on_jsc_invalid_env_var, eval_mode, one_shot) };
+}
+
+/// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /
+/// `bun -p <code>` / `bun --print <code>` — i.e. an inline-eval one-shot that
+/// runs a trivial script and exits without entering a long-running event loop.
+///
+/// Kept conservative on purpose: only the explicit eval flags qualify. `bun
+/// <file>` is *not* treated as one-shot (it may start a server), so server
+/// workloads keep the default multi-threaded JIT/GC configuration.
+fn is_one_shot_eval_invocation() -> bool {
+    for arg in bun_core::argv().iter().skip(1) {
+        if arg == b"-e" || arg == b"--eval" || arg == b"-p" || arg == b"--print" {
+            return true;
+        }
+        if arg.starts_with(b"--eval=") || arg.starts_with(b"--print=") {
+            return true;
+        }
+        // Skip leading flags (e.g. `--smol`) until the first positional, which
+        // is the subcommand / entry file — at which point this is not an
+        // inline-eval invocation.
+        if arg.first() == Some(&b'-') && arg.len() > 1 {
+            continue;
+        }
+        return false;
+    }
+    false
 }
 
 /// Port of `onJSCInvalidEnvVar` (jsc.zig:254).
@@ -2269,6 +2299,7 @@ unsafe extern "C" {
         count: usize,
         cb: extern "C" fn(name: *const u8, len: usize),
         eval_mode: bool,
+        one_shot_startup: bool,
     );
 }
 

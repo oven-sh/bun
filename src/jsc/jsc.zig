@@ -18,7 +18,9 @@ pub const wtf = @import("./WTF.zig").WTF;
 pub fn initialize(eval_mode: bool) void {
     markBinding(@src());
     bun.analytics.Features.jsc += 1;
-    JSCInitialize(std.os.environ.ptr, std.os.environ.len, onJSCInvalidEnvVar, eval_mode);
+    // `one_shot_startup` is wired up by the Rust runtime (`bun_jsc::initialize`);
+    // the legacy Zig entry point keeps the default multi-threaded configuration.
+    JSCInitialize(std.os.environ.ptr, std.os.environ.len, onJSCInvalidEnvVar, eval_mode, false);
 }
 
 pub const JSValue = @import("./JSValue.zig").JSValue;
@@ -250,7 +252,7 @@ pub fn toJSTime(sec: isize, nsec: isize) JSTimeType {
 pub const MAX_SAFE_INTEGER = 9007199254740991;
 pub const MIN_SAFE_INTEGER = -9007199254740991;
 
-extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn ([*]const u8, len: usize) callconv(.c) void, eval_mode: bool) void;
+extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn ([*]const u8, len: usize) callconv(.c) void, eval_mode: bool, one_shot_startup: bool) void;
 fn onJSCInvalidEnvVar(name: [*]const u8, len: usize) callconv(.c) void {
     bun.Output.errGeneric(
         \\invalid JSC environment variable

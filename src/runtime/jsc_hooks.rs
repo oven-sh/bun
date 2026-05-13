@@ -2230,11 +2230,18 @@ fn transpile_source_code_inner(
                 // real `Transpiler` into `vm.transpiler` (the `options.jsx` /
                 // `options.loaders` reads below depend on the same invariant).
                 let src = unsafe { &(*jsc_vm).transpiler.options.macro_remap };
-                let mut m = bun_resolver::package_json::MacroMap::default();
-                for (k, v) in src.iter() {
-                    m.insert(k, bun_core::handle_oom(v.clone()));
+                if src.is_empty() {
+                    // Hot path: a module with no `--define`/`with { type: "macro" }`
+                    // remappings skips the per-entry re-key + per-value fallible
+                    // `clone()` entirely (Zig copied the empty struct by value).
+                    bun_resolver::package_json::MacroMap::default()
+                } else {
+                    let mut m = bun_resolver::package_json::MacroMap::default();
+                    for (k, v) in src.iter() {
+                        m.insert(k, bun_core::handle_oom(v.clone()));
+                    }
+                    m
                 }
-                m
             };
 
             // Spec :211-215.

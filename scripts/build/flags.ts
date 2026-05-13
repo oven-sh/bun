@@ -964,13 +964,18 @@ export const linkerFlags: Flag[] = [
       "-Wl,-z,combreloc",
       // NOTE: --sort-section=name was here historically; lld ignores it
       // for the default `.text` rule. We deliberately do NOT pass
-      // `-z keep-text-section-prefix`: without PGO/BOLT (the release/`btg`
-      // profile has none), LLVM's *static* `.unlikely` heuristic mislabels a
-      // lot of error/panic-format/`#[cold]`/bring-up code that actually runs
-      // on the `bun <file>` / `bun -p` startup path. Segregating it into a
-      // dedicated `.text.unlikely` then made ~84% of that section resident at
-      // startup anyway (plus 64 KB fault-around), so the monolithic `.text`
-      // the linker produces by default has *better* startup RSS locality.
+      // `-z keep-text-section-prefix` on the *unconditional* path: without a
+      // profile (the plain release/`btg` link has none), LLVM's *static*
+      // `.unlikely` heuristic mislabels a lot of error/panic-format/`#[cold]`/
+      // bring-up code that actually runs on the `bun <file>` / `bun -p`
+      // startup path. Segregating it into a dedicated `.text.unlikely` then
+      // made ~84% of that section resident at startup anyway (plus 64 KB
+      // fault-around), so the monolithic `.text` the linker produces by
+      // default has *better* startup RSS locality. With `--pgo-use` the
+      // `.hot`/`.unlikely` split is driven by *measured* counts instead, so
+      // `keep-text-section-prefix` IS passed in that case — see the dedicated
+      // entry further below, and `scripts/build-pgo.ts` for the two-stage
+      // `btg` PGO build that produces the profile.
       "-Wl,--hash-style=both",
       "-Wl,--build-id=sha1",
     ],
@@ -990,6 +995,24 @@ export const linkerFlags: Flag[] = [
     flag: c => ["-Wl,-icf=safe", `-Wl,-Map=${c.buildDir}/${bunExeName(c)}.linker-map`],
     when: c => c.linux && c.release && !c.asan && !c.valgrind,
     desc: "Identical-code-folding (safe; perf symbolication uses the linker-map)",
+  },
+  {
+    // When a PGO profile is loaded (`--pgo-use`, e.g. the two-stage `btg`
+    // build driven by scripts/build-pgo.ts) clang AND rustc emit `.text.hot` /
+    // `.text.unlikely` section prefixes from *measured* execution counts.
+    // Tell lld to keep those prefixes (it merges them into one `.text` by
+    // default) so the hot cold-start working set — clap → CLI dispatch →
+    // module loader → js_parser/js_printer bring-up → JSC VM init — lands in
+    // one contiguous run of pages instead of being scattered across the ~54 MB
+    // `.text` (each hot fn otherwise drags in a 64 KB fault-around window of
+    // cold neighbours: ~+1.3 MB resident `.text` vs the PGO+BOLT'd shipped
+    // binary). This SUPERSEDES the hand-authored src/startup.order clustering.
+    // Gated strictly on `pgoUse`: without a real profile this flag is harmful
+    // (the static `.unlikely` heuristic is wrong for our startup path — see
+    // the linker-tuning block above).
+    flag: "-Wl,-z,keep-text-section-prefix",
+    when: c => c.linux && c.release && !!c.pgoUse && !c.asan && !c.valgrind,
+    desc: "Keep .text.hot/.text.unlikely prefixes from the PGO profile (cluster hot startup .text)",
   },
 
   // ─── Symbols / exports ───

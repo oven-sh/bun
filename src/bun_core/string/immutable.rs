@@ -1084,6 +1084,13 @@ impl StringOrTinyString {
 
     // PORT NOTE: Zig deinit was a no-op (commented-out free). No Drop impl.
 
+    // PORT NOTE: plain `#[inline]` (not `#[inline(always)]`). These are tiny
+    // generic delegators: a length check plus a tail call into the non-generic
+    // `init`/`init_lower_case` or the `Appender` method. `#[inline]` lets the
+    // small fast path fold into callers (and lets duplicate `A` instantiations
+    // be ICF'd at link time / clustered by the symbol-ordering file) without
+    // forcing the cold `append*` arm into every call site.
+    #[inline]
     pub fn init_append_if_needed<A: Appender>(
         stringy: &[u8],
         appendy: &mut A,
@@ -1094,6 +1101,7 @@ impl StringOrTinyString {
         Ok(StringOrTinyString::init(appendy.append(stringy)?))
     }
 
+    #[inline]
     pub fn init_lower_case_append_if_needed<A: Appender>(
         stringy: &[u8],
         appendy: &mut A,

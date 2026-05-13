@@ -2072,9 +2072,12 @@ impl RealFS {
         // `Vec` first — that costs N `push`es + ~log2(N) Vec grows just to learn
         // the count, and forces every `Name` allocation to outlive the loop.
         // Stream `getdents64` straight into `add_entry` like Zig's
-        // `while (try iter.next()) |*e| dir.addEntry(e)`.
-        dir.data
-            .ensure_unused_capacity(prev_map.as_deref().map(|m| m.count()).unwrap_or(64))?;
+        // `while (try iter.next()) |*e| dir.addEntry(e)`. Floor at 64 even when
+        // a `prev_map` exists but is tiny/empty — a directory that just grew
+        // would otherwise rebuild `data` from a zero-capacity table.
+        dir.data.ensure_unused_capacity(
+            prev_map.as_deref().map(|m| m.count()).unwrap_or(0).max(64),
+        )?;
 
         // Hoist the `FilenameStore` singleton resolution (Once + LazyLock atomic
         // checks) out of the per-entry loop.

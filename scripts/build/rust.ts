@@ -448,6 +448,28 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (cfg.release && !cfg.assertions) {
     rustflags.push("-Zlocation-detail=none");
   }
+  // IR PGO, Rust half — mirrors the C++ `-fprofile-generate`/`-fprofile-use`
+  // (flags.ts) so the Rust ~half of bun's `.text` participates too (a port-era
+  // `bun` is mostly Rust now; instrumenting only C++ would leave most of the
+  // cold-start working set un-ordered). One merged `.profdata` covers both:
+  // clang and rustc share LLVM's IR-PGO format, and scripts/build-pgo.ts
+  // resolves `llvm-profdata` from the build's own toolchain so the versions
+  // line up. Stale/partial coverage is expected (codegen drifts; prebuilt
+  // WebKit isn't instrumented) — `-fprofile-use`'s C++ warnings are already
+  // silenced in flags.ts; rustc just emits "no profile data" notes and skips
+  // those functions, it does not fail. Driven end-to-end by `bun run
+  // build:btg:pgo`. RUSTFLAGS only reach target crates (with `--target`), so
+  // host build scripts / proc-macros stay un-instrumented, which is what we
+  // want. Not on Windows (the C++ PGO flags are `c.unix`-gated; keep parity).
+  if (!cfg.windows && cfg.pgoGenerate) {
+    rustflags.push(`-Cprofile-generate=${cfg.pgoGenerate}`);
+  }
+  if (!cfg.windows && cfg.pgoUse) {
+    // Functions absent from the profile (or whose CFG hash drifted) just don't
+    // get PGO applied — rustc emits a stderr warning, not an error, so a
+    // stale/partial profile degrades gracefully rather than failing the build.
+    rustflags.push(`-Cprofile-use=${cfg.pgoUse}`);
+  }
   // Force lld for any link rustc itself performs (the cdylib/staticlib deps
   // like `lol_html_c_api`; the `bun_bin` staticlib has no link step). The
   // default `cc` driver picks BFD `/usr/bin/ld`, which doesn't match the

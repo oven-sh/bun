@@ -311,6 +311,16 @@ export function getStdinStream(
   // same native fd. Called from GlobalObject::reload(). (#15027)
   stream.$resetStdioForHotReload = function () {
     disown();
+    // removeAllListeners() alone leaves the Readable's kDataListening bit
+    // set and schedules updateReadableListening() on the next tick, which
+    // would call self.resume() → own() and undo the disown() above. Use
+    // removeListener('data', fn) per listener so kDataListening is cleared,
+    // and pause() so kFlowing is cleared — otherwise any chunk pushed by an
+    // in-flight internalRead before the new load attaches its handler takes
+    // the addChunk fast path and is emitted to zero listeners instead of
+    // buffered.
+    for (const fn of stream.listeners("data")) stream.removeListener("data", fn);
+    originalPause.$call(stream);
     stream.removeAllListeners();
     stream.on("resume", onStreamResume);
     stream.on("pause", onStreamPause);

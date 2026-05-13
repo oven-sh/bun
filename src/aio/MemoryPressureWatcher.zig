@@ -255,12 +255,19 @@ const Darwin = struct {
 
     const State = struct {
         source: *anyopaque,
+        /// Signalled by the cancel handler once the last in-flight event
+        /// handler has returned. `uninstall()` blocks on this so it doesn't
+        /// return to `VirtualMachine.deinit()` until no off-thread enqueue
+        /// can happen — same guarantee as Linux's `thread.join()` and
+        /// Windows's `UnregisterWaitEx(..., INVALID_HANDLE_VALUE)`.
+        drained: *anyopaque,
         vm: *jsc.VirtualMachine,
         /// Set on the dispatch thread, consumed on the JS thread.
         pending_critical: std.atomic.Value(bool) = .init(true),
         /// Fast-path bail for an in-flight `onPressureDispatch` during
-        /// shutdown. NOT load-bearing for safety — see `testUninstallBarrier`
-        /// for the TOCTOU (handler can pass this check before it's set).
+        /// shutdown. Not load-bearing for safety — `drained` is what makes
+        /// `uninstall()` block until the handler finishes; this just avoids
+        /// an unnecessary enqueue when the handler hasn't started yet.
         shutting_down: std.atomic.Value(bool) = .init(false),
         test_hooks: if (Environment.isDebug) ?*TestHooks else void =
             if (Environment.isDebug) null else {},
@@ -278,14 +285,18 @@ const Darwin = struct {
             log("dispatch_source_create({s}) failed", .{name});
             return;
         };
-        const s = bun.new(State, .{ .source = source, .vm = vm });
+        const drained = dispatch_semaphore_create(0) orelse {
+            log("dispatch_semaphore_create failed", .{});
+            dispatch_release(source);
+            return;
+        };
+        const s = bun.new(State, .{ .source = source, .drained = drained, .vm = vm });
         state = s;
         dispatch_set_context(source, s);
         dispatch_source_set_event_handler_f(source, onPressureDispatch);
-        // dispatch_source_cancel() is async and doesn't interrupt an
-        // in-flight event handler; libdispatch guarantees the cancel handler
-        // runs only after the last event handler has returned, so do the
-        // release+destroy there to avoid a UAF.
+        // libdispatch guarantees the cancel handler runs only after the last
+        // event handler has returned. onCancelled signals `drained`;
+        // uninstall() waits on it before releasing/destroying.
         dispatch_source_set_cancel_handler_f(source, onCancelled);
         dispatch_resume(source);
         log("installed ({s})", .{name});
@@ -321,24 +332,28 @@ const Darwin = struct {
         s.shutting_down.store(true, .release);
         dispatch_source_cancel(s.source);
         if (comptime Environment.isDebug) if (s.test_hooks) |th| th.after_cancel.set();
-        // RACE: dispatch_source_cancel() is async and does NOT wait for an
-        // in-flight event handler, so onPressureDispatch may be between its
-        // shutting_down.load() and enqueueTaskConcurrent() while we return
-        // and VirtualMachine.deinit() proceeds to has_terminated=true (which
-        // makes that enqueue panic under allow_assert). State cleanup is
-        // deferred to onCancelled, which libdispatch guarantees runs after
-        // the last event handler — so State is safe; the enqueue is not.
-        // Demonstrated by testUninstallBarrier(); barrier added in the
-        // following commit. Linux (thread.join) and Windows
-        // (UnregisterWaitEx INVALID_HANDLE_VALUE) already block here.
+        // dispatch_source_cancel() is async and does NOT wait for an
+        // in-flight event handler — without this barrier, onPressureDispatch
+        // could be between its shutting_down.load() and enqueueTaskConcurrent
+        // while VirtualMachine.deinit() proceeds past us to
+        // has_terminated=true (which makes that enqueue panic under
+        // allow_assert). libdispatch guarantees the cancel handler runs only
+        // after the last event handler returns, so blocking on `drained`
+        // here closes the race. No deadlock risk: we're on the JS thread,
+        // the cancel handler runs on a libdispatch worker for the global
+        // utility queue. Verified by testUninstallBarrier().
+        _ = dispatch_semaphore_wait(s.drained, DISPATCH_TIME_FOREVER);
+        dispatch_release(s.drained);
+        dispatch_release(s.source);
+        bun.destroy(s);
     }
 
     /// libdispatch worker thread. Runs after the last `onPressureDispatch`
-    /// has returned, so State is no longer touched concurrently.
+    /// has returned. Must not touch `s` after signalling — `uninstall()` may
+    /// destroy it the moment the wait unblocks.
     fn onCancelled(ctx: ?*anyopaque) callconv(.c) void {
         const s: *State = @ptrCast(@alignCast(ctx.?));
-        dispatch_release(s.source);
-        bun.destroy(s);
+        _ = dispatch_semaphore_signal(s.drained);
     }
 
     /// Debug-only red/green seam for the `uninstall()` barrier.
@@ -351,16 +366,17 @@ const Darwin = struct {
     /// `handler_done` immediately after it returns.
     ///
     /// Returns `true` iff the handler had completed before `uninstall()`
-    /// returned. With the current non-blocking `uninstall()` this is
-    /// deterministically `false`: `uninstall()` falls through right after
-    /// `after_cancel.set()` while the worker is still parked, the helper
-    /// thread hasn't released `proceed` yet (it waits on `after_cancel`),
-    /// so when we read `handler_done.isSet()` the worker hasn't reached the
-    /// enqueue. After capturing the verdict the seam waits on `handler_done`
-    /// so the stack-allocated `hooks` outlives the worker, then joins the
-    /// helper. The enqueued ConcurrentTask is harmless: when it later runs
-    /// `onJSThread(s)` on the event loop the first line is
-    /// `if (state == null) return;`, which bails before any `s` deref.
+    /// returned. Without `dispatch_semaphore_wait(s.drained)` in
+    /// `uninstall()` this is deterministically `false`: `uninstall()` falls
+    /// through right after `after_cancel.set()` while the worker is still
+    /// parked, the helper thread hasn't released `proceed` yet (it waits on
+    /// `after_cancel`), so when we read `handler_done.isSet()` the worker
+    /// hasn't reached the enqueue. After capturing the verdict the seam
+    /// waits on `handler_done` so the stack-allocated `hooks` outlives the
+    /// worker, then joins the helper. The enqueued ConcurrentTask is
+    /// harmless: when it later runs `onJSThread(s)` on the event loop the
+    /// first line is `if (state == null) return;`, which bails before any
+    /// `s` deref.
     pub fn testUninstallBarrier(vm: *jsc.VirtualMachine) bool {
         if (comptime !Environment.isDebug) return true;
         bun.assert(state == null); // don't clobber a real install
@@ -414,6 +430,10 @@ const Darwin = struct {
     extern "c" fn dispatch_resume(object: *anyopaque) void;
     extern "c" fn dispatch_source_cancel(source: *anyopaque) void;
     extern "c" fn dispatch_release(object: *anyopaque) void;
+    extern "c" fn dispatch_semaphore_create(value: c_long) ?*anyopaque;
+    extern "c" fn dispatch_semaphore_signal(sema: *anyopaque) c_long;
+    extern "c" fn dispatch_semaphore_wait(sema: *anyopaque, timeout: u64) c_long;
+    const DISPATCH_TIME_FOREVER: u64 = ~@as(u64, 0);
     const DISPATCH_MEMORYPRESSURE_WARN: c_ulong = 0x02;
     const DISPATCH_MEMORYPRESSURE_CRITICAL: c_ulong = 0x04;
     const DISPATCH_MEMORYPRESSURE_PROC_LIMIT_WARN: c_ulong = 0x10;

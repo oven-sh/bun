@@ -4139,7 +4139,9 @@ mod windows_impl {
         if ok == 0 {
             return Err(Error::new(w::get_last_errno(), Tag::fstat).with_fd(fd));
         }
-        Ok(size as u64)
+        // sys.zig:4217 `@intCast(@max(size, 0))` — clamp defensively so a
+        // negative LARGE_INTEGER never becomes ~18 EB after the i64→u64 cast.
+        Ok(size.max(0) as u64)
     }
     pub fn realpath<'a>(path: &ZStr, buf: &'a mut bun_core::PathBuffer) -> Maybe<&'a [u8]> {
         // sys_uv.rs:216 — open + GetFinalPathNameByHandle (uv_fs_realpath edge cases).
@@ -6874,6 +6876,69 @@ pub enum ExistsAtType {
     File,
     Directory,
 }
+/// sys.zig:3648 Windows tail — `NtQueryAttributesFile` against an
+/// OBJECT_ATTRIBUTES built from an already NT-prefixed wide path. Shared by the
+/// UTF-8 (`exists_at_type`) and UTF-16 (`exists_at_type_w`) entry points so the
+/// `anytype` width-dispatch in Zig's `existsAtType` is preserved without
+/// duplicating the syscall body.
+#[cfg(windows)]
+fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
+    use bun_windows_sys::externs as w;
+    // Trim leading `.\` — NtQueryAttributesFile expects relative paths
+    // without it.
+    if path.len() > 2 && path[0] == b'.' as u16 && path[1] == b'\\' as u16 {
+        path = &path[2..];
+    }
+    let path_len_bytes = (path.len() * 2) as u16;
+    let mut nt_name = w::UNICODE_STRING {
+        Length: path_len_bytes,
+        MaximumLength: path_len_bytes,
+        Buffer: path.as_ptr().cast_mut().cast::<u16>(),
+    };
+    let attr = w::OBJECT_ATTRIBUTES {
+        Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
+        RootDirectory: if bun_paths::is_absolute_windows_wtf16(path) {
+            core::ptr::null_mut()
+        } else if dir.is_valid() {
+            dir.native()
+        } else {
+            Fd::cwd().native()
+        },
+        Attributes: 0,
+        ObjectName: &mut nt_name,
+        SecurityDescriptor: core::ptr::null_mut(),
+        SecurityQualityOfService: core::ptr::null_mut(),
+    };
+    let mut basic_info: w::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: FFI; attr/basic_info valid for the call duration.
+    let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
+    if rc != w::NTSTATUS::SUCCESS {
+        // sys.zig:3744 `Maybe(bool).errnoSys(rc, .access)` — `errnoSys` for
+        // `NTSTATUS` routes through the curated `translateNTStatusToErrno`
+        // table, NOT `RtlNtStatusToDosError`. `directory_exists_at()` then
+        // branches on `ENOENT`, so the mapping must match the spec table.
+        return Err(Error::from_code(
+            windows::translate_nt_status_to_errno(rc),
+            Tag::access,
+        ));
+    }
+    let attrs = basic_info.FileAttributes;
+    // From libuv: directories cannot be read-only.
+    // https://github.com/libuv/libuv/blob/eb5af8e3/src/win/fs.c#L2144-L2146
+    let is_dir = attrs != windows::INVALID_FILE_ATTRIBUTES
+        && (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0
+        && (attrs & w::FILE_ATTRIBUTE_READONLY) == 0;
+    let is_regular = attrs != windows::INVALID_FILE_ATTRIBUTES
+        && ((attrs & w::FILE_ATTRIBUTE_DIRECTORY) == 0
+            || (attrs & w::FILE_ATTRIBUTE_READONLY) == 0);
+    if is_dir {
+        Ok(ExistsAtType::Directory)
+    } else if is_regular {
+        Ok(ExistsAtType::File)
+    } else {
+        Err(Error::from_code(E::EUNKNOWN, Tag::access))
+    }
+}
 /// sys.zig:3640 — `fstatat` then `S_ISDIR`.
 pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
     #[cfg(unix)]
@@ -6887,71 +6952,36 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
     }
     #[cfg(windows)]
     {
-        use bun_windows_sys::externs as w;
         // sys.zig:3648 — `NtQueryAttributesFile` against an OBJECT_ATTRIBUTES
         // built from the (optionally NT-prefixed) wide path.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let mut path =
-            bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
-        // Trim leading `.\` — NtQueryAttributesFile expects relative paths
-        // without it.
-        if path.len() > 2 && path[0] == b'.' as u16 && path[1] == b'\\' as u16 {
-            path = &path[2..];
-        }
-        let path_len_bytes = (path.len() * 2) as u16;
-        let mut nt_name = w::UNICODE_STRING {
-            Length: path_len_bytes,
-            MaximumLength: path_len_bytes,
-            Buffer: path.as_ptr().cast_mut().cast::<u16>(),
-        };
-        let attr = w::OBJECT_ATTRIBUTES {
-            Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-            RootDirectory: if bun_paths::is_absolute_windows_wtf16(path) {
-                core::ptr::null_mut()
-            } else if dir.is_valid() {
-                dir.native()
-            } else {
-                Fd::cwd().native()
-            },
-            Attributes: 0,
-            ObjectName: &mut nt_name,
-            SecurityDescriptor: core::ptr::null_mut(),
-            SecurityQualityOfService: core::ptr::null_mut(),
-        };
-        let mut basic_info: w::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
-        // SAFETY: FFI; attr/basic_info valid for the call duration.
-        let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
-        if rc != w::NTSTATUS::SUCCESS {
-            // sys.zig:3744 `Maybe(bool).errnoSys(rc, .access)` — `errnoSys` for
-            // `NTSTATUS` routes through the curated `translateNTStatusToErrno`
-            // table, NOT `RtlNtStatusToDosError`. `directory_exists_at()` then
-            // branches on `ENOENT`, so the mapping must match the spec table.
-            return Err(Error::from_code(
-                windows::translate_nt_status_to_errno(rc),
-                Tag::access,
-            ));
-        }
-        let attrs = basic_info.FileAttributes;
-        // From libuv: directories cannot be read-only.
-        // https://github.com/libuv/libuv/blob/eb5af8e3/src/win/fs.c#L2144-L2146
-        let is_dir = attrs != windows::INVALID_FILE_ATTRIBUTES
-            && (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0
-            && (attrs & w::FILE_ATTRIBUTE_READONLY) == 0;
-        let is_regular = attrs != windows::INVALID_FILE_ATTRIBUTES
-            && ((attrs & w::FILE_ATTRIBUTE_DIRECTORY) == 0
-                || (attrs & w::FILE_ATTRIBUTE_READONLY) == 0);
-        if is_dir {
-            Ok(ExistsAtType::Directory)
-        } else if is_regular {
-            Ok(ExistsAtType::File)
-        } else {
-            Err(Error::from_code(E::EUNKNOWN, Tag::access))
-        }
+        let path = bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
+        exists_at_type_nt(dir, path)
     }
+}
+/// sys.zig:3712 `existsAtType` — the `std.meta.Child(@TypeOf(subpath)) == u16`
+/// arm. Takes an already-wide path (Windows `OSPathSliceZ`) and routes through
+/// `toNTPath16` instead of re-widening from UTF-8.
+#[cfg(windows)]
+pub fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
+    let mut wbuf = bun_paths::w_path_buffer_pool::get();
+    let path = bun_paths::string_paths::to_nt_path16(&mut wbuf.0[..], sub).as_slice();
+    exists_at_type_nt(dir, path)
 }
 /// sys.zig:3533 — `directoryExistsAt(dir, sub)`. ENOENT → `Ok(false)`.
 pub fn directory_exists_at(dir: Fd, sub: &ZStr) -> Maybe<bool> {
     match exists_at_type(dir, sub) {
+        Ok(t) => Ok(t == ExistsAtType::Directory),
+        Err(e) if e.get_errno() == E::ENOENT => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+/// sys.zig:3533 `directoryExistsAt` — wide-path (`u16`) overload for Windows
+/// `OSPathSliceZ` callers (mkdir-recursive, cpSync auto-detect). Mirrors the
+/// `anytype` dispatch instead of forcing a UTF-16 → UTF-8 → UTF-16 round-trip.
+#[cfg(windows)]
+pub fn directory_exists_at_w(dir: Fd, sub: &[u16]) -> Maybe<bool> {
+    match exists_at_type_w(dir, sub) {
         Ok(t) => Ok(t == ExistsAtType::Directory),
         Err(e) if e.get_errno() == E::ENOENT => Ok(false),
         Err(e) => Err(e),
@@ -7182,14 +7212,28 @@ pub fn clonefileat(_from_dir: Fd, from: &ZStr, _to_dir: Fd, to: &ZStr) -> Maybe<
 
 // ── getFdPath ──
 
-/// sys.zig:632 `LinuxKernel.get()` — cached probe of `/proc/version` for
-/// "freebsd" (linprocfs hardcodes "des@freebsd.org"). Under FreeBSD's
-/// Linuxulator `/proc/self/fd/*` doesn't readlink, but `/dev/fd/*` does.
+/// sys.zig:632 `LinuxKernel` — cached probe of `/proc/version` for "freebsd"
+/// (linprocfs hardcodes "des@freebsd.org"). Under FreeBSD's Linuxulator
+/// `/proc/self/fd/*` doesn't readlink, but `/dev/fd/*` does.
+/// 0=unknown, 1=linux, 2=freebsd.
+#[cfg(target_os = "linux")]
+static LINUX_KERNEL_CACHED: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+/// sys.zig:3032 `LinuxKernel.cached.load(.acquire) == .freebsd` — non-probing
+/// fast-path check. Returns `true` only when a previous probe already proved
+/// FreeBSD's Linuxulator; never triggers the `/proc/version` read itself.
+#[cfg(target_os = "linux")]
+#[inline]
+fn linux_kernel_cached_is_freebsd() -> bool {
+    LINUX_KERNEL_CACHED.load(core::sync::atomic::Ordering::Acquire) == 2
+}
+
+/// sys.zig:659 `LinuxKernel.get()` — probing variant: reads `/proc/version`
+/// once (memoized) and returns whether this is FreeBSD's Linuxulator.
 #[cfg(target_os = "linux")]
 fn linux_kernel_is_freebsd() -> bool {
-    use core::sync::atomic::{AtomicU8, Ordering};
-    static CACHED: AtomicU8 = AtomicU8::new(0); // 0=unknown, 1=linux, 2=freebsd
-    let v = CACHED.load(Ordering::Acquire);
+    use core::sync::atomic::Ordering;
+    let v = LINUX_KERNEL_CACHED.load(Ordering::Acquire);
     if v != 0 {
         return v == 2;
     }
@@ -7211,8 +7255,27 @@ fn linux_kernel_is_freebsd() -> bool {
             1
         }
     };
-    CACHED.store(detected, Ordering::Release);
+    LINUX_KERNEL_CACHED.store(detected, Ordering::Release);
     detected == 2
+}
+
+/// sys.zig:2999 `getFdPathFreeBSDLinuxulator` — readlink `/dev/fd/N` (fdescfs).
+#[cfg(target_os = "linux")]
+fn get_fd_path_freebsd_linuxulator<'a>(
+    fd: Fd,
+    out: &'a mut bun_paths::PathBuffer,
+) -> Maybe<&'a mut [u8]> {
+    let mut dev = [0u8; 32];
+    let n = {
+        use std::io::Write as _;
+        let mut c = std::io::Cursor::new(&mut dev[..]);
+        let _ = write!(c, "/dev/fd/{}\0", fd.native());
+        c.position() as usize - 1
+    };
+    // SAFETY: NUL written above.
+    let z = ZStr::from_buf(&dev[..], n);
+    let len = readlink(z, &mut out.0)?;
+    Ok(&mut out.0[..len])
 }
 
 /// sys.zig:2940 — fd → absolute path. Linux: readlink `/proc/self/fd/N`;
@@ -7220,6 +7283,11 @@ fn linux_kernel_is_freebsd() -> bool {
 pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a mut [u8]> {
     #[cfg(target_os = "linux")]
     {
+        // sys.zig:3032 — fast path: a previous call already proved this is
+        // FreeBSD's Linuxulator. Skip the doomed `/proc/self/fd/N` readlink.
+        if linux_kernel_cached_is_freebsd() {
+            return get_fd_path_freebsd_linuxulator(fd, out);
+        }
         let mut proc = [0u8; 32];
         let n = {
             use std::io::Write as _;
@@ -7232,20 +7300,11 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         match readlink(z, &mut out.0) {
             Ok(len) => return Ok(&mut out.0[..len]),
             Err(e) => {
-                // sys.zig:2975 — under FreeBSD Linuxulator, fall back to
-                // `getFdPathFreeBSDLinuxulator` (`/dev/fd/N`).
+                // sys.zig:3046 — under FreeBSD Linuxulator, fall back to
+                // `getFdPathFreeBSDLinuxulator` (`/dev/fd/N`). Probing variant
+                // (memoized read of `/proc/version`); only taken once.
                 if linux_kernel_is_freebsd() {
-                    let mut dev = [0u8; 32];
-                    let n = {
-                        use std::io::Write as _;
-                        let mut c = std::io::Cursor::new(&mut dev[..]);
-                        let _ = write!(c, "/dev/fd/{}\0", fd.native());
-                        c.position() as usize - 1
-                    };
-                    // SAFETY: NUL written above.
-                    let z = ZStr::from_buf(&dev[..], n);
-                    let len = readlink(z, &mut out.0)?;
-                    return Ok(&mut out.0[..len]);
+                    return get_fd_path_freebsd_linuxulator(fd, out);
                 }
                 return Err(e);
             }
@@ -7276,7 +7335,33 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         let len = bun_paths::string_paths::from_w_path(&mut out.0[..], wide_slice).len();
         return Ok(&mut out.0[..len]);
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    #[cfg(target_os = "freebsd")]
+    {
+        // sys.zig:3054-3066 — FreeBSD: F_KINFO returns a `struct kinfo_file`
+        // with `kf_path`. The /dev/fd readlink trick used for the Linuxulator
+        // path doesn't resolve to an absolute path on native FreeBSD, so go
+        // via fcntl. Mirrors `bun_core::util::fd_path_raw` (T0 sibling).
+        use core::ptr::{addr_of, addr_of_mut};
+        let mut kif = core::mem::MaybeUninit::<libc::kinfo_file>::zeroed();
+        // SAFETY: kif is zeroed; kf_structsize is a c_int at a valid offset.
+        unsafe {
+            addr_of_mut!((*kif.as_mut_ptr()).kf_structsize)
+                .write(core::mem::size_of::<libc::kinfo_file>() as c_int);
+        }
+        fcntl(fd, libc::F_KINFO, kif.as_mut_ptr() as isize)?;
+        // SAFETY: kernel wrote a NUL-terminated path into kf_path.
+        let path_ptr = unsafe { addr_of!((*kif.as_ptr()).kf_path) } as *const u8;
+        let len = unsafe { libc::strlen(path_ptr.cast()) };
+        // SAFETY: path_ptr has `len` initialized bytes (kernel-written).
+        out.0[..len].copy_from_slice(unsafe { core::slice::from_raw_parts(path_ptr, len) });
+        return Ok(&mut out.0[..len]);
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "freebsd",
+        windows
+    )))]
     {
         let _ = (fd, out);
         Err(Error::from_code_int(libc::ENOSYS, Tag::readlink))

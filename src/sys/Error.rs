@@ -98,7 +98,18 @@ impl IntoErrnoInt for u16 {
 impl IntoErrnoInt for i32 {
     #[inline]
     fn into_errno_int(self) -> Int {
-        self.unsigned_abs() as Int
+        // PORT NOTE: matches Error.zig fromCodeInt:
+        // `@intCast(if (Environment.isWindows) @abs(errno) else errno)` — only Windows
+        // (libuv negative codes) takes the absolute value; on POSIX a negative errno is
+        // a caller bug and `@intCast` would trap in safe builds, so panic here too.
+        #[cfg(windows)]
+        {
+            self.unsigned_abs() as Int
+        }
+        #[cfg(not(windows))]
+        {
+            Int::try_from(self).expect("errno must be non-negative on POSIX")
+        }
     }
 }
 

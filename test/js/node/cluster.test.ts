@@ -1,5 +1,5 @@
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, isLinux, joinP, tempDir, tempDirWithFiles } from "harness";
-import { test, expect, describe } from "bun:test";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {

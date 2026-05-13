@@ -21,7 +21,6 @@
 #![cfg(any(target_os = "linux", target_os = "android"))]
 #![allow(unreachable_pub)]
 
-use core::ffi::CStr;
 use rustix::fd::{BorrowedFd, IntoRawFd, OwnedFd};
 use rustix::io::Errno;
 
@@ -45,15 +44,6 @@ use bun_core::ZStr;
 unsafe fn bfd<'a>(fd: i32) -> BorrowedFd<'a> {
     // SAFETY: forwarded — see fn doc.
     unsafe { BorrowedFd::borrow_raw(fd) }
-}
-
-/// `&ZStr` → `&CStr` (both are NUL-terminated; `ZStr` additionally carries the
-/// length, which rustix's `path::Arg` for `&CStr` recomputes via `strlen` —
-/// acceptable: paths are short and this matches glibc's `open(3)` cost).
-#[inline(always)]
-fn zcstr(path: &ZStr) -> &CStr {
-    // SAFETY: `ZStr` invariant — `as_ptr()` points at `len` bytes followed by NUL.
-    unsafe { bun_core::ffi::cstr(path.as_ptr()) }
 }
 
 /// rustix `Errno` → raw positive errno (matches `libc::E*` constants on Linux).
@@ -100,7 +90,7 @@ pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
     let mode = rustix::fs::Mode::from_raw_mode(mode);
     // rustix `open` issues `openat(AT_FDCWD, ...)` on arches without SYS_open
     // (aarch64) — same as the kernel's own `open(2)` compat shim.
-    retry(|| rustix::fs::open(zcstr(path), oflags, mode)).map(own_fd)
+    retry(|| rustix::fs::open(path.as_cstr(), oflags, mode)).map(own_fd)
 }
 
 #[inline]
@@ -108,7 +98,7 @@ pub fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
     let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
     let mode = rustix::fs::Mode::from_raw_mode(mode);
     let dir = dir.as_borrowed_fd();
-    retry(|| rustix::fs::openat(dir, zcstr(path), oflags, mode)).map(own_fd)
+    retry(|| rustix::fs::openat(dir, path.as_cstr(), oflags, mode)).map(own_fd)
 }
 
 #[inline]
@@ -173,12 +163,12 @@ pub fn fstat(fd: Fd) -> Result<libc::stat, i32> {
 
 #[inline]
 pub fn stat(path: &ZStr) -> Result<libc::stat, i32> {
-    retry(|| rustix::fs::stat(zcstr(path))).map(stat_to_libc)
+    retry(|| rustix::fs::stat(path.as_cstr())).map(stat_to_libc)
 }
 
 #[inline]
 pub fn lstat(path: &ZStr) -> Result<libc::stat, i32> {
-    retry(|| rustix::fs::lstat(zcstr(path))).map(stat_to_libc)
+    retry(|| rustix::fs::lstat(path.as_cstr())).map(stat_to_libc)
 }
 
 #[inline]
@@ -186,7 +176,7 @@ pub fn fstatat(dir: i32, path: &ZStr, flags: i32) -> Result<libc::stat, i32> {
     // SAFETY: `dir` is caller-owned (or AT_FDCWD) for the call.
     let dir = unsafe { bfd(dir) };
     let at = rustix::fs::AtFlags::from_bits_retain(flags as u32);
-    retry(|| rustix::fs::statat(dir, zcstr(path), at)).map(stat_to_libc)
+    retry(|| rustix::fs::statat(dir, path.as_cstr(), at)).map(stat_to_libc)
 }
 
 /// Map rustix's kernel `struct stat` → `libc::stat`.

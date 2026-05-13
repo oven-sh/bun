@@ -3261,6 +3261,12 @@ void GlobalObject::reload()
 {
     auto& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // process.stdin/stdout/stderr survive reloads. Drop user-attached
+    // listeners from the previous load so a fresh readline/etc. doesn't
+    // stack duplicate handlers on the same stream. (#15027)
+    Bun::resetStdioForHotReload(this);
+
     this->moduleLoader()->clearAll();
     this->requireMap()->clear(this);
     RETURN_IF_EXCEPTION(scope, );

@@ -130,4 +130,6 @@ public:
 bool isSignalName(WTF::String input);
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 
+void resetStdioForHotReload(Zig::GlobalObject* globalObject);
+
 } // namespace Bun

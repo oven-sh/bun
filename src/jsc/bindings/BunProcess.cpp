@@ -2676,6 +2676,47 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     return result;
 }
 
+// In `--hot` mode the process object and its stdio streams survive module
+// registry reloads. User code (e.g. node:readline) that attached listeners on
+// the previous load must be detached so the fresh evaluation doesn't stack a
+// second set of handlers on the same stream. Called from
+// GlobalObject::reload(). (#15027)
+void resetStdioForHotReload(Zig::GlobalObject* globalObject)
+{
+    if (!globalObject->hasProcessObject()) {
+        return;
+    }
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* process = globalObject->processObject();
+    const auto& resetName = WebCore::builtinNames(vm).resetStdioForHotReloadPrivateName();
+
+    for (auto name : { "stdin"_s, "stdout"_s, "stderr"_s }) {
+        // getDirect() only returns the value if the PropertyCallback was
+        // already reified by a prior access; it does not trigger lazy
+        // construction of the stream.
+        JSValue stream = process->getDirect(vm, Identifier::fromString(vm, name));
+        if (!stream || !stream.isObject()) {
+            continue;
+        }
+
+        JSValue resetFn = stream.getObject()->getDirect(vm, resetName);
+        if (!resetFn) {
+            continue;
+        }
+
+        auto callData = JSC::getCallData(resetFn);
+        if (callData.type == JSC::CallData::Type::None) {
+            continue;
+        }
+
+        JSC::MarkedArgumentBuffer args;
+        JSC::profiledCall(globalObject, ProfilingReason::API, resetFn, callData, stream, args);
+        CLEAR_IF_EXCEPTION(scope);
+    }
+}
+
 JSC_DEFINE_CUSTOM_GETTER(processThrowDeprecation, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
 {
     return JSValue::encode(jsBoolean(Bun__Node__ProcessThrowDeprecation));

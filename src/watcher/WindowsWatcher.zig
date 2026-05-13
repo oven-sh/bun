@@ -197,6 +197,13 @@ pub fn stop(this: *WindowsWatcher) void {
     w.CloseHandle(this.iocp);
 }
 
+/// Wake the watcher thread from a blocking `GetQueuedCompletionStatus` so
+/// it can observe `Watcher.running == false` and exit. Posts a zero-byte
+/// completion, which `next()` already treats as a shutdown notification.
+pub fn wake(this: *WindowsWatcher) void {
+    _ = w.kernel32.PostQueuedCompletionStatus(this.iocp, 0, 0, &this.watcher.overlapped);
+}
+
 pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
     const buf = &this.platform.buf;
     const base_idx = this.platform.base_idx;

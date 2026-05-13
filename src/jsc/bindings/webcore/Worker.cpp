@@ -332,6 +332,18 @@ void Worker::drainToWorker(ScriptExecutionContext& context)
         m_toWorker.drainScheduled.store(false, std::memory_order_relaxed);
         return;
     }
+    // The worker flips to Running (and starts scheduling drains) before its
+    // entry module evaluates, so a drain can land before the module has
+    // called `parentPort.on("message", ...)`. Dispatching then would drop
+    // the event on the floor. Keep the inbox buffered until a listener
+    // exists; WorkerGlobalScope::onDidChangeListenerImpl kicks a drain when
+    // the first one is added. Matches Node's MessagePort, which buffers
+    // until the port is started by attaching a listener.
+    if (!globalObject->globalEventScope->hasActiveEventListeners(eventNames().messageEvent)) {
+        Locker locker { m_toWorker.lock };
+        m_toWorker.drainScheduled.store(false, std::memory_order_relaxed);
+        return;
+    }
     bool reschedule = drainInbox(m_toWorker, globalObject, context, [&](Event& event) {
         globalObject->globalEventScope->dispatchEvent(event);
     });
@@ -574,6 +586,26 @@ extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* glo
 extern "C" void WebWorker__fireEarlyMessages(Worker* worker, Zig::GlobalObject* globalObject)
 {
     worker->fireEarlyMessages(globalObject);
+}
+
+// Called from WorkerGlobalScope::onDidChangeListenerImpl on the worker
+// thread when the first 'message' listener is attached. drainToWorker
+// refuses to dispatch while no listener exists (so early messages aren't
+// dropped); this kicks the drain now that one does.
+void Worker::scheduleToWorkerDrainOnListenerAdded(ScriptExecutionContext& context)
+{
+    {
+        Locker locker { m_toWorker.lock };
+        if (m_toWorker.queue.isEmpty() || m_toWorker.drainScheduled.load(std::memory_order_relaxed))
+            return;
+        m_toWorker.drainScheduled.store(true, std::memory_order_relaxed);
+    }
+    // Post rather than drain inline: we're inside addEventListener(), and
+    // dispatching synchronously there would reorder the message before any
+    // code that follows the `.on("message", ...)` call.
+    context.postTask([protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
+        protectedThis->drainToWorker(ctx);
+    });
 }
 
 extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, JSC::EncodedJSValue errorValue)

@@ -1,7 +1,11 @@
 #include "config.h"
 
 #include "BunWorkerGlobalScope.h"
+#include "ZigGlobalObject.h"
+#include "webcore/Worker.h"
 #include <wtf/TZoneMallocInlines.h>
+
+extern "C" WebCore::Worker* WebWorker__getParentWorker(void* bunVM);
 
 namespace WebCore {
 
@@ -14,7 +18,16 @@ void WorkerGlobalScope::onDidChangeListenerImpl(EventTarget& self, const AtomStr
         switch (kind) {
         case Add:
             if (global.m_messageEventCount == 0) {
-                global.scriptExecutionContext()->refEventLoop();
+                auto* ctx = global.scriptExecutionContext();
+                ctx->refEventLoop();
+                // drainToWorker holds messages while no 'message' listener
+                // is attached (so early posts aren't lost before the entry
+                // module registers one). Now that the first listener exists,
+                // flush anything that accumulated.
+                if (auto* globalObject = defaultGlobalObject(ctx->jsGlobalObject())) {
+                    if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM()))
+                        worker->scheduleToWorkerDrainOnListenerAdded(*ctx);
+                }
             }
             global.m_messageEventCount++;
             break;

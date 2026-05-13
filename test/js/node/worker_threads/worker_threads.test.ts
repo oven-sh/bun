@@ -487,3 +487,93 @@ describe("getHeapSnapshot", () => {
     worker.postMessage(0);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/15408
+// A worker whose entry module has a never-resolving top-level await (e.g. a
+// `while (true) { await setImmediate }` loop) must still receive messages
+// posted from the parent and fire 'online'. Previously Bun deferred the
+// Pending→Running transition until the entry-module promise settled, so
+// messages were buffered forever and 'online' never fired.
+describe("worker with unresolved top-level await", () => {
+  for (const yieldVia of ["setImmediate", "setTimeout"]) {
+    test(`receives parentPort messages while yielding via ${yieldVia}`, async () => {
+      const worker = new Worker(
+        `
+          const { parentPort } = require("node:worker_threads");
+          parentPort.on("message", m => parentPort.postMessage("echo:" + m));
+          while (true) {
+            await new Promise(r => ${yieldVia}(r));
+          }
+        `,
+        { eval: true },
+      );
+      try {
+        const onlinePromise = once(worker, "online");
+        worker.postMessage("first");
+        const [firstReply] = await once(worker, "message");
+        // 'online' should have fired before (or at worst by the time) the
+        // first reply arrived — the module promise never settles.
+        await onlinePromise;
+        worker.postMessage("second");
+        const [secondReply] = await once(worker, "message");
+        expect({ firstReply, secondReply }).toEqual({
+          firstReply: "echo:first",
+          secondReply: "echo:second",
+        });
+      } finally {
+        await worker.terminate();
+      }
+    });
+  }
+
+  test("fires 'online' and delivers message before a finite top-level await resolves", async () => {
+    const worker = new Worker(
+      `
+        const { parentPort } = require("node:worker_threads");
+        let tlaResolved = false;
+        parentPort.on("message", m => parentPort.postMessage({ echo: m, tlaResolved }));
+        await new Promise(r => parentPort.once("message", r));
+        tlaResolved = true;
+      `,
+      { eval: true },
+    );
+    try {
+      await once(worker, "online");
+      worker.postMessage("hi");
+      const [reply] = await once(worker, "message");
+      expect(reply).toEqual({ echo: "hi", tlaResolved: false });
+    } finally {
+      await worker.terminate();
+    }
+  });
+});
+
+test("messages posted before parentPort listener is attached are delivered once it is", async () => {
+  // drainToWorker must buffer (not drop) messages that arrive before the
+  // worker's entry module has called `parentPort.on("message", ...)`, and
+  // attaching the first listener must flush them.
+  const worker = new Worker(
+    `
+      const { parentPort } = require("node:worker_threads");
+      const got = [];
+      // Defer listener registration past the first event-loop turn so any
+      // drain scheduled before the module evaluates would see no listener.
+      setImmediate(() => setImmediate(() => {
+        parentPort.on("message", m => {
+          got.push(m);
+          if (got.length === 3) parentPort.postMessage(got);
+        });
+      }));
+    `,
+    { eval: true },
+  );
+  try {
+    worker.postMessage(1);
+    worker.postMessage(2);
+    worker.postMessage(3);
+    const [got] = await once(worker, "message");
+    expect(got).toEqual([1, 2, 3]);
+  } finally {
+    await worker.terminate();
+  }
+});

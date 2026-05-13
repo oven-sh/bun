@@ -2406,7 +2406,10 @@ pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const 
     return promise;
 }
 
-// worker dont has bun_watcher and also we dont wanna call autoTick before dispatchOnline
+// Worker entry-point load: start the module, then spin the event loop until
+// it settles or the worker is terminated. dispatchOnline has already fired by
+// the time this runs (see web_worker.zig spin()), so parent→worker messages
+// are deliverable while we're waiting on top-level await here.
 pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
     const promise = try this.reloadEntryPoint(entry_path);
     this.eventLoop().performGC();

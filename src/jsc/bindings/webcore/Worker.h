@@ -151,6 +151,7 @@ public:
 
     void enqueueToParent(MessageWithMessagePorts&&);
     void drainToWorker(ScriptExecutionContext&);
+    void scheduleToWorkerDrainOnListenerAdded(ScriptExecutionContext&);
 
 private:
     Worker(ScriptExecutionContext&, WorkerOptions&&);

@@ -613,6 +613,21 @@ fn spin(this: *WebWorker) void {
         this.shutdown();
     }
 
+    // dispatchOnline fires the parent-side 'open' event and flips the C++
+    // state to Running (so parent postMessage schedules drains directly
+    // instead of just buffering). This must happen BEFORE we wait on the
+    // entry module's promise: a module with top-level await may never
+    // resolve (e.g. `while (true) await new Promise(r => setImmediate(r))`),
+    // and Node.js delivers messages — and fires 'online' — as soon as the
+    // worker starts executing, not after TLA settles. drainToWorker won't
+    // actually dispatch until a 'message' listener exists on the worker
+    // global scope, so messages posted before the listener is registered
+    // stay buffered (see Worker::drainToWorker and
+    // WorkerGlobalScope::onDidChangeListenerImpl).
+    WebWorker__dispatchOnline(this.cpp_worker, vm.global);
+    WebWorker__fireEarlyMessages(this.cpp_worker, vm.global);
+    this.setStatus(.running);
+
     var promise = vm.loadEntryPointForWebWorker(path) catch {
         // process.exit() may have run during load; don't clobber its code.
         if (!this.exit_called) vm.exit_handler.exit_code = 1;
@@ -633,14 +648,6 @@ fn spin(this: *WebWorker) void {
 
     this.flushLogs(vm);
     log("[{d}] event loop start", .{this.execution_context_id});
-    // dispatchOnline fires the parent-side 'open' event and flips the C++
-    // state to Running (which routes postMessage directly instead of
-    // queuing). It is placed after the entry point has loaded so the parent
-    // observes 'online' only once the worker's top-level code has completed;
-    // moving it earlier would change that observable ordering.
-    WebWorker__dispatchOnline(this.cpp_worker, vm.global);
-    WebWorker__fireEarlyMessages(this.cpp_worker, vm.global);
-    this.setStatus(.running);
 
     // don't run the GC if we don't actually need to
     if (vm.isEventLoopAlive() or

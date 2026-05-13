@@ -6,16 +6,20 @@ pub const EventListIndex = u32;
 eventlist_index: EventListIndex = 0,
 
 fd: bun.FD.Optional = .none,
+/// See `INotifyWatcher.coalesce_interval` for rationale. Honours the same
+/// env var (despite its Linux-centric name) so tests can pin the window
+/// uniformly across platforms.
+coalesce_interval_ns: isize = default_coalesce_interval_ns,
 
 const changelist_count = 128;
-/// See `INotifyWatcher.default_coalesce_interval_ns` for rationale.
-const coalesce_interval_ns = 10_000_000; // 10ms
+const default_coalesce_interval_ns = 10_000_000; // 10ms
 const max_coalesce_iterations = 5;
 
 pub fn init(this: *KEventWatcher, _: []const u8) !void {
     const fd = try std.posix.kqueue();
     if (fd == 0) return error.KQueueError;
     this.fd = .init(.fromNative(fd));
+    this.coalesce_interval_ns = std.math.cast(isize, bun.env_var.BUN_INOTIFY_COALESCE_INTERVAL.get()) orelse default_coalesce_interval_ns;
 }
 
 pub fn stop(this: *KEventWatcher) void {
@@ -72,7 +76,7 @@ pub fn watchLoopCycle(this: *Watcher) bun.sys.Maybe(void) {
             0,
             changelist[@intCast(count)..].ptr,
             remain,
-            &.{ .sec = 0, .nsec = coalesce_interval_ns },
+            &.{ .sec = 0, .nsec = this.platform.coalesce_interval_ns },
         );
 
         if (extra <= 0) break; // quiet (or error: fall through to existing processing)

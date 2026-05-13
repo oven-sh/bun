@@ -304,25 +304,50 @@ pub struct NewBuilder<T: SourceMapFormatCtx> {
     /// `ManuallyDrop` because in the bundler `printWithWriter` path this is a
     /// shallow bitwise copy of `LinkerGraph.files[i].line_offset_table` (Zig
     /// passed the unmanaged `MultiArrayList` header by value and never
-    /// `deinit`s on that path). The `printAst`/`printCommonJS` paths generate
-    /// a fresh table and free it explicitly (mirrors Zig's
-    /// `defer source_map_builder.line_offset_tables.deinit(...)`).
+    /// `deinit`s on that path). The runtime/transpiler `printAst`/`printCommonJS`
+    /// paths now defer table construction (see `lazy_line_offset_tables`), so
+    /// this is left `EMPTY` there.
     pub line_offset_tables: core::mem::ManuallyDrop<line_offset_table::List>,
+
+    /// Lazily-generated, *owned* line-offset table for the runtime/transpiler
+    /// print path. When no precomputed `line_offset_tables` is supplied and
+    /// `deferred_source` is set, this stays `None` until the first
+    /// `add_source_mapping` call, which fills it via `LineOffsetTable::generate`.
+    /// Mirrors the Zig transpiler, which only builds the table on demand:
+    /// modules that emit no source mappings (asset/JSON shims, empty modules,
+    /// fully-stripped files) never pay the full-source scan + `MultiArrayList`
+    /// allocation. Unlike `line_offset_tables` (a `ManuallyDrop` bitwise alias
+    /// of borrowed linker storage) this table is uniquely owned;
+    /// [`OwnedLineOffsetTables`] drains its `columns_for_non_ascii` payloads on
+    /// drop (`MultiArrayList::Drop` is slab-only).
+    pub lazy_line_offset_tables: Option<OwnedLineOffsetTables>,
+
+    /// Source bytes + approximate line count for the lazy path. `&'static` is a
+    /// lifetime erasure of a borrow into `Source.contents` (same rationale as
+    /// `line_offset_table_byte_offset_list` below — a real lifetime would infect
+    /// every `Printer<'a, …>` instantiation). `None` ⇒ eager-table mode (a
+    /// precomputed table was supplied, or source maps are disabled).
+    pub deferred_source: Option<(&'static [u8], i32)>,
+
     pub prev_state: SourceMapState,
     pub last_generated_update: u32,
     pub generated_column: i32,
     pub prev_loc: Loc,
     pub has_prev_state: bool,
 
-    /// Cached `line_offset_tables.items(.byte_offset_to_start_of_line)`.
+    /// Cached `byte_offset_to_start_of_line` column of whichever line-offset
+    /// table is in use (`line_offset_tables` or `lazy_line_offset_tables`).
     ///
-    /// Borrows heap storage owned by `line_offset_tables` (a `ManuallyDrop`
-    /// `MultiArrayList` that is never resized/dropped while the builder is
-    /// live), so the pointer is stable across moves of `Self`. `&'static` is a
-    /// lifetime erasure of that self-borrow — threading a real `'a` would
-    /// infect every `Printer<'a, …>` instantiation for a field that's only
-    /// ever read in `add_source_mapping`. Populated lazily on the first
-    /// mapping (Zig caches it eagerly in `Printer.init`, js_printer.zig:5459).
+    /// Borrows the heap storage owned by that table; both variants keep the
+    /// `MultiArrayList` header live and un-resized for the builder's lifetime
+    /// (`line_offset_tables` is a `ManuallyDrop` alias of linker storage;
+    /// `lazy_line_offset_tables` is built once and never mutated again), so the
+    /// pointer is stable across moves of `Self`. `&'static` is a lifetime
+    /// erasure of that self-borrow — threading a real `'a` would infect every
+    /// `Printer<'a, …>` instantiation for a field that's only ever read in
+    /// `add_source_mapping`. Populated lazily on the first mapping (Zig caches
+    /// it eagerly in `Printer.init`, js_printer.zig:5459); reset to `&[]` when
+    /// the lazy table is generated so it re-derives against the new storage.
     pub line_offset_table_byte_offset_list: &'static [u32],
 
     // This is a workaround for a bug in the popular "source-map" library:
@@ -350,6 +375,8 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
         Self {
             source_map: SourceMapFormat { ctx: T::default() },
             line_offset_tables: core::mem::ManuallyDrop::new(line_offset_table::List::EMPTY),
+            lazy_line_offset_tables: None,
+            deferred_source: None,
             prev_state: SourceMapState::default(),
             last_generated_update: 0,
             generated_column: 0,
@@ -361,6 +388,27 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
             approximate_input_line_count: 0,
             prepend_count: false,
         }
+    }
+}
+
+/// A uniquely-owned [`line_offset_table::List`] whose per-row
+/// `columns_for_non_ascii: Vec<i32>` payloads are drained on drop.
+///
+/// `MultiArrayList::Drop` is **slab-only** — it frees the SoA buffer but never
+/// runs column destructors (a bitwise `clone` can alias two lists onto the same
+/// column heap pointers; see its docs). The eager `print_ast`/`print_common_js`
+/// paths handle this with an explicit `defer`-style scopeguard around their
+/// `ManuallyDrop<List>`; the lazily-built table needs the same drain, so wrap
+/// it in a type that does it automatically. (A `Drop` impl on `NewBuilder`
+/// itself would forbid the `..Default::default()` struct-update used to build
+/// it in `get_source_map_builder`, hence the newtype.)
+pub struct OwnedLineOffsetTables(pub line_offset_table::List);
+
+impl Drop for OwnedLineOffsetTables {
+    fn drop(&mut self) {
+        // Run every row's destructors (drops the `columns_for_non_ascii` Vecs);
+        // the `MultiArrayList::Drop` that follows then frees the SoA slab.
+        self.0.drop_elements();
     }
 }
 
@@ -536,6 +584,24 @@ impl NewBuilder<VLQSourceMap> {
         self.has_prev_state = true;
     }
 
+    /// Defer line-offset-table construction to the first `add_source_mapping`
+    /// call. Use on the runtime/transpiler print path when no precomputed table
+    /// is supplied, so modules that emit no mappings skip the table's
+    /// full-source scan + allocation entirely. `contents` must point into the
+    /// live `Source.contents` and outlive the builder.
+    #[inline]
+    pub fn set_deferred_line_offset_table(&mut self, contents: &[u8], approximate_line_count: i32) {
+        debug_assert!(
+            self.line_offset_tables.len() == 0,
+            "deferred table requires no precomputed line_offset_tables",
+        );
+        // SAFETY: lifetime erased to `'static`; `contents` (`Source.contents`)
+        // outlives the builder. Same erasure as `line_offset_table_byte_offset_list`.
+        let contents: &'static [u8] =
+            unsafe { core::slice::from_raw_parts(contents.as_ptr(), contents.len()) };
+        self.deferred_source = Some((contents, approximate_line_count));
+    }
+
     #[inline(never)]
     pub fn add_source_mapping(&mut self, loc: Loc, output: &[u8]) {
         if
@@ -548,7 +614,25 @@ impl NewBuilder<VLQSourceMap> {
         }
 
         self.prev_loc = loc;
-        let list = &*self.line_offset_tables;
+
+        // Lazily build the line-offset table on the first mapping. The
+        // runtime/transpiler path passes `deferred_source` instead of a
+        // precomputed table (see `set_deferred_line_offset_table`); modules that
+        // never reach this point skip the full-source scan + allocation.
+        if self.lazy_line_offset_tables.is_none() {
+            if let Some((contents, approx)) = self.deferred_source {
+                self.lazy_line_offset_tables = Some(OwnedLineOffsetTables(
+                    LineOffsetTable::generate(contents, approx).unwrap_or_default(),
+                ));
+                // The byte-offset cache below must re-derive against the new table.
+                self.line_offset_table_byte_offset_list = &[];
+            }
+        }
+
+        let list: &line_offset_table::List = match &self.lazy_line_offset_tables {
+            Some(t) => &t.0,
+            None => &*self.line_offset_tables,
+        };
 
         // We have no sourcemappings.
         // This happens for example when importing an asset which does not support sourcemaps
@@ -561,17 +645,18 @@ impl NewBuilder<VLQSourceMap> {
         }
 
         // PERF: cache the `byte_offset_to_start_of_line` column once. The
-        // backing storage is heap-owned by `self.line_offset_tables` (a
-        // `ManuallyDrop<MultiArrayList>` that is never resized or dropped for
-        // the builder's lifetime — see field doc), so the slice stays valid
-        // across moves of `self`. Zig caches this in `Printer.init`
+        // backing storage is heap-owned by whichever table `list` points at —
+        // `line_offset_tables` (a `ManuallyDrop<MultiArrayList>`) or
+        // `lazy_line_offset_tables` (built once just above) — and both are kept
+        // live and un-resized for the builder's lifetime, so the slice stays
+        // valid across moves of `self`. Zig caches this in `Printer.init`
         // (js_printer.zig:5459, "costs 1ms according to Instruments"); we
         // lazy-init here on the first mapping to keep the fix self-contained.
         if self.line_offset_table_byte_offset_list.len() != list.len() {
             let col = list.items::<"byte_offset_to_start_of_line", u32>();
             // SAFETY: lifetime widened to `'static` per the invariant above —
-            // `line_offset_tables` outlives every `add_source_mapping` call and
-            // is never reallocated. Same shape as Zig's cached `[]const u32`.
+            // the backing table outlives every `add_source_mapping` call and is
+            // never reallocated. Same shape as Zig's cached `[]const u32`.
             self.line_offset_table_byte_offset_list =
                 unsafe { core::slice::from_raw_parts(col.as_ptr(), col.len()) };
         }

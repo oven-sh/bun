@@ -277,6 +277,50 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     return release;
 }
 
+// If the user replaced `process.emit` with a custom function (e.g.
+// signal-exit's monkey-patch), returns that function. Otherwise returns
+// empty. Uses `getDirect` so only an own-property override is observed —
+// we must NOT route through the prototype's default emit binding here,
+// which is `emitForBindings` and early-returns when
+// `scriptExecutionContext()` is gone during natural shutdown.
+static JSC::JSValue userEmitOverride(JSC::VM& vm, Process* process)
+{
+    JSC::JSValue emitValue = process->getDirect(vm, JSC::Identifier::fromString(vm, "emit"_s));
+    if (!emitValue || JSC::getCallData(emitValue).type == JSC::CallData::Type::None)
+        return {};
+    return emitValue;
+}
+
+// Invoke a user-installed `process.emit` override with (eventName, arg).
+// Returns true iff the override returned truthy — mirrors Node's
+// EventEmitter#emit contract where truthy means "had listeners".
+static bool callUserEmitOverride(JSC::JSGlobalObject* globalObject, Process* process, JSC::JSValue emitValue, ASCIILiteral eventName, JSC::JSValue arg)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    auto callData = JSC::getCallData(emitValue);
+    JSC::MarkedArgumentBuffer args;
+    args.append(JSC::jsString(vm, String(eventName)));
+    args.append(arg);
+    JSC::JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, emitValue, callData, process, args);
+
+    if (auto* exception = scope.exception()) {
+        (void)scope.tryClearException();
+        if (!vm.hasPendingTerminationException()) {
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        }
+        return false;
+    }
+
+    bool ret = result.toBoolean(globalObject);
+    if (scope.exception()) {
+        (void)scope.tryClearException();
+        return false;
+    }
+    return ret;
+}
+
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
 {
     static bool processIsExiting = false;
@@ -289,15 +333,30 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
         return;
 
-    auto event = Identifier::fromString(vm, "exit"_s);
-    if (!emitter.hasEventListeners(event)) {
-        return;
-    }
+    // Match Node: set `_exiting` unconditionally during shutdown,
+    // regardless of whether any 'exit' listener is registered.
     process->putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(true), 0);
 
-    MarkedArgumentBuffer arguments;
-    arguments.append(jsNumber(exitCode));
-    emitter.emit(event, arguments);
+    if (JSC::JSValue userEmit = userEmitOverride(vm, process)) {
+        callUserEmitOverride(globalObject, process, userEmit, "exit"_s, jsNumber(exitCode));
+    } else {
+        auto event = Identifier::fromString(vm, "exit"_s);
+        if (!emitter.hasEventListeners(event)) {
+            return;
+        }
+        MarkedArgumentBuffer arguments;
+        arguments.append(jsNumber(exitCode));
+        emitter.emit(event, arguments);
+    }
+
+    // Node drains microtasks once more after the 'exit' event so that a
+    // promise rejected from an 'exit' listener (signal-exit -> inquirer's
+    // ExitPromptError) can reach its .catch()/.finally() before the
+    // process dies. Without this, @inquirer/prompts never runs its
+    // `.catch(() => process.exit(0))` on stdin close (#17636).
+    if (!vm.hasTerminationRequest()) {
+        defaultGlobalObject(globalObject)->drainMicrotasks();
+    }
 }
 
 JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -828,10 +887,16 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     }
     auto& vm = JSC::getVM(globalObject);
     auto* process = globalObject->processObject();
-    MarkedArgumentBuffer arguments;
-    arguments.append(jsNumber(exitCode));
     Bun__VirtualMachine__exitDuringUncaughtException(bunVM(vm));
-    auto fired = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
+
+    bool fired;
+    if (JSC::JSValue userEmit = userEmitOverride(vm, process)) {
+        fired = callUserEmitOverride(globalObject, process, userEmit, "beforeExit"_s, jsNumber(exitCode));
+    } else {
+        MarkedArgumentBuffer arguments;
+        arguments.append(jsNumber(exitCode));
+        fired = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
+    }
     if (fired) {
         if (globalObject->m_nextTickQueue) {
             auto nextTickQueue = globalObject->m_nextTickQueue.get();

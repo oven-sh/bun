@@ -316,6 +316,34 @@ it("jsx with fragment", () => {
   expect(input).toBe(output);
 });
 
+it("jsx with circular props", () => {
+  const el = {
+    $$typeof: Symbol.for("react.element"),
+    type: "div",
+  };
+  el.props = el;
+  expect(Bun.inspect(el)).toContain("[Circular]");
+});
+
+it("jsx with circular children", () => {
+  const el = {
+    $$typeof: Symbol.for("react.element"),
+    type: "span",
+    props: {},
+  };
+  el.props.children = el;
+  expect(Bun.inspect(el)).toContain("[Circular]");
+});
+
+it("jsx with non-object props", () => {
+  const el = {
+    $$typeof: Symbol.for("react.element"),
+    type: "p",
+    props: 42,
+  };
+  expect(Bun.inspect(el)).toBe("<p />");
+});
+
 it("inspect", () => {
   expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(true);
   expect(Bun.inspect("hi")).toBe('"hi"');

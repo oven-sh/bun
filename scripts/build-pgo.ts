@@ -108,15 +108,17 @@ async function main(): Promise<void> {
 
 /**
  * Exercise the paths that dominate bun's cold start: clap arg-parse + CLI
- * dispatch, the module loader, the transpiler (js_parser/js_printer), the
- * bundler + sourcemap chunk builder, and a touch of webcore. Every step is
- * best-effort — a non-zero exit (e.g. from `bun -e`) still leaves the
- * already-executed code's counters in the `.profraw`.
+ * dispatch, `bun run <script>` npm-script lookup/spawn (incl. `--bun` mode),
+ * the module loader + CJS-wrap/transpile hot loop (at module-graph scale, not
+ * just a couple files), the transpiler (js_parser/js_printer), the bundler +
+ * sourcemap chunk builder, and a touch of webcore. Every step is best-effort —
+ * a non-zero exit (e.g. from `bun -e`) still leaves the already-executed code's
+ * counters in the `.profraw`.
  */
 function trainWorkload(bun: string, rawDir: string): void {
   // %m = binary signature, %p = pid → one distinct .profraw per run.
   const env = { ...process.env, LLVM_PROFILE_FILE: join(rawDir, "bun-%m-%p.profraw"), BUN_DEBUG_QUIET_LOGS: "1" };
-  const train = (args: string[]) => run(bun, args, { env, allowFail: true, quiet: true });
+  const train = (args: string[], cwd?: string) => run(bun, args, { cwd, env, allowFail: true, quiet: true });
 
   // CLI dispatch + version/banner paths.
   train(["--version"]);
@@ -141,6 +143,55 @@ function trainWorkload(bun: string, rawDir: string): void {
     "-e",
     "const srv=Bun.serve({port:0,fetch:()=>new Response('ok')});const r=await fetch(srv.url);await r.text();srv.stop(true);",
   ]);
+
+  // `bun run <package.json script>` — the npm-script lookup + child-spawn path
+  // and `--bun`-mode node→bun shebang redirect. Cold start for `bun --bun lint`
+  // & friends (npm-run-all `run-s` in bun → `bun run lint:*` → tool) goes
+  // through RunCommand::exec → arguments::parse(RUN_TABLE) → script resolution →
+  // spawn, none of which the -e / build / test steps above sample.
+  const pkgDir = join(rawDir, "_train_pkg");
+  mkdirSync(join(pkgDir, "bin"), { recursive: true });
+  writeFileSync(
+    join(pkgDir, "package.json"),
+    JSON.stringify({
+      name: "_pgo_train",
+      private: true,
+      scripts: { noop: "bun ./bin/noop.mjs --flag a b", chain: "bun run noop", "via-node": "node ./bin/noop.mjs" },
+    }),
+  );
+  writeFileSync(join(pkgDir, "bin", "noop.mjs"), "void process.argv.slice(2);\nprocess.exitCode = 0;\n");
+  train(["run", "noop"], pkgDir);
+  train(["run", "chain"], pkgDir); // run-script → run-script (npm-run-all `run-s` shape)
+  train(["--bun", "run", "via-node"], pkgDir); // exercises the node→bun shebang redirect
+
+  // Heavy CJS/TS module-graph transpile — the `require()`-wrap + resolver +
+  // parser hot loop that dominates `bun --bun <lint-tool>` (eslint + plugins =
+  // hundreds of node_modules files). Synthesize a fan-out DAG so the profile
+  // covers the CJS wrapper at scale, not just the handful of files `-e` /
+  // `bun build` above touch.
+  const graphDir = join(rawDir, "_train_graph");
+  mkdirSync(graphDir, { recursive: true });
+  const MODS = 48;
+  for (let i = 0; i < MODS; i++) {
+    const deps = [i + 1, i + 2, i + 5].filter(j => j < MODS);
+    const reqs = deps.map(j => `const m${j} = require("./m${j}.js");`).join("\n");
+    const sum = deps.map(j => `m${j}.v`).join(" + ") || "0";
+    writeFileSync(
+      join(graphDir, `m${i}.js`),
+      `${reqs}\nconst extra = { a: ${i}, b: "x".repeat(${i % 17}), c: [${deps.join(",")}] };\n` +
+        `function compute() { let s = ${i}; for (let k = 0; k < 8; k++) s = (s * 31 + k) >>> 0; return s; }\n` +
+        `module.exports = { v: ${i} + ${sum} + compute() * 0, extra, compute };\n`,
+    );
+  }
+  writeFileSync(
+    join(graphDir, "m0.ts"),
+    `import * as root from "./m0.js";\nexport interface Bag { readonly v: number }\nexport const b: Bag = { v: root.v };\n`,
+  );
+  writeFileSync(
+    join(graphDir, "entry.ts"),
+    `import "./m0.ts";\nfor (let i = 0; i < ${MODS}; i++) require("./m" + i + ".js");\n`,
+  );
+  train(["run", join(graphDir, "entry.ts")], pkgDir);
 
   // Transpiler coverage on real, non-trivial TypeScript: run a chunk of the
   // build tooling itself. `--help` transpiles build.ts + its direct imports;

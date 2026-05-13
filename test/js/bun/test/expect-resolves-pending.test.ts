@@ -260,8 +260,7 @@ describe("expect().resolves / .rejects on a still-pending promise", () => {
     // If `.resolves` blocks, each test runs to completion before the
     // next starts and maxInFlight stays at 1. With the deferred path
     // all ten are in flight at once.
-    const maxInFlight = Number(out.match(/MAX_INFLIGHT=(\d+)/)?.[1]);
-    expect(maxInFlight).toBe(10);
+    expect(out).toContain("MAX_INFLIGHT=10");
     expect(exitCode).toBe(0);
   }, 40_000);
 });

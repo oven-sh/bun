@@ -288,21 +288,30 @@ pub const Expect = struct {
         fn settle(this: *PendingMatcher, globalThis: *JSGlobalObject) void {
             defer this.deinit();
 
-            const expect_this = this.expect_this.get() orelse return;
-            const matcher_fn = this.matcher_fn.get() orelse return;
-            const args_array = this.matcher_args.get() orelse return;
+            const result = this.rerun(globalThis) catch {
+                const exception = globalThis.tryTakeException() orelse JSValue.js_undefined;
+                this.deferred.reject(globalThis, exception) catch {};
+                return;
+            };
+            this.deferred.resolve(globalThis, result) catch {};
+        }
+
+        fn rerun(this: *PendingMatcher, globalThis: *JSGlobalObject) bun.JSError!JSValue {
+            const expect_this = this.expect_this.get() orelse return .js_undefined;
+            const matcher_fn = this.matcher_fn.get() orelse return .js_undefined;
+            const args_array = this.matcher_args.get() orelse return .js_undefined;
 
             // Extract the original arguments back out of the array.
             // Most built-in matchers take 0-2 arguments, but
             // `toHaveBeenCalledWith` and `expect.extend()` custom matchers
             // are variadic, so fall back to the heap when needed.
-            const args_len: u32 = @intCast(args_array.getLength(globalThis) catch return);
+            const args_len: u32 = @intCast(try args_array.getLength(globalThis));
             var sfa = std.heap.stackFallback(inline_matcher_args * @sizeOf(JSValue), bun.default_allocator);
             const allocator = sfa.get();
             const args_buf = allocator.alloc(JSValue, args_len) catch bun.outOfMemory();
             defer allocator.free(args_buf);
             for (0..args_len) |i| {
-                args_buf[i] = args_array.getIndex(globalThis, @intCast(i)) catch return;
+                args_buf[i] = try args_array.getIndex(globalThis, @intCast(i));
             }
 
             // Mark the re-run so we don't try to defer a second time. The
@@ -313,12 +322,7 @@ pub const Expect = struct {
                 expect.is_async_rerun = false;
             };
 
-            const result = matcher_fn.call(globalThis, expect_this, args_buf) catch {
-                const exception = globalThis.tryTakeException() orelse JSValue.js_undefined;
-                this.deferred.reject(globalThis, exception) catch {};
-                return;
-            };
-            this.deferred.resolve(globalThis, result) catch {};
+            return matcher_fn.call(globalThis, expect_this, args_buf);
         }
 
         fn deinit(this: *PendingMatcher) void {

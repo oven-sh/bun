@@ -1450,6 +1450,12 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
   // every WIC call returned BackendUnavailable → this threw
   // ERR_IMAGE_FORMAT_UNSUPPORTED on Windows despite WIC being present.
   test.skipIf(!isWindows)("TIFF decodes via WIC on Windows", async () => {
+    // Earlier tests in this describe leave the process-global backend set to
+    // "bun", which bypasses WIC entirely (codecs.decodeViaSystem short-
+    // circuits on useSystem()). Pin it so we actually reach loadFactory();
+    // the describe's afterAll restores the original.
+    Bun.Image.backend = "system";
+
     // Hand-rolled 4×2 uncompressed baseline-RGB TIFF (little-endian, 12 IFD
     // entries — the TIFF 6.0 §8 required set). Layout: header 0..8, IFD
     // count 8..10, 12×12-byte entries 10..154, next-IFD 154..158,

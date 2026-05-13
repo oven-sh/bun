@@ -25,10 +25,17 @@ pub extern "kernel32" fn SetCurrentDirectoryW(
 
 pub extern "advapi32" fn SaferiIsExecutableFileType(szFullPathname: win32.LPCWSTR, bFromShellExecute: win32.BOOLEAN) callconv(.winapi) win32.BOOL;
 
-pub extern fn GetProcAddress(
+// kernel32 has no GetProcAddressW — PE export names are ANSI-only, so the
+// sole export takes LPCSTR. Declaring this as `[*:0]const u16` caused every
+// `bun.windows.GetProcAddressA` call to widen the symbol to UTF-16 and hand
+// kernel32 what it reads as "<first-byte>\0" — i.e. a one-char lookup that
+// always fails. The WIC image backend's `loadFactory()` was the visible
+// casualty (whole backend reported BackendUnavailable), but every
+// `bun.sys.dlsymImpl` on Windows went through the same broken path.
+pub extern "kernel32" fn GetProcAddress(
     ptr: ?*anyopaque,
-    [*:0]const u16,
-) ?*anyopaque;
+    [*:0]const u8,
+) callconv(.winapi) ?*anyopaque;
 
 pub extern fn LoadLibraryA(
     [*:0]const u8,

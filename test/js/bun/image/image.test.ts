@@ -1441,6 +1441,66 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
       await expect(new Bun.Image(tiff).png().bytes()).rejects.toMatchObject({ code: "ERR_IMAGE_FORMAT_UNSUPPORTED" });
     });
   }
+
+  // TIFF has no static decoder, so it's the one decode-only format that
+  // can't mask a dead system backend by silently falling back. Regression
+  // guard for bun.windows.GetProcAddressA widening the symbol name to UTF-16
+  // before handing it to kernel32's ANSI-only GetProcAddress — the lookup
+  // for "WICConvertBitmapSource" matched nothing, loadFactory() bailed, and
+  // every WIC call returned BackendUnavailable → this threw
+  // ERR_IMAGE_FORMAT_UNSUPPORTED on Windows despite WIC being present.
+  test.skipIf(!isWindows)("TIFF decodes via WIC on Windows", async () => {
+    // Hand-rolled 4×2 uncompressed baseline-RGB TIFF (little-endian, 12 IFD
+    // entries — the TIFF 6.0 §8 required set). Layout: header 0..8, IFD
+    // count 8..10, 12×12-byte entries 10..154, next-IFD 154..158,
+    // BitsPerSample 158..164, X/YResolution 164..180, pixels 180..204.
+    const tiff = new Uint8Array(204);
+    const dv = new DataView(tiff.buffer);
+    tiff.set([0x49, 0x49, 0x2a, 0x00], 0); // "II" + 42
+    dv.setUint32(4, 8, true); // IFD0 at byte 8
+    dv.setUint16(8, 12, true); // 12 entries
+    const entry = (i: number, tag: number, type: number, count: number, value: number) => {
+      const e = 10 + i * 12;
+      dv.setUint16(e, tag, true);
+      dv.setUint16(e + 2, type, true);
+      dv.setUint32(e + 4, count, true);
+      dv.setUint32(e + 8, value, true);
+    };
+    entry(0, 0x0100, 4, 1, 4); //    ImageWidth      = 4
+    entry(1, 0x0101, 4, 1, 2); //    ImageLength     = 2
+    entry(2, 0x0102, 3, 3, 158); //  BitsPerSample   → offset 158 (8,8,8)
+    entry(3, 0x0103, 3, 1, 1); //    Compression     = none
+    entry(4, 0x0106, 3, 1, 2); //    PhotoInterp     = RGB
+    entry(5, 0x0111, 4, 1, 180); //  StripOffsets    → offset 180
+    entry(6, 0x0115, 3, 1, 3); //    SamplesPerPixel = 3
+    entry(7, 0x0116, 4, 1, 2); //    RowsPerStrip    = 2
+    entry(8, 0x0117, 4, 1, 24); //   StripByteCounts = 24
+    entry(9, 0x011a, 5, 1, 164); //  XResolution     → offset 164 (72/1)
+    entry(10, 0x011b, 5, 1, 172); // YResolution     → offset 172 (72/1)
+    entry(11, 0x0128, 3, 1, 2); //   ResolutionUnit  = inch
+    dv.setUint32(154, 0, true); // next IFD = 0
+    for (const o of [158, 160, 162]) dv.setUint16(o, 8, true); // BitsPerSample
+    dv.setUint32(164, 72, true);
+    dv.setUint32(168, 1, true);
+    dv.setUint32(172, 72, true);
+    dv.setUint32(176, 1, true);
+    // prettier-ignore
+    tiff.set([
+      255, 0, 0,  0, 255, 0,  0, 0, 255,  128, 128, 128,
+      64, 64, 64,  200, 200, 200,  32, 64, 96,  96, 64, 32,
+    ], 180);
+
+    // metadata() on TIFF falls through probe() to a full system-backend
+    // decode; if WIC never loaded, this rejects with
+    // ERR_IMAGE_FORMAT_UNSUPPORTED instead of returning dims.
+    expect(await new Bun.Image(tiff).metadata()).toEqual({ width: 4, height: 2, format: "tiff" });
+
+    // Round-trip the pixels so a half-loaded backend (factory present but
+    // WICConvertBitmapSource missing) shows up as a decode failure.
+    const png = await new Bun.Image(tiff).png().bytes();
+    expect(png.subarray(0, 8)).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    expect(await new Bun.Image(png).metadata()).toEqual({ width: 4, height: 2, format: "png" });
+  });
 });
 
 describe("Bun.Image clipboard statics", () => {

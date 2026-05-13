@@ -2970,10 +2970,11 @@ pub const GetProcAddress = @import("../../windows_sys/externs.zig").GetProcAddre
 
 pub fn GetProcAddressA(
     ptr: ?*anyopaque,
-    utf8: [:0]const u8,
+    name: [:0]const u8,
 ) ?*anyopaque {
-    var wbuf: [2048]u16 = undefined;
-    return GetProcAddress(ptr, bun.strings.toWPath(&wbuf, utf8).ptr);
+    // No widening: kernel32 exports exactly one GetProcAddress and it takes
+    // LPCSTR. PE export tables are byte strings — there is no W variant.
+    return GetProcAddress(ptr, name.ptr);
 }
 
 pub const LoadLibraryA = @import("../../windows_sys/externs.zig").LoadLibraryA;

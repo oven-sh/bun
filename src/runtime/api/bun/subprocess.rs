@@ -1029,10 +1029,13 @@ impl Subprocess<'_> {
             let must_deref = self.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED);
             self.update_flags(|f| f.remove(Flags::DEREF_ON_STDIN_DESTROYED));
 
-            // `pipe_ptr` is live (see `pipe` borrow above); Zig mutates through
-            // `*FileSink` here on the single mutator thread — same invariant as
-            // the centralised `Writable::pipe_sink_mut` accessor.
-            Writable::pipe_sink_mut(&pipe_ptr).on_attached_process_exit(&status);
+            // `pipe_ptr` is live (see `pipe` borrow above) and is the canonical
+            // `*mut FileSink` from `FileSink::create*`; pass it straight through —
+            // `on_attached_process_exit` re-enters via the writer backref and may
+            // free `this`, so no `&mut FileSink` is materialized at the boundary.
+            // SAFETY: `pipe_ptr` is the canonical heap pointer with write+dealloc
+            // provenance, held live by the `Writable::Pipe`/cache +1.
+            unsafe { FileSink::on_attached_process_exit(pipe_ptr.as_ptr(), &status) };
 
             if must_deref {
                 self.deref();

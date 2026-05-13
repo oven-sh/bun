@@ -422,7 +422,6 @@ impl<'a> Writable<'a> {
                 // stdin already replaced with Ignore above (mirrors Zig `this.* = .{ .ignore = {} }`)
                 // pipe is live (held a +1 in this enum); separate allocation
                 // from `*subprocess` so the borrows are disjoint.
-                let pipe = Self::pipe_sink_mut(&pipe_nn);
                 if subprocess.has_exited()
                     && !subprocess
                         .flags
@@ -437,16 +436,29 @@ impl<'a> Writable<'a> {
                     // writes were clobbered by the struct-literal reassignment
                     // in spawn_maybe_sync and this path asserted no ref change;
                     // see https://github.com/oven-sh/bun/pull/14092).
-                    pipe.on_attached_process_exit(&subprocess.process().status);
+                    //
+                    // Pass the canonical `*mut FileSink` straight through — the
+                    // call re-enters via the writer backref and may free `this`,
+                    // so no `&mut FileSink` is materialized across it.
+                    // SAFETY: `pipe_nn` is the canonical heap pointer from
+                    // `FileSink::create*` with write+dealloc provenance, held
+                    // live by the `Writable::Pipe` +1.
+                    unsafe {
+                        FileSink::on_attached_process_exit(
+                            pipe_nn.as_ptr(),
+                            &subprocess.process().status,
+                        )
+                    };
                     // Rust `FileSink::to_js` takes its own per-wrapper +1 (Zig's
                     // `toJS` *transfers* the create-time +1). Release the
                     // enum's create-time +1 now that the wrapper holds its own
                     // — mirrors Blob.rs:1899-1902. `stdin` was already swapped
                     // to `Ignore` above so `on_close` won't double-release.
-                    let js = pipe.to_js(global_this);
+                    let js = Self::pipe_sink_mut(&pipe_nn).to_js(global_this);
                     Self::pipe_release(pipe_nn);
                     js
                 } else {
+                    let pipe = Self::pipe_sink_mut(&pipe_nn);
                     subprocess.update_flags(|f| f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false));
                     subprocess.weak_file_sink_stdin_ptr.set(Some(pipe_nn));
                     if !subprocess

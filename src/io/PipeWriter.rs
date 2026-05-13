@@ -2572,8 +2572,9 @@ pub type StreamingWriter<P> = WindowsStreamingWriter<P>;
 // (POSIX + WindowsWriterParent + Windows{Streaming,Buffered}WriterParent),
 // differing only in:
 //   (a) the inherent-method names the vtable forwards to,
-//   (b) whether the body derefs `*mut Self` as `&mut` or `&` (re-entrancy
-//       under Stacked Borrows — see `borrow = shared` callers),
+//   (b) how the callback is dispatched off `*mut Self` — as `&mut`, `&`, or
+//       a raw-ptr method call (re-entrancy under Stacked/Tree Borrows — see
+//       `borrow = shared` / `borrow = ptr` callers),
 //   (c) the `event_loop` / `loop_` / refcount accessor expressions.
 // These macros stamp that triple once per parent.
 //
@@ -2583,6 +2584,12 @@ pub type StreamingWriter<P> = WindowsStreamingWriter<P>;
 // `borrow = shared` → bodies form `&*this` (callback may re-enter JS or
 //                     `enqueue(&self)` and observe a fresh `&Self`; aliased
 //                     `&Self` is sound where `&mut Self` is not).
+// `borrow = ptr`    → bodies call `Self::method(this, ..)` — no reference is
+//                     materialized at the boundary; for parents that must
+//                     keep full write/dealloc provenance through a re-entrant,
+//                     freeing callback (the callback may run `Box::from_raw`
+//                     on `this`, so a `&self`-derived ptr would carry only
+//                     SharedReadOnly provenance and dealloc through it is UB).
 //
 // Accessor args use closure-literal syntax (`|this| expr`) purely as a binder
 // for the macro — no actual closure is created; `expr` is pasted into an
@@ -2602,9 +2609,10 @@ pub mod __parent_macro {
 /// `WindowsStreamingWriterParent` for a parent type. See module comment above.
 #[macro_export]
 macro_rules! impl_streaming_writer_parent {
-    // Internal: project the `borrow` mode onto a raw-ptr deref.
-    (@borrow mut    $p:expr) => { &mut *$p };
-    (@borrow shared $p:expr) => { &*$p };
+    // Internal: dispatch a callback off the raw-ptr backref per `borrow` mode.
+    (@call mut    $p:expr; $m:ident($($a:tt)*)) => { (&mut *$p).$m($($a)*) };
+    (@call shared $p:expr; $m:ident($($a:tt)*)) => { (&*$p).$m($($a)*) };
+    (@call ptr    $p:expr; $m:ident($($a:tt)*)) => { <Self>::$m($p, $($a)*) };
 
     // Internal: expand the three impls once generics are normalized.
     (@emit
@@ -2628,24 +2636,26 @@ macro_rules! impl_streaming_writer_parent {
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: `this` is the BACKREF set via `set_parent`; the
-                // StreamingWriter never materializes `&mut Parent`, so this is
-                // the unique access path for the callback's duration.
-                unsafe { ($crate::impl_streaming_writer_parent!(@borrow $borrow this)).$on_write(amount, status) }
+                // StreamingWriter never materializes `&mut Parent`. The handler
+                // is dispatched per the `borrow` mode (`mut`/`shared`/`ptr` —
+                // see the module comment); `ptr` keeps full write/dealloc
+                // provenance through re-entrant, freeing callbacks.
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_write(amount, status)) }
             }
             #[inline]
             unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_streaming_writer_parent!(@borrow $borrow this)).$on_error(err) }
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_error(err)) }
             }
             #[inline]
             unsafe fn on_ready(this: *mut Self) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_streaming_writer_parent!(@borrow $borrow this)).$on_ready() }
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_ready()) }
             }
             #[inline]
             unsafe fn on_close(this: *mut Self) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_streaming_writer_parent!(@borrow $borrow this)).$on_close() }
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_close()) }
             }
             #[inline]
             unsafe fn event_loop(this: *mut Self) -> $crate::EventLoopHandle {
@@ -2695,22 +2705,22 @@ macro_rules! impl_streaming_writer_parent {
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: BACKREF set via `set_parent`; see borrow-mode note.
-                unsafe { ($crate::impl_streaming_writer_parent!(@borrow $borrow this)).$on_write(amount, status) }
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_write(amount, status)) }
             }
             #[inline]
             unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_streaming_writer_parent!(@borrow $borrow this)).$on_error(err) }
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_error(err)) }
             }
             #[inline]
             unsafe fn on_writable(this: *mut Self) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_streaming_writer_parent!(@borrow $borrow this)).$on_ready() }
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_ready()) }
             }
             #[inline]
             unsafe fn on_close(this: *mut Self) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_streaming_writer_parent!(@borrow $borrow this)).$on_close() }
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_close()) }
             }
         }
     };

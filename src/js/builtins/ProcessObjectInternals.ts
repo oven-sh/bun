@@ -318,7 +318,9 @@ export function getStdinStream(
     // and pause() so kFlowing is cleared — otherwise any chunk pushed by an
     // in-flight internalRead before the new load attaches its handler takes
     // the addChunk fast path and is emitted to zero listeners instead of
-    // buffered.
+    // buffered. unpipe() also clears state.pipes so destinations from the
+    // previous load aren't pinned for the process lifetime.
+    stream.unpipe();
     for (const fn of stream.listeners("data")) stream.removeListener("data", fn);
     originalPause.$call(stream);
     stream.removeAllListeners();

@@ -354,6 +354,12 @@ pub struct Diagnostic {
 impl Diagnostic {
     /// Default diagnostics reporter when all you want is English with no colors.
     /// Use this as a reference for implementing your own if needed.
+    ///
+    /// Error path only — never reached on the trivial-script / `bun -p` cold
+    /// start. `#[cold]` + `#[inline(never)]` so the formatting machinery lands
+    /// in `.text.unlikely`, away from the cold-start working set.
+    #[cold]
+    #[inline(never)]
     pub fn report<W>(&self, _stream: W, err: bun_core::Error) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         let mut name_buf = [0u8; 1024];
@@ -453,6 +459,13 @@ impl<'a> Default for ParseOptions<'a> {
     }
 }
 
+// Help/usage/error rendering — none of this is on the cold-start hot chain
+// (`bun -p '1+1'` / `bun --version` / plain `bun <file>` never call into the
+// help or diagnostics path). Mark every entry point `#[cold]` + `#[inline(never)]`
+// so rustc emits them in `.text.unlikely.*` sections that the linker clusters
+// together, keeping them out of the pages faulted in on a normal invocation.
+#[cold]
+#[inline(never)]
 fn get_help_simple(param: &Param<Help>) -> &'static [u8] {
     param.id.msg
 }
@@ -469,6 +482,8 @@ fn get_help_simple(param: &Param<Help>) -> &'static [u8] {
 /// the rewrite at `comptime` via `Output.prettyFmt` inside
 /// `clap.simpleHelpBunTopLevel`; the colour case is rare enough that doing it
 /// lazily at runtime is the better trade for binary size.)
+#[cold]
+#[inline(never)]
 fn pretty_help_desc(param: &Param<Help>) -> std::borrow::Cow<'static, [u8]> {
     if Output::enable_ansi_colors_stdout() {
         std::borrow::Cow::Owned(bun_core::output::pretty_fmt_runtime(param.id.msg, true))
@@ -477,6 +492,8 @@ fn pretty_help_desc(param: &Param<Help>) -> std::borrow::Cow<'static, [u8]> {
     }
 }
 
+#[cold]
+#[inline(never)]
 fn get_value_simple(param: &Param<Help>) -> &'static [u8] {
     param.id.value
 }
@@ -523,8 +540,9 @@ impl<Id: 'static> Args<Id> {
 /// **Cold path** — the startup hot set uses [`parse_with_table`] against a
 /// rodata [`comptime_table!`]. This entry point performs a runtime conversion
 /// (`ConvertedTable::for_params`) and is only used by non-startup commands
-/// (`bun install`, `bun create`), so it's `#[cold]`.
+/// (`bun install`, `bun create`), so it's `#[cold]` + `#[inline(never)]`.
 #[cold]
+#[inline(never)]
 pub fn parse<Id: 'static>(
     params: &'static [Param<Id>],
     opt: ParseOptions<'_>,
@@ -572,6 +590,7 @@ pub fn parse_with_table<Id: 'static>(
 ///
 /// **Cold path** — see [`parse`]; the startup hot path is [`parse_with_table`].
 #[cold]
+#[inline(never)]
 pub fn parse_ex<Id: 'static, I>(
     params: &'static [Param<Id>],
     iter: &mut I,
@@ -590,6 +609,8 @@ where
 ///     -s <valueText>         helpText
 ///         --long             helpText
 ///         --long <valueText> helpText
+#[cold]
+#[inline(never)]
 pub fn help_full<W, Id, E, C>(
     stream: &mut W,
     params: &[Param<Id>],
@@ -641,6 +662,8 @@ where
     Ok(())
 }
 
+#[cold]
+#[inline(never)]
 fn print_param<W, Id, E, C>(
     stream: &mut W,
     param: &Param<Id>,
@@ -672,6 +695,8 @@ where
 
 /// Shared by `print_param` and `usage_full`: emit the ` <val>` / ` <val>?` /
 /// ` <val>...` suffix for a param's `takes_value`. Mirrors clap.zig:459/672.
+#[cold]
+#[inline(never)]
 fn write_takes_value_suffix<W, Id, E, C>(
     w: &mut W,
     param: &Param<Id>,
@@ -712,6 +737,8 @@ where
 
 /// A wrapper around help_full for simple help_text and value_text functions that
 /// cant return an error or take a context.
+#[cold]
+#[inline(never)]
 pub fn help_ex<W, Id>(
     stream: &mut W,
     params: &[Param<Id>],
@@ -749,6 +776,8 @@ where
     )
 }
 
+#[cold]
+#[inline(never)]
 pub fn simple_print_param(param: &Param<Help>) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
     Output::pretty(format_args!("\n"));
@@ -782,6 +811,8 @@ pub fn simple_print_param(param: &Param<Help>) -> Result<(), bun_core::Error> {
 /// Display width of a single param's flag column: `--long` plus the literal
 /// `=<val>` suffix (6 bytes) when it takes a value. Kept in lockstep with
 /// `simple_print_param`'s `"=<val>"` literal — change both together.
+#[cold]
+#[inline(never)]
 fn param_display_width(param: &Param<Help>) -> usize {
     let flags_len = param.names.long.map_or(0, |l| l.len());
     let value_len: usize = if param.takes_value != Values::None {
@@ -792,6 +823,8 @@ fn param_display_width(param: &Param<Help>) -> usize {
     flags_len + value_len
 }
 
+#[cold]
+#[inline(never)]
 fn compute_max_help_spacing(params: &[Param<Help>]) -> usize {
     let mut res: usize = 2;
     for param in params {
@@ -800,6 +833,8 @@ fn compute_max_help_spacing(params: &[Param<Help>]) -> usize {
     res
 }
 
+#[cold]
+#[inline(never)]
 pub fn simple_help(params: &[Param<Help>]) {
     let max_spacing: usize = compute_max_help_spacing(params);
 
@@ -834,6 +869,8 @@ pub fn simple_help(params: &[Param<Help>]) {
     }
 }
 
+#[cold]
+#[inline(never)]
 pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
     // TODO(port): Zig evaluates `computed_max_spacing` at `comptime` and emits
     // `@compileError` on overflow, plus uses `inline for` + comptime string
@@ -876,6 +913,8 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
 }
 
 /// A wrapper around help_ex that takes a `Param<Help>`.
+#[cold]
+#[inline(never)]
 pub fn help<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> Result<(), bun_core::Error> {
     help_ex(stream, params, get_help_simple, get_value_simple)
 }
@@ -885,6 +924,8 @@ pub fn help<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> Result<(),
 ///
 /// First all none value taking parameters, which have a short name are
 /// printed, then non positional parameters and finally the positinal.
+#[cold]
+#[inline(never)]
 pub fn usage_full<W, Id, E, C>(
     stream: &mut W,
     params: &[Param<Id>],
@@ -967,6 +1008,8 @@ where
 
 /// A wrapper around usage_full for a simple value_text functions that
 /// cant return an error or take a context.
+#[cold]
+#[inline(never)]
 pub fn usage_ex<W, Id>(
     stream: &mut W,
     params: &[Param<Id>],
@@ -988,6 +1031,8 @@ where
 }
 
 /// A wrapper around usage_ex that takes a `Param<Help>`.
+#[cold]
+#[inline(never)]
 pub fn usage<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> Result<(), bun_core::Error> {
     usage_ex(stream, params, get_value_simple)
 }

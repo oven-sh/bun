@@ -392,4 +392,26 @@ size_t simdutf__utf16_length_from_latin1(const char* input, size_t length)
     UNUSED_PARAM(input);
     return simdutf::utf16_length_from_latin1(length);
 }
+
+// Returns whether simdutf selected a real implementation for this CPU.
+//
+// When built with -march=nehalem (Bun's x64 baseline) simdutf omits its
+// scalar fallback because it assumes the westmere (SSE4.2) kernel can
+// "always run". On a host without SSE4.2 — for example the default QEMU
+// TCG vCPU, which only advertises SSE3 — the runtime dispatcher finds no
+// compatible implementation and returns an `unsupported_implementation`
+// stub. Every function on that stub returns 0/false/{OTHER,0}, which
+// silently corrupts every downstream consumer (firstNonASCII, StringImpl
+// UTF-8 creation, Base64, ...). Bun checks this once at startup so it can
+// fail fast with a useful diagnostic instead of spinning for ~16 seconds
+// allocating ~4 GB and then segfaulting (issue #30613).
+//
+// The stub's validate_ascii() unconditionally returns false, so probing it
+// with a single known-ASCII byte both forces lazy dispatch to run and
+// detects the stub without reaching into simdutf's private state.
+bool simdutf__has_implementation()
+{
+    static constexpr const char probe = 'a';
+    return simdutf::validate_ascii(&probe, 1);
+}
 }

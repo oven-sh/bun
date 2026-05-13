@@ -25,9 +25,17 @@ pub const Expect = struct {
     parent: ?*bun.jsc.Jest.bun_test.BunTest.RefData,
     custom_label: bun.String = bun.String.empty,
     /// Set to true while re-invoking a matcher from a `.resolves`/`.rejects`
-    /// `.then()` callback so we don't double-count the expectation or defer
-    /// again.
+    /// `.then()` callback so we don't try to defer again.
     is_async_rerun: bool = false,
+    /// Set by `incrementExpectCallCounter()` on the first call for this
+    /// `expect()` instance so a deferred re-run doesn't count the same
+    /// expectation twice. Matchers call `incrementExpectCallCounter()`
+    /// either before or after `getValue()`, so we can't rely on ordering.
+    counted_expect_call: bool = false,
+    /// The caller's source location, captured when a `.resolves`/`.rejects`
+    /// matcher is deferred. `inlineSnapshot()` needs this on the re-run
+    /// because the user's frame is no longer on the stack.
+    async_rerun_srcloc: ?CallFrame.CallerSrcLoc = null,
 
     pub const TestScope = struct {
         test_id: TestRunner.Test.ID,
@@ -35,7 +43,8 @@ pub const Expect = struct {
     };
 
     pub fn incrementExpectCallCounter(this: *Expect) void {
-        if (this.is_async_rerun) return; // already counted on the first (deferred) call
+        if (this.counted_expect_call) return;
+        this.counted_expect_call = true;
         const parent = this.parent orelse return; // not in bun:test
         var buntest_strong = parent.bunTest() orelse return; // the test file this expect() call was for is no longer
         defer buntest_strong.deinit();
@@ -207,6 +216,14 @@ pub const Expect = struct {
         if (promise.status() != .pending) return null;
 
         promise.setHandled(globalThis.vm());
+
+        // Capture the caller's source location now, while the user's frame
+        // is still on the stack. `toMatchInlineSnapshot` /
+        // `toThrowErrorMatchingInlineSnapshot` need it on the re-run to
+        // know which line to write the snapshot back to.
+        if (this.async_rerun_srcloc) |*old| old.str.deref();
+        this.async_rerun_srcloc = callframe.getCallerSrcLoc(globalThis);
+
         const deferred = try PendingMatcher.create(globalThis, thisValue, callframe, value);
         js.resultValueSetCached(thisValue, globalThis, deferred);
         return deferred;
@@ -276,25 +293,27 @@ pub const Expect = struct {
             const args_array = this.matcher_args.get() orelse return;
 
             // Extract the original arguments back out of the array.
-            const args_len: u32 = @intCast(@min(
-                args_array.getLength(globalThis) catch return,
-                max_matcher_args,
-            ));
-            var args_buf: [max_matcher_args]JSValue = @splat(.js_undefined);
+            // Most built-in matchers take 0-2 arguments, but
+            // `toHaveBeenCalledWith` and `expect.extend()` custom matchers
+            // are variadic, so fall back to the heap when needed.
+            const args_len: u32 = @intCast(args_array.getLength(globalThis) catch return);
+            var sfa = std.heap.stackFallback(inline_matcher_args * @sizeOf(JSValue), bun.default_allocator);
+            const allocator = sfa.get();
+            const args_buf = allocator.alloc(JSValue, args_len) catch bun.outOfMemory();
+            defer allocator.free(args_buf);
             for (0..args_len) |i| {
                 args_buf[i] = args_array.getIndex(globalThis, @intCast(i)) catch return;
             }
 
-            // Mark the re-run so we don't increment the expectation counter
-            // again or try to defer a second time. The captured promise is
-            // now settled, so `processPromise` will extract its result
-            // synchronously.
+            // Mark the re-run so we don't try to defer a second time. The
+            // captured promise is now settled, so `processPromise` will
+            // extract its result synchronously.
             if (Expect.fromJS(expect_this)) |expect| expect.is_async_rerun = true;
             defer if (Expect.fromJS(expect_this)) |expect| {
                 expect.is_async_rerun = false;
             };
 
-            const result = matcher_fn.call(globalThis, expect_this, args_buf[0..args_len]) catch {
+            const result = matcher_fn.call(globalThis, expect_this, args_buf) catch {
                 const exception = globalThis.tryTakeException() orelse JSValue.js_undefined;
                 this.deferred.reject(globalThis, exception) catch {};
                 return;
@@ -310,10 +329,11 @@ pub const Expect = struct {
             bun.destroy(this);
         }
 
-        /// Maximum number of positional arguments any matcher accepts. The
-        /// largest today is 2 (e.g. `toBeCloseTo(number, precision)`), but
-        /// custom matchers via `expect.extend()` can take more.
-        const max_matcher_args = 32;
+        /// Stack-buffer size for the re-run's argument list. Most built-in
+        /// matchers take 0-2 positional arguments; `toHaveBeenCalledWith`
+        /// and custom matchers via `expect.extend()` are variadic, so
+        /// `settle()` heap-allocates past this.
+        const inline_matcher_args = 8;
     };
 
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
@@ -475,6 +495,7 @@ pub const Expect = struct {
     ) callconv(.c) void {
         this.custom_label.deref();
         if (this.parent) |parent| parent.deref();
+        if (this.async_rerun_srcloc) |*s| s.str.deref();
         VirtualMachine.get().allocator.destroy(this);
     }
 
@@ -905,8 +926,14 @@ pub const Expect = struct {
             const buntest = buntest_strong.get();
 
             // 1. find the src loc of the snapshot
-            const srcloc = callFrame.getCallerSrcLoc(globalThis);
-            defer srcloc.str.deref();
+            // When re-running from a deferred `.resolves`/`.rejects`
+            // `.then()` callback, the user's frame is no longer on the
+            // stack; use the location captured in `maybeDeferMatcher()`.
+            const srcloc: CallFrame.CallerSrcLoc, const owns_srcloc: bool = if (this.async_rerun_srcloc) |s|
+                .{ s, false }
+            else
+                .{ callFrame.getCallerSrcLoc(globalThis), true };
+            defer if (owns_srcloc) srcloc.str.deref();
             const file_id = buntest.file_id;
             const fget = runner.files.get(file_id);
 

@@ -136,12 +136,17 @@ fn heap_alloc(layout: Layout) -> *mut u8 {
 //   (two `Vec` headers may alias one buffer; neither frees it). Under the
 //   global fallback the buffer leaks until process exit — the documented
 //   pre-Strategy-B status quo.
-// - `grow` allocates a fresh block + `memcpy` rather than `mi_realloc`: when
-//   the TL heap is *null* we cannot tell whether `ptr` is a global-fallback
-//   `mi_malloc` block head or a heap block from a since-exited AST scope on
-//   another thread (`BundleV2::clone_ast` does exactly this), so passing it to
-//   `mi_realloc` would be unsound. The old block is abandoned (same leak
-//   semantics as `deallocate`).
+// - `grow` first tries `mi_expand` (extend the existing block in place — never
+//   moves it, so it stays in whatever heap owns it; sound for any live `ptr`).
+//   On failure it allocates a fresh block + `memcpy` rather than `mi_realloc`:
+//   when the TL heap is *null* we cannot tell whether `ptr` is a
+//   global-fallback `mi_malloc` block head or a heap block from a since-exited
+//   AST scope on another thread (`BundleV2::clone_ast` does exactly this), so
+//   passing it to `mi_realloc` would be unsound. The old block is abandoned
+//   (same leak semantics as `deallocate`).
+// - `allocate_zeroed` is `mi_*zalloc` (skips the redundant `memset` mimalloc
+//   would otherwise need over already-zero OS pages); same lifetime as
+//   `allocate`.
 // - `AstAlloc` is a ZST: every instance is trivially "the same allocator", so
 //   the "pointers may be freed by any clone" requirement is satisfied.
 // - `Send + Sync` (auto-derived for a fieldless ZST) is sound: each call reads
@@ -154,6 +159,27 @@ unsafe impl Allocator for AstAlloc {
     #[inline]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         alloc_result(heap_alloc(layout), layout.size())
+    }
+
+    #[inline]
+    fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        // `mi_*zalloc` lets mimalloc skip the `memset` for blocks carved from
+        // freshly-`mmap`ed (already-zero) OS pages, which the default
+        // `allocate` + `ptr::write_bytes(0)` cannot. Same lifetime semantics as
+        // `heap_alloc` (the block is reclaimed by `mi_heap_destroy` on
+        // `MimallocArena::reset()`, or leaks under the global fallback). Mirrors
+        // `MimallocArena::allocate_zeroed`.
+        let heap = AST_HEAP.get();
+        let p: *mut u8 = if heap.is_null() {
+            mimalloc::mi_zalloc_auto_align(layout.size(), layout.align()).cast()
+        } else {
+            // SAFETY: `heap` is the live `mi_heap_t*` of this thread's AST
+            // arena (the `set_thread_heap` contract); see `heap_alloc`.
+            unsafe {
+                mimalloc::mi_heap_zalloc_auto_align(heap, layout.size(), layout.align()).cast()
+            }
+        };
+        alloc_result(p, layout.size())
     }
 
     #[inline]
@@ -172,10 +198,34 @@ unsafe impl Allocator for AstAlloc {
         old: Layout,
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        // Allocate-new + copy + abandon-old. Not `mi_realloc`: `ptr`'s
-        // provenance is unknown when the TL heap is null (see SAFETY above),
-        // and under a TL heap the old block is reclaimed by `mi_heap_destroy`
-        // anyway, so the leak is bounded by the arena lifetime.
+        // Fast path: mimalloc rounds every allocation up to a size class, so the
+        // block behind `ptr` frequently already has room for `new.size()`.
+        // `mi_expand` reports that (and fixes up mimalloc's own padding
+        // bookkeeping) *without* moving the block — so it is sound on a `ptr`
+        // from any heap (the block does not change owner) and never thrashes the
+        // `heap → theap` TLS lookup. When it succeeds there is no allocation, no
+        // `memcpy`, and no abandoned block, matching `MimallocArena`'s
+        // `resize_in_place` (Zig's arena `remap` is `mi_expand`-then-`mi_realloc`).
+        //
+        // Only attempt it when `new.align() <= old.align()`: the block was
+        // originally aligned for `old`, `mi_expand` cannot raise that, and for
+        // `Vec<T>` (the only `AstVec` shape) the alignment never changes across
+        // grows, so this is the common case.
+        if new.align() <= old.align() {
+            // SAFETY: `ptr` is a live block from this allocator (the `grow`
+            // contract), i.e. a real mimalloc block head — the precondition
+            // `mi_expand` requires. It returns `ptr` unchanged on success or
+            // null when the block cannot hold `new.size()`.
+            if let Some(p) = NonNull::new(unsafe {
+                mimalloc::mi_expand(ptr.as_ptr().cast(), new.size()).cast::<u8>()
+            }) {
+                return Ok(NonNull::slice_from_raw_parts(p, new.size()));
+            }
+        }
+        // Slow path: allocate-new + copy + abandon-old. Not `mi_realloc`:
+        // `ptr`'s provenance is unknown when the TL heap is null (see SAFETY
+        // above), and under a TL heap the old block is reclaimed by
+        // `mi_heap_destroy` anyway, so the leak is bounded by the arena lifetime.
         let p = NonNull::new(heap_alloc(new)).ok_or(AllocError)?;
         // SAFETY: `p` is a fresh `new.size()`-byte block disjoint from `ptr`;
         // `old.size()` bytes at `ptr` are initialized per the `grow` contract;

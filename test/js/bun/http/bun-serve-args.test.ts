@@ -685,11 +685,7 @@ describe("app.bundlerOptions validation", () => {
       { bundlerOptions: { client: "x" } },
       "'app.bundlerOptions.client' must be an object",
     ],
-    [
-      "bundlerOptions.ssr is a bigint",
-      { bundlerOptions: { ssr: 1n } },
-      "'app.bundlerOptions.ssr' must be an object",
-    ],
+    ["bundlerOptions.ssr is a bigint", { bundlerOptions: { ssr: 1n } }, "'app.bundlerOptions.ssr' must be an object"],
     [
       "bundlerOptions.server.minify is a number",
       { bundlerOptions: { server: { minify: 123 } } },

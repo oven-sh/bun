@@ -169,7 +169,9 @@ describe.concurrent("process-stdio", () => {
 describe.concurrent.skipIf(isWindows)("console.* EPIPE surfaces on process.stdout/stderr (#7251)", () => {
   const script = (fn: "log" | "error", stream: "stdout" | "stderr") => `
     process.${stream}.on('error', (err) => {
-      process.${stream === "stdout" ? "stderr" : "stdout"}.write('CODE:' + err.code + '\\n');
+      process.${stream === "stdout" ? "stderr" : "stdout"}.write(
+        JSON.stringify({ code: err.code, syscall: err.syscall, errno: err.errno }) + '\\n',
+      );
       process.exit(0);
     });
     function loop() {
@@ -203,13 +205,13 @@ describe.concurrent.skipIf(isWindows)("console.* EPIPE surfaces on process.stdou
 
   test("console.log → process.stdout 'error' listener fires with EPIPE", async () => {
     const { otherText, exitCode } = await runWithBrokenPipe(script("log", "stdout"), "stdout");
-    expect(otherText).toContain("CODE:EPIPE");
+    expect(JSON.parse(otherText)).toEqual({ code: "EPIPE", syscall: "write", errno: -32 });
     expect(exitCode).toBe(0);
   });
 
   test("console.error → process.stderr 'error' listener fires with EPIPE", async () => {
     const { otherText, exitCode } = await runWithBrokenPipe(script("error", "stderr"), "stderr");
-    expect(otherText).toContain("CODE:EPIPE");
+    expect(JSON.parse(otherText)).toEqual({ code: "EPIPE", syscall: "write", errno: -32 });
     expect(exitCode).toBe(0);
   });
 

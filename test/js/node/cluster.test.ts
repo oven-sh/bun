@@ -214,9 +214,11 @@ if (cluster.isPrimary) {
           if (msg === "listening") {
             ready++;
             if (ready === 2) {
-              // Make several connections; SO_REUSEPORT should distribute them.
+              // Make enough connections that SO_REUSEPORT hashing is
+              // effectively guaranteed to hit both workers (P(all-same)
+              // with 64 conns and 2 listeners is ~1e-19).
               let done = 0;
-              const total = 16;
+              const total = 64;
               for (let j = 0; j < total; j++) {
                 const c = net.connect(port, "127.0.0.1");
                 c.on("data", (d) => {

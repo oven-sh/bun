@@ -27,10 +27,12 @@ pub const Expect = struct {
     /// Set to true while re-invoking a matcher from a `.resolves`/`.rejects`
     /// `.then()` callback so we don't try to defer again.
     is_async_rerun: bool = false,
-    /// Set by `incrementExpectCallCounter()` on the first call for this
-    /// `expect()` instance so a deferred re-run doesn't count the same
-    /// expectation twice. Matchers call `incrementExpectCallCounter()`
-    /// either before or after `getValue()`, so we can't rely on ordering.
+    /// Set by `incrementExpectCallCounter()` so a deferred re-run doesn't
+    /// count the same expectation twice. Matchers call the counter either
+    /// before or after `getValue()`, so we can't rely on ordering. Reset
+    /// by `postMatch()` so multiple matchers on the same `expect()` each
+    /// count; `PendingMatcher` snapshots it at defer time and restores it
+    /// before the re-run.
     counted_expect_call: bool = false,
     /// The caller's source location, captured when a `.resolves`/`.rejects`
     /// matcher is deferred. `inlineSnapshot()` needs this on the re-run
@@ -224,7 +226,7 @@ pub const Expect = struct {
         if (this.async_rerun_srcloc) |*old| old.str.deref();
         this.async_rerun_srcloc = callframe.getCallerSrcLoc(globalThis);
 
-        const deferred = try PendingMatcher.create(globalThis, thisValue, callframe, value);
+        const deferred = try PendingMatcher.create(globalThis, thisValue, callframe, value, this.counted_expect_call);
         js.resultValueSetCached(thisValue, globalThis, deferred);
         return deferred;
     }
@@ -241,8 +243,13 @@ pub const Expect = struct {
         matcher_args: jsc.Strong.Optional,
         /// The promise returned to the caller of the matcher.
         deferred: jsc.JSPromise.Strong,
+        /// Whether `incrementExpectCallCounter()` had already run by the
+        /// time we deferred. Restored on re-run so the counter is bumped
+        /// exactly once regardless of whether this matcher calls it
+        /// before or after `getValue()`.
+        was_counted_before_defer: bool,
 
-        fn create(globalThis: *JSGlobalObject, thisValue: JSValue, callframe: *CallFrame, promise_value: JSValue) bun.JSError!JSValue {
+        fn create(globalThis: *JSGlobalObject, thisValue: JSValue, callframe: *CallFrame, promise_value: JSValue, was_counted: bool) bun.JSError!JSValue {
             const args = callframe.arguments();
             const args_array = try JSValue.createEmptyArray(globalThis, args.len);
             for (args, 0..) |arg, i| {
@@ -254,6 +261,7 @@ pub const Expect = struct {
                 .matcher_fn = .create(callframe.callee(), globalThis),
                 .matcher_args = .create(args_array, globalThis),
                 .deferred = jsc.JSPromise.Strong.init(globalThis),
+                .was_counted_before_defer = was_counted,
             });
             const deferred_value = pending.deferred.value();
 
@@ -317,7 +325,16 @@ pub const Expect = struct {
             // Mark the re-run so we don't try to defer a second time. The
             // captured promise is now settled, so `processPromise` will
             // extract its result synchronously.
-            if (Expect.fromJS(expect_this)) |expect| expect.is_async_rerun = true;
+            //
+            // Restore `counted_expect_call` to its value at the point of
+            // defer: if the matcher incremented before `getValue()` on the
+            // first call, the re-run's increment is a no-op; if it
+            // increments after, the first call never reached it and the
+            // re-run does.
+            if (Expect.fromJS(expect_this)) |expect| {
+                expect.is_async_rerun = true;
+                expect.counted_expect_call = this.was_counted_before_defer;
+            }
             defer if (Expect.fromJS(expect_this)) |expect| {
                 expect.is_async_rerun = false;
             };
@@ -1421,7 +1438,12 @@ pub const Expect = struct {
         return globalThis.throw("Not implemented", .{});
     }
 
-    pub fn postMatch(_: *Expect, globalThis: *JSGlobalObject) void {
+    pub fn postMatch(this: *Expect, globalThis: *JSGlobalObject) void {
+        // Each matcher call should count independently when the user
+        // reuses the same `expect()` instance. `PendingMatcher` snapshots
+        // the flag at defer time and restores it on re-run, so clearing
+        // here is safe in the deferred path too.
+        this.counted_expect_call = false;
         var vm = globalThis.bunVM();
         vm.autoGarbageCollect();
     }

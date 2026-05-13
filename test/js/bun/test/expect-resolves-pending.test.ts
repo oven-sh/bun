@@ -191,11 +191,20 @@ describe("expect().resolves / .rejects on a still-pending promise", () => {
           resolve("bar");
           await assertion;
         });
+
+        // The counted_expect_call flag is per-Expect-instance; each
+        // matcher call on a reused instance must still count.
+        test("multiple matchers on the same expect() each count", () => {
+          expect.assertions(2);
+          const e = expect(5);
+          e.toBe(5);
+          e.toBeGreaterThan(0);
+        });
       `,
     );
 
     expect({ timedOut, exitCode }).toEqual({ timedOut: false, exitCode: 0 });
-    expect(out).toContain("3 pass");
+    expect(out).toContain("4 pass");
     expect(out).toContain("0 fail");
   }, 40_000);
 

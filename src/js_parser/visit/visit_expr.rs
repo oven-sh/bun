@@ -59,7 +59,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     pub fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
-        if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(*e) {
+        if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(e) {
             self.log()
                 .add_error(Some(self.source), e.loc, b"Invalid assignment target");
         }

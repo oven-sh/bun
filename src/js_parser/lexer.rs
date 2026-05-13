@@ -970,10 +970,13 @@ lexer_impl_header! {
         Ok(())
     }
 
-    // PERF: each `QUOTE` instantiation has exactly one caller
-    // (`parse_string_literal::<QUOTE>`); hint cross-CGU so LLVM's
-    // single-caller merge fires and the byte loop lands inside `next()`.
-    #[inline]
+    // PERF: heavy sub-scanner — the per-byte string body loop plus the
+    // escape/`\r\n`/`</script` slow paths. Keep it *out* of `next()` so that
+    // body stays small enough to partial-inline at the parser's call sites
+    // (see the note on `next()`); `parse_string_literal::<QUOTE>` is the only
+    // caller and stays `#[inline]`, so what folds into `next()` is just the
+    // token-kind set + the call here.
+    #[inline(never)]
     fn parse_string_literal_inner<const QUOTE: i32>(
         &mut self,
     ) -> Result<InnerStringLiteral, Error> {
@@ -1221,6 +1224,8 @@ lexer_impl_header! {
         Ok(())
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn add_unsupported_syntax_error(&mut self, msg: &[u8]) -> Result<(), Error> {
         self.add_error(
             self.end,
@@ -1230,7 +1235,10 @@ lexer_impl_header! {
     }
 
     // This is an edge case that doesn't really exist in the wild, so it doesn't
-    // need to be as fast as possible.
+    // need to be as fast as possible — keep it fully out of line so it never
+    // bloats `next()` (which dispatches here from the identifier arm).
+    #[cold]
+    #[inline(never)]
     pub fn scan_identifier_with_escapes(
         &mut self,
         kind: IdentifierKind,
@@ -1482,19 +1490,23 @@ lexer_impl_header! {
         Ok(())
     }
 
-    /// PERF: `next()` is the *only* dispatch boundary between the parser and
-    /// the lexer's inner scanners. It is called from hundreds of parser sites
-    /// (directly and via `expect()`), so we explicitly forbid inlining it
-    /// outward — one symbol per `JSONOptions` monomorphization, exactly like
-    /// Zig's `pub fn next(noalias lexer: *LexerType)`. Conversely, every hot
-    /// scanner it dispatches to (`latin1_identifier_continue_length`,
-    /// `parse_numeric_literal_or_dot`, `parse_string_literal::<QUOTE>`) is
-    /// single-caller per instantiation and marked `#[inline]`/`#[inline(always)]`
-    /// so LLVM merges them *into* this body the way Zig's comptime
-    /// monomorphisation does. Without this anchor, LLVM's partial-inliner was
-    /// observed splitting `next()` and leaving the identifier scanner as a
-    /// separate ~1.8% symbol in `build/create-next` profiles.
-    #[inline(never)]
+    /// PERF: `next()` is the dispatch boundary between the parser and the
+    /// lexer's inner scanners; the parser calls it from hundreds of sites
+    /// (directly and via `expect()`). We deliberately *don't* mark it
+    /// `#[inline(never)]` — that turned every `lexer.next()` site into a real
+    /// call + caller-saved-register spill, whereas Zig's `pub fn next` is
+    /// partial-inlinable at leaf call sites (the EOF/`TSemicolon`/`TIdentifier`
+    /// fast tails fold into the caller and the bulky switch stays out of line).
+    /// To make that tractable for LLVM we instead anchor `#[inline(never)]` /
+    /// `#[cold]` on the *heavy, rare* sub-scanners (`scan_identifier_with_escapes`,
+    /// `parse_string_literal_inner`, `add_*error`) so this body stays small
+    /// enough that the partial-inliner extracts a clean cold region instead of
+    /// splitting the identifier scanner out as its own symbol (the failure mode
+    /// observed in `build/create-next` profiles that originally motivated the
+    /// `#[inline(never)]` here). The genuinely hot, tiny scanners
+    /// (`latin1_identifier_continue_length`, `parse_numeric_literal_or_dot`,
+    /// `parse_string_literal::<QUOTE>`) stay `#[inline]`/`#[inline(always)]` so
+    /// they merge *into* this body the way Zig's comptime monomorphisation does.
     pub fn next(&mut self) -> Result<(), Error> {
         self.has_newline_before = self.end == 0;
         self.has_pure_comment_before = false;
@@ -2258,6 +2270,8 @@ lexer_impl_header! {
         Ok(())
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn expected(&mut self, token: T) -> Result<(), Error> {
         if self.is_log_disabled {
             return Err(Error::Backtrack);
@@ -2268,6 +2282,8 @@ lexer_impl_header! {
         }
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn unexpected(&mut self) -> Result<(), Error> {
         let found: &[u8] = 'finder: {
             self.start = self.start.min(self.end);
@@ -2296,6 +2312,8 @@ lexer_impl_header! {
         self.token == T::TIdentifier && self.raw() == keyword
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn expected_string(&mut self, text: &[u8]) -> Result<(), Error> {
         if self.prev_token_was_await_keyword {
             let mut notes: [bun_ast::Data; 1] = [bun_ast::Data::default()];
@@ -3881,8 +3899,8 @@ fn float64(num: i32) -> f64 {
 }
 
 // PERF: force-inline — sole call site is the identifier arm of `next()`, the
-// hottest token by frequency. Without `always`, LLVM kept this as a separate
-// symbol (call + ret per identifier) once `next()` was `#[inline(never)]`.
+// hottest token by frequency. It's tiny, so it belongs *inside* `next()`'s
+// body (a call + ret per identifier would dominate it).
 #[inline(always)]
 fn latin1_identifier_continue_length(name: &[u8]) -> usize {
     // We don't use SIMD for this because the input will be very short.

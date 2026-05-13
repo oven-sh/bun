@@ -927,15 +927,6 @@ fn emit_vlq(
     *prev = current;
 }
 
-#[derive(Copy, Clone, Default)]
-struct Delta {
-    d_gen_line: i32,
-    d_gen_col: i32,
-    d_orig_line: i32,
-    d_orig_col: i32,
-    d_src_idx: i32,
-}
-
 // `#[repr(C)]` pins declaration order so the per-mapping read/modify/write set
 // (`state`, `pending_generated_line_delta`, `count`, `pending_n` — 29 bytes)
 // lands at offset 0 in the head cache line, with `sync_entries`' NonNull ptr
@@ -1037,37 +1028,52 @@ impl Builder {
         let n_deltas: usize = n as usize - 1;
 
         // PERF: worst-case capacity assuming *every* optional section is present
-        // and every varint is maximal. This equals the previous "all flags set"
-        // bound, so it is still a sound upper bound on the write cursor `w`; the
-        // win is that it needs no `flags` pre-scan, so we can `reserve` and grab
-        // `buf_ptr` *before* the delta loop. That collapses what used to be two
-        // walks over the window (one to materialize `deltas`/compute `flags`,
-        // then a re-walk to set the three equality masks and emit the `gen_col`
-        // lane — re-reading `d_gen_col` out of the buffer) into a single pass.
-        // `w <= cap` and `w + MAX_VARINT_LEN <= cap` hold at every `write_varint`
-        // because each section emits at most `n_deltas` varints of `<=
-        // MAX_VARINT_LEN` bytes and `cap` reserves room for all of them; the
-        // trailing `commit_spare(w)` exposes only the written prefix, so
-        // over-reserving costs nothing committed.
-        let cap: usize = win_hdr::GEN_COL_LANE_OFF
-            + n_deltas * (3 * MAX_VARINT_LEN)     // gen_col lane + orig_line + orig_col exceptions
-            + n_deltas * (1 + MAX_VARINT_LEN) + 1 // gen_line exceptions: (idx u8, varint) per delta + 0xFF
-            + 8 + n_deltas * MAX_VARINT_LEN; // src_idx: 8-byte mask + one varint per delta
+        // and every varint is maximal. Reserving up front lets us grab `buf_ptr`
+        // before the delta loop and emit *all* lanes in a single pass: each lane
+        // gets its own worst-case sub-range of the spare buffer, written through a
+        // dedicated cursor, and once the loop is done — true lengths now known —
+        // the lanes are compacted into the on-disk (contiguous) layout. This
+        // removes the post-loop re-walks (orig_line / orig_col / src_idx / gen_line
+        // exceptions) of a materialized `Delta` array, and the array itself.
+        //
+        // Sub-range bases relative to `buf_ptr` (MV == MAX_VARINT_LEN):
+        //   gen_col_lane : [GEN_COL_LANE_OFF              .. + nd*MV)
+        //   orig_line    : [orig_line_base               .. + nd*MV)
+        //   orig_col     : [orig_col_base                .. + nd*MV)
+        //   gen_line exc : [gen_line_base                .. + nd*(1+MV) + 1)   (+1 = 0xFF terminator)
+        //   src_idx      : [src_idx_base                 .. + 8 + nd*MV)       (8 = leading bitmask)
+        // `cap` is the sum, identical to the previous "all flags set" bound.
+        // Each cursor stays inside its sub-range: a lane emits <= nd varints of
+        // <= MV bytes, gen_line adds a 1-byte index per pair plus the terminator,
+        // src_idx adds the 8-byte mask. The compaction destinations are always
+        // <= the corresponding source base (each preceding lane's true length is
+        // <= its reserved width), so `ptr::copy` (memmove) is sound even though
+        // regions abut, and the runs are copied in layout order so a copy never
+        // clobbers a not-yet-copied source. `commit_spare(w)` exposes only the
+        // compacted prefix, so over-reserving costs nothing committed.
+        let gen_col_base = win_hdr::GEN_COL_LANE_OFF;
+        let orig_line_base = gen_col_base + n_deltas * MAX_VARINT_LEN;
+        let orig_col_base = orig_line_base + n_deltas * MAX_VARINT_LEN;
+        let gen_line_base = orig_col_base + n_deltas * MAX_VARINT_LEN;
+        let src_idx_base = gen_line_base + n_deltas * (1 + MAX_VARINT_LEN) + 1;
+        let cap: usize = src_idx_base + 8 + n_deltas * MAX_VARINT_LEN;
         let buf_ptr: *mut u8 = self.win_stream.reserve_spare(cap).as_mut_ptr().cast();
         // SAFETY: `cap >= GEN_COL_LANE_OFF` bytes were just reserved as spare.
         unsafe { buf_ptr.write_bytes(0, win_hdr::GEN_COL_LANE_OFF) };
         // SAFETY: COUNT_OFF is within the zeroed 32-byte header.
         unsafe { *buf_ptr.add(win_hdr::COUNT_OFF) = n };
+        // The src_idx lane starts with an 8-byte "d_src_idx == 0" bitmask; zero
+        // it up front so the loop can OR bits in as it goes.
+        // SAFETY: [src_idx_base, src_idx_base + 8) is within the reserved `cap`.
+        unsafe { buf_ptr.add(src_idx_base).write_bytes(0, 8) };
 
-        // Zig: `undefined` — every slot in [0..n_deltas] is filled by the loop
-        // below before any read; Delta is Copy/POD so assume_init is sound.
-        // `d_gen_col`/`d_gen_line` are emitted/masked inline below but also kept
-        // here because the later orig_line/orig_col passes compare against them.
-        let mut deltas_buf: [MaybeUninit<Delta>; SYNC_INTERVAL - 1] =
-            [MaybeUninit::uninit(); SYNC_INTERVAL - 1];
         let mut flags: u8 = 0;
         let mut prev = seed;
-        let mut w: usize = win_hdr::GEN_COL_LANE_OFF;
+        let mut w_gen_col = gen_col_base;
+        let mut w_orig_line = orig_line_base;
+        let mut w_orig_col = orig_col_base;
+        let mut w_gen_line = gen_line_base;
+        let mut w_src_idx = src_idx_base + 8;
         for (k, cur) in pending[1..].iter().enumerate() {
             let d_gen_line = cur.generated_line - prev.generated_line;
             let d_gen_col = if d_gen_line != 0 {
@@ -1081,111 +1087,117 @@ impl Builder {
 
             let bit = 1u8 << (k & 7);
             // SAFETY: k < n_deltas <= SYNC_INTERVAL-1 == 63, so `k >> 3 <= 7`
-            // and every mask byte offset is within the zeroed 32-byte header.
-            unsafe {
-                if d_gen_line >= 1 {
-                    *buf_ptr.add(win_hdr::GEN_LINE_MASK_OFF + (k >> 3)) |= bit;
-                }
-                if d_orig_line == d_gen_line {
-                    *buf_ptr.add(win_hdr::ORIG_LINE_EQ_MASK_OFF + (k >> 3)) |= bit;
-                }
-                if d_orig_col == d_gen_col {
-                    *buf_ptr.add(win_hdr::ORIG_COL_EQ_MASK_OFF + (k >> 3)) |= bit;
-                }
+            // and the header mask byte offset is within the zeroed 32-byte header.
+            if d_gen_line >= 1 {
+                unsafe { *buf_ptr.add(win_hdr::GEN_LINE_MASK_OFF + (k >> 3)) |= bit };
             }
-            // SAFETY: `w` starts at GEN_COL_LANE_OFF and grows by `<=
-            // MAX_VARINT_LEN` per delta, so after the at-most-`n_deltas` calls
-            // `w <= GEN_COL_LANE_OFF + n_deltas*MAX_VARINT_LEN <= cap`; every
-            // call still has `>= MAX_VARINT_LEN` reserved bytes ahead of it.
-            w += write_varint(unsafe { buf_ptr.add(w) }, d_gen_col);
 
-            // SAFETY: k ranges over 0..n_deltas, n_deltas <= deltas_buf.len().
-            // Elides the per-delta bounds check (Zig: unchecked `deltas[k] = …`).
-            unsafe { deltas_buf.get_unchecked_mut(k) }.write(Delta {
-                d_gen_line,
-                d_gen_col,
-                d_orig_line,
-                d_orig_col,
-                d_src_idx,
-            });
+            // gen_col lane: one zig-zag varint per delta.
+            // SAFETY: `w_gen_col` stays within [gen_col_base, gen_col_base + nd*MAX_VARINT_LEN).
+            w_gen_col += write_varint(unsafe { buf_ptr.add(w_gen_col) }, d_gen_col);
+
+            // orig_line: a bit in the eq-mask when it equals d_gen_line, else one varint.
+            if d_orig_line == d_gen_line {
+                // SAFETY: mask byte within the zeroed 32-byte header.
+                unsafe { *buf_ptr.add(win_hdr::ORIG_LINE_EQ_MASK_OFF + (k >> 3)) |= bit };
+            } else {
+                // SAFETY: `w_orig_line` stays within [orig_line_base, orig_line_base + nd*MAX_VARINT_LEN).
+                w_orig_line += write_varint(unsafe { buf_ptr.add(w_orig_line) }, d_orig_line);
+            }
+
+            // orig_col: a bit in the eq-mask when it equals d_gen_col, else one varint.
+            if d_orig_col == d_gen_col {
+                // SAFETY: mask byte within the zeroed 32-byte header.
+                unsafe { *buf_ptr.add(win_hdr::ORIG_COL_EQ_MASK_OFF + (k >> 3)) |= bit };
+            } else {
+                // SAFETY: `w_orig_col` stays within [orig_col_base, orig_col_base + nd*MAX_VARINT_LEN).
+                w_orig_col += write_varint(unsafe { buf_ptr.add(w_orig_col) }, d_orig_col);
+            }
+
+            // gen_line exceptions: (idx:u8, varint) pair when d_gen_line does not
+            // round-trip through the single mask bit (i.e. > 1 or < 0).
             if d_gen_line > 1 || d_gen_line < 0 {
                 flags |= FLAG_HAS_GEN_LINE_EXCEPTIONS;
+                // SAFETY: `w_gen_line` stays within
+                // [gen_line_base, gen_line_base + nd*(1+MAX_VARINT_LEN)); the trailing
+                // +1 byte (for the 0xFF terminator) is written after the loop.
+                unsafe { *buf_ptr.add(w_gen_line) = k as u8 };
+                w_gen_line += 1;
+                w_gen_line += write_varint(unsafe { buf_ptr.add(w_gen_line) }, d_gen_line);
             }
-            if d_src_idx != 0 {
+
+            // src_idx: a bit in the leading mask when zero, else one varint after it.
+            if d_src_idx == 0 {
+                // SAFETY: [src_idx_base, src_idx_base + 8) was zeroed; k >> 3 <= 7.
+                unsafe { *buf_ptr.add(src_idx_base + (k >> 3)) |= bit };
+            } else {
                 flags |= FLAG_HAS_SRC_IDX;
+                // SAFETY: `w_src_idx` stays within
+                // [src_idx_base + 8, src_idx_base + 8 + nd*MAX_VARINT_LEN).
+                w_src_idx += write_varint(unsafe { buf_ptr.add(w_src_idx) }, d_src_idx);
             }
+
             prev = *cur;
         }
-        // SAFETY: deltas_buf[0..n_deltas] fully initialized above; Delta is repr(Rust) POD.
-        let deltas: &[Delta] =
-            unsafe { core::slice::from_raw_parts(deltas_buf.as_ptr().cast::<Delta>(), n_deltas) };
+
+        // 0xFF terminator closes the gen_line exception stream when present.
+        if flags & FLAG_HAS_GEN_LINE_EXCEPTIONS != 0 {
+            // SAFETY: the reserved +1 slot past nd*(1+MAX_VARINT_LEN) in the gen_line sub-range.
+            unsafe { *buf_ptr.add(w_gen_line) = 0xFF };
+            w_gen_line += 1;
+        }
 
         // SAFETY: FLAGS_OFF is within the zeroed 32-byte header.
         unsafe { *buf_ptr.add(win_hdr::FLAGS_OFF) = flags };
+
+        // True lane lengths. gen_line/src_idx are 0 unless their flag bit is set
+        // (the cursors never advance past their base in that case).
+        let gen_col_len = w_gen_col - gen_col_base;
+        let orig_line_len = w_orig_line - orig_line_base;
+        let orig_col_len = w_orig_col - orig_col_base;
+        let gen_line_len = w_gen_line - gen_line_base;
+        let src_idx_len = if flags & FLAG_HAS_SRC_IDX != 0 {
+            w_src_idx - src_idx_base // includes the leading 8-byte mask
+        } else {
+            0
+        };
         // PERF(port): @intCast — n_deltas <= 63, MAX_VARINT_LEN == 5, so each
-        // section is <= 315 bytes < u16::MAX. Drop the panic edge so the hot
+        // length field is <= 315 bytes < u16::MAX. Drop the panic edge so the hot
         // window-emit path has no unwind landing pads.
-        debug_assert!(w - win_hdr::GEN_COL_LANE_OFF <= u16::MAX as usize);
-        let gen_col_len: u16 = (w - win_hdr::GEN_COL_LANE_OFF) as u16;
+        debug_assert!(gen_col_len <= u16::MAX as usize);
+        debug_assert!(orig_line_len <= u16::MAX as usize);
+        debug_assert!(orig_col_len <= u16::MAX as usize);
         unsafe {
             buf_ptr
                 .add(win_hdr::GEN_COL_LEN_OFF)
                 .cast::<[u8; 2]>()
-                .write_unaligned(gen_col_len.to_ne_bytes());
-        }
-
-        let orig_line_start = w;
-        for d in deltas {
-            if d.d_orig_line != d.d_gen_line {
-                w += write_varint(unsafe { buf_ptr.add(w) }, d.d_orig_line);
-            }
-        }
-        debug_assert!(w - orig_line_start <= u16::MAX as usize);
-        let orig_line_len: u16 = (w - orig_line_start) as u16;
-        let orig_col_start = w;
-        for d in deltas {
-            if d.d_orig_col != d.d_gen_col {
-                w += write_varint(unsafe { buf_ptr.add(w) }, d.d_orig_col);
-            }
-        }
-        debug_assert!(w - orig_col_start <= u16::MAX as usize);
-        let orig_col_len: u16 = (w - orig_col_start) as u16;
-        unsafe {
+                .write_unaligned((gen_col_len as u16).to_ne_bytes());
             buf_ptr
                 .add(win_hdr::ORIG_LINE_LEN_OFF)
                 .cast::<[u8; 2]>()
-                .write_unaligned(orig_line_len.to_ne_bytes());
+                .write_unaligned((orig_line_len as u16).to_ne_bytes());
             buf_ptr
                 .add(win_hdr::ORIG_COL_LEN_OFF)
                 .cast::<[u8; 2]>()
-                .write_unaligned(orig_col_len.to_ne_bytes());
+                .write_unaligned((orig_col_len as u16).to_ne_bytes());
         }
 
-        if flags & FLAG_HAS_GEN_LINE_EXCEPTIONS != 0 {
-            for (k, d) in deltas.iter().enumerate() {
-                if d.d_gen_line > 1 || d.d_gen_line < 0 {
-                    unsafe { *buf_ptr.add(w) = k as u8 };
-                    w += 1;
-                    w += write_varint(unsafe { buf_ptr.add(w) }, d.d_gen_line);
-                }
-            }
-            unsafe { *buf_ptr.add(w) = 0xFF };
-            w += 1;
-        }
-        if flags & FLAG_HAS_SRC_IDX != 0 {
-            let mask_off = w;
-            unsafe { buf_ptr.add(w).write_bytes(0, 8) };
-            w += 8;
-            for (k, d) in deltas.iter().enumerate() {
-                if d.d_src_idx == 0 {
-                    unsafe { *buf_ptr.add(mask_off + (k >> 3)) |= 1u8 << (k & 7) };
-                }
-            }
-            for d in deltas {
-                if d.d_src_idx != 0 {
-                    w += write_varint(unsafe { buf_ptr.add(w) }, d.d_src_idx);
-                }
-            }
+        // Compact: gen_col is already in place; pull each later lane left so the
+        // streams sit back-to-back, the layout the reader (`WindowReader::parse`)
+        // walks. Destinations are <= sources and runs are moved in order, so
+        // `ptr::copy` is sound (see the cap/sub-range comment above).
+        let mut w = gen_col_base + gen_col_len;
+        // SAFETY: every copy stays within the reserved `cap` and never reads past
+        // a lane's written prefix; `dst <= src` for each so overlap is fine.
+        unsafe {
+            ptr::copy(buf_ptr.add(orig_line_base), buf_ptr.add(w), orig_line_len);
+            w += orig_line_len;
+            ptr::copy(buf_ptr.add(orig_col_base), buf_ptr.add(w), orig_col_len);
+            w += orig_col_len;
+            ptr::copy(buf_ptr.add(gen_line_base), buf_ptr.add(w), gen_line_len);
+            w += gen_line_len;
+            ptr::copy(buf_ptr.add(src_idx_base), buf_ptr.add(w), src_idx_len);
+            w += src_idx_len;
         }
 
         debug_assert!(w <= cap);

@@ -24,16 +24,23 @@
 # names match what lld actually links — see -Wl,-icf=safe in flags.ts.
 #
 # This file is NOT passed to lld verbatim. Rust v0-mangled entries embed a
-# per-crate disambiguator hash (`Cs<hash>_<len><crate>`) that churns whenever
-# a crate's source/feature/dep-graph/rustc changes, so the checked-in hashes
-# below are treated as wildcards: scripts/build/rewrite-startup-order.ts
-# substitutes the live hash from `nm libbun_rust.a` at link time and writes
-# `${buildDir}/startup.order.resolved`, which is what flags.ts actually feeds
-# to `-Wl,--symbol-ordering-file=`. C++/_Z* and hand-listed entries pass
-# through unchanged. Unknown symbols are still silently ignored (paired with
+# per-crate disambiguator hash (`Cs<hash>_<len><crate>`), an impl-block index
+# (`Ms<n>_`), back-references (`B<n>_`) and a link-time ThinLTO suffix
+# (`.llvm.<N>`) that all churn whenever a crate's source/feature/dep-graph/
+# rustc changes, so the checked-in entries below are treated as templates:
+# scripts/build/rewrite-startup-order.ts canonicalises away those components,
+# matches each entry against the just-built `nm libbun_rust.a` (plus the
+# previous link's `-Wl,-Map=`), and writes `${buildDir}/startup.order.resolved`
+# — which is what flags.ts actually feeds to `-Wl,--symbol-ordering-file=`.
+# When an entry's *path* drifted too (a module renamed, a `___phase_a_body`-
+# style port-scaffold module came/went, an `impl` became free or vice versa)
+# the rewriter falls back to a demangled-suffix match — the trailing
+# type/module/fn names near the leaf, plus the first generic type argument,
+# survive a rename further up. C++/_Z* and hand-listed entries pass through
+# unchanged. Unknown symbols are still silently ignored (paired with
 # -Wl,--no-warn-symbol-ordering) so genuinely-removed functions degrade
-# gracefully — but a stale crate hash no longer silently de-clusters the
-# whole hot path.
+# gracefully — but routine hash / impl-index / module-rename drift no longer
+# silently de-clusters the hot path.
 #
 # Regenerate when the *call order* changes (new init step, moved hot path),
 # not when hashes drift. Run from inside a real install fixture (package.json
@@ -209,6 +216,18 @@ _RINvMsz_NtCse6QRUUowleZ_8bun_core4utilINtB6_4OnceINtNtCs4YSnrHLetPa_5alloc3vec3
 _RINvNtCs7OdcJh5Qlq1_9hashbrown3map9make_hashNtNtCs42hxcmPGjd_15bun_collections14array_hash_map16StringHashMapKeyINtNtCshzHRevywlmE_4core4hash18BuildHasherDefaultNtCscLam1bTMnVN_10bun_wyhash13OneShotHasherEECs1yM7iN7snuq_11bun_install
 _RNvNtCsh9MI6aZaYfi_10bun_string9immutable24copy_lowercase_if_needed
 _RNvNtNtCsdUGwqtdHSXW_11bun_runtime3cli7command22write_context_no_parse
+# `ContextData::default` (`#[inline(always)]`, folds into the symbol above)
+# now leaves the `bun run`-needed nested option-group `Default` bodies out of
+# line (`#[inline(never)]`) instead of `#[inline(always)]`-folding ~1.6 KB into
+# `write_context_no_parse`; cluster them next to it so the fault-around window
+# stays one contiguous run. (The `bun test` / `bun build` groups — `TestOptions`
+# / `BundlerOptions` — are `Option<Box<…>>` and `#[cold]`, so deliberately *not*
+# listed here.) Disambiguators are a best-effort guess; if the call order or
+# impl ordering in `options_types/context.rs` changes, regenerate per the header.
+_RNvXs2_NtCsfIhL58IiwFY_17bun_options_types7contextNtB5_12DebugOptionsNtNtCsgQzurOSq4GZ_4core7default7Default7default
+_RNvXsj_NtCsfIhL58IiwFY_17bun_options_types7contextNtB5_14RuntimeOptionsNtNtCsgQzurOSq4GZ_4core7default7Default7default
+_RNvXsh_NtCsfIhL58IiwFY_17bun_options_types7contextNtB5_7CpuProfNtNtCsgQzurOSq4GZ_4core7default7Default7default
+_RNvXse_NtCsfIhL58IiwFY_17bun_options_types7contextNtB5_8DebuggerNtNtCsgQzurOSq4GZ_4core7default7Default7default
 _ZL10init_entryPKcS0_P10UErrorCode
 _ZL11_uhash_findPK10UHashtable8UElementi
 _ZL14compareEntries8UElementS_

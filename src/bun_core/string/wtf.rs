@@ -33,6 +33,7 @@ pub trait WTFStringImplExt {
     fn to_latin1_slice(&self) -> ZigStringSlice;
     fn to_utf8(&self) -> ZigStringSlice;
     fn to_utf8_without_ref(&self) -> ZigStringSlice;
+    fn to_utf8_borrowed(&self) -> ZigStringSlice;
     fn to_owned_slice_z(&self) -> crate::ZBox;
     fn to_utf8_if_needed(&self) -> Option<ZigStringSlice>;
     fn can_use_as_utf8(&self) -> bool;
@@ -79,6 +80,33 @@ impl WTFStringImplExt for WTFStringImplStruct {
             }
 
             return ZigStringSlice::from_utf8_never_free(self.latin1_slice());
+        }
+
+        ZigStringSlice::init_owned(strings::to_utf8_alloc(self.utf16_slice()))
+    }
+
+    /// Like [`to_utf8`] but the 8-bit all-ASCII fast path returns a non-owning
+    /// [`ZigStringSlice::WtfBorrowed`] view (no `r#ref`/`deref` pair) instead of
+    /// the ref-holding [`ZigStringSlice::WTF`]. The caller MUST keep this impl
+    /// alive for the lifetime of the returned slice — `bun.String::to_slice`
+    /// does so via `SliceWithUnderlyingString.underlying`. `WtfBorrowed` still
+    /// records `self` so a later thread-safe migration can re-derive the view.
+    ///
+    /// [`to_utf8`]: WTFStringImplExt::to_utf8
+    #[inline]
+    fn to_utf8_borrowed(&self) -> ZigStringSlice {
+        if self.is_8bit() {
+            if let Some(utf8) = strings::to_utf8_from_latin1(self.latin1_slice()) {
+                return ZigStringSlice::init_owned(utf8);
+            }
+
+            // All-ASCII Latin-1: borrow the impl's own bytes, no refcount bump.
+            let s = self.latin1_slice();
+            return ZigStringSlice::WtfBorrowed {
+                string_impl: std::ptr::from_ref::<Self>(self),
+                ptr: s.as_ptr(),
+                len: s.len(),
+            };
         }
 
         ZigStringSlice::init_owned(strings::to_utf8_alloc(self.utf16_slice()))

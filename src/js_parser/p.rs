@@ -5624,7 +5624,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         None
     }
 
-    pub fn is_valid_assignment_target(&self, expr: Expr) -> bool {
+    // PERF(port): takes `&Expr` — the Zig original passes `Expr` by value (cheap there:
+    // `Expr` is `{ *Data, Loc }` = 16B), but Rust's `Expr` inlines `ExprData` so a by-value
+    // pass copies the full union. The only caller (`visit_expr_in_out`) already holds `&mut Expr`.
+    pub fn is_valid_assignment_target(&self, expr: &Expr) -> bool {
         match &expr.data {
             js_ast::ExprData::EIdentifier(ident) => {
                 !is_eval_or_arguments(self.load_name_from_ref(ident.ref_))
@@ -9016,8 +9019,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         mut lexer: js_lexer::Lexer<'a>,
         mut opts: ParserOptions<'a>,
     ) -> Result<(), bun_core::Error> {
+        // Pre-size the parser's per-file name/ref-keyed symbol maps so the
+        // common case never re-hashes while it grows. Upstream Zig grows these
+        // incrementally too, but profiling the runtime transpiler showed
+        // `hashbrown` `make_hash` / `reserve_rehash` churn from the module
+        // scope's member map and the visit-pass `symbol_uses` map being created
+        // at zero capacity and reserved one identifier reference at a time. A
+        // `source.len() / 16` hint (≈ one symbol per 16 source bytes) covers
+        // the vast majority of real files in a single allocation.
+        let estimated_symbol_count = source.contents.len() / 16;
+
         let mut scope_order = ScopeOrderList::with_capacity_in(1, arena);
-        let scope = js_ast::StoreRef::from_bump(arena.alloc(Scope {
+        let scope_obj = arena.alloc(Scope {
             members: Default::default(),
             children: bun_alloc::AstAlloc::vec(),
             generated: bun_alloc::AstAlloc::vec(),
@@ -9025,7 +9038,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             label_ref: None,
             parent: None,
             ..Default::default()
-        }));
+        });
+        let _ = scope_obj.members.ensure_total_capacity(estimated_symbol_count);
+        let scope = js_ast::StoreRef::from_bump(scope_obj);
 
         scope_order.push(Some(ScopeOrder::new(loc_module_scope, scope.as_ptr())));
         // PERF(port): was assume_capacity
@@ -9083,6 +9098,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowExpr;
             fn_or_arrow_data_parse.is_top_level = true;
         }
+
+        let mut symbol_uses = SymbolUseMap::default();
+        let _ = symbol_uses.ensure_total_capacity(estimated_symbol_count);
 
         // Single placement write — no separate stack temp for `Self`.
         // `MaybeUninit::write` is safe; it overwrites without dropping.
@@ -9171,7 +9189,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
             injected_define_symbols: BumpVec::new_in(arena),
-            symbol_uses: Default::default(),
+            symbol_uses,
             declared_symbols: Default::default(),
             declared_symbols_for_reuse: Default::default(),
             runtime_imports: RuntimeImports::default(),

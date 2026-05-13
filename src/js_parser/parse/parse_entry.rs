@@ -436,6 +436,13 @@ impl<'a> Parser<'a> {
         // We don't have accurate symbol counts.
         // So we don't have a good way to distinguish between a type-only import and not.
         if TS {
+            // Pre-size the name-keyed usage map so the scan pass doesn't
+            // re-hash it one identifier reference at a time (≈ one tracked
+            // symbol per 16 source bytes). `ensure_total_capacity` is a no-op
+            // when the map already retains enough capacity from a prior file.
+            let _ = scan_pass
+                .used_symbols
+                .ensure_total_capacity(self.source.contents.len() / 16);
             p.parse_pass_symbol_uses = Some(&mut scan_pass.used_symbols);
         }
 

@@ -716,6 +716,27 @@ impl String {
             _ => ZigStringSlice::EMPTY,
         }
     }
+    /// Like [`to_utf8`] but, for the 8-bit all-ASCII `WTFStringImpl` fast path,
+    /// returns a non-owning [`ZigStringSlice::WtfBorrowed`] view instead of
+    /// [`to_utf8`]'s ref-holding [`ZigStringSlice::WTF`] — skipping the
+    /// `WTF::StringImpl::ref` (and the matching `deref` on drop) entirely.
+    ///
+    /// The returned slice borrows the impl's buffer, so it is only safe to pair
+    /// with a value whose `underlying` keeps the impl alive (e.g. the
+    /// [`SliceWithUnderlyingString`] returned by [`to_slice`]). All other tags
+    /// behave exactly like [`to_utf8`] / [`to_utf8_without_ref`].
+    ///
+    /// [`to_utf8`]: Self::to_utf8
+    /// [`to_slice`]: Self::to_slice
+    #[inline]
+    pub fn to_utf8_borrowed(&self) -> ZigStringSlice {
+        match self.0.tag {
+            Tag::WTFStringImpl => self.as_wtf().to_utf8_borrowed(),
+            Tag::ZigString => self.as_zig().to_slice(),
+            Tag::StaticZigString => ZigStringSlice::from_utf8_never_free(self.as_zig().slice()),
+            _ => ZigStringSlice::EMPTY,
+        }
+    }
     /// Returns `Some(utf8_bytes)` only if this is already valid UTF-8 with no
     /// transcoding needed (string.zig:571 `asUTF8`).
     pub fn as_utf8(&self) -> Option<&[u8]> {
@@ -1021,8 +1042,15 @@ impl String {
     /// [`SliceWithUnderlyingString`], leaving `self` as [`EMPTY`].
     #[inline]
     pub fn to_slice(&mut self) -> SliceWithUnderlyingString {
-        let utf8 = self.to_utf8();
+        // Move our ref into `underlying` first, then derive the UTF-8 view as a
+        // *borrow* of that already-pinned impl: the ref-holding `to_utf8()` /
+        // `ZigStringSlice::WTF` variant would be a redundant second handle on
+        // the same `StringImpl` (one extra atomic `ref` here + one extra
+        // `deref` on `deinit`). `WtfBorrowed` keeps the impl pointer so
+        // `SliceWithUnderlyingString::to_thread_safe` can still re-derive after
+        // a thread-safe migration.
         let underlying = core::mem::replace(self, Self::EMPTY);
+        let utf8 = underlying.to_utf8_borrowed();
         SliceWithUnderlyingString {
             utf8,
             underlying,
@@ -1048,14 +1076,15 @@ impl String {
                 };
             }
             // Thread-safe impl. If `slice` is borrowed (all-ASCII Latin-1),
-            // re-use the impl's storage by taking two refs (one for `utf8`,
-            // one for `underlying`).
+            // re-use the impl's storage: take a single ref for `underlying` and
+            // hand back a non-owning `WtfBorrowed` view pinned by it. (Zig took
+            // two refs plus a WTF allocator; the second ref was redundant since
+            // `underlying` already keeps the impl alive.)
             if let ZigStringSlice::Static(ptr, len) = slice {
-                self.ref_();
                 self.ref_();
                 let string_impl = self.wtf_ptr();
                 return SliceWithUnderlyingString {
-                    utf8: ZigStringSlice::WTF {
+                    utf8: ZigStringSlice::WtfBorrowed {
                         string_impl,
                         ptr,
                         len,
@@ -2001,6 +2030,23 @@ pub enum ZigStringSlice {
         ptr: *const u8,
         len: usize,
     },
+    /// Borrowed view of a `WTFStringImpl`'s all-ASCII Latin-1 buffer that does
+    /// **not** hold its own refcount: the enclosing
+    /// [`SliceWithUnderlyingString::underlying`] (or some equivalent owner)
+    /// pins the impl for as long as the view is used. `string_impl` is recorded
+    /// only so [`SliceWithUnderlyingString::to_thread_safe`] can tell the view
+    /// must be re-derived after a thread-safe migration, and so [`clone_ref`]
+    /// can promote it to an owning [`Self::WTF`]. Drop is a no-op. Produced by
+    /// [`String::to_utf8_borrowed`] — it avoids the redundant `ref`/`deref`
+    /// pair that the ref-holding `WTF` variant would cost on the
+    /// `String::to_slice` hot path.
+    ///
+    /// [`clone_ref`]: ZigStringSlice::clone_ref
+    WtfBorrowed {
+        string_impl: *const wtf::WTFStringImplStruct,
+        ptr: *const u8,
+        len: usize,
+    },
 }
 impl Default for ZigStringSlice {
     fn default() -> Self {
@@ -2036,9 +2082,12 @@ impl ZigStringSlice {
             // SAFETY: constructor guarantees ptr/len describe a valid slice for self's lifetime.
             Self::Static(p, l) => unsafe { core::slice::from_raw_parts(*p, *l) },
             Self::Owned(v) => v.as_slice(),
-            Self::WTF { ptr, len, .. } if *len == 0 => &[],
-            // SAFETY: WTF variant holds a ref; latin1 buffer valid while ref held.
-            Self::WTF { ptr, len, .. } => unsafe { core::slice::from_raw_parts(*ptr, *len) },
+            Self::WTF { ptr, len, .. } | Self::WtfBorrowed { ptr, len, .. } if *len == 0 => &[],
+            // SAFETY: WTF/WtfBorrowed views are pinned (own ref / `underlying`
+            // ref respectively); latin1 buffer valid while the pin is held.
+            Self::WTF { ptr, len, .. } | Self::WtfBorrowed { ptr, len, .. } => unsafe {
+                core::slice::from_raw_parts(*ptr, *len)
+            },
         }
     }
 }
@@ -2047,10 +2096,11 @@ impl ZigStringSlice {
     /// allocates a copy otherwise. WTF-backed slices deref the impl.
     pub fn into_vec(mut self) -> Vec<u8> {
         // For `Owned`, move the buffer out (leaving an empty Vec to drop
-        // harmlessly). For `Static`/`WTF`, allocate a copy of the borrowed
-        // bytes; the subsequent `Drop` of `self` releases the WTF ref (paired
-        // with the ref taken in `to_latin1_slice`). Equivalent to the prior
-        // `ManuallyDrop` + per-variant raw-read dance without any unsafe.
+        // harmlessly). For `Static`/`WTF`/`WtfBorrowed`, allocate a copy of the
+        // borrowed bytes; the subsequent `Drop` of `self` releases the `WTF`
+        // ref (paired with the ref taken in `to_latin1_slice`) — `WtfBorrowed`
+        // / `Static` drop as no-ops. Equivalent to the prior `ManuallyDrop` +
+        // per-variant raw-read dance without any unsafe.
         if let Self::Owned(v) = &mut self {
             return core::mem::take(v);
         }
@@ -2145,10 +2195,13 @@ impl SliceWithUnderlyingString {
             let new = self.underlying.wtf_ptr();
             if new != orig {
                 if self.utf8.is_wtf_allocated() {
+                    // Drop the stale view first: a `WtfBorrowed` into the
+                    // just-released `orig` drops as a no-op, and a ref-holding
+                    // `WTF` keeps `orig` alive until this line runs — so this is
+                    // safe either way. Re-derive against the new (live) impl as
+                    // a borrow pinned by `underlying`; no extra ref needed.
                     self.utf8 = ZigStringSlice::EMPTY;
-                    // `as_wtf()` derefs the live impl just installed by
-                    // `to_thread_safe`; `to_latin1_slice` takes a ref for the view.
-                    self.utf8 = self.underlying.as_wtf().to_latin1_slice();
+                    self.utf8 = self.underlying.to_utf8_borrowed();
                 }
             }
         }
@@ -2171,28 +2224,34 @@ impl ZigStringSlice {
         match self {
             Self::Static(_, l) => *l,
             Self::Owned(v) => v.len(),
-            Self::WTF { len, .. } => *len,
+            Self::WTF { len, .. } | Self::WtfBorrowed { len, .. } => *len,
         }
     }
 
     /// True iff this slice owns a heap allocation that would be freed on
     /// `Drop`. Replaces the Zig `slice.allocator.get().is_some()` idiom: in
-    /// Rust the allocator is implicit in the variant.
+    /// Rust the allocator is implicit in the variant. `WtfBorrowed` is *not*
+    /// allocated — it borrows storage pinned by someone else.
     #[inline]
     pub fn is_allocated(&self) -> bool {
         matches!(self, Self::Owned(_) | Self::WTF { .. })
     }
 
-    /// True iff this slice is backed by a `WTF::StringImpl` ref (the Zig
-    /// `String.isWTFAllocator(slice.allocator)` check).
+    /// True iff this slice is a view into a `WTF::StringImpl` (the Zig
+    /// `String.isWTFAllocator(slice.allocator)` check) — whether it holds its
+    /// own ref (`WTF`) or is pinned by an `underlying` (`WtfBorrowed`). Used by
+    /// [`SliceWithUnderlyingString::to_thread_safe`] to decide whether the view
+    /// must be re-derived after a thread-safe migration.
     #[inline]
     pub fn is_wtf_allocated(&self) -> bool {
-        matches!(self, Self::WTF { .. })
+        matches!(self, Self::WTF { .. } | Self::WtfBorrowed { .. })
     }
 
     /// `ZigString.Slice.cloneRef` — produce an independently-droppable copy
     /// of this slice that views the *same bytes*: `Static` is bitwise-copied,
-    /// `WTF` bumps the StringImpl refcount, `Owned` deep-copies the buffer.
+    /// `WTF`/`WtfBorrowed` bump the StringImpl refcount (the clone has no
+    /// `underlying` to pin it, so it must become an owning `WTF`), `Owned`
+    /// deep-copies the buffer.
     ///
     /// Used by `PathLike::clone()` so a cloned path returns identical bytes
     /// from `slice()` (unlike `SliceWithUnderlyingString::dupe_ref`, which
@@ -2205,11 +2264,16 @@ impl ZigStringSlice {
                 string_impl,
                 ptr,
                 len,
+            }
+            | Self::WtfBorrowed {
+                string_impl,
+                ptr,
+                len,
             } => {
-                // SAFETY: invariant of the WTF variant is that `string_impl`
-                // points at a live `WTF::StringImpl` for as long as `self`
-                // exists; bumping its refcount yields a second owner whose
-                // `Drop` will pair with this ref.
+                // SAFETY: invariant of the WTF/WtfBorrowed variants is that
+                // `string_impl` points at a live `WTF::StringImpl` for as long
+                // as `self` exists; bumping its refcount yields a second owner
+                // whose `Drop` will pair with this ref.
                 unsafe { (**string_impl).r#ref() };
                 Self::WTF {
                     string_impl: *string_impl,

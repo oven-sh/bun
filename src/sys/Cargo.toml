@@ -36,6 +36,9 @@ thiserror.workspace = true
 # kernel via inline asm, skipping glibc's PLT + errno-TLS + cancellation check.
 # Android: same kernel ABI; rustix's linux_raw backend supports it directly.
 rustix = { workspace = true }
+# SIMD-vectorized NUL scan for `linux_dirent64.d_name` in the getdents64 walk
+# (mirrors Zig's `indexOfScalar`); a scalar byte loop showed up in startup profiles.
+memchr = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 bun_libuv_sys.workspace = true

@@ -390,7 +390,8 @@ impl Scripts {
         // TODO(port): narrow error set
         // Zig: `var tmp: Lockfile = undefined; tmp.initEmpty(allocator)`.
         let mut tmp = RealLockfile::init_empty_value();
-        // `defer tmp.deinit()` — Lockfile impls Drop
+        // `defer tmp.deinit()` — `tmp` stays empty (only `string_builder` borrows it), so field
+        // auto-drop suffices; Lockfile has no `impl Drop`.
         let mut builder = tmp.string_builder();
         self.fill_from_package_json(&mut builder, log, folder_path)?;
 

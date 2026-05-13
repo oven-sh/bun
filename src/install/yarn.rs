@@ -723,12 +723,14 @@ pub fn migrate_yarn_lockfile<'a>(
         else {
             return Err(bun_core::err!("InvalidPackageJSON"));
         };
+        // Zig: `defer package_json_fd.close()` — guard so every early-return
+        // below (read_to_end / get_fd_path failure) still closes the fd.
+        let package_json_fd = scopeguard::guard(package_json_fd, |f| {
+            let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
+        });
         let Ok(package_json_contents) = package_json_fd.read_to_end() else {
-            let _ = package_json_fd.close(); // close error is non-actionable (Zig parity: discarded)
             return Err(bun_core::err!("InvalidPackageJSON"));
         };
-        // package_json_fd closed on drop / explicit close below
-        // TODO(port): explicit close ordering — Zig closes fd via defer after readToEnd
 
         // The path buffer must outlive `package_json_source`: `Source.path.text`
         // borrows into it (lifetime-erased) and is read when `parse_append`
@@ -742,7 +744,7 @@ pub fn migrate_yarn_lockfile<'a>(
             };
             bun_ast::Source::init_path_string(&*package_json_path, package_json_contents.as_slice())
         };
-        let _ = package_json_fd.close(); // close error is non-actionable (Zig parity: discarded)
+        drop(package_json_fd); // close now; fd no longer needed past path resolution
 
         // PORT NOTE: Zig passes `comptime opts: js_lexer.JSONOptions`; the Rust
         // port spells the 8 option flags out as const generics (stable Rust has

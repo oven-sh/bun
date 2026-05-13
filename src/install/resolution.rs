@@ -553,6 +553,63 @@ pub struct URLFormatter<'a, SemverInt: VersionInt> {
     buf: &'a [u8],
 }
 
+impl<'a, SemverInt: VersionInt> URLFormatter<'a, SemverInt> {
+    /// Byte-exact port of Zig `URLFormatter.format` (`writer.writeAll` / `{s}`).
+    ///
+    /// Prefer this over the `Display` impl whenever the output is persisted to
+    /// disk (yarn.lock, lockfile JSON): `core::fmt::Display` routes through
+    /// `&str` and the `BStr` adapter is *lossy* on non-UTF-8 bytes (a Linux
+    /// folder/tarball path under a Latin-1 directory would emit U+FFFD instead
+    /// of the original byte). `write_to` mirrors Zig's `writeAll(slice)` and
+    /// pushes the lockfile string-buffer bytes through unchanged.
+    pub fn write_to<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
+    where
+        W: bun_core::io::Write + ?Sized,
+    {
+        let buf = self.buf;
+        let res = self.resolution;
+        match res.tag {
+            Tag::Npm => writer.write_all(res.npm().url.slice(buf)),
+            Tag::LocalTarball => write!(
+                writer,
+                "{}",
+                fmt_path(
+                    res.local_tarball().slice(buf),
+                    PathFormatOptions {
+                        path_sep: PathSep::Posix,
+                        ..Default::default()
+                    },
+                )
+            ),
+            Tag::Folder => writer.write_all(res.folder().slice(buf)),
+            Tag::RemoteTarball => writer.write_all(res.remote_tarball().slice(buf)),
+            // PORT NOTE: `Repository::format_as` still goes through `fmt::Write`
+            // (and uses `BStr` internally); git/github URLs are ASCII in
+            // practice so byte-exactness is preserved. A follow-up shard owns
+            // `repository.rs` if that ever needs a byte-level path too.
+            Tag::Git => write!(writer, "{}", res.git().fmt("git+", buf)),
+            Tag::Github => write!(writer, "{}", res.github().fmt("github:", buf)),
+            Tag::Workspace => {
+                writer.write_all(b"workspace:")?;
+                writer.write_all(res.workspace().slice(buf))
+            }
+            Tag::Symlink => {
+                writer.write_all(b"link:")?;
+                writer.write_all(res.symlink().slice(buf))
+            }
+            Tag::SingleFileModule => {
+                writer.write_all(b"module:")?;
+                writer.write_all(res.single_file_module().slice(buf))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+// PORT NOTE: kept for the ~dozen call sites that interpolate into
+// `format_args!` for terminal/log output (Output::err, pretty_errorln, …),
+// where lossy U+FFFD on the rare non-UTF-8 byte is acceptable. File-producing
+// callers MUST use [`URLFormatter::write_to`] instead.
 impl<'a, SemverInt: VersionInt> fmt::Display for URLFormatter<'a, SemverInt> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let buf = self.buf;
@@ -597,6 +654,83 @@ pub struct Formatter<'a, SemverInt: VersionInt> {
     path_sep: PathSep,
 }
 
+impl<'a, SemverInt: VersionInt> Formatter<'a, SemverInt> {
+    /// Byte-exact port of Zig `Formatter.format`. See [`URLFormatter::write_to`]
+    /// for rationale — `Display` is lossy on non-UTF-8 path bytes; this writes
+    /// the lockfile string-buffer slices verbatim via `write_all`, matching
+    /// Zig's `writer.writeAll` / `{s}`.
+    pub fn write_to<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
+    where
+        W: bun_core::io::Write + ?Sized,
+    {
+        let buf = self.buf;
+        let res = self.resolution;
+        match res.tag {
+            Tag::Npm => write!(writer, "{}", res.npm().version.fmt(buf)),
+            Tag::LocalTarball => write!(
+                writer,
+                "{}",
+                fmt_path(
+                    res.local_tarball().slice(buf),
+                    PathFormatOptions {
+                        path_sep: self.path_sep,
+                        ..Default::default()
+                    },
+                )
+            ),
+            Tag::Folder => write!(
+                writer,
+                "{}",
+                fmt_path(
+                    res.folder().slice(buf),
+                    PathFormatOptions {
+                        path_sep: self.path_sep,
+                        ..Default::default()
+                    },
+                )
+            ),
+            Tag::RemoteTarball => writer.write_all(res.remote_tarball().slice(buf)),
+            Tag::Git => write!(writer, "{}", res.git().fmt("git+", buf)),
+            Tag::Github => write!(writer, "{}", res.github().fmt("github:", buf)),
+            Tag::Workspace => {
+                writer.write_all(b"workspace:")?;
+                write!(
+                    writer,
+                    "{}",
+                    fmt_path(
+                        res.workspace().slice(buf),
+                        PathFormatOptions {
+                            path_sep: self.path_sep,
+                            ..Default::default()
+                        },
+                    )
+                )
+            }
+            Tag::Symlink => {
+                writer.write_all(b"link:")?;
+                write!(
+                    writer,
+                    "{}",
+                    fmt_path(
+                        res.symlink().slice(buf),
+                        PathFormatOptions {
+                            path_sep: self.path_sep,
+                            ..Default::default()
+                        },
+                    )
+                )
+            }
+            Tag::SingleFileModule => {
+                writer.write_all(b"module:")?;
+                writer.write_all(res.single_file_module().slice(buf))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+// PORT NOTE: kept for terminal/log call sites (Output::err, tree printer, …).
+// Persisted-to-disk callers (Yarn.rs) MUST use [`Formatter::write_to`].
 impl<'a, SemverInt: VersionInt> fmt::Display for Formatter<'a, SemverInt> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let buf = self.buf;

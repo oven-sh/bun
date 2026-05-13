@@ -82,8 +82,11 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
             let quoted = QuotedFormatter { text: paths.rel };
             fmt::Display::fmt(&quoted, f)
         } else {
-            // Zig: `writer.writeAll(paths.rel)` — Display only accepts &str, so
-            // route through `bstr::BStr` which writes the bytes verbatim.
+            // Zig: `writer.writeAll(paths.rel)` writes raw bytes. `fmt::Formatter`
+            // only accepts `&str`, so non-UTF-8 path bytes are emitted lossily
+            // (U+FFFD) via `bstr::BStr`'s Display. Both current callers pass
+            // `quoted = true`, so this branch is unreached today; if a future
+            // caller needs byte-exact output it must use an `io::Write` sink.
             write!(f, "{}", bstr::BStr::new(paths.rel))
         }
     }

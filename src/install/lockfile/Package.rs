@@ -50,15 +50,17 @@ pub use workspace_map as WorkspaceMap;
 bun_output::declare_scope!(Lockfile, hidden);
 
 trait ExprStr {
-    fn as_utf8(&self) -> Option<&'static [u8]>;
+    fn as_utf8<'b>(&self, bump: &'b bun_alloc::Arena) -> Option<&'b [u8]>;
 }
 impl ExprStr for Expr {
+    // Zig `Expr.asString` (expr.zig:477) — transparently transcodes UTF-16
+    // `EString`s. The earlier `is_utf8()` guard returned `None` for keys the
+    // lexer stored as UTF-16 (e.g. `\u`-escaped non-ASCII), tripping the
+    // `expect("unreachable")` callers below.
     #[inline]
-    fn as_utf8(&self) -> Option<&'static [u8]> {
+    fn as_utf8<'b>(&self, bump: &'b bun_alloc::Arena) -> Option<&'b [u8]> {
         if let ExprData::EString(s) = &self.data {
-            if s.is_utf8() {
-                return Some(s.data.slice());
-            }
+            return Some(s.string(bump).expect("OOM"));
         }
         None
     }
@@ -2117,6 +2119,10 @@ impl Package<u64> {
         #[allow(non_snake_case)]
         let FEATURES = features;
         // TODO(port): narrow error set
+        // Zig threads `allocator` for `asString` transcoding; the Rust signature
+        // dropped it, so use a function-local arena (transcoded strings are only
+        // borrowed until `string_builder.append` copies them).
+        let bump = bun_alloc::Arena::new();
         // PORT NOTE: split-borrow `string_bytes`/`string_pool` so the dozens of
         // disjoint `lockfile.{buffers.*, overrides, catalogs, workspace_*, …}`
         // accesses below pass borrowck. Reads of `lockfile.buffers.string_bytes`
@@ -2135,7 +2141,7 @@ impl Package<u64> {
         // -- Count the sizes
         'name: {
             if let Some(name_q) = json.as_property(b"name") {
-                if let Some(name) = name_q.expr.as_utf8() {
+                if let Some(name) = name_q.expr.as_utf8(&bump) {
                     if !name.is_empty() {
                         string_builder.count(name);
                         break 'name;
@@ -2168,7 +2174,7 @@ impl Package<u64> {
                     let key = prop.key.expect("infallible: prop has key");
                     let value = prop.value.expect("infallible: prop has value");
                     if key.is_string() && value.is_string() {
-                        string_builder.count(value.as_utf8().unwrap());
+                        string_builder.count(value.as_utf8(&bump).unwrap());
                     }
                 }
             }
@@ -2176,7 +2182,7 @@ impl Package<u64> {
 
         if !FEATURES.is_main {
             if let Some(version_q) = json.as_property(b"version") {
-                if let Some(version_str) = version_q.expr.as_utf8() {
+                if let Some(version_str) = version_q.expr.as_utf8(&bump) {
                     string_builder.count(version_str);
                 }
             }
@@ -2186,7 +2192,10 @@ impl Package<u64> {
                 match &bin.expr.data {
                     ExprData::EObject(obj) => {
                         for bin_prop in obj.properties.slice() {
-                            let Some(k) = bin_prop.key.expect("infallible: prop has key").as_utf8()
+                            let Some(k) = bin_prop
+                                .key
+                                .expect("infallible: prop has key")
+                                .as_utf8(&bump)
                             else {
                                 break 'bin;
                             };
@@ -2194,7 +2203,7 @@ impl Package<u64> {
                             let Some(v) = bin_prop
                                 .value
                                 .expect("infallible: prop has value")
-                                .as_utf8()
+                                .as_utf8(&bump)
                             else {
                                 break 'bin;
                             };
@@ -2203,7 +2212,7 @@ impl Package<u64> {
                         break 'bin;
                     }
                     ExprData::EString(_) => {
-                        if let Some(str_) = bin.expr.as_utf8() {
+                        if let Some(str_) = bin.expr.as_utf8(&bump) {
                             string_builder.count(str_);
                             break 'bin;
                         }
@@ -2214,7 +2223,7 @@ impl Package<u64> {
 
             if let Some(dirs) = json.as_property(b"directories") {
                 if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                    if let Some(str_) = bin_prop.expr.as_utf8() {
+                    if let Some(str_) = bin_prop.expr.as_utf8(&bump) {
                         string_builder.count(str_);
                         break 'bin;
                     }
@@ -2285,7 +2294,7 @@ impl Package<u64> {
                             let key = prop
                                 .key
                                 .expect("infallible: prop has key")
-                                .as_utf8()
+                                .as_utf8(&bump)
                                 .expect("unreachable");
                             // PERF(port): was assume_capacity
                             optional_peer_dependencies.put_assume_capacity(
@@ -2372,10 +2381,12 @@ impl Package<u64> {
                                 let key = item
                                     .key
                                     .expect("infallible: prop has key")
-                                    .as_utf8()
+                                    .as_utf8(&bump)
                                     .unwrap();
-                                let Some(value) =
-                                    item.value.expect("infallible: prop has value").as_utf8()
+                                let Some(value) = item
+                                    .value
+                                    .expect("infallible: prop has value")
+                                    .as_utf8(&bump)
                                 else {
                                     let _ = bun_ast::add_error_pretty!(
                                         log,
@@ -2440,7 +2451,7 @@ impl Package<u64> {
                             .unwrap()
                             .ensure_unused_capacity(arr.items.len_u32() as usize)?;
                         for item in arr.slice() {
-                            let Some(name) = item.as_utf8() else {
+                            let Some(name) = item.as_utf8(&bump) else {
                                 let _ = log.add_error_fmt(
                                     source,
                                     q.loc,
@@ -2542,7 +2553,7 @@ impl Package<u64> {
             }
 
             if let Some(name_q) = json.as_property(b"name") {
-                if let Some(name) = name_q.expr.as_utf8() {
+                if let Some(name) = name_q.expr.as_utf8(&bump) {
                     if !name.is_empty() {
                         let external_string = string_builder.append::<ExternalString>(name);
 
@@ -2573,8 +2584,10 @@ impl Package<u64> {
                     let value = prop.value.expect("infallible: prop has value");
                     if key.is_string() && value.is_string() {
                         // PERF(port): was stack-fallback
-                        let keyhash = semver::string::Builder::string_hash(key.as_utf8().unwrap());
-                        let patch_path = string_builder.append::<String>(value.as_utf8().unwrap());
+                        let keyhash =
+                            semver::string::Builder::string_hash(key.as_utf8(&bump).unwrap());
+                        let patch_path =
+                            string_builder.append::<String>(value.as_utf8(&bump).unwrap());
                         lockfile
                             .patched_dependencies
                             .put(
@@ -2598,10 +2611,10 @@ impl Package<u64> {
                             0 => {}
                             1 => {
                                 let first = &obj.properties.slice()[0];
-                                let Some(bin_name) = first.key.unwrap().as_utf8() else {
+                                let Some(bin_name) = first.key.unwrap().as_utf8(&bump) else {
                                     break 'bin;
                                 };
-                                let Some(value) = first.value.unwrap().as_utf8() else {
+                                let Some(value) = first.value.unwrap().as_utf8(&bump) else {
                                     break 'bin;
                                 };
 
@@ -2630,8 +2643,10 @@ impl Package<u64> {
 
                                 let mut i: usize = 0;
                                 for bin_prop in obj.properties.slice() {
-                                    let Some(k) =
-                                        bin_prop.key.expect("infallible: prop has key").as_utf8()
+                                    let Some(k) = bin_prop
+                                        .key
+                                        .expect("infallible: prop has key")
+                                        .as_utf8(&bump)
                                     else {
                                         break 'bin;
                                     };
@@ -2640,7 +2655,7 @@ impl Package<u64> {
                                     let Some(v) = bin_prop
                                         .value
                                         .expect("infallible: prop has value")
-                                        .as_utf8()
+                                        .as_utf8(&bump)
                                     else {
                                         break 'bin;
                                     };
@@ -2694,7 +2709,7 @@ impl Package<u64> {
                 // the files in an existing bin directory, use
                 // directories.bin.
                 if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                    if let Some(str_) = bin_prop.expr.as_utf8() {
+                    if let Some(str_) = bin_prop.expr.as_utf8(&bump) {
                         if !str_.is_empty() {
                             self.bin = Bin {
                                 tag: bin::Tag::Dir,
@@ -2736,7 +2751,9 @@ impl Package<u64> {
                     }
                     ExprData::EArray(arr) => {
                         for item in arr.slice() {
-                            let Some(s) = item.as_utf8() else { continue };
+                            let Some(s) = item.as_utf8(&bump) else {
+                                continue;
+                            };
                             bundled_deps.insert(s)?;
                         }
                     }
@@ -2924,9 +2941,9 @@ impl Package<u64> {
                             for item in obj.properties.slice() {
                                 let key = item.key.expect("infallible: prop has key");
                                 let value = item.value.expect("infallible: prop has value");
-                                let external_name =
-                                    string_builder.append::<ExternalString>(key.as_utf8().unwrap());
-                                let version = value.as_utf8().unwrap_or(b"");
+                                let external_name = string_builder
+                                    .append::<ExternalString>(key.as_utf8(&bump).unwrap());
+                                let version = value.as_utf8(&bump).unwrap_or(b"");
 
                                 if let Some(dep_) = Self::parse_dependency(
                                     &mut lockfile.workspace_paths,

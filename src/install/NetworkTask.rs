@@ -2,7 +2,7 @@ use core::mem::MaybeUninit;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
 
-use bstr::{BStr, ByteSlice};
+use bstr::ByteSlice;
 
 use crate::bun_fs::{FileSystem, FilenameStore};
 use bun_collections::HashMap;
@@ -346,16 +346,14 @@ const DEFAULT_HEADERS_BUF: &str = concat!(
 const EXTENDED_HEADERS_BUF: &str = concat!("Accept", "application/json, */*");
 
 fn append_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) {
+    // PORT NOTE: Zig `appendFmt("Authorization", "Bearer {s}", .{scope.token})`
+    // writes raw bytes; routing through `format_args!`/`BStr` Display would be
+    // lossy for non-UTF-8 tokens (U+FFFD expands 1→3 bytes) and overrun the
+    // exact byte count reserved by `count_auth`. Use raw-byte append.
     if !scope.token.is_empty() {
-        header_builder.append_fmt(
-            "Authorization",
-            format_args!("Bearer {}", BStr::new(&scope.token)),
-        );
+        header_builder.append_bytes_value("Authorization", b"Bearer ", &scope.token);
     } else if !scope.auth.is_empty() {
-        header_builder.append_fmt(
-            "Authorization",
-            format_args!("Basic {}", BStr::new(&scope.auth)),
-        );
+        header_builder.append_bytes_value("Authorization", b"Basic ", &scope.auth);
     } else {
         return;
     }

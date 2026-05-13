@@ -139,9 +139,9 @@ describe("backpressure", () => {
     // Without the fix this grows into the hundreds of MB on every platform.
     expect(finalReadableLength).toBeLessThan(8 * 1024 * 1024);
     if (process.platform !== "win32") {
-      // On Windows, doPause() in NodeHTTPResponse.zig intentionally does not
-      // call pauseSocket() (see the TODO there about UV_DISCONNECT/EOF
-      // detection), so TCP backpressure does not propagate to the client —
+      // On Windows, doPause() in NodeHTTPResponse.zig intentionally skips
+      // pauseSocket() because libuv does not deliver EOF while the socket is
+      // paused, so TCP backpressure does not propagate to the client there —
       // only the Readable's buffer is bounded. On every other platform the
       // client's pull count must also stabilise.
       expect(finalPullCount).toBeLessThan(512);

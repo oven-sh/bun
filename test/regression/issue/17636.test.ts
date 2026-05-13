@@ -12,7 +12,12 @@
 // @inquirer/prompts package itself.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+
+// All six tests spawn a child bun; under the ASAN debug build six
+// concurrent processes contend enough that the default 5s timeout
+// isn't always sufficient for the readline/stdin cases.
+const timeout = isDebug ? 30_000 : 10_000;
 
 test.concurrent("unsettled top-level await exits 13 once the event loop is idle instead of hanging", async () => {
   // Reduced from inquirer's search() prompt: stdin closes, readline closes,
@@ -45,7 +50,7 @@ test.concurrent("unsettled top-level await exits 13 once the event loop is idle 
   expect(stdout.split("\n").filter(Boolean)).toEqual(["rl-closed", "beforeExit 0", "exit 13"]);
   expect(stderr).toContain("unsettled top-level await");
   expect(exitCode).toBe(13);
-});
+}, timeout);
 
 test.concurrent("monkey-patched process.emit observes 'beforeExit' and 'exit' on natural shutdown", async () => {
   // signal-exit's mechanism: replace process.emit to intercept the 'exit'
@@ -72,7 +77,7 @@ test.concurrent("monkey-patched process.emit observes 'beforeExit' and 'exit' on
   expect(seen).toEqual(["beforeExit:0", "exit:0"]);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
-});
+}, timeout);
 
 test.concurrent("signal-exit pattern rejects a pending TLA prompt on stdin close (inquirer flow)", async () => {
   // End-to-end reduction of issue #17636: a prompt library awaits a promise
@@ -139,7 +144,7 @@ test.concurrent("signal-exit pattern rejects a pending TLA prompt on stdin close
   expect(stderr).toContain("unsettled top-level await");
   expect(stdout.trim()).toBe("CAUGHT:User force closed the prompt with 13 null");
   expect(exitCode).toBe(0);
-});
+}, timeout);
 
 test.concurrent("Promise microtasks queued from an 'exit' listener run, but nextTick does not", async () => {
   // Node drains Promise microtasks once more after the 'exit' event so
@@ -168,7 +173,7 @@ test.concurrent("Promise microtasks queued from an 'exit' listener run, but next
   expect(stdout.split("\n").filter(Boolean)).toEqual(["exit-listener:5", "microtask:5"]);
   expect(stderr).toBe("");
   expect(exitCode).toBe(5);
-});
+}, timeout);
 
 test.concurrent("explicit process.exitCode suppresses the unsettled-TLA warning and exit 13", async () => {
   // Node: if user code set an exit code, the TLA-unsettled path respects it
@@ -188,7 +193,7 @@ test.concurrent("explicit process.exitCode suppresses the unsettled-TLA warning 
   expect(stdout).toBe("");
   expect(stderr).not.toContain("unsettled");
   expect(exitCode).toBe(7);
-});
+}, timeout);
 
 test.concurrent("beforeExit listener that settles the TLA lets execution resume (no exit 13)", async () => {
   // Node parity: a beforeExit handler can resolve the pending top-level
@@ -210,4 +215,4 @@ test.concurrent("beforeExit listener that settles the TLA lets execution resume 
   expect(stdout.trim()).toBe("resumed:ok");
   expect(stderr).not.toContain("unsettled");
   expect(exitCode).toBe(0);
-});
+}, timeout);

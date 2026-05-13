@@ -1069,12 +1069,10 @@ describe("Bun.Image", () => {
       expect(rgbaAt(data, 4, 3, 0)).toEqual([0, 0, 0, 0]);
     });
 
-    test("fit:'cover'/'contain' with square-into-square is a no-op on dims", async () => {
-      for (const fit of ["cover", "contain"] as const) {
-        const out = await new Bun.Image(gradientPng).resize(8, 8, { fit }).png().bytes();
-        const { w, h } = decodePngRaw(out);
-        expect({ fit, w, h }).toEqual({ fit, w: 8, h: 8 });
-      }
+    test.each(["cover", "contain"] as const)("fit:'%s' with square-into-square is a no-op on dims", async fit => {
+      const out = await new Bun.Image(gradientPng).resize(8, 8, { fit }).png().bytes();
+      const { w, h } = decodePngRaw(out);
+      expect({ fit, w, h }).toEqual({ fit, w: 8, h: 8 });
     });
 
     test("modulate({saturation:0}) greyscales: R=G=B per pixel", async () => {

@@ -331,10 +331,15 @@ pub struct LexerType<
     /// `Source.contents: Cow<'static,[u8]>`, every inlined `step()` was a
     /// 3-load dependent chain (`self.source` → Cow tag/ptr → Cow len) that
     /// LLVM could not hoist (perf-annotate showed `mov 0x70(%rbx),%rax` at
-    /// ~8% of `next()` cycles). Caching the deref'd `&'a [u8]` once collapses
-    /// every `self.contents[..]` access to a single noalias-protected fat-ptr
-    /// load that stays in a register, matching Zig codegen. `source` is kept
-    /// for error-reporting paths that need `path` / `identifier_name`.
+    /// ~8% of `next()` cycles). Caching the deref'd `&'a [u8]` here collapses
+    /// that to a single fat-ptr field load — but a *struct field* load LLVM
+    /// still won't hoist out of the token loop (perf-annotate of `next()`
+    /// showed `mov 0x80(%rbx),%rsi` at ~7.7% of its samples). The hot paths
+    /// therefore copy this into a local `let contents: &[u8]` once per `next()`
+    /// / `scan_single_line_comment()` call and thread it by value into
+    /// `step_with()` / `next_codepoint_with()`, so the ptr+len stays in a
+    /// register for the whole loop, matching Zig codegen. `source` is kept for
+    /// error-reporting paths that need `path` / `identifier_name`.
     pub contents: &'a [u8],
     pub current: usize,
     pub start: usize,
@@ -1166,9 +1171,18 @@ lexer_impl_header! {
     /// (showing as a separate ~2.7% symbol). The fast path is now 4 insns
     /// (bounds cmp, load, cmp 0x80, store) so it folds into every `step()`
     /// site, matching Zig's per-byte `ptr[current]` increment.
+    ///
+    /// PERF: takes `contents: &[u8]` by value (a `Copy` fat-ptr) instead of
+    /// reloading `self.contents` from the struct. With `self.contents`, every
+    /// inlined site re-emitted `mov 0x80(%rbx),%rsi` to fetch the slice ptr+len
+    /// (perf-annotate of `next()` showed that single load at ~7.7% of `next()`
+    /// samples) — LLVM couldn't prove the field load loop-invariant across the
+    /// intervening `&mut self` writes. As a by-value SSA parameter it stays in
+    /// a register for the whole token loop, matching Zig's `noalias *Lexer`
+    /// codegen. Callers outside the hot loop use the thin `step()` wrapper
+    /// below, which loads `self.contents` once.
     #[inline(always)]
-    fn next_codepoint(&mut self) -> CodePoint {
-        let contents: &[u8] = self.contents;
+    fn next_codepoint_with(&mut self, contents: &[u8]) -> CodePoint {
         let len = contents.len();
         if self.current >= len {
             self.end = len;
@@ -1187,20 +1201,27 @@ lexer_impl_header! {
             return first as CodePoint;
         }
 
-        strings::lexer_step::next_codepoint_multibyte(self.contents, &mut self.current, first)
+        strings::lexer_step::next_codepoint_multibyte(contents, &mut self.current, first)
     }
 
+    /// PERF: `contents` threaded by value — see [`Self::next_codepoint_with`].
     #[inline]
-    pub fn step(&mut self) {
-        self.code_point = self.next_codepoint();
+    fn step_with(&mut self, contents: &[u8]) {
+        self.code_point = self.next_codepoint_with(contents);
 
         // Track the approximate number of newlines in the file so we can preallocate
         // the line offset table in the printer for source maps. The line offset table
         // is the #1 highest allocation in the heap profile, so this is worth doing.
         // This count is approximate because it handles "\n" and "\r\n" (the common
-        // cases) but not "\r" or " " or " ". Getting this wrong is harmless
+        // cases) but not "\r" or " " or " ". Getting this wrong is harmless
         // because it's only a preallocation. The array will just grow if it's too small.
         self.approximate_newline_count += (self.code_point == 0x0A) as usize;
+    }
+
+    #[inline]
+    pub fn step(&mut self) {
+        let contents: &[u8] = self.contents;
+        self.step_with(contents);
     }
 
     #[inline]
@@ -1513,6 +1534,13 @@ lexer_impl_header! {
         self.has_no_side_effect_comment_before = false;
         self.prev_token_was_await_keyword = false;
 
+        // PERF: bind the source slice once so every inlined `step()` in the
+        // token loop below reads a register-resident `Copy` fat-ptr instead of
+        // reloading `self.contents` (`mov 0x80(%rbx),%rsi`) at ~50 sites. See
+        // `next_codepoint_with`. `self.contents` is never reassigned during a
+        // `next()` call, so `contents == self.contents` throughout.
+        let contents: &[u8] = self.contents;
+
         loop {
             self.start = self.end;
             self.token = T::TEndOfFile;
@@ -1529,13 +1557,13 @@ lexer_impl_header! {
                         );
                     }
                     if self.start == 0
-                        && self.contents.len() > 1
-                        && self.contents[1] == b'!'
+                        && contents.len() > 1
+                        && contents[1] == b'!'
                     {
                         // "#!/usr/bin/env node"
                         self.token = T::THashbang;
                         'hashbang: loop {
-                            self.step();
+                            self.step_with(contents);
                             match self.code_point {
                                 0x0D | 0x0A | 0x2028 | 0x2029 =>
                                 {
@@ -1550,7 +1578,7 @@ lexer_impl_header! {
                         self.identifier = self.raw();
                     } else {
                         // "#foo"
-                        self.step();
+                        self.step_with(contents);
                         if self.code_point == 0x5C {
                             self.identifier = self
                                 .scan_identifier_with_escapes(IdentifierKind::Private)
@@ -1561,9 +1589,9 @@ lexer_impl_header! {
                                 self.syntax_error()?;
                             }
 
-                            self.step();
+                            self.step_with(contents);
                             while is_identifier_continue(self.code_point) {
-                                self.step();
+                                self.step_with(contents);
                             }
                             if self.code_point == 0x5C {
                                 self.identifier = self
@@ -1589,7 +1617,7 @@ lexer_impl_header! {
                             while self.code_point == 0x0A
                                 || self.code_point == 0x0D
                             {
-                                self.step();
+                                self.step_with(contents);
                             }
 
                             if self.code_point != 0x20
@@ -1605,7 +1633,7 @@ lexer_impl_header! {
                             let indent_character = self.code_point;
                             let mut count: usize = 0;
                             while self.code_point == indent_character {
-                                self.step();
+                                self.step_with(contents);
                                 count += 1;
                             }
 
@@ -1620,43 +1648,43 @@ lexer_impl_header! {
                         }
                     }
 
-                    self.step();
+                    self.step_with(contents);
                     continue;
                 }
                 0x09 | 0x20 => {
-                    self.step();
+                    self.step_with(contents);
                     continue;
                 }
                 0x28 => {
-                    self.step();
+                    self.step_with(contents);
                     self.token = T::TOpenParen;
                 }
                 0x29 => {
-                    self.step();
+                    self.step_with(contents);
                     self.token = T::TCloseParen;
                 }
                 0x5B => {
-                    self.step();
+                    self.step_with(contents);
                     self.token = T::TOpenBracket;
                 }
                 0x5D => {
-                    self.step();
+                    self.step_with(contents);
                     self.token = T::TCloseBracket;
                 }
                 0x7B => {
-                    self.step();
+                    self.step_with(contents);
                     self.token = T::TOpenBrace;
                 }
                 0x7D => {
-                    self.step();
+                    self.step_with(contents);
                     self.token = T::TCloseBrace;
                 }
                 0x2C => {
-                    self.step();
+                    self.step_with(contents);
                     self.token = T::TComma;
                 }
                 0x3A => {
-                    self.step();
+                    self.step_with(contents);
                     self.token = T::TColon;
                 }
                 0x3B => {
@@ -1665,7 +1693,7 @@ lexer_impl_header! {
                             b"Semicolons are not allowed in JSON",
                         );
                     }
-                    self.step();
+                    self.step_with(contents);
                     self.token = T::TSemicolon;
                 }
                 0x40 => {
@@ -1674,7 +1702,7 @@ lexer_impl_header! {
                             b"Decorators are not allowed in JSON",
                         );
                     }
-                    self.step();
+                    self.step_with(contents);
                     self.token = T::TAt;
                 }
                 0x7E => {
@@ -1682,18 +1710,18 @@ lexer_impl_header! {
                         return self
                             .add_unsupported_syntax_error(b"~ is not allowed in JSON");
                     }
-                    self.step();
+                    self.step_with(contents);
                     self.token = T::TTilde;
                 }
                 0x3F => {
                     // '?' or '?.' or '??' or '??='
-                    self.step();
+                    self.step_with(contents);
                     match self.code_point {
                         0x3F => {
-                            self.step();
+                            self.step_with(contents);
                             match self.code_point {
                                 0x3D => {
-                                    self.step();
+                                    self.step_with(contents);
                                     self.token = T::TQuestionQuestionEquals;
                                 }
                                 _ => {
@@ -1705,13 +1733,12 @@ lexer_impl_header! {
                         0x2E => {
                             self.token = T::TQuestion;
                             let current = self.current;
-                            let contents = self.contents;
 
                             // Lookahead to disambiguate with 'a?.1:b'
                             if current < contents.len() {
                                 let c = contents[current];
                                 if c < b'0' || c > b'9' {
-                                    self.step();
+                                    self.step_with(contents);
                                     self.token = T::TQuestionDot;
                                 }
                             }
@@ -1729,10 +1756,10 @@ lexer_impl_header! {
                     }
 
                     // '%' or '%='
-                    self.step();
+                    self.step_with(contents);
                     match self.code_point {
                         0x3D => {
-                            self.step();
+                            self.step_with(contents);
                             self.token = T::TPercentEquals;
                         }
                         _ => {
@@ -1749,17 +1776,17 @@ lexer_impl_header! {
                     }
 
                     // '&' or '&=' or '&&' or '&&='
-                    self.step();
+                    self.step_with(contents);
                     match self.code_point {
                         0x3D => {
-                            self.step();
+                            self.step_with(contents);
                             self.token = T::TAmpersandEquals;
                         }
                         0x26 => {
-                            self.step();
+                            self.step_with(contents);
                             match self.code_point {
                                 0x3D => {
-                                    self.step();
+                                    self.step_with(contents);
                                     self.token = T::TAmpersandAmpersandEquals;
                                 }
                                 _ => {
@@ -1781,17 +1808,17 @@ lexer_impl_header! {
                     }
 
                     // '|' or '|=' or '||' or '||='
-                    self.step();
+                    self.step_with(contents);
                     match self.code_point {
                         0x3D => {
-                            self.step();
+                            self.step_with(contents);
                             self.token = T::TBarEquals;
                         }
                         0x7C => {
-                            self.step();
+                            self.step_with(contents);
                             match self.code_point {
                                 0x3D => {
-                                    self.step();
+                                    self.step_with(contents);
                                     self.token = T::TBarBarEquals;
                                 }
                                 _ => {
@@ -1813,10 +1840,10 @@ lexer_impl_header! {
                     }
 
                     // '^' or '^='
-                    self.step();
+                    self.step_with(contents);
                     match self.code_point {
                         0x3D => {
-                            self.step();
+                            self.step_with(contents);
                             self.token = T::TCaretEquals;
                         }
                         _ => {
@@ -1833,14 +1860,14 @@ lexer_impl_header! {
                     }
 
                     // '+' or '+=' or '++'
-                    self.step();
+                    self.step_with(contents);
                     match self.code_point {
                         0x3D => {
-                            self.step();
+                            self.step_with(contents);
                             self.token = T::TPlusEquals;
                         }
                         0x2B => {
-                            self.step();
+                            self.step_with(contents);
                             self.token = T::TPlusPlus;
                         }
                         _ => {
@@ -1851,7 +1878,7 @@ lexer_impl_header! {
 
                 0x2D => {
                     // '+' or '+=' or '++'
-                    self.step();
+                    self.step_with(contents);
                     match self.code_point {
                         0x3D => {
                             if IS_JSON {
@@ -1859,7 +1886,7 @@ lexer_impl_header! {
                                     b"Operators are not allowed in JSON",
                                 );
                             }
-                            self.step();
+                            self.step_with(contents);
                             self.token = T::TMinusEquals;
                         }
                         0x2D => {
@@ -1868,10 +1895,10 @@ lexer_impl_header! {
                                     b"Operators are not allowed in JSON",
                                 );
                             }
-                            self.step();
+                            self.step_with(contents);
 
                             if self.code_point == 0x3E && self.has_newline_before {
-                                self.step();
+                                self.step_with(contents);
                                 self.log()
                                     .add_range_warning(
                                         Some(self.source),
@@ -1890,7 +1917,7 @@ lexer_impl_header! {
                                         }
                                         _ => {}
                                     }
-                                    self.step();
+                                    self.step_with(contents);
                                 }
                                 continue;
                             }
@@ -1905,17 +1932,17 @@ lexer_impl_header! {
 
                 0x2A => {
                     // '*' or '*=' or '**' or '**='
-                    self.step();
+                    self.step_with(contents);
                     match self.code_point {
                         0x3D => {
-                            self.step();
+                            self.step_with(contents);
                             self.token = T::TAsteriskEquals;
                         }
                         0x2A => {
-                            self.step();
+                            self.step_with(contents);
                             match self.code_point {
                                 0x3D => {
-                                    self.step();
+                                    self.step_with(contents);
                                     self.token = T::TAsteriskAsteriskEquals;
                                 }
                                 _ => {
@@ -1930,11 +1957,11 @@ lexer_impl_header! {
                 }
                 0x2F => {
                     // '/' or '/=' or '//' or '/* ... */'
-                    self.step();
+                    self.step_with(contents);
 
                     match self.code_point {
                         0x3D => {
-                            self.step();
+                            self.step_with(contents);
                             self.token = T::TSlashEquals;
                         }
                         0x2F => {
@@ -1952,20 +1979,20 @@ lexer_impl_header! {
                             continue;
                         }
                         0x2A => {
-                            self.step();
+                            self.step_with(contents);
 
                             'multi_line_comment: loop {
                                 match self.code_point {
                                     0x2A => {
-                                        self.step();
+                                        self.step_with(contents);
                                         if self.code_point == 0x2F {
-                                            self.step();
+                                            self.step_with(contents);
                                             break 'multi_line_comment;
                                         }
                                     }
                                     0x0D | 0x0A | 0x2028 | 0x2029 =>
                                     {
-                                        self.step();
+                                        self.step_with(contents);
                                         self.has_newline_before = true;
                                     }
                                     -1 => {
@@ -1981,17 +2008,17 @@ lexer_impl_header! {
                                         if Environment::ENABLE_SIMD {
                                             if self.code_point < 128 {
                                                 let remainder =
-                                                    &self.contents[self.current..];
+                                                    &contents[self.current..];
                                                 if remainder.len() >= 512 {
                                                     match skip_to_interesting_character_in_multiline_comment(remainder) {
                                                         Some(off) => {
                                                             self.current += off as usize;
                                                             self.end = self.current.saturating_sub(1);
-                                                            self.step();
+                                                            self.step_with(contents);
                                                             continue;
                                                         }
                                                         None => {
-                                                            self.step();
+                                                            self.step_with(contents);
                                                             continue;
                                                         }
                                                     }
@@ -1999,7 +2026,7 @@ lexer_impl_header! {
                                             }
                                         }
 
-                                        self.step();
+                                        self.step_with(contents);
                                     }
                                 }
                             }
@@ -2029,17 +2056,17 @@ lexer_impl_header! {
                     }
 
                     // '=' or '=>' or '==' or '==='
-                    self.step();
+                    self.step_with(contents);
                     match self.code_point {
                         0x3E => {
-                            self.step();
+                            self.step_with(contents);
                             self.token = T::TEqualsGreaterThan;
                         }
                         0x3D => {
-                            self.step();
+                            self.step_with(contents);
                             match self.code_point {
                                 0x3D => {
-                                    self.step();
+                                    self.step_with(contents);
                                     self.token = T::TEqualsEqualsEquals;
                                 }
                                 _ => {
@@ -2061,17 +2088,17 @@ lexer_impl_header! {
                     }
 
                     // '<' or '<<' or '<=' or '<<=' or '<!--'
-                    self.step();
+                    self.step_with(contents);
                     match self.code_point {
                         0x3D => {
-                            self.step();
+                            self.step_with(contents);
                             self.token = T::TLessThanEquals;
                         }
                         0x3C => {
-                            self.step();
+                            self.step_with(contents);
                             match self.code_point {
                                 0x3D => {
-                                    self.step();
+                                    self.step_with(contents);
                                     self.token = T::TLessThanLessThanEquals;
                                 }
                                 _ => {
@@ -2104,25 +2131,25 @@ lexer_impl_header! {
                     }
 
                     // '>' or '>>' or '>>>' or '>=' or '>>=' or '>>>='
-                    self.step();
+                    self.step_with(contents);
 
                     match self.code_point {
                         0x3D => {
-                            self.step();
+                            self.step_with(contents);
                             self.token = T::TGreaterThanEquals;
                         }
                         0x3E => {
-                            self.step();
+                            self.step_with(contents);
                             match self.code_point {
                                 0x3D => {
-                                    self.step();
+                                    self.step_with(contents);
                                     self.token = T::TGreaterThanGreaterThanEquals;
                                 }
                                 0x3E => {
-                                    self.step();
+                                    self.step_with(contents);
                                     match self.code_point {
                                         0x3D => {
-                                            self.step();
+                                            self.step_with(contents);
                                             self.token = T::TGreaterThanGreaterThanGreaterThanEquals;
                                         }
                                         _ => {
@@ -2149,13 +2176,13 @@ lexer_impl_header! {
                     }
 
                     // '!' or '!=' or '!=='
-                    self.step();
+                    self.step_with(contents);
                     match self.code_point {
                         0x3D => {
-                            self.step();
+                            self.step_with(contents);
                             match self.code_point {
                                 0x3D => {
-                                    self.step();
+                                    self.step_with(contents);
                                     self.token = T::TExclamationEqualsEquals;
                                 }
                                 _ => {
@@ -2182,18 +2209,18 @@ lexer_impl_header! {
                 0x5F | 0x24 | 0x61..=0x7A | 0x41..=0x5A =>
                 {
                     let advance = latin1_identifier_continue_length(
-                        &self.contents[self.current..],
+                        &contents[self.current..],
                     );
 
                     self.end = self.current + advance;
                     self.current = self.end;
 
-                    self.step();
+                    self.step_with(contents);
 
                     if self.code_point >= 0x80 {
                         // @branchHint(.unlikely)
                         while is_identifier_continue(self.code_point) {
-                            self.step();
+                            self.step_with(contents);
                         }
                     }
 
@@ -2217,9 +2244,9 @@ lexer_impl_header! {
                 0x5C => {
                     if IS_JSON && IGNORE_LEADING_ESCAPE_SEQUENCES {
                         if self.start == 0
-                            || self.current == self.contents.len() - 1
+                            || self.current == contents.len() - 1
                         {
-                            self.step();
+                            self.step_with(contents);
                             continue;
                         }
                     }
@@ -2238,14 +2265,14 @@ lexer_impl_header! {
                 _ => {
                     // Check for unusual whitespace characters
                     if is_whitespace(self.code_point) {
-                        self.step();
+                        self.step_with(contents);
                         continue;
                     }
 
                     if is_identifier_start(self.code_point) {
-                        self.step();
+                        self.step_with(contents);
                         while is_identifier_continue(self.code_point) {
-                            self.step();
+                            self.step_with(contents);
                         }
                         if self.code_point == 0x5C {
                             let scan_result = self
@@ -2423,15 +2450,17 @@ lexer_impl_header! {
 
     /// This scans a "// comment" in a single pass over the input.
     fn scan_single_line_comment(&mut self) {
+        // PERF: keep the source slice register-resident — see `next_codepoint_with`.
+        let contents: &[u8] = self.contents;
         loop {
             // Find index of newline (ASCII/Unicode), non-ASCII, '#', or '@'.
             if let Some(relative_index) =
-                bun_highway::index_of_newline_or_non_ascii_or_hash_or_at(self.remaining())
+                bun_highway::index_of_newline_or_non_ascii_or_hash_or_at(&contents[self.current..])
             {
                 let absolute_index = self.current + relative_index;
                 self.current = absolute_index; // Move TO the interesting char
 
-                self.step(); // Consume the interesting char, sets code_point, advances current
+                self.step_with(contents); // Consume the interesting char, sets code_point, advances current
 
                 match self.code_point {
                     0x0D | 0x0A | 0x2028 | 0x2029 =>
@@ -2481,8 +2510,8 @@ lexer_impl_header! {
             } else {
                 // Highway found nothing until EOF
                 // Consume the rest of the line.
-                self.end = self.contents.len();
-                self.current = self.contents.len();
+                self.end = contents.len();
+                self.current = contents.len();
                 self.code_point = -1; // Set EOF state
                 return;
             }

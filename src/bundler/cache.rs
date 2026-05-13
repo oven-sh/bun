@@ -317,7 +317,14 @@ impl Fs {
         use_shared_buffer: bool,
         _file_handle: Option<Fd>,
     ) -> Result<Entry, bun_core::Error> {
-        self.read_file_with_allocator(_fs, path, dirname_fd, use_shared_buffer, _file_handle)
+        self.read_file_with_allocator(
+            _fs,
+            path,
+            dirname_fd,
+            use_shared_buffer,
+            _file_handle,
+            None,
+        )
     }
 
     /// Port of `Fs.readFileWithAllocator` (cache.zig:146).
@@ -328,11 +335,16 @@ impl Fs {
     /// resolver's `FsCache` forward-decl already pinned this shape.
     /// PERF(port): re-monomorphize once both callers stabilize.
     ///
-    /// PORT NOTE: `arena` is dropped — Zig forwarded it to
-    /// `readFileWithHandleAndAllocator`; the only effect was choosing which
-    /// heap owns the non-shared-buffer read. The Rust path always allocates
-    /// from the global heap (`Contents::Owned(Vec<u8>)`); arena callers can
-    /// pass through the resolver's bump-backed forward-decl instead.
+    /// `arena` restores the Zig `allocator` param: when
+    /// `!use_shared_buffer && arena.is_some()` the file body is read straight
+    /// into `arena` (`Contents::Arena`), so the bytes are bulk-freed by
+    /// `mi_heap_destroy` when the per-call `MimallocArena` (the per-job arena
+    /// from `RuntimeTranspilerStore` / `ParseTask`) drops — instead of round-
+    /// tripping through the worker thread's *default* mimalloc heap, which is
+    /// never destroyed and retains the fresh page for the process lifetime.
+    /// `None` keeps the global-heap `Contents::Owned(Vec<u8>)` path. Zig:
+    /// `transpiler.zig:838-839` passed `if (use_shared_buffer)
+    /// bun.default_allocator else this_parse.allocator`.
     pub fn read_file_with_allocator(
         &mut self,
         _fs: &mut fs_mod::FileSystem,
@@ -340,6 +352,7 @@ impl Fs {
         dirname_fd: Fd,
         use_shared_buffer: bool,
         _file_handle: Option<Fd>,
+        arena: Option<&bun_alloc::Arena>,
     ) -> Result<Entry, bun_core::Error> {
         let rfs = &_fs.fs;
 
@@ -392,24 +405,49 @@ impl Fs {
         // PORT NOTE: reshaped for borrowck — capture `stream` scalar before borrowing
         // the shared buffer.
         let stream = self.stream;
-        let shared = self.shared_buffer();
 
-        let contents =
-            match fs_mod::read_file_contents(&file_handle, path, use_shared_buffer, shared, stream)
-                .map(Contents::from)
-            {
-                Ok(c) => c,
-                Err(err) => {
-                    if cfg!(debug_assertions) {
-                        Output::print_error(format_args!(
-                            "{}: readFile error -- {}",
-                            bstr::BStr::new(path),
-                            bstr::BStr::new(err.name()),
-                        ));
+        let contents = match (use_shared_buffer, arena) {
+            // Zig: `readFileWithHandleAndAllocator(this_parse.allocator, …)` —
+            // read straight into the per-call arena so the source bytes are
+            // reclaimed by `mi_heap_destroy` instead of pinning a fresh page in
+            // the worker thread's default heap (one `mi_malloc` + `munmap` pair
+            // per transpiled module → one bump allocation in a wholesale-reset
+            // heap).
+            (false, Some(arena)) => {
+                match fs_mod::read_file_contents_in_arena(&file_handle, path, arena) {
+                    Ok((_, 0)) => Contents::Empty,
+                    Ok((ptr, len)) => Contents::Arena { ptr, len },
+                    Err(err) => {
+                        if cfg!(debug_assertions) {
+                            Output::print_error(format_args!(
+                                "{}: readFile error -- {}",
+                                bstr::BStr::new(path),
+                                bstr::BStr::new(err.name()),
+                            ));
+                        }
+                        return Err(err);
                     }
-                    return Err(err);
                 }
-            };
+            }
+            _ => {
+                let shared = self.shared_buffer();
+                match fs_mod::read_file_contents(&file_handle, path, use_shared_buffer, shared, stream)
+                    .map(Contents::from)
+                {
+                    Ok(c) => c,
+                    Err(err) => {
+                        if cfg!(debug_assertions) {
+                            Output::print_error(format_args!(
+                                "{}: readFile error -- {}",
+                                bstr::BStr::new(path),
+                                bstr::BStr::new(err.name()),
+                            ));
+                        }
+                        return Err(err);
+                    }
+                }
+            }
+        };
 
         Ok(Entry {
             contents,

@@ -7601,6 +7601,23 @@ impl BufferWriter {
         }
     }
 
+    /// Like [`init`], but pre-sizes the output buffer. The transpiled output is
+    /// almost always within a small factor of the source length, so reserving up
+    /// front avoids the repeated grow+`memmove` the `Vec` doubling would
+    /// otherwise do as the printer appends token-by-token. (`MutableString::init`
+    /// is a no-op when `capacity == 0`.)
+    pub fn with_capacity(capacity: usize) -> BufferWriter {
+        BufferWriter {
+            buffer: MutableString::init(capacity).unwrap_or_else(|_| MutableString::init_empty()),
+            written_len: 0,
+            sentinel: bun_core::ZStr::EMPTY,
+            append_null_byte: false,
+            append_newline: false,
+            approximate_newline_count: 0,
+            last_bytes: [0, 0],
+        }
+    }
+
     pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error> {
         Write::write_fmt(&mut self.buffer.list, format_args!("{}", args))
     }
@@ -7984,7 +8001,12 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // Spec js_printer.zig:6024 — `is_bun_platform = ascii_only` for printAst.
     type PrinterType<'a, W, const A: bool, const G: bool> =
         Printer<'a, W, A, false, /*IS_BUN_PLATFORM=*/ A, false, G>;
-    let writer = _writer;
+    let mut writer = _writer;
+    // Pre-size the output buffer ~proportional to the source. Transpiled output
+    // is almost always within a small factor of the input, so reserving up front
+    // keeps the per-token appends below from repeatedly growing+memmoving the
+    // backing `Vec`. Cheap no-op on a reused (already-grown) writer.
+    let _ = writer.reserve(source.contents().len() as u64);
 
     let mut opts = opts;
     let source_map_builder = get_source_map_builder::<ASCII_ONLY>(
@@ -8180,7 +8202,9 @@ pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
 ) -> PrintResult {
     let _trace = bun_core::perf::trace("JSPrinter.print");
 
-    let buffer_writer = BufferWriter::init();
+    // Pre-size the output buffer ~proportional to the source so the per-token
+    // appends below don't repeatedly grow+memmove the backing `Vec`.
+    let buffer_writer = BufferWriter::with_capacity(source.contents().len());
     let mut buffer_printer = BufferPrinter::init(buffer_writer);
 
     print_with_writer::<&mut BufferPrinter, GENERATE_SOURCE_MAPS>(
@@ -8239,7 +8263,7 @@ pub fn print_with_writer_and_platform<
     const IS_BUN_PLATFORM: bool,
     const GENERATE_SOURCE_MAPS: bool,
 >(
-    writer: W,
+    mut writer: W,
     bump: &'a bun_alloc::Arena,
     ast: &Ast,
     source: &bun_ast::Source,
@@ -8250,6 +8274,9 @@ pub fn print_with_writer_and_platform<
 ) -> PrintResult {
     let _restore =
         bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
+
+    // See `print_ast`: pre-size the output buffer to avoid grow+memmove churn.
+    let _ = writer.reserve(source.contents().len() as u64);
 
     type PrinterType<'a, W, const B: bool, const G: bool> =
         Printer<'a, W, /*ASCII_ONLY=*/ B, false, B, false, G>;
@@ -8354,7 +8381,9 @@ pub fn print_common_js<
 
     type PrinterType<'a, W, const A: bool, const G: bool> =
         Printer<'a, W, A, true, false, false, G>;
-    let writer = _writer;
+    let mut writer = _writer;
+    // See `print_ast`: pre-size the output buffer to avoid grow+memmove churn.
+    let _ = writer.reserve(source.contents().len() as u64);
     let mut opts = opts;
     let mut renamer = rename::NoOpRenamer::init(symbols, source);
     let source_map_builder = get_source_map_builder::<false>(

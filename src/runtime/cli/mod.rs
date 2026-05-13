@@ -1161,56 +1161,65 @@ pub mod command {
             }
         }
 
-        let tag = which();
-
-        // Fast path: `bun -e ''` / `bun -p ''` (and the `--eval=` / `--print=`
-        // spellings). Zig's AutoCommand arm constructs the full Context, sees
-        // `eval.script.len == 0` and `positionals.len == 0`, and falls through
-        // to `HelpCommand.exec`. Mirror that outcome *before* paying for
-        // `create_context_data` — `arguments::parse` builds and drops a
-        // `TransformOptions` and forces two `LazyLock`s for what is a no-op.
-        // The check is exact-argv-shape (no other flags/positionals) so it
-        // cannot diverge from the post-parse fall-through.
-        if tag == Tag::AutoCommand {
+        // Fast path: `bun -v` / `bun --version` / `bun --revision`, plus the
+        // empty-eval forms `bun -e ''` / `bun -p ''` (and the `--eval=` /
+        // `--print=` spellings). Hoisted ABOVE `which()` and the per-tag
+        // `match` so `bun --version` never decodes the subcommand-name
+        // classifier (`which()` + its `RootCommandMatcher` name table) or
+        // pays for `create_context_data` (`arguments::parse` builds-and-drops
+        // a full `api::TransformOptions` and forces two `LazyLock`s for what
+        // is a no-op). Keeps `command::which`'s code/rodata and `arguments`'s
+        // clap tables out of the `--version` working set.
+        //
+        // Correctness guards:
+        //  * argv0 must be a plain `bun` invocation — a `node` / `bunx` shim
+        //    must still fall through to `which()` so `node --version` reports
+        //    Node's version, `bunx --version` is parsed by bunx, etc. Only
+        //    the *predicates* are read here; `which()` performs the matching
+        //    `PRETEND_TO_BE_NODE` / `IS_BUNX_EXE` side effects.
+        //  * the standalone-graph probe above already ran, so a compiled
+        //    executable's `--version` / `-e ''` is still passed through to
+        //    user code (it returned via `boot_standalone`).
+        //  * the version check is exact-argv-shape (`len == 2`) so it cannot
+        //    intercept `bun <bin> --version`, where the flag belongs to
+        //    `<bin>` (the bug the old Phase-C argv-scan shim had — see the
+        //    NOTE below). The empty-eval check is likewise exact-shape, so it
+        //    matches Zig's post-parse `eval.script.len == 0 &&
+        //    positionals.len == 0` fall-through to `HelpCommand.exec`.
+        {
             let argv = bun::argv();
-
-            // Fast path: `bun -v` / `bun --version` / `bun --revision`. Zig's
-            // AutoCommand arm reaches `print_version_and_exit` only after
-            // `arguments::parse` has run `clap::parse_with_table::<Help>` (which
-            // forces the `AUTO_PARAMS` `LazyLock` + `concat_params!` table) and
-            // built-then-dropped a full `api::TransformOptions`. Short-circuit
-            // before `create_context_data` for the *exact* argv shape `len == 2`
-            // — that keeps it from intercepting `bun <bin> --version`, where the
-            // flag belongs to `<bin>` (the bug the old Phase-C argv-scan shim
-            // had; see the NOTE below). Same outcome as the post-parse checks in
-            // `Arguments.rs`, just without the clap/table/TransformOptions cost.
-            if argv.len() == 2 {
-                match argv.get(1).map(bun_core::ZStr::as_bytes) {
-                    Some(b"-v" | b"--version") => print_version_and_exit(),
-                    Some(b"--revision") => print_revision_and_exit(),
-                    _ => {}
+            let argv0 = argv.get(0).map(bun_core::ZStr::as_bytes).unwrap_or(b"");
+            if !is_node(argv0) && !is_bun_x(argv0) {
+                if argv.len() == 2 {
+                    match argv.get(1).map(bun_core::ZStr::as_bytes) {
+                        Some(b"-v" | b"--version") => print_version_and_exit(),
+                        Some(b"--revision") => print_revision_and_exit(),
+                        _ => {}
+                    }
                 }
-            }
 
-            let empty_eval = match argv.len() {
-                2 => matches!(
-                    argv.get(1).map(bun_core::ZStr::as_bytes),
-                    Some(b"-e=" | b"-p=" | b"--eval=" | b"--print=")
-                ),
-                3 => {
-                    argv.get(2).is_some_and(|a| a.as_bytes().is_empty())
-                        && matches!(
-                            argv.get(1).map(bun_core::ZStr::as_bytes),
-                            Some(b"-e" | b"-p" | b"--eval" | b"--print")
-                        )
+                let empty_eval = match argv.len() {
+                    2 => matches!(
+                        argv.get(1).map(bun_core::ZStr::as_bytes),
+                        Some(b"-e=" | b"-p=" | b"--eval=" | b"--print=")
+                    ),
+                    3 => {
+                        argv.get(2).is_some_and(|a| a.as_bytes().is_empty())
+                            && matches!(
+                                argv.get(1).map(bun_core::ZStr::as_bytes),
+                                Some(b"-e" | b"-p" | b"--eval" | b"--print")
+                            )
+                    }
+                    _ => false,
+                };
+                if empty_eval {
+                    Output::flush();
+                    return HelpCommand::exec();
                 }
-                _ => false,
-            };
-            if empty_eval {
-                Output::flush();
-                return HelpCommand::exec();
             }
         }
+
+        let tag = which();
 
         // NOTE: a Phase-C shim used to scan all of `argv` here for
         // `--version`/`--help`/`--revision` and short-circuit, because

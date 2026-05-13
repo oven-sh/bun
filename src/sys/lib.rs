@@ -367,12 +367,11 @@ pub mod dir_iterator {
                 let d_type = buf[base + 18];
                 self.index = base + reclen;
 
-                // d_name is NUL-terminated within the record.
+                // d_name is NUL-terminated within the record. Use a SIMD-vectorized
+                // scan for the terminator (mirrors Zig's `indexOfScalar`); a scalar
+                // byte loop here showed up in startup profiles on large directories.
                 let name_field = &buf[base + 19..base + reclen];
-                let nul = name_field
-                    .iter()
-                    .position(|&b| b == 0)
-                    .unwrap_or(name_field.len());
+                let nul = memchr::memchr(0, name_field).unwrap_or(name_field.len());
                 let name = &name_field[..nul];
 
                 // skip . and .. entries

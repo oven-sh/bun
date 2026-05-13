@@ -246,7 +246,8 @@ static napi_value create_many_int64(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   uint32_t count;
   NODE_API_CALL(env, napi_get_value_uint32(env, info[0], &count));
-  napi_value element = nullptr;
+  napi_value element;
+  NODE_API_CALL(env, napi_get_undefined(env, &element));
   for (uint32_t i = 0; i < count; i++) {
     // Use a value outside the int32 range so it is encoded as a double in the
     // JSValue rather than an int32. This matches what rrule-rust produces

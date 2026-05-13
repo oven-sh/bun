@@ -41,7 +41,15 @@ bun_core::declare_scope!(cache, visible);
 /// Version 20: InternalSourceMap stream is bit-packed windows.
 const EXPECTED_VERSION: u32 = 20;
 
-const MINIMUM_CACHE_SIZE: usize = 50 * 1024;
+/// Source files smaller than this are not written to / read from the on-disk
+/// transpiler cache. Originally 50 KiB, which excluded almost every file in a
+/// typical `node_modules` tree (eslint pulls in ~1500 small CommonJS files, all
+/// well under that floor), forcing a full lex -> parse -> visit -> print ->
+/// sourcemap pass on every invocation. A `statx` + `open` + `read` of a tiny
+/// cache file is far cheaper than re-transpiling, so the floor is low. The cache
+/// key still incorporates the source byte length (see `input_byte_length` /
+/// `is_stale`), so shrinking this does not weaken staleness detection.
+const MINIMUM_CACHE_SIZE: usize = 4 * 1024;
 
 // When making parser changes, it gets extremely confusing.
 #[cfg(debug_assertions)]

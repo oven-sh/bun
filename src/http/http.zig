@@ -1620,7 +1620,14 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
     }
 
     if (this.proxy_tunnel) |proxy| {
+        // onWritable → flush() → handleTraffic() can drain a response that
+        // completes the request and frees `this` synchronously. Keep the
+        // tunnel alive across the call and bail if it detached from us.
+        proxy.ref();
         proxy.onWritable(is_ssl, socket);
+        const detached = proxy.owner != this;
+        proxy.deref();
+        if (detached) return;
     }
 
     switch (this.state.request_stage) {

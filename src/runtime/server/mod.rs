@@ -1226,9 +1226,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             // SAFETY: out-param written by `on_request_ffi`;
                             // owned ref held until `deref()` below.
                             let nhr = unsafe { &mut *node_http_response };
-                            if nhr.flags.get().contains(NhrFlags::REQUEST_HAS_COMPLETED)
-                                || nhr.flags.get().contains(NhrFlags::SOCKET_CLOSED)
-                                || nhr.flags.get().contains(NhrFlags::UPGRADED)
+                            // Single `Cell` load for all three flag checks (no
+                            // re-entry between them) — Zig reads the packed field once.
+                            let nhr_flags = nhr.flags.get();
+                            if nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
+                                || nhr_flags.contains(NhrFlags::SOCKET_CLOSED)
+                                || nhr_flags.contains(NhrFlags::UPGRADED)
                             {
                                 strong_promise.deinit();
                                 break 'brk HttpResult::Success;
@@ -1276,9 +1279,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 if !node_http_response.is_null() {
                     // SAFETY: see `nhr` above.
                     let nhr = unsafe { &mut *node_http_response };
-                    if !nhr.flags.get().contains(NhrFlags::UPGRADED) {
+                    let nhr_flags = nhr.flags.get();
+                    if !nhr_flags.contains(NhrFlags::UPGRADED) {
                         if let Some(raw) = nhr.raw_response.get() {
-                            if !nhr.flags.get().contains(NhrFlags::REQUEST_HAS_COMPLETED)
+                            if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                                 && raw.state().is_response_pending()
                             {
                                 // PORT NOTE: matches server.zig:2173 verbatim.
@@ -1306,9 +1310,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !node_http_response.is_null() {
             // SAFETY: see `nhr` above.
             let nhr = unsafe { &mut *node_http_response };
-            if !nhr.flags.get().contains(NhrFlags::UPGRADED) {
+            let nhr_flags = nhr.flags.get();
+            if !nhr_flags.contains(NhrFlags::UPGRADED) {
                 if let Some(raw) = nhr.raw_response.get() {
-                    if !nhr.flags.get().contains(NhrFlags::REQUEST_HAS_COMPLETED)
+                    if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                         && raw.state().is_response_pending()
                     {
                         nhr.set_on_aborted_handler();

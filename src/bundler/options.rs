@@ -1018,10 +1018,10 @@ pub fn defines_from_transform_options(
                     } else if node_env == b"test" {
                         break 'brk Box::from(b"\"test\"".as_slice());
                     } else {
-                        use std::io::Write;
-                        let mut v = Vec::new();
-                        write!(&mut v, "\"{}\"", bstr::BStr::new(node_env))
-                            .expect("infallible: in-memory write");
+                        let mut v = Vec::with_capacity(node_env.len() + 2);
+                        v.push(b'"');
+                        v.extend_from_slice(node_env);
+                        v.push(b'"');
                         break 'brk v.into_boxed_slice();
                     }
                 }

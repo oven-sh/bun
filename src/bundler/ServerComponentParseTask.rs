@@ -109,12 +109,19 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // Zig matched `worker.ctx.loop().*` on `AnyEventLoop::{js, mini}`.
     // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
     // of `linker.r#loop` is centralised in `LinkerContext::any_loop_mut`.
-    match worker.ctx.linker.any_loop_mut() {
-        None => {
-            // No event loop registered (e.g., synchronous CLI bundling) — run inline.
-            on_complete(result);
-        }
-        Some(bun_event_loop::AnyEventLoop::Js { owner }) => {
+    //
+    // Zig `worker.ctx.loop().*` is non-optional (.zig:52) — `BundleV2::init`
+    // always sets `linker.r#loop` before scheduling any ServerComponentParseTask.
+    // Running `on_complete` inline on the worker thread would violate
+    // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
+    // bundler graph, which is owned by the main/bundler thread).
+    match worker
+        .ctx
+        .linker
+        .any_loop_mut()
+        .expect("BundleV2.linker.loop must be set before scheduling ServerComponentParseTask")
+    {
+        bun_event_loop::AnyEventLoop::Js { owner } => {
             owner.enqueue_task_concurrent(
                 bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
                     on_complete(p);
@@ -122,7 +129,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
                 }),
             );
         }
-        Some(bun_event_loop::AnyEventLoop::Mini(mini)) => {
+        bun_event_loop::AnyEventLoop::Mini(mini) => {
             mini.enqueue_task_concurrent_with_extra_ctx::<parse_task::Result, BundleV2<'static>>(
                 result,
                 on_complete_mini,

@@ -1124,7 +1124,6 @@ pub mod bv2_impl {
                         ..Default::default()
                     }
                 }
-
             }
 
             /// Mirrors `JSBundler.Resolve.MiniImportRecord` (zig:1242).
@@ -4449,16 +4448,14 @@ pub mod bv2_impl {
                             // TODO: support explicit watchFiles array. this is not done
                             // right now because DevServer requires a table to map
                             // watched files and dirs to their respective dependants.
-                            // PORT NOTE: `Watcher.REQUIRES_FILE_DESCRIPTORS` is `true`
-                            // only on macOS (kqueue needs an open fd per file).
-                            let fd = if cfg!(target_os = "macos") {
+                            let fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
                                 let mut buf = bun_paths::path_buffer_pool::get();
                                 // PORT NOTE: Zig used `std.posix.toPosixPath` (copy + NUL-
-                                // terminate); on macOS paths are already posix-separated so
-                                // `z()` alone suffices. `Watcher.WATCH_OPEN_FLAGS` = `O_EVTONLY`.
+                                // terminate); on kqueue platforms paths are already
+                                // posix-separated so `z()` alone suffices.
                                 match bun_sys::open(
                                     bun_paths::resolve_path::z(load.path.as_ref(), &mut *buf),
-                                    0x8000, /* O_EVTONLY */
+                                    bun_watcher::WATCH_OPEN_FLAGS,
                                     0,
                                 ) {
                                     bun_sys::Result::Ok(fd) => fd,
@@ -6998,7 +6995,8 @@ pub mod bv2_impl {
                     // saw this; the Rust swap+drop does.)
                     if matches!(result.source.contents, std::borrow::Cow::Owned(_)) {
                         core::mem::swap(
-                            &mut this.graph.input_files.items_source_mut()[result_source_index].contents,
+                            &mut this.graph.input_files.items_source_mut()[result_source_index]
+                                .contents,
                             &mut result.source.contents,
                         );
                     }

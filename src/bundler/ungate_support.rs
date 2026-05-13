@@ -350,7 +350,12 @@ pub fn generic_path_with_pretty_initialized(
             // the SSR graph needs different pretty names or else HMR mode will
             // confuse the two modules.
             let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
-            let _ = write!(fbs, "ssr:{}", bstr::BStr::new(rel));
+            // PORT NOTE: Zig `bufPrint(buf, "ssr:{s}", .{rel})` writes bytes
+            // verbatim; routing through `bstr::BStr` Display lossily replaces
+            // non-UTF-8 path bytes (legal on Linux) with U+FFFD, corrupting
+            // metafile `inputs` keys / HMR module identity. Write raw bytes.
+            let _ = fbs.write_all(b"ssr:");
+            let _ = fbs.write_all(rel);
             let written = fbs.pos;
             path_clone.pretty = &buf.0[..written];
         } else {
@@ -361,35 +366,36 @@ pub fn generic_path_with_pretty_initialized(
         // in non-file namespaces, standard filesystem rules do not apply.
         let mut path_clone: bun_fs::Path<'_> = path;
         let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
-        let _ = write!(
-            fbs,
-            "{}{}:{}",
-            if target == options::Target::BakeServerComponentsSsr {
-                "ssr:"
-            } else {
-                ""
-            },
-            // make sure that a namespace including a colon wont collide with anything
-            EscapedNamespace(path_clone.namespace),
-            bstr::BStr::new(path_clone.text),
-        );
+        // PORT NOTE: raw byte writes (not `write!` over `bstr::BStr`) — see
+        // the `ssr:` branch above; namespace/text may carry non-UTF-8 bytes.
+        if target == options::Target::BakeServerComponentsSsr {
+            let _ = fbs.write_all(b"ssr:");
+        }
+        // make sure that a namespace including a colon wont collide with anything
+        let _ = write_escaped_namespace(&mut fbs, path_clone.namespace);
+        let _ = fbs.write_all(b":");
+        let _ = fbs.write_all(path_clone.text);
         let written = fbs.pos;
         path_clone.pretty = &buf.0[..written];
         path_clone.dupe_alloc_fix_pretty()
     }
 }
 
-struct EscapedNamespace<'a>(&'a [u8]);
-impl core::fmt::Display for EscapedNamespace<'_> {
-    fn fmt(&self, w: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let mut rest = self.0;
-        while let Some(i) = strings::index_of_char(rest, b':') {
-            write!(w, "{}", bstr::BStr::new(&rest[..i as usize]))?;
-            w.write_str("::")?;
-            rest = &rest[i as usize + 1..];
-        }
-        write!(w, "{}", bstr::BStr::new(rest))
+/// `bundle_v2.zig:fmtEscapedNamespace`. Doubles every `:` so a namespace
+/// containing colons cannot collide with the `<ns>:<path>` separator.
+///
+/// PORT NOTE: byte-level `Write::write_all` (not `core::fmt::Display` over
+/// `bstr::BStr`) — Zig `writer.writeAll` emits raw bytes, and plugins may set
+/// arbitrary (non-UTF-8) namespace bytes that `BStr`'s Display would lossily
+/// replace with U+FFFD.
+fn write_escaped_namespace<W: bun_io::Write + ?Sized>(w: &mut W, slice: &[u8]) -> bun_io::Result {
+    let mut rest = slice;
+    while let Some(i) = strings::index_of_char(rest, b':') {
+        w.write_all(&rest[..i as usize])?;
+        w.write_all(b"::")?;
+        rest = &rest[i as usize + 1..];
     }
+    w.write_all(rest)
 }
 
 /// `bundle_v2.zig:CompileResultForSourceMap`.

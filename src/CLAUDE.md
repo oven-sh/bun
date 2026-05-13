@@ -13,7 +13,7 @@ bun_bin` (driven by `scripts/build/rust.ts`). Key crates:
 - `bun_bin` (`src/bun_bin/`) — the staticlib root that `cargo build` links
 
 You will see `.zig` siblings next to many `.rs` files — those are the original
-implementation kept as a porting reference for *behavior*; they are not
+implementation kept as a porting reference for _behavior_; they are not
 compiled and are not where new code goes.
 
 Conventions:
@@ -28,18 +28,18 @@ Conventions:
 The `std` equivalents either lose OS error info, allocate where we have pools,
 or don't match the cross-platform behavior the runtime needs.
 
-| Instead of                              | Use                                              |
-| --------------------------------------- | ------------------------------------------------ |
-| `std::fs::File`                         | `bun_sys::File` (Copy, no `Drop`-close)          |
-| `std::fs::read` / `write`               | `bun_sys::File::read_from` / `File::create` + `write_all` |
-| `std::path::Path::join`                 | `bun_paths::resolve_path::join` / `join_string_buf` |
-| `std::path::Path::parent`/`file_name`   | `bun_paths::dirname` / `bun_paths::basename`     |
-| `std::env::var`                         | `bun_core::env_var::*::get()` (typed + cached)   |
-| `String::from_utf8` for JS-visible strs | `bun_core::String::clone_utf8` / `borrow_utf8`   |
-| `&str` operations on byte slices        | `bun_core::strings::*` (SIMD-backed `&[u8]` ops) |
-| `eprintln!` for debug logging           | `bun_core::declare_scope!` + `scoped_log!`       |
+| Instead of                              | Use                                                                                  |
+| --------------------------------------- | ------------------------------------------------------------------------------------ |
+| `std::fs::File`                         | `bun_sys::File` (Copy, no `Drop`-close)                                              |
+| `std::fs::read` / `write`               | `bun_sys::File::read_from` / `File::create` + `write_all`                            |
+| `std::path::Path::join`                 | `bun_paths::resolve_path::join` / `join_string_buf`                                  |
+| `std::path::Path::parent`/`file_name`   | `bun_paths::dirname` / `bun_paths::basename`                                         |
+| `std::env::var`                         | `bun_core::env_var::*::get()` (typed + cached)                                       |
+| `String::from_utf8` for JS-visible strs | `bun_core::String::clone_utf8` / `borrow_utf8`                                       |
+| `&str` operations on byte slices        | `bun_core::strings::*` (SIMD-backed `&[u8]` ops)                                     |
+| `eprintln!` for debug logging           | `bun_core::declare_scope!` + `scoped_log!`                                           |
 | `std::process::Command`                 | `bun_core::util::spawn_sync_inherit` (CLI helpers) or `bun_spawn_sys` (full control) |
-| `Box::new` + raw ptr round-trip         | `bun_core::heap::{into_raw, take, destroy}`      |
+| `Box::new` + raw ptr round-trip         | `bun_core::heap::{into_raw, take, destroy}`                                          |
 
 ## `bun_sys` — System Calls (`src/sys/`)
 

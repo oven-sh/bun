@@ -12,11 +12,11 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-async function runFixture(name: string, source: string) {
+async function runFixture(name: string, source: string, extraEnv: Record<string, string> = {}) {
   using dir = tempDir(`expect-resolves-${name}`, { "sub.test.js": source });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "sub.test.js"],
-    env: bunEnv,
+    env: { ...bunEnv, ...extraEnv },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
@@ -153,25 +153,74 @@ describe("expect().resolves / .rejects on a still-pending promise", () => {
     expect(out).not.toContain("timed out");
   }, 40_000);
 
+  // Matchers are inconsistent about whether they call
+  // `incrementExpectCallCounter()` before or after `getValue()`. Both
+  // orderings must count exactly once through the deferred path.
   test("expect.assertions counts a deferred matcher exactly once", async () => {
     const { out, exitCode, timedOut } = await runFixture(
       "assertions",
       /* js */ `
         import { test, expect } from "bun:test";
 
-        test("one deferred assertion", async () => {
+        expect.extend({
+          toBeBar(received) {
+            return { pass: received === "bar", message: () => "expected bar" };
+          },
+        });
+
+        test("toBe: increments before getValue", async () => {
           expect.assertions(1);
           let resolve;
           const assertion = expect(new Promise(r => (resolve = r))).resolves.toBe(5);
           resolve(5);
           await assertion;
         });
+
+        test("toBeTruthy: increments after getValue", async () => {
+          expect.assertions(1);
+          let resolve;
+          const assertion = expect(new Promise(r => (resolve = r))).resolves.toBeTruthy();
+          resolve("x");
+          await assertion;
+        });
+
+        test("custom matcher: increments after maybeDeferMatcher", async () => {
+          expect.assertions(1);
+          let resolve;
+          const assertion = expect(new Promise(r => (resolve = r))).resolves.toBeBar();
+          resolve("bar");
+          await assertion;
+        });
       `,
+    );
+
+    expect({ timedOut, exitCode }).toEqual({ timedOut: false, exitCode: 0 });
+    expect(out).toContain("3 pass");
+    expect(out).toContain("0 fail");
+  }, 40_000);
+
+  // On the deferred re-run the user's frame is gone from the stack, so
+  // `inlineSnapshot()` has to use the source location captured on the
+  // first call. Only the write path reads the source location, so this
+  // exercises it by creating a new snapshot (hence `CI: "false"`).
+  test("toMatchInlineSnapshot writes from the deferred re-run", async () => {
+    const { out, exitCode, timedOut } = await runFixture(
+      "inline-snapshot",
+      /* js */ `
+        import { test, expect } from "bun:test";
+
+        test("pending", async () => {
+          await expect(Bun.sleep(1).then(() => ({ a: 1 }))).resolves.toMatchInlineSnapshot();
+        });
+      `,
+      { CI: "false" },
     );
 
     expect({ timedOut, exitCode }).toEqual({ timedOut: false, exitCode: 0 });
     expect(out).toContain("1 pass");
     expect(out).toContain("0 fail");
+    expect(out).toContain("+1 added");
+    expect(out).not.toContain("must be called from the test file");
   }, 40_000);
 
   // https://github.com/oven-sh/bun/issues/25181

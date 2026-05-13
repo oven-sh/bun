@@ -88,7 +88,9 @@ pub const StatWatcherScheduler = struct {
         }
 
         // reschedule the timer
-        this.vm.timer.update(&this.event_loop_timer, &bun.timespec.msFromNow(.allow_mocked_time, interval));
+        // StatWatcherScheduler opts out of fake timers (allowFakeTimers() == false) and
+        // lives in the real timer heap, so its deadline must be computed from real time.
+        this.vm.timer.update(&this.event_loop_timer, &bun.timespec.msFromNow(.force_real_time, interval));
     }
 
     /// Schedule a task to set the timer in the main thread

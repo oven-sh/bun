@@ -2,7 +2,7 @@ import { gzipSync, type Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
 
-// In-process server with `h1: false` so the build under test binds UDP only.
+// In-process server with `http1: false` so the build under test binds UDP only.
 // A fetch that silently fell back to HTTP/1.1 would get ECONNREFUSED, which
 // is what makes this suite prove `protocol: "http3"` actually works.
 let server: Server;
@@ -13,8 +13,8 @@ beforeAll(async () => {
   server = Bun.serve({
     port: 0,
     tls,
-    h3: true,
-    h1: false,
+    http3: true,
+    http1: false,
     routes: {
       "/hello": () => new Response("hello over h3", { headers: { "x-proto": "h3" } }),
       "/echo": async req => {
@@ -153,7 +153,7 @@ beforeAll(async () => {
     await fetch(`${base}/hello`, { tls: { rejectUnauthorized: false } });
     tcpReached = true;
   } catch {}
-  if (tcpReached) throw new Error("server accepted TCP; h1:false not honoured — suite would not prove HTTP/3");
+  if (tcpReached) throw new Error("server accepted TCP; http1:false not honoured — suite would not prove HTTP/3");
 });
 
 // Don't await: the H3 client's pooled session to this origin stays open
@@ -394,7 +394,7 @@ describe("fetch protocol: http3", () => {
     // unusable so the next fetch (new port → new session) isn't disrupted by
     // the draining ones still on the shared UDP socket.
     for (let i = 0; i < 30; i++) {
-      const s = Bun.serve({ port: 0, tls, h3: true, h1: false, routes: { "/n": () => new Response(String(i)) } });
+      const s = Bun.serve({ port: 0, tls, http3: true, http1: false, routes: { "/n": () => new Response(String(i)) } });
       const res = await fetch(`https://127.0.0.1:${s.port}/n`, h3);
       expect(await res.text()).toBe(String(i));
       s.stop(true);
@@ -551,8 +551,8 @@ test("retries on a fresh session when a pooled session is stale (port reuse)", a
     port: 0,
     reusePort: true,
     tls,
-    h3: true,
-    h1: false,
+    http3: true,
+    http1: false,
     fetch: async req => {
       if (new URL(req.url).pathname === "/hang") {
         await new Promise<void>(r => (release = r));
@@ -565,7 +565,7 @@ test("retries on a fresh session when a pooled session is stale (port reuse)", a
   expect(await fetch(`https://127.0.0.1:${port}/`, h3).then(r => r.text())).toBe("a");
   const inflight = fetch(`https://127.0.0.1:${port}/hang`, h3);
   await Bun.sleep(50);
-  const b = Bun.serve({ port, reusePort: true, tls, h3: true, h1: false, fetch: () => new Response("b") });
+  const b = Bun.serve({ port, reusePort: true, tls, http3: true, http1: false, fetch: () => new Response("b") });
   // Abrupt stop sends CONNECTION_CLOSE then closes the fd, so /hang's
   // stream closes before any response — that's the retryOrFail trigger.
   a.stop(true);
@@ -579,21 +579,21 @@ test("retries on a fresh session when a pooled session is stale (port reuse)", a
 });
 
 // Subprocess so the experimental flag is process-scoped and the in-process
-// server above (h1: false) doesn't interfere — this server keeps h1 on so the
-// first fetch goes over TCP and reads Alt-Svc.
+// server above (http1: false) doesn't interfere — this server keeps http1 on
+// so the first fetch goes over TCP and reads Alt-Svc.
 describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
-  // The fixture starts a server with both h1+h3 listening on the same port,
-  // does two fetches with no `protocol:` hint, and prints the alt-svc header
-  // plus the live h3 session count after each. With the flag on, fetch #1
-  // goes over h1 (sessions=0) and records Alt-Svc; fetch #2 goes over QUIC
-  // (sessions=1).
+  // The fixture starts a server with both http1+http3 listening on the same
+  // port, does two fetches with no `protocol:` hint, and prints the alt-svc
+  // header plus the live http/3 session count after each. With the flag on,
+  // fetch #1 goes over http/1.1 (sessions=0) and records Alt-Svc; fetch #2
+  // goes over QUIC (sessions=1).
   const fixture = `
     import { fetchH3Internals } from "bun:internal-for-testing";
     const { liveCounts } = fetchH3Internals;
     using server = Bun.serve({
       port: 0,
       tls: ${JSON.stringify(tls)},
-      h3: true,
+      http3: true,
       fetch: () => new Response("ok"),
     });
     const url = "https://127.0.0.1:" + server.port + "/";

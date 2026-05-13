@@ -939,7 +939,13 @@ pub use default_user_defines as DefaultUserDefines;
 
 pub fn defines_from_transform_options(
     log: &mut bun_ast::Log,
-    maybe_input_define: Option<api::StringMap>,
+    // PERF(port): borrowed, not owned — the caller (`load_defines`) holds
+    // `transform_options` behind an `Arc`, so taking the `StringMap` by value
+    // forced a full deep clone of the `--define` map *every* VM init even though
+    // each value gets cloned again below on insert. Reading it through `&` keeps
+    // the per-value clone (the owned `RawDefines` map needs `Box<[u8]>`s) but
+    // drops the redundant outer `keys.clone() + values.clone()`.
+    maybe_input_define: Option<&api::StringMap>,
     target: Target,
     env_loader: Option<&mut DotEnv::Loader>,
     framework_env: Option<&Env>,
@@ -948,14 +954,17 @@ pub fn defines_from_transform_options(
     omit_unused_global_calls: bool,
     bump: &bun_alloc::Arena,
 ) -> Result<Box<defines::Define>, bun_core::Error> {
-    let input_user_define = maybe_input_define.unwrap_or_default();
+    let (input_keys, input_values): (&[Box<[u8]>], &[Box<[u8]>]) = match maybe_input_define {
+        Some(m) => (&m.keys, &m.values),
+        None => (&[], &[]),
+    };
 
     // PORT NOTE: Zig stringHashMapFromArrays — inlined as concrete RawDefines build (over-reserves +4).
     let mut user_defines: defines::RawDefines = defines::RawDefines::default();
-    user_defines.reserve(input_user_define.keys.len() + 4);
-    for (i, key) in input_user_define.keys.iter().enumerate() {
+    user_defines.reserve(input_keys.len() + 4);
+    for (i, key) in input_keys.iter().enumerate() {
         // PERF(port): was assume_capacity
-        user_defines.insert(key.as_ref(), input_user_define.values[i].clone());
+        user_defines.insert(key.as_ref(), input_values[i].clone());
     }
 
     let mut environment_defines = defines::UserDefinesArray::default();
@@ -1712,29 +1721,34 @@ impl<'a> BundleOptions<'a> {
         if self.defines_loaded {
             return Ok(());
         }
-        let node_env: Option<Box<[u8]>> = 'node_env: {
+        // PERF(port): the spec uses borrowed static literals for the three
+        // constant cases; only the env-loader case needs an owned copy (it has
+        // to outlive the `&mut loader_` we pass below, so it can't stay a borrow
+        // into the loader). `Cow` keeps the literals zero-alloc — matters because
+        // every VM with no `NODE_ENV` in its env hits the `"development"` arm.
+        let node_env: Option<Cow<[u8]>> = 'node_env: {
             if let Some(e) = loader_.as_deref() {
                 if let Some(env_) = e.get_node_env() {
-                    break 'node_env Some(Box::from(env_));
+                    break 'node_env Some(Cow::Owned(env_.to_vec()));
                 }
             }
 
             if self.is_test() {
-                break 'node_env Some(Box::from(b"\"test\"".as_slice()));
+                break 'node_env Some(Cow::Borrowed(b"\"test\"".as_slice()));
             }
 
             if self.production {
-                break 'node_env Some(Box::from(b"\"production\"".as_slice()));
+                break 'node_env Some(Cow::Borrowed(b"\"production\"".as_slice()));
             }
 
-            Some(Box::from(b"\"development\"".as_slice()))
+            Some(Cow::Borrowed(b"\"development\"".as_slice()))
         };
         // PORT NOTE: reshaped for borrowck — node_env computed before passing self.log
         self.define = defines_from_transform_options(
             // No other `&mut Log` is live across this call (see `log_mut`
             // caller contract).
             self.log_mut(),
-            self.transform_options.define.clone(),
+            self.transform_options.define.as_ref(),
             self.target,
             loader_,
             Some(&self.env),

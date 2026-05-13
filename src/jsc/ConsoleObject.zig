@@ -117,9 +117,9 @@ fn maybeEmitStdioWriteError(
     emitted: *bool,
 ) void {
     const write_err = backing.err orelse return;
+    // Always clear the recorded error so a later successful write doesn't see a stale one.
     backing.err = null;
     if (emitted.*) return;
-    emitted.* = true;
 
     // The underlying writer is a `bun.sys.File` whose write failures go through
     // `Maybe.unwrap()` → `bun.errnoToZigErr(errno)`, producing errors named after
@@ -130,9 +130,13 @@ fn maybeEmitStdioWriteError(
         .syscall = .write,
     };
     const js_err = sys_err.toJS(global) catch {
-        // toJS only fails if a JS exception is already pending; nothing more we can do.
+        // toJS only fails if a JS exception is already pending; leave `emitted` unset
+        // so a subsequent failed write can retry.
         return;
     };
+    // Mark emitted before calling into JS so a re-entrant console.* from inside the
+    // user's 'error' listener (or stream construction) can't recurse back here.
+    emitted.* = true;
     Bun__ConsoleObject__onStdioWriteError(global, fd, js_err);
 }
 fn messageWithTypeAndLevel_(

@@ -172,17 +172,23 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
 
         Identifier nameIdentifier;
         JSString* nameString = nullptr;
+        // `findHTTPHeaderName` only writes `name` when it returns true, so the
+        // SetCookie check must be gated on a successful lookup rather than on the
+        // (otherwise indeterminate) `name` value. set-cookie is always a known
+        // header name, so an unrecognized header is never set-cookie.
+        bool isSetCookie = false;
 
         if (WebCore::findHTTPHeaderName(nameView, name)) {
             nameString = identifiers.stringFor(globalObject, name);
             nameIdentifier = identifiers.identifierFor(vm, name);
+            isSetCookie = name == WebCore::HTTPHeaderName::SetCookie;
         } else {
             WTF::String wtfString = nameView.toString();
             nameString = jsString(vm, wtfString);
             nameIdentifier = Identifier::fromString(vm, wtfString.convertToASCIILowercase());
         }
 
-        if (name == WebCore::HTTPHeaderName::SetCookie) {
+        if (isSetCookie) {
             if (!setCookiesHeaderArray) {
                 setCookiesHeaderArray = constructEmptyArray(globalObject, nullptr);
                 RETURN_IF_EXCEPTION(scope, );

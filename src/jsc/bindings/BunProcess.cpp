@@ -4362,9 +4362,14 @@ const JSC::ClassInfo Process::s_info
 
 bool Process::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
+    VM& vm = JSC::getVM(globalObject);
+    auto* thisObject = uncheckedDowncast<Process>(object);
+    bool hadException = !!vm.exceptionForInspection();
+    unsigned attributes;
+    bool wasDirect = isValidOffset(thisObject->getDirectOffset(vm, propertyName, attributes));
+
     bool result = Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
     if (result) [[likely]] {
-        VM& vm = JSC::getVM(globalObject);
         // Several lazy PropertyCallback initializers in this class (nextTick,
         // mainModule, channel, stdin/stdout/stderr, ...) call into JavaScript
         // and can throw (e.g. stack overflow, termination). JSC's
@@ -4374,13 +4379,16 @@ bool Process::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
         // found, violating the !scope.exception() || !hasSlot invariant in
         // JSValue::get. If that happened, replace the bogus reified value with
         // undefined and report the slot as not found so the exception
-        // propagates to the caller.
-        if (vm.exceptionForInspection()) [[unlikely]] {
-            auto* thisObject = uncheckedDowncast<Process>(object);
-            unsigned attributes;
-            PropertyOffset offset = thisObject->getDirectOffset(vm, propertyName, attributes);
-            if (isValidOffset(offset))
-                thisObject->putDirectOffset(vm, offset, jsUndefined());
+        // propagates to the caller. Only do this when the exception originated
+        // from this lookup and the property was not already a direct own
+        // property, so a pre-existing exception or user-assigned value is
+        // never clobbered.
+        if (!hadException && vm.exceptionForInspection()) [[unlikely]] {
+            if (!wasDirect) {
+                PropertyOffset offset = thisObject->getDirectOffset(vm, propertyName, attributes);
+                if (isValidOffset(offset))
+                    thisObject->putDirectOffset(vm, offset, jsUndefined());
+            }
             return false;
         }
     }

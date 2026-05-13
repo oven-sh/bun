@@ -14,6 +14,21 @@ pub fn applyStandaloneRuntimeFlags(b: *bun.Transpiler, graph: *const bun.Standal
     b.resolver.opts.load_package_json = !graph.flags.disable_autoload_package_json;
 }
 
+/// Read a small file at an absolute path into `buf`, returning the bytes read
+/// (or `null` on any error). Uses `bun.sys.File`/`bun.FD.cwd()` rather than
+/// `std.fs.cwd()` per the codebase convention; absolute paths ignore the dir fd.
+fn readSmallFileAbs(path: [:0]const u8, buf: []u8) ?[]const u8 {
+    const file = switch (bun.sys.File.openat(bun.FD.cwd(), path, bun.O.RDONLY, 0)) {
+        .result => |f| f,
+        .err => return null,
+    };
+    defer file.close();
+    return switch (file.readAll(buf)) {
+        .result => |n| buf[0..n],
+        .err => null,
+    };
+}
+
 /// Resolve the host IANA timezone id cheaply (without walking
 /// /usr/share/zoneinfo/**) and seed it as JSC's default timezone via
 /// `setTimeZone()`. Called only when `$TZ` is unset. See the call site for why.
@@ -41,16 +56,16 @@ fn seedHostTimeZone(global: *jsc.JSGlobalObject) void {
     } else |_| {}
 
     // 2) /etc/timezone (Debian/Ubuntu) — file content is the IANA id
-    if (std.fs.cwd().readFile("/etc/timezone", &buf)) |contents| {
+    if (readSmallFileAbs("/etc/timezone", &buf)) |contents| {
         const id = std.mem.trim(u8, contents, " \t\r\n");
         if (id.len > 0) {
             _ = global.setTimeZone(&jsc.ZigString.init(id));
             return;
         }
-    } else |_| {}
+    }
 
     // 3) ZONE="..." in /etc/sysconfig/clock (older RHEL/CentOS)
-    if (std.fs.cwd().readFile("/etc/sysconfig/clock", &buf)) |contents| {
+    if (readSmallFileAbs("/etc/sysconfig/clock", &buf)) |contents| {
         var lines = std.mem.tokenizeAny(u8, contents, "\r\n");
         while (lines.next()) |line| {
             const trimmed = std.mem.trim(u8, line, " \t");
@@ -64,7 +79,7 @@ fn seedHostTimeZone(global: *jsc.JSGlobalObject) void {
                 return;
             }
         }
-    } else |_| {}
+    }
 }
 
 pub const Run = struct {

@@ -348,9 +348,18 @@ pub const Expect = struct {
             // captured location for the duration of the call and restored
             // afterwards so two deferred matchers on the same `expect()`
             // each see their own call site in `inlineSnapshot()`.
+            //
+            // All three are saved/restored (not hard-reset) because a
+            // sibling `PendingMatcher` on the same input promise can rerun
+            // *inside* `matcher_fn.call()` when the matcher re-enters the
+            // event loop (e.g. `toThrow` → `getValueAsToThrow` →
+            // `waitForPromise` → `tick` drains the microtask queue), and
+            // the inner defer must not clobber the outer's state.
+            var saved_is_rerun: bool = false;
             var saved_flags: Expect.Flags = undefined;
             var saved_srcloc: ?CallFrame.CallerSrcLoc = null;
             if (Expect.fromJS(expect_this)) |expect| {
+                saved_is_rerun = expect.is_async_rerun;
                 expect.is_async_rerun = true;
                 expect.counted_expect_call = this.was_counted_before_defer;
                 saved_flags = expect.flags;
@@ -359,7 +368,7 @@ pub const Expect = struct {
                 expect.async_rerun_srcloc = this.srcloc_at_defer;
             }
             defer if (Expect.fromJS(expect_this)) |expect| {
-                expect.is_async_rerun = false;
+                expect.is_async_rerun = saved_is_rerun;
                 expect.flags = saved_flags;
                 expect.async_rerun_srcloc = saved_srcloc;
             };

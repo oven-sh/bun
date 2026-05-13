@@ -698,11 +698,14 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error('${counter}');`,
     await using runner = spawn({
       cmd: [bunExe(), "--smol", "--hot", "run", hotRunnerRoot],
       // This test needs the self-write's watcher event to be dispatched
-      // immediately so it lands in the reject→report window; the default
-      // 10 ms coalesce would absorb it into the next `writeFull` and the
-      // race under test never opens. The override is honoured by all
-      // three watcher backends despite the Linux-centric name.
-      env: { ...bunEnv, BUN_INOTIFY_COALESCE_INTERVAL: "100000" },
+      // promptly so it lands in the reject→report window; the default
+      // 10 ms coalesce would delay it until after the error is already
+      // reported and the race under test never opens. `0` makes the
+      // drain loop non-blocking (poll once, process what's there),
+      // which is the closest analogue to the pre-coalesce-loop behaviour
+      // this test was tuned against. Honoured by all three watcher
+      // backends despite the Linux-centric name.
+      env: { ...bunEnv, BUN_INOTIFY_COALESCE_INTERVAL: "0" },
       cwd,
       stdout: "ignore",
       stderr: "pipe",

@@ -1,12 +1,17 @@
 /**
  * Two-stage PGO build for the `btg` (bench-till-green) profile.
  *
- *   bun run build:btg:pgo
+ *   bun run build:btg            (this is the default `btg` build — see below)
+ *   bun run build:btg:pgo        (explicit alias for the same thing)
  *   bun scripts/build-pgo.ts [--gen-dir=build/btg-pgo] [build flags...] [-- <exec args>]
+ *
+ * `bun run build:btg:plain` does the fast profile-less link instead — handy for
+ * iteration, but its `.text` layout is NOT comparable to a BOLT/PGO'd release,
+ * so don't bench it against the shipped `bun`.
  *
  * Why this exists
  * ───────────────
- * The plain `btg` link has no profile, so the cold-start working set
+ * A profile-less `btg` link has no profile, so the cold-start working set
  * (clap → CLI dispatch → module loader → js_parser/js_printer bring-up → JSC
  * VM init) is scattered across the ~54 MB `.text`; each hot fn drags in a
  * 64 KB fault-around window of cold neighbours (≈ +1.3 MB resident `.text`

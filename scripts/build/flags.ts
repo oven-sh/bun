@@ -965,17 +965,17 @@ export const linkerFlags: Flag[] = [
       // NOTE: --sort-section=name was here historically; lld ignores it
       // for the default `.text` rule. We deliberately do NOT pass
       // `-z keep-text-section-prefix` on the *unconditional* path: without a
-      // profile (the plain release/`btg` link has none), LLVM's *static*
-      // `.unlikely` heuristic mislabels a lot of error/panic-format/`#[cold]`/
-      // bring-up code that actually runs on the `bun <file>` / `bun -p`
-      // startup path. Segregating it into a dedicated `.text.unlikely` then
-      // made ~84% of that section resident at startup anyway (plus 64 KB
-      // fault-around), so the monolithic `.text` the linker produces by
-      // default has *better* startup RSS locality. With `--pgo-use` the
-      // `.hot`/`.unlikely` split is driven by *measured* counts instead, so
-      // `keep-text-section-prefix` IS passed in that case — see the dedicated
-      // entry further below, and `scripts/build-pgo.ts` for the two-stage
-      // `btg` PGO build that produces the profile.
+      // profile (a profile-less release / `bun run build:btg:plain` link has
+      // none), LLVM's *static* `.unlikely` heuristic mislabels a lot of error/
+      // panic-format/`#[cold]`/bring-up code that actually runs on the
+      // `bun <file>` / `bun -p` startup path. Segregating it into a dedicated
+      // `.text.unlikely` then made ~84% of that section resident at startup
+      // anyway (plus 64 KB fault-around), so the monolithic `.text` the linker
+      // produces by default has *better* startup RSS locality. With
+      // `--pgo-use` the `.hot`/`.unlikely` split is driven by *measured* counts
+      // instead, so `keep-text-section-prefix` IS passed in that case — see the
+      // dedicated entry further below, and `scripts/build-pgo.ts` for the
+      // two-stage `btg` PGO build (`bun run build:btg`) that produces it.
       "-Wl,--hash-style=both",
       "-Wl,--build-id=sha1",
     ],

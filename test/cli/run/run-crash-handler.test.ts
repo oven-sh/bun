@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, mergeWindowEnvs } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, mergeWindowEnvs } from "harness";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -92,8 +92,9 @@ describe("automatic crash reporter", () => {
   }
 });
 
-// ASAN builds don't install Bun's segfault handler.
-describe.skipIf(isASAN)("ucontext-aware fault handler", () => {
+// ASAN builds don't install Bun's segfault handler. Windows is opted out of
+// FaultRegisters.supported until verified, so it still emits v1/v2.
+describe.skipIf(isASAN || isWindows)("ucontext-aware fault handler", () => {
   async function crash(approach: "panic" | "segfault") {
     let reportedPath: string | undefined;
     const reported = Promise.withResolvers<void>();

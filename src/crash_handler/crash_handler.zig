@@ -894,14 +894,16 @@ pub const FaultRegisters = struct {
     pc: usize,
     gp: [gp_count]usize,
 
-    /// Register capture is restricted to the (os, arch) pairs we can actually
-    /// test. On anything else (FreeBSD, Android, future ports) the extractors
-    /// return null and the trace string encodes a zero-length register block,
-    /// so the format is still v3/v4 but carries no register data. This keeps
-    /// the wire format uniform without risking a bad `ucontext_t` layout
-    /// assumption on a platform we haven't verified.
+    /// Register capture is restricted to the (os, arch) pairs we have actually
+    /// verified at runtime. On anything else the extractors return null and the
+    /// trace string stays on the legacy '1'/'2' format — byte-identical to a
+    /// build without this feature — so an unverified `ucontext_t`/CONTEXT
+    /// layout assumption can't corrupt reports.
+    ///
+    /// Windows is opted out until we can test it on real hardware; the
+    /// `fromWindowsContext` path compiles but is unexercised.
     pub const supported = (bun.Environment.isX64 or bun.Environment.isAarch64) and switch (bun.Environment.os) {
-        .mac, .windows => true,
+        .mac => true,
         // Android shares the Linux kernel ucontext ABI but we have no test
         // coverage for it; opt out until proven.
         .linux => !bun.Environment.isAndroid,
@@ -929,9 +931,11 @@ pub const FaultRegisters = struct {
     /// Returns null on platforms where capture isn't `supported`, or if the
     /// kernel passed a null context.
     pub fn fromPosixContext(ctx_ptr: ?*const anyopaque) ?FaultRegisters {
-        const raw = ctx_ptr orelse return null;
-        switch (comptime bun.Environment.os) {
-            inline .mac, .linux => |os| if (comptime supported and std.debug.have_ucontext) {
+        // `supported` implies os ∈ {.mac, .linux}; the body is dead on every
+        // other target so Zig never analyzes the platform-specific fields.
+        if (comptime supported and std.debug.have_ucontext) switch (comptime bun.Environment.os) {
+            inline .mac, .linux => |os| {
+                const raw = ctx_ptr orelse return null;
                 // Some kernels don't align `ctx_ptr` properly; load via align(1).
                 const unaligned: *align(1) const std.posix.ucontext_t = @ptrCast(raw);
                 var ctx: std.posix.ucontext_t = unaligned.*;
@@ -989,8 +993,8 @@ pub const FaultRegisters = struct {
                 }
                 return self;
             },
-            else => {},
-        }
+            else => comptime unreachable,
+        };
         return null;
     }
 
@@ -1341,7 +1345,15 @@ const Platform = enum(u8) {
 ///       `n` u64 values each as two VLQs, in `FaultRegisters.gp_names` order
 ///       followed by pc. The canary bit moves into `TraceFlags` so each
 ///       future format change costs one version slot, not two.
-const version_char = "3";
+///
+/// Builds where `FaultRegisters.supported` is false stay on '1'/'2' so the
+/// emitted trace string is byte-identical to a build without this feature.
+const version_char = if (FaultRegisters.supported)
+    "3"
+else if (bun.Environment.is_canary)
+    "2"
+else
+    "1";
 
 /// Single VLQ of build-shape flags emitted right after the sha in v3+
 /// trace strings. Append-only; bun.report ignores unknown high bits.
@@ -1559,7 +1571,9 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
     try writer.writeByte(if (bun.cli.Cli.cmd) |cmd| cmd.char() else '_');
 
     try writer.writeAll(version_char ++ git_sha);
-    try VLQ.encode(@bitCast(TraceFlags.current)).writeTo(writer);
+    if (comptime FaultRegisters.supported) {
+        try VLQ.encode(@bitCast(TraceFlags.current)).writeTo(writer);
+    }
 
     const packed_features = bun.analytics.packedFeatures();
     try writeU64AsTwoVLQs(writer, @bitCast(packed_features));
@@ -1618,12 +1632,14 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
                 else => comptime unreachable,
             });
             try writeU64AsTwoVLQs(writer, addr);
-            if (opts.fault_regs) |fr| {
-                try VLQ.encode(@intCast(FaultRegisters.gp_count + 1)).writeTo(writer);
-                for (fr.gp) |reg| try writeU64AsTwoVLQs(writer, reg);
-                try writeU64AsTwoVLQs(writer, fr.pc);
-            } else {
-                try writer.writeAll(VLQ.zero.slice());
+            if (comptime FaultRegisters.supported) {
+                if (opts.fault_regs) |fr| {
+                    try VLQ.encode(@intCast(FaultRegisters.gp_count + 1)).writeTo(writer);
+                    for (fr.gp) |reg| try writeU64AsTwoVLQs(writer, reg);
+                    try writeU64AsTwoVLQs(writer, fr.pc);
+                } else {
+                    try writer.writeAll(VLQ.zero.slice());
+                }
             }
         },
 

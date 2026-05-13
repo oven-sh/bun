@@ -682,6 +682,20 @@ export function testMacro(val: any) {
   );
 });
 
+test.concurrent("Bun.build does not crash with many conditions", async () => {
+  const dir = tempDirWithFilesAnon({
+    "entry.js": `console.log("hi");`,
+  });
+  for (let n = 0; n <= 16; n++) {
+    const conditions = Array.from({ length: n }, (_, i) => `cond${i}`);
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.js")],
+      conditions,
+    });
+    expect(result.success).toBe(true);
+  }
+});
+
 // Since NODE_PATH has to be set, we need to run this test outside the bundler tests.
 test.concurrent("regression/NODE_PATHBuild api", async () => {
   const dir = tempDirWithFiles("node-path-build", {

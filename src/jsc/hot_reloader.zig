@@ -224,16 +224,6 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
 
             pub fn append(this: *Task, id: u32) void {
-                // A single logical save routinely surfaces here many times
-                // (truncate+write × file-watch × dir-watch, all carrying the
-                // same path hash). Without this dedup the fixed-size buffer
-                // fills and `enqueue()` fires mid-`onFileUpdate`, which lets
-                // the JS thread start a reload while the watcher thread is
-                // still appending — and the `while` loop in `run()` then
-                // turns the later increments into a second reload for the
-                // same save.
-                if (std.mem.indexOfScalar(u32, this.hashes[0..this.count], id) != null) return;
-
                 if (this.count == 8) {
                     this.enqueue();
                     this.count = 0;

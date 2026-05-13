@@ -696,6 +696,25 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         continue;
                     }
 
+                    // A pooled tunnel's inner TLS session can die after the
+                    // request that pooled it completed — a close_notify or
+                    // SSL error arriving in the same handleReading() call,
+                    // after detachOwner(). tunnel_poolable's snapshot can't
+                    // see that. Don't hand back a dead wrapper: adopt() →
+                    // proxy.write() would swallow error.ConnectionClosed
+                    // (closed_notified is already true so onClose no-ops)
+                    // and the request would hang until timeout.
+                    if (socket.proxy_tunnel) |rp| {
+                        const w = &(rp.data.wrapper orelse {
+                            terminateSocket(http_socket);
+                            continue;
+                        });
+                        if (w.isShutdown() or w.flags.fatal_error) {
+                            terminateSocket(http_socket);
+                            continue;
+                        }
+                    }
+
                     // Release the pool's strong ref (caller has its own via tls_props)
                     if (socket.ssl_config) |*s| s.deinit();
                     socket.ssl_config = null;

@@ -889,6 +889,20 @@ pub const FaultRegisters = struct {
     pc: usize,
     gp: [gp_count]usize,
 
+    /// Register capture is restricted to the (os, arch) pairs we can actually
+    /// test. On anything else (FreeBSD, Android, future ports) the extractors
+    /// return null and the trace string encodes a zero-length register block,
+    /// so the format is still v3/v4 but carries no register data. This keeps
+    /// the wire format uniform without risking a bad `ucontext_t` layout
+    /// assumption on a platform we haven't verified.
+    pub const supported = (bun.Environment.isX64 or bun.Environment.isAarch64) and switch (bun.Environment.os) {
+        .mac, .windows => true,
+        // Android shares the Linux kernel ucontext ABI but we have no test
+        // coverage for it; opt out until proven.
+        .linux => !bun.Environment.isAndroid,
+        else => false,
+    };
+
     pub const gp_count = gp_names.len;
 
     pub const gp_names: []const [:0]const u8 = if (bun.Environment.isAarch64)
@@ -907,75 +921,76 @@ pub const FaultRegisters = struct {
         };
 
     /// Extract from the third argument of a `SA_SIGINFO` POSIX signal handler.
-    /// Returns null if the kernel passed a null context (defensive — should
-    /// not happen in practice when `SA_SIGINFO` is set).
+    /// Returns null on platforms where capture isn't `supported`, or if the
+    /// kernel passed a null context.
     pub fn fromPosixContext(ctx_ptr: ?*const anyopaque) ?FaultRegisters {
-        if (comptime !std.debug.have_ucontext) return null;
         const raw = ctx_ptr orelse return null;
-
-        // Some kernels don't align `ctx_ptr` properly; load via align(1).
-        const unaligned: *align(1) const std.posix.ucontext_t = @ptrCast(raw);
-        var ctx: std.posix.ucontext_t = unaligned.*;
-        if (comptime bun.Environment.isMac and bun.Environment.isAarch64) {
-            // Darwin/arm64 kernel bug: `__mcontext_data` is written immediately
-            // after `mcontext` instead of after the 8 bytes of padding the C
-            // struct layout expects. Re-read it from the unpadded layout so
-            // that `relocateContext` (which sets `mcontext = &__mcontext_data`)
-            // points at valid data. See std.debug.dumpSegfaultInfoPosix.
-            ctx.__mcontext_data = @as(*align(1) const extern struct {
-                onstack: c_int,
-                sigmask: std.c.sigset_t,
-                stack: std.c.stack_t,
-                link: ?*std.c.ucontext_t,
-                mcsize: u64,
-                mcontext: *std.c.mcontext_t,
-                __mcontext_data: std.c.mcontext_t align(@sizeOf(usize)),
-            }, @ptrCast(raw)).__mcontext_data;
-        }
-        std.debug.relocateContext(&ctx);
-
-        var self: FaultRegisters = undefined;
         switch (comptime bun.Environment.os) {
-            .mac => {
-                const ss = ctx.mcontext.ss;
-                if (comptime bun.Environment.isAarch64) {
-                    self.pc = ss.pc;
-                    inline for (0..29) |i| self.gp[i] = ss.regs[i];
-                    self.gp[29] = ss.fp;
-                    self.gp[30] = ss.lr;
-                    self.gp[31] = ss.sp;
-                } else {
-                    self.pc = ss.rip;
-                    self.gp = .{
-                        ss.rax, ss.rbx, ss.rcx, ss.rdx, ss.rdi, ss.rsi, ss.rbp, ss.rsp,
-                        ss.r8,  ss.r9,  ss.r10, ss.r11, ss.r12, ss.r13, ss.r14, ss.r15,
-                    };
+            inline .mac, .linux => |os| if (comptime supported and std.debug.have_ucontext) {
+                // Some kernels don't align `ctx_ptr` properly; load via align(1).
+                const unaligned: *align(1) const std.posix.ucontext_t = @ptrCast(raw);
+                var ctx: std.posix.ucontext_t = unaligned.*;
+                if (comptime os == .mac and bun.Environment.isAarch64) {
+                    // Darwin/arm64 kernel bug: `__mcontext_data` is written immediately
+                    // after `mcontext` instead of after the 8 bytes of padding the C
+                    // struct layout expects. Re-read it from the unpadded layout so
+                    // that `relocateContext` (which sets `mcontext = &__mcontext_data`)
+                    // points at valid data. See std.debug.dumpSegfaultInfoPosix.
+                    ctx.__mcontext_data = @as(*align(1) const extern struct {
+                        onstack: c_int,
+                        sigmask: std.c.sigset_t,
+                        stack: std.c.stack_t,
+                        link: ?*std.c.ucontext_t,
+                        mcsize: u64,
+                        mcontext: *std.c.mcontext_t,
+                        __mcontext_data: std.c.mcontext_t align(@sizeOf(usize)),
+                    }, @ptrCast(raw)).__mcontext_data;
                 }
-            },
-            .linux => {
-                const mc = ctx.mcontext;
-                if (comptime bun.Environment.isAarch64) {
-                    self.pc = mc.pc;
-                    inline for (0..31) |i| self.gp[i] = mc.regs[i];
-                    self.gp[31] = mc.sp;
+                std.debug.relocateContext(&ctx);
+
+                var self: FaultRegisters = undefined;
+                if (comptime os == .mac) {
+                    const ss = ctx.mcontext.ss;
+                    if (comptime bun.Environment.isAarch64) {
+                        self.pc = ss.pc;
+                        inline for (0..29) |i| self.gp[i] = ss.regs[i];
+                        self.gp[29] = ss.fp;
+                        self.gp[30] = ss.lr;
+                        self.gp[31] = ss.sp;
+                    } else {
+                        self.pc = ss.rip;
+                        self.gp = .{
+                            ss.rax, ss.rbx, ss.rcx, ss.rdx, ss.rdi, ss.rsi, ss.rbp, ss.rsp,
+                            ss.r8,  ss.r9,  ss.r10, ss.r11, ss.r12, ss.r13, ss.r14, ss.r15,
+                        };
+                    }
                 } else {
-                    const REG = std.os.linux.REG;
-                    const r = mc.gregs;
-                    self.pc = r[REG.RIP];
-                    self.gp = .{
-                        r[REG.RAX], r[REG.RBX], r[REG.RCX], r[REG.RDX],
-                        r[REG.RDI], r[REG.RSI], r[REG.RBP], r[REG.RSP],
-                        r[REG.R8],  r[REG.R9],  r[REG.R10], r[REG.R11],
-                        r[REG.R12], r[REG.R13], r[REG.R14], r[REG.R15],
-                    };
+                    const mc = ctx.mcontext;
+                    if (comptime bun.Environment.isAarch64) {
+                        self.pc = mc.pc;
+                        inline for (0..31) |i| self.gp[i] = mc.regs[i];
+                        self.gp[31] = mc.sp;
+                    } else {
+                        const REG = std.os.linux.REG;
+                        const r = mc.gregs;
+                        self.pc = r[REG.RIP];
+                        self.gp = .{
+                            r[REG.RAX], r[REG.RBX], r[REG.RCX], r[REG.RDX],
+                            r[REG.RDI], r[REG.RSI], r[REG.RBP], r[REG.RSP],
+                            r[REG.R8],  r[REG.R9],  r[REG.R10], r[REG.R11],
+                            r[REG.R12], r[REG.R13], r[REG.R14], r[REG.R15],
+                        };
+                    }
                 }
+                return self;
             },
-            .windows, .wasm => comptime unreachable,
+            else => {},
         }
-        return self;
+        return null;
     }
 
-    pub fn fromWindowsContext(ctx: *const windows.CONTEXT) FaultRegisters {
+    pub fn fromWindowsContext(ctx: *const windows.CONTEXT) ?FaultRegisters {
+        if (comptime !supported) return null;
         var self: FaultRegisters = undefined;
         if (comptime bun.Environment.isAarch64) {
             self.pc = ctx.Pc;

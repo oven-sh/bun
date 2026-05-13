@@ -60,12 +60,13 @@ extern "C" int32_t bun_wic_propbag_write_u8(void* props, const wchar_t* name, ui
 // "advisory, never fail decode" treatment. PROPVARIANT lives here for the same
 // reason VARIANT does — the SDK's own union layout is the source of truth.
 //
-// Query path is container-specific in WIC's metadata language, so we try in
-// order: `/ifd/{ushort=274}` covers TIFF (orientation lives in IFD0) and the
-// HEIF decoder's EXIF item (iPhone HEIC writes one); `System.Photo.Orientation`
-// is the WIC photo-metadata-policy name that the platform maps to whichever
-// container path applies — it's the documented container-agnostic fallback.
-// First successful read wins. (#30235)
+// WIC's metadata-query root differs by container, so we try in order:
+//  - /{ushort=274}            TIFF — frame reader's root *is* IFD0
+//  - /ifd/{ushort=274}        HEIF — EXIF item is mounted under /ifd
+//  - System.Photo.Orientation WIC photo-metadata policy; container-agnostic
+// First path that yields a valid 1..8 wins; a SUCCEEDED-but-wrong-vt read
+// falls through to the next path rather than short-circuiting to identity.
+// (#30235)
 extern "C" int32_t bun_wic_read_orientation(void* frame)
 {
     if (!frame) return 1;
@@ -73,15 +74,20 @@ extern "C" int32_t bun_wic_read_orientation(void* frame)
     if (FAILED(static_cast<IWICBitmapFrameDecode*>(frame)->GetMetadataQueryReader(&reader)) || !reader)
         return 1;
     int32_t result = 1;
-    static const wchar_t* const paths[] = { L"/ifd/{ushort=274}", L"System.Photo.Orientation" };
+    static const wchar_t* const paths[] = {
+        L"/{ushort=274}",
+        L"/ifd/{ushort=274}",
+        L"System.Photo.Orientation",
+    };
     for (auto path : paths) {
         PROPVARIANT pv;
         PropVariantInit(&pv);
-        if (SUCCEEDED(reader->GetMetadataByName(path, &pv))) {
-            if (pv.vt == VT_UI2 && pv.uiVal >= 1 && pv.uiVal <= 8) result = pv.uiVal;
+        if (SUCCEEDED(reader->GetMetadataByName(path, &pv)) && pv.vt == VT_UI2 && pv.uiVal >= 1 && pv.uiVal <= 8) {
+            result = pv.uiVal;
             PropVariantClear(&pv);
             break;
         }
+        PropVariantClear(&pv);
     }
     reader->Release();
     return result;

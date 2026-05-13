@@ -12,7 +12,7 @@ pub fn toEqual(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
     this.incrementExpectCallCounter();
 
     const expected = arguments[0];
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toEqual", "<green>expected<r>");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toEqual", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
 
     const not = this.flags.not;
     var pass = try value.jestDeepEquals(expected, globalThis);

@@ -16,7 +16,7 @@ pub fn toHaveProperty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
     const expected_property: ?JSValue = if (arguments.len > 1) arguments[1] else null;
     if (expected_property) |ev| ev.ensureStillAlive();
 
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveProperty", "<green>path<r><d>, <r><green>value<r>");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toHaveProperty", "<green>path<r><d>, <r><green>value<r>")) orelse return this.deferredResult(thisValue);
 
     if (!expected_property_path.isString() and !try expected_property_path.isIterable(globalThis)) {
         return globalThis.throw("Expected path must be a string or an array", .{});

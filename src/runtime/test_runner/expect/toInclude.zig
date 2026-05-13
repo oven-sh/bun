@@ -16,7 +16,7 @@ pub fn toInclude(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
         return globalThis.throw("toInclude() requires the first argument to be a string", .{});
     }
 
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toInclude", "");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toInclude", "")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

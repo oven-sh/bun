@@ -2,7 +2,7 @@ pub fn toBeNaN(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
     defer this.postMatch(globalThis);
 
     const thisValue = callFrame.this();
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeNaN", "");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeNaN", "")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

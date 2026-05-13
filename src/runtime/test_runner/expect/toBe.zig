@@ -16,7 +16,7 @@ pub fn toBe(
     this.incrementExpectCallCounter();
     const right = arguments[0];
     right.ensureStillAlive();
-    const left = try this.getValue(globalThis, thisValue, "toBe", "<green>expected<r>");
+    const left = (try this.getValue(globalThis, thisValue, callframe, "toBe", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
 
     const not = this.flags.not;
     var pass = try right.isSameValue(left, globalThis);

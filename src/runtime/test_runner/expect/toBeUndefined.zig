@@ -1,7 +1,7 @@
 pub fn toBeUndefined(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
     defer this.postMatch(globalThis);
     const thisValue = callFrame.this();
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeUndefined", "");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeUndefined", "")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

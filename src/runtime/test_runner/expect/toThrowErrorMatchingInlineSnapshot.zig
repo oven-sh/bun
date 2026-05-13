@@ -32,7 +32,8 @@ pub fn toThrowErrorMatchingInlineSnapshot(this: *Expect, globalThis: *JSGlobalOb
 
     const expected_slice: ?[]const u8 = if (has_expected) expected.slice() else null;
 
-    const value: JSValue = (try this.fnToErrStringOrUndefined(globalThis, try this.getValue(globalThis, thisValue, "toThrowErrorMatchingInlineSnapshot", "<green>properties<r><d>, <r>hint"))) orelse {
+    const received = (try this.getValue(globalThis, thisValue, callFrame, "toThrowErrorMatchingInlineSnapshot", "<green>properties<r><d>, <r>hint")) orelse return this.deferredResult(thisValue);
+    const value: JSValue = (try this.fnToErrStringOrUndefined(globalThis, received)) orelse {
         const signature = comptime getSignature("toThrowErrorMatchingInlineSnapshot", "", false);
         return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Received function did not throw\n", .{});
     };

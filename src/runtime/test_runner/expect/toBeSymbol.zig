@@ -2,7 +2,7 @@ pub fn toBeSymbol(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
     defer this.postMatch(globalThis);
 
     const thisValue = callFrame.this();
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeSymbol", "");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeSymbol", "")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

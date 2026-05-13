@@ -84,7 +84,7 @@
 //! Delta indices are 0..count-2 (first mapping is the seed; only count-1
 //! deltas are encoded).
 
-use core::mem::{MaybeUninit, size_of};
+use core::mem::size_of;
 use core::ptr;
 
 use crate::Ordinal; // TODO(b2-blocked): bun_core::Ordinal — local shim
@@ -928,36 +928,52 @@ fn emit_vlq(
 }
 
 // `#[repr(C)]` pins declaration order so the per-mapping read/modify/write set
-// (`state`, `pending_generated_line_delta`, `count`, `pending_n` — 29 bytes)
-// lands at offset 0 in the head cache line, with `sync_entries`' NonNull ptr
-// (the `Option<Builder>` niche) immediately after at offset 32 in the *same*
+// (`generated_line`, `pending_generated_line_delta`, `count`, `pending_n` —
+// 13 bytes) lands at offset 0 in the head cache line, with `sync_entries`'
+// NonNull ptr (the `Option<Builder>` niche) immediately after in the *same*
 // line. The inlined `VLQSourceMap::append`/`append_line_separator` (Chunk.zig
 // 103/107 are `pub inline fn`) thus touch one line on the fast path instead of
-// straddling the 1280-byte `pending` array. (benches: lint/create-vue)
+// straddling the five 256-byte `pending_*` lanes. (benches: lint/create-vue)
+//
+// The pending window is stored column-wise — five parallel `[i32; SYNC_INTERVAL]`
+// lanes rather than one `[State; SYNC_INTERVAL]` array of 20-byte rows. So
+// `append_mapping`'s per-mapping store is five naturally-aligned i32 writes that
+// never straddle a cache line, and `flush_window`'s `cur - prev` deltas walk
+// each lane as a contiguous, prefetcher-friendly stream. Only `[0..pending_n]`
+// of each lane are live; the rest hold stale/zero values that nothing reads.
 #[repr(C)]
 pub struct Builder {
-    state: State,
+    /// Absolute generated line of the last mapping appended; carried across
+    /// `append_mapping` calls so a run of `append_line_separator`s can be folded
+    /// into the next mapping's delta.
+    generated_line: i32,
     pending_generated_line_delta: i32,
     count: u32,
     pending_n: u8,
     sync_entries: Vec<SyncEntry>,
     win_stream: Vec<u8>,
-    /// Only `[0..pending_n]` are initialized; matches Zig's `undefined` init.
-    pending: [MaybeUninit<State>; SYNC_INTERVAL],
+    pending_generated_line: [i32; SYNC_INTERVAL],
+    pending_generated_column: [i32; SYNC_INTERVAL],
+    pending_source_index: [i32; SYNC_INTERVAL],
+    pending_original_line: [i32; SYNC_INTERVAL],
+    pending_original_column: [i32; SYNC_INTERVAL],
     finalized: Option<MutableString>,
 }
 
 impl Default for Builder {
     fn default() -> Self {
         Builder {
-            state: State::default(),
+            generated_line: 0,
             pending_generated_line_delta: 0,
             count: 0,
             pending_n: 0,
             sync_entries: Vec::new(),
             win_stream: Vec::new(),
-            // Zig: `undefined` — slots are written before read (gated by pending_n).
-            pending: [MaybeUninit::uninit(); SYNC_INTERVAL],
+            pending_generated_line: [0; SYNC_INTERVAL],
+            pending_generated_column: [0; SYNC_INTERVAL],
+            pending_source_index: [0; SYNC_INTERVAL],
+            pending_original_line: [0; SYNC_INTERVAL],
+            pending_original_column: [0; SYNC_INTERVAL],
             finalized: None,
         }
     }
@@ -977,13 +993,8 @@ impl Builder {
 
     #[inline(always)]
     pub fn append_mapping(&mut self, current: &SourceMapState) {
-        self.state = State {
-            generated_line: self.state.generated_line + self.pending_generated_line_delta,
-            generated_column: current.generated_column,
-            source_index: current.source_index,
-            original_line: current.original_line,
-            original_column: current.original_column,
-        };
+        let generated_line = self.generated_line + self.pending_generated_line_delta;
+        self.generated_line = generated_line;
         self.pending_generated_line_delta = 0;
 
         let i = self.pending_n as usize;
@@ -991,8 +1002,14 @@ impl Builder {
         // SAFETY: invariant `pending_n < SYNC_INTERVAL` between flushes — the
         // tail of this fn flushes (resetting to 0) the moment it would reach
         // SYNC_INTERVAL, so on entry `pending_n <= SYNC_INTERVAL-1`. Elides the
-        // per-mapping bounds check (Zig: `self.pending[n]` is unchecked in release).
-        unsafe { self.pending.get_unchecked_mut(i) }.write(self.state);
+        // per-mapping bounds check (Zig stores into `self.pending[n]` unchecked).
+        unsafe {
+            *self.pending_generated_line.get_unchecked_mut(i) = generated_line;
+            *self.pending_generated_column.get_unchecked_mut(i) = current.generated_column;
+            *self.pending_source_index.get_unchecked_mut(i) = current.source_index;
+            *self.pending_original_line.get_unchecked_mut(i) = current.original_line;
+            *self.pending_original_column.get_unchecked_mut(i) = current.original_column;
+        }
         self.pending_n += 1;
         self.count += 1;
 
@@ -1006,23 +1023,25 @@ impl Builder {
         if n == 0 {
             return;
         }
-        // SAFETY: `pending[0..n]` were each written by `append_mapping` before
-        // `pending_n` advanced past them; `n != 0` checked above.
-        let pending: &[State] = unsafe {
-            core::slice::from_raw_parts(self.pending.as_ptr().cast::<State>(), n as usize)
-        };
-        let seed = pending[0];
+        // The pending window, column-wise: `[0..n]` of each lane is live (written
+        // by `append_mapping` before `pending_n` advanced past them).
+        let nn = n as usize;
+        let gen_line = &self.pending_generated_line[..nn];
+        let gen_col = &self.pending_generated_column[..nn];
+        let src_idx = &self.pending_source_index[..nn];
+        let orig_line = &self.pending_original_line[..nn];
+        let orig_col = &self.pending_original_column[..nn];
         // PERF(port): @intCast — win_stream is bounded by total mapping count × ~5B/mapping;
         // u32 overflow would mean a >4 GiB sourcemap stream, unreachable in practice.
         debug_assert!(self.win_stream.len() <= u32::MAX as usize);
         let start_off: u32 = self.win_stream.len() as u32;
         self.sync_entries.push(SyncEntry {
-            generated_line: seed.generated_line,
-            generated_column: seed.generated_column,
+            generated_line: gen_line[0],
+            generated_column: gen_col[0],
             byte_offset: start_off,
-            original_line: seed.original_line,
-            original_column: seed.original_column,
-            source_index: seed.source_index,
+            original_line: orig_line[0],
+            original_column: orig_col[0],
+            source_index: src_idx[0],
         });
 
         let n_deltas: usize = n as usize - 1;
@@ -1068,22 +1087,24 @@ impl Builder {
         unsafe { buf_ptr.add(src_idx_base).write_bytes(0, 8) };
 
         let mut flags: u8 = 0;
-        let mut prev = seed;
         let mut w_gen_col = gen_col_base;
         let mut w_orig_line = orig_line_base;
         let mut w_orig_col = orig_col_base;
         let mut w_gen_line = gen_line_base;
         let mut w_src_idx = src_idx_base + 8;
-        for (k, cur) in pending[1..].iter().enumerate() {
-            let d_gen_line = cur.generated_line - prev.generated_line;
+        // Each lane is a contiguous stream; `gen_line[k+1] - gen_line[k]` etc.
+        // are strided loads the prefetcher handles. `k < n_deltas == nn - 1`, so
+        // both `[k]` and `[k+1]` are in bounds of the `[..nn]` slices.
+        for k in 0..n_deltas {
+            let d_gen_line = gen_line[k + 1] - gen_line[k];
             let d_gen_col = if d_gen_line != 0 {
-                cur.generated_column
+                gen_col[k + 1]
             } else {
-                cur.generated_column - prev.generated_column
+                gen_col[k + 1] - gen_col[k]
             };
-            let d_orig_line = cur.original_line - prev.original_line;
-            let d_orig_col = cur.original_column - prev.original_column;
-            let d_src_idx = cur.source_index - prev.source_index;
+            let d_orig_line = orig_line[k + 1] - orig_line[k];
+            let d_orig_col = orig_col[k + 1] - orig_col[k];
+            let d_src_idx = src_idx[k + 1] - src_idx[k];
 
             let bit = 1u8 << (k & 7);
             // SAFETY: k < n_deltas <= SYNC_INTERVAL-1 == 63, so `k >> 3 <= 7`
@@ -1136,8 +1157,6 @@ impl Builder {
                 // [src_idx_base + 8, src_idx_base + 8 + nd*MAX_VARINT_LEN).
                 w_src_idx += write_varint(unsafe { buf_ptr.add(w_src_idx) }, d_src_idx);
             }
-
-            prev = *cur;
         }
 
         // 0xFF terminator closes the gen_line exception stream when present.

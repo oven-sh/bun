@@ -470,7 +470,7 @@ fn err_from_static(name: &'static str) -> bun_core::Error {
 /// were dropped in the lib.rs port (only `preallocate_file()` remains). Mirror
 /// the original values from `sys.zig` so the write-file fast path keeps its
 /// guard. 2 MiB matches `node_fs.zig`'s threshold.
-const PREALLOCATE_SUPPORTED: bool = cfg!(target_os = "linux");
+const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "android"));
 const PREALLOCATE_LENGTH: usize = 2048 * 1024;
 
 /// `PathString.PathInt` — Zig packed-struct field width. `bun_core::PathString`
@@ -504,10 +504,9 @@ fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> May
 }
 
 /// `bun.sys.directoryExistsAt` — Zig dispatches on `anytype` element width
-/// (sys.zig:3601 → `existsAtType` picks `toNTPath16` for `[*]const u16`). The
-/// Rust `sys::directory_exists_at` only accepts `&ZStr` and re-widens
-/// internally, so for `OSPathSliceZ` callers we narrow the already-wide
-/// Windows path through a pooled UTF-8 buffer first. POSIX is a forwarder.
+/// (sys.zig:3601 → `existsAtType` picks `toNTPath16` for `[*]const u16`). On
+/// Windows `OSPathSliceZ` is already `&WStr`, so forward to the wide overload
+/// instead of narrowing to UTF-8 and re-widening. POSIX is a forwarder.
 #[inline]
 fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
     #[cfg(not(windows))]
@@ -516,9 +515,7 @@ fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
     }
     #[cfg(windows)]
     {
-        let mut tmp = paths::path_buffer_pool::get();
-        let narrow = strings::from_wpath(&mut tmp[..], path.as_slice());
-        sys::directory_exists_at(dir, narrow)
+        sys::directory_exists_at_w(dir, path.as_slice())
     }
 }
 

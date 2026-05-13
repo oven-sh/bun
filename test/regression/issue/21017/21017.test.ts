@@ -16,7 +16,7 @@
 // This test exercises the teardown path repeatedly and asserts the process
 // neither crashes nor accumulates watcher threads.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
 import path from "node:path";
 
@@ -29,11 +29,7 @@ test("Watcher is cleaned up when DevServer fails to start", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Diagnose failures with the subprocess output before asserting the exit
   // code, per repo testing convention.

@@ -176,8 +176,20 @@ impl AsyncModule {
         // refcounts explicitly via scopeguard. The `TopExceptionScope` is
         // omitted: `from_js_host_call_generic` already checks the VM for a
         // pending exception after the FFI call (host_fn.rs).
-        let _specifier_guard = scopeguard::guard(specifier, |s| s.deref());
-        let _referrer_guard = scopeguard::guard(referrer, |s| s.deref());
+        //
+        // The guard captures raw pointers to the locals (not by-value copies)
+        // so the deref observes the *post-FFI* value of the variable, matching
+        // Zig `defer` semantics — `Bun__onFulfillAsyncModule` receives
+        // `&mut specifier`/`&mut referrer` and is free to overwrite them.
+        // Safety: `specifier`/`referrer` are declared above this guard, so
+        // they outlive it (locals drop in reverse order); the `&mut` reborrow
+        // passed to FFI below is dead by the time the guard runs.
+        let sp: *mut BunString = &raw mut specifier;
+        let rp: *mut BunString = &raw mut referrer;
+        let _strings_guard = scopeguard::guard((), move |()| unsafe {
+            (*sp).deref();
+            (*rp).deref();
+        });
 
         let mut errorable: ErrorableResolvedSource;
         if let Some(e) = err {

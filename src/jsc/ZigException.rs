@@ -168,11 +168,17 @@ impl Holder {
         Self::zero()
     }
 
-    // PORT NOTE: not `Drop` — takes `vm` parameter.
+    // PORT NOTE: not just `Drop` — takes `vm` parameter for `reset_arena`. Zig
+    // callers all `defer holder.deinit(vm)`; Rust callers should still call this
+    // explicitly at the tail (it does the arena reset which `Drop` cannot), but
+    // the string-ref release half is also covered by `Drop` below so an early
+    // `?`/return between population and the tail call won't leak WTF string refs.
     pub fn deinit(&mut self, vm: &mut VirtualMachine) {
         if self.loaded {
             // SAFETY: `loaded == true` ⇔ `zig_exception()` has written this slot.
             unsafe { self.zig_exception.assume_init_mut() }.deinit();
+            // Make idempotent so the subsequent `Drop` is a no-op.
+            self.loaded = false;
         }
         if self.need_to_clear_parser_arena_on_deinit {
             // PORT NOTE: reshaped for borrowck — Zig `vm.module_loader.resetArena(vm)`
@@ -216,6 +222,20 @@ impl Holder {
         // SAFETY: either the branch above just wrote it, or `loaded` was already
         // true from a prior call that wrote it.
         unsafe { self.zig_exception.assume_init_mut() }
+    }
+}
+
+impl Drop for Holder {
+    // PORT NOTE: restores the string-ref-release half of Zig's
+    // `defer holder.deinit(vm)`. The explicit `deinit(&mut self, vm)` clears
+    // `loaded` after running, so this is a no-op on the happy path; it only
+    // fires when an early-return/`?`/panic skips the tail `deinit` call.
+    fn drop(&mut self) {
+        if self.loaded {
+            // SAFETY: `loaded == true` ⇔ `zig_exception()` has written this slot.
+            unsafe { self.zig_exception.assume_init_mut() }.deinit();
+            self.loaded = false;
+        }
     }
 }
 

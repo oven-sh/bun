@@ -261,6 +261,12 @@ struct Http2Context {
             if (r->dead) continue;
             Http2ResponseData *d = r->getHttpResponseData();
             if (d->onTimeout) d->onTimeout(r, d->userData);
+            /* A `timeout` listener (or a microtask it drained) may have
+             * called server.stop(true) → us_socket_group_close_all →
+             * force-drain → onClose(s) → ~Http2Connection(), which
+             * deleted every Http2Response* this snapshot holds and
+             * destructed `c` in place. Same guard as drainStreams(). */
+            if (us_socket_is_closed(s)) return s;
         }
         c->dispatchDepth--;
         ((AsyncSocket<true> *) s)->uncorkWithoutSending();

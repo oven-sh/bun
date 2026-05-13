@@ -217,10 +217,27 @@ fn bun_vm_mut(_global: &JSGlobalObject) -> &mut VirtualMachine {
     VirtualMachine::get_mut()
 }
 
-/// `globalObject.ERR(.CODE, msg, .{}).throw()`
+/// `globalObject.ERR(.CODE, msg, .{}).throw()` — the actual error-construction
+/// body, kept non-generic and out of line.
+///
+/// Every caller is an error branch that is essentially never taken on the
+/// node:http response hot path (`write_head` / `write_or_end` / `cork`). Marking
+/// this `#[cold]` + `#[inline(never)]` keeps the `ErrorBuilder::throw` codegen —
+/// message formatting (`core::fmt`), error-code table lookup, JS error object
+/// allocation — physically separated from those hot functions so it neither
+/// bloats them nor pollutes their icache footprint. Being non-generic also means
+/// it's emitted once instead of once per `T`.
+#[cold]
+#[inline(never)]
+fn err_throw_cold(global: &JSGlobalObject, code: ErrorCode, msg: &'static str) -> jsc::JsError {
+    global.err(code, format_args!("{}", msg)).throw()
+}
+
+/// Thin generic wrapper so call sites can `return err_throw(...)` from any
+/// `JsResult<T>`-returning fn; all the weight lives in [`err_throw_cold`].
 #[inline]
 fn err_throw<T>(global: &JSGlobalObject, code: ErrorCode, msg: &'static str) -> JsResult<T> {
-    Err(global.err(code, format_args!("{}", msg)).throw())
+    Err(err_throw_cold(global, code, msg))
 }
 
 /// AnyResponse `is_ssl()` shim (upstream lacks this accessor).

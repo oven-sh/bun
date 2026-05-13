@@ -128,16 +128,20 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         args.append(methodString);
     }
 
-    size_t size = 0;
-    for (auto it = request->begin(); it != request->end(); ++it) {
-        size++;
-    }
-
-    JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(size, static_cast<size_t>(JSFinalObject::maxInlineCapacity)));
+    // Skip the extra O(headers) counting pass that used to size the inline
+    // capacity hint. Using a constant capacity keeps every request's headers
+    // object on a single cached structure (structureCache keys on prototype +
+    // inline capacity), so the putDirect transitions below stay on the fast
+    // path request-to-request instead of churning a fresh structure for every
+    // distinct header count. The default inline capacity covers the typical
+    // request without over-allocating; rarer header-heavy requests spill to a
+    // butterfly, same as any other object.
+    JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), JSFinalObject::defaultInlineCapacity);
     RETURN_IF_EXCEPTION(scope, void());
     JSC::JSArray* setCookiesHeaderArray = nullptr;
     JSC::JSString* setCookiesHeaderString = nullptr;
     MarkedArgumentBuffer arrayValues;
+    HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
 
     args.append(headersObject);
 
@@ -153,7 +157,6 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
 
         JSString* jsValue = jsString(vm, value);
 
-        HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
         Identifier nameIdentifier;
         JSString* nameString = nullptr;
 

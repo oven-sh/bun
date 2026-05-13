@@ -67,17 +67,33 @@ pub fn main() void {
     // ~16 seconds churning through ~4 GB of bad allocations before crashing
     // with an opaque SIGSEGV. Detect that up front and explain why.
     if (!_bun.simdutf.hasAnyImplementation()) {
-        const requirement = if (Environment.isX64) "SSE4.2" else if (Environment.isAarch64) "NEON" else "SIMD";
+        // simdutf's minimum compiled-in kernel is westmere (SSE4.2) for the
+        // baseline build and haswell (AVX2) for the default build — the
+        // lower tiers are elided once __SSE4_2__ / __AVX2__ are defined.
+        const requirement = if (Environment.isX64)
+            (if (Environment.baseline) "SSE4.2" else "AVX2")
+        else if (Environment.isAarch64)
+            "NEON"
+        else
+            "SIMD";
         Output.errGeneric(
             "this CPU is missing {s} support, which Bun requires for UTF-8 processing.",
             .{requirement},
         );
         if (Environment.isX64) {
-            Output.prettyErrorln(
-                "  Bun's baseline build targets Nehalem-class (2008+) x86_64 CPUs.\n" ++
-                    "  If this is a VM, enable host CPU passthrough (e.g. <b>-cpu host<r> for QEMU/KVM).",
-                .{},
-            );
+            if (Environment.baseline) {
+                Output.prettyErrorln(
+                    "  Bun's baseline build targets Nehalem-class (2008+) x86_64 CPUs.\n" ++
+                        "  If this is a VM, enable host CPU passthrough (e.g. <b>-cpu host<r> for QEMU/KVM).",
+                    .{},
+                );
+            } else {
+                Output.prettyErrorln(
+                    "  Install the baseline build, which only requires SSE4.2:\n" ++
+                        "    <cyan>{s}<r>",
+                    .{_bun.cli.UpgradeCommand.Bun__githubBaselineURL},
+                );
+            }
         }
         if (_bun.getenvZ("SIMDUTF_FORCE_IMPLEMENTATION")) |forced| {
             Output.prettyErrorln("<d>  note:<r> SIMDUTF_FORCE_IMPLEMENTATION is set to \"{s}\"", .{forced});

@@ -1919,6 +1919,14 @@ pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
 pub use index_of_newline_or_non_ascii as index_of_newline_or_non_ascii_or_ansi;
 
 /// Checks if slice[offset..] has any < 0x20 or > 127 characters
+// PERF: `#[inline]` — this is the predicate of the source-map column-tracking
+// fast path (`Chunk.rs::update_generated_line_and_column`) and the per-rune
+// fast-forward inside its slow loop; it's also the LineOffsetTable scan step.
+// Without the hint LLVM emits a cross-crate `call` (the body is a couple of
+// branches plus a tail-call into the SIMD `highway` routine), so the
+// `is_none()` fast path doesn't fold into the caller. Same rationale as
+// `str_utf8` above.
+#[inline]
 pub fn index_of_newline_or_non_ascii(slice_: &[u8], offset: u32) -> Option<u32> {
     index_of_newline_or_non_ascii_check_start::<true>(slice_, offset)
 }
@@ -1941,6 +1949,7 @@ pub fn index_of_space_or_newline_or_non_ascii(slice_: &[u8], offset: u32) -> Opt
     Some(i as u32 + offset)
 }
 
+#[inline]
 pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
     slice_: &[u8],
     offset: u32,

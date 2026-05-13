@@ -195,6 +195,17 @@ pub fn onOpen(
     // completes. See https://github.com/oven-sh/bun/issues/30325.
     client.setTimeout(socket);
 
+    // Enable TCP keepalive so a half-open connection (peer closed but the
+    // FIN/RST never reached us — NAT timeout, wifi/cellular handoff,
+    // middlebox state eviction, VPN disconnect) is detected in ~70s instead
+    // of hanging until an application-level timeout. Without this, a
+    // streaming `reader.read()` on a half-open socket blocks indefinitely.
+    // Matches Node/undici (TCP_KEEPIDLE=60, KEEPINTVL=1, KEEPCNT=10 — the
+    // latter two are hardcoded in bsd_socket_keepalive). The kernel default
+    // TCP_KEEPIDLE is 7200s, so bare SO_KEEPALIVE without the delay would be
+    // ineffective; 60 here sets TCP_KEEPIDLE=60s.
+    _ = socket.setKeepAlive(true, 60);
+
     if (client.signals.get(.aborted)) {
         client.closeAndAbort(comptime is_ssl, socket);
         return error.ClientAborted;

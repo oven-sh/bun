@@ -532,32 +532,14 @@ pub fn doMetadata(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.Cal
     // in memory it's cheaper to do it inline than to bounce off the WorkPool
     // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
     if (this.jsThreadBytes(callframe.this(), global)) |buf| {
-        if (codecs.probe(buf, this.max_pixels)) |p| {
-            var w = p.width;
-            var h = p.height;
-            // Route through PipelineTask.readOrientation so all four gates
-            // (JS-thread probe, worker-thread probe, worker-thread decode-
-            // hint, worker-thread applyOrientation) share one reader. Today
-            // probe() returns UnsupportedOnPlatform for HEIC/TIFF/AVIF so
-            // this branch only sees JPEG/PNG/WebP/BMP/GIF, but if probe()
-            // grows a TIFF IFD0 / HEIF `ispe` parser, the sync and async
-            // paths stay in sync for free.
-            if (this.auto_orient) {
-                const t = PipelineTask.readOrientation(buf, p.format).transform();
-                if (t.rotate == 90 or t.rotate == 270) std.mem.swap(u32, &w, &h);
-            }
-            this.last_width = @intCast(w);
-            this.last_height = @intCast(h);
-            const obj = jsc.JSValue.createEmptyObject(global, 3);
-            obj.put(global, jsc.ZigString.static("width"), jsc.JSValue.jsNumber(w));
-            obj.put(global, jsc.ZigString.static("height"), jsc.JSValue.jsNumber(h));
-            obj.put(global, jsc.ZigString.static("format"), jsc.ZigString.init(@tagName(p.format)).toJS(global));
-            return jsc.JSPromise.resolvedPromiseValue(global, obj);
-        } else |e| switch (e) {
-            // HEIC/AVIF need the system backend → fall through to async.
-            error.UnsupportedOnPlatform => {},
-            else => return jsc.JSPromise.rejectedPromise(global, rejectError(global, e)).asValue(global),
+        if (PipelineTask.probeMeta(buf, this.max_pixels, this.auto_orient) catch |e|
+            return jsc.JSPromise.rejectedPromise(global, rejectError(global, e)).asValue(global)) |m|
+        {
+            this.last_width = @intCast(m.w);
+            this.last_height = @intCast(m.h);
+            return jsc.JSPromise.resolvedPromiseValue(global, m.toJS(global));
         }
+        // HEIC/AVIF need the system backend → fall through to async.
     }
     return this.schedule(global, callframe.this(), .metadata, .uint8array);
 }
@@ -891,9 +873,23 @@ pub const PipelineTask = struct {
         placeholder,
     };
 
+    pub const Meta = struct {
+        w: u32,
+        h: u32,
+        format: codecs.Format,
+
+        pub fn toJS(m: Meta, global: *jsc.JSGlobalObject) jsc.JSValue {
+            const obj = jsc.JSValue.createEmptyObject(global, 3);
+            obj.put(global, jsc.ZigString.static("width"), jsc.JSValue.jsNumber(m.w));
+            obj.put(global, jsc.ZigString.static("height"), jsc.JSValue.jsNumber(m.h));
+            obj.put(global, jsc.ZigString.static("format"), jsc.ZigString.init(@tagName(m.format)).toJS(global));
+            return obj;
+        }
+    };
+
     pub const Result = union(enum) {
         encoded: struct { out: codecs.Encoded, format: codecs.Format, w: u32, h: u32 },
-        meta: struct { w: u32, h: u32, format: codecs.Format },
+        meta: Meta,
         err: codecs.Error,
         io_err: bun.sys.Error,
     };
@@ -965,23 +961,11 @@ pub const PipelineTask = struct {
         // Header-only fast path for `.metadata()` — Sharp parses just the
         // IHDR/SOF/VP8 header; we used to decode the full RGBA buffer first
         // (~70× slower on a 1920×1080 PNG). EXIF orientation only swaps the
-        // reported dims, no pixels involved.
-        if (this.kind == .metadata) {
-            if (codecs.probe(input, this.max_pixels)) |p| {
-                var w = p.width;
-                var h = p.height;
-                if (this.auto_orient) {
-                    const t = readOrientation(input, p.format).transform();
-                    if (t.rotate == 90 or t.rotate == 270) std.mem.swap(u32, &w, &h);
-                }
-                return .{ .meta = .{ .w = w, .h = h, .format = p.format } };
-            } else |e| switch (e) {
-                // HEIC/AVIF have no header probe — fall through to full decode
-                // via the system backend.
-                error.UnsupportedOnPlatform => {},
-                else => return e,
-            }
-        }
+        // reported dims, no pixels involved. null ⇒ HEIC/AVIF have no header
+        // probe — fall through to full decode via the system backend.
+        if (this.kind == .metadata)
+            if (try probeMeta(input, this.max_pixels, this.auto_orient)) |m|
+                return .{ .meta = m };
 
         // Sniff format and read orientation once up front. JPEG orientation is
         // a cheap byte walk; HEIC/TIFF/AVIF go through the system backend
@@ -1169,13 +1153,7 @@ pub const PipelineTask = struct {
                     try promise.resolve(global, write_promise);
                 },
             },
-            .meta => |m| {
-                const obj = jsc.JSValue.createEmptyObject(global, 3);
-                obj.put(global, jsc.ZigString.static("width"), jsc.JSValue.jsNumber(m.w));
-                obj.put(global, jsc.ZigString.static("height"), jsc.JSValue.jsNumber(m.h));
-                obj.put(global, jsc.ZigString.static("format"), jsc.ZigString.init(@tagName(m.format)).toJS(global));
-                try promise.resolve(global, obj);
-            },
+            .meta => |m| try promise.resolve(global, m.toJS(global)),
             .err => |e| try promise.reject(global, rejectError(global, e)),
             .io_err => |e| try promise.reject(global, e.toJS(global)),
         }
@@ -1233,6 +1211,23 @@ pub const PipelineTask = struct {
         }
         if (r.without_enlargement and (w > sw or h > sh)) return .{ .w = sw, .h = sh };
         return .{ .w = w, .h = h };
+    }
+
+    /// Header-only probe + EXIF orient-swap. `null` ⇒ UnsupportedOnPlatform
+    /// (HEIC/AVIF/TIFF have no header parser; caller falls through to full
+    /// decode). Shared by the JS-thread sync path in `doMetadata()` and the
+    /// worker-thread path in `runInner()` so a future TIFF-IFD0 / HEIF-`ispe`
+    /// probe lands in one spot.
+    fn probeMeta(input: []const u8, max_pixels: u64, auto_orient: bool) codecs.Error!?Meta {
+        const p = codecs.probe(input, max_pixels) catch |e|
+            return if (e == error.UnsupportedOnPlatform) null else e;
+        var w = p.width;
+        var h = p.height;
+        if (auto_orient) {
+            const t = readOrientation(input, p.format).transform();
+            if (t.rotate == 90 or t.rotate == 270) std.mem.swap(u32, &w, &h);
+        }
+        return .{ .w = w, .h = h, .format = p.format };
     }
 
     /// EXIF Orientation for whatever container `input` is. The Zig reader in

@@ -4,7 +4,7 @@ pub fn toHaveBeenNthCalledWith(this: *Expect, globalThis: *JSGlobalObject, callf
     const thisValue = callframe.this();
     const arguments = callframe.arguments();
     defer this.postMatch(globalThis);
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callframe, "toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

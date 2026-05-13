@@ -12,7 +12,7 @@ pub fn toEqualIgnoringWhitespace(this: *Expect, globalThis: *JSGlobalObject, cal
     this.incrementExpectCallCounter();
 
     const expected = arguments[0];
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toEqualIgnoringWhitespace", "<green>expected<r>");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toEqualIgnoringWhitespace", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
 
     if (!expected.isString()) {
         return globalThis.throw("toEqualIgnoringWhitespace() requires argument to be a string", .{});

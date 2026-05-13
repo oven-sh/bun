@@ -2,7 +2,7 @@ pub fn toBeInteger(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallF
     defer this.postMatch(globalThis);
 
     const thisValue = callFrame.this();
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeInteger", "");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeInteger", "")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

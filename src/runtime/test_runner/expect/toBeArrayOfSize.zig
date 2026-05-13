@@ -9,7 +9,7 @@ pub fn toBeArrayOfSize(this: *Expect, globalThis: *JSGlobalObject, callFrame: *C
         return globalThis.throwInvalidArguments("toBeArrayOfSize() requires 1 argument", .{});
     }
 
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeArrayOfSize", "");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeArrayOfSize", "")) orelse return this.deferredResult(thisValue);
 
     const size = arguments[0];
     size.ensureStillAlive();

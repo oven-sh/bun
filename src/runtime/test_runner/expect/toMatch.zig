@@ -22,7 +22,7 @@ pub fn toMatch(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
     }
     expected_value.ensureStillAlive();
 
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toMatch", "<green>expected<r>");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toMatch", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
 
     if (!value.isString()) {
         return globalThis.throw("Received value must be a string: {f}", .{value.toFmt(&formatter)});

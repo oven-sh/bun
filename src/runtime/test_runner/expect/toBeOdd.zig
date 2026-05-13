@@ -3,7 +3,7 @@ pub fn toBeOdd(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
 
     const thisValue = callFrame.this();
 
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeOdd", "");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeOdd", "")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

@@ -1,7 +1,7 @@
 pub fn toBeTruthy(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
     defer this.postMatch(globalThis);
     const thisValue = callFrame.this();
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeTruthy", "");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeTruthy", "")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

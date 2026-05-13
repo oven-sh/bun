@@ -8,7 +8,7 @@ pub fn toHaveBeenCalled(this: *Expect, globalThis: *JSGlobalObject, callframe: *
         return globalThis.throwInvalidArguments("toHaveBeenCalled() must not have an argument", .{});
     }
 
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenCalled", "");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callframe, "toHaveBeenCalled", "")) orelse return this.deferredResult(thisValue);
 
     const calls = try bun.cpp.JSMockFunction__getCalls(globalThis, value);
     this.incrementExpectCallCounter();

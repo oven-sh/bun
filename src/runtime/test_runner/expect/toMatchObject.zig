@@ -9,7 +9,7 @@ pub fn toMatchObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
 
     const not = this.flags.not;
 
-    const received_object: JSValue = try this.getValue(globalThis, thisValue, "toMatchObject", "<green>expected<r>");
+    const received_object: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toMatchObject", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
 
     if (!received_object.isObject()) {
         const matcher_error = "\n\n<b>Matcher error<r>: <red>received<r> value must be a non-null object\n";

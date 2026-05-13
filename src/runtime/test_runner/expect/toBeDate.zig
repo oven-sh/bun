@@ -2,7 +2,7 @@ pub fn toBeDate(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFram
     defer this.postMatch(globalThis);
 
     const thisValue = callFrame.this();
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeDate", "");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeDate", "")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

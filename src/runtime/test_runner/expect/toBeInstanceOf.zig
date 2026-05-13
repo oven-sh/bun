@@ -19,7 +19,7 @@ pub fn toBeInstanceOf(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
     }
     expected_value.ensureStillAlive();
 
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeInstanceOf", "<green>expected<r>");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeInstanceOf", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
 
     const not = this.flags.not;
     var pass = value.isInstanceOf(globalThis, expected_value);

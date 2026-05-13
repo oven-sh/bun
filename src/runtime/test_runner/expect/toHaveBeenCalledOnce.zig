@@ -3,7 +3,7 @@ pub fn toHaveBeenCalledOnce(this: *Expect, globalThis: *JSGlobalObject, callfram
 
     const thisValue = callframe.this();
     defer this.postMatch(globalThis);
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenCalledOnce", "<green>expected<r>");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callframe, "toHaveBeenCalledOnce", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

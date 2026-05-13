@@ -16,7 +16,7 @@ pub fn toContainEqual(
 
     const expected = arguments[0];
     expected.ensureStillAlive();
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toContainEqual", "<green>expected<r>");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toContainEqual", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
 
     const not = this.flags.not;
     var pass = false;

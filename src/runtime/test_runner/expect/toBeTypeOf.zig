@@ -20,7 +20,7 @@ pub fn toBeTypeOf(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
         return globalThis.throwInvalidArguments("toBeTypeOf() requires 1 argument", .{});
     }
 
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeTypeOf", "");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeTypeOf", "")) orelse return this.deferredResult(thisValue);
 
     const expected = arguments[0];
     expected.ensureStillAlive();

@@ -2,7 +2,7 @@ pub fn toBeFunction(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Call
     defer this.postMatch(globalThis);
 
     const thisValue = callFrame.this();
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeFunction", "");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeFunction", "")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

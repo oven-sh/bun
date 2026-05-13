@@ -14,7 +14,7 @@ pub fn toBeGreaterThan(this: *Expect, globalThis: *JSGlobalObject, callFrame: *C
     const other_value = arguments[0];
     other_value.ensureStillAlive();
 
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeGreaterThan", "<green>expected<r>");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeGreaterThan", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
 
     if ((!value.isNumber() and !value.isBigInt()) or (!other_value.isNumber() and !other_value.isBigInt())) {
         return globalThis.throw("Expected and actual values must be numbers or bigints", .{});

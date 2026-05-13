@@ -3,7 +3,7 @@ pub fn toBeEven(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFram
 
     const thisValue = callFrame.this();
 
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeEven", "");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeEven", "")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

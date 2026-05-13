@@ -34,7 +34,8 @@ pub fn toThrowErrorMatchingSnapshot(this: *Expect, globalThis: *JSGlobalObject, 
     var hint = hint_string.toSlice(default_allocator);
     defer hint.deinit();
 
-    const value: JSValue = (try this.fnToErrStringOrUndefined(globalThis, try this.getValue(globalThis, thisValue, "toThrowErrorMatchingSnapshot", "<green>properties<r><d>, <r>hint"))) orelse {
+    const received = (try this.getValue(globalThis, thisValue, callFrame, "toThrowErrorMatchingSnapshot", "<green>properties<r><d>, <r>hint")) orelse return this.deferredResult(thisValue);
+    const value: JSValue = (try this.fnToErrStringOrUndefined(globalThis, received)) orelse {
         const signature = comptime getSignature("toThrowErrorMatchingSnapshot", "", false);
         return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Received function did not throw\n", .{});
     };

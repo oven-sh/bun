@@ -16,7 +16,7 @@ pub fn toEndWith(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
         return globalThis.throw("toEndWith() requires the first argument to be a string", .{});
     }
 
-    const value: JSValue = try this.getValue(globalThis, thisValue, "toEndWith", "<green>expected<r>");
+    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toEndWith", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
 
     this.incrementExpectCallCounter();
 

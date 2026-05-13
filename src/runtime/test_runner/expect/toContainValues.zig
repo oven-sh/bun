@@ -19,7 +19,7 @@ pub fn toContainValues(
         return globalObject.throwInvalidArgumentType("toContainValues", "expected", "array");
     }
     expected.ensureStillAlive();
-    const value: JSValue = try this.getValue(globalObject, thisValue, "toContainValues", "<green>expected<r>");
+    const value: JSValue = (try this.getValue(globalObject, thisValue, callFrame, "toContainValues", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
 
     const not = this.flags.not;
     var pass = true;

@@ -3604,13 +3604,26 @@ function listenInCluster(
     if (err) {
       throw new ExceptionWithHostPort(err, "bind", address, port);
     }
+    // Bun: IPC socket-handle passing isn't implemented yet, so the primary
+    // can't distribute accepted connections to workers (RoundRobinHandle is
+    // a stub). Instead, bind directly in the worker with SO_REUSEPORT so the
+    // kernel load-balances across workers. Use the port the primary resolved
+    // so that `port: 0` maps every worker to the same concrete port rather
+    // than N independent random ports.
+    let actualPort = port;
+    if (handle && typeof handle.getsockname === "function") {
+      const out: { port?: number } = {};
+      handle.getsockname(out);
+      const { port: resolvedPort } = out;
+      if (typeof resolvedPort === "number") actualPort = resolvedPort;
+    }
     server[kRealListen](
       path,
-      port,
+      actualPort,
       hostname,
       exclusive,
       ipv6Only,
-      reusePort,
+      true /* reusePort */,
       readableAll,
       writableAll,
       tls,

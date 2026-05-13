@@ -427,12 +427,20 @@ pub type SourceMapper<T> = SourceMapFormat<T>;
 //
 // `#[inline(never)]` is kept on the cross-crate entry points only
 // (`generate_chunk` matches Zig's `noinline`; `add_source_mapping` is the
-// per-token call site from the printer). `update_generated_line_and_column` is
-// *not* marked never-inline — Zig's `updateGeneratedLineAndColumn` isn't
-// `noinline` either — so LLVM may fold it into `add_source_mapping` and skip
-// the extra call+ret per emitted token. The concrete (non-generic) impl is
-// what prevents the cross-CGU duplication; the inline barrier is not needed
-// for that on the intra-crate callee.
+// per-token call site from the printer).
+//
+// `update_generated_line_and_column` is split: the `#[inline]` wrapper holds
+// *only* the ASCII-window fast path (bump `generated_column` by the window
+// length and return), so it folds into both callers and the per-token path
+// stays a single function with `generated_column`/`last_generated_update` in
+// registers — no `call`+`ret`, no argument/return spill per emitted token.
+// (In the Zig build LLVM folds `updateGeneratedLineAndColumn` wholesale into
+// `addSourceMapping`; as a standalone `pub fn` in Rust it was kept out of
+// line and showed up as its own profile symbol — the call overhead the Zig
+// build doesn't pay.) The rare newline/non-ASCII case tail-calls
+// `update_generated_line_and_column_slow`, which is `#[inline(never)] #[cold]`
+// and lives once in this crate, adjacent to `flush_window`. The concrete
+// (non-generic) impl is what pins one copy per CGU.
 impl NewBuilder<VLQSourceMap> {
     #[inline(never)]
     pub fn generate_chunk(&mut self, output: &[u8]) -> Chunk {
@@ -463,25 +471,33 @@ impl NewBuilder<VLQSourceMap> {
     }
 
     // Scan over the printed text since the last source mapping and update the
-    // generated line and column numbers
+    // generated line and column numbers.
+    //
+    // ASCII fast path: the window between two source mappings is almost always
+    // pure printable ASCII with no `\r`/`\n` (e.g. eslint and most JS sources).
+    // `index_of_newline_or_non_ascii` flags any byte `< 0x20` (except `\t`) or
+    // `> 127`, so a `None` result means every byte in the window — including
+    // any `\t` — advances the generated column by exactly 1 and never crosses a
+    // line boundary. This `#[inline]` shim handles only that case so it folds
+    // into the per-token callers (see the impl-level PERF note); the per-rune
+    // WTF-8 decode loop is out of line in `_slow` and reached only when a
+    // newline or non-ASCII byte actually exists in the window.
+    #[inline]
     pub fn update_generated_line_and_column(&mut self, output: &[u8]) {
         let slice = &output[self.last_generated_update as usize..];
-
-        // ASCII fast path: the window between two source mappings is almost
-        // always pure printable ASCII with no `\r`/`\n` (e.g. eslint and most
-        // JS sources). `index_of_newline_or_non_ascii` flags any byte `< 0x20`
-        // (except `\t`) or `> 127`, so a `None` result means every byte in the
-        // window — including any `\t` — advances the generated column by exactly
-        // 1 and never crosses a line boundary. Skip the per-rune WTF-8 decode
-        // (`wtf8_byte_sequence_length_with_invalid` + `decode_wtf8_rune_t` per
-        // rune) entirely in that case; fall to the rune loop only when a
-        // newline or non-ASCII byte actually exists in the window.
         if strings::index_of_newline_or_non_ascii(slice, 0).is_none() {
             debug_assert!(slice.len() <= i32::MAX as usize);
             self.generated_column += slice.len() as i32;
             self.last_generated_update = output.len() as u32;
             return;
         }
+        self.update_generated_line_and_column_slow(output);
+    }
+
+    #[inline(never)]
+    #[cold]
+    fn update_generated_line_and_column_slow(&mut self, output: &[u8]) {
+        let slice = &output[self.last_generated_update as usize..];
 
         let mut needs_mapping = self.cover_lines_without_mappings
             && !self.line_starts_with_mapping

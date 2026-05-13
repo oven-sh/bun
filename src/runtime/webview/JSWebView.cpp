@@ -20,6 +20,8 @@
 #include <JavaScriptCore/WeakInlines.h>
 #include <JavaScriptCore/WeakHandleOwner.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/RunLoop.h>
+#include <wtf/text/MakeString.h>
 
 namespace Bun {
 
@@ -59,6 +61,11 @@ void settleSlot(JSGlobalObject* g, JSWebView* v,
     JSPromise* p = slot.get();
     if (!p) return;
     slot.clear();
+    // Navigate settled → invalidate the armed timeout. The dispatchAfter
+    // timer self-owns; bumping the generation is how we "cancel" — when
+    // it eventually fires it sees the mismatch and returns. Identity
+    // check because callers pass the barrier member directly.
+    if (&slot == &v->m_pendingNavigate) ++v->m_navGeneration;
     v->m_pendingActivityCount.fetch_sub(1, std::memory_order_release);
     if (ok)
         p->resolve(g, g->vm(), value);
@@ -179,14 +186,67 @@ const ClassInfo JSWebView::s_info = { "WebView"_s, &Base::s_info, nullptr, nullp
 #define WK_DISPATCH(call) return call
 #endif
 
-JSPromise* JSWebView::navigate(JSGlobalObject* g, const WTF::String& url)
+// Resolve a viewId back to its JSWebView through the backend's routing
+// table. The timeout timer fires on the event loop with only POD captures;
+// this re-establishes the view pointer. Null if the view was collected
+// (user dropped both view and its awaited promise) or closed.
+static JSWebView* viewByIdForBackend(WebViewBackend backend, uint32_t viewId)
 {
+    if (backend == WebViewBackend::Chrome) return CDP::transport().viewFor(viewId);
+#if OS(DARWIN)
+    auto& byId = WK::client().viewsById;
+    auto it = byId.find(viewId);
+    return it == byId.end() ? nullptr : it->second.get();
+#else
+    return nullptr;
+#endif
+}
+
+void JSWebView::armNavTimeout(JSGlobalObject* g, uint32_t timeoutMs)
+{
+    // Arm AFTER the backend op stored the promise. A sync-rejected op
+    // (transport dead, spawn failed) never sets the slot → nothing to
+    // time out. Also skip if the caller asked for no timeout.
+    if (!m_pendingNavigate || timeoutMs == 0) return;
+
+    uint32_t gen = m_navGeneration;
+    uint32_t vid = m_viewId;
+    auto backend = m_backend;
+    auto* global = defaultGlobalObject(g);
+    // dispatchAfter self-refs: the returned DispatchTimer owns a closure
+    // that holds a Ref back to itself, released when fired(). We don't
+    // cancel — settleSlot bumps m_navGeneration so a late fire no-ops.
+    // WTFTimer (the Bun-side backing) doesn't ref the event loop; the
+    // navigate promise already does via m_pendingActivityCount.
+    (void)WTF::RunLoop::currentSingleton().dispatchAfter(
+        WTF::Seconds::fromMilliseconds(timeoutMs),
+        [global, vid, gen, backend, timeoutMs]() {
+            JSWebView* v = viewByIdForBackend(backend, vid);
+            if (!v || v->m_navGeneration != gen || !v->m_pendingNavigate) return;
+            v->m_loading = false;
+            settleSlot(global, v, v->m_pendingNavigate, false,
+                createError(global, makeString("Navigation timeout of "_s, timeoutMs, "ms exceeded"_s)));
+        });
+}
+
+JSPromise* JSWebView::navigate(JSGlobalObject* g, const WTF::String& url, NavWaitUntil waitUntil, uint32_t timeoutMs)
+{
+    m_navWaitUntil = waitUntil;
+    ++m_navGeneration;
     if (m_backend == WebViewBackend::Chrome) {
         auto* p = CDP::Ops::navigate(g, this, url);
         if (m_pendingNavigate) m_loading = true;
+        armNavTimeout(g, timeoutMs);
         return p;
     }
-    WK_DISPATCH(WK::Ops::navigate(g, this, url));
+#if OS(DARWIN)
+    auto* p = WK::Ops::navigate(g, this, url);
+    armNavTimeout(g, timeoutMs);
+    return p;
+#else
+    RELEASE_ASSERT_NOT_REACHED();
+    return nullptr;
+#endif
 }
 
 JSPromise* JSWebView::evaluate(JSGlobalObject* g, const WTF::String& script)
@@ -257,21 +317,44 @@ JSPromise* JSWebView::resize(JSGlobalObject* g, uint32_t width, uint32_t height)
     WK_DISPATCH(WK::Ops::resize(g, this, width, height));
 }
 
-JSPromise* JSWebView::goBack(JSGlobalObject* g)
+// Chrome's goBack/goForward/reload all settle via Page.lifecycleEvent /
+// loadEventFired → same waitUntil + timeout handling as navigate().
+// WebKit's Ack is sync (Misc slot) for these, so waitUntil is moot there;
+// the timeout still applies but will never fire in practice (Ack is
+// immediate). Arming it anyway keeps the two backends symmetric.
+JSPromise* JSWebView::goBack(JSGlobalObject* g, NavWaitUntil waitUntil, uint32_t timeoutMs)
 {
-    if (m_backend == WebViewBackend::Chrome) return CDP::Ops::goBack(g, this);
+    m_navWaitUntil = waitUntil;
+    ++m_navGeneration;
+    if (m_backend == WebViewBackend::Chrome) {
+        auto* p = CDP::Ops::goBack(g, this);
+        armNavTimeout(g, timeoutMs);
+        return p;
+    }
     WK_DISPATCH(WK::Ops::goBack(g, this));
 }
 
-JSPromise* JSWebView::goForward(JSGlobalObject* g)
+JSPromise* JSWebView::goForward(JSGlobalObject* g, NavWaitUntil waitUntil, uint32_t timeoutMs)
 {
-    if (m_backend == WebViewBackend::Chrome) return CDP::Ops::goForward(g, this);
+    m_navWaitUntil = waitUntil;
+    ++m_navGeneration;
+    if (m_backend == WebViewBackend::Chrome) {
+        auto* p = CDP::Ops::goForward(g, this);
+        armNavTimeout(g, timeoutMs);
+        return p;
+    }
     WK_DISPATCH(WK::Ops::goForward(g, this));
 }
 
-JSPromise* JSWebView::reload(JSGlobalObject* g)
+JSPromise* JSWebView::reload(JSGlobalObject* g, NavWaitUntil waitUntil, uint32_t timeoutMs)
 {
-    if (m_backend == WebViewBackend::Chrome) return CDP::Ops::reload(g, this);
+    m_navWaitUntil = waitUntil;
+    ++m_navGeneration;
+    if (m_backend == WebViewBackend::Chrome) {
+        auto* p = CDP::Ops::reload(g, this);
+        armNavTimeout(g, timeoutMs);
+        return p;
+    }
     WK_DISPATCH(WK::Ops::reload(g, this));
 }
 

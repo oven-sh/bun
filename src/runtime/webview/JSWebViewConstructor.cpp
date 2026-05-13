@@ -353,7 +353,7 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
         }
         view->m_consoleIsGlobal = consoleIsGlobal;
         if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);
-        if (!initialUrl.isEmpty()) view->navigate(globalObject, initialUrl);
+        if (!initialUrl.isEmpty()) view->navigate(globalObject, initialUrl, NavWaitUntil::Load, 30000);
         return JSValue::encode(view);
     }
 
@@ -377,7 +377,7 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     // first navigate via view.onNavigated or a second navigate that picks
     // up the pending state. Same semantics as `view.navigate(url)` right
     // after construction — just one line shorter.
-    if (!initialUrl.isEmpty()) view->navigate(globalObject, initialUrl);
+    if (!initialUrl.isEmpty()) view->navigate(globalObject, initialUrl, NavWaitUntil::Load, 30000);
     return JSValue::encode(view);
 #endif
 }

@@ -207,6 +207,56 @@ static VirtualKey virtualKeyFromName(const WTF::String& s)
     return VirtualKey::Character;
 }
 
+// { waitUntil?: 'load'|'domcontentloaded', timeout?: number } — shared by
+// navigate/reload/goBack/goForward. Playwright defaults: 'load', 30000ms;
+// timeout: 0 disables. Returns false on validation error (scope has the
+// pending exception).
+static bool parseNavOptions(JSGlobalObject* g, ThrowScope& scope, JSValue opts,
+    NavWaitUntil& waitUntil, uint32_t& timeout)
+{
+    auto& vm = g->vm();
+    waitUntil = NavWaitUntil::Load;
+    timeout = 30000;
+    if (!opts.isObject()) return true;
+    JSObject* o = opts.getObject();
+
+    JSValue w = o->get(g, Identifier::fromString(vm, "waitUntil"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!w.isUndefined()) {
+        if (!w.isString()) {
+            Bun::ERR::INVALID_ARG_TYPE(scope, g, "options.waitUntil"_s, "string"_s, w);
+            return false;
+        }
+        WTF::String ws = w.toWTFString(g);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (ws == "load"_s) {
+            waitUntil = NavWaitUntil::Load;
+        } else if (ws == "domcontentloaded"_s) {
+            waitUntil = NavWaitUntil::DOMContentLoaded;
+        } else {
+            Bun::ERR::INVALID_ARG_VALUE(scope, g, "options.waitUntil"_s, w,
+                "must be \"load\" or \"domcontentloaded\""_s);
+            return false;
+        }
+    }
+
+    JSValue t = o->get(g, Identifier::fromString(vm, "timeout"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!t.isUndefined()) {
+        double tn = t.toNumber(g);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!std::isfinite(tn) || tn < 0) {
+            Bun::ERR::INVALID_ARG_VALUE(scope, g, "options.timeout"_s, t,
+                "must be a non-negative finite number"_s);
+            return false;
+        }
+        // Clamp to ~24.8 days — uint32 ms range. Anything larger is
+        // effectively "no timeout" anyway.
+        timeout = static_cast<uint32_t>(std::min(tn, static_cast<double>(std::numeric_limits<uint32_t>::max())));
+    }
+    return true;
+}
+
 // --- Core ops ---------------------------------------------------------------
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncNavigate, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -222,8 +272,15 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncNavigate, (JSGlobalObject * globalObj
     WTF::String url = urlArg.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    NavWaitUntil waitUntil;
+    uint32_t timeout;
+    if (!parseNavOptions(globalObject, scope, callFrame->argument(1), waitUntil, timeout)) return {};
+    // Option-object getters can call user code that closes the view.
+    if (thisObject->m_closed)
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "WebView is closed"_s);
+
     if (!checkSlot(globalObject, scope, thisObject->m_pendingNavigate, "a navigation"_s)) return {};
-    return JSValue::encode(thisObject->navigate(globalObject, url));
+    return JSValue::encode(thisObject->navigate(globalObject, url, waitUntil, timeout));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncEvaluate, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -626,8 +683,11 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncBack, (JSGlobalObject * globalObject,
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "goBack"_s);
     RETURN_IF_EXCEPTION(scope, {});
+    NavWaitUntil waitUntil;
+    uint32_t timeout;
+    if (!parseNavOptions(globalObject, scope, callFrame->argument(0), waitUntil, timeout)) return {};
     if (!checkSlot(globalObject, scope, navSlot(thisObject), "a navigation"_s)) return {};
-    return JSValue::encode(thisObject->goBack(globalObject));
+    return JSValue::encode(thisObject->goBack(globalObject, waitUntil, timeout));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncForward, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -636,8 +696,11 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncForward, (JSGlobalObject * globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "goForward"_s);
     RETURN_IF_EXCEPTION(scope, {});
+    NavWaitUntil waitUntil;
+    uint32_t timeout;
+    if (!parseNavOptions(globalObject, scope, callFrame->argument(0), waitUntil, timeout)) return {};
     if (!checkSlot(globalObject, scope, navSlot(thisObject), "a navigation"_s)) return {};
-    return JSValue::encode(thisObject->goForward(globalObject));
+    return JSValue::encode(thisObject->goForward(globalObject, waitUntil, timeout));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncReload, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -646,8 +709,11 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncReload, (JSGlobalObject * globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "reload"_s);
     RETURN_IF_EXCEPTION(scope, {});
+    NavWaitUntil waitUntil;
+    uint32_t timeout;
+    if (!parseNavOptions(globalObject, scope, callFrame->argument(0), waitUntil, timeout)) return {};
     if (!checkSlot(globalObject, scope, navSlot(thisObject), "a navigation"_s)) return {};
-    return JSValue::encode(thisObject->reload(globalObject));
+    return JSValue::encode(thisObject->reload(globalObject, waitUntil, timeout));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClose, (JSGlobalObject * globalObject, CallFrame* callFrame))

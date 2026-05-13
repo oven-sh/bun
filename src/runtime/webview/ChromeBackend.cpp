@@ -765,6 +765,18 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         uint32_t rid = nextId();
         send(0, Command(rid, "Runtime.enable"_s, sidSpan));
 
+        // Page.setLifecycleEventsEnabled — fire-and-forget. Chrome then
+        // emits Page.lifecycleEvent {frameId, loaderId, name} for commit/
+        // DOMContentLoaded/load/networkIdle. navigate({waitUntil:
+        // 'domcontentloaded'}) settles on that instead of loadEventFired,
+        // so pages that never fire `load` (SSE, long-poll, a hung
+        // subresource) don't hang the await. Enabling replays the current
+        // document's events, but m_frameId/m_loaderId are unset until the
+        // USER url's frameNavigated, so the about:blank replay never
+        // matches.
+        uint32_t lid = nextId();
+        send(0, Command(lid, "Page.setLifecycleEventsEnabled"_s, sidSpan).boolean("enabled"_s, true));
+
         // Page.navigate with the url stashed by the first navigate() call.
         // The response confirms the navigation STARTED; Page.loadEventFired
         // confirms completion. We keep the pending entry alive for the
@@ -1091,14 +1103,35 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
+    // Chained from lifecycleEvent/loadEventFired: Runtime.evaluate(
+    // "document.title") so view.title is populated when navigate()
+    // resolves — matches WKWebView's NavDone which packs url+title in
+    // one reply. One extra roundtrip (~1ms), but the user-visible
+    // guarantee (`await view.navigate(); view.title` works) is worth
+    // it. PageTitle's response handler is the settle point.
+    auto chainTitle = [&]() {
+        uint32_t tid = nextId();
+        m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId });
+        send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
+    };
+
     // Page.frameNavigated — commit. Update m_url and fire onNavigated.
     // Same timing as WKWebView's NavDone (didFinishNavigation): the URL is
     // now the new document, resources may still be loading.
     if (method.size() == 19 && memcmp(method.data(), "Page.frameNavigated", 19) == 0) {
         auto frame = jsonField(params, { "frame", 5 });
+        // Subframe commits have frame.parentId set; only the main frame
+        // updates m_url and the lifecycle loaderId. (frameNavigated for
+        // subframes is rare without Page.setFrameTree, but an <iframe>
+        // doc.write can trigger one.)
+        if (!jsonField(frame, { "parentId", 8 }).empty()) return;
         auto url = jsonString(jsonField(frame, { "url", 3 }));
         auto urlStr = WTF::String::fromUTF8(url);
         view->m_url = urlStr;
+        // Stash for lifecycleEvent matching. loaderId changes every
+        // navigation; frame.id is stable for the target's main frame.
+        view->m_frameId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "id", 2 })));
+        view->m_loaderId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "loaderId", 8 })));
         // m_loading stays true — loadEventFired flips it.
 
         if (JSObject* cb = view->m_onNavigated.get()) {
@@ -1108,19 +1141,53 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Page.loadEventFired — load complete. Chain a document.title fetch
-    // so view.title is populated when navigate() resolves — matches
-    // WKWebView's NavDone which packs url+title in one reply. One extra
-    // roundtrip (~1ms), but the user-visible guarantee is worth it:
-    // `await view.navigate(); view.title` just works.
+    // Page.lifecycleEvent — {frameId, loaderId, name, timestamp}. Fires
+    // for commit, DOMContentLoaded, load, networkAlmostIdle, networkIdle
+    // on every frame. We settle the Navigate slot when the main frame's
+    // current loaderId reaches the user's waitUntil milestone. Gating on
+    // loaderId is what makes 'domcontentloaded' safe: Chrome REPLAYS the
+    // prior document's lifecycle on setLifecycleEventsEnabled, and
+    // subframes fire their own — neither has our loaderId.
     //
-    // If no navigate is pending (uninitiated navigation, redirect), the
-    // PageTitle handler settles a no-op and m_title still updates.
+    // waitUntil:'load' is left to Page.loadEventFired below (it fires
+    // once for the main frame only, after lifecycleEvent(name=load)) —
+    // existing behavior preserved and no duplicate title-fetch.
+    if (method.size() == 19 && memcmp(method.data(), "Page.lifecycleEvent", 19) == 0) {
+        if (!view->m_pendingNavigate || view->m_navWaitUntil != NavWaitUntil::DOMContentLoaded)
+            return;
+        auto name = jsonString(jsonField(params, { "name", 4 }));
+        // `load` also satisfies `domcontentloaded` — it can only fire
+        // after DCL, and on some same-document navigations Chrome skips
+        // DCL and emits load directly. Playwright's LifecycleWatcher
+        // treats it the same way.
+        if (!(name.size() == 16 && memcmp(name.data(), "DOMContentLoaded", 16) == 0)
+            && !(name.size() == 4 && memcmp(name.data(), "load", 4) == 0))
+            return;
+        if (view->m_frameId.isEmpty()) return; // frameNavigated hasn't committed yet
+        auto frameId = jsonString(jsonField(params, { "frameId", 7 }));
+        auto loaderId = jsonString(jsonField(params, { "loaderId", 8 }));
+        auto fUtf = view->m_frameId.utf8();
+        auto lUtf = view->m_loaderId.utf8();
+        if (frameId.size() != fUtf.length() || memcmp(frameId.data(), fUtf.data(), frameId.size()) != 0) return;
+        if (loaderId.size() != lUtf.length() || memcmp(loaderId.data(), lUtf.data(), loaderId.size()) != 0) return;
+        chainTitle();
+        return;
+    }
+
+    // Page.loadEventFired — window `load` fired on the main frame. This
+    // is the settle path for waitUntil:'load' (default). m_loading
+    // always flips here regardless of waitUntil — it tracks the REAL
+    // load state, not the user's chosen milestone.
+    //
+    // chainTitle() runs unconditionally so m_title tracks uninitiated
+    // navigations (window.location, meta refresh) too. If the Navigate
+    // slot already settled (domcontentloaded earlier), PageTitle's
+    // settleSlot sees an empty slot and no-ops — one extra ~1ms
+    // roundtrip for 'domcontentloaded' navigates, but m_title then
+    // reflects any <title> mutation between DCL and load.
     if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
         view->m_loading = false;
-        uint32_t tid = nextId();
-        m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId });
-        send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
+        chainTitle();
         return;
     }
 

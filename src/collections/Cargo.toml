@@ -8,7 +8,10 @@ path = "lib.rs"
 
 [dependencies]
 strum.workspace = true
-hashbrown.workspace = true
+# `raw-entry` powers `StringHashMap::{get_hashed, put_static_key_hashed}` — the
+# precomputed-hash probe/insert path the resolver's `DirEntry::add_entry` hot
+# loop uses so it hashes each basename once instead of on every lookup + insert.
+hashbrown = { workspace = true, features = ["raw-entry"] }
 # Direct dep purely so its `nightly` feature unifies — makes hashbrown's
 # `Allocator` bound a re-export of `core::alloc::Allocator` instead of the
 # polyfill trait, so `bun_alloc::AstAlloc` (which only implements the real

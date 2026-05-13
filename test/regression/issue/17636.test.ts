@@ -69,8 +69,7 @@ test.concurrent("monkey-patched process.emit observes 'beforeExit' and 'exit' on
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const seen = JSON.parse(stdout.trim());
-  expect(seen).toContain("beforeExit:0");
-  expect(seen).toContain("exit:0");
+  expect(seen).toEqual(["beforeExit:0", "exit:0"]);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

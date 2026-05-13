@@ -178,6 +178,18 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  test("many user conditions does not crash", async () => {
+    const conditions = Array.from({ length: 20 }, (_, i) => "cond" + i);
+    for (const target of ["bun", "node", "browser"] as const) {
+      const build = await Bun.build({
+        entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
+        target,
+        conditions,
+      });
+      expect(build.success).toBe(true);
+    }
+  });
+
   test("Bun.write(BuildArtifact)", async () => {
     Bun.gc(true);
     const tmpdir = tempDirWithFiles("bun-build-api-write", {

@@ -660,12 +660,32 @@ pub const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
 // + short-index entirely at const-eval, so `parse_with_table` does zero runtime
 // conversion / allocation / sorting / locking. perf: `ConvertedTable::build` +
 // quicksort + RawVec::grow was 8.7 % of `bun --version` userland samples.
+//
+// `.rodata.startup`: `comptime_table!` clusters the run/default-command tables'
+// nested `__CONV` / `__LONG` / `__TABLE` payloads there (see `src/clap/lib.rs`),
+// and the matching outer `&ConvertedTable` pointer statics — the ones
+// `tag_table()` returns and the `bun <file>` / `bun run` dispatch + arg-parse
+// fast path dereferences — otherwise each get their own `.data.rel.ro.<sym>`
+// (or `.rodata.<sym>`) input section, which fat-LTO scatters across distinct
+// pages in crate order. Pinning AUTO/RUN next to their `__TABLE` payloads packs
+// the trivial-script arg-parse working set onto a couple of shared fault-around
+// pages. Non-PIE `bun` has zero runtime relocations, so a `&'static` pointer
+// literal stays in plain rodata even in `.rodata.startup`. Linux-only: ELF
+// section syntax.
+//
+// The subcommand tables (`build` / `test`, plus the `BASE_RUNTIME_TRANSPILER`
+// catch-all used by `install` / `pm` / `x` / …) are built with
+// `comptime_table!(.., cold)` and left out of the `.rodata.startup` cluster:
+// `.rodata.startup` is deliberately one contiguous block so cold start faults
+// it in with a single read-around, and `bun <file>` never touches these.
+#[cfg_attr(target_os = "linux", unsafe(link_section = ".rodata.startup"))]
 pub static AUTO_TABLE: &clap::ConvertedTable = clap::comptime_table!(AUTO_PARAMS);
+#[cfg_attr(target_os = "linux", unsafe(link_section = ".rodata.startup"))]
 pub static RUN_TABLE: &clap::ConvertedTable = clap::comptime_table!(RUN_PARAMS);
-pub static BUILD_TABLE: &clap::ConvertedTable = clap::comptime_table!(BUILD_PARAMS);
-pub static TEST_TABLE: &clap::ConvertedTable = clap::comptime_table!(TEST_PARAMS);
+pub static BUILD_TABLE: &clap::ConvertedTable = clap::comptime_table!(BUILD_PARAMS, cold);
+pub static TEST_TABLE: &clap::ConvertedTable = clap::comptime_table!(TEST_PARAMS, cold);
 pub static BASE_RUNTIME_TRANSPILER_TABLE: &clap::ConvertedTable =
-    clap::comptime_table!(BASE_RUNTIME_TRANSPILER_PARAMS);
+    clap::comptime_table!(BASE_RUNTIME_TRANSPILER_PARAMS, cold);
 
 /// Per-tag pre-converted clap table (rodata, built at compile time via
 /// `comptime_table!`). This is what `parse` consumes so the startup path never

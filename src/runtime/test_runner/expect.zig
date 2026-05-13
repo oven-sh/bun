@@ -226,7 +226,7 @@ pub const Expect = struct {
         if (this.async_rerun_srcloc) |*old| old.str.deref();
         this.async_rerun_srcloc = callframe.getCallerSrcLoc(globalThis);
 
-        const deferred = try PendingMatcher.create(globalThis, thisValue, callframe, value, this.counted_expect_call);
+        const deferred = try PendingMatcher.create(globalThis, thisValue, callframe, value, this.counted_expect_call, this.flags);
         js.resultValueSetCached(thisValue, globalThis, deferred);
         return deferred;
     }
@@ -248,8 +248,14 @@ pub const Expect = struct {
         /// exactly once regardless of whether this matcher calls it
         /// before or after `getValue()`.
         was_counted_before_defer: bool,
+        /// The `Expect.flags` at the time we deferred. `.not` / `.resolves`
+        /// / `.rejects` mutate flags in place on the shared instance, so a
+        /// later matcher call on the same `expect()` could flip them before
+        /// this re-run fires; restore so the re-run observes the flags the
+        /// user wrote for *this* matcher call.
+        flags_at_defer: Expect.Flags,
 
-        fn create(globalThis: *JSGlobalObject, thisValue: JSValue, callframe: *CallFrame, promise_value: JSValue, was_counted: bool) bun.JSError!JSValue {
+        fn create(globalThis: *JSGlobalObject, thisValue: JSValue, callframe: *CallFrame, promise_value: JSValue, was_counted: bool, flags: Expect.Flags) bun.JSError!JSValue {
             const args = callframe.arguments();
             const args_array = try JSValue.createEmptyArray(globalThis, args.len);
             for (args, 0..) |arg, i| {
@@ -262,6 +268,7 @@ pub const Expect = struct {
                 .matcher_args = .create(args_array, globalThis),
                 .deferred = jsc.JSPromise.Strong.init(globalThis),
                 .was_counted_before_defer = was_counted,
+                .flags_at_defer = flags,
             });
             const deferred_value = pending.deferred.value();
 
@@ -326,17 +333,23 @@ pub const Expect = struct {
             // captured promise is now settled, so `processPromise` will
             // extract its result synchronously.
             //
-            // Restore `counted_expect_call` to its value at the point of
-            // defer: if the matcher incremented before `getValue()` on the
-            // first call, the re-run's increment is a no-op; if it
-            // increments after, the first call never reached it and the
-            // re-run does.
+            // Restore `counted_expect_call` and `flags` to their values at
+            // the point of defer: if the matcher incremented before
+            // `getValue()` on the first call, the re-run's increment is a
+            // no-op; if it increments after, the first call never reached
+            // it and the re-run does. `flags` is restored (and the current
+            // value put back afterwards) so a later `.not` on the same
+            // reused `expect()` instance doesn't leak into this re-run.
+            var saved_flags: Expect.Flags = undefined;
             if (Expect.fromJS(expect_this)) |expect| {
                 expect.is_async_rerun = true;
                 expect.counted_expect_call = this.was_counted_before_defer;
+                saved_flags = expect.flags;
+                expect.flags = this.flags_at_defer;
             }
             defer if (Expect.fromJS(expect_this)) |expect| {
                 expect.is_async_rerun = false;
+                expect.flags = saved_flags;
             };
 
             return matcher_fn.call(globalThis, expect_this, args_buf);

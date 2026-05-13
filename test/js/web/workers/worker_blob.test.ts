@@ -60,7 +60,7 @@ test("Worker from a blob errors on invalid blob", async () => {
   const { promise, reject } = Promise.withResolvers();
   const worker = new Worker("blob:i dont exist!");
   worker.addEventListener("error", e => reject(e.message));
-  expect(promise).rejects.toBe('BuildMessage: ModuleNotFound resolving "blob:i dont exist!" (entry point)');
+  await expect(promise).rejects.toBe('BuildMessage: ModuleNotFound resolving "blob:i dont exist!" (entry point)');
 });
 
 test("Revoking an object URL after a Worker is created before it loads should throw an error", async () => {

@@ -33,7 +33,7 @@ async function runFixture(name: string, source: string, extraEnv: Record<string,
   return { out: stdout + stderr, exitCode: proc.exitCode, timedOut };
 }
 
-describe("expect().resolves / .rejects on a still-pending promise", () => {
+describe.concurrent("expect().resolves / .rejects on a still-pending promise", () => {
   // Exact reproduction from #14950, plus the .rejects mirror and several
   // matcher variants.
   test("does not hang when the promise is settled after the matcher call", async () => {

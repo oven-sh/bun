@@ -2134,6 +2134,22 @@ fn transpile_source_code_inner(
                 }
             }
 
+            // PORT NOTE / fix: never reuse the watcher's cached fd for the
+            // `--hot` entrypoint. An atomic `rename()` over the entrypoint (the
+            // common HMR save pattern) replaces its inode; the watcher entry
+            // still holds an fd to the now-unlinked old inode until the
+            // IN_DELETE_SELF event for it is processed and `flush_evictions`
+            // closes it. If a reload's transpile runs first (e.g. the
+            // directory-watch recovery in `hot_reloader` re-fired the reload
+            // before that file event landed under load), reading via the stale
+            // fd returns the OLD file contents — the reload "succeeds" with the
+            // wrong source and `bun --hot` hangs. Re-open the entrypoint by
+            // path so we always see the current inode; `maybe_watch_file` below
+            // re-registers the fresh fd with the watcher.
+            if is_main && fd.is_some() {
+                fd = None;
+            }
+
             // ── RuntimeTranspilerCache ──────────────────────────────────────
             // Spec :178-182.
             // PORT NOTE: Zig threaded `output_code_allocator = arena.allocator()`,

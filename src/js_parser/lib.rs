@@ -243,8 +243,8 @@ pub enum AlreadyBundled {
 pub type BindingList = Vec<Binding>;
 
 /// `impl EqlParser for P` — moved out of `bun_ast::expr` (next to `P`).
-impl<'a, const IS_TS: bool, J: crate::JsxT, const SCAN: bool> bun_ast::expr::EqlParser
-    for crate::p::P<'a, IS_TS, J, SCAN>
+impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
+    for crate::p::P<'a, IS_TS, SCAN>
 {
     #[inline]
     fn arena(&self) -> &bun_alloc::Arena {

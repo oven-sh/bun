@@ -13,7 +13,7 @@ use bun_core::strings;
 use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{
-    AsyncPrefixExpression, AwaitOrYield, DeferredErrors, FnOrArrowDataParse, JsxT, ParenExprOpts,
+    AsyncPrefixExpression, AwaitOrYield, DeferredErrors, FnOrArrowDataParse, ParenExprOpts,
     ParseClassOptions, PropertyOpts, SkipTypeParameterResult, TypeParameterFlag, prefill,
 };
 use bun_ast::e::UnaryFlags;
@@ -31,7 +31,7 @@ type PResult<T> = core::result::Result<T, bun_core::Error>;
 // surfaced. Round-G un-gates the per-token bodies (same JsxT pattern as parseStmt.rs); helper
 // names pfx_-prefixed to avoid colliding with parseStmt.rs / parseSuffix.rs mixins on the same `P`.
 
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     fn pfx_t_super(p: &mut Self, level: Level) -> PResult<Expr> {
         let loc = p.lexer.loc();
         let super_range = p.lexer.range();
@@ -967,7 +967,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         //     <A>(x) => {}
         //     <A = B>(x) => {}
         // PERF(port): was comptime monomorphization — profile in Phase B
-        if Self::IS_TYPESCRIPT_ENABLED && Self::IS_JSX_ENABLED {
+        if Self::IS_TYPESCRIPT_ENABLED && p.is_jsx_enabled() {
             if p.is_ts_arrow_fn_jsx()? {
                 let _ =
                     p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
@@ -983,7 +983,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         }
 
-        if Self::IS_JSX_ENABLED {
+        if p.is_jsx_enabled() {
             // Use NextInsideJSXElement() instead of Next() so we parse "<<" as "<"
             p.lexer.next_inside_jsx_element()?;
             let element = p.parse_jsx_element(loc)?;

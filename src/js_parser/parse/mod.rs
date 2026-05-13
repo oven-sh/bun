@@ -32,7 +32,7 @@ use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
 use crate::parser::{
     AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
-    FnOrArrowDataParse, JsxT, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
+    FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
     ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
     StmtList, TypeParameterFlag,
 };
@@ -48,7 +48,7 @@ use bun_ast::{
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
 
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // Zig: `inline fn parseExprOrBindings(p, level, errors: ?*DeferredErrors, expr: *Expr) !void`
     #[inline]
     pub fn parse_expr_or_bindings(
@@ -1632,7 +1632,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // "async <T>() => {}"
                 T::TLessThan => {
                     if Self::IS_TYPESCRIPT_ENABLED
-                        && (!Self::IS_JSX_ENABLED || p.is_ts_arrow_fn_jsx()?)
+                        && (!p.is_jsx_enabled() || p.is_ts_arrow_fn_jsx()?)
                     {
                         match p
                             .try_skip_type_script_type_parameters_then_open_paren_with_backtracking(

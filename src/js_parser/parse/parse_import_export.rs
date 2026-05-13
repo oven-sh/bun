@@ -1,6 +1,6 @@
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
-use crate::parser::{ExportClauseResult, ImportClause, JsxT, is_eval_or_arguments};
+use crate::parser::{ExportClauseResult, ImportClause, is_eval_or_arguments};
 use bun_alloc::ArenaVecExt as _;
 use bun_ast::LexerLog as _;
 use bun_ast::expr::Data as ExprData;
@@ -12,7 +12,7 @@ use bun_core::Error;
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
 
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Note: The caller has already parsed the "import" keyword
     pub fn parse_import_expr(&mut self, loc: bun_ast::Loc, level: Level) -> Result<Expr, Error> {
         let p = self;

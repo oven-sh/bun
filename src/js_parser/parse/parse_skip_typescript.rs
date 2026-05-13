@@ -2,7 +2,7 @@
 #![warn(unused_must_use)]
 use crate::lexer::T;
 use crate::p::P;
-use crate::parser::{JsxT, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag};
+use crate::parser::{ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag};
 use crate::typescript;
 use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
@@ -20,7 +20,7 @@ use bun_core::{self, Error, err};
 // canonical definition in `TypeScript.rs`.
 pub type SkipTypeOptionsBitset = typescript::SkipTypeOptionsBitset;
 
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     #[inline]
     pub fn skip_typescript_return_type(&mut self) -> Result<(), Error> {
         self.skip_type_script_type_with_opts::<false>(

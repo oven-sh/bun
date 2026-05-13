@@ -10,7 +10,7 @@ use bun_core::{Error, err};
 
 use crate::lexer::T;
 use crate::p::P;
-use crate::parser::{DeferredErrors, JsxT};
+use crate::parser::{DeferredErrors};
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
@@ -29,7 +29,7 @@ enum Continuation {
 
 type CResult = core::result::Result<Continuation, Error>;
 
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     fn sfx_handle_typescript_as(p: &mut Self, level: Level) -> CResult {
         if Self::IS_TYPESCRIPT_ENABLED
             && level.lt(Level::Compare)

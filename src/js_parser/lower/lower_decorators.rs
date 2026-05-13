@@ -15,7 +15,7 @@ use core::ptr::NonNull;
 use bun_collections::{HashMap, VecExt};
 
 use crate::p::P;
-use crate::parser::{ARGUMENTS_STR as arguments_str, JsxT, Ref};
+use crate::parser::{ARGUMENTS_STR as arguments_str, Ref};
 use bun_ast::g::{Arg, Decl, DeclList, Property, PropertyKind};
 use bun_ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt, StmtNodeList, Symbol};
 
@@ -131,7 +131,7 @@ fn class_copy(c: &G::Class) -> G::Class {
 
 // ── impl P ───────────────────────────────────────────────────────────────────
 
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // ── Expression builder helpers ───────────────────────
 
     /// recordUsage + E.Identifier in one call.

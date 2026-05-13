@@ -703,6 +703,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// not share `.text` pages with the hot `bun run <script>` dispatch path.
     #[cold]
     #[inline(never)]
+    #[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
     fn configure_run_transpiler_linker(this_transpiler: &mut Transpiler<'static>) {
         this_transpiler.resolver.opts.load_tsconfig_json = true;
         this_transpiler.options.load_tsconfig_json = true;
@@ -1019,6 +1020,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// entry point through the bun-shell on a `MiniEventLoop` without ever
     /// initializing JSC.
     #[cold]
+    #[inline(never)]
+    #[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
     fn boot_bun_shell(
         ctx: &mut ContextData,
         entry_path: &[u8],
@@ -1650,8 +1653,6 @@ impl Run {
             }
         }
 
-        let mut printed_sourcemap_warning_and_version = false;
-
         match vm.load_entry_point(entry) {
             Ok(promise) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
@@ -1677,17 +1678,7 @@ impl Run {
                         // this VM; uniquely accessed here.
                         vm.event_loop_ref().tick_possibly_forever();
                     } else {
-                        vm.exit_handler.exit_code = 1;
-                        vm.on_exit();
-                        if ANY_UNHANDLED.load(Ordering::Relaxed) {
-                            printed_sourcemap_warning_and_version = true;
-                            bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
-                            pretty_errorln!(
-                                "<r>\n<d>{}<r>",
-                                Global::unhandled_error_bun_version_string,
-                            );
-                        }
-                        vm.global_exit();
+                        exit_with_unhandled_note(vm);
                     }
                 }
 
@@ -1699,26 +1690,7 @@ impl Run {
                     log_clear_msgs(vm);
                 }
             }
-            Err(err) => {
-                if log_has_msgs(vm) {
-                    dump_build_error(vm);
-                    log_clear_msgs(vm);
-                } else {
-                    pretty_errorln!(
-                        "Error occurred loading entry point: {}",
-                        bstr::BStr::new(err.name()),
-                    );
-                    Output::flush();
-                }
-                vm.exit_handler.exit_code = 1;
-                vm.on_exit();
-                if ANY_UNHANDLED.load(Ordering::Relaxed) {
-                    printed_sourcemap_warning_and_version = true;
-                    bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
-                    pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);
-                }
-                vm.global_exit();
-            }
+            Err(err) => entry_point_load_failed(vm, &err),
         }
 
         // don't run the GC if we don't actually need to
@@ -1822,10 +1794,8 @@ impl Run {
         vm.global().handle_rejected_promises();
         vm.on_exit();
 
-        if ANY_UNHANDLED.load(Ordering::Relaxed) && !printed_sourcemap_warning_and_version {
-            vm.exit_handler.exit_code = 1;
-            bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
-            pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);
+        if ANY_UNHANDLED.load(Ordering::Relaxed) {
+            print_unhandled_version_note(vm);
         }
 
         // These create undefined references to externally-defined C symbols
@@ -1862,6 +1832,7 @@ fn log_clear_msgs(vm: &mut VirtualMachine) {
 
 #[cold]
 #[inline(never)]
+#[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
 fn dump_build_error(vm: &mut VirtualMachine) {
     Output::flush();
     if let Some(log) = vm.log {
@@ -1872,6 +1843,53 @@ fn dump_build_error(vm: &mut VirtualMachine) {
         ));
     }
     Output::flush();
+}
+
+/// Cold tail shared by the rejected-entry-point and load-failure paths in
+/// `Run::start`: flag the exit code, run `on_exit`, optionally print the
+/// "unhandled error" sourcemap note + version string, then hard-exit. Hoisted
+/// out (and parked in `.text.unlikely` on linux) so the linker keeps it off the
+/// `.text.hot` fault-around window the `require('fs')` startup path pulls in.
+#[cold]
+#[inline(never)]
+#[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
+    vm.exit_handler.exit_code = 1;
+    vm.on_exit();
+    if ANY_UNHANDLED.load(Ordering::Relaxed) {
+        bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
+        pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);
+    }
+    vm.global_exit();
+}
+
+/// Cold `Err(err)` arm of `vm.load_entry_point` in `Run::start`.
+#[cold]
+#[inline(never)]
+#[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+fn entry_point_load_failed(vm: &mut VirtualMachine, err: &bun_core::Error) -> ! {
+    if log_has_msgs(vm) {
+        dump_build_error(vm);
+        log_clear_msgs(vm);
+    } else {
+        pretty_errorln!(
+            "Error occurred loading entry point: {}",
+            bstr::BStr::new(err.name()),
+        );
+        Output::flush();
+    }
+    exit_with_unhandled_note(vm);
+}
+
+/// Cold tail of `Run::start` when `ANY_UNHANDLED` tripped on an otherwise-clean
+/// exit: bump the exit code and print the sourcemap note + version string.
+#[cold]
+#[inline(never)]
+#[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+fn print_unhandled_version_note(vm: &mut VirtualMachine) {
+    vm.exit_handler.exit_code = 1;
+    bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
+    pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);
 }
 
 impl RunCommand {
@@ -1895,26 +1913,38 @@ impl RunCommand {
         let owned: Box<[u8]> = path.to_vec().into_boxed_slice();
 
         if let Err(err) = Self::boot(ctx, owned, loader) {
-            // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
-            // CLI startup) and is process-lifetime.
-
-            // PORT NOTE: `Log::print` is generic over `IntoLogWrite`, which is
-            // implemented for `*mut io::Writer` (not `&mut`). `error_writer()`
-            // returns the process-global writer; cast to the raw pointer the
-            // trait expects.
-            let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                Output::error_writer(),
-            ));
-
-            pretty_errorln!(
-                "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
-                bstr::BStr::new(paths::basename(path)),
-                bstr::BStr::new(err.name()),
-            );
-            bun_core::handle_error_return_trace(&err);
-            Global::exit(1);
+            Self::boot_failed_exit(ctx, paths::basename(path), &err);
         }
         true
+    }
+
+    /// Cold tail of the `bun <file>` / `bun run -` boot path: flush the parse
+    /// log, print `Failed to run <name> due to error <err>`, and `exit(1)`.
+    /// Hoisted into its own `#[cold] #[inline(never)]` (and parked in
+    /// `.text.unlikely` on linux) so PGO + the linker keep it out of the
+    /// `.text.hot` fault-around window the `require('fs')` startup path pulls in.
+    #[cold]
+    #[inline(never)]
+    #[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+    fn boot_failed_exit(ctx: &mut ContextData, display_name: &[u8], err: &bun_core::Error) -> ! {
+        // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
+        // CLI startup) and is process-lifetime.
+        //
+        // PORT NOTE: `Log::print` is generic over `IntoLogWrite`, which is
+        // implemented for `*mut io::Writer` (not `&mut`). `error_writer()`
+        // returns the process-global writer; cast to the raw pointer the
+        // trait expects.
+        let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
+            Output::error_writer(),
+        ));
+
+        pretty_errorln!(
+            "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
+            bstr::BStr::new(display_name),
+            bstr::BStr::new(err.name()),
+        );
+        bun_core::handle_error_return_trace(err);
+        Global::exit(1);
     }
 
     // This path is almost always a path to a user directory. So it cannot be
@@ -3058,18 +3088,7 @@ impl RunCommand {
         // (= "[stdin]"), in the error message.
         let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
         if let Err(err) = Self::boot(ctx, owned, None) {
-            // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
-            // CLI startup), process-lifetime.
-            let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                Output::error_writer(),
-            ));
-            pretty_errorln!(
-                "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
-                bstr::BStr::new(b"-"),
-                bstr::BStr::new(err.name()),
-            );
-            bun_core::handle_error_return_trace(&err);
-            Global::exit(1);
+            Self::boot_failed_exit(ctx, b"-", &err);
         }
         Ok(true)
     }
@@ -3126,11 +3145,7 @@ impl RunCommand {
         }
 
         if ctx.positionals.is_empty() {
-            Output::err_generic(
-                "Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.",
-                (),
-            );
-            Global::exit(1);
+            Self::exec_as_if_node_missing_script();
         }
 
         // PORT NOTE: borrowck — `_boot_and_handle_error` takes `&mut ctx`, so
@@ -3163,20 +3178,42 @@ impl RunCommand {
         // `Output.err(err, "Failed to run script \"...\"")` form.
         let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
         if let Err(err) = Self::boot(ctx, normalized, None) {
-            // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
-            // CLI startup), process-lifetime.
-            let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                Output::error_writer(),
-            ));
-
-            Output::err(
-                err,
-                "Failed to run script \"<b>{}<r>\"",
-                (bstr::BStr::new(&basename),),
-            );
-            Global::exit(1);
+            Self::exec_as_if_node_boot_failed(ctx, &basename, err);
         }
         Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    #[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+    fn exec_as_if_node_missing_script() -> ! {
+        Output::err_generic(
+            "Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.",
+            (),
+        );
+        Global::exit(1);
+    }
+
+    #[cold]
+    #[inline(never)]
+    #[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+    fn exec_as_if_node_boot_failed(
+        ctx: &mut ContextData,
+        basename: &[u8],
+        err: bun_core::Error,
+    ) -> ! {
+        // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
+        // CLI startup), process-lifetime.
+        let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
+            Output::error_writer(),
+        ));
+
+        Output::err(
+            err,
+            "Failed to run script \"<b>{}<r>\"",
+            (bstr::BStr::new(basename),),
+        );
+        Global::exit(1);
     }
 }
 

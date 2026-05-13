@@ -112,17 +112,37 @@ async function main(): Promise<void> {
 
 /**
  * Exercise the paths that dominate bun's cold start: clap arg-parse + CLI
- * dispatch, `bun run <script>` npm-script lookup/spawn (incl. `--bun` mode),
- * the module loader + CJS-wrap/transpile hot loop (at module-graph scale, not
- * just a couple files), the transpiler (js_parser/js_printer), the bundler +
+ * dispatch, the bare eval/print/exit slice (`bun -p '1+1'`, `bun -e ...`),
+ * `bun run <script>` npm-script lookup/spawn (incl. `--bun` mode), the module
+ * loader + CJS-wrap/transpile hot loop (at module-graph scale, not just a
+ * couple files), the transpiler (js_parser/js_printer), the bundler +
  * sourcemap chunk builder, and a touch of webcore. Every step is best-effort —
  * a non-zero exit (e.g. from `bun -e`) still leaves the already-executed code's
  * counters in the `.profraw`.
+ *
+ * Ordering matters: PGO classifies a function as `.text.hot` vs `.text.unlikely`
+ * from its execution count relative to the whole training run, so the *lightest*
+ * cold-start paths (eval/print, `require('fs')`) are run several times up front.
+ * Otherwise the heavier bundler / test / `bun run` cases below outvote them and
+ * the eval/print path lands in `.text.unlikely`, scattered across the ~54 MB
+ * `.text` — which is exactly the regression the `btg`/`startup/*` benches see.
  */
 function trainWorkload(bun: string, rawDir: string): void {
   // %m = binary signature, %p = pid → one distinct .profraw per run.
   const env = { ...process.env, LLVM_PROFILE_FILE: join(rawDir, "bun-%m-%p.profraw"), BUN_DEBUG_QUIET_LOGS: "1" };
   const train = (args: string[], cwd?: string) => run(bun, args, { cwd, env, allowFail: true, quiet: true });
+
+  // ── cold-start core (weighted heavily on purpose) ────────────────────────
+  // The single most important slice: clap arg-parse → CLI dispatch → JSC VM
+  // init + C++ .init_array ctors → eval → print → exit, with no module loading
+  // at all. This is precisely what `bun -p '1+1'` / `bun -e '1+1'` and several
+  // `startup/*` benches measure. Run it a handful of times so these functions
+  // get firmly into `.text.hot` and cluster contiguously.
+  for (let i = 0; i < 5; i++) {
+    train(["-p", "1+1"]);
+    train(["-e", "1+1"]);
+    train(["-e", ""]);
+  }
 
   // CLI dispatch + version/banner paths.
   train(["--version"]);
@@ -135,6 +155,16 @@ function trainWorkload(bun: string, rawDir: string): void {
     "-e",
     "for (const m of ['fs','path','os','crypto','util','events','stream','buffer','url','http','net','tls','zlib','process','child_process','assert','string_decoder','querystring']) require(m);",
   ]);
+
+  // Narrow, bench-exact `require()` shapes — what `startup/require-fs` & friends
+  // actually run (`require('fs').readdirSync('.')`, `require('path')`). The
+  // 18-builtin sweep above covers breadth; these bump the counts on the exact
+  // pages those benches fault in so the `.text.hot` / `.rodata.startup` cluster
+  // stays tight rather than getting outvoted by the heavier cases below.
+  for (let i = 0; i < 3; i++) {
+    train(["-e", "require('fs').readdirSync('.')"]);
+    train(["-e", "require('path');require('fs')"]);
+  }
 
   // A bit of runtime/webcore: JSON, encoders, Buffer, hashing, Bun.file.
   train([

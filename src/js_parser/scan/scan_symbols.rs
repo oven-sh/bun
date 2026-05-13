@@ -1,6 +1,6 @@
 use crate::js_lexer;
 use crate::p::P;
-use crate::parser::{FindSymbolResult, JsxT};
+use crate::parser::{FindSymbolResult};
 use bun_ast as js_ast;
 use bun_ast::{Ref, Scope};
 
@@ -12,7 +12,7 @@ use bun_ast::{Ref, Scope};
 //
 // adt_const_params: round-C lowered `const JSX: JSXTransformType` → `J: JsxT` (sealed trait + ZST).
 
-impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn find_symbol(
         &mut self,
         loc: bun_ast::Loc,

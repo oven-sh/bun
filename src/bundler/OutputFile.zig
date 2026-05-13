@@ -129,8 +129,21 @@ pub const Value = union(Kind) {
         return switch (v) {
             .noop => bun.String.empty,
             .buffer => |buf| {
-                // Use ExternalStringImpl to avoid cloning the string, at
-                // the cost of allocating space to remember the allocator.
+                // Bundler output can contain raw UTF-8 bytes from non-ASCII
+                // `String.raw` / `RegExp.source` literals (see #30563). The
+                // external-string fast path creates a Latin-1 WTFString,
+                // which can't represent multi-byte UTF-8 sequences. Fall
+                // through to `cloneInferEncoding` (which picks Latin-1 for
+                // pure ASCII and UTF-16 for non-ASCII) when the buffer is
+                // not pure ASCII, then free the buffer since the string
+                // takes its own copy.
+                if (bun.strings.firstNonASCII(buf.bytes)) |_| {
+                    defer buf.allocator.free(buf.bytes);
+                    return bun.String.cloneInferEncoding(buf.bytes);
+                }
+
+                // Pure ASCII: keep the zero-copy external-Latin-1 path that
+                // hands ownership of the bytes to WebKit.
                 const FreeContext = struct {
                     allocator: std.mem.Allocator,
 

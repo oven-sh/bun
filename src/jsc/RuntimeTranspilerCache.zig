@@ -17,7 +17,8 @@
 /// Version 18: Include ESM record (module info) with an ES Module, see #15758
 /// Version 19: Sourcemap blob is InternalSourceMap (varint stream + sync points), not VLQ.
 /// Version 20: InternalSourceMap stream is bit-packed windows.
-const expected_version = 20;
+/// Version 21: Non-ASCII bytes in `String.raw` / `RegExp.source` are preserved verbatim; old entries wrote Latin-1-tagged UTF-8, see #30563.
+const expected_version = 21;
 
 const debug = Output.scoped(.cache, .visible);
 const MINIMUM_CACHE_SIZE = 50 * 1024;
@@ -210,13 +211,19 @@ pub const RuntimeTranspilerCache = struct {
                             .cjs => ModuleType.cjs,
                             else => ModuleType.esm,
                         },
+                        // Select the on-disk encoding from the *bytes*, not
+                        // from the `bun.String`'s encoding tag. 8-bit bytes
+                        // with any byte > 0x7F round-trip as Latin-1 (which
+                        // is what WTFStringImpl stores them as); otherwise
+                        // they're pure ASCII which we record as Latin-1 too.
+                        // UTF-16 is the only case where we need to tag the
+                        // stored bytes as 16-bit on disk. This makes the
+                        // tag/byte pairing explicit here so a future refactor
+                        // that constructs a `bun.String` with a mis-matched
+                        // tag can't silently corrupt the cache entry.
                         .output_encoding = switch (output_code) {
-                            .utf8 => Encoding.utf8,
-                            .string => |str| switch (str.encoding()) {
-                                .utf8 => Encoding.utf8,
-                                .utf16 => Encoding.utf16,
-                                .latin1 => Encoding.latin1,
-                            },
+                            .utf8 => |u8_bytes| if (bun.strings.firstNonASCII(u8_bytes) == null) Encoding.latin1 else Encoding.utf8,
+                            .string => |str| if (str.isUTF16()) Encoding.utf16 else Encoding.latin1,
                         },
                         .sourcemap_byte_length = sourcemap.len,
                         .output_byte_offset = Metadata.size,
@@ -582,17 +589,13 @@ pub const RuntimeTranspilerCache = struct {
         features_hash: u64,
         sourcemap: []const u8,
         esm_record: []const u8,
-        source_code: bun.String,
+        output_code: Entry.OutputCode,
         exports_kind: bun.ast.ExportsKind,
     ) !void {
         var tracer = bun.perf.trace("RuntimeTranspilerCache.toFile");
         defer tracer.end();
 
         var cache_file_path_buf: bun.PathBuffer = undefined;
-        const output_code: Entry.OutputCode = switch (source_code.encoding()) {
-            .utf8 => .{ .utf8 = source_code.byteSlice() },
-            else => .{ .string = source_code },
-        };
 
         const cache_file_path = try getCacheFilePath(&cache_file_path_buf, input_hash);
         debug("filename to put into: '{s}'", .{cache_file_path});
@@ -688,15 +691,22 @@ pub const RuntimeTranspilerCache = struct {
             return;
         }
         bun.assert(this.entry == null);
-        const output_code = bun.String.cloneLatin1(output_code_bytes);
-        this.output_code = output_code;
 
-        toFile(this.input_byte_length.?, this.input_hash.?, this.features_hash.?, sourcemap, esm_record, output_code, this.exports_kind) catch |err| {
+        // Cache a `bun.String` view for in-process reuse (the runtime may
+        // serve this entry to JSC without hitting disk again via
+        // `this.output_code`), and pass the raw bytes straight through to
+        // the on-disk writer so the Latin-1/UTF-8 pick in `Entry.save`
+        // operates on the bytes — not on the WTFString's encoding tag,
+        // which would always be latin1/utf16 for `cloneInferEncoding`
+        // results and would pessimise non-ASCII files to UTF-16 on disk.
+        this.output_code = bun.String.cloneInferEncoding(output_code_bytes);
+
+        toFile(this.input_byte_length.?, this.input_hash.?, this.features_hash.?, sourcemap, esm_record, .{ .utf8 = output_code_bytes }, this.exports_kind) catch |err| {
             debug("put() = {s}", .{@errorName(err)});
             return;
         };
         if (comptime bun.Environment.allow_assert)
-            debug("put() = {d} bytes", .{output_code.latin1().len});
+            debug("put() = {d} bytes", .{output_code_bytes.len});
     }
 };
 

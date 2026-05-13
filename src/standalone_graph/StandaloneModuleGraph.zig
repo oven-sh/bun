@@ -524,8 +524,17 @@ pub const StandaloneModuleGraph = struct {
                 }),
                 .loader = output_file.loader,
                 .contents = string_builder.appendCountZ(output_file.value.buffer.bytes),
+                // JS bundles usually carry a `// @bun` banner so they're
+                // pure ASCII, which keeps the zero-copy external-Latin-1
+                // load path fast. When the bundle contains raw UTF-8
+                // (from non-ASCII `String.raw` / `RegExp.source` — see
+                // #30563) we tag it `.utf8` so `toWTFString` converts
+                // via `cloneUTF8` and JSC sees the correct codepoints.
                 .encoding = switch (output_file.loader) {
-                    .js, .jsx, .ts, .tsx => .latin1,
+                    .js, .jsx, .ts, .tsx => if (bun.strings.firstNonASCII(output_file.value.buffer.bytes) == null)
+                        .latin1
+                    else
+                        .utf8,
                     else => .binary,
                 },
                 .module_format = if (output_file.loader.isJavaScriptLike()) switch (output_format) {

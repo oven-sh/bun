@@ -387,7 +387,7 @@ pub fn transpileSourceCode(
                 const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.cloneLatin1(source.contents),
+                    .source_code = bun.String.cloneInferEncoding(source.contents),
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .already_bundled = true,
@@ -551,10 +551,17 @@ pub fn transpileSourceCode(
             const module_info_deserialized: ?*anyopaque = if (module_info) |mi| @ptrCast(mi.asDeserialized()) else null;
 
             if (jsc_vm.isWatcherEnabled()) {
-                var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, input_specifier, path.text, null, false);
-                resolved_source.is_commonjs_module = is_commonjs_module;
-                resolved_source.module_info = module_info_deserialized;
-                return resolved_source;
+                // The ref-counted watcher source path creates an external
+                // Latin-1 WTFString, which can't represent multi-byte UTF-8
+                // sequences. If the printer output contains non-ASCII (e.g.
+                // from `String.raw`/regex source), fall through to the
+                // normal clone path that picks the right encoding.
+                if (bun.strings.firstNonASCII(printer.ctx.written) == null) {
+                    var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, input_specifier, path.text, null, false);
+                    resolved_source.is_commonjs_module = is_commonjs_module;
+                    resolved_source.module_info = module_info_deserialized;
+                    return resolved_source;
+                }
             }
 
             // Pass along package.json type "module" if set.
@@ -576,7 +583,7 @@ pub fn transpileSourceCode(
                 .allocator = null,
                 .source_code = brk: {
                     const written = printer.ctx.getWritten();
-                    const result = cache.output_code orelse bun.String.cloneLatin1(written);
+                    const result = cache.output_code orelse bun.String.cloneInferEncoding(written);
 
                     if (written.len > 1024 * 1024 * 2 or jsc_vm.smol) {
                         printer.ctx.buffer.deinit();

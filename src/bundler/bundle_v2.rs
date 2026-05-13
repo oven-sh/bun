@@ -1951,6 +1951,10 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
+        // `#[cold]`/`#[inline(never)]`: tree-shake reachability walk — a
+        // bundle-pass phase, never reached from `bun run script.js`.
+        #[cold]
+        #[inline(never)]
         pub fn find_reachable_files(&mut self) -> Result<Box<[Index]>, Error> {
             // RAII guard — `Ctx` ends the span on Drop (Zig: `defer trace.end()`).
             let _trace = crate::ungate_support::perf::trace("Bundler.findReachableFiles");
@@ -2135,6 +2139,8 @@ pub mod bv2_impl {
             self.graph.pool().worker_pool().dump_stats(label);
         }
 
+        #[cold]
+        #[inline(never)]
         pub fn scan_for_secondary_paths(&mut self) {
             if !self.graph.has_any_secondary_paths {
                 // Assert the boolean is accurate.
@@ -2775,6 +2781,11 @@ pub mod bv2_impl {
         }
 
         /// `heap` is not freed when `deinit`ing the BundleV2
+        ///
+        /// `#[cold]`/`#[inline(never)]`: a ~one-per-bundle-pass constructor of a
+        /// large struct — never on the `bun run script.js` hot path.
+        #[cold]
+        #[inline(never)]
         pub fn init(
             transpiler: &'a mut Transpiler<'a>,
             bake_options: Option<BakeOptions<'a>>,
@@ -3003,6 +3014,14 @@ pub mod bv2_impl {
 
         // PORT NOTE: split because data type varies by variant — cannot express `switch(variant)`-typed param with const-generic enum on stable
         // TODO(port): comptime variant enum param + dependent data type — split into three monomorphic fns
+        //
+        // `#[cold]`/`#[inline(never)]`: graph bring-up for a bundle pass — runs
+        // once per `bun build` / `Bun.build()` and never on the `bun run
+        // script.js` hot path. Keeping it (and the rest of the bundle-graph /
+        // tree-shake / chunk-emit machinery below) out-of-line lets LLVM sink it
+        // away from the runtime's `.text` working set; see b0c79b16e646.
+        #[cold]
+        #[inline(never)]
         pub fn enqueue_entry_points_normal<P: AsRef<[u8]>>(
             &mut self,
             data: &[P],
@@ -3065,6 +3084,8 @@ pub mod bv2_impl {
             Ok(())
         }
 
+        #[cold]
+        #[inline(never)]
         pub fn enqueue_entry_points_dev_server(
             &mut self,
             files: bake_types::EntryPointList,
@@ -3186,6 +3207,8 @@ pub mod bv2_impl {
             Ok(())
         }
 
+        #[cold]
+        #[inline(never)]
         pub fn enqueue_entry_points_bake_production(
             &mut self,
             data: &bake_types::production::EntryPointMap,
@@ -3225,6 +3248,8 @@ pub mod bv2_impl {
         }
 
         /// Common prelude shared by all enqueue_entry_points_* variants: add the runtime task.
+        #[cold]
+        #[inline(never)]
         fn enqueue_entry_points_common(&mut self) -> Result<(), Error> {
             // Add the runtime
             let rt = ParseTask::get_runtime_source(self.transpiler.options.target);
@@ -3257,6 +3282,8 @@ pub mod bv2_impl {
             Ok(())
         }
 
+        #[cold]
+        #[inline(never)]
         fn clone_ast(&mut self) -> Result<(), Error> {
             let _trace = crate::ungate_support::perf::trace("Bundler.cloneAST");
             // TODO(port): bun.safety.alloc.assertEq
@@ -3286,6 +3313,8 @@ pub mod bv2_impl {
 
         /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
         /// at the same time in one pass over the SCB list.
+        #[cold]
+        #[inline(never)]
         pub fn process_server_component_manifest_files(&mut self) -> Result<(), AllocError> {
             // If a server components is not configured, do nothing
             let Some(fw) = &self.framework else {
@@ -3800,6 +3829,8 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
+        #[cold]
+        #[inline(never)]
         pub fn get_all_dependencies(
             &mut self,
             reachable_files: &[Index],
@@ -3840,6 +3871,12 @@ pub mod bv2_impl {
             (fetcher.on_fetch)(fetcher.ctx, &mut result)
         }
 
+        // `#[cold]`/`#[inline(never)]`: the `bun build` CLI entry point — a
+        // whole bundle pass driven from here. Never on the `bun run script.js`
+        // hot path; out-of-lining keeps the bundler's `.text` away from the
+        // runtime working set (see b0c79b16e646).
+        #[cold]
+        #[inline(never)]
         pub fn generate_from_cli(
             transpiler: &'a mut Transpiler<'a>,
             alloc: &bun_alloc::Arena,
@@ -3987,6 +4024,8 @@ pub mod bv2_impl {
         /// sole caller exec()s (watch mode) or exits shortly after, so the leak
         /// is bounded. Dupe anything you need out of the graph before returning
         /// to the caller.
+        #[cold]
+        #[inline(never)]
         pub fn scan_module_graph_from_cli(
             transpiler: &'a mut Transpiler<'a>,
             alloc: &bun_alloc::Arena,
@@ -4024,6 +4063,8 @@ pub mod bv2_impl {
             Ok(this)
         }
 
+        #[cold]
+        #[inline(never)]
         pub fn generate_from_bake_production_cli(
             entry_points: &bake_types::production::EntryPointMap,
             server_transpiler: &'a mut Transpiler<'a>,
@@ -4097,6 +4138,8 @@ pub mod bv2_impl {
             )
         }
 
+        #[cold]
+        #[inline(never)]
         pub fn add_server_component_boundaries_as_extra_entry_points(
             &mut self,
         ) -> Result<(), Error> {
@@ -4127,6 +4170,8 @@ pub mod bv2_impl {
             Ok(())
         }
 
+        #[cold]
+        #[inline(never)]
         pub fn process_files_to_copy(&mut self, reachable_files: &[Index]) -> Result<(), Error> {
             if self.graph.estimated_file_loader_count > 0 {
                 // PORT NOTE: Zig per-file `arena` column dropped — Box owns its alloc.
@@ -4818,6 +4863,8 @@ pub mod bv2_impl {
             // resolve is dropped here (defer resolve.deinit())
         }
 
+        #[cold]
+        #[inline(never)]
         pub fn deinit_without_freeing_arena(&mut self) {
             {
                 // We do this first to make it harder for any dangling pointers to data to be used in there.
@@ -4967,6 +5014,10 @@ pub mod bv2_impl {
             }
         }
 
+        // `#[cold]`/`#[inline(never)]`: the `Bun.build({...})` JS entry point —
+        // a full bundle pass on a fresh thread, never the `bun run` hot path.
+        #[cold]
+        #[inline(never)]
         pub fn run_from_js_in_new_thread(
             &mut self,
             entry_points: &[&[u8]],
@@ -5103,6 +5154,8 @@ pub mod bv2_impl {
 
     /// Writes a metafile (JSON or markdown) to disk and appends it to the output_files list.
     /// Metafile paths are relative to outdir, like all other output files.
+    #[cold]
+    #[inline(never)]
     fn write_metafile_output(
         output_files: &mut Vec<options::OutputFile>,
         outdir: &[u8],
@@ -5179,6 +5232,8 @@ pub mod bv2_impl {
         }
 
         /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
+        #[cold]
+        #[inline(never)]
         pub fn start_from_bake_dev_server(
             &mut self,
             bake_entry_points: bake_types::EntryPointList,
@@ -5201,6 +5256,8 @@ pub mod bv2_impl {
         // css_entry_points, etc.). After tier-6 collapse this fn should be HOISTED into
         // bun_runtime::bake (which can name DevServer concretely) and call back into BundleV2
         // helpers. Until then the entry-point fields are reached through the vtable.
+        #[cold]
+        #[inline(never)]
         pub fn finish_from_bake_dev_server(
             &mut self,
             dev_server: &dispatch::DevServerHandle,
@@ -6773,6 +6830,8 @@ pub mod bv2_impl {
             }
         }
 
+        #[cold]
+        #[inline(never)]
         fn generate_server_html_module(
             &mut self,
             path: &Fs::Path,

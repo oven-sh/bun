@@ -795,8 +795,28 @@ pub const Resolver = struct {
             };
         }
 
-        if (DataURL.parse(import_path) catch {
-            return .{ .failure = error.InvalidDataURL };
+        if (DataURL.parse(import_path) catch |data_url_err| {
+            // Malformed data URL (e.g. "data:" with no comma). For CSS url()
+            // tokens we preserve the URL as-is (matching the behavior for
+            // http://, https://, and // URLs above) so the build doesn't
+            // silently lose the file. For other import kinds we surface a
+            // real error instead of the downstream panic that used to hit
+            // when the AST was discarded.
+            if (kind.isFromCSS()) {
+                if (r.debug_logs) |*debug| {
+                    debug.addNote("Marking malformed \"dataurl\" as external");
+                    r.flushDebugLogs(.success) catch {};
+                }
+                return .{
+                    .success = Result{
+                        .import_kind = kind,
+                        .path_pair = PathPair{ .primary = Path.init(import_path) },
+                        .module_type = .unknown,
+                        .flags = .{ .is_external = true },
+                    },
+                };
+            }
+            return .{ .failure = data_url_err };
         }) |data_url| {
             // "import 'data:text/javascript,console.log(123)';"
             // "@import 'data:text/css,body{background:white}';"

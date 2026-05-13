@@ -3228,6 +3228,20 @@ pub const BundleV2 = struct {
                             }
                         }
                     },
+                    error.InvalidDataURL => {
+                        if (!import_record.flags.handles_import_errors) {
+                            last_error = err;
+                            Logger.Log.addResolveErrorWithTextDupe(
+                                log,
+                                source,
+                                import_record.range,
+                                this.allocator(),
+                                "Could not resolve data URL: \"{s}\"",
+                                .{import_record.path.text},
+                                import_record.kind,
+                            ) catch |e| bun.handleOom(e);
+                        }
+                    },
                     // assume other errors are already in the log
                     else => {
                         last_error = err;

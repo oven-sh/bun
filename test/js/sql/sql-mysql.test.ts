@@ -167,7 +167,7 @@ if (isDockerEnabled()) {
           expect((err as SQL.MySQLError).code).toBe(`ERR_MYSQL_IDLE_TIMEOUT`);
         });
 
-        test("Max lifetime works", async () => {
+        test("Max lifetime closes an idle connection and the pool reconnects", async () => {
           const onClosePromise = Promise.withResolvers();
           const onclose = mock(err => {
             onClosePromise.resolve(err);
@@ -180,26 +180,46 @@ if (isDockerEnabled()) {
             onclose,
             max: 1,
           });
-          let error: unknown;
 
-          try {
-            expect<[{ x: number }]>(await sql`select 1 as x`).toEqual([{ x: 1 }]);
+          // Get the server-side connection id before maxLifetime fires.
+          const [{ id: connBefore }] = await sql`select CONNECTION_ID() as id`;
 
-            while (true) {
-              for (let i = 0; i < 100; i++) {
-                await sql`select SLEEP(1)`;
-              }
-            }
-          } catch (e) {
-            error = e;
-          }
-
+          // maxLifetime fires while the connection is idle → closed gracefully.
+          await onClosePromise.promise;
           expect(onclose).toHaveBeenCalledTimes(1);
           expect(onconnect).toHaveBeenCalledTimes(1);
 
-          expect(error).toBeInstanceOf(SQL.SQLError);
-          expect(error).toBeInstanceOf(SQL.MySQLError);
-          expect((error as SQL.MySQLError).code).toBe(`ERR_MYSQL_LIFETIME_TIMEOUT`);
+          // Pool reconnects on a different connection id.
+          const [{ id: connAfter }] = await sql`select CONNECTION_ID() as id`;
+          expect(connAfter).not.toBe(connBefore);
+        });
+
+        test("Max lifetime does not kill an in-flight query (#30646)", async () => {
+          const onClosePromise = Promise.withResolvers();
+          const onclose = mock(err => {
+            onClosePromise.resolve(err);
+          });
+          const onconnect = mock();
+          await using sql = new SQL({
+            ...getOptions(),
+            max_lifetime: 1,
+            onconnect,
+            onclose,
+            max: 1,
+          });
+
+          const [{ id: connBefore }] = await sql`select CONNECTION_ID() as id`;
+
+          // Query longer than max_lifetime must complete normally.
+          // Before the fix this rejected with ERR_MYSQL_LIFETIME_TIMEOUT.
+          const result = await sql`select SLEEP(3) as s, 42 as x`;
+          expect(result[0].x).toBe(42);
+
+          await onClosePromise.promise;
+          expect(onclose).toHaveBeenCalledTimes(1);
+
+          const [{ id: connAfter }] = await sql`select CONNECTION_ID() as id`;
+          expect(connAfter).not.toBe(connBefore);
         });
 
         // Last one wins.

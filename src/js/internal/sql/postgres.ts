@@ -1164,11 +1164,16 @@ class PostgresAdapter
           // letting everyone pile up behind the first socket.
           this.#tryGrowPool();
         } else if (!retry_in_progress) {
-          // Nothing retryable in the existing slots. If we haven't hit the
-          // pool ceiling yet, try to open a fresh connection instead of
-          // failing — the earlier slots may be permanently broken but a
-          // brand-new one can still succeed.
-          const grown = this.#tryGrowPool();
+          // Every existing slot is closed and `retry()` refused all of them.
+          // That's the non-retryable class of errors (bad password, unknown
+          // auth method, TLS failures). Opening another connection with the
+          // SAME `connectionInfo` will hit the identical failure and just
+          // burn a TCP+auth round-trip per waiter, so fail fast — UNLESS
+          // the password is supplied as a function (dynamic credential,
+          // e.g. IAM token), in which case a fresh attempt may genuinely
+          // pick up a new secret.
+          const canDynamicallyAuth = typeof this.connectionInfo.password === "function";
+          const grown = canDynamicallyAuth ? this.#tryGrowPool() : null;
           if (grown) {
             if (reserved) {
               this.reservedQueue.push(onConnected);

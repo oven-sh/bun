@@ -7007,6 +7007,12 @@ pub mod __phase_a_body {
                     self.generation,
                 );
 
+                // Pre-size `data` so the per-entry inserts below skip the
+                // 1→2→4→…→N hashbrown rehash cascade from an empty table. 64
+                // covers a typical node_modules package dir; larger dirs still
+                // rehash from there (cheap relative to starting at 0).
+                new_entry.data.reserve(64);
+
                 let mut dir_iterator = bun_sys::iterate_dir(open_dir);
                 // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
                 // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
@@ -8082,6 +8088,12 @@ pub mod __phase_a_body {
                         },
                         self.generation,
                     );
+
+                    // Pre-size `data` so the per-entry inserts below skip the
+                    // 1→2→4→…→N hashbrown rehash cascade from an empty table. 64
+                    // covers a typical node_modules package dir; larger dirs
+                    // still rehash from there (cheap relative to starting at 0).
+                    new_entry.data.reserve(64);
 
                     let mut dir_iterator = bun_sys::iterate_dir(open_dir);
                     // PORT NOTE: Zig `while (dir_iterator.next().unwrap()) |entry|` —

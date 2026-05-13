@@ -30,10 +30,13 @@ test.skipIf(process.platform !== "linux")(
     });
 
     const port = server.port;
-    const fetchPromise = fetch(`http://127.0.0.1:${port}/`);
-
-    // Give the connection a moment to establish
-    await Bun.sleep(50);
+    // Await headers + first chunk so the socket is ESTABLISHED and the
+    // client's outbound GET has been ACKed (piggybacked on the response)
+    // before we read /proc — otherwise a retransmit timer (01) could mask
+    // the keepalive timer (02) in the kernel's timer field.
+    const resp = await fetch(`http://127.0.0.1:${port}/`);
+    const reader = resp.body!.getReader();
+    await reader.read();
 
     // Parse /proc/self/net/tcp: find ESTABLISHED (state 01) socket with
     // remote port = server.port. Column 5 is the timer field
@@ -61,11 +64,10 @@ test.skipIf(process.platform !== "linux")(
     }
 
     // Drain the fetch so the server can clean up
-    const resp = await fetchPromise;
-    await resp.text();
+    await reader.cancel();
 
     expect(found).toBe(true);
-    // Without SO_KEEPALIVE: "00". With it: "02" (sk_timer armed).
-    expect(timerActive).not.toBe("00");
+    // Without SO_KEEPALIVE: "00". With it: "02" (sk_timer / keepalive armed).
+    expect(timerActive).toBe("02");
   },
 );

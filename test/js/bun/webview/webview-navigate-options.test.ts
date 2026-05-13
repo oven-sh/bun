@@ -138,11 +138,7 @@ ${body}
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 
@@ -171,11 +167,7 @@ test("navigate({waitUntil:'domcontentloaded'}) settles on Page.lifecycleEvent wh
     `,
   );
   expect(stderr).toBe("");
-  expect(stdout.trim().split("\n")).toEqual([
-    "title=mock-title",
-    "loading=true",
-    "url=http://example/dcl",
-  ]);
+  expect(stdout.trim().split("\n")).toEqual(["title=mock-title", "loading=true", "url=http://example/dcl"]);
   expect(exitCode).toBe(0);
 });
 
@@ -247,10 +239,7 @@ test("navigate({timeout}) rejects when no lifecycle event arrives", async () => 
     `,
   );
   expect(stderr).toBe("");
-  expect(stdout.trim().split("\n")).toEqual([
-    "rejected=true elapsed>=250=true",
-    "second=true",
-  ]);
+  expect(stdout.trim().split("\n")).toEqual(["rejected=true elapsed>=250=true", "second=true"]);
   expect(exitCode).toBe(0);
 });
 

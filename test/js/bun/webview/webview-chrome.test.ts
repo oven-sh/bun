@@ -809,10 +809,9 @@ it("chrome: navigate({waitUntil:'domcontentloaded'}) settles when `load` never f
           { headers: { "content-type": "image/png" } },
         );
       }
-      return new Response(
-        `<!doctype html><title>dcl</title><body>ready<img src="/hang"></body>`,
-        { headers: { "content-type": "text/html" } },
-      );
+      return new Response(`<!doctype html><title>dcl</title><body>ready<img src="/hang"></body>`, {
+        headers: { "content-type": "text/html" },
+      });
     },
   });
 
@@ -870,9 +869,9 @@ it("chrome: navigate({timeout}) rejects when `load` never fires", async () => {
     // parent-side RunLoop::dispatchAfter timer rejects. No cancel: the
     // timer captures m_navGeneration and no-ops if a later navigate
     // (or this settle) bumped it.
-    await expect(
-      view.navigate(`http://127.0.0.1:${server.port}/`, { timeout: 500 }),
-    ).rejects.toThrow(/Navigation timeout of 500ms exceeded/);
+    await expect(view.navigate(`http://127.0.0.1:${server.port}/`, { timeout: 500 })).rejects.toThrow(
+      /Navigation timeout of 500ms exceeded/,
+    );
     // The slot is clear after the timeout rejection — a fresh
     // navigate works and its own 30s default timer is independent
     // (generation bumped).
@@ -907,10 +906,9 @@ it("chrome: reload({waitUntil:'domcontentloaded'}) settles on DCL", async () => 
         );
       }
       hits++;
-      return new Response(
-        `<!doctype html><body data-hit="${hits}"><img src="/hang"></body>`,
-        { headers: { "content-type": "text/html" } },
-      );
+      return new Response(`<!doctype html><body data-hit="${hits}"><img src="/hang"></body>`, {
+        headers: { "content-type": "text/html" },
+      });
     },
   });
 
@@ -932,10 +930,9 @@ it("chrome: navigate({waitUntil:'domcontentloaded'}) ignores subframe lifecycle 
   // frameId gate (main frame only, matched against m_frameId from
   // frameNavigated) must filter it out.
   await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
-  await view.navigate(
-    html(`<!doctype html><body><iframe srcdoc="<p>sub</p>"></iframe><p id=m>main</p></body>`),
-    { waitUntil: "domcontentloaded" },
-  );
+  await view.navigate(html(`<!doctype html><body><iframe srcdoc="<p>sub</p>"></iframe><p id=m>main</p></body>`), {
+    waitUntil: "domcontentloaded",
+  });
   // If the subframe's DCL had settled us, #m wouldn't exist yet (the
   // iframe is before it in the stream). Settling on the MAIN frame's
   // DCL means the whole document is parsed.

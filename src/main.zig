@@ -86,10 +86,13 @@ pub export fn Bun__panic(msg: [*]const u8, len: usize) noreturn {
     Output.panic("{s}", .{msg[0..len]});
 }
 
+extern fn bun_abort_missing_simd(requirement: [*:0]const u8, hint: [*:0]const u8) noreturn;
+
 /// Prints a CPU-requirement diagnostic and exits. Called from `main()` before
 /// `Output.Source` is initialized and before Windows has converted its
-/// environment block to UTF-8, so it writes to raw stderr and reads the
-/// environment through the C runtime rather than `bun.getenvZ`.
+/// environment block to UTF-8, so the actual write goes through the C
+/// runtime (fprintf(stderr)/getenv) in `bun_abort_missing_simd` rather than
+/// `bun.Output` / `bun.getenvZ`.
 fn abortForUnsupportedSimdutf() noreturn {
     @branchHint(.cold);
 
@@ -112,20 +115,7 @@ fn abortForUnsupportedSimdutf() noreturn {
     else
         "";
 
-    var stderr = std.fs.File.stderr().writerStreaming(&.{});
-    stderr.interface.print(
-        "error: this CPU is missing {s} support, which Bun requires for UTF-8 processing.\n" ++
-            "{s}",
-        .{ requirement, hint },
-    ) catch {};
-    if (std.c.getenv("SIMDUTF_FORCE_IMPLEMENTATION")) |forced| {
-        stderr.interface.print(
-            "  note: SIMDUTF_FORCE_IMPLEMENTATION is set to \"{s}\"\n",
-            .{_bun.sliceTo(forced, 0)},
-        ) catch {};
-    }
-
-    std.process.exit(134);
+    bun_abort_missing_simd(requirement, hint);
 }
 
 // -- Zig Standard Library Additions --

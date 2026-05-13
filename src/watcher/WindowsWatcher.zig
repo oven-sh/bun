@@ -142,9 +142,13 @@ pub fn init(this: *WindowsWatcher, root: []const u8) !void {
     this.base_idx = if (needs_slash) root.len + 1 else root.len;
 
     // Env var is in nanoseconds; convert to the millisecond granularity
-    // `GetQueuedCompletionStatus` expects.
+    // `GetQueuedCompletionStatus` expects. Round up so a sub-millisecond
+    // override (e.g. the 0.1 ms a test might pin for the other backends)
+    // becomes 1 ms rather than truncating to 0 and disabling the wait;
+    // an explicit `0` still means "don't wait".
     const ns = bun.env_var.BUN_INOTIFY_COALESCE_INTERVAL.get();
-    this.coalesce_interval_ms = std.math.cast(w.DWORD, ns / std.time.ns_per_ms) orelse default_coalesce_interval_ms;
+    const ms = if (ns == 0) 0 else std.math.divCeil(u64, ns, std.time.ns_per_ms) catch default_coalesce_interval_ms;
+    this.coalesce_interval_ms = std.math.cast(w.DWORD, ms) orelse default_coalesce_interval_ms;
 }
 
 /// See `INotifyWatcher.max_coalesce_iterations` for rationale. Kept in

@@ -73,8 +73,13 @@ pub fn watchLoopCycle(this: *Watcher) bun.sys.Maybe(void) {
     // so one save becomes one `onFileUpdate` call instead of several,
     // which in `--hot` mode would otherwise re-evaluate the entry point
     // once per burst.
+    //
+    // `count > 0` guards against the initial `kevent` returning -1
+    // (error) — the `@max(0, count)` below already handles that for the
+    // final slice, but `@intCast(count)` here would trap on a negative.
+    const interval = this.platform.coalesce_interval_ns;
     var iterations: u32 = 0;
-    while (count < changelist_count and iterations < max_coalesce_iterations) : (iterations += 1) {
+    while (count > 0 and count < changelist_count and iterations < max_coalesce_iterations) : (iterations += 1) {
         const remain = changelist_count - count;
         const extra = std.posix.system.kevent(
             fd.native(),
@@ -82,7 +87,12 @@ pub fn watchLoopCycle(this: *Watcher) bun.sys.Maybe(void) {
             0,
             changelist[@intCast(count)..].ptr,
             remain,
-            &.{ .sec = 0, .nsec = this.platform.coalesce_interval_ns },
+            // POSIX requires tv_nsec < 10^9; split so a user-supplied
+            // interval ≥ 1 s doesn't make `kevent` fail with EINVAL.
+            &.{
+                .sec = @divTrunc(interval, std.time.ns_per_s),
+                .nsec = @rem(interval, std.time.ns_per_s),
+            },
         );
 
         if (extra <= 0) break; // quiet (or error: fall through to existing processing)

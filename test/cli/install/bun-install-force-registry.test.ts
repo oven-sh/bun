@@ -187,12 +187,16 @@ describe.concurrent("install.forceRegistry", () => {
       "project/package.json": JSON.stringify({ name: "test", dependencies: { "no-deps": "1.0.0" } }),
     });
 
-    await runInstall(String(dir), makeEnv(String(dir)), ["--registry", other.url]);
+    const { stderr } = await runInstall(String(dir), makeEnv(String(dir)), ["--registry", other.url]);
 
     expect({ forced: forced.hits, other: other.hits }).toEqual({
       forced: ["/no-deps"],
       other: [],
     });
+    // --registry is the most explicit way to ask for a different registry,
+    // so the "why isn't my registry working?" notice should definitely
+    // fire here.
+    expect(stderr).toContain(`using forced registry ${forced.url}`);
   });
 
   test("global bunfig forceRegistry overrides NPM_CONFIG_REGISTRY", async () => {

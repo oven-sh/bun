@@ -732,6 +732,9 @@ pub fn load(
             }
             const prev_scope = this.scope;
             const had_scoped_registries = this.registries.count() > 0;
+            // `--registry` mutates `this.scope.url` without recomputing
+            // `url_hash`, so detect it separately.
+            const had_cli_registry = if (maybe_cli) |cli| cli.registry.len > 0 else false;
             this.scope = try Npm.Registry.Scope.fromAPI("", force_registry.*, allocator, env);
             // Discard scoped registries so `scopeForPackageName` always falls
             // back to `this.scope` — every package resolves through the
@@ -746,7 +749,9 @@ pub fn load(
             // anyway (nothing to be confused about).
             if (this.log_level != .silent and
                 prev_scope.url_hash != this.scope.url_hash and
-                (prev_scope.url_hash != Npm.Registry.default_url_hash or had_scoped_registries))
+                (prev_scope.url_hash != Npm.Registry.default_url_hash or
+                    had_scoped_registries or
+                    had_cli_registry))
             {
                 Output.note("using forced registry <b>{s}<r> <d>(install.forceRegistry is set on this machine, ignoring project registry configuration)<r>", .{this.scope.url.href});
                 Output.flush();

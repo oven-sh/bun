@@ -49,16 +49,6 @@ const ROOT = resolve(import.meta.dirname, "..");
 const BUN = process.execPath;
 const BUILD_TS = join(ROOT, "scripts", "build.ts");
 
-try {
-  await main();
-} catch (err) {
-  if (err instanceof BuildError) {
-    process.stderr.write(err.format());
-    process.exit(1);
-  }
-  throw err;
-}
-
 async function main(): Promise<void> {
   const { genDir, passThrough, execArgs } = parseArgs(process.argv.slice(2));
   const rawDir = join(genDir, "raw");
@@ -425,4 +415,17 @@ function findLlvmProfdata(): string {
       "LLVM_PROFDATA=/path/to/llvm-profdata — it must match the LLVM that built " +
       "the instrumented binary.",
   });
+}
+
+// Entry point — kept at the bottom so the module-level data consts above
+// (e.g. `SAMPLE_TS`) are initialized before `main()` (which runs synchronously
+// up to its first real `await`) reaches into them.
+try {
+  await main();
+} catch (err) {
+  if (err instanceof BuildError) {
+    process.stderr.write(err.format());
+    process.exit(1);
+  }
+  throw err;
 }

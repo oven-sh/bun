@@ -22,22 +22,37 @@ const PRIMES: [u64; 5] = [
     0x1d8e4e27c47d124f,
 ];
 
-#[inline]
+// Zig: `inline fn read(comptime T, data) { mem.readInt(T, data[0..@sizeOf(T)], .little) }`
+// — a single unaligned load. Mirrors the `Wyhash::read4`/`read8` treatment
+// below (~lib.rs:600): the per-byte `[data[0], data[1], ...]` spelling left a
+// cmp/je-to-panic ladder per byte in `WyhashStateless::final_`/`round`, and
+// `final_` is the `StringHashMap` short-key hash — hit on every parser /
+// resolver / module-registry HashMap probe during startup (identifier/path
+// keys are <32B so `aligned_len == 0` and the whole key goes through `final_`).
+// Every caller proves the length first (the `1..=31` arms of `final_` slice
+// `rem_key = &b[0..rem_len]` with `rem_len` == the match scrutinee; `round`
+// takes a `&[u8]` it `debug_assert!`s == 32), so match Zig's codegen exactly.
+#[inline(always)]
 fn read_bytes<const BYTES: u8>(data: &[u8]) -> u64 {
+    debug_assert!(data.len() >= usize::from(BYTES));
     // Zig: const T = std.meta.Int(.unsigned, 8 * bytes); mem.readInt(T, data[0..bytes], .little)
     // Rust cannot mint an integer type from a const generic; dispatch on the only values used.
     match BYTES {
         1 => u64::from(data[0]),
         2 => u64::from(u16::from_le_bytes([data[0], data[1]])),
-        4 => u64::from(u32::from_le_bytes([data[0], data[1], data[2], data[3]])),
-        8 => u64::from_le_bytes([
-            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-        ]),
+        // SAFETY: `data.len() >= BYTES == 4` (asserted above; every caller
+        // proves it). `read_unaligned` imposes no alignment requirement.
+        4 => u64::from(u32::from_le(unsafe {
+            core::ptr::read_unaligned(data.as_ptr() as *const u32)
+        })),
+        // SAFETY: `data.len() >= BYTES == 8` (asserted above; every caller
+        // proves it). `read_unaligned` imposes no alignment requirement.
+        8 => u64::from_le(unsafe { core::ptr::read_unaligned(data.as_ptr() as *const u64) }),
         _ => unreachable!(),
     }
 }
 
-#[inline]
+#[inline(always)]
 fn read_8bytes_swapped(data: &[u8]) -> u64 {
     (read_bytes::<4>(data) << 32) | read_bytes::<4>(&data[4..])
 }
@@ -57,6 +72,91 @@ fn mix0(a: u64, b: u64, seed: u64) -> u64 {
 #[inline]
 fn mix1(a: u64, b: u64, seed: u64) -> u64 {
     mum(a ^ seed ^ PRIMES[2], b ^ seed ^ PRIMES[3])
+}
+
+/// Cold tail of [`WyhashStateless::final_`] — the `17..=31`-byte remainder
+/// arms. Split out (and marked `#[cold] #[inline(never)]`) so the common
+/// short-key path (`0..=16`, which covers virtually every identifier/path key
+/// the parser/resolver/module-registry hash through `StringHashMap`) stays
+/// small enough to inline into the hashbrown probe loop. `key.len()` is in
+/// `17..=31`; `seed` is the running `WyhashStateless::seed`.
+#[cold]
+#[inline(never)]
+fn final_long(seed: u64, key: &[u8]) -> u64 {
+    debug_assert!((17..32).contains(&key.len()));
+
+    let head = mix0(
+        read_8bytes_swapped(key),
+        read_8bytes_swapped(&key[8..]),
+        seed,
+    );
+    let tail = match key.len() {
+        17 => mix1(read_bytes::<1>(&key[16..]), PRIMES[4], seed),
+        18 => mix1(read_bytes::<2>(&key[16..]), PRIMES[4], seed),
+        19 => mix1(
+            (read_bytes::<2>(&key[16..]) << 8) | read_bytes::<1>(&key[18..]),
+            PRIMES[4],
+            seed,
+        ),
+        20 => mix1(read_bytes::<4>(&key[16..]), PRIMES[4], seed),
+        21 => mix1(
+            (read_bytes::<4>(&key[16..]) << 8) | read_bytes::<1>(&key[20..]),
+            PRIMES[4],
+            seed,
+        ),
+        22 => mix1(
+            (read_bytes::<4>(&key[16..]) << 16) | read_bytes::<2>(&key[20..]),
+            PRIMES[4],
+            seed,
+        ),
+        23 => mix1(
+            (read_bytes::<4>(&key[16..]) << 24)
+                | (read_bytes::<2>(&key[20..]) << 8)
+                | read_bytes::<1>(&key[22..]),
+            PRIMES[4],
+            seed,
+        ),
+        24 => mix1(read_8bytes_swapped(&key[16..]), PRIMES[4], seed),
+        25 => mix1(
+            read_8bytes_swapped(&key[16..]),
+            read_bytes::<1>(&key[24..]),
+            seed,
+        ),
+        26 => mix1(
+            read_8bytes_swapped(&key[16..]),
+            read_bytes::<2>(&key[24..]),
+            seed,
+        ),
+        27 => mix1(
+            read_8bytes_swapped(&key[16..]),
+            (read_bytes::<2>(&key[24..]) << 8) | read_bytes::<1>(&key[26..]),
+            seed,
+        ),
+        28 => mix1(
+            read_8bytes_swapped(&key[16..]),
+            read_bytes::<4>(&key[24..]),
+            seed,
+        ),
+        29 => mix1(
+            read_8bytes_swapped(&key[16..]),
+            (read_bytes::<4>(&key[24..]) << 8) | read_bytes::<1>(&key[28..]),
+            seed,
+        ),
+        30 => mix1(
+            read_8bytes_swapped(&key[16..]),
+            (read_bytes::<4>(&key[24..]) << 16) | read_bytes::<2>(&key[28..]),
+            seed,
+        ),
+        31 => mix1(
+            read_8bytes_swapped(&key[16..]),
+            (read_bytes::<4>(&key[24..]) << 24)
+                | (read_bytes::<2>(&key[28..]) << 8)
+                | read_bytes::<1>(&key[30..]),
+            seed,
+        ),
+        _ => unreachable!(),
+    };
+    head ^ tail
 }
 
 // Wyhash version which does not store internal state for handling partial buffers.
@@ -103,10 +203,14 @@ impl WyhashStateless {
         self.msg_len += b.len();
     }
 
-    // perf on next-lint showed `WyhashStateless::final_` as a standalone
-    // 0.80%-self-time symbol — `#[inline]` was being declined for the ~45-line
-    // length-switch body. Zig spells the call as `@call(bun.callmod_inline,
-    // c.final, ...)` (force-inline); match that.
+    // `final_` is the `StringHashMap` short-key hash (every parser / resolver /
+    // module-registry probe during startup). `#[inline(always)]` alone wasn't
+    // enough — the 31-arm length switch is large enough that LLVM still emitted
+    // an out-of-line `final_` symbol and `call`ed it. Identifier/path keys are
+    // almost always <17B, so split the cold `17..=31` tail into a separate
+    // `#[cold] #[inline(never)] final_long`, leaving `final_` with just the
+    // `0..=16` arms — small enough to inline cleanly into every hashbrown probe.
+    // Zig spells the call as `@call(bun.callmod_inline, c.final, ...)`.
     #[inline(always)]
     pub(crate) fn final_(&mut self, b: &[u8]) -> u64 {
         debug_assert!(b.len() < 32);
@@ -186,160 +290,9 @@ impl WyhashStateless {
                 read_8bytes_swapped(&rem_key[8..]),
                 seed,
             ),
-            17 => {
-                mix0(
-                    read_8bytes_swapped(rem_key),
-                    read_8bytes_swapped(&rem_key[8..]),
-                    seed,
-                ) ^ mix1(read_bytes::<1>(&rem_key[16..]), PRIMES[4], seed)
-            }
-            18 => {
-                mix0(
-                    read_8bytes_swapped(rem_key),
-                    read_8bytes_swapped(&rem_key[8..]),
-                    seed,
-                ) ^ mix1(read_bytes::<2>(&rem_key[16..]), PRIMES[4], seed)
-            }
-            19 => {
-                mix0(
-                    read_8bytes_swapped(rem_key),
-                    read_8bytes_swapped(&rem_key[8..]),
-                    seed,
-                ) ^ mix1(
-                    (read_bytes::<2>(&rem_key[16..]) << 8) | read_bytes::<1>(&rem_key[18..]),
-                    PRIMES[4],
-                    seed,
-                )
-            }
-            20 => {
-                mix0(
-                    read_8bytes_swapped(rem_key),
-                    read_8bytes_swapped(&rem_key[8..]),
-                    seed,
-                ) ^ mix1(read_bytes::<4>(&rem_key[16..]), PRIMES[4], seed)
-            }
-            21 => {
-                mix0(
-                    read_8bytes_swapped(rem_key),
-                    read_8bytes_swapped(&rem_key[8..]),
-                    seed,
-                ) ^ mix1(
-                    (read_bytes::<4>(&rem_key[16..]) << 8) | read_bytes::<1>(&rem_key[20..]),
-                    PRIMES[4],
-                    seed,
-                )
-            }
-            22 => {
-                mix0(
-                    read_8bytes_swapped(rem_key),
-                    read_8bytes_swapped(&rem_key[8..]),
-                    seed,
-                ) ^ mix1(
-                    (read_bytes::<4>(&rem_key[16..]) << 16) | read_bytes::<2>(&rem_key[20..]),
-                    PRIMES[4],
-                    seed,
-                )
-            }
-            23 => {
-                mix0(
-                    read_8bytes_swapped(rem_key),
-                    read_8bytes_swapped(&rem_key[8..]),
-                    seed,
-                ) ^ mix1(
-                    (read_bytes::<4>(&rem_key[16..]) << 24)
-                        | (read_bytes::<2>(&rem_key[20..]) << 8)
-                        | read_bytes::<1>(&rem_key[22..]),
-                    PRIMES[4],
-                    seed,
-                )
-            }
-            24 => {
-                mix0(
-                    read_8bytes_swapped(rem_key),
-                    read_8bytes_swapped(&rem_key[8..]),
-                    seed,
-                ) ^ mix1(read_8bytes_swapped(&rem_key[16..]), PRIMES[4], seed)
-            }
-            25 => {
-                mix0(
-                    read_8bytes_swapped(rem_key),
-                    read_8bytes_swapped(&rem_key[8..]),
-                    seed,
-                ) ^ mix1(
-                    read_8bytes_swapped(&rem_key[16..]),
-                    read_bytes::<1>(&rem_key[24..]),
-                    seed,
-                )
-            }
-            26 => {
-                mix0(
-                    read_8bytes_swapped(rem_key),
-                    read_8bytes_swapped(&rem_key[8..]),
-                    seed,
-                ) ^ mix1(
-                    read_8bytes_swapped(&rem_key[16..]),
-                    read_bytes::<2>(&rem_key[24..]),
-                    seed,
-                )
-            }
-            27 => {
-                mix0(
-                    read_8bytes_swapped(rem_key),
-                    read_8bytes_swapped(&rem_key[8..]),
-                    seed,
-                ) ^ mix1(
-                    read_8bytes_swapped(&rem_key[16..]),
-                    (read_bytes::<2>(&rem_key[24..]) << 8) | read_bytes::<1>(&rem_key[26..]),
-                    seed,
-                )
-            }
-            28 => {
-                mix0(
-                    read_8bytes_swapped(rem_key),
-                    read_8bytes_swapped(&rem_key[8..]),
-                    seed,
-                ) ^ mix1(
-                    read_8bytes_swapped(&rem_key[16..]),
-                    read_bytes::<4>(&rem_key[24..]),
-                    seed,
-                )
-            }
-            29 => {
-                mix0(
-                    read_8bytes_swapped(rem_key),
-                    read_8bytes_swapped(&rem_key[8..]),
-                    seed,
-                ) ^ mix1(
-                    read_8bytes_swapped(&rem_key[16..]),
-                    (read_bytes::<4>(&rem_key[24..]) << 8) | read_bytes::<1>(&rem_key[28..]),
-                    seed,
-                )
-            }
-            30 => {
-                mix0(
-                    read_8bytes_swapped(rem_key),
-                    read_8bytes_swapped(&rem_key[8..]),
-                    seed,
-                ) ^ mix1(
-                    read_8bytes_swapped(&rem_key[16..]),
-                    (read_bytes::<4>(&rem_key[24..]) << 16) | read_bytes::<2>(&rem_key[28..]),
-                    seed,
-                )
-            }
-            31 => {
-                mix0(
-                    read_8bytes_swapped(rem_key),
-                    read_8bytes_swapped(&rem_key[8..]),
-                    seed,
-                ) ^ mix1(
-                    read_8bytes_swapped(&rem_key[16..]),
-                    (read_bytes::<4>(&rem_key[24..]) << 24)
-                        | (read_bytes::<2>(&rem_key[28..]) << 8)
-                        | read_bytes::<1>(&rem_key[30..]),
-                    seed,
-                )
-            }
-            _ => unreachable!(),
+            // Keys ≥17B are rare among identifier/path keys; keep this tail out
+            // of line so the `0..=16` arms above inline into every caller.
+            _ => final_long(seed, rem_key),
         };
 
         self.msg_len += b.len();
@@ -403,7 +356,9 @@ impl Wyhash11 {
         self.buf_len += usize::from(u8::try_from(tail.len()).expect("int cast"));
     }
 
-    #[inline]
+    // Force-inline so no out-of-line copy of `WyhashStateless::final_`'s
+    // length-switch survives on the `Hasher`-driven streaming path.
+    #[inline(always)]
     pub fn final_(&mut self) -> u64 {
         let rem_key = &self.buf[0..self.buf_len];
 
@@ -515,7 +470,7 @@ impl Wyhash {
         self.buf_len = remaining_bytes.len();
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn final_(&self) -> u64 {
         let input: &[u8] = &self.buf[0..self.buf_len];
         let mut new_self = self.shallow_copy(); // ensure idempotency

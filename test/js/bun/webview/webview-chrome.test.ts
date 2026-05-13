@@ -262,11 +262,20 @@ it("chrome: cdp() raw passthrough", async () => {
 });
 
 it("chrome: cdp() guards — before navigate and params validation", async () => {
-  // Chrome before first navigate → no sessionId → INVALID_STATE.
+  // Chrome before first navigate → no sessionId → ERR_INVALID_STATE. This
+  // rejects (not sync-throws) so `void v.cdp(...).catch(()=>{})` recovery
+  // patterns are safe when Chrome dies before the attach chain completes —
+  // a sync throw escapes .catch() and masks the original navigate() error.
   const crView = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
   try {
-    expect(() => crView.cdp("Page.enable")).toThrow(/session.*navigate/i);
-    // params validation: non-object rejected before any I/O.
+    const p = crView.cdp("Page.enable");
+    expect(p).toBeInstanceOf(Promise);
+    await expect(p).rejects.toMatchObject({
+      code: "ERR_INVALID_STATE",
+      message: expect.stringMatching(/session.*navigate/i),
+    });
+    // params validation: non-object still sync-throws before any I/O —
+    // programmer error, not a state error.
     await crView.navigate(html("<body></body>"));
     expect(() => crView.cdp("Page.enable", 42 as any)).toThrow(/object/);
   } finally {

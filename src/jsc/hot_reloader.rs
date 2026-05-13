@@ -1144,6 +1144,55 @@ where
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
 
+                        // The watched entrypoint has a per-file inotify watch on its inode.
+                        // An atomic rename (`rename(tmp, entrypoint)`) or a rm+recreate over
+                        // the entrypoint replaces that inode, so the kernel drops the
+                        // per-file watch (IN_DELETE_SELF + IN_IGNORED). When the file event
+                        // and this directory event land in separate inotify-read batches,
+                        // `flush_evictions` runs in between and the entry is gone from the
+                        // watchlist before the recreated file is seen below — so the reload
+                        // for the recreated entrypoint would be dropped and `--hot` would
+                        // deadlock waiting for a reload that never happens.
+                        //
+                        // Recover the same way the kqueue path does (see
+                        // `is_waiting_for_dir_change` above): if this directory event names
+                        // the entrypoint and the file now exists, enqueue an entrypoint
+                        // reload unconditionally — `main.hash` is a stored field, independent
+                        // of whether the per-file watchlist entry survived. The per-file
+                        // watch itself is re-armed on the JS thread by
+                        // `VirtualMachine::add_main_to_watcher_if_needed` after the reload.
+                        if !IS_KQUEUE && self.main.hash != 0 && self.main.dir_hash == current_hash
+                        {
+                            let main_basename = bun_paths::basename(self.main.file);
+                            for changed_name_ in affected_inotify {
+                                let changed_name: &[u8] = match changed_name_ {
+                                    Some(z) => z.as_bytes(),
+                                    None => continue,
+                                };
+                                if changed_name != main_basename {
+                                    continue;
+                                }
+                                let main_exists = {
+                                    let mut zbuf = PathBuffer::uninit();
+                                    if self.main.file.len() >= zbuf.len() {
+                                        false
+                                    } else {
+                                        zbuf[..self.main.file.len()]
+                                            .copy_from_slice(self.main.file);
+                                        zbuf[self.main.file.len()] = 0;
+                                        // SAFETY: zbuf is NUL-terminated at len.
+                                        let z = ZStr::from_buf(&zbuf[..], self.main.file.len());
+                                        bun_sys::access(z, libc::F_OK).is_ok()
+                                    }
+                                };
+                                if main_exists {
+                                    record_changed_path(self.main.file);
+                                    current_task.append(self.main.hash);
+                                }
+                                break;
+                            }
+                        }
+
                         if let Some(dir_ent) = entries_option {
                             // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);
                             // both outlive this loop iteration.

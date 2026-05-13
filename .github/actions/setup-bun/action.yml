@@ -72,7 +72,9 @@ runs:
           # disagree. Tagged + latest releases are stable, check those.
           if [ "$release" != "canary" ]; then
             curl --fail --retry 5 -LO "${base}/SHASUMS256.txt"
-            grep " ${target}.zip\$" SHASUMS256.txt | sha256sum -c -
+            shacheck="sha256sum"
+            command -v "$shacheck" >/dev/null 2>&1 || shacheck="shasum -a 256"
+            grep " ${target}.zip\$" SHASUMS256.txt | $shacheck -c -
           fi
         fi
 

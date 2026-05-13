@@ -1,7 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { totalmem } from "os";
 import { join } from "path";
-import { bunEnv, bunExe, isWindows } from "harness";
 
 describe("FormData", () => {
   it("should be able to append a string", () => {

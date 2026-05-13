@@ -963,10 +963,14 @@ export const linkerFlags: Flag[] = [
       "-Wl,--gdb-index",
       "-Wl,-z,combreloc",
       // NOTE: --sort-section=name was here historically; lld ignores it
-      // for the default `.text` rule. Hot/cold partitioning of `.text` is
-      // handled by -z keep-text-section-prefix (release entry below): it
-      // keeps LLVM's per-function .text.hot/.startup/.unlikely prefixes as
-      // distinct output sections so cold code doesn't share startup pages.
+      // for the default `.text` rule. We deliberately do NOT pass
+      // `-z keep-text-section-prefix`: without PGO/BOLT (the release/`btg`
+      // profile has none), LLVM's *static* `.unlikely` heuristic mislabels a
+      // lot of error/panic-format/`#[cold]`/bring-up code that actually runs
+      // on the `bun <file>` / `bun -p` startup path. Segregating it into a
+      // dedicated `.text.unlikely` then made ~84% of that section resident at
+      // startup anyway (plus 64 KB fault-around), so the monolithic `.text`
+      // the linker produces by default has *better* startup RSS locality.
       "-Wl,--hash-style=both",
       "-Wl,--build-id=sha1",
     ],
@@ -977,24 +981,6 @@ export const linkerFlags: Flag[] = [
     flag: "-Wl,--gc-sections",
     when: c => c.linux && c.release,
     desc: "Garbage-collect unused sections (release only; debug keeps Zig dbHelper symbols)",
-  },
-  {
-    // Keep LLVM's per-function `.text.hot.` / `.text.startup.` /
-    // `.text.unlikely.` / `.text.exit.` prefixes as separate output
-    // sections instead of merging everything into one `.text`. Fat-LTO
-    // otherwise lays out all ~14k Rust `.text.*` sections in CGU /
-    // crate-alphabetical order, so hot CLI-dispatch + VM-init code (the
-    // `bun <file>` startup path) ends up sharing 4 KB / 64 KB fault-around
-    // pages with cold panic/format/bounds-check machinery and the cold
-    // bundler/install/css bodies — ~2.7 MB of extra .text faulted in at
-    // startup vs. a layout that packs the startup path together. LLVM
-    // already tags panic/EH/bounds paths (and `#[cold]` fns) `.unlikely`
-    // and C++ static-init ctors `.startup`; this makes lld actually
-    // segregate them so steady-state RSS doesn't carry them. LTO-safe and
-    // needs no second link (unlike --symbol-ordering-file). gold/lld only.
-    flag: "-Wl,-z,keep-text-section-prefix",
-    when: c => c.linux && c.release,
-    desc: "Segregate .text.hot/.startup/.unlikely sections (packs startup path, evicts cold code)",
   },
   {
     // Always icf=safe in release. The stripped `bun` shares its build-id
@@ -1028,6 +1014,22 @@ export const linkerFlags: Flag[] = [
     ],
     when: c => c.linux,
     desc: "Dynamic symbol list + version script",
+  },
+  {
+    // Cluster the cold-start working set (clap arg-parse -> CLI dispatch ->
+    // module loader -> transpiler/js_parser+js_printer bring-up -> JSC
+    // ZigGlobalObject/VM init) into one contiguous run of `.text` pages
+    // instead of letting fat-LTO scatter it across the ~50 MB `.text` blob
+    // (Rust CGUs land in arbitrary order). Single-pass, best-effort: the
+    // file is human-authored and `--no-warn-symbol-ordering` lets lld drop
+    // entries whose Rust v0-mangled `Cs<hash>_` disambiguators / `.llvm.<N>`
+    // suffixes have drifted — a slightly-stale list just loses a little
+    // clustering and costs zero extra link time (no 2-pass relink). See
+    // src/startup.order; linkDepends() lists the same path so ninja relinks
+    // when it changes.
+    flag: c => [`-Wl,--symbol-ordering-file=${c.cwd}/src/startup.order`, "-Wl,--no-warn-symbol-ordering"],
+    when: c => c.linux && c.release && !c.asan && !c.valgrind,
+    desc: "Cluster hot cold-start .text (RSS/iTLB) from src/startup.order",
   },
 
   // ─── FreeBSD ───
@@ -1082,13 +1084,6 @@ export const linkerFlags: Flag[] = [
     desc: "Garbage-collect unused sections",
   },
   {
-    // Same as the Linux entry: keep .text.hot/.startup/.unlikely prefixes
-    // as distinct output sections so cold code doesn't share startup pages.
-    flag: "-Wl,-z,keep-text-section-prefix",
-    when: c => c.freebsd && c.release,
-    desc: "Segregate .text.hot/.startup/.unlikely sections",
-  },
-  {
     flag: c => [
       "-Wl,-Bsymbolic-functions",
       "-rdynamic",
@@ -1109,8 +1104,10 @@ export function linkDepends(cfg: Config): string[] {
   if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
   if (cfg.windows) return [join(cfg.cwd, "src/symbols.def")];
   if (cfg.darwin) return [join(cfg.cwd, "src/symbols.txt")];
-  // linux: ELF dynamic-list + version script
-  return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
+  // linux: ELF dynamic-list + version script (+ .text ordering hint in release)
+  const deps = [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
+  if (cfg.release && !cfg.asan && !cfg.valgrind) deps.push(join(cfg.cwd, "src/startup.order"));
+  return deps;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

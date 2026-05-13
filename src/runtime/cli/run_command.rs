@@ -504,16 +504,60 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// Port of `configureEnvForRun` (run_command.zig:772). Allocates a
     /// process-lifetime `Transpiler`, primes its resolver/env, reads the
-    /// top-level `DirInfo`, and seeds the `npm_*` env vars.
+    /// top-level `DirInfo`, configures the bundler linker / JSX runtime, and
+    /// seeds the `npm_*` env vars.
     ///
     /// Returns a raw `*mut DirInfo` borrowed from the resolver's directory
     /// cache (process-lifetime; Zig returned `*DirInfo`).
+    ///
+    /// Hot-path note: the common `bun run <package.json script>` case never
+    /// transpiles anything through this `Transpiler` (it shells out / boots a
+    /// fresh VM with its own transpiler), so it should call
+    /// [`Self::configure_env_for_run_without_linker`] instead — that skips the
+    /// `configure_linker()` + `load_tsconfig_json` work, which is the single
+    /// largest block of bundler/linker code otherwise faulted in by `bun run`.
     pub fn configure_env_for_run(
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader<'static>>,
         log_errors: bool,
         store_root_fd: bool,
+    ) -> Result<bun_resolver::DirInfoRef, bun_core::Error> {
+        Self::configure_env_for_run_impl(ctx, this_transpiler, env, log_errors, store_root_fd, true)
+    }
+
+    /// Like [`Self::configure_env_for_run`] but does **not** construct the
+    /// bundler linker or enable `load_tsconfig_json` — for callers that only
+    /// use the returned `Transpiler` for module resolution / env / `$PATH`
+    /// lookup (the `bun run <script>` dispatch path), never for transpiling.
+    pub fn configure_env_for_run_without_linker(
+        ctx: &mut ContextData,
+        this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
+        env: Option<*mut DotEnv::Loader<'static>>,
+        log_errors: bool,
+        store_root_fd: bool,
+    ) -> Result<bun_resolver::DirInfoRef, bun_core::Error> {
+        Self::configure_env_for_run_impl(ctx, this_transpiler, env, log_errors, store_root_fd, false)
+    }
+
+    /// `configure_linker()` + `load_tsconfig_json` setup, factored into a
+    /// `#[cold]` callee so the bundler-linker/JSX-runtime code it pulls in does
+    /// not share `.text` pages with the hot `bun run <script>` dispatch path.
+    #[cold]
+    #[inline(never)]
+    fn configure_run_transpiler_linker(this_transpiler: &mut Transpiler<'static>) {
+        this_transpiler.resolver.opts.load_tsconfig_json = true;
+        this_transpiler.options.load_tsconfig_json = true;
+        this_transpiler.configure_linker();
+    }
+
+    fn configure_env_for_run_impl(
+        ctx: &mut ContextData,
+        this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
+        env: Option<*mut DotEnv::Loader<'static>>,
+        log_errors: bool,
+        store_root_fd: bool,
+        with_linker: bool,
     ) -> Result<bun_resolver::DirInfoRef, bun_core::Error> {
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
@@ -538,10 +582,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler.resolver.care_about_scripts = true;
         this_transpiler.resolver.store_fd = store_root_fd;
 
-        this_transpiler.resolver.opts.load_tsconfig_json = true;
-        this_transpiler.options.load_tsconfig_json = true;
-
-        this_transpiler.configure_linker();
+        // Bundler-linker + JSX-runtime config: only callers that actually
+        // transpile through this `Transpiler` need it. `configure_linker`'s
+        // auto-JSX step reads the cwd `DirInfo` (and, with `load_tsconfig_json`
+        // on, its `tsconfig.json`) — keep it ahead of the `read_dir_info` below
+        // so that read populates/uses the same cache entry, matching Zig's
+        // `configureEnvForRun` ordering exactly.
+        if with_linker {
+            Self::configure_run_transpiler_linker(this_transpiler);
+        }
 
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
         let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
@@ -2309,11 +2358,23 @@ impl RunCommand {
         // `&Arena`/`Box`/enum fields), so use `MaybeUninit` and let
         // `configure_env_for_run` `.write()` the whole struct (PORTING.md
         // §std.mem.zeroes).
+        //
+        // Use the `_without_linker` variant: nothing reached from here
+        // transpiles through `this_transpiler` — the script-string path shells
+        // out, and the file-entry-point path boots a fresh VM with its own
+        // transpiler — so the bundler-linker / `tsconfig.json` / JSX-runtime
+        // setup would be dead weight (and the largest block of bundler code
+        // otherwise faulted in for a plain `bun run <script>`).
         let mut this_transpiler = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
-        let root_dir_info =
-            Self::configure_env_for_run(ctx, &mut this_transpiler, None, log_errors, false)?;
-        // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is
-        // fully initialized via `MaybeUninit::write`.
+        let root_dir_info = Self::configure_env_for_run_without_linker(
+            ctx,
+            &mut this_transpiler,
+            None,
+            log_errors,
+            false,
+        )?;
+        // SAFETY: `configure_env_for_run_without_linker` returned `Ok`, so the
+        // slot is fully initialized via `MaybeUninit::write`.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
         let force_using_bun = ctx.debug.run_in_bun;
         let mut original_path: Vec<u8> = Vec::new();

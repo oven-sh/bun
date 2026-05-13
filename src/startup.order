@@ -1,0 +1,101 @@
+# lld --symbol-ordering-file
+#
+# Hot-startup symbol order for `bun <file>` / `bun run` / `bun --version`.
+# lld clusters the symbols listed here at the front of `.text`, packing the
+# init-array-reachable + CLI-dispatch + transpiler/VM bring-up code into one
+# contiguous run of `.text` pages instead of letting it scatter across the
+# ~50 MB `.text` blob (fat-LTO emits the ~14k Rust `.text.*` sections in
+# arbitrary CGU / crate-alphabetical order, so hot bun_clap / bun_runtime
+# code otherwise shares 64 KB fault-around windows with cold bun_install /
+# bun_bundler / bun_css bodies).
+#
+# This is a single-pass, best-effort hint: lld silently ignores entries it
+# can't resolve (paired with -Wl,--no-warn-symbol-ordering in flags.ts), so a
+# slightly-stale list — Rust v0 mangling bakes in per-crate `Cs<hash>_`
+# disambiguators and post-LTO `.llvm.<N>` suffixes that churn — just loses a
+# little clustering and costs zero extra link time. Refresh when convenient:
+#   perf record -e cycles:u -- ./build/release/bun trivial.js
+#   perf script -F sym | awk 'NF{print $1}' | sort -u
+# Linux release only (see flags.ts).
+#
+# Order: .init_array / libc / mimalloc init -> main -> Rust CLI entry ->
+# arg parse -> run-command -> resolver/transpiler bring-up -> JSC VM init.
+
+# .init_array targets + libc/cpu feature init
+_start
+frame_dummy
+__cpu_indicator_init
+register_tm_clones
+_GLOBAL__sub_I_eh_alloc.cc
+_GLOBAL__sub_I.00090_globals_io.cc
+_GLOBAL__sub_I_cxx11_locale_inst.cc
+_GLOBAL__sub_I_cxx11_wlocale_inst.cc
+_GLOBAL__sub_I_locale_inst.cc
+_GLOBAL__sub_I_system_error.cc
+_GLOBAL__sub_I_ios_errcat.cc
+
+# mimalloc fast path (touched before Rust main)
+_ZL17mi_process_attachv
+_ZL20mi_process_init_oncev
+_ZL18mi_heap_init_theapPK9mi_heap_s
+mi_thread_init
+mi_malloc
+mi_zalloc
+mi_free
+
+# entry — Rust CLI boot chain: main -> Cli::start -> Command::start
+#   -> Command::which (argv->Tag) -> Command::create_context_data
+#   (-> Arguments::parse, see the clap block below) -> dispatch.
+# These are each `#[inline(never)]` at their definition site (see
+# src/runtime/cli/mod.rs) precisely so they stay concrete symbols lld can
+# anchor here instead of fat-LTO inlining-and-scattering them.
+main
+_RNvNtCs6TDVCTbknsP_8bun_core4util14argv_view_init
+_RNvNtNtCskCIO3tXDagw_11bun_runtime3cli3cli5start
+_RNvNtNtCskCIO3tXDagw_11bun_runtime3cli7command5start
+_RNvNtNtCskCIO3tXDagw_11bun_runtime3cli7command5which
+_RNvNtNtCskCIO3tXDagw_11bun_runtime3cli7command19create_context_data
+_RNvNtNtCskCIO3tXDagw_11bun_runtime3cli7command16exec_auto_or_run
+_RNvNtNtCskCIO3tXDagw_11bun_runtime3cli7command15boot_standalone
+
+# arg parsing (Arguments::parse + clap comptime table + run/default tables)
+_RNvNtNtCskCIO3tXDagw_11bun_runtime3cli9arguments5parse
+_RNvNtNtCskCIO3tXDagw_11bun_runtime3cli9arguments10AUTO_TABLE
+_RNvNtNtCskCIO3tXDagw_11bun_runtime3cli9arguments9RUN_TABLE
+_RNvMNtCscCEpA7StTXG_8bun_clap8comptimeNtB2_14ConvertedTable4find
+_RINvMs_NtCscCEpA7StTXG_8bun_clap8comptimeINtB5_12ComptimeClapNtB7_4HelpE16parse_with_tableNtNtB7_4args10OsIteratorECskCIO3tXDagw_11bun_runtime
+_RINvCscCEpA7StTXG_8bun_clap5parseNtB2_4HelpECskCIO3tXDagw_11bun_runtime
+_RINvMNtCscCEpA7StTXG_8bun_clap8comptimeNtB3_14ConvertedTable10for_paramsNtB5_4HelpECskCIO3tXDagw_11bun_runtime
+_RINvMNtCscCEpA7StTXG_8bun_clap8comptimeNtB3_14ConvertedTable5buildNtB5_4HelpECskCIO3tXDagw_11bun_runtime
+
+# run-command path
+_RNvMs2_NtNtCskCIO3tXDagw_11bun_runtime3cli11run_commandNtB5_10RunCommand22__boot_and_handle_error
+_RNvMs0_NtNtCskCIO3tXDagw_11bun_runtime3cli11run_commandNtB5_10RunCommand4boot
+_RNvMs0_NtNtCskCIO3tXDagw_11bun_runtime3cli11run_commandNtB5_10RunCommand14boot_bun_shell
+_RNvMs0_NtNtCskCIO3tXDagw_11bun_runtime3cli11run_commandNtB5_10RunCommand21configure_env_for_run
+_RNvMs1_NtNtCskCIO3tXDagw_11bun_runtime3cli11run_commandNtB5_3Run5start
+
+# package.json / bunfig parse on the run path
+_RNvMNtCs1dyHEfsqs8O_11bun_parsers4jsonNtB2_14JSONLikeParser10parse_expr
+_RNvMs_NtCs1dyHEfsqs8O_11bun_parsers4jsonNtB4_25PackageJSONVersionChecker10parse_expr
+
+# module resolution bring-up
+_RNvMsf_NtCsfYJVEQ7Pi82_12bun_resolver14___phase_a_bodyNtB5_8Resolver5init1
+_RNvMsf_NtCsfYJVEQ7Pi82_12bun_resolver14___phase_a_bodyNtB5_8Resolver7resolve
+_RNvMsf_NtCsfYJVEQ7Pi82_12bun_resolver14___phase_a_bodyNtB5_8Resolver25resolve_without_remapping
+_RNvMsf_NtCsfYJVEQ7Pi82_12bun_resolver14___phase_a_bodyNtB5_8Resolver24resolve_without_symlinks
+
+# transpiler / parser / printer bring-up (first module transpile)
+_RNvMs0_NtCsclwXITsTUWq_11bun_bundler10transpilerNtB5_10Transpiler30configure_linker_with_auto_jsx
+_RNvNtCskCIO3tXDagw_11bun_runtime9jsc_hooks27transpile_source_code_inner
+_RNvMNtCsiaUZQtdHvEM_13bun_js_parser5parseINtNtB4_1p1PKb0_NtNtB4_6parser7JsxNoneKb1_E17parse_stmts_up_toB4_
+_RINvCsamR7DS469dC_14bun_js_printer17print_with_writerQINtB2_6WriterNtB2_12BufferWriterEKb0_ECsclwXITsTUWq_11bun_bundler
+
+# JSC ZigGlobalObject + VM init
+_RNvNtCskCIO3tXDagw_11bun_runtime9jsc_hooks18init_runtime_state
+Zig__GlobalObject__create
+_RNvMsa_NtCsaGe5PNy0ep6_7bun_jsc15virtual_machineNtB5_14VirtualMachine4init
+
+# teardown (always reached)
+_RNvMs7_NtCsaGe5PNy0ep6_7bun_jsc15virtual_machineNtB5_14VirtualMachine7on_exit
+Zig__GlobalObject__destructOnExit

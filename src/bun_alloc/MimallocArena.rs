@@ -249,37 +249,57 @@ impl MimallocArena {
 
     /// Zig: `std.heap.ArenaAllocator.reset(.{.retain_with_limit = limit})`.
     ///
-    /// **PORT NOTE — always a full [`Self::reset`]; `_limit` is ignored.**
+    /// Retains the warm heap while its in-use footprint is `<= limit`, and
+    /// only then falls back to a full [`Self::reset`] (`mi_heap_destroy` +
+    /// `mi_heap_new`). Returns `true` when the heap was retained, `false` when
+    /// it was recycled — mirroring `ArenaAllocator.reset`'s "reuse succeeded"
+    /// boolean.
     ///
-    /// Zig's `std.heap.ArenaAllocator` is a bump allocator: `.retain_with_limit`
-    /// rewinds the bump cursor to offset 0 (bulk-freeing every allocation) and
-    /// retains up to `limit` bytes of *backing buffer capacity*, so the next
-    /// cycle's allocations reuse the same committed pages. A `mi_heap_t` is not
-    /// a bump allocator and has no rewind primitive — the only bulk-free is
-    /// `mi_heap_destroy`. The previous implementation's under-limit branch kept
-    /// the live heap and zeroed a soft counter, which retained *garbage*, not
-    /// capacity: every previous cycle's blocks (never `mi_free`d — callers use
-    /// arena semantics, and `AstAlloc::deallocate` is a no-op by design) stayed
-    /// resident and the next cycle allocated fresh pages on top. RSS saw-toothed
-    /// 0→limit→destroy instead of plateauing at one cycle's footprint; smaps
-    /// showed the mimalloc 1 GB arena at 28.4 MB (port) vs 23.6 MB (Zig) on
-    /// lint/create-vite, and `--smol` (which forced full `reset()`) collapsed
-    /// the port-vs-Zig RSS delta to noise.
+    /// **Why this isn't a no-op-or-full-reset.** Zig's `std.heap.ArenaAllocator`
+    /// is a bump allocator: `.retain_with_limit` rewinds the bump cursor to
+    /// offset 0 (logically freeing every allocation) but keeps up to `limit`
+    /// bytes of *backing buffer* committed, so the next cycle's allocations
+    /// reuse those warm pages instead of faulting in (and zeroing) fresh ones.
+    /// A `mi_heap_t` has no "free all blocks but keep the pages" primitive —
+    /// the only bulk-free is `mi_heap_destroy`, which also hands the pages back
+    /// to mimalloc (which may purge/decommit them). So the faithful mapping is
+    /// "keep the *whole* heap — blocks and all — while it is still small;
+    /// recycle it once it grows past `limit`". The retained blocks are dead
+    /// (arena callers never `mi_free`; `AstAlloc::deallocate` is a no-op by
+    /// design), so they *are* garbage — but `limit` bounds that garbage, and
+    /// in exchange the per-cycle `mi_heap_destroy` + `mi_heap_new` (and the
+    /// re-commit + memset its first allocation pays when mimalloc has since
+    /// purged the arena page) is amortised away for the common case of many
+    /// small cycles. `limit` is the RSS/CPU knob: a tighter cap trades warm
+    /// pages for lower steady-state RSS; a looser one does the reverse.
     ///
-    /// The "warm pages" goal the retain branch was chasing is already provided
-    /// by mimalloc itself: `mi_heap_destroy` returns pages to the per-thread
-    /// segment cache and `mi_heap_new`'s first alloc pulls from there, so the
-    /// destroy+new round-trip reuses the same committed memory without holding
-    /// dead blocks live. There is no correctness- or performance-preserving way
-    /// to map `.retain_with_limit` onto `mi_heap_t`; the correct mapping is
-    /// plain `reset()`.
-    ///
-    /// Kept as a separate entry point (rather than deleting) so existing callers
-    /// compile unchanged; new code should call [`Self::reset`] directly.
+    /// (An earlier port made this an unconditional `reset()` on the theory
+    /// that mimalloc's per-thread segment cache already keeps pages warm
+    /// across `mi_heap_destroy`/`mi_heap_new`. In practice, with a lower RSS
+    /// ceiling and mimalloc's purge timer, the recycled page is often already
+    /// decommitted by the time the next cycle touches it, so the round-trip
+    /// re-commits and re-zeroes it — exactly the cost `.retain_with_limit`
+    /// exists to avoid. Hence the cap-gated retain.)
     #[inline]
-    pub fn reset_retain_with_limit(&mut self, _limit: usize) -> bool {
+    pub fn reset_retain_with_limit(&mut self, limit: usize) -> bool {
+        // `borrowing_default()` arenas (`!owns`) wrap `mi_heap_main()`, whose
+        // footprint is the whole process — they always fall through to
+        // `reset()`, which debug-asserts `owns` (recycling the main heap is a
+        // bug). `allocated_bytes()` walks heap *areas* (O(areas)), so the
+        // check is cheap.
+        if self.owns && self.allocated_bytes() <= limit {
+            // `&mut self` proves exclusive access; re-stamp the debug
+            // thread-lock so an arena `Send`-moved to a worker and then
+            // retain-reset there may keep allocating on that worker — same as
+            // the full-reset path below (`reset()` re-stamps after
+            // `mi_heap_new`).
+            #[cfg(debug_assertions)]
+            self.owning_thread
+                .store(debug_thread_stamp(), Ordering::Relaxed);
+            return true;
+        }
         self.reset();
-        true
+        false
     }
 
     /// Zig: `MimallocArena.gc()` → `mi_heap_collect(heap, false)`.

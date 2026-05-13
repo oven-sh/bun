@@ -7594,25 +7594,29 @@ pub mod __phase_a_body {
             &mut self,
             path: &[u8],
         ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
-            self.dir_info_cached_maybe_log::<true, true>(path)
+            self.dir_info_cached_maybe_log(true, path)
         }
 
         pub fn read_dir_info(
             &mut self,
             path: &[u8],
         ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
-            self.dir_info_cached_maybe_log::<false, true>(path)
+            self.dir_info_cached_maybe_log(false, path)
         }
 
         /// Like `readDirInfo`, but returns `null` instead of throwing an error.
         pub fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
-            self.dir_info_cached_maybe_log::<false, true>(path)
-                .ok()
-                .flatten()
+            self.dir_info_cached_maybe_log(false, path).ok().flatten()
         }
 
-        fn dir_info_cached_maybe_log<const ENABLE_LOGGING: bool, const FOLLOW_SYMLINKS: bool>(
+        // PORT NOTE: Zig's `dirInfoCachedMaybeLog` takes `comptime enable_logging`
+        // and `comptime follow_symlinks`. `follow_symlinks` is `true` at every call
+        // site, so it's dropped here; `enable_logging` is a plain runtime parameter
+        // (it gates one cold error-formatting branch) so this large dir-walk function
+        // monomorphizes to a single copy instead of two faulted in at startup.
+        fn dir_info_cached_maybe_log(
             &mut self,
+            enable_logging: bool,
             raw_input_path: &[u8],
         ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
             // TODO(port): narrow error set
@@ -7910,7 +7914,7 @@ pub mod __phase_a_body {
                             bun_sys::open_dir_absolute_z(
                                 sentinel,
                                 bun_sys::OpenDirOptions {
-                                    no_follow: !FOLLOW_SYMLINKS,
+                                    no_follow: false,
                                     iterate: true,
                                 },
                             )
@@ -7926,7 +7930,7 @@ pub mod __phase_a_body {
                                 sentinel.as_bytes(),
                                 bun_sys::WindowsOpenDirOptions {
                                     iterable: true,
-                                    no_follow: !FOLLOW_SYMLINKS,
+                                    no_follow: false,
                                     read_only: true,
                                     ..Default::default()
                                 },
@@ -7969,7 +7973,7 @@ pub mod __phase_a_body {
                                 if !(err == bun_core::err!("ENOENT")
                                     || err == bun_core::err!("FileNotFound"))
                                 {
-                                    if ENABLE_LOGGING {
+                                    if enable_logging {
                                         let pretty = queue_top_unsafe_path;
                                         let _ = self.log_mut().add_error_fmt(
                                             None,

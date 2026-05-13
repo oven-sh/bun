@@ -71,32 +71,56 @@ macro_rules! concat_params {
 /// pub const RUN_PARAMS: &[Param<Help>] = concat_params!(...);
 /// pub static RUN_TABLE: &ConvertedTable = comptime_table!(RUN_PARAMS);
 /// ```
+///
+/// Pass `, cold` for subcommand tables off the trivial-script cold-start path
+/// (`bun build` / `bun test` / `bun install` / `bun pm` / `bun x` / …) so they
+/// stay in plain `.rodata` instead of padding the contiguous `.rodata.startup`
+/// run (see the per-arm notes below):
+///
+/// ```ignore
+/// pub static TEST_TABLE: &ConvertedTable = comptime_table!(TEST_PARAMS, cold);
+/// ```
 #[macro_export]
 macro_rules! comptime_table {
-    ($params:expr) => {{
+    // Hot tables — the run/default-command param tables that `bun <file>` and
+    // `bun run` dereference on cold start. Cluster every nested `__CONV` /
+    // `__LONG` / `__TABLE` static into `.rodata.startup`: with
+    // `-Zfunction-sections` each `static` otherwise lands in its own
+    // `.rodata.<sym>` input section that fat-LTO emits in crate-alphabetical
+    // order — one minor fault per scattered table on first touch. The cluster is
+    // placed contiguously by `src/sections.lds` (alongside `.text.startup`), so
+    // the trivial-script cold path faults the converted arrays, long-name index,
+    // and `ConvertedTable` headers in with a couple of shared fault-around
+    // pages. Non-PIE `bun` has zero runtime relocations, so these stay in plain
+    // rodata even with the `&'static [u8]` help strings they point at.
+    // Linux-only: the section-name syntax is ELF-specific (mirrors
+    // `bun_core::err!`'s `.bun_err` clustering).
+    ($params:expr) => {
+        $crate::comptime_table!(
+            @build
+            { #[cfg_attr(target_os = "linux", unsafe(link_section = ".rodata.startup"))] }
+            $params
+        )
+    };
+    // Cold tables — `bun build` / `bun test` / `bun install` / `bun pm` /
+    // `bun x` and friends. `.rodata.startup` is deliberately one contiguous
+    // block so cold start faults it in with a single read-around; padding it
+    // with param tables those rare subcommands need (and `bun <file>` / `bun
+    // run` never touch) only grows that run. Leave these in plain `.rodata`.
+    ($params:expr, cold) => {
+        $crate::comptime_table!(@build { } $params)
+    };
+    (@build { $(#[$attr:meta])* } $params:expr) => {{
         const __P: &[$crate::Param<$crate::Help>] = $params;
         const __N: usize = __P.len();
-        // `.rodata.startup`: every `comptime_table!` table is a CLI-param table
-        // dereferenced on the `bun <file>` / `bun run` / `bun install` /
-        // `bun --version` hot path. With `-Zfunction-sections` each `static`
-        // otherwise lands in its own `.rodata.<sym>` input section that fat-LTO
-        // emits in crate-alphabetical order — one minor fault per scattered
-        // table on first touch. Clustering the converted arrays, long-name
-        // index, and `ConvertedTable` headers into a single `.rodata.startup`
-        // (placed contiguously by `src/sections.lds`, alongside `.text.startup`)
-        // packs them onto a couple of shared fault-around pages. Non-PIE `bun`
-        // has zero runtime relocations, so these stay in plain rodata even with
-        // the `&'static [u8]` help strings they point at. Linux-only: the
-        // section-name syntax is ELF-specific (mirrors `bun_core::err!`'s
-        // `.bun_err` clustering).
-        #[cfg_attr(target_os = "linux", unsafe(link_section = ".rodata.startup"))]
+        $(#[$attr])*
         static __CONV: [$crate::Param<usize>; __N] =
             $crate::comptime::convert_params_array::<$crate::Help, __N>(__P);
         const __M: usize = $crate::comptime::count_long_entries(__P);
-        #[cfg_attr(target_os = "linux", unsafe(link_section = ".rodata.startup"))]
+        $(#[$attr])*
         static __LONG: [$crate::comptime::LongEntry; __M] =
             $crate::comptime::build_long_index::<$crate::Help, __M>(__P);
-        #[cfg_attr(target_os = "linux", unsafe(link_section = ".rodata.startup"))]
+        $(#[$attr])*
         static __TABLE: $crate::ConvertedTable = $crate::ConvertedTable::from_const(
             &__CONV,
             $crate::comptime::count_flags(__P),

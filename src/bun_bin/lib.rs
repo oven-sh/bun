@@ -15,14 +15,21 @@
 //!
 //! ## Layout
 //!
-//! Every callee of `main()` below is hand-listed in `src/startup.order`
-//! (the `main() direct-call chain` block) so lld's `--symbol-ordering-file`
-//! packs them into one contiguous `.text` run. Without that, fat-LTO emits
-//! the C-ABI leaves (`bun_initialize_process`, `bun_warn_avx_missing`,
-//! `__wrap_quick_exit`, `__wrap_gettid`, …) in crate-alphabetical order —
-//! ~6 MB from `main` amid cold JSC/WebCore code — and each call faults a
-//! separate 64 KB page run on cold start. **If you add or reorder a step
-//! here, mirror it in `src/startup.order`.**
+//! `main()`'s callee chain — the C-ABI leaves (`bun_initialize_process`,
+//! `bun_warn_avx_missing`, the `__wrap_*` shims, …) plus `cli::Cli::start`
+//! and everything `bun run` reaches under it — sits on the cold-start
+//! critical path: each call can fault a fresh page run. A
+//! `--symbol-ordering-file` 2-pass relink that clustered these onto shared
+//! pages was tried and dropped (the second link wasn't worth it over the
+//! monolithic `.text` lld emits by default — see the `-z
+//! keep-text-section-prefix` note in `scripts/build/flags.ts`).
+//!
+//! What still matters at the source level: keep cold-only code off these
+//! pages. Subcommand bodies never reached by `bun run` (`bun install`,
+//! `bun create`, the bundler/test-runner entry points) and the panic /
+//! crash-report path are tagged `#[cold]` so LLVM sinks them to the tail of
+//! their translation unit's `.text` instead of interleaving with the
+//! startup chain.
 
 #![allow(unused_imports)]
 #![warn(unused_must_use)]
@@ -52,6 +59,11 @@ static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 /// `JSGlobalObject::GlobalPropertyInfo` because `detect_stack_use_after_return`
 /// puts C++ stack locals on a heap-backed fake stack JSC's conservative GC
 /// can't see). Unconditional: harmless dead symbol when ASAN isn't linked.
+///
+/// `#[cold]`: read once by the ASAN runtime during its own init (never linked
+/// in release / on the `bun run` path) — keep it off the startup `.text` pages.
+#[cold]
+#[inline(never)]
 #[unsafe(no_mangle)]
 pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     // detect_stack_use_after_return=0: keep stack locals on the real stack so
@@ -87,6 +99,11 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
 /// Weak-defined by the ASAN runtime, so this strong definition wins. Harmless
 /// dead symbol when ASAN isn't linked (same linkage story as
 /// `__asan_default_options` above).
+///
+/// `#[cold]`: read once by the LSAN runtime during its own init (never linked
+/// in release / on the `bun run` path) — keep it off the startup `.text` pages.
+#[cold]
+#[inline(never)]
 #[unsafe(no_mangle)]
 pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
     // One rule per line. Substring match on any frame in the allocation stack.

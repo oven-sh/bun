@@ -559,6 +559,16 @@ pub mod cli {
     pub static LOG_: bun_core::RacyCell<core::mem::MaybeUninit<bun_ast::Log>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
+    /// `#[inline(never)]`: this is the first Rust call after `main()` (see
+    /// `src/bun_bin/lib.rs`) and the head of the `bun <file>` / `bun run`
+    /// startup chain. It must stay a concrete symbol so lld's
+    /// `--symbol-ordering-file` (`src/startup.order`) can cluster it — and the
+    /// callees it walks (`Command::start` → `which` → `create_context_data` →
+    /// `Arguments::parse` → …) — into one contiguous front-loaded `.text` run.
+    /// Without that, fat-LTO + `codegen-units=1` lay these out in
+    /// crate-alphabetical order, scattering the cold-start path across pages
+    /// shared with bundler/install/css/panic-format bodies.
+    #[inline(never)]
     pub fn start() {
         IS_MAIN_THREAD.with(|c| c.set(true));
         // Mirror the threadlocal into the crash-handler crate's global so
@@ -944,6 +954,13 @@ pub mod command {
         basename.contains(&b'.')
     }
 
+    /// `#[inline(never)]`: argv→`Tag` classification, called once from
+    /// `Cli::start` on every `bun` invocation. Kept a concrete symbol so
+    /// `src/startup.order` can place it next to `Cli::start` /
+    /// `create_context_data` (and the `RootCommandMatcher` helpers it pulls
+    /// in) in the front-loaded startup window, rather than letting fat-LTO
+    /// inline-and-scatter it through cold code.
+    #[inline(never)]
     pub fn which() -> Tag {
         let argv = bun::argv();
         let mut iter = argv.iter();
@@ -1203,6 +1220,13 @@ pub mod command {
     /// sat at byte offset +0x142d behind ~5 KB of inlined standalone-graph
     /// setup and per-tag bodies — see perf sample 0x3d628fd. With the bodies
     /// out-lined, `start` is just `which()` + a `match` of tail calls.
+    ///
+    /// `#[inline(never)]`: the dispatch root must stay a concrete symbol so
+    /// `src/startup.order`'s `--symbol-ordering-file` can anchor the `bun
+    /// <file>` startup cluster on it (and keep `which` / `create_context_data`
+    /// / `exec_auto_or_run` adjacent), instead of fat-LTO inlining it into
+    /// `Cli::start` and re-scattering the per-tag tail calls.
+    #[inline(never)]
     pub fn start(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
         // WebView host subprocess entry. Must be before StandaloneModuleGraph,
         // before JSC init, before anything that touches a JS engine. The child

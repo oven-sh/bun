@@ -57,6 +57,20 @@ describe("Intl.DateTimeFormat timeZone option", () => {
     expect(formatIn("PST8PDT")).toBe("05:00");
   });
 
+  test("Date.prototype.toLocaleString accepts the legacy zones too", () => {
+    // toLocaleString funnels through the same time-zone resolution path as
+    // Intl.DateTimeFormat, so it should agree on both the accepted-set and
+    // the rejected-set.
+    const d = new Date("2024-06-15T12:00:00Z");
+    const options = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as const;
+    for (const zone of legacyPrimaryZones) {
+      const viaDTF = new Intl.DateTimeFormat("en-US", { ...options, timeZone: zone }).format(d);
+      const viaDate = d.toLocaleString("en-US", { ...options, timeZone: zone });
+      expect(viaDate).toBe(viaDTF);
+    }
+    expect(() => d.toLocaleString("en-US", { timeZone: "BogusZone" })).toThrow(RangeError);
+  });
+
   test("unknown zones still throw RangeError", () => {
     expect(() => new Intl.DateTimeFormat("en-US", { timeZone: "Not/A_Zone" })).toThrow(RangeError);
     expect(() => new Intl.DateTimeFormat("en-US", { timeZone: "BogusZone" })).toThrow(RangeError);

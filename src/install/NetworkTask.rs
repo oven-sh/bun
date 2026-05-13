@@ -738,8 +738,22 @@ impl NetworkTask {
         // credentials. The empty-`tarball_url` branch builds the URL from
         // `scope.url.href()`, so its origin matches and authorized downloads
         // keep working.
-        let send_auth = matches!(authorization, Authorization::AllowAuthorization)
-            && URL::parse(&self.url_buf).origin == scope.url.url().origin;
+        //
+        // Compare (protocol, hostname, effective port) rather than the raw
+        // `URL.origin` slice — `origin` is a borrowed prefix of the input
+        // string and is not normalized for default ports, so a tarball URL of
+        // `https://host:443/...` would not byte-match a `.npmrc` registry of
+        // `https://host/...` even though they are the same origin. Some
+        // registries emit `dist.tarball` URLs with the default port spelled
+        // out; without normalization those installs lose the `Authorization`
+        // header and fail with 401.
+        let send_auth = matches!(authorization, Authorization::AllowAuthorization) && {
+            let tarball = URL::parse(&self.url_buf);
+            let registry = scope.url.url();
+            tarball.protocol == registry.protocol
+                && tarball.hostname == registry.hostname
+                && tarball.get_port_auto() == registry.get_port_auto()
+        };
 
         self.response_buffer = MutableString::init_empty();
 

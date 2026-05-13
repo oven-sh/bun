@@ -195,13 +195,10 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     if (pooled.ssl_config) |*s| s.deinit();
                     pooled.ssl_config = null;
                     if (pooled.proxy_tunnel) |*rp| {
-                        // Do NOT call rp.data.shutdown() here — it drives
-                        // SSLWrapper.shutdown → triggerCloseCallback →
-                        // onClose(handlers.ctx), and handlers.ctx is the
-                        // stale HTTPClient pointer from detachOwner(). That
-                        // client is freed by now. http_socket.close(.failure)
-                        // below force-closes the TCP without triggering the
-                        // callback, same as addMemoryBackToPool().
+                        // No shutdown() needed — http_socket.close(.failure)
+                        // below force-closes the TCP, same as addMemoryBackToPool().
+                        // (onClose would no-op anyway: owner was cleared in
+                        // detachOwner().)
                         rp.deref();
                     }
                     pooled.proxy_tunnel = null;

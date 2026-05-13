@@ -2,77 +2,23 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // A top-level-awaited dynamic import whose target statically imports the
-// awaiting module back. The spec's innerModuleEvaluation 11.c.v would have the
+// awaiting module back. The spec's innerModuleEvaluation 11.c.v makes the
 // chunk wait on the entry's async-evaluation order, but the entry can only
-// finish once the chunk's evaluate() promise settles — a self-deadlock. Bun
-// matches the pre-rewrite loader and lets the chunk evaluate immediately
-// against the entry's already-initialised bindings.
-test("dynamic import inside TLA whose target imports the awaiter back does not deadlock", async () => {
-  using dir = tempDir("dyn-tla-cycle", {
-    "index.mjs": `
-      import fs from "node:fs";
-      export const x = 42;
-      const chunk = await import("./chunks/stream.mjs");
-      console.log("chunk loaded:", chunk.handler());
-    `,
-    "chunks/stream.mjs": `
-      import { x } from "../index.mjs";
-      import fs from "node:fs";
-      export const handler = () => x + (fs.existsSync("/") ? 1 : 0);
-    `,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "index.mjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("chunk loaded: 43");
-  expect(exitCode).toBe(0);
-});
-
-// Same self-deadlock pattern, but the awaiting module is not the Evaluate()
-// entry — it's a static dependency of the entry. The cycle root re-entered by
-// the chunk has no TopLevelCapability of its own, so the discriminator must
-// be "has its body started" (pendingAsyncDependencies == 0), not "is it the
-// Evaluate() entry".
-test("dynamic import inside TLA of a non-entry module whose target imports it back does not deadlock", async () => {
-  using dir = tempDir("dyn-tla-cycle-nonentry", {
-    "entry.mjs": `
-      import { result } from "./mid.mjs";
-      console.log("result:", result);
-    `,
-    "mid.mjs": `
-      export const x = 42;
-      const chunk = await import("./chunk.mjs");
-      export const result = chunk.handler();
-    `,
-    "chunk.mjs": `
-      import { x } from "./mid.mjs";
-      export const handler = () => x + 1;
-    `,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "entry.mjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("result: 43");
-  expect(exitCode).toBe(0);
-});
+// finish once the chunk's evaluate() promise settles — a self-deadlock, and
+// Node prints "unsettled top-level await". Bun used to divert from spec at
+// 11.c.v to match the pre-rewrite loader behaviour (let the chunk evaluate
+// immediately against the entry's already-initialised bindings), but that
+// custom skip also fired for unrelated sibling dynamic imports and left
+// their importers reading post-`await` exports while they were still in
+// TDZ (#30634 — breaks @lexical/react and other packages that dispatch
+// dev/prod via `await import()` in a wrapper module). The skip was dropped;
+// this pattern now matches spec/Node behaviour (deadlock). Reinstating a
+// narrower skip that distinguishes the self-deadlock case from the
+// sibling-race case requires threading the dynamic-import referrer from
+// Bun's moduleLoaderImportModule hook through ModuleLoaderPayload to the
+// evaluate path — tracked for follow-up.
+test.todo("dynamic import inside TLA whose target imports the awaiter back does not deadlock");
+test.todo("dynamic import inside TLA of a non-entry module whose target imports it back does not deadlock");
 
 // The deadlock-avoidance above must NOT fire for sibling static imports in the
 // same Evaluate() pass. Here `entry` first imports `a` (in an SCC {a,c} with
@@ -197,5 +143,61 @@ test("static sibling import waits for an indirectly-shared TLA dep in the same E
 
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("456");
+  expect(exitCode).toBe(0);
+});
+
+// #30634: sibling dynamic imports from the event loop (Promise.all of two
+// top-level import() calls) that share a TLA wrapper dep. Each import() is
+// its own Evaluate() at the top of the stack, so by the time consumer2's DFS
+// visits wrapper, wrapper is EvaluatingAsync (popped at the end of consumer1's
+// DFS), its asyncEvaluationOrder is below the new watermark, and its
+// pendingAsyncDependencies is 0 — matching every earlier discriminator.
+// But wrapper's post-`await` `export const` assignments have not run yet
+// (its continuation is queued in the microtask queue, not on the C++ stack),
+// so skipping the spec wait runs consumer2 with wrapper's exports in TDZ.
+// The discriminator must additionally require the dep's body to be actively
+// executing on the JS call stack (Field::State == Executing) — true for
+// require(esm)/dynamic-import re-entry from inside wrapper's continuation,
+// false for a sibling import racing in from a fresh event-loop turn.
+test("sibling dynamic imports in Promise.all wait for a shared TLA wrapper", async () => {
+  using dir = tempDir("sibling-dynamic-tla", {
+    "entry.mjs": `
+      await Promise.all([import("./consumer1.mjs"), import("./consumer2.mjs")]);
+      console.log("ok");
+    `,
+    "wrapper.mjs": `
+      const mod = await import("./inner.mjs");
+      export const FOO = mod.FOO;
+      export const BAR = mod.BAR;
+    `,
+    "inner.mjs": `
+      export const FOO = "hello";
+      export const BAR = "world";
+    `,
+    "consumer1.mjs": `
+      import { FOO } from "./wrapper.mjs";
+      console.log("c1:", FOO);
+    `,
+    "consumer2.mjs": `
+      import { BAR } from "./wrapper.mjs";
+      console.log("c2:", BAR);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  // Order of c1/c2 isn't part of the contract — both must appear with their
+  // correct bindings, and the final "ok" must print.
+  const lines = stdout.trim().split("\n").sort();
+  expect(lines).toEqual(["c1: hello", "c2: world", "ok"]);
   expect(exitCode).toBe(0);
 });

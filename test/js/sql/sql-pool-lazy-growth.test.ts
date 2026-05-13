@@ -32,27 +32,25 @@ function makeSink() {
   };
 }
 
-for (const adapter of ["postgres", "mysql"] as Adapter[]) {
-  describe(`${adapter} connection pool grows lazily (#30632)`, () => {
-    test("a single query only opens one TCP connection, not `max`", async () => {
-      using sink = makeSink();
-      await using sql = new SQL({
-        adapter,
-        host: "127.0.0.1",
-        port: sink.port,
-        username: "x",
-        database: "x",
-        max: 50,
-        connectionTimeout: 1,
-      });
-
-      // Query fails (nothing is speaking the DB protocol on the other end);
-      // we only care about how many sockets Bun opened.
-      await sql`SELECT 1`.catch(() => {});
-      expect(sink.opened).toBe(1);
+describe.each(["postgres", "mysql"] as Adapter[])("%s connection pool grows lazily (#30632)", adapter => {
+  test("a single query only opens one TCP connection, not `max`", async () => {
+    using sink = makeSink();
+    await using sql = new SQL({
+      adapter,
+      host: "127.0.0.1",
+      port: sink.port,
+      username: "x",
+      database: "x",
+      max: 50,
+      connectionTimeout: 1,
     });
+
+    // Query fails (nothing is speaking the DB protocol on the other end);
+    // we only care about how many sockets Bun opened.
+    await sql`SELECT 1`.catch(() => {});
+    expect(sink.opened).toBe(1);
   });
-}
+});
 
 // Followup from #30632 review (@claude-bot / @Lillious): when a connection
 // fails with a non-retryable auth error (unsupported auth method, bad

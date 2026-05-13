@@ -1295,10 +1295,12 @@ async function getPipelineOptions() {
     !parseBoolean(getEnv("RELEASE", false) || "false") &&
     !/\[(release|build release|release build)\]/i.test(commitMessage);
 
-  // Commit-message-driven flags that reach code-signing or cloud credentials
-  // must never be honored on PR/fork builds.
-  const canRunPrivilegedSteps = isMainBranch() && !isPullRequest();
-  const privilegedOption = pattern => (canRunPrivilegedSteps ? parseOption(pattern) : false);
+  // [sign windows] / [publish images] reach code-signing and overwrite
+  // production AMIs, so they're main-branch-non-PR only. [build images] only
+  // bakes a test image and is needed when iterating on CI image changes from a
+  // branch, so it's allowed on any non-fork build.
+  const mainOnlyOption = pattern => (isMainBranch() && !isPullRequest() ? parseOption(pattern) : false);
+  const nonForkOption = pattern => (isFork() ? false : parseOption(pattern));
 
   return {
     canary: isCanary ? canary : 0,
@@ -1307,13 +1309,13 @@ async function getPipelineOptions() {
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
-    signWindows: privilegedOption(/\[(sign windows)\]/i),
-    buildImages: privilegedOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
+    signWindows: mainOnlyOption(/\[(sign windows)\]/i),
+    buildImages: nonForkOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
     dryRun: parseOption(/\[(dry run)\]/i),
-    publishImages: privilegedOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i),
-    imageFilter: canRunPrivilegedSteps
-      ? (commitMessage.match(/\[(?:build|publish) (windows|linux) images?\]/i) || [])[1]?.toLowerCase()
-      : undefined,
+    publishImages: mainOnlyOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i),
+    imageFilter: isFork()
+      ? undefined
+      : (commitMessage.match(/\[(?:build|publish) (windows|linux) images?\]/i) || [])[1]?.toLowerCase(),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };

@@ -1054,6 +1054,14 @@ fn init_file_system(
 /// crates re-export it — `Resolver::init1` will then take the canonical type
 /// directly and Zig's `bundle_options` value can flow through unchanged
 /// (transpiler.zig:209 passes the same `options` to both struct fields).
+///
+/// `#[cold]`/`#[inline(never)]`: this is a ~100-line struct-construction blob
+/// run exactly once per `Transpiler::init` (i.e. once per VM bring-up). Keeping
+/// it out-of-line stops it from bloating `init`'s prologue — `init` is on the
+/// startup path of every `bun`/`bunx`/`bun --bun` process, where the perf cost
+/// is the icache/decode footprint of the prologue, not the cold body itself.
+#[cold]
+#[inline(never)]
 pub(crate) fn resolver_bundle_options_subset(
     src: &options::BundleOptions<'_>,
 ) -> resolver::options::BundleOptions {
@@ -1175,6 +1183,15 @@ impl<'a> Transpiler<'a> {
         // TODO(port): narrow error set
         bun_ast::expr::data::Store::create();
         bun_ast::stmt::data::Store::create();
+        // These two `create()`s are eager (not deferred to the first `parse()`)
+        // because option setup below needs the AST stores *unconditionally*:
+        // `from_api` → `defines_from_transform_options` always materialises at
+        // least `process.env.NODE_ENV` via `parse_env_json`, whose `E::String`
+        // payload lands in the thread-local Expr store (then a `StoreResetGuard`
+        // resets it — which `expect()`s the store exists). So there is no
+        // "transpile nothing" spawn that skips them. The remaining cost is the
+        // ~`BLOCK_SIZE` uninit `Box` per store; making *that* lazy belongs in
+        // `new_store.rs` (lazy first `Block`), not here.
         // `store_ast_alloc_heap::enter()` is NOT called here: `--define`
         // object-literal JSON is parsed below (during option setup) and the
         // bundler holds its `StoreRef<E::Object>` across every `reset_store()`,

@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunRun, joinP, tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, bunRun, isLinux, joinP, tempDir, tempDirWithFiles } from "harness";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -159,4 +159,151 @@ process.send("regular message");
   });
   const { stdout } = bunRun(joinP(dir, "parent.ts"), bunEnv);
   expect(stdout).toContain("P received regular message");
+});
+
+// https://github.com/oven-sh/bun/issues/14727
+describe("net.Server in cluster worker", () => {
+  test("workers listening on port: 0 agree on a single port", async () => {
+    // Previously each worker would bind its own random port because the
+    // worker ignored the primary's resolved sockname and called Bun.listen()
+    // with the original port: 0.
+    using dir = tempDir("cluster-net-port0", {
+      "index.ts": `
+import cluster from "node:cluster";
+import net from "node:net";
+
+if (cluster.isPrimary) {
+  const ports: number[] = [];
+  for (let i = 0; i < 2; i++) {
+    const w = cluster.fork();
+    w.on("message", (msg) => {
+      if (typeof msg?.port === "number") {
+        ports.push(msg.port);
+        if (ports.length === 2) {
+          for (const worker of Object.values(cluster.workers!)) worker!.kill();
+          console.log(JSON.stringify({ ports, same: ports[0] === ports[1] }));
+          process.exit(ports[0] === ports[1] ? 0 : 1);
+        }
+      }
+    });
+    w.on("exit", (code) => {
+      if (code !== 0 && code !== null) process.exit(code);
+    });
+  }
+} else {
+  const server = net.createServer(() => {});
+  server.on("error", (err) => {
+    console.error("worker listen error:", err.message);
+    process.exit(1);
+  });
+  server.listen(0, () => {
+    process.send!({ port: server.address().port });
+  });
+}
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout.trim());
+    expect(result.ports).toHaveLength(2);
+    expect(result.ports[0]).toBe(result.ports[1]);
+    expect(exitCode).toBe(0);
+  });
+
+  // SO_REUSEPORT load-balancing only works on Linux; on other platforms
+  // multiple workers still bind but one socket wins. The important part
+  // (no EADDRINUSE crash) is covered by the port: 0 test above.
+  test.skipIf(!isLinux)("workers listening on a fixed port share it without EADDRINUSE", async () => {
+    // Previously the primary's RoundRobinHandle bound the port exclusively
+    // and the worker's own Bun.listen() on the same port failed with
+    // "Failed to listen at ::".
+    using dir = tempDir("cluster-net-fixed-port", {
+      "index.ts": `
+import cluster from "node:cluster";
+import net from "node:net";
+
+if (cluster.isPrimary) {
+  // Reserve a free port for the workers to share.
+  const probe = net.createServer().listen(0, () => {
+    const port = probe.address().port;
+    probe.close(() => {
+      let ready = 0;
+      const responders = new Set<string>();
+      const workers: import("node:cluster").Worker[] = [];
+      const finish = (code: number) => {
+        for (const w of workers) w.kill();
+        console.log(JSON.stringify({ responders: [...responders].sort() }));
+        process.exit(code);
+      };
+      for (let i = 0; i < 2; i++) {
+        const w = cluster.fork({ PORT: String(port) });
+        workers.push(w);
+        w.on("exit", (code) => {
+          if (code !== 0 && code !== null) process.exit(code);
+        });
+        w.on("message", (msg) => {
+          if (msg === "listening") {
+            ready++;
+            if (ready === 2) {
+              // Make several connections; SO_REUSEPORT should distribute them.
+              let done = 0;
+              const total = 16;
+              for (let j = 0; j < total; j++) {
+                const c = net.connect(port, "127.0.0.1");
+                c.on("data", (d) => {
+                  responders.add(d.toString().trim());
+                  c.end();
+                });
+                c.on("close", () => {
+                  done++;
+                  if (done === total) finish(0);
+                });
+                c.on("error", (err) => {
+                  console.error("connect error:", err.message);
+                  finish(1);
+                });
+              }
+            }
+          }
+        });
+      }
+    });
+  });
+} else {
+  const server = net.createServer((socket) => {
+    socket.end("worker-" + cluster.worker!.id);
+  });
+  server.on("error", (err) => {
+    console.error("worker listen error:", err.message);
+    process.exit(1);
+  });
+  server.listen(Number(process.env.PORT), () => {
+    process.send!("listening");
+  });
+}
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout.trim());
+    // Both workers should have handled at least one connection.
+    expect(result.responders).toEqual(["worker-1", "worker-2"]);
+    expect(exitCode).toBe(0);
+  });
 });

@@ -93,6 +93,23 @@ pub const PosixSignalTask = struct {
     pub const new = bun.TrivialNew(@This());
     pub fn runFromJSThread(number: u8, globalObject: *jsc.JSGlobalObject) void {
         Bun__onSignalForJS(number, globalObject);
+
+        // `--watch`/`--hot` run a `while (true)` event loop that never falls
+        // through, so a JS-handled SIGINT/SIGTERM/SIGHUP would otherwise trap
+        // the signal but never exit. Record it so the watch loop can break
+        // out once the handler (and any work it kicked off) has drained.
+        // Only reached if a JS listener is registered — default disposition
+        // already terminates the process without going through here.
+        const vm = globalObject.bunVM();
+        if (vm.hot_reload != .none and vm.watch_mode_terminating_signal == 0) {
+            switch (number) {
+                @intFromEnum(bun.SignalCode.SIGINT),
+                @intFromEnum(bun.SignalCode.SIGTERM),
+                @intFromEnum(bun.SignalCode.SIGHUP),
+                => vm.watch_mode_terminating_signal = number,
+                else => {},
+            }
+        }
     }
 };
 

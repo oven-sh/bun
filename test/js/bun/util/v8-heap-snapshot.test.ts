@@ -11,24 +11,20 @@ afterEach(() => {
   Bun.gc(true);
 });
 
-test(
-  "v8 heap snapshot",
-  async () => {
-    const snapshot = Bun.generateHeapSnapshot("v8");
-    // The full parseSnapshot() validation is exercised by "v8 heap snapshot
-    // arraybuffer"; here just make sure the string output is valid JSON with the
-    // expected top-level shape.
-    const parsed = JSON.parse(snapshot);
+test("v8 heap snapshot", async () => {
+  const snapshot = Bun.generateHeapSnapshot("v8");
+  // The full parseSnapshot() validation is exercised by "v8 heap snapshot
+  // arraybuffer"; here just make sure the string output is valid JSON with the
+  // expected top-level shape.
+  const parsed = JSON.parse(snapshot);
 
-    expect(parsed.snapshot).toBeDefined();
-    expect(parsed.snapshot.meta).toBeDefined();
-    expect(parsed.nodes).toBeInstanceOf(Array);
-    expect(parsed.edges).toBeInstanceOf(Array);
-    expect(parsed.nodes.length).toBeGreaterThan(0);
-    expect(parsed.edges.length).toBeGreaterThan(0);
-  },
-  30_000,
-);
+  expect(parsed.snapshot).toBeDefined();
+  expect(parsed.snapshot.meta).toBeDefined();
+  expect(parsed.nodes).toBeInstanceOf(Array);
+  expect(parsed.edges).toBeInstanceOf(Array);
+  expect(parsed.nodes.length).toBeGreaterThan(0);
+  expect(parsed.edges.length).toBeGreaterThan(0);
+}, 30_000);
 
 test("v8.getHeapSnapshot()", async () => {
   const snapshot = v8.getHeapSnapshot();
@@ -49,34 +45,30 @@ test("v8.writeHeapSnapshot()", async () => {
   expect(await v8HeapSnapshot.parseSnapshot(snapshot)).toBeDefined();
 });
 
-test(
-  "v8 heap snapshot arraybuffer",
-  async () => {
-    const snapshot = Bun.generateHeapSnapshot("v8", "arraybuffer");
-    expect(snapshot).toBeInstanceOf(ArrayBuffer);
-    expect(snapshot.byteLength).toBeGreaterThan(0);
+test("v8 heap snapshot arraybuffer", async () => {
+  const snapshot = Bun.generateHeapSnapshot("v8", "arraybuffer");
+  expect(snapshot).toBeInstanceOf(ArrayBuffer);
+  expect(snapshot.byteLength).toBeGreaterThan(0);
 
-    // Decode the ArrayBuffer as UTF-8 and parse it as JSON
-    const text = new TextDecoder().decode(snapshot);
-    const parsed = JSON.parse(text);
+  // Decode the ArrayBuffer as UTF-8 and parse it as JSON
+  const text = new TextDecoder().decode(snapshot);
+  const parsed = JSON.parse(text);
 
-    // Validate structure
-    expect(parsed.snapshot).toBeDefined();
-    expect(parsed.snapshot.meta).toBeDefined();
-    expect(parsed.nodes).toBeInstanceOf(Array);
-    expect(parsed.edges).toBeInstanceOf(Array);
-    expect(parsed.strings).toBeInstanceOf(Array);
-    expect(parsed.nodes.length).toBeGreaterThan(0);
-    expect(parsed.edges.length).toBeGreaterThan(0);
-    expect(parsed.strings.length).toBeGreaterThan(0);
+  // Validate structure
+  expect(parsed.snapshot).toBeDefined();
+  expect(parsed.snapshot.meta).toBeDefined();
+  expect(parsed.nodes).toBeInstanceOf(Array);
+  expect(parsed.edges).toBeInstanceOf(Array);
+  expect(parsed.strings).toBeInstanceOf(Array);
+  expect(parsed.nodes.length).toBeGreaterThan(0);
+  expect(parsed.edges.length).toBeGreaterThan(0);
+  expect(parsed.strings.length).toBeGreaterThan(0);
 
-    // Also validate via v8-heapsnapshot library
-    const parsedSnapshot = await v8HeapSnapshot.parseSnapshot(parsed);
-    expect(parsedSnapshot.nodes.length).toBeGreaterThan(0);
-    expect(parsedSnapshot.edges.length).toBeGreaterThan(0);
-  },
-  30_000,
-);
+  // Also validate via v8-heapsnapshot library
+  const parsedSnapshot = await v8HeapSnapshot.parseSnapshot(parsed);
+  expect(parsedSnapshot.nodes.length).toBeGreaterThan(0);
+  expect(parsedSnapshot.edges.length).toBeGreaterThan(0);
+}, 30_000);
 
 test("v8 heap snapshot arraybuffer matches string output", async () => {
   // The arraybuffer output should produce valid JSON identical in structure to the string output

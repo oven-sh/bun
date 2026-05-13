@@ -6,26 +6,13 @@ pub const EventListIndex = u32;
 eventlist_index: EventListIndex = 0,
 
 fd: bun.FD.Optional = .none,
-/// See `INotifyWatcher.coalesce_interval` for rationale. Honours the same
-/// env var (despite its Linux-centric name) so tests can pin the window
-/// uniformly across platforms.
-coalesce_interval_ns: isize = default_coalesce_interval_ns,
 
 const changelist_count = 128;
-const default_coalesce_interval_ns = 10_000_000; // 10ms
-/// `kevent()` returns as soon as one event is ready rather than waiting
-/// the full timeout, so a burst of N writes a few ms apart consumes ~N
-/// drain iterations. Keep this in step with
-/// `INotifyWatcher.max_coalesce_iterations` so the same save burst
-/// collapses into one cycle on both backends; the quiet-timeout `break`
-/// still terminates the common case after one idle interval.
-const max_coalesce_iterations = 32;
 
 pub fn init(this: *KEventWatcher, _: []const u8) !void {
     const fd = try std.posix.kqueue();
     if (fd == 0) return error.KQueueError;
     this.fd = .init(.fromNative(fd));
-    this.coalesce_interval_ns = std.math.cast(isize, bun.env_var.BUN_INOTIFY_COALESCE_INTERVAL.get()) orelse default_coalesce_interval_ns;
 }
 
 pub fn stop(this: *KEventWatcher) void {
@@ -66,36 +53,18 @@ pub fn watchLoopCycle(this: *Watcher) bun.sys.Maybe(void) {
         null, // timeout
     );
 
-    // A single editor save typically produces several kevents a few ms
-    // apart (e.g. NOTE_WRITE on the file plus NOTE_WRITE on its parent
-    // directory, or the rename/create pair from an atomic save). Keep
-    // draining until the queue stays quiet for `coalesce_interval_ns`
-    // so one save becomes one `onFileUpdate` call instead of several,
-    // which in `--hot` mode would otherwise re-evaluate the entry point
-    // once per burst.
-    //
-    // `count > 0` guards against the initial `kevent` returning -1
-    // (error) — the `@max(0, count)` below already handles that for the
-    // final slice, but `@intCast(count)` here would trap on a negative.
-    const interval = this.platform.coalesce_interval_ns;
-    var iterations: u32 = 0;
-    while (count > 0 and count < changelist_count and iterations < max_coalesce_iterations) : (iterations += 1) {
-        const remain = changelist_count - count;
+    // Give the events more time to coalesce
+    if (count < 128 / 2) {
+        const remain = 128 - count;
         const extra = std.posix.system.kevent(
             fd.native(),
             changelist[@intCast(count)..].ptr,
             0,
             changelist[@intCast(count)..].ptr,
             remain,
-            // POSIX requires tv_nsec < 10^9; split so a user-supplied
-            // interval ≥ 1 s doesn't make `kevent` fail with EINVAL.
-            &.{
-                .sec = @divTrunc(interval, std.time.ns_per_s),
-                .nsec = @rem(interval, std.time.ns_per_s),
-            },
+            &.{ .sec = 0, .nsec = 100_000 }, // 0.0001 seconds
         );
 
-        if (extra <= 0) break; // quiet (or error: fall through to existing processing)
         count += extra;
     }
 

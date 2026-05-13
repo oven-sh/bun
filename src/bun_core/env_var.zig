@@ -62,9 +62,12 @@ pub const BUN_ENABLE_CRASH_REPORTING = New(kind.boolean, "BUN_ENABLE_CRASH_REPOR
 /// so nothing it spawned outlives it. See `src/ParentDeathWatchdog.zig`.
 pub const BUN_FEATURE_FLAG_NO_ORPHANS = New(kind.boolean, "BUN_FEATURE_FLAG_NO_ORPHANS", .{ .default = false });
 pub const BUN_FEATURE_FLAG_DUMP_CODE = New(kind.string, "BUN_FEATURE_FLAG_DUMP_CODE", .{});
-/// TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
-/// so we'll keep it for now.
-pub const BUN_INOTIFY_COALESCE_INTERVAL = New(kind.unsigned, "BUN_INOTIFY_COALESCE_INTERVAL", .{ .default = 100_000 });
+/// Nanoseconds the inotify watcher waits for additional events after the
+/// first `read()` returns, so a single editor save (which typically emits
+/// several events a few ms apart) is delivered as one `onFileUpdate` call.
+/// The old 0.1 ms default was too short to coalesce real-world save bursts
+/// and caused `--hot` to re-evaluate the entry point once per kernel event.
+pub const BUN_INOTIFY_COALESCE_INTERVAL = New(kind.unsigned, "BUN_INOTIFY_COALESCE_INTERVAL", .{ .default = 10_000_000 });
 pub const BUN_INSPECT = New(kind.string, "BUN_INSPECT", .{ .default = "" });
 pub const BUN_INSPECT_CONNECT_TO = New(kind.string, "BUN_INSPECT_CONNECT_TO", .{ .default = "" });
 pub const BUN_INSPECT_PRELOAD = New(kind.string, "BUN_INSPECT_PRELOAD", .{});

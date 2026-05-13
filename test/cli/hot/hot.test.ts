@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
+import { closeSync, copyFileSync, cpSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync, writeSync } from "fs";
 import { bunEnv, bunExe, isDebug, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
@@ -325,6 +325,102 @@ it(
 );
 
 it(
+  "coalesces a burst of writes into a single reload",
+  async () => {
+    // https://github.com/oven-sh/bun/issues/13511
+    //
+    // A single editor save typically generates several filesystem events a
+    // few milliseconds apart (truncate+write, write+rename, and matching
+    // events on the parent-directory watch). Previously the watcher's
+    // coalesce window was 0.1 ms and only performed one extra read, so most
+    // of those events landed in separate watch-loop cycles and `--hot`
+    // re-evaluated the entry point once per cycle — the user saw their
+    // script's output repeated for one save.
+    //
+    // Use a dedicated empty directory rather than `cwd` (which `beforeEach`
+    // populates with the whole fixture set) so the directory watch only
+    // ever sees events for the one file under test.
+    const dir = tmpdirSync();
+    const root = join(dir, "coalesce.js");
+    // `globalThis.count` survives a hot reload, so it counts evaluations.
+    // `console.write` so the line is written atomically (see hot-runner.js).
+    const body = `globalThis.count = (globalThis.count || 0) + 1;
+console.write("[eval] " + globalThis.count + "\\n");
+setInterval(() => {}, 1e6);
+`;
+    writeFileSync(root, body);
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", root],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+
+    const evals: number[] = [];
+    let buffered = "";
+    (async () => {
+      for await (const chunk of runner.stdout) {
+        buffered += new TextDecoder().decode(chunk);
+        let nl: number;
+        while ((nl = buffered.indexOf("\n")) !== -1) {
+          const line = buffered.slice(0, nl);
+          buffered = buffered.slice(nl + 1);
+          const m = line.match(/\[eval\] (\d+)/);
+          if (m) evals.push(Number(m[1]));
+        }
+      }
+    })().catch(() => {});
+
+    while (evals.length < 1) await Bun.sleep(1);
+
+    // Simulate a noisy editor save: a burst of writes spread over a few
+    // milliseconds. Each `write()` on the open fd emits an `IN_MODIFY` on
+    // both the file watch and the parent-directory watch — the same
+    // shape as a real editor's truncate/write/fsync/rename sequence. The
+    // `sleepSync` gaps yield the CPU so the child's watcher thread
+    // actually observes the events mid-burst rather than all at once,
+    // which is what the pre-fix 0.1 ms coalesce window relied on; they
+    // stay well inside the new 10 ms window so the whole burst still
+    // collapses into one `onFileUpdate`.
+    //
+    // Without the hash dedup in `Task.append`, the many directory-watch
+    // events (all naming the same file) also overflow the task's
+    // fixed-size hash buffer and flush mid-`onFileUpdate`, which on a
+    // slow (debug/ASAN) build lets the JS thread start a reload while
+    // the watcher is still appending — the `while` loop in `Task.run`
+    // then turns the later increments into a second reload for the
+    // same save.
+    {
+      const fd = openSync(root, "a");
+      try {
+        for (let i = 0; i < 10; i++) {
+          writeSync(fd, "\n");
+          Bun.sleepSync(2);
+        }
+      } finally {
+        closeSync(fd);
+      }
+    }
+
+    while (evals.length < 2) await Bun.sleep(1);
+    // Let any spurious extra reloads from this burst surface. Has to
+    // outlive the watcher's coalesce window; 200 ms matches the settle
+    // used by the "random file" test below.
+    await Bun.sleep(200);
+
+    runner.kill();
+
+    // One initial evaluation + one reload for the whole burst. Before
+    // the fix the burst above produced several reloads on Linux.
+    expect({ evals }).toEqual({ evals: [1, 2] });
+  },
+  timeout,
+);
+
+it(
   "should not hot reload when a random file is written",
   async () => {
     const root = hotRunnerRoot;
@@ -590,7 +686,11 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error('${counter}');`,
     writeFull(0);
     await using runner = spawn({
       cmd: [bunExe(), "--smol", "--hot", "run", hotRunnerRoot],
-      env: bunEnv,
+      // This test needs the self-write's watcher event to be dispatched
+      // immediately so it lands in the reject→report window; the default
+      // 10 ms coalesce would absorb it into the next `writeFull` and the
+      // race under test never opens.
+      env: { ...bunEnv, BUN_INOTIFY_COALESCE_INTERVAL: "100000" },
       cwd,
       stdout: "ignore",
       stderr: "pipe",

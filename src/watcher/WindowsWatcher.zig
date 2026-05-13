@@ -135,9 +135,21 @@ pub fn init(this: *WindowsWatcher, root: []const u8) !void {
 
 const Timeout = enum(w.DWORD) {
     infinite = w.INFINITE,
+    /// After the first (infinite) wait returns, subsequent waits use this
+    /// timeout to sweep up the remaining events from a single editor save
+    /// (which on Windows typically produces several `Modified` notifications
+    /// a few ms apart). Without this, each notification lands in its own
+    /// `watchLoopCycle` and `--hot` re-evaluates the entry point once per
+    /// notification. Windows' default timer resolution is ~15.6 ms, so the
+    /// effective wait is usually closer to that than to the nominal 10 ms;
+    /// that's fine for this purpose.
+    coalesce = 10,
     minimal = 1,
     none = 0,
 };
+
+/// See `INotifyWatcher.max_coalesce_iterations` for rationale.
+const max_coalesce_iterations = 5;
 
 // wait until new events are available
 pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.sys.Maybe(?EventIterator) {
@@ -205,15 +217,15 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
 
     // first wait has infinite timeout - we're waiting for the next event and don't want to spin
     var timeout = WindowsWatcher.Timeout.infinite;
-    while (true) {
+    var iterations: u32 = 0;
+    while (iterations <= max_coalesce_iterations) : (iterations += 1) {
         var iter = switch (this.platform.next(timeout)) {
             .err => |err| return .{ .err = err },
             .result => |iter| iter orelse break,
         };
-        // after the first wait, we want to coalesce further events but don't want to wait for them
-        // NOTE: using a 1ms timeout would be ideal, but that actually makes the thread wait for at least 10ms more than it should
-        // Instead we use a 0ms timeout, which may not do as much coalescing but is more responsive.
-        timeout = WindowsWatcher.Timeout.none;
+        // After the first wait, briefly wait for trailing events from the
+        // same logical save so they coalesce into a single `onFileUpdate`.
+        timeout = WindowsWatcher.Timeout.coalesce;
         const item_paths = this.watchlist.items(.file_path);
         log("number of watched items: {d}", .{item_paths.len});
         while (iter.next()) |event| {

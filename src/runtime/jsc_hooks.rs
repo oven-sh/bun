@@ -2090,22 +2090,33 @@ fn transpile_source_code_inner(
                                 // `mi_heap`'s first alloc pays
                                 // `mi_arena_pages_alloc` → bitmap memset).
                                 //
-                                // PORT NOTE (RSS): 2 MB, not the spec's 8 MB.
-                                // Zig's `retain_with_limit` is a bump-pointer
-                                // rewind whose retained chunk is mostly
-                                // untouched after reset; `MimallocArena`
-                                // retains a live `mi_heap` whose pages stay
-                                // committed (mimalloc never decommits inside
-                                // a live heap, and `AstAlloc::deallocate` is
-                                // a no-op so nothing is freed until this trip-
-                                // wire). With `AstAlloc` now routed into this
-                                // heap too (see `set_thread_heap` above), the
-                                // 8 MB ceiling carried an extra ~6 MB anon-rw
-                                // resident at mid-run on lint/create-vite.
-                                // 2 MB matches the `parse_arena` slot's limit
-                                // (commit bfe6056b1e8e) and bounds committed
-                                // RSS to ~one mimalloc segment between resets.
-                                arena.reset_retain_with_limit(2 * 1024 * 1024);
+                                // PERF NOTE: the over-limit branch of this is
+                                // `MimallocArena::reset()` = `mi_heap_destroy`
+                                // + `mi_heap_new`, and `mi_heap_destroy` is
+                                // the costly half (per-page free-list/bitmap
+                                // teardown, plus `_mi_stats_merge_from`'s
+                                // `mi_stats_t` walk when stats are compiled in).
+                                // Because `AstAlloc::deallocate` is a no-op (the
+                                // AST graph is abandoned, not freed — see the
+                                // `Expr::Data::clone_in` aliasing invariant in
+                                // `ast_alloc.rs`), this heap's footprint only
+                                // *grows* across retained modules, so a tight
+                                // cap means a `mi_heap_destroy` every few
+                                // modules — and `next lint` transpiles a few
+                                // hundred. `mi_heap_collect` can't substitute:
+                                // it only returns *empty* pages, and there are
+                                // none while the dead AST blocks pin them. So
+                                // the lever is the cap: raise it to the spec's
+                                // 8 MB (matching every other
+                                // `reset_retain_with_limit` call site) so the
+                                // common case retains the warm heap and the
+                                // destroy fires ~4× less often. This re-adds the
+                                // ~6 MB anon-rw mid-run footprint that commit
+                                // bfe6056b1e8e shaved off by going to 2 MB —
+                                // accepted: the lint/create-next RSS budget has
+                                // headroom vs the Zig baseline, and the
+                                // per-destroy CPU is the bigger lever.
+                                arena.reset_retain_with_limit(8 * 1024 * 1024);
                             }
                         }
                         *slot = Some(arena);

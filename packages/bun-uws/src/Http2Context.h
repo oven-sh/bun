@@ -121,10 +121,6 @@ struct Http2Connection : AsyncSocketData<true> {
     WTF::Vector<Http2Response *, 4> pendingDelete;
     int dispatchDepth = 0;
 
-    /* Scratch for HPACK decode; one per connection avoids per-header
-     * allocation. Sized to the advertised MAX_HEADER_LIST_SIZE. */
-    char hpackBuf[h2::MAX_HEADER_LIST];
-
     ~Http2Connection();
 
     void initHpack() {
@@ -854,6 +850,12 @@ struct Http2Context {
      * When out==nullptr only the decoder state is advanced. */
     bool decodeHeaderBlock(us_socket_t *s, WTF::Vector<Http2Header, 32> *out,
                            std::string *store = nullptr) {
+        /* Decode scratch. Decoded bytes are copied into `store` before the
+         * next loop iteration and never read after return; lshpack is pure
+         * C so there's no JS re-entry mid-decode. Same lifetime as
+         * writeHeaders()'s thread_local encode buffer — saves 64 KiB per
+         * connection vs. embedding this in the socket ext. */
+        static thread_local char hpackBuf[h2::MAX_HEADER_LIST];
         Http2Connection *c = conn(s);
         const unsigned char *src = (const unsigned char *) c->headerBlock.data();
         const unsigned char *end = src + c->headerBlock.size();
@@ -861,7 +863,7 @@ struct Http2Context {
         size_t used = 0;
         while (src < end) {
             struct lsxpack_header xh;
-            lsxpack_header_prepare_decode(&xh, c->hpackBuf, 0, sizeof(c->hpackBuf));
+            lsxpack_header_prepare_decode(&xh, hpackBuf, 0, sizeof(hpackBuf));
             int rc = lshpack_dec_decode(&c->dec, &src, end, &xh);
             if (rc != 0) {
                 protocolError(s, h2::ERR_COMPRESSION);
@@ -873,8 +875,8 @@ struct Http2Context {
                 protocolError(s, h2::ERR_ENHANCE_YOUR_CALM);
                 return false;
             }
-            store->append(c->hpackBuf + xh.name_offset, nlen);
-            store->append(c->hpackBuf + xh.val_offset, vlen);
+            store->append(hpackBuf + xh.name_offset, nlen);
+            store->append(hpackBuf + xh.val_offset, vlen);
             out->append({(const char *)(uintptr_t) used, (unsigned) nlen,
                          (const char *)(uintptr_t)(used + nlen), (unsigned) vlen});
             used += nlen + vlen;

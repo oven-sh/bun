@@ -110,10 +110,11 @@ describe("expect().resolves / .rejects on a still-pending promise", () => {
       `,
     );
 
-    expect({ timedOut, exitCode }).toEqual({ timedOut: false, exitCode: 0 });
+    expect(timedOut).toBe(false);
     expect(out).toContain("8 pass");
     expect(out).toContain("0 fail");
     expect(out).not.toContain("timed out");
+    expect(exitCode).toBe(0);
   }, 40_000);
 
   test("a failing deferred assertion still fails the test", async () => {
@@ -144,13 +145,14 @@ describe("expect().resolves / .rejects on a still-pending promise", () => {
       `,
     );
 
-    expect({ timedOut, exitCode }).toEqual({ timedOut: false, exitCode: 1 });
+    expect(timedOut).toBe(false);
     expect(out).toContain("0 pass");
     expect(out).toContain("3 fail");
     expect(out).toContain("Expected: 25");
     expect(out).toContain("Received: 99");
     expect(out).toContain("Expected promise that rejects");
     expect(out).not.toContain("timed out");
+    expect(exitCode).toBe(1);
   }, 40_000);
 
   // Matchers are inconsistent about whether they call
@@ -193,19 +195,28 @@ describe("expect().resolves / .rejects on a still-pending promise", () => {
         });
 
         // The counted_expect_call flag is per-Expect-instance; each
-        // matcher call on a reused instance must still count.
+        // matcher call on a reused instance must still count, including
+        // when the first is a custom matcher (applyCustomMatcher path).
         test("multiple matchers on the same expect() each count", () => {
           expect.assertions(2);
           const e = expect(5);
           e.toBe(5);
           e.toBeGreaterThan(0);
         });
+
+        test("custom then built-in on the same expect() each count", () => {
+          expect.assertions(2);
+          const e = expect("bar");
+          e.toBeBar();
+          e.toBe("bar");
+        });
       `,
     );
 
-    expect({ timedOut, exitCode }).toEqual({ timedOut: false, exitCode: 0 });
-    expect(out).toContain("4 pass");
+    expect(timedOut).toBe(false);
+    expect(out).toContain("5 pass");
     expect(out).toContain("0 fail");
+    expect(exitCode).toBe(0);
   }, 40_000);
 
   // On the deferred re-run the user's frame is gone from the stack, so
@@ -225,11 +236,12 @@ describe("expect().resolves / .rejects on a still-pending promise", () => {
       { CI: "false" },
     );
 
-    expect({ timedOut, exitCode }).toEqual({ timedOut: false, exitCode: 0 });
+    expect(timedOut).toBe(false);
     expect(out).toContain("1 pass");
     expect(out).toContain("0 fail");
     expect(out).toContain("+1 added");
     expect(out).not.toContain("must be called from the test file");
+    expect(exitCode).toBe(0);
   }, 40_000);
 
   // https://github.com/oven-sh/bun/issues/25181

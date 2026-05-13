@@ -3873,7 +3873,28 @@ thread_local! {
 /// `HashSet<&'static [u8]>` makes the intern idempotent: each distinct path
 /// is appended exactly once (matching the resolver's own per-file semantics),
 /// and the 10⁴–10⁵-iteration leak tests pay zero growth after the first call.
+///
+/// PERF: most callers already hand us a slice that lives inside the
+/// `FilenameStore` BSS arena — the resolver interns every resolved module path
+/// before this point, and a re-entrant transpile of an arena-resident path
+/// just round-trips its own prior result. For those, skip the content hash and
+/// `HashSet` probe/insert entirely: a pointer-range compare against the store's
+/// backing buffer (`FilenameStore::exists`, == Zig `isSliceInBuffer`) proves
+/// the bytes are already `'static`, so we can widen and return them directly.
+/// Only genuinely-foreign slices (heap-backed `bun.String::to_utf8` views, the
+/// rare overflow-block case) fall back to the dedup map. This is ~0.7%
+/// self-time on `bun --bun eslint .` (hundreds of `require()`d CJS modules).
 fn intern_transpile_path(value: &[u8]) -> &'static [u8] {
+    // Fast path: `value` already lives in the process-lifetime `FilenameStore`
+    // backing arena (resolver-interned, or a prior `intern_transpile_path`
+    // result) — no hash, no probe, no append.
+    if Fs::FilenameStore::instance().exists(value) {
+        // SAFETY: `exists` is the pointer-range check `isSliceInBuffer` — the
+        // bytes lie wholly within `FilenameStore`'s backing storage, which is
+        // process-lifetime and never freed, so widening to `'static` is sound.
+        // Same widening as `FilenameStore::append_slice` itself performs.
+        return unsafe { core::slice::from_raw_parts(value.as_ptr(), value.len()) };
+    }
     TRANSPILE_PATH_INTERN.with(|cell| {
         let mut set = cell.borrow_mut();
         if let Some(interned) = set.get(value) {

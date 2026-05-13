@@ -223,6 +223,10 @@ describe.concurrent("expect().resolves / .rejects on a still-pending promise", (
   // `inlineSnapshot()` has to use the source location captured on the
   // first call. Only the write path reads the source location, so this
   // exercises it by creating a new snapshot (hence `CI: "false"`).
+  //
+  // The second test reuses the same `expect()` instance for two deferred
+  // snapshots. Each must write to its own call site — the srcloc is
+  // stored per-PendingMatcher, not on the shared `Expect`.
   test("toMatchInlineSnapshot writes from the deferred re-run", async () => {
     const { out, exitCode, timedOut } = await runFixture(
       "inline-snapshot",
@@ -232,14 +236,23 @@ describe.concurrent("expect().resolves / .rejects on a still-pending promise", (
         test("pending", async () => {
           await expect(Bun.sleep(1).then(() => ({ a: 1 }))).resolves.toMatchInlineSnapshot();
         });
+
+        test("two on the same expect()", async () => {
+          let resolve;
+          const e = expect(new Promise(r => (resolve = r)));
+          const first = e.resolves.toMatchInlineSnapshot();
+          const second = e.resolves.toMatchInlineSnapshot();
+          resolve("x");
+          await Promise.all([first, second]);
+        });
       `,
       { CI: "false" },
     );
 
     expect(timedOut).toBe(false);
-    expect(out).toContain("1 pass");
+    expect(out).toContain("2 pass");
     expect(out).toContain("0 fail");
-    expect(out).toContain("+1 added");
+    expect(out).toContain("+3 added");
     expect(out).not.toContain("must be called from the test file");
     expect(exitCode).toBe(0);
   }, 40_000);

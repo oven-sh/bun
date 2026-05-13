@@ -223,11 +223,10 @@ const BuildConfigSubset = struct {
 
         if (try js_options.getOptional(global, "minify", JSValue)) |minify_options| brk: {
             if (minify_options.isBoolean()) {
-                if (minify_options.asBoolean()) {
-                    options.minify_syntax = true;
-                    options.minify_identifiers = true;
-                    options.minify_whitespace = true;
-                }
+                const enabled = minify_options.asBoolean();
+                options.minify_syntax = enabled;
+                options.minify_identifiers = enabled;
+                options.minify_whitespace = enabled;
                 break :brk;
             }
 

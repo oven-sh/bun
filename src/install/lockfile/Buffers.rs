@@ -147,6 +147,10 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Erro
     }
 
     let byte_len = end_pos - start_pos;
+    if start_pos % core::mem::align_of::<T>() as u64 != 0 || byte_len % size_of::<T>() as u64 != 0 {
+        return Err(bun_core::err!("CorruptLockfile"));
+    }
+
     stream.pos = end_pos as usize;
 
     if byte_len == 0 {

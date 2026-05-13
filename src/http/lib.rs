@@ -4622,17 +4622,16 @@ impl<'a> HTTPClient<'a> {
                                 },
                             ];
                             for to_remove in headers_to_remove.iter() {
-                                let found =
-                                    self.header_entries
-                                        .items_name()
-                                        .iter()
-                                        .position(|name_ptr| {
-                                            let name = self.header_str(*name_ptr);
-                                            name.len() == to_remove.name.len()
-                                                && hash_header_name(name) == to_remove.hash
-                                        });
-                                if let Some(i) = found {
-                                    self.header_entries.ordered_remove(i);
+                                let mut i = 0;
+                                while i < self.header_entries.len() {
+                                    let name = self.header_str(self.header_entries.items_name()[i]);
+                                    if name.len() == to_remove.name.len()
+                                        && hash_header_name(name) == to_remove.hash
+                                    {
+                                        let _ = self.header_entries.ordered_remove(i);
+                                    } else {
+                                        i += 1;
+                                    }
                                 }
                             }
                         }

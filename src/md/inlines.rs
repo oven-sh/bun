@@ -594,6 +594,17 @@ impl Parser<'_> {
             return;
         }
 
+        let opener_bottom_key = |d: &EmphDelim| -> usize {
+            let char_idx = match d.emph_char {
+                b'*' => 0,
+                b'_' => 1,
+                b'~' => 2,
+                _ => 0,
+            };
+            ((char_idx * 3) + (d.count % 3)) * 2 + (d.can_open as usize)
+        };
+        let mut openers_bottom: [usize; 18] = [0; 18];
+
         // Process potential closers from left to right
         let mut closer_idx: usize = 0;
         while closer_idx < len {
@@ -605,10 +616,11 @@ impl Parser<'_> {
             }
 
             // Look backward for a matching opener
+            let opener_bottom = openers_bottom[opener_bottom_key(&self.emph_delims[closer_idx])];
             let mut found_match = false;
-            if closer_idx > 0 {
+            if closer_idx > opener_bottom {
                 let mut oi: usize = closer_idx;
-                while oi > 0 {
+                while oi > opener_bottom {
                     oi -= 1;
                     if self.emph_delims[oi].emph_char != self.emph_delims[closer_idx].emph_char {
                         continue;
@@ -689,9 +701,12 @@ impl Parser<'_> {
                 }
             }
 
-            // If no match and can't open, deactivate
-            if !found_match && !self.emph_delims[closer_idx].can_open {
-                self.emph_delims[closer_idx].active = false;
+            // If no match, avoid rescanning the same failed prefix for this closer class.
+            if !found_match {
+                openers_bottom[opener_bottom_key(&self.emph_delims[closer_idx])] = closer_idx;
+                if !self.emph_delims[closer_idx].can_open {
+                    self.emph_delims[closer_idx].active = false;
+                }
             }
 
             closer_idx = closer_idx.wrapping_add(1);

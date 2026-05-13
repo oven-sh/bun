@@ -879,7 +879,10 @@ impl InitCommand {
                     Output::flush();
                 }
 
-                if !fields.entry_point.is_empty() && !exists(&fields.entry_point) {
+                if !fields.entry_point.is_empty()
+                    && is_safe_entry_point_path(&fields.entry_point)
+                    && !exists(&fields.entry_point)
+                {
                     if let Some(dirname) = bun_core::dirname(&fields.entry_point) {
                         if dirname != b"." {
                             let _ = bun_sys::make_path(bun_sys::Dir::cwd(), dirname);
@@ -2014,6 +2017,14 @@ static REACT_SHADCN_FILES: &[TemplateFile] = &[
 #[inline]
 pub(crate) fn exists(path: &[u8]) -> bool {
     bun_sys::exists(path)
+}
+
+/// Refuse entry-point paths that would escape the project directory
+/// (absolute paths or any `..` segment), so `bun init` only creates files
+/// inside the current working directory.
+fn is_safe_entry_point_path(path: &[u8]) -> bool {
+    !bun_paths::is_absolute_loose(path)
+        && !path.split(|&c| c == b'/' || c == b'\\').any(|seg| seg == b"..")
 }
 
 #[inline]

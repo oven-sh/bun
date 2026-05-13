@@ -768,7 +768,7 @@ mod draft {
                                     }
 
                                     if let Some(new_i) =
-                                        self.parse_env_substitution(val, i, i, &mut unesc)?
+                                        self.parse_env_substitution(val, i, i, 0, &mut unesc)?
                                     {
                                         // set to true so we heap alloc
                                         did_any_escape = true;
@@ -958,9 +958,14 @@ mod draft {
             val: &[u8],
             start: usize,
             i: usize,
+            depth: usize,
             unesc: &mut ArenaVec<'a, u8>,
         ) -> OOM<Option<usize>> {
             debug_assert!(val[i] == b'$');
+            const MAX_ENV_SUBSTITUTION_DEPTH: usize = 32;
+            if depth >= MAX_ENV_SUBSTITUTION_DEPTH {
+                return Ok(None);
+            }
             let mut esc = false;
             if i + b"{}".len() < val.len() && val[i + 1] == b'{' {
                 let mut found_closing = false;
@@ -970,7 +975,7 @@ mod draft {
                         b'\\' => esc = !esc,
                         b'$' => {
                             if !esc {
-                                return self.parse_env_substitution(val, start, j, unesc);
+                                return self.parse_env_substitution(val, start, j, depth + 1, unesc);
                             }
                         }
                         b'{' => {

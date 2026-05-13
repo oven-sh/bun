@@ -319,7 +319,7 @@ impl<'a> Entry<'a> {
 
             if last_slash < dash_idx && url[last_slash + 1] == b'@' {
                 return Some(&url[second_last_slash + 1..dash_idx]);
-            } else {
+            } else if last_slash < dash_idx {
                 return Some(&url[last_slash + 1..dash_idx]);
             }
         }
@@ -377,6 +377,9 @@ impl<'a> YarnLock<'a> {
                 let mut specs_it = strings::split(specs_str, b",");
                 while let Some(spec) = specs_it.next() {
                     let spec_trimmed = strings::trim(spec, b" \"");
+                    if spec_trimmed.is_empty() {
+                        continue;
+                    }
                     // TODO(port): Zig dupes here; we borrow from `content` directly since
                     // spec_trimmed is a subslice of `content` and outlives YarnLock<'a>.
                     current_specs.push(spec_trimmed);
@@ -503,7 +506,7 @@ impl<'a> YarnLock<'a> {
                         }
                     } else if key == b"integrity" {
                         entry.integrity = Some(value);
-                    } else if key == b"os" {
+                    } else if key == b"os" && value.starts_with(b"[") && value.ends_with(b"]") {
                         let mut os_list: Vec<&'a [u8]> = Vec::new();
                         let mut os_it = strings::split(&value[1..value.len() - 1], b",");
                         while let Some(os) = os_it.next() {
@@ -511,7 +514,7 @@ impl<'a> YarnLock<'a> {
                             os_list.push(trimmed_os);
                         }
                         entry.os = Some(os_list);
-                    } else if key == b"cpu" {
+                    } else if key == b"cpu" && value.starts_with(b"[") && value.ends_with(b"]") {
                         let mut cpu_list: Vec<&'a [u8]> = Vec::new();
                         let mut cpu_it = strings::split(&value[1..value.len() - 1], b",");
                         while let Some(cpu) = cpu_it.next() {

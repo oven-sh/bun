@@ -366,8 +366,9 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         // `c.graph.ast.items(.css)`. We MUST NOT mutate that
                         // buffer in place — a second import of the same
                         // source_index would observe the compacted prefix and
-                        // drop rules. Instead we either reslice the copied
-                        // header (fast path) or build a fresh rules list.
+                        // drop rules. Instead we always build a fresh rules
+                        // list (copying the retained "@layer" prefix rules +
+                        // the tail).
                         //
                         // Regression: #28914
                         let original_rules = ast.rules.v.as_slice();
@@ -388,27 +389,6 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         if dropped == 0 {
                             // Prefix is all "@layer" (or empty). Nothing to
                             // strip — leave `ast.rules.v` untouched.
-                        } else if layer_count == 0 {
-                            // Fast path: no "@layer" statements to preserve,
-                            // reslice the copied header forward. This does
-                            // not touch the backing array.
-                            let original_len = original_rules.len();
-                            let tail_len = original_len - prefix_end;
-                            // SAFETY: `ast.rules.v` is a shallow-copied `Vec` header
-                            // aliasing the source stylesheet's backing buffer (see
-                            // `ptr::read` above). Advancing ptr/len/cap mirrors Zig's
-                            // ArrayListUnmanaged reslice; the buffer is arena-owned
-                            // and never freed via this view.
-                            unsafe {
-                                let old_ptr = ast.rules.v.as_mut_ptr();
-                                let old_cap = ast.rules.v.capacity();
-                                core::mem::forget(core::mem::take(&mut ast.rules.v));
-                                ast.rules.v = Vec::from_raw_parts(
-                                    old_ptr.add(prefix_end),
-                                    tail_len,
-                                    old_cap - prefix_end,
-                                );
-                            }
                         } else {
                             // Interleaved case: allocate a fresh rules list
                             // so we don't mutate the shared backing array.

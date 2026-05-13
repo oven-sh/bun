@@ -1207,6 +1207,14 @@ mod _impl {
         let mut ctx = scopeguard::guard(ctx, |mut c| c.deinit_sync());
         let (buf, bytes) = ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, ctx.keylen)?;
         ctx.run_task_impl(bytes);
+        if ctx.err.is_some() {
+            return Err(global
+                .err(
+                    ErrorCode::CRYPTO_OPERATION_FAILED,
+                    format_args!("Scrypt failed"),
+                )
+                .throw());
+        }
         Ok(buf)
     }
 

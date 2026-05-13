@@ -988,16 +988,10 @@ impl Parser<'_> {
             }
 
             // First definition wins
-            let mut already_exists = false;
-            for existing in self.ref_defs.iter() {
-                if existing.label[..] == norm_label[..] {
-                    already_exists = true;
-                    break;
-                }
-            }
-            if !already_exists {
+            let label = norm_label.into_boxed_slice();
+            if self.ref_def_labels.insert(label.clone()) {
                 self.ref_defs.push(crate::ref_defs::RefDef {
-                    label: norm_label.into_boxed_slice(),
+                    label,
                     dest: dest_dupe,
                     title: title_dupe,
                 });

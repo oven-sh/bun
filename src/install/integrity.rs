@@ -65,6 +65,9 @@ impl Integrity {
         let end: usize = b"3cd0599b099384b815c10f7fa7df0092b62d534f"
             .len()
             .min(buf.len());
+        if end % 2 != 0 {
+            return Err(bun_core::err!("InvalidCharacter"));
+        }
         let mut out_i: usize = 0;
         let mut i: usize = 0;
 

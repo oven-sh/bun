@@ -435,6 +435,10 @@ pub fn load(
                     // const block without specialization; rely on type-checked
                     // `ensure_total_capacity` + slice copy below to enforce it.
 
+                    if workspace_package_name_hashes.len() != workspace_versions_list.len() {
+                        return Err(bun_core::err!("InvalidLockfile"));
+                    }
+
                     lockfile
                         .workspace_versions
                         .ensure_total_capacity(workspace_versions_list.len())?;
@@ -459,6 +463,10 @@ pub fn load(
                 {
                     let workspace_paths_hashes: Vec<PackageNameHash> = buffers::read_array(stream)?;
                     let workspace_paths_strings: Vec<SemverString> = buffers::read_array(stream)?;
+
+                    if workspace_paths_hashes.len() != workspace_paths_strings.len() {
+                        return Err(bun_core::err!("InvalidLockfile"));
+                    }
 
                     lockfile
                         .workspace_paths

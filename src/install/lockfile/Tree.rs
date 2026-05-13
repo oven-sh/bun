@@ -332,6 +332,11 @@ pub fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
         IteratorPathStyle::PkgPath => 0,
     };
 
+    let path_too_long = || -> ! {
+        Output::err_generic("Lockfile is malformed (dependency path is too long)", ());
+        bun_core::Global::crash();
+    };
+
     depth_buf[0] = 0;
 
     if tree.id > 0 {
@@ -339,6 +344,10 @@ pub fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
         let mut depth_buf_len: usize = 1;
 
         while parent_id > 0 && (parent_id as usize) < trees.len() {
+            if depth_buf_len == MAX_DEPTH {
+                path_buf[path_written] = 0;
+                return (ZStr::from_buf(path_buf, path_written), 0);
+            }
             depth_buf[depth_buf_len] = parent_id;
             parent_id = trees[parent_id as usize].parent;
             depth_buf_len += 1;
@@ -350,21 +359,34 @@ pub fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
         while depth_buf_len > 0 {
             if PATH_STYLE == IteratorPathStyle::PkgPath {
                 if depth_buf_len != depth {
+                    if path_written + 1 >= MAX_PATH_BYTES {
+                        path_too_long();
+                    }
                     path_buf[path_written] = b'/';
                     path_written += 1;
                 }
             } else {
+                if path_written + 1 >= MAX_PATH_BYTES {
+                    path_too_long();
+                }
                 path_buf[path_written] = SEP;
                 path_written += 1;
             }
 
             let id = depth_buf[depth_buf_len];
             let name = trees[id as usize].folder_name(dependencies, buf);
-            path_buf[path_written..path_written + name.len()].copy_from_slice(name);
-            path_written += name.len();
+            let name_end = match path_written.checked_add(name.len()) {
+                Some(end) if end < MAX_PATH_BYTES => end,
+                _ => path_too_long(),
+            };
+            path_buf[path_written..name_end].copy_from_slice(name);
+            path_written = name_end;
 
             if PATH_STYLE == IteratorPathStyle::NodeModules {
                 // Zig: std.fs.path.sep_str ++ "node_modules" (always 13 bytes)
+                if path_written + b"/node_modules".len() >= MAX_PATH_BYTES {
+                    path_too_long();
+                }
                 path_buf[path_written] = SEP;
                 path_buf[path_written + 1..path_written + 1 + b"node_modules".len()]
                     .copy_from_slice(b"node_modules");

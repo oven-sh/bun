@@ -837,20 +837,17 @@ impl PendingResponse {
         // R-2: scope the `&mut Vec` to the find+remove only — `RefCount::deref`
         // can run `Route::drop` (which `get()`s `pending_responses`) and must
         // not overlap a live `with_mut` borrow.
-        loop {
-            let removed = route.pending_responses.with_mut(|v| {
-                if let Some(index) = v.iter().position(|&p| p == this) {
-                    v.remove(index);
-                    true
-                } else {
-                    false
-                }
-            });
-            if !removed {
-                break;
+        let removed = route.pending_responses.with_mut(|v| {
+            if let Some(index) = v.iter().position(|&p| p == this) {
+                v.remove(index);
+                true
+            } else {
+                false
             }
-            // SAFETY: matches the ref taken when this entry was pushed in on_any_request.
-            unsafe { RefCount::<Route>::deref(route_ptr) };
+        });
+        if removed {
+            // SAFETY: matches `heap::into_raw` in on_any_request; Drop releases the route ref taken there.
+            drop(unsafe { bun_core::heap::take(this) });
         }
     }
 }

@@ -2731,7 +2731,7 @@ impl DevServer {
             b".html",
         );
         // TODO: function for URL safe chars
-        if !strings::is_all_ascii(display_name) {
+        if !strings::is_all_ascii(display_name) || display_name.contains(&b'"') {
             display_name = b"page";
         }
 

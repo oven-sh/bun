@@ -2417,6 +2417,18 @@ impl<'a> ESModule<'a> {
 
         // If resolved contains any percent encodings of "/" or "\" ("%2f" and "%5C"
         // respectively), then throw an Invalid Module Specifier error.
+        // This must be checked on the still-encoded path, before percent-decoding.
+        if INVALID_PERCENT_CHARS
+            .iter()
+            .any(|p| strings::contains(&result.path, p))
+        {
+            return Resolution {
+                status: Status::InvalidModuleSpecifier,
+                path: result.path,
+                debug: result.debug,
+            };
+        }
+
         // SAFETY: threadlocal UnsafeCell; finalize() does not recurse, so this is the unique
         // live `&mut` to resolved_path_buf_percent on this thread.
         let resolved_path_buf_percent: &mut PathBuffer =
@@ -2437,25 +2449,6 @@ impl<'a> ESModule<'a> {
         };
 
         let resolved_path = &resolved_path_buf_percent.0[0..len as usize];
-
-        let mut found: &[u8] = b"";
-        if strings::contains(resolved_path, INVALID_PERCENT_CHARS[0]) {
-            found = INVALID_PERCENT_CHARS[0];
-        } else if strings::contains(resolved_path, INVALID_PERCENT_CHARS[1]) {
-            found = INVALID_PERCENT_CHARS[1];
-        } else if strings::contains(resolved_path, INVALID_PERCENT_CHARS[2]) {
-            found = INVALID_PERCENT_CHARS[2];
-        } else if strings::contains(resolved_path, INVALID_PERCENT_CHARS[3]) {
-            found = INVALID_PERCENT_CHARS[3];
-        }
-
-        if !found.is_empty() {
-            return Resolution {
-                status: Status::InvalidModuleSpecifier,
-                path: result.path,
-                debug: result.debug,
-            };
-        }
 
         // If resolved is a directory, throw an Unsupported Directory Import error.
         if strings::ends_with_any(resolved_path, b"/\\") {

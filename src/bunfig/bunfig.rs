@@ -1588,6 +1588,7 @@ impl<'a> Parser<'a> {
                     }
                     break 'plugins Some(plugins);
                 } else {
+                    self.expect_string(&config_plugins)?;
                     let s = config_plugins
                         .data
                         .e_string()

@@ -888,6 +888,9 @@ pub fn migrate_npm_lockfile<'a>(
     }
 
     // Root resolution isn't hit through dependency tracing.
+    if pkg_count == 0 {
+        return Err(err!("InvalidNPMLockfile"));
+    }
     this.packages.items_resolution_mut()[0] = Resolution::init(ResTagged::Root);
     this.packages.items_meta_mut()[0].origin = lockfile::Origin::Local;
     let root_name_hash = this.packages.items_name_hash()[0];

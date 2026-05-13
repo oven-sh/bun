@@ -570,34 +570,34 @@ mod transition_handler_body {
                     i += u32::try_from(ltr.len()).expect("int cast");
                 }
                 _ => {
+                    let index = i;
                     // Expand vendor prefixes for targets.
-                    properties.slice_mut()[i as usize].set_prefixes_for_targets(context.targets);
+                    properties.slice_mut()[index as usize].set_prefixes_for_targets(context.targets);
 
                     // Expand mask properties, which use different vendor-prefixed names.
-                    if let Some(property_id) = masking::get_webkit_mask_property(properties.at(i)) {
+                    if let Some(property_id) = masking::get_webkit_mask_property(properties.at(index)) {
                         if context
                             .targets
                             .prefixes(VendorPrefix::NONE, Feature::MaskBorder)
                             .contains(VendorPrefix::WEBKIT)
                         {
-                            properties.insert(i, property_id);
+                            properties.insert(index, property_id);
                             i += 1;
                         }
                     }
 
                     if let Some(rtl_props) = &mut rtl_properties {
-                        rtl_props.slice_mut()[i as usize].set_prefixes_for_targets(context.targets);
+                        rtl_props.slice_mut()[index as usize].set_prefixes_for_targets(context.targets);
 
                         if let Some(property_id) =
-                            masking::get_webkit_mask_property(rtl_props.at(i))
+                            masking::get_webkit_mask_property(rtl_props.at(index))
                         {
                             if context
                                 .targets
                                 .prefixes(VendorPrefix::NONE, Feature::MaskBorder)
                                 .contains(VendorPrefix::WEBKIT)
                             {
-                                rtl_props.insert(i, property_id);
-                                i += 1;
+                                rtl_props.insert(index, property_id);
                             }
                         }
                     }

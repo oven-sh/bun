@@ -182,6 +182,7 @@ impl MultiPartUpload {
     const MIN_SINGLE_UPLOAD_SIZE: usize = MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE;
     const DEFAULT_PART_SIZE: usize = MultiPartUploadOptions::DEFAULT_PART_SIZE;
     const MAX_QUEUE_SIZE: usize = MultiPartUploadOptions::MAX_QUEUE_SIZE as usize;
+    const MAX_UPLOAD_ID_LEN: usize = 2000;
     // `const AWS = S3Credentials;` — type alias unused in this file; dropped.
 
     // bun.ptr.RefCount(Self, "ref_count", deinit, .{}) — intrusive refcount.
@@ -690,7 +691,7 @@ impl MultiPartUpload {
                     }
                 }
                 this.uploadid_buffer = response.body;
-                if this.upload_id.is_empty() {
+                if this.upload_id.is_empty() || this.upload_id.len() > Self::MAX_UPLOAD_ID_LEN {
                     // Unknown type of response error from AWS
                     scoped_log!(
                         S3MultiPartUpload,

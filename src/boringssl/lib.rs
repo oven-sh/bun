@@ -274,7 +274,11 @@ pub fn ip2_string<'a>(
     ip: &boring::ASN1_OCTET_STRING,
     out_ip: &'a mut [u8; INET6_ADDRSTRLEN + 1],
 ) -> Option<&'a [u8]> {
-    let af: c_int = if ip.length == 4 { AF_INET } else { AF_INET6 };
+    let af: c_int = match ip.length {
+        4 => AF_INET,
+        16 => AF_INET6,
+        _ => return None,
+    };
     // SAFETY: ip.data points to ip.length bytes (4 or 16); out_ip is INET6_ADDRSTRLEN+1 bytes.
     unsafe { c_ares::ntop(af, ip.data.cast(), &mut out_ip[..]) }
 }

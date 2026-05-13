@@ -840,6 +840,17 @@ impl S3Credentials {
             return Ok(r);
         }
 
+        if contains_newline_or_cr(aws_content_hash)
+            || acl.is_some_and(contains_newline_or_cr)
+            || storage_class.is_some_and(contains_newline_or_cr)
+            || content_md5.as_deref().is_some_and(contains_newline_or_cr)
+            || content_disposition.is_some_and(contains_newline_or_cr)
+            || content_encoding.is_some_and(contains_newline_or_cr)
+            || session_token.is_some_and(contains_newline_or_cr)
+        {
+            return Err(SignError::InvalidHeaderValue);
+        }
+
         let url = alloc_print!(
             "{}://{}{}{}",
             protocol,
@@ -1235,6 +1246,8 @@ pub enum SignError {
     InvalidEndpoint,
     #[error("InvalidSessionToken")]
     InvalidSessionToken,
+    #[error("InvalidHeaderValue")]
+    InvalidHeaderValue,
     #[error("FailedToGenerateSignature")]
     FailedToGenerateSignature,
     #[error("NoSpaceLeft")]

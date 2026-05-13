@@ -88,6 +88,8 @@ pub struct BodyReaderMixin<Wrap: BodyReaderHandler> {
     _wrap: PhantomData<Wrap>,
 }
 
+const MAX_BODY_SIZE: usize = 1024 * 1024 * 128;
+
 impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
     pub fn init() -> Self {
         Self {
@@ -173,17 +175,27 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
             // mixin.body has ended, so on_body receives sole ownership of the
             // allocation and may heap::take it on success.
             if !body.is_empty() {
+                if body.len().saturating_add(chunk.len()) > MAX_BODY_SIZE {
+                    return Err(bun_core::err!(RequestBodyTooLarge));
+                }
                 // TODO(port): Zig handled OOM gracefully here; Vec::extend_from_slice aborts.
                 // Consider try_reserve in Phase B if graceful 500 on OOM is required.
                 body.extend_from_slice(chunk);
                 unsafe { Wrap::on_body(wrap, body.as_slice(), resp)? };
             } else {
+                if chunk.len() > MAX_BODY_SIZE {
+                    return Err(bun_core::err!(RequestBodyTooLarge));
+                }
                 unsafe { Wrap::on_body(wrap, chunk, resp)? };
             }
             // `body` drops here (was `defer body.deinit()` in Zig)
             Ok(())
         } else {
-            Self::mixin_of(wrap).body.extend_from_slice(chunk);
+            let body = &mut Self::mixin_of(wrap).body;
+            if body.len().saturating_add(chunk.len()) > MAX_BODY_SIZE {
+                return Err(bun_core::err!(RequestBodyTooLarge));
+            }
+            body.extend_from_slice(chunk);
             Ok(())
         }
     }

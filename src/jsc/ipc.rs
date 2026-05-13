@@ -2100,8 +2100,9 @@ pub mod IPCHandlers {
             #[cfg(not(windows))]
             {
                 log!("onFd: {}", fd);
-                if send_queue.incoming_fd.is_some() {
+                if let Some(existing_fd) = send_queue.incoming_fd.take() {
                     log!("onFd: incoming_fd already set; overwriting");
+                    FdExt::close(existing_fd);
                 }
                 send_queue.incoming_fd = Some(Fd::from_native(fd));
             }

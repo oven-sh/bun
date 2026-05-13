@@ -35,10 +35,10 @@ enum ValueRef {
 }
 
 impl ValueRef {
-    pub fn as_bun_string(&self, global: &JSGlobalObject) -> String {
+    pub fn as_bun_string(&self, global: &JSGlobalObject) -> JsResult<String> {
         match self {
-            ValueRef::Jsvalue(str) => str.to_bun_string(global).expect("unexpected exception"),
-            ValueRef::Bunstr(str) => *str,
+            ValueRef::Jsvalue(str) => str.to_bun_string(global),
+            ValueRef::Bunstr(str) => Ok(*str),
         }
     }
 
@@ -105,16 +105,16 @@ struct OptionToken {
     raw: ValueRef,
 }
 
-struct RawNameFormatter<'a> {
+struct RawNameFormatter {
     token: OptionToken,
-    global: &'a JSGlobalObject,
+    raw: String,
 }
 
-impl<'a> fmt::Display for RawNameFormatter<'a> {
+impl fmt::Display for RawNameFormatter {
     /// Formats the raw name of the arg (includes any dashes and excludes inline values)
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let token = &self.token;
-        let raw = token.raw.as_bun_string(self.global);
+        let raw = self.raw;
         if let Some(optgroup_idx) = token.optgroup_idx {
             let i = optgroup_idx as usize;
             raw.substring_with_len(i, i + 1).fmt(f)
@@ -139,7 +139,7 @@ impl OptionToken {
     /// Returns the raw name of the arg (includes any dashes and excludes inline values), as a JSValue
     fn make_raw_name_js_value(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(optgroup_idx) = self.optgroup_idx {
-            let raw = self.raw.as_bun_string(global);
+            let raw = self.raw.as_bun_string(global)?;
             let i = optgroup_idx as usize;
             let mut buf = [0u8; 8];
             let str = {
@@ -156,12 +156,12 @@ impl OptionToken {
                     self.raw.as_js_value(global)
                 }
                 OptionParseType::ShortOptionAndValue => {
-                    let raw = self.raw.as_bun_string(global);
+                    let raw = self.raw.as_bun_string(global)?;
                     let substr = raw.substring_with_len(0, 2);
                     substr.to_js(global)
                 }
                 OptionParseType::LongOptionAndValue => {
-                    let raw = self.raw.as_bun_string(global);
+                    let raw = self.raw.as_bun_string(global)?;
                     let equal_index = raw.index_of_ascii_char(b'=').unwrap();
                     let substr = raw.substring_with_len(0, equal_index);
                     substr.to_js(global)
@@ -220,12 +220,13 @@ fn get_default_args(global: &JSGlobalObject) -> JsResult<ArgsSlice> {
 
 /// In strict mode, throw for possible usage errors like "--foo --bar" where foo was defined as a string-valued arg
 fn check_option_like_value(global: &JSGlobalObject, token: OptionToken) -> JsResult<()> {
-    if !token.inline_value && is_option_like_value(&token.value.as_bun_string(global)) {
-        let raw_name = RawNameFormatter { token, global };
+    if !token.inline_value && is_option_like_value(&token.value.as_bun_string(global)?) {
+        let raw = token.raw.as_bun_string(global)?;
+        let raw_name = RawNameFormatter { token, raw };
 
         // Only show short example if user used short option.
         let err: JSValue;
-        if token.raw.as_bun_string(global).has_prefix_comptime(b"--") {
+        if raw.has_prefix_comptime(b"--") {
             err = global.to_type_error(
                 bun_jsc::ErrorCode::PARSE_ARGS_INVALID_OPTION_VALUE,
                 format_args!(
@@ -233,7 +234,7 @@ fn check_option_like_value(global: &JSGlobalObject, token: OptionToken) -> JsRes
                 ),
             );
         } else {
-            let token_name = token.name.as_bun_string(global);
+            let token_name = token.name.as_bun_string(global)?;
             err = global.to_type_error(
                 bun_jsc::ErrorCode::PARSE_ARGS_INVALID_OPTION_VALUE,
                 format_args!(
@@ -261,7 +262,10 @@ fn check_option_usage(
                     if token.negative {
                         // the option was found earlier because we trimmed 'no-' from the name, so we throw
                         // the expected unknown option error.
-                        let raw_name = RawNameFormatter { token, global };
+                        let raw_name = RawNameFormatter {
+                            token,
+                            raw: token.raw.as_bun_string(global)?,
+                        };
                         let err = global.to_type_error(
                             bun_jsc::ErrorCode::PARSE_ARGS_UNKNOWN_OPTION,
                             format_args!("Unknown option '{raw_name}'"),
@@ -283,7 +287,7 @@ fn check_option_usage(
                             } else {
                                 ""
                             },
-                            token.name.as_bun_string(global),
+                            token.name.as_bun_string(global)?,
                         ),
                     );
                     return Err(global.throw_value(err));
@@ -306,7 +310,7 @@ fn check_option_usage(
                             } else {
                                 ""
                             },
-                            token.name.as_bun_string(global),
+                            token.name.as_bun_string(global)?,
                         ),
                     );
                     return Err(global.throw_value(err));
@@ -314,7 +318,10 @@ fn check_option_usage(
             }
         }
     } else {
-        let raw_name = RawNameFormatter { token, global };
+        let raw_name = RawNameFormatter {
+            token,
+            raw: token.raw.as_bun_string(global)?,
+        };
 
         let err = if allow_positionals {
             global.to_type_error(
@@ -349,7 +356,7 @@ fn store_option(
     options: &[OptionDefinition],
     values: JSValue,
 ) -> JsResult<()> {
-    let key = option_name.as_bun_string(global);
+    let key = option_name.as_bun_string(global)?;
     if key.eql_comptime(b"__proto__") {
         return Ok(());
     }
@@ -527,7 +534,7 @@ fn tokenize_args(
     let mut index: u32 = 0;
     while index < num_args {
         let arg_ref = ValueRef::Jsvalue(args.get(global, index)?);
-        let arg = arg_ref.as_bun_string(global);
+        let arg = arg_ref.as_bun_string(global)?;
 
         let token_rawtype = classify_token(&arg, options);
         bun_output::scoped_log!(
@@ -798,7 +805,7 @@ impl<'a> ParseArgsState<'a> {
                         bun_jsc::ErrorCode::PARSE_ARGS_UNEXPECTED_POSITIONAL,
                         format_args!(
                             "Unexpected argument '{}'. This command does not take positional arguments",
-                            value.as_bun_string(global),
+                            value.as_bun_string(global)?,
                         ),
                     );
                     return Err(global.throw_value(err));

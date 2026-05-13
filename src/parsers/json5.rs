@@ -1082,17 +1082,10 @@ impl<'a> JSON5Parser<'a> {
                 len: 1,
             });
         }
-        // SAFETY: Zig reinterprets the slice ptr as *const [4]u8; we have at least
-        // seq_len (≤4) valid bytes at self.pos. decode_wtf8_rune_t reads at most seq_len bytes.
-        // TODO(port): verify decode_wtf8_rune_t signature — Zig passes ptr[0..4] which may
-        // read past end-of-buffer when seq_len < 4 and remaining < 4; preserve that contract.
-        let decoded = unsafe {
-            strings::decode_wtf8_rune_t(
-                &*self.source.as_ptr().add(self.pos).cast::<[u8; 4]>(),
-                seq_len,
-                -1i32,
-            )
-        };
+        let seq_len_usize = usize::from(seq_len);
+        let mut bytes = [0u8; 4];
+        bytes[..seq_len_usize].copy_from_slice(&self.source[self.pos..self.pos + seq_len_usize]);
+        let decoded = strings::decode_wtf8_rune_t(&bytes, seq_len, -1i32);
         if decoded < 0 {
             return Some(Codepoint {
                 cp: i32::from(first),

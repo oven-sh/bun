@@ -758,13 +758,14 @@ impl RepositoryExt for Repository {
 
         let shared = SharedEnv::get(env);
 
-        let argv_with: [&[u8]; 7] = [
+        let argv_with: [&[u8]; 8] = [
             b"git",
             b"-C",
             path,
             b"log",
             b"--format=%H",
             b"-1",
+            b"--end-of-options",
             committish,
         ];
         let argv_without: [&[u8]; 6] = [b"git", b"-C", path, b"log", b"--format=%H", b"-1"];

@@ -652,8 +652,24 @@ impl RunCommand {
                 ZStr::from_static(B)
             };
 
+            // Don't trust attacker-created entries in a shared temp dir
+            // (`BUN_NODE_DIR` lives under e.g. `/tmp`). Create it `0700`; if it
+            // already exists, refuse to use it unless it's a directory we own
+            // with no group/other write bits.
+            match bun_sys::mkdir(DIR_Z, 0o700) {
+                Ok(()) => {}
+                Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(DIR_Z) {
+                    Ok(st)
+                        if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
+                            == bun_sys::FileKind::Directory
+                            && st.st_uid == bun_sys::c::getuid()
+                            && (st.st_mode as bun_sys::Mode) & 0o022 == 0 => {}
+                    _ => return Ok(()),
+                },
+                Err(_) => return Ok(()),
+            }
+
             for dest in [NODE_LINK, BUN_LINK] {
-                let mut made_dir = false;
                 let mut replaced = false;
                 loop {
                     match bun_sys::symlink(argv0_z, dest) {
@@ -675,10 +691,6 @@ impl RunCommand {
                             }
                             let _ = bun_sys::unlink(dest);
                             replaced = true;
-                        }
-                        Err(_) if !made_dir => {
-                            let _ = bun_sys::mkdir(DIR_Z, 0o755);
-                            made_dir = true;
                         }
                         Err(_) => return Ok(()),
                     }

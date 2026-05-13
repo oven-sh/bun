@@ -102,6 +102,9 @@ impl<'a> PatchFile<'a> {
         for part in &self.parts {
             match part {
                 PatchFilePart::FileDeletion(file_deletion) => {
+                    if !is_safe_patch_path(file_deletion.path) {
+                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::unlink));
+                    }
                     let pathz = ZBox::from_vec_with_nul(file_deletion.path.to_vec());
 
                     if let sys::Result::Err(e) = sys::unlinkat(patch_dir, &pathz) {
@@ -136,6 +139,9 @@ impl<'a> PatchFile<'a> {
                     }
                 }
                 PatchFilePart::FileCreation(file_creation) => {
+                    if !is_safe_patch_path(file_creation.path) {
+                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
+                    }
                     let filepath_z = ZBox::from_vec_with_nul(file_creation.path.to_vec());
                     let filepath = PathString::init(filepath_z.as_bytes());
                     let filedir = paths::dirname_simple(filepath.slice());
@@ -1069,6 +1075,14 @@ fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'
 fn parse_file_mode(mode: &[u8]) -> Option<FileMode> {
     let parsed_mode = bun_core::parse_int::<u32>(mode, 8).ok()? & 0o777;
     FileMode::from_u32(parsed_mode)
+}
+
+fn is_safe_patch_path(path: &[u8]) -> bool {
+    !path.is_empty()
+        && !paths::is_absolute_loose(path)
+        && !path
+            .split(|&c| c == b'/' || c == b'\\')
+            .any(|part| part == b"..")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

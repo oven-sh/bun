@@ -591,7 +591,7 @@ impl TokenList {
                         last_is_delim = false;
                         last_is_whitespace = false;
                     } else if let Ok(color) =
-                        input.try_parse(|i| UnresolvedColor::parse(i, f, options))
+                        input.try_parse(|i| UnresolvedColor::parse(i, f, options, depth))
                     {
                         tokens.push(TokenOrValue::UnresolvedColor(color));
                         last_is_delim = false;
@@ -956,7 +956,12 @@ impl UnresolvedColor {
         }
     }
 
-    pub fn parse(input: &mut Parser, f: &[u8], options: &ParserOptions) -> Result<UnresolvedColor> {
+    pub fn parse(
+        input: &mut Parser,
+        f: &[u8],
+        options: &ParserOptions,
+        depth: usize,
+    ) -> Result<UnresolvedColor> {
         use css_values::color::{
             ComponentParser, HSL, SRGB, parse_hsl_hwb_components, parse_rgb_components,
         };
@@ -969,7 +974,7 @@ impl UnresolvedColor {
                         return Err(i.new_custom_error(ParserError::invalid_value));
                     }
                     i.expect_delim(b'/')?;
-                    let alpha = TokenListFns::parse(i, options, 0)?;
+                    let alpha = TokenListFns::parse(i, options, depth + 1)?;
                     Ok(UnresolvedColor::RGB { r, g, b, alpha })
                 })
             }),
@@ -980,7 +985,7 @@ impl UnresolvedColor {
                         return Err(i.new_custom_error(ParserError::invalid_value));
                     }
                     i.expect_delim(b'/')?;
-                    let alpha = TokenListFns::parse(i, options, 0)?;
+                    let alpha = TokenListFns::parse(i, options, depth + 1)?;
                     Ok(UnresolvedColor::HSL { h, s, l, alpha })
                 })
             }),
@@ -988,10 +993,10 @@ impl UnresolvedColor {
                 // errdefer doesn't fire on `return .{ .err = ... }` in Zig — but in Rust,
                 // `?` drops `light` automatically on the error path.
                 let light = input2.parse_until_before(Delimiters::COMMA, |i| {
-                    TokenListFns::parse(i, options, 1)
+                    TokenListFns::parse(i, options, depth + 1)
                 })?;
                 input2.expect_comma()?;
-                let dark = TokenListFns::parse(input2, options, 0)?;
+                let dark = TokenListFns::parse(input2, options, depth + 1)?;
                 Ok(UnresolvedColor::LightDark { light, dark })
             }),
             _ => {},

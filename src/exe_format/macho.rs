@@ -739,11 +739,18 @@ impl MachoSigner {
         }
 
         // Finally, ensure that the length of data we write matches the total data expected
-        // SAFETY: capacity >= aligned_sig_off + total_sig_size >= linkedit end (asserted by
-        // compute_signature_size sizing in write_section); bytes up to this length were initialized.
+        let final_len = self
+            .linkedit_seg
+            .fileoff
+            .checked_add(self.linkedit_seg.filesize)
+            .and_then(|len| usize::try_from(len).ok())
+            .ok_or(MachoError::OffsetOverflow)?;
+        if final_len > aligned_sig_off + total_sig_size {
+            return Err(MachoError::OffsetOutOfRange.into());
+        }
+        // SAFETY: final_len is bounded by the initialized length from resize above.
         unsafe {
-            self.data
-                .set_len((self.linkedit_seg.fileoff + self.linkedit_seg.filesize) as usize);
+            self.data.set_len(final_len);
         }
 
         // Write final binary

@@ -411,19 +411,13 @@ impl Parser<'_> {
                 if norm_label.is_empty() {
                     break; // whitespace-only labels are invalid
                 }
-                let mut already_exists = false;
-                for existing in self.ref_defs.iter() {
-                    if existing.label[..] == norm_label[..] {
-                        already_exists = true;
-                        break;
-                    }
-                }
-                if !already_exists {
+                let label = norm_label.into_boxed_slice();
+                if self.ref_def_labels.insert(label.clone()) {
                     // Dupe dest and title since they point into self.buffer which gets reused
                     let dest_dupe: Box<[u8]> = Box::from(result.dest);
                     let title_dupe: Box<[u8]> = Box::from(result.title);
                     self.ref_defs.push(RefDef {
-                        label: norm_label.into_boxed_slice(),
+                        label,
                         dest: dest_dupe,
                         title: title_dupe,
                     });

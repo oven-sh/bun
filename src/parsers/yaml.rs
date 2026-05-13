@@ -5477,7 +5477,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 return Err(ParseError::UnexpectedCharacter);
             }
             self.inc(1);
-            while !self.is_char(Enc::ch(b'\n')) && !self.is_char(Enc::ch(b'\r')) {
+            while !self.is_b_char_or_eof() {
                 self.inc(1);
             }
         }

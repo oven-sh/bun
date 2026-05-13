@@ -2409,6 +2409,7 @@ pub struct LexError {
 /// \b (decimal value of 8) is deliberately chosen so that it is not
 /// easy for the user to accidentally use this char in their script.
 const SPECIAL_JS_CHAR: u8 = 8;
+const MAX_SUBSHELL_DEPTH: u32 = 128;
 pub const LEX_JS_OBJREF_PREFIX: &[u8] = b"\x08__bun_";
 pub const LEX_JS_STRING_PREFIX: &[u8] = b"\x08__bunstr_";
 
@@ -2429,6 +2430,8 @@ pub enum LexerError {
     Utf8InvalidStartByte,
     #[error("CodepointTooLarge")]
     CodepointTooLarge,
+    #[error("Subshell nesting depth exceeded")]
+    SubshellDepthExceeded,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2470,6 +2473,7 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
     pub tokens: bun_alloc::ArenaVec<'bump, Token>,
     pub delimit_quote: bool,
     pub in_subshell: Option<SubShellKind>,
+    pub subshell_depth: u32,
     pub errors: bun_alloc::ArenaVec<'bump, LexError>,
 
     /// Contains a list of strings we need to escape
@@ -2498,6 +2502,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             j: 0,
             delimit_quote: false,
             in_subshell: None,
+            subshell_depth: 0,
             string_refs: strings_to_escape,
             jsobjs_len,
         }
@@ -2535,6 +2540,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             tokens: core::mem::replace(&mut self.tokens, bun_alloc::ArenaVec::new_in(bump)),
             errors: core::mem::replace(&mut self.errors, bun_alloc::ArenaVec::new_in(bump)),
             in_subshell: Some(kind),
+            subshell_depth: self.subshell_depth + 1,
             word_start: self.word_start,
             j: self.j,
             delimit_quote: false,
@@ -3547,6 +3553,11 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     }
 
     fn eat_subshell(&mut self, kind: SubShellKind) -> Result<(), LexerError> {
+        if self.subshell_depth >= MAX_SUBSHELL_DEPTH {
+            self.add_error(b"Subshell nesting depth exceeded");
+            return Err(LexerError::SubshellDepthExceeded);
+        }
+
         if kind == SubShellKind::Dollar {
             // Eat the open paren
             let _ = self.eat();

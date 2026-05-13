@@ -618,7 +618,7 @@ impl Display for FormatUTF8<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if let Some(opts) = self.path_fmt_opts {
             if opts.path_sep == PathSep::Any && !opts.escape_backslashes {
-                return write_bytes(f, self.buf);
+                return write!(f, "{}", bstr::BStr::new(self.buf));
             }
 
             let mut ptr = self.buf;
@@ -629,7 +629,7 @@ impl Display for FormatUTF8<'_> {
                     PathSep::Auto => crate::SEP,
                     PathSep::Any => ptr[i],
                 };
-                write_bytes(f, &ptr[..i])?;
+                write!(f, "{}", bstr::BStr::new(&ptr[..i]))?;
                 f.write_char(sep as char)?;
                 if opts.escape_backslashes && sep == b'\\' {
                     f.write_char(sep as char)?;
@@ -637,7 +637,7 @@ impl Display for FormatUTF8<'_> {
                 ptr = &ptr[i + 1..];
             }
 
-            return write_bytes(f, ptr);
+            return write!(f, "{}", bstr::BStr::new(ptr));
         }
 
         write_bytes(f, self.buf)
@@ -1369,6 +1369,48 @@ impl Display for GithubActionFormatter<'_> {
 
 pub fn github_action(self_: &[u8]) -> GithubActionFormatter<'_> {
     GithubActionFormatter { text: self_ }
+}
+
+/// Formats a string to be safe to use as a Github Actions workflow-command
+/// *property* value (e.g. the `title=` in `::error title=...::`). Unlike
+/// [`github_action`] (which only escapes the message-class metacharacters), this
+/// escapes the property-class metacharacters per the actions/toolkit spec:
+/// `%`->`%25`, `\r`->`%0D`, `\n`->`%0A`, `:`->`%3A`, `,`->`%2C`.
+pub fn github_action_property_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
+    let mut start: usize = 0;
+    for (i, &byte) in self_.iter().enumerate() {
+        let replacement: &str = match byte {
+            b'%' => "%25",
+            b'\r' => "%0D",
+            b'\n' => "%0A",
+            b':' => "%3A",
+            b',' => "%2C",
+            _ => continue,
+        };
+        if i > start {
+            write_bytes(writer, &self_[start..i])?;
+        }
+        writer.write_str(replacement)?;
+        start = i + 1;
+    }
+    if start < self_.len() {
+        write_bytes(writer, &self_[start..])?;
+    }
+    Ok(())
+}
+
+pub struct GithubActionPropertyFormatter<'a> {
+    pub text: &'a [u8],
+}
+
+impl Display for GithubActionPropertyFormatter<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        github_action_property_writer(f, self.text)
+    }
+}
+
+pub fn github_action_property(self_: &[u8]) -> GithubActionPropertyFormatter<'_> {
+    GithubActionPropertyFormatter { text: self_ }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

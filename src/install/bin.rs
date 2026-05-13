@@ -1462,6 +1462,10 @@ impl<'a> Linker<'a> {
                     if normalized_name.is_empty() || target.is_empty() {
                         return;
                     }
+                    if normalized_name.len() >= self.abs_dest_buf.len().saturating_sub(dest_off) {
+                        self.err = Some(bun_core::err!("NameTooLong"));
+                        return;
+                    }
 
                     // for normalizing `target`
                     let abs_target: &ZStr = {
@@ -1501,6 +1505,12 @@ impl<'a> Linker<'a> {
                         if bin_target.is_empty() || normalized_bin_dest.is_empty() {
                             i += 2;
                             continue;
+                        }
+                        if normalized_bin_dest.len()
+                            >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
+                        {
+                            self.err = Some(bun_core::err!("NameTooLong"));
+                            return;
                         }
 
                         let abs_target: &ZStr = {

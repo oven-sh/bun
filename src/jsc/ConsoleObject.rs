@@ -5358,8 +5358,13 @@ pub mod formatter {
                 let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
                 self.quote_strings = true;
 
-                // JSX props are always objects.
-                let props_obj = props.get_object().unwrap();
+                let Some(props_obj) = props.get_object() else {
+                    writer.write_all(b" />");
+                    if writer.failed {
+                        self.failed = true;
+                    }
+                    return Ok(());
+                };
                 let mut props_iter = jsc::JSPropertyIterator::init(
                     self.global_this,
                     props_obj,

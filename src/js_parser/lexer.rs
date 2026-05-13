@@ -838,10 +838,10 @@ lexer_impl_header! {
                                     self.syntax_error()?;
                                 }
 
-                                let hex_start = (iter.i as usize + start)
-                                    - width as usize
-                                    - width2 as usize
-                                    - width3 as usize;
+                                let hex_start = (iter.i as usize)
+                                    .saturating_sub(width as usize)
+                                    .saturating_sub(width2 as usize)
+                                    .saturating_sub(width3 as usize);
                                 let mut is_first = true;
                                 let mut is_out_of_range = false;
                                 'variable_length: loop {
@@ -883,7 +883,7 @@ lexer_impl_header! {
                                                     .unwrap(),
                                             },
                                             len: i32::try_from(
-                                                (iter.i as usize + start) - hex_start,
+                                                (iter.i as usize).saturating_sub(hex_start),
                                             )
                                             .unwrap(),
                                         },
@@ -3311,6 +3311,9 @@ lexer_impl_header! {
             let length = length as usize;
             let end = cursor.width as usize + cursor.i as usize;
             let entity = &text[end..end + length];
+            if entity.is_empty() {
+                return;
+            }
             if entity[0] == b'#' {
                 let mut number = &entity[1..entity.len()];
                 let mut base: u8 = 10;

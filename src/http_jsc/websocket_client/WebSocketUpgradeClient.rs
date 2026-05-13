@@ -489,9 +489,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         // `tls: { checkServerIdentity }` or put the hostname
                         // in the URL (wss+unix://name/path) to verify against
                         // a specific certificate name.
-                        if !host_slice.slice().is_empty()
-                            && !strings::is_ip_address(host_slice.slice())
-                        {
+                        if !host_slice.slice().is_empty() {
                             client_ref.hostname = ZBox::from_bytes(host_slice.slice());
                         }
                     }
@@ -539,7 +537,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // SNI for the outer TLS socket must use the host we actually
                     // dialed. For HTTPS proxy connections, that's the proxy host,
                     // not the wss:// target.
-                    if !strings::is_ip_address(display_host_) {
+                    if !display_host_.is_empty() {
                         out.hostname = ZBox::from_bytes(display_host_);
                     }
                 }
@@ -749,15 +747,21 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 // Keep the raw pointer — round-tripping through `&c_char` would
                 // shrink provenance to 1 byte and make the CStr scan UB.
                 let servername = unsafe { boringssl::c::SSL_get_servername(ssl_ptr, 0) };
-                if !servername.is_null() {
+                let hostname = if !this.hostname.is_empty() {
+                    this.hostname.as_bytes()
+                } else if !servername.is_null() {
                     // SAFETY: SSL_get_servername returns a NUL-terminated C string
                     // owned by the SSL session; full provenance retained above.
-                    let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-                    // SAFETY: ssl_ptr is a live `*SSL` from the open socket.
-                    if !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname) {
-                        // SAFETY: no `&mut Self` is live across this call.
-                        unsafe { Self::fail(this.as_ptr(), ErrorCode::TlsHandshakeFailed) };
-                    }
+                    unsafe { bun_core::ffi::cstr(servername) }.to_bytes()
+                } else {
+                    b""
+                };
+                // SAFETY: ssl_ptr is a live `*SSL` from the open socket.
+                if hostname.is_empty()
+                    || !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
+                {
+                    // SAFETY: no `&mut Self` is live across this call.
+                    unsafe { Self::fail(this.as_ptr(), ErrorCode::TlsHandshakeFailed) };
                 }
             }
         } else {
@@ -790,11 +794,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // boringssl::SSL; use bun_http's helper.
                     bun_http::configure_http_client_with_alpn(
                         handle,
-                        me.hostname.as_ptr(),
+                        if strings::is_ip_address(me.hostname.as_bytes()) {
+                            core::ptr::null()
+                        } else {
+                            me.hostname.as_ptr()
+                        },
                         bun_http::AlpnOffer::H1,
                     );
                 }
-                me.hostname = ZBox::default();
             }
         }
 
@@ -889,6 +896,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let me = unsafe { &mut *this.as_ptr() };
         let mut body = data;
         if !me.body.is_empty() {
+            if me.body.len().saturating_add(data.len()) > bun_http::max_http_header_size() {
+                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
+                unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
+                return;
+            }
             me.body.extend_from_slice(data);
             body = &me.body;
         }
@@ -913,6 +925,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
             Err(picohttp::ParseResponseError::ShortRead) => {
                 if me.body.is_empty() {
+                    if data.len() > bun_http::max_http_header_size() {
+                        // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
+                        unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
+                        return;
+                    }
                     me.body.extend_from_slice(data);
                 }
                 return;

@@ -374,7 +374,7 @@ impl<'a> ValkeyReader<'a> {
                     return Ok(RESPValue::Array(Vec::new()));
                 }
                 let len = usize::try_from(len).expect("int cast");
-                let mut array = Vec::with_capacity(len);
+                let mut array = Vec::with_capacity(len.min(self.buffer.len() - self.pos));
                 // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;
                 while i < len {
@@ -426,7 +426,7 @@ impl<'a> ValkeyReader<'a> {
                 }
                 let len = usize::try_from(len).expect("int cast");
 
-                let mut entries = Vec::with_capacity(len);
+                let mut entries = Vec::with_capacity(len.min(self.buffer.len() - self.pos));
                 // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;
                 while i < len {
@@ -448,7 +448,7 @@ impl<'a> ValkeyReader<'a> {
                 }
                 let len = usize::try_from(len).expect("int cast");
 
-                let mut set = Vec::with_capacity(len);
+                let mut set = Vec::with_capacity(len.min(self.buffer.len() - self.pos));
                 // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;
                 while i < len {
@@ -467,7 +467,7 @@ impl<'a> ValkeyReader<'a> {
                 }
                 let len = usize::try_from(len).expect("int cast");
 
-                let mut attrs = Vec::with_capacity(len);
+                let mut attrs = Vec::with_capacity(len.min(self.buffer.len() - self.pos));
                 // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;
                 while i < len {
@@ -516,7 +516,7 @@ impl<'a> ValkeyReader<'a> {
 
                 // Read the rest of the data
                 let data_len = usize::try_from(len - 1).expect("int cast");
-                let mut data = Vec::with_capacity(data_len);
+                let mut data = Vec::with_capacity(data_len.min(self.buffer.len() - self.pos));
                 // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;
                 while i < data_len {

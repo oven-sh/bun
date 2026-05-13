@@ -1524,10 +1524,12 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
                 bin_str,
                 &mut path_buf,
             );
-            bins.push(BinInfo {
-                path: ZBox::from_bytes(normalized),
-                ty: BinType::File,
-            });
+            if !bin_path_escapes_root(normalized) {
+                bins.push(BinInfo {
+                    path: ZBox::from_bytes(normalized),
+                    ty: BinType::File,
+                });
+            }
             return Ok(bins);
         }
 
@@ -1543,10 +1545,12 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
                             bin_str,
                             &mut path_buf,
                         );
-                        bins.push(BinInfo {
-                            path: ZBox::from_bytes(normalized),
-                            ty: BinType::File,
-                        });
+                        if !bin_path_escapes_root(normalized) {
+                            bins.push(BinInfo {
+                                path: ZBox::from_bytes(normalized),
+                                ty: BinType::File,
+                            });
+                        }
                     }
                 }
             }
@@ -1563,16 +1567,22 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
                         bin_str,
                         &mut path_buf,
                     );
-                    bins.push(BinInfo {
-                        path: ZBox::from_bytes(normalized),
-                        ty: BinType::Dir,
-                    });
+                    if !bin_path_escapes_root(normalized) {
+                        bins.push(BinInfo {
+                            path: ZBox::from_bytes(normalized),
+                            ty: BinType::Dir,
+                        });
+                    }
                 }
             }
         }
     }
 
     Ok(bins)
+}
+
+fn bin_path_escapes_root(p: &[u8]) -> bool {
+    path::is_absolute_loose(p) || p == b".." || p.starts_with(b"../")
 }
 
 fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {

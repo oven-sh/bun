@@ -5658,22 +5658,19 @@ impl S3BlobDownloadTask {
         let global = global_ref.get();
         match result {
             crate::webcore::__s3_client::S3DownloadResult::Success(response) => {
-                // PORT NOTE: Zig leaks `response.body` here (no Drop on
-                // MutableString). The handler runs `to*WithBytes` with
-                // `Lifetime::Clone`, which builds an external JS
-                // string/ArrayBuffer that *aliases* `body.list` (no copy) and
-                // anchors its lifetime to the S3 store ref — the body buffer
-                // itself is intentionally leaked into JSC's external view.
-                // Dropping `response` would free the Vec while JSC still
-                // points at it (mimalloc reuses the first 8 bytes for its
-                // free-list link → "\0…\0n!" for a 10-byte body). Match Zig:
-                // leak the body.
-                let mut response = core::mem::ManuallyDrop::new(response);
-                let bytes = &mut response.body.list[..];
+                // Move the downloaded body into a Blob store so its lifetime is
+                // tied to the Blob/JS view and freed via the store's finalizer.
+                let store = Store::init(response.body.list);
+                let bytes: *mut [u8] = match store.data_mut() {
+                    store::Data::Bytes(b) => std::ptr::from_mut(b.as_array_list()),
+                    _ => unreachable!(),
+                };
+                this.blob.store.set(Some(store));
                 if this.blob.size.get() == MAX_SIZE {
                     this.blob.size.set(bytes.len() as SizeType);
                 }
-                let value = JSPromise::wrap(global, |_g| Ok(this.call_handler(bytes)))?;
+                let value =
+                    JSPromise::wrap(global, |_g| Ok(this.call_handler(unsafe { &mut *bytes })))?;
                 this.promise.resolve(global, value)?;
             }
             crate::webcore::__s3_client::S3DownloadResult::NotFound(err)

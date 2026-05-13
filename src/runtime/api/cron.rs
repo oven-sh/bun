@@ -713,6 +713,11 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
                 "Path must not contain percent signs (cron interprets % as newline)"
             )));
         }
+        if c == b'\n' || c == b'\r' {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Path must not contain line breaks"))
+            );
+        }
     }
 
     let bun_exe = match bun_core::self_exe_path() {

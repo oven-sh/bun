@@ -94,14 +94,18 @@ pub struct HttpThread {
     pub uws_loop: *mut uws::Loop,
     pub http_context: NewHttpContext<false>,
     pub https_context: NewHttpContext<true>,
-    /// Stashed `InitOpts` for the default HTTPS context. `on_start` defers
+    /// Stashed `InitOpts` for the default HTTPS context. When the user passed
+    /// no explicit CA config, `on_start` defers
     /// `https_context.init_with_thread_opts` (which calls
     /// `us_ssl_ctx_from_options` → `us_get_default_ca_store`, ~0.7 ms CPU +
     /// ~400 KB heap to parse the bundled root certs) until the first SSL
     /// connect actually arrives via [`HttpThread::connect`]`::<true>`. A
     /// fully-cached `bun install` never makes one, so the cost is skipped
-    /// entirely. HTTP-thread-only after `on_start`; `Option::take` is the
-    /// once-guard (no atomics needed — `connect` is never reentrant).
+    /// entirely. If `--cafile` / `--ca` *was* passed, `on_start` still runs
+    /// init eagerly so a bad CA file crashes at thread start (the long-standing
+    /// test contract) and this stays `None`. HTTP-thread-only after `on_start`;
+    /// `Option::take` is the once-guard (no atomics needed — `connect` is never
+    /// reentrant).
     lazy_https_init: Option<InitOpts>,
 
     pub queued_tasks: Queue,
@@ -1160,16 +1164,29 @@ mod _event_loop_draft {
         thread.loop_ = loop_;
         thread.uws_loop = uws_loop;
         thread.http_context.init();
-        // Defer `https_context.init_with_thread_opts` — it eagerly builds the
-        // BoringSSL `SSL_CTX` and parses the bundled root-CA store
+        // `https_context.init_with_thread_opts` eagerly builds the BoringSSL
+        // `SSL_CTX` and parses the bundled root-CA store
         // (`us_get_default_ca_store`, root_certs.cpp:210), costing ~0.7 ms CPU
-        // and ~400 KB heap whether or not an HTTPS request ever happens. Stash
-        // `opts` and let the first `connect::<true>` call run it (see
-        // `HttpThread::lazy_https_init`). Behavior-preserving: a bad CA file
-        // still crashes via `on_init_error`, just at first SSL use instead of
-        // thread start — and a fully-cached `bun install` (which makes zero
-        // network requests) skips the cost entirely.
-        thread.lazy_https_init = Some(opts);
+        // and ~400 KB heap whether or not an HTTPS request ever happens. When
+        // there is no user-supplied CA config we stash `opts` and let the first
+        // `connect::<true>` call run it (see `HttpThread::lazy_https_init`) — a
+        // fully-cached `bun install` (which makes zero network requests) then
+        // skips the cost entirely.
+        if !opts.abs_ca_file_name.is_empty() || !opts.ca.is_empty() {
+            // User passed --cafile / --ca: validate now so a bad CA file fails
+            // the process at thread start (test contract:
+            // bun-install-registry.test.ts "non-existent --cafile" /
+            // "invalid cafile"), even if the registry is plain HTTP and no SSL
+            // connect would ever happen.
+            if let Err(err) = thread.https_context.init_with_thread_opts(&opts) {
+                (opts.on_init_error)(err, &opts);
+            }
+        } else {
+            // No CA config — safe to defer the ~0.7 ms / ~400 KB root-cert
+            // parse to the first SSL connect (warm-cache `bun install` makes
+            // none).
+            thread.lazy_https_init = Some(opts);
+        }
         // Release: publishes `uws_loop`/`loop_` to cross-thread `wakeup()`
         // readers (which Acquire-load `has_awoken`).
         thread.has_awoken.store(true, Ordering::Release);

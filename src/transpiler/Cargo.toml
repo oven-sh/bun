@@ -6,6 +6,9 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 # `Transpiler` (the high-level wrapper around the parser/options/resolver/env
 # stack) physically lives in `bun_bundler::transpiler`. This crate is the

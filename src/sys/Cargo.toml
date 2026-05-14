@@ -10,6 +10,9 @@ path = "lib.rs"
 # Zig `Environment.ci_assert` → opt-in extra invariant checks (off by default).
 ci_assert = []
 
+[lints]
+workspace = true
+
 [dependencies]
 bytemuck = "1"
 bun_opaque.workspace = true

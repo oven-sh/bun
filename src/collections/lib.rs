@@ -364,11 +364,6 @@ impl<T, const N: usize> SmallList<T, N> {
     pub fn last_mut(&mut self) -> Option<&mut T> {
         self.0.last_mut()
     }
-    #[inline]
-    pub fn get_last_unchecked(&self) -> &T {
-        // SAFETY: caller guarantees len >= 1 (Zig contract).
-        unsafe { self.0.get_unchecked(self.0.len() - 1) }
-    }
 
     // ── mutation ───────────────────────────────────────────────────────────
     #[inline]

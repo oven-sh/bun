@@ -1180,3 +1180,27 @@ it("process.versions", () => {
   expect(process.versions.napi).toEqual("10");
   expect(process.versions.modules).toEqual("137");
 });
+
+// On Windows, env var names are case-insensitive but the JS Proxy that wraps
+// `process.env` keys its underlying object on canonical-uppercase names. The
+// proxy-related vars (HTTP_PROXY/HTTPS_PROXY/NO_PROXY) get a CustomAccessor at
+// the canonical name; that accessor must stay enumerable when the OS env block
+// carries a non-canonical casing, or `{...process.env}` (and any spawn env
+// merge that spreads it) silently drops the var.
+it.skipIf(!isWindows)("proxy env vars survive {...process.env} regardless of OS env-block casing", () => {
+  const variants = ["Http_Proxy", "HTTP_proxy", "http_Proxy", "HTTPS_Proxy", "No_Proxy"];
+  for (const variant of variants) {
+    const canonical = variant.toUpperCase();
+    const child = spawnSync({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const o = {...process.env}; console.log(JSON.stringify({direct: process.env.${canonical}, spread: o.${canonical}}));`,
+      ],
+      env: { ...bunEnv, [variant]: "http://proxy.example" },
+    });
+    const { direct, spread } = JSON.parse(child.stdout.toString().trim());
+    expect(direct).toBe("http://proxy.example");
+    expect(spread).toBe("http://proxy.example");
+  }
+});

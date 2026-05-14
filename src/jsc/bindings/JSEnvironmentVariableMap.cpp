@@ -369,6 +369,17 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         for (size_t j = 0; j < proxyVarCount; j++) {
             if (name == proxyVarNames[j]) return j;
         }
+#if OS(WINDOWS)
+        // Windows env var names are case-insensitive, so the OS env block can
+        // carry any casing (`Http_Proxy`, `HTTP_proxy`, ...). Without this
+        // fallback the per-key loop falls through, the bottom loop then adds
+        // the canonical accessor with `DontEnum` (because hasProxyVar[*] stayed
+        // false), and `{...process.env}` (which most spawn env merges do) drops
+        // the var even though `process.env.HTTP_PROXY` reads it fine.
+        for (size_t j = 0; j < proxyVarCount; j++) {
+            if (equalIgnoringASCIICase(name, proxyVarNames[j])) return j;
+        }
+#endif
         return std::nullopt;
     };
 

@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -566,8 +566,7 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   timeout,
 );
 
-// Known pre-existing self-rewrite race (see d644b4732b5b body) surfaces as a stall under ASAN timing; the sourcemap-remap correctness this test guards is already covered on non-ASAN jobs.
-it.skipIf(isCI && isASAN)(
+it(
   "should not remap against a stale sourcemap after a partial-file reload",
   async () => {
     // Regression: the watcher can deliver a second reload Task between the

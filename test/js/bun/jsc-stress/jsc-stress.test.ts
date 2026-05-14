@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isDebug, isWindows } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import path from "path";
 
 const fixturesDir = path.join(import.meta.dir, "fixtures");
@@ -197,12 +197,7 @@ describe.concurrent("JSC JIT Stress Tests", () => {
     }
   });
 
-  // todoIf(isWindows): the WebKit bump on this branch regressed Wasm fast
-  // memory on Windows — OSAllocator::protect → VirtualAlloc(MEM_COMMIT) on
-  // the bmalloc-reserved fast-memory region now fails with
-  // ERROR_INVALID_ADDRESS (487) at OSAllocatorWin.cpp:154 during BBQ/OMG
-  // memory creation. This is purely upstream (vendor/WebKit), not the port.
-  describe.todoIf(isWindows)("Wasm (BBQ/OMG)", () => {
+  describe("Wasm (BBQ/OMG)", () => {
     for (const fixture of wasmFixtures) {
       test(
         fixture,

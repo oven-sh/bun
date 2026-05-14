@@ -2546,10 +2546,44 @@ pub mod __gated_printer {
             open_paren_loc: Option<bun_ast::Loc>,
             args: &[G::Arg],
             has_rest_arg: bool,
-            // is_arrow can be used for minifying later
-            _is_arrow: bool,
+            is_arrow: bool,
         ) {
-            let wrap = true;
+            // When minifying, drop the parentheses around an arrow function's
+            // single simple identifier parameter: `(x) => …` becomes `x => …`.
+            // Only safe when there's exactly one argument, it's a plain
+            // identifier binding (not destructuring), no default value, no
+            // rest/spread, and no decorators.
+            //
+            // Gated on minify_whitespace (matches esbuild): the bun runtime
+            // transpiler enables minify_syntax silently to get tree-shaking
+            // and inlining, but that path must not alter `Function.prototype
+            // .toString()` output that user code may parse. Whitespace-level
+            // minification is opt-in via `--minify`/`--minify-whitespace`.
+            let wrap = 'wrap: {
+                if !is_arrow {
+                    break 'wrap true;
+                }
+                if !self.options.minify_whitespace {
+                    break 'wrap true;
+                }
+                if args.len() != 1 {
+                    break 'wrap true;
+                }
+                if has_rest_arg {
+                    break 'wrap true;
+                }
+                let arg = &args[0];
+                if !matches!(arg.binding.data, BindingData::BIdentifier(_)) {
+                    break 'wrap true;
+                }
+                if arg.default.is_some() {
+                    break 'wrap true;
+                }
+                if !arg.ts_decorators.is_empty() {
+                    break 'wrap true;
+                }
+                false
+            };
 
             if wrap {
                 if let Some(loc) = open_paren_loc {

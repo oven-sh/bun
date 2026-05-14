@@ -720,12 +720,12 @@ fn message_with_type_and_level_(
     if print_length > 0 {
         format2(level, global, vals, print_length, writer, print_options)?;
     } else if message_type == MessageType::Log {
-        // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
-        // the only later uses are in the mutually-exclusive `Trace` block, and
-        // `message_type == Log` here.
-        let w = unsafe { (*console).writer() };
-        let _ = w.write_all(b"\n");
-        let _ = w.flush();
+        // Use the level-selected `writer` so no-arg `console.warn()`/`.error()`
+        // write to stderr (matching Node.js) and the EPIPE-detection layer's
+        // `is_stderr` predicate in `message_with_type_and_level` checks the
+        // same backing that was actually written to.
+        let _ = writer.write_all(b"\n");
+        let _ = writer.flush();
     } else if message_type != MessageType::Trace {
         let _ = writer.write_all(b"undefined\n");
     }

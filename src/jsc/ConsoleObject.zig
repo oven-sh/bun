@@ -16,12 +16,6 @@ writer_backing: @TypeOf(Output.Source.StreamType.quietWriter(undefined)).Adapter
 error_writer: *std.Io.Writer,
 writer: *std.Io.Writer,
 
-/// Set once we've surfaced a write error (e.g. EPIPE) from `console.*` onto
-/// `process.stdout`/`process.stderr`. We only do this once per stream to avoid
-/// queuing an unbounded number of `destroy()` calls from a tight sync loop.
-stdout_write_error_emitted: bool = false,
-stderr_write_error_emitted: bool = false,
-
 default_indent: u16 = 0,
 
 counts: Counter = .{},
@@ -90,65 +84,7 @@ pub fn messageWithTypeAndLevel(
     vals: [*]const JSValue,
     len: usize,
 ) callconv(jsc.conv) void {
-    // Node.js routes console.log/console.error through process.stdout.write() /
-    // process.stderr.write(), so a write failure (EPIPE when piped to `head`, etc.)
-    // surfaces as an 'error' event on the corresponding stream. Bun's console.* writes
-    // directly to the fd and swallows errors, so detect them here and forward to the
-    // stream so user 'error' listeners fire instead of the process hanging forever.
-    // See https://github.com/oven-sh/bun/issues/7251.
-    var console = global.bunVM().console;
-    const is_stderr = level == .Warning or level == .Error or message_type == .Assert;
-    const backing = if (is_stderr) &console.error_writer_backing else &console.writer_backing;
-    const emitted = if (is_stderr) &console.stderr_write_error_emitted else &console.stdout_write_error_emitted;
-
-    messageWithTypeAndLevel_(ctype, message_type, level, global, vals, len) catch |err| {
-        // A JS exception is now pending (voidFromJSError leaves it for the C++ caller).
-        // Don't call into JS to forward the stdio write error — the C++ handler's
-        // exception scopes would clear the user's throw. Just drop the recorded write
-        // error; the pipe stays broken, so the next console.* call will hit EPIPE again
-        // and retry the emit with no exception pending.
-        backing.err = null;
-        return bun.jsc.host_fn.voidFromJSError(err, global);
-    };
-
-    maybeEmitStdioWriteError(global, if (is_stderr) 2 else 1, backing, emitted);
-}
-
-extern fn Bun__ConsoleObject__onStdioWriteError(global: *JSGlobalObject, fd: i32, err: JSValue) void;
-
-fn maybeEmitStdioWriteError(
-    global: *JSGlobalObject,
-    fd: i32,
-    backing: *@TypeOf(Output.Source.StreamType.quietWriter(undefined)).Adapter,
-    emitted: *bool,
-) void {
-    const write_err = backing.err orelse return;
-    // Always clear the recorded error so a later successful write doesn't see a stale one.
-    backing.err = null;
-    if (emitted.*) return;
-
-    // The underlying writer is a `bun.sys.File` whose write failures go through
-    // `Maybe.unwrap()` → `bun.errnoToZigErr(errno)`, producing errors named after
-    // `bun.sys.SystemErrno` tags (e.g. `error.EPIPE`). Reverse that here.
-    const system_errno = std.meta.stringToEnum(bun.sys.SystemErrno, @errorName(write_err)) orelse return;
-    // EAGAIN/EWOULDBLOCK (non-blocking fd, pipe buffer momentarily full) and
-    // EINTR (signal mid-write; macOS's write() has no EINTR retry) are
-    // transient conditions that Node.js/libuv retry internally and never
-    // surface as 'error' events. Skip them here too — the next console.* call
-    // will either succeed or hit the real EPIPE once the reader closes.
-    if (system_errno == .EAGAIN or system_errno == .EINTR) return;
-    const sys_err: bun.sys.Error = .{
-        .errno = @truncate(@intFromEnum(system_errno)),
-        .syscall = .write,
-    };
-    const js_err = sys_err.toJS(global) catch {
-        // Leave `emitted` unset so a subsequent failed write can retry.
-        return;
-    };
-    // Mark emitted before calling into JS so a re-entrant console.* from inside the
-    // user's 'error' listener (or stream construction) can't recurse back here.
-    emitted.* = true;
-    Bun__ConsoleObject__onStdioWriteError(global, fd, js_err);
+    messageWithTypeAndLevel_(ctype, message_type, level, global, vals, len) catch |err| bun.jsc.host_fn.voidFromJSError(err, global);
 }
 fn messageWithTypeAndLevel_(
     //console_: *ConsoleObject,

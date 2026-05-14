@@ -4260,7 +4260,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
     }
 }
 
-// Called from ConsoleObject.zig when a console.log/console.error write to stdout/stderr fails
+// Called from ConsoleObject.rs when a console.log/console.error write to stdout/stderr fails
 // (e.g. EPIPE when piped to `head`). In Node.js, console.log writes through process.stdout.write()
 // so write errors surface as 'error' events on process.stdout. Bun's console.* uses a separate
 // native writer, so we replicate the observable behavior here: emit the error on the

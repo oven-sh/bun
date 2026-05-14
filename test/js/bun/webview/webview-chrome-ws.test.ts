@@ -104,7 +104,7 @@ const html = (h: string) => "data:text/html," + encodeURIComponent(h);
 // explicit ws:// URL makes the constructor succeed without a Chrome
 // binary (WebSocket handshake is async; the guard fires before any I/O),
 // and the subprocess keeps the bogus URL out of this file's Transport
-// singleton so the remote-Chrome `it` tests above still connect cleanly.
+// singleton so the remote-Chrome `it` tests below still connect cleanly.
 test("cdp() rejects (not sync-throws) with ERR_INVALID_STATE before first navigate", async () => {
   await using proc = Bun.spawn({
     cmd: [

@@ -106,6 +106,8 @@ bun_zstd.workspace = true
 bun_install_jsc.workspace = true
 bun_patch_jsc.workspace = true
 bun_css_jsc.workspace = true
+wgpu.workspace = true
+futures = { version = "0.3", features = ["executor"], default-features = false }
 
 [features]
 default = []

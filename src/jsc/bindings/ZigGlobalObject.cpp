@@ -1782,6 +1782,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * g
 }
 
 extern "C" JSC::EncodedJSValue CryptoObject__create(JSGlobalObject*);
+extern "C" JSC::EncodedJSValue GPUSingleton__create(JSGlobalObject*);
 JSC_DEFINE_CUSTOM_GETTER(moduleNamespacePrototypeGetESModuleMarker, (JSGlobalObject * globalObject, JSC::EncodedJSValue encodedThisValue, PropertyName))
 {
     JSValue thisValue = JSValue::decode(encodedThisValue);
@@ -2171,6 +2172,10 @@ void GlobalObject::finishCreation(VM& vm)
 #endif
 
             obj->putDirect(init.vm, hardwareConcurrencyIdentifier, JSC::jsNumber(cpuCount));
+
+            JSC::JSValue gpuValue = JSC::JSValue::decode(GPUSingleton__create(init.owner));
+            obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "gpu"_s), gpuValue, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
+
             init.set(obj);
         });
 

@@ -147,9 +147,7 @@ pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;
 #[derive(Default)]
 pub struct CrossChunkImport {
     pub chunk_index: IndexInt,
-    /// Borrowed view into `ImportsFromOtherChunks` — Zig's `BabyList` has no
-    /// destructor, so dropping `CrossChunkImport` must not free this buffer.
-    pub sorted_import_items: core::mem::ManuallyDrop<CrossChunkImportItemList>,
+    pub sorted_import_items: CrossChunkImportItemList,
 }
 /// `Chunk.zig:ImportsFromOtherChunks`.
 pub mod cross_chunk_import {

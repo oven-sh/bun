@@ -589,12 +589,16 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                                 c.arena(),
                             );
                         for item in cross_chunk_import.sorted_import_items.slice() {
+                            // `StoreStr` borrows raw; `sorted_import_items` is
+                            // dropped on the next `list.clear()`, so copy the
+                            // alias bytes into the arena (per StoreStr contract).
+                            let alias = c.arena().alloc_slice_copy(item.export_alias.as_ref());
                             clauses.push(bun_ast::ClauseItem {
                                 name: bun_ast::LocRef {
                                     ref_: Some(item.r#ref),
                                     loc: bun_ast::Loc::EMPTY,
                                 },
-                                alias: bun_ast::StoreStr::new(item.export_alias.as_ref()),
+                                alias: bun_ast::StoreStr::new(alias),
                                 alias_loc: bun_ast::Loc::EMPTY,
                                 original_name: bun_ast::StoreStr::new(b"" as &[u8]),
                             });

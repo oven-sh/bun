@@ -140,6 +140,12 @@ domain.createDomain = domain.create = function () {
   d.add = function (emitter) {
     if (memberListeners.has(emitter)) return;
     const listener = function (e) {
+      // Synthesize an error if nothing meaningful was emitted, matching
+      // Node.js `EventEmitter` semantics where `emit('error')` / `emit('error',
+      // false | null | undefined)` throws an `ERR_UNHANDLED_ERROR`.
+      if (e === undefined || e === null || e === false) {
+        e = $ERR_UNHANDLED_ERROR();
+      }
       if ((typeof e === "object" && e !== null) || typeof e === "function") {
         try {
           e.domainEmitter = emitter;

@@ -287,7 +287,7 @@ unsafe fn init_runtime_state(
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
         transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
-        body_value_pool: Box::new(crate::webcore::body::HiveAllocator::init()),
+        body_value_pool: crate::webcore::body::HiveAllocator::new_boxed(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
@@ -1172,11 +1172,11 @@ unsafe fn init_request_body_value(_vm: *mut VirtualMachine, body: *mut c_void) -
     // its `body_value_pool` `Box` payload is heap-stable for the
     // VM's lifetime (BACKREF contract on `HiveRef::allocator`).
     let value = unsafe { core::ptr::read(body.cast::<Value>()) };
-    let pool: *mut crate::webcore::body::HiveAllocator =
-        unsafe { &raw mut *(*state).body_value_pool };
     // Spec returns `!*HiveRef` with the only `try` site being the pool
     // allocation; `bun.handleOom`-style crash matches Zig.
-    unsafe { HiveRef::init(value, pool) }.cast::<c_void>()
+    unsafe { HiveRef::init(value, &mut (*state).body_value_pool) }
+        .cast::<c_void>()
+        .as_ptr()
 }
 
 /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])` —

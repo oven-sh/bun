@@ -686,14 +686,13 @@ impl NumberRenamer {
         parent: Option<bun_ptr::ParentRef<NumberScope>>,
         sorted: &mut Vec<u32>,
     ) {
-        let s: *mut NumberScope = self.number_scope_pool.get();
-        // SAFETY: `s` is a valid pool slot (HiveArrayFallback::get never returns null).
-        unsafe {
-            s.write(NumberScope {
+        let s: *mut NumberScope = self
+            .number_scope_pool
+            .get_init(NumberScope {
                 parent,
                 name_counts: StringHashMap::default(),
-            });
-        }
+            })
+            .as_ptr();
 
         self.assign_names_recursive_with_number_scope(s, scope, source_index, sorted);
 
@@ -750,20 +749,18 @@ impl NumberRenamer {
 
         loop {
             if scope.members.count() > 0 || scope.generated.len_u32() > 0 {
-                let new_child_scope: *mut NumberScope = self.number_scope_pool.get();
-                // SAFETY: `new_child_scope` is a valid pool slot.
-                unsafe {
-                    new_child_scope.write(NumberScope {
-                        // `s` is non-null (either `initial_scope` or a fresh
-                        // pool slot from a prior iteration); the new child
-                        // outlives this `ParentRef` only until `put()` below.
+                // `s` is non-null (either `initial_scope` or a fresh pool slot
+                // from a prior iteration); the new child outlives this
+                // `ParentRef` only until `put()` below.
+                s = self
+                    .number_scope_pool
+                    .get_init(NumberScope {
                         parent: Some(bun_ptr::ParentRef::from(
                             core::ptr::NonNull::new(s).expect("number_scope non-null"),
                         )),
                         name_counts: StringHashMap::default(),
-                    });
-                }
-                s = new_child_scope;
+                    })
+                    .as_ptr();
 
                 // SAFETY: s is a valid pool slot just initialized above
                 self.assign_names_in_scope(unsafe { &mut *s }, scope, source_index, sorted);

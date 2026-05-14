@@ -74,18 +74,11 @@ fn start_manifest_task(
     // TODO(port): lifetime — BACKREF.
     let manager_backref: *mut PackageManager = manager;
 
-    // Take the pool slot as a raw pointer so borrowck releases `manager` for the
-    // `enqueue_network_task` tail.
-    let net_ptr: *mut NetworkTask = run_tasks::get_network_task(manager);
     // Zig: `task.* = .{ .package_manager = manager, .callback = undefined,
     //                   .task_id = task_id, .allocator = manager.allocator };`
-    // — full struct overwrite that resets every other field to its struct
-    // default. The slot may be uninitialized (heap fallback) or stale (reused
-    // hive slot).
-    // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
-    // other alias exists until we hand it to `enqueue_network_task`.
-    unsafe { NetworkTask::write_init(net_ptr, task_id, manager_backref, None) };
-    // SAFETY: `write_init` populated every field with a drop-safe value;
+    let net_ptr: *mut NetworkTask =
+        run_tasks::get_network_task(manager, task_id, manager_backref, None);
+    // SAFETY: `get_network_task` returns a fully-initialized pool slot;
     // `unsafe_http_client` is `MaybeUninit` and overwritten by `for_manifest`.
     let task = unsafe { &mut *net_ptr };
     // `scope` points into `manager.options` which is not mutated by

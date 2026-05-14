@@ -702,22 +702,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // SAFETY: `request_pool` points at a process-static (or
         // server-owned) `HiveArray::Fallback`; valid for the server's lifetime.
-        let ctx_slot = unsafe { (*server.request_pool).try_get() };
-        // SAFETY: `try_get` hands out an uninitialized slot; `create()` fully
-        // initializes it via `MaybeUninit::write`.
-        let ctx_uninit = unsafe {
-            &mut *ctx_slot.cast::<core::mem::MaybeUninit<ServerRequestContext<SSL, DEBUG>>>()
-        };
+        let mut slot = unsafe { (*server.request_pool).claim() };
         ServerRequestContext::<SSL, DEBUG>::create(
-            ctx_uninit,
+            slot.as_uninit(),
             this,
             std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
             any_response_from::<SSL>(resp),
             should_deinit_context,
             method,
         );
-        // SAFETY: fully initialized by `create()`.
-        let ctx: *mut ServerRequestContext<SSL, DEBUG> = ctx_slot;
+        // SAFETY: fully initialized by `create()` via `MaybeUninit::write`.
+        let ctx: *mut ServerRequestContext<SSL, DEBUG> = unsafe { slot.assume_init() }.as_ptr();
         let ctx_mut = unsafe { &mut *ctx };
 
         // `VirtualMachine::jsc_vm()` is the safe accessor for the JSC VM
@@ -2967,7 +2962,7 @@ macro_rules! impl_server_pools {
                         // `Box::new(Pool::init())` builds the ~816 KB pool on
                         // the stack and `memcpy`s it into the heap (no NRVO);
                         // `new_boxed` writes only the 256 B bitset in place.
-                        p = Pool::new_boxed().as_ptr();
+                        p = Box::into_raw(Pool::new_boxed());
                         cell.set(p);
                     }
                     p
@@ -2982,7 +2977,7 @@ macro_rules! impl_server_pools {
                 POOL.with(|cell| {
                     let mut p = cell.get();
                     if p.is_null() {
-                        p = Pool::new_boxed().as_ptr();
+                        p = Box::into_raw(Pool::new_boxed());
                         cell.set(p);
                     }
                     p

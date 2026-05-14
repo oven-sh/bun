@@ -424,8 +424,8 @@ pub struct PackageManager {
     pub pending_pre_calc_hashes: AtomicU32,
     pub pending_tasks: AtomicU32,
     pub total_tasks: u32,
-    pub preallocated_network_tasks: PreallocatedNetworkTasks,
-    pub preallocated_resolve_tasks: PreallocatedTaskStore,
+    pub preallocated_network_tasks: Box<PreallocatedNetworkTasks>,
+    pub preallocated_resolve_tasks: Box<PreallocatedTaskStore>,
 
     /// items are only inserted into this if they took more than 500ms
     pub lifecycle_script_time_log: LifecycleScriptTimeLog,
@@ -1979,15 +1979,11 @@ pub fn init(
                 core::ptr::addr_of_mut!((*p).$field).write($val)
             };
         }
-        // The two large pools: in-place init that only zeros the 256 B
-        // occupancy bitset and leaves `[MaybeUninit<T>; N]` untouched — no
-        // stack temporary, no memcpy.
-        PreallocatedNetworkTasks::init_in_place(core::ptr::addr_of_mut!(
-            (*p).preallocated_network_tasks
-        ));
-        PreallocatedTaskStore::init_in_place(core::ptr::addr_of_mut!(
-            (*p).preallocated_resolve_tasks
-        ));
+        // The two large pools: `new_boxed` writes only the 256 B occupancy
+        // bitset and leaves `[MaybeUninit<T>; N]` untouched — no stack
+        // temporary, no memcpy.
+        wr!(preallocated_network_tasks, PreallocatedNetworkTasks::new_boxed());
+        wr!(preallocated_resolve_tasks, PreallocatedTaskStore::new_boxed());
 
         wr!(cache_directory_, None);
         wr!(cache_directory_path, ZBox::from_bytes(b"")); // TODO(port): default ""
@@ -2430,14 +2426,10 @@ pub fn init_with_runtime_once(
                 core::ptr::addr_of_mut!((*p).$field).write($val)
             };
         }
-        // The two large pools: in-place init that only zeros the 256 B
-        // occupancy bitset and leaves `[MaybeUninit<T>; N]` untouched.
-        PreallocatedNetworkTasks::init_in_place(core::ptr::addr_of_mut!(
-            (*p).preallocated_network_tasks
-        ));
-        PreallocatedTaskStore::init_in_place(core::ptr::addr_of_mut!(
-            (*p).preallocated_resolve_tasks
-        ));
+        // The two large pools: `new_boxed` writes only the 256 B occupancy
+        // bitset and leaves `[MaybeUninit<T>; N]` untouched.
+        wr!(preallocated_network_tasks, PreallocatedNetworkTasks::new_boxed());
+        wr!(preallocated_resolve_tasks, PreallocatedTaskStore::new_boxed());
 
         wr!(cache_directory_, None);
         wr!(cache_directory_path, ZBox::from_bytes(b"")); // TODO(port): default

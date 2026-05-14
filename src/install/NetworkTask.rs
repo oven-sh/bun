@@ -882,58 +882,43 @@ impl NetworkTask {
         self.response = HTTPClientResult::default();
     }
 
-    /// Initialize a freshly-vended pool slot in place, mirroring Zig's
+    /// Build a fresh `NetworkTask` value mirroring Zig's
     /// `network_task.* = .{ .task_id = …, .callback = undefined, .allocator = …,
     /// .package_manager = …, .apply_patch_task = … }` — a full struct overwrite
-    /// that resets every other field to its struct default. The slot may be
-    /// uninitialized heap memory (from `HiveArrayFallback::get()`'s
-    /// `Box::new_uninit()` fallback) or stale (reused hive slot whose prior
-    /// contents ARE now dropped on `put` since 1e76047), so each field is
-    /// written via `addr_of_mut!().write()` without dropping the previous
-    /// value — the slot is freshly poisoned/uninit from `get()`.
+    /// that resets every other field to its struct default.
     ///
-    /// Fields that are `= undefined` in Zig (`unsafe_http_client`, `callback`,
-    /// `request_buffer`, `response_buffer`) are written here with drop-safe
-    /// placeholders so subsequent `=` assignments in `for_manifest`/
-    /// `for_tarball` do not drop uninitialized memory. `unsafe_http_client`
-    /// stays bitwise-untouched (it is `MaybeUninit`, so leaving it uninit is
-    /// sound under the `&mut NetworkTask` the caller forms next; it is
-    /// overwritten without drop by `for_manifest`/`for_tarball`).
-    ///
-    /// # Safety
-    /// `slot` must be the unique handle to a `HiveArrayFallback<NetworkTask>`
-    /// slot returned by `get()`; its prior contents are treated as garbage
-    /// (matches Zig — no destructors run).
-    pub unsafe fn write_init(
-        slot: *mut NetworkTask,
+    /// Zig-`undefined` fields (`unsafe_http_client`, `callback`,
+    /// `request_buffer`, `response_buffer`) get drop-safe placeholders so
+    /// subsequent `=` assignments in `for_manifest`/`for_tarball` do not drop
+    /// uninitialized memory. `unsafe_http_client` is `MaybeUninit::uninit()`
+    /// (overwritten without drop by `for_manifest`/`for_tarball`).
+    pub fn new(
         task_id: crate::package_manager_task::Id,
         package_manager: *mut PackageManager,
         apply_patch_task: Option<Box<PatchTask>>,
-    ) {
-        use core::ptr::addr_of_mut;
-        unsafe {
-            addr_of_mut!((*slot).task_id).write(task_id);
+    ) -> Self {
+        Self {
+            unsafe_http_client: MaybeUninit::uninit(),
+            task_id,
             // SAFETY: `package_manager` is the live owner of this task; write
             // provenance is required for `for_manifest`/`for_tarball`'s
             // `assume_mut`, so callers pass `*mut` (not `*const`).
-            addr_of_mut!((*slot).package_manager)
-                .write(bun_ptr::ParentRef::from_raw_mut(package_manager));
-            addr_of_mut!((*slot).apply_patch_task).write(apply_patch_task);
+            package_manager: unsafe { bun_ptr::ParentRef::from_raw_mut(package_manager) },
+            apply_patch_task,
             // Struct-default fields (Zig: `= .{}` / `= 0` / `= null` / `= &[_]u8{}`).
-            addr_of_mut!((*slot).response).write(HTTPClientResult::default());
-            addr_of_mut!((*slot).url_buf).write(Box::default());
-            addr_of_mut!((*slot).retried).write(0);
-            addr_of_mut!((*slot).next).write(bun_threading::Link::new());
-            addr_of_mut!((*slot).tarball_stream).write(None);
-            addr_of_mut!((*slot).streaming_extract_task).write(ptr::null_mut());
-            addr_of_mut!((*slot).streaming_committed).write(false);
-            addr_of_mut!((*slot).signal_store).write(http::signals::Store::default());
-            // Zig-`undefined` fields: write drop-safe placeholders so the
-            // plain `=` in `for_manifest`/`for_tarball` drops a valid value.
-            // (`unsafe_http_client` is `MaybeUninit` — left uninitialized.)
-            addr_of_mut!((*slot).request_buffer).write(MutableString::init_empty());
-            addr_of_mut!((*slot).response_buffer).write(MutableString::init_empty());
-            addr_of_mut!((*slot).callback).write(Callback::LocalTarball);
+            response: HTTPClientResult::default(),
+            url_buf: Box::default(),
+            retried: 0,
+            next: bun_threading::Link::new(),
+            tarball_stream: None,
+            streaming_extract_task: ptr::null_mut(),
+            streaming_committed: false,
+            signal_store: http::signals::Store::default(),
+            // Zig-`undefined` fields: drop-safe placeholders so the plain `=`
+            // in `for_manifest`/`for_tarball` drops a valid value.
+            request_buffer: MutableString::init_empty(),
+            response_buffer: MutableString::init_empty(),
+            callback: Callback::LocalTarball,
         }
     }
 }

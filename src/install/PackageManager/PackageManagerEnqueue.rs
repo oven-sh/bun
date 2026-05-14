@@ -355,29 +355,29 @@ pub fn enqueue_parse_npm_package(
     name: StringOrTinyString,
     network_task: *mut NetworkTask,
 ) -> *mut ThreadPool::Task {
-    let task = this.preallocated_resolve_tasks.get();
-    // SAFETY: task is a freshly acquired slot from the preallocated pool; we own the write.
+    let value = Task::Task {
+        package_manager: Some(bun_ptr::ParentRef::from(core::ptr::NonNull::from(
+            &mut *this,
+        ))),
+        log: bun_ast::Log::init(),
+        tag: crate::package_manager_task::Tag::PackageManifest,
+        request: crate::package_manager_task::Request {
+            package_manifest: ManuallyDrop::new(
+                crate::package_manager_task::PackageManifestRequest {
+                    // SAFETY: `network_task` is a freshly-vended pool slot; the
+                    // `'static` reborrow matches the `Task<'static>` slot lifetime.
+                    network: unsafe { &mut *network_task },
+                    name,
+                },
+            ),
+        },
+        id: task_id,
+        // TODO(port): `data: undefined` — Task::data left uninitialized in Zig
+        ..Task::uninit()
+    };
+    let task = this.preallocated_resolve_tasks.get_init(value).as_ptr();
+    // SAFETY: `get_init` just fully initialized the slot.
     unsafe {
-        task.write(Task::Task {
-            package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
-                PackageManager,
-            >(this))),
-            log: bun_ast::Log::init(),
-            tag: crate::package_manager_task::Tag::PackageManifest,
-            request: crate::package_manager_task::Request {
-                package_manifest: ManuallyDrop::new(
-                    crate::package_manager_task::PackageManifestRequest {
-                        // SAFETY: `network_task` is a freshly-vended pool slot; the
-                        // `'static` reborrow matches the `Task<'static>` slot lifetime.
-                        network: &mut *network_task,
-                        name,
-                    },
-                ),
-            },
-            id: task_id,
-            // TODO(port): `data: undefined` — Task::data left uninitialized in Zig
-            ..Task::uninit()
-        });
         &raw mut (*task).threadpool_task
     }
 }
@@ -1158,14 +1158,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 // preallocated pool, not `string_bytes`; with
                                 // `name_str` lifetime-detached above, `this`
                                 // is free to reborrow `&mut`.
-                                let network_task = this.get_network_task();
-                                // SAFETY: `network_task` is the unique handle to a
-                                // freshly-vended pool slot. Zig's `network_task.* = .{ ... }`
-                                // resets every defaulted field; `write_init` mirrors that
-                                // (callback is `= undefined` and overwritten by `for_manifest`).
-                                unsafe {
-                                    NetworkTask::write_init(network_task, task_id, this_ptr, None);
-                                }
+                                let network_task =
+                                    this.get_network_task(task_id, this_ptr, None);
 
                                 let scope = this.scope_for_package_name(name_str);
                                 // SAFETY: network_task points to a valid initialized NetworkTask slot
@@ -1656,37 +1650,32 @@ fn init_extract_task(
     tarball: &ExtractTarball,
     network_task: *mut NetworkTask,
 ) -> *mut Task::Task<'static> {
-    let task = this.preallocated_resolve_tasks.get();
-    // SAFETY: task is a freshly acquired uninitialized slot from the preallocated
-    // pool; we own the write. `ptr::write` (no drop of prior value) matches Zig's
-    // `task.* = Task{...}` semantics on uninit memory.
-    unsafe {
-        task.write(Task::Task {
-            package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
-                PackageManager,
-            >(this))),
-            log: bun_ast::Log::init(),
-            tag: crate::package_manager_task::Tag::Extract,
-            request: crate::package_manager_task::Request {
-                extract: ManuallyDrop::new(crate::package_manager_task::ExtractRequest {
-                    // SAFETY: `network_task` is a freshly-vended pool slot; the
-                    // `'static` reborrow matches the `Task<'static>` slot lifetime.
-                    network: &mut *network_task,
-                    tarball: ExtractTarball {
-                        skip_verify: !this
-                            .options
-                            .do_
-                            .contains(crate::package_manager_real::options::Do::VERIFY_INTEGRITY),
-                        ..*tarball
-                    },
-                }),
-            },
-            id: (*network_task).task_id,
-            // TODO(port): `data: undefined`
-            ..Task::uninit()
-        });
-        task
-    }
+    let value = Task::Task {
+        package_manager: Some(bun_ptr::ParentRef::from(core::ptr::NonNull::from(
+            &mut *this,
+        ))),
+        log: bun_ast::Log::init(),
+        tag: crate::package_manager_task::Tag::Extract,
+        request: crate::package_manager_task::Request {
+            extract: ManuallyDrop::new(crate::package_manager_task::ExtractRequest {
+                // SAFETY: `network_task` is a freshly-vended pool slot; the
+                // `'static` reborrow matches the `Task<'static>` slot lifetime.
+                network: unsafe { &mut *network_task },
+                tarball: ExtractTarball {
+                    skip_verify: !this
+                        .options
+                        .do_
+                        .contains(crate::package_manager_real::options::Do::VERIFY_INTEGRITY),
+                    ..*tarball
+                },
+            }),
+        },
+        // SAFETY: `network_task` is a fully-initialized pool slot.
+        id: unsafe { (*network_task).task_id },
+        // TODO(port): `data: undefined`
+        ..Task::uninit()
+    };
+    this.preallocated_resolve_tasks.get_init(value).as_ptr()
 }
 
 pub fn enqueue_extract_npm_package(
@@ -1800,74 +1789,72 @@ pub fn enqueue_git_checkout(
     // if patched then we need to do apply step after network task is done
     patch_name_and_version_hash: Option<u64>,
 ) -> *mut ThreadPool::Task {
-    let task = this.preallocated_resolve_tasks.get();
-    // SAFETY: task is a freshly acquired uninitialized slot from the preallocated
-    // pool; we own the write. `ptr::write` (no drop of prior value) matches Zig's
-    // `task.* = Task{...}` semantics on uninit memory.
-    unsafe {
-        task.write(Task::Task {
-            package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
-                PackageManager,
-            >(this))),
-            log: bun_ast::Log::init(),
-            tag: crate::package_manager_task::Tag::GitCheckout,
-            request: crate::package_manager_task::Request {
-                git_checkout: ManuallyDrop::new(crate::package_manager_task::GitCheckoutRequest {
-                    repo_dir: dir,
-                    resolution,
-                    dependency_id,
-                    name: StringOrTinyString::init_append_if_needed(
-                        name,
-                        &mut crate::network_task::filename_store_appender(),
-                    )
-                    .expect("unreachable"),
-                    url: StringOrTinyString::init_append_if_needed(
-                        // `resolution.tag == Git` for the git-checkout path.
-                        this.lockfile.str(&resolution.git().repo),
-                        &mut crate::network_task::filename_store_appender(),
-                    )
-                    .expect("unreachable"),
-                    resolved: StringOrTinyString::init_append_if_needed(
-                        resolved,
-                        &mut crate::network_task::filename_store_appender(),
-                    )
-                    .expect("unreachable"),
-                    env: crate::repository::SharedEnv::get(this.env_mut()),
-                }),
-            },
-            apply_patch_task: if let Some(h) = patch_name_and_version_hash {
-                let dep_name_hash =
-                    this.lockfile.buffers.dependencies[dependency_id as usize].name_hash;
-                let pkg_id = match this
-                    .lockfile
-                    .package_index
-                    .get(&dep_name_hash)
-                    .unwrap_or_else(|| panic!("Package not found"))
-                {
-                    PackageIndexEntry::Id(p) => *p,
-                    PackageIndexEntry::Ids(ps) => ps[0], // TODO is this correct
-                };
-                let patch_hash = this
-                    .lockfile
-                    .patched_dependencies
-                    .get(&h)
-                    .unwrap()
-                    .patchfile_hash()
-                    .unwrap();
-                let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
-                // SAFETY: `pt` is fresh from `heap::alloc`; reclaim ownership.
-                let mut pt = bun_core::heap::take(pt);
-                pt.callback.apply_mut().task_id = Some(task_id);
-                Some(pt)
-            } else {
-                None
-            },
-            id: task_id,
-            // TODO(port): `data: undefined`
-            ..Task::uninit()
-        });
-        &raw mut (*task).threadpool_task
-    }
+    // Build the `Task` value before claiming a hive slot — the `.expect()`s
+    // below can unwind, and `Task` carries drop glue. See `enqueue_git_clone`.
+    let value = Task::Task {
+        package_manager: Some(bun_ptr::ParentRef::from(core::ptr::NonNull::from(
+            &mut *this,
+        ))),
+        log: bun_ast::Log::init(),
+        tag: crate::package_manager_task::Tag::GitCheckout,
+        request: crate::package_manager_task::Request {
+            git_checkout: ManuallyDrop::new(crate::package_manager_task::GitCheckoutRequest {
+                repo_dir: dir,
+                resolution,
+                dependency_id,
+                name: StringOrTinyString::init_append_if_needed(
+                    name,
+                    &mut crate::network_task::filename_store_appender(),
+                )
+                .expect("unreachable"),
+                url: StringOrTinyString::init_append_if_needed(
+                    // `resolution.tag == Git` for the git-checkout path.
+                    this.lockfile.str(&resolution.git().repo),
+                    &mut crate::network_task::filename_store_appender(),
+                )
+                .expect("unreachable"),
+                resolved: StringOrTinyString::init_append_if_needed(
+                    resolved,
+                    &mut crate::network_task::filename_store_appender(),
+                )
+                .expect("unreachable"),
+                env: crate::repository::SharedEnv::get(this.env_mut()),
+            }),
+        },
+        apply_patch_task: if let Some(h) = patch_name_and_version_hash {
+            let dep_name_hash =
+                this.lockfile.buffers.dependencies[dependency_id as usize].name_hash;
+            let pkg_id = match this
+                .lockfile
+                .package_index
+                .get(&dep_name_hash)
+                .unwrap_or_else(|| panic!("Package not found"))
+            {
+                PackageIndexEntry::Id(p) => *p,
+                PackageIndexEntry::Ids(ps) => ps[0], // TODO is this correct
+            };
+            let patch_hash = this
+                .lockfile
+                .patched_dependencies
+                .get(&h)
+                .unwrap()
+                .patchfile_hash()
+                .unwrap();
+            let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
+            // SAFETY: `pt` is fresh from `heap::alloc`; reclaim ownership.
+            let mut pt = unsafe { bun_core::heap::take(pt) };
+            pt.callback.apply_mut().task_id = Some(task_id);
+            Some(pt)
+        } else {
+            None
+        },
+        id: task_id,
+        // TODO(port): `data: undefined`
+        ..Task::uninit()
+    };
+    let task = this.preallocated_resolve_tasks.get_init(value).as_ptr();
+    // SAFETY: `get_init` just fully initialized the slot.
+    unsafe { &raw mut (*task).threadpool_task }
 }
 
 fn enqueue_local_tarball(

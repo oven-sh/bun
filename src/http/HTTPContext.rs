@@ -212,21 +212,6 @@ fn h2_session_as_mut<'a>(
     s.map(|mut s| unsafe { s.as_mut() })
 }
 
-/// Upgrade a `*mut PooledSocket<SSL>` returned by `HiveArray::at` to `&mut`.
-///
-/// INVARIANT: every caller obtains `p` from `pending_sockets.at(idx)` while
-/// iterating `pending_sockets.used` (the slot's `used` bit is set), so the
-/// slot is an initialised `PooledSocket` written by `release_socket`. The
-/// HiveArray data array is disjoint from the `used` bitset the iterator
-/// borrows, so the returned `&mut` does not alias it. HTTP-thread-only.
-/// Centralises the raw `&mut *socket_ptr` upgrade repeated at each HiveArray
-/// scan.
-#[inline]
-fn pooled_socket_mut<'a, const SSL: bool>(p: *mut PooledSocket<SSL>) -> &'a mut PooledSocket<SSL> {
-    // SAFETY: see INVARIANT above.
-    unsafe { &mut *p }
-}
-
 impl<const SSL: bool> PooledSocket<SSL> {
     /// Mutable access to the parked HTTP/2 session.
     ///
@@ -633,7 +618,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             // borrow held by the `HiveSlot` doesn't conflict with a whole-`self`
             // borrow inside the initializer.
             let owner: *mut Self = self;
-            if let Some(slot) = self.pending_sockets.claim() {
+            if let Some(mut slot) = self.pending_sockets.claim() {
                 // The slot's stable address is registered as the socket's
                 // user-data *before* the `PooledSocket` is written; nothing
                 // dereferences it until after `slot.write()` below. If the
@@ -724,13 +709,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
             return None;
         }
 
-        let mut iter = self.pending_sockets.used.iterator::<true, true>();
+        let mut iter = self.pending_sockets.used_iter();
 
         while let Some(pending_socket_index) = iter.next() {
-            let socket_ptr = self
-                .pending_sockets
-                .at(u16::try_from(pending_socket_index).expect("int cast"));
-            let socket = pooled_socket_mut(socket_ptr);
+            let socket = self.pending_sockets.at_mut(pending_socket_index).unwrap();
+            let socket_ptr: *mut PooledSocket<SSL> = socket;
             if socket.port != port {
                 continue;
             }
@@ -811,11 +794,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 let tunnel: Option<crate::proxy_tunnel::RefPtr> = socket.proxy_tunnel.take();
                 socket.target_hostname = Box::default();
                 let h2_session = socket.h2_session.take();
-                // SAFETY: `socket_ptr` is a fully-initialized hive slot; the
-                // owned-heap fields (ssl_config/tunnel/target_hostname/h2_session)
-                // were just moved out / cleared, so the in-place drop in `put`
-                // touches only trivially-droppable residuals.
-                let ok = unsafe { self.pending_sockets.put(socket_ptr) };
+                // The owned-heap fields (ssl_config/tunnel/target_hostname/
+                // h2_session) were just moved out / cleared, so the in-place
+                // drop in `put` touches only trivially-droppable residuals.
+                let ok = self.pending_sockets.put(socket_ptr);
                 debug_assert!(ok);
                 bun_core::scoped_log!(
                     HTTPContext,
@@ -1059,12 +1041,9 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
         // Without force-close, the socket stays linked and the context refcount never
         // reaches 0, leaking the SSL_CTX.
         {
-            let mut iter = self.pending_sockets.used.iterator::<true, true>();
+            let mut iter = self.pending_sockets.used_iter();
             while let Some(idx) = iter.next() {
-                let pooled_ptr = self
-                    .pending_sockets
-                    .at(u16::try_from(idx).expect("int cast"));
-                let pooled = pooled_socket_mut(pooled_ptr);
+                let pooled = self.pending_sockets.at_mut(idx).unwrap();
                 // Do NOT call rp.data.shutdown() here — it drives
                 // SSLWrapper.shutdown → triggerCloseCallback →
                 // onClose(handlers.ctx), and handlers.ctx is the
@@ -1228,8 +1207,9 @@ impl<const SSL: bool> Handler<SSL> {
             slot.owner
         };
         // SAFETY: owner is the HiveArray backing this slot; address-stable
-        // (static or Box-allocated) and outlives any pooled entry.
-        let ok = unsafe { (*owner).pending_sockets.put(pooled_ptr) };
+        // (static or Box-allocated) and outlives any pooled entry. The unsafe
+        // is for the `*owner` deref; `put` itself is safe.
+        let ok = unsafe { &mut *owner }.pending_sockets.put(pooled_ptr);
         debug_assert!(ok);
     }
 

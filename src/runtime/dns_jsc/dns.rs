@@ -283,10 +283,8 @@ pub mod lib_info {
                     // `MaybeUninit::uninit().assume_init()` write was UB regardless of
                     // POD-ness.
                     let pos = (*request).cache.pos_in_pending();
-                    this.pending_host_cache_native.with_mut(|c| {
-                        let slot = c.buffer[pos as usize].as_mut_ptr();
-                        c.put_raw(slot);
-                    });
+                    this.pending_host_cache_native
+                        .with_mut(|c| c.release_at(pos as usize));
                 }
                 // Drop the KeepAlive + resolver ref that `GetAddrInfoRequest.init` took.
                 DNSLookup::destroy(&raw mut (*request).head);
@@ -4065,7 +4063,7 @@ impl Resolver {
 
     fn any_requests_pending(&self) -> bool {
         // TODO(port): Zig used @typeInfo to iterate all `pending_*` fields.
-        macro_rules! check { ($($f:ident),*) => { $( if self.$f.get().used.find_first_set().is_some() { return true; } )* } }
+        macro_rules! check { ($($f:ident),*) => { $( if self.$f.get().any_used() { return true; } )* } }
         check!(
             pending_host_cache_cares,
             pending_host_cache_native,
@@ -4237,13 +4235,8 @@ impl Resolver {
         cache_field: PendingCacheField,
     ) -> R::PendingCacheKey {
         let cache = R::pending_cache(self, cache_field);
-        debug_assert!(cache.used.is_set(index as usize));
-        // SAFETY: `used` bit is set ⇒ slot was initialized by `get_or_put_into_resolve_pending_cache`
-        // + `*Request::init`. `PendingCacheKey` is POD; reading by value then unsetting the bit
-        // hands ownership of the slot back to the HiveArray (Zig's `= undefined`).
-        let entry = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
-        cache.used.unset(index as usize);
-        entry
+        // `take()` moves the value out and releases the slot (Zig's `= undefined`).
+        cache.take(index as usize).expect("pending-cache slot")
     }
 
     // Monomorphic helpers used by the drain* fns below.
@@ -4253,26 +4246,15 @@ impl Resolver {
         field: PendingCacheField,
     ) -> get_addr_info_request::PendingCacheKey {
         let cache = self.pending_host_cache(field);
-        debug_assert!(cache.used.is_set(index as usize));
-        let entry = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
-        cache.used.unset(index as usize);
-        entry
+        cache.take(index as usize).expect("pending-cache slot")
     }
     fn get_key_addr(&self, index: u8) -> get_host_by_addr_info_request::PendingCacheKey {
-        self.pending_addr_cache_cares.with_mut(|cache| {
-            debug_assert!(cache.used.is_set(index as usize));
-            let entry = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
-            cache.used.unset(index as usize);
-            entry
-        })
+        self.pending_addr_cache_cares
+            .with_mut(|cache| cache.take(index as usize).expect("pending-cache slot"))
     }
     fn get_key_nameinfo(&self, index: u8) -> get_name_info_request::PendingCacheKey {
-        self.pending_nameinfo_cache_cares.with_mut(|cache| {
-            debug_assert!(cache.used.is_set(index as usize));
-            let entry = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
-            cache.used.unset(index as usize);
-            entry
-        })
+        self.pending_nameinfo_cache_cares
+            .with_mut(|cache| cache.take(index as usize).expect("pending-cache slot"))
     }
 
     pub fn drain_pending_cares<T: CAresRecordType>(
@@ -4287,17 +4269,10 @@ impl Resolver {
         let _g = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
 
         // TODO(port): generic getKey over T::CACHE_FIELD
-        let key = {
-            let cache = self.pending_cache_for::<T>(T::CACHE_FIELD);
-            debug_assert!(cache.used.is_set(index as usize));
-            // SAFETY: `used` bit is set ⇒ slot was initialized by
-            // `get_or_put_into_resolve_pending_cache` + `*Request::init`.
-            // `PendingCacheKey` is POD; reading by value then unsetting the bit hands
-            // ownership of the slot back to the HiveArray (Zig's `= undefined`).
-            let key = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
-            cache.used.unset(index as usize);
-            key
-        };
+        let key = self
+            .pending_cache_for::<T>(T::CACHE_FIELD)
+            .take(index as usize)
+            .expect("pending-cache slot");
 
         let Some(addr) = result else {
             unsafe {
@@ -4608,11 +4583,10 @@ impl Resolver {
         // PORT NOTE: Zig used `@field(this, field)` over a comptime string. We dispatch via
         // `HasPendingCacheKey::pending_cache`; the body is identical across all `R`.
         let cache = R::pending_cache(self, field);
-        let mut inflight_iter = cache.used.iter_set();
+        let mut inflight_iter = cache.used_iter();
 
         while let Some(index) = inflight_iter.next() {
-            // SAFETY: `used` bit is set ⇒ slot was initialized.
-            let entry = unsafe { &mut *cache.buffer[index].as_mut_ptr() };
+            let entry = cache.at_mut(index).unwrap();
             if R::key_hash(entry) == R::key_hash(key) && R::key_len(entry) == R::key_len(key) {
                 return LookupCacheHit::Inflight(std::ptr::from_mut(entry));
             }
@@ -4631,11 +4605,10 @@ impl Resolver {
         field: PendingCacheField,
     ) -> CacheHit {
         let cache = self.pending_host_cache(field);
-        let mut inflight_iter = cache.used.iter_set();
+        let mut inflight_iter = cache.used_iter();
 
         while let Some(index) = inflight_iter.next() {
-            // SAFETY: `used` bit is set ⇒ slot was initialized.
-            let entry = unsafe { &mut *cache.buffer[index].as_mut_ptr() };
+            let entry = cache.at_mut(index).unwrap();
             if entry.hash == key.hash && entry.len == key.len {
                 return CacheHit::Inflight(std::ptr::from_mut(entry));
             }

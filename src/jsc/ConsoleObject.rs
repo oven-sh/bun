@@ -449,13 +449,13 @@ fn take_stdio_write_error(console: &mut ConsoleObject, is_stderr: bool) -> Optio
     if emitted.get() {
         return None;
     }
-    // EAGAIN/EWOULDBLOCK is a transient "would block" condition that can
-    // occur if fd 1/2 is non-blocking and the pipe buffer is momentarily
-    // full before the reader closes. Node.js's stream layer retries these
-    // internally and never surfaces them as 'error' events, so skip them
-    // here too — the next console.* call will either succeed (buffer
-    // drained) or hit the real EPIPE once the reader actually closes.
-    if write_err == bun_sys::E::EAGAIN as i32 {
+    // EAGAIN/EWOULDBLOCK (non-blocking fd, pipe buffer momentarily full)
+    // and EINTR (signal mid-write; macOS's `write()` uses `check_once!`
+    // with no retry) are transient conditions that Node.js/libuv retry
+    // internally and never surface as 'error' events. Skip them here too —
+    // the next console.* call will either succeed or hit the real EPIPE
+    // once the reader actually closes.
+    if write_err == bun_sys::E::EAGAIN as i32 || write_err == bun_sys::E::EINTR as i32 {
         return None;
     }
     // Latch before calling into JS so a re-entrant console.* from inside

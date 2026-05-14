@@ -131,13 +131,12 @@ fn maybeEmitStdioWriteError(
     // `Maybe.unwrap()` → `bun.errnoToZigErr(errno)`, producing errors named after
     // `bun.sys.SystemErrno` tags (e.g. `error.EPIPE`). Reverse that here.
     const system_errno = std.meta.stringToEnum(bun.sys.SystemErrno, @errorName(write_err)) orelse return;
-    // EAGAIN/EWOULDBLOCK is a transient "would block" condition that can occur
-    // if fd 1/2 is non-blocking and the pipe buffer is momentarily full before
-    // the reader closes. Node.js's stream layer retries these internally and
-    // never surfaces them as 'error' events, so skip them here too — the next
-    // console.* call will either succeed (buffer drained) or hit the real
-    // EPIPE once the reader actually closes.
-    if (system_errno == .EAGAIN) return;
+    // EAGAIN/EWOULDBLOCK (non-blocking fd, pipe buffer momentarily full) and
+    // EINTR (signal mid-write; macOS's write() has no EINTR retry) are
+    // transient conditions that Node.js/libuv retry internally and never
+    // surface as 'error' events. Skip them here too — the next console.* call
+    // will either succeed or hit the real EPIPE once the reader closes.
+    if (system_errno == .EAGAIN or system_errno == .EINTR) return;
     const sys_err: bun.sys.Error = .{
         .errno = @truncate(@intFromEnum(system_errno)),
         .syscall = .write,

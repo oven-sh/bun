@@ -250,7 +250,7 @@ static bool parseNavOptions(JSGlobalObject* g, ThrowScope& scope, JSValue opts,
                 "must be a non-negative finite number"_s);
             return false;
         }
-        // Clamp to ~24.8 days — uint32 ms range. Anything larger is
+        // Clamp to uint32 ms range (~49.7 days). Anything larger is
         // effectively "no timeout" anyway.
         timeout = static_cast<uint32_t>(std::min(tn, static_cast<double>(std::numeric_limits<uint32_t>::max())));
     }
@@ -686,6 +686,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncBack, (JSGlobalObject * globalObject,
     NavWaitUntil waitUntil;
     uint32_t timeout;
     if (!parseNavOptions(globalObject, scope, callFrame->argument(0), waitUntil, timeout)) return {};
+    if (thisObject->m_closed)
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "WebView is closed"_s);
     if (!checkSlot(globalObject, scope, navSlot(thisObject), "a navigation"_s)) return {};
     return JSValue::encode(thisObject->goBack(globalObject, waitUntil, timeout));
 }
@@ -699,6 +701,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncForward, (JSGlobalObject * globalObje
     NavWaitUntil waitUntil;
     uint32_t timeout;
     if (!parseNavOptions(globalObject, scope, callFrame->argument(0), waitUntil, timeout)) return {};
+    if (thisObject->m_closed)
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "WebView is closed"_s);
     if (!checkSlot(globalObject, scope, navSlot(thisObject), "a navigation"_s)) return {};
     return JSValue::encode(thisObject->goForward(globalObject, waitUntil, timeout));
 }
@@ -712,6 +716,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncReload, (JSGlobalObject * globalObjec
     NavWaitUntil waitUntil;
     uint32_t timeout;
     if (!parseNavOptions(globalObject, scope, callFrame->argument(0), waitUntil, timeout)) return {};
+    if (thisObject->m_closed)
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "WebView is closed"_s);
     if (!checkSlot(globalObject, scope, navSlot(thisObject), "a navigation"_s)) return {};
     return JSValue::encode(thisObject->reload(globalObject, waitUntil, timeout));
 }

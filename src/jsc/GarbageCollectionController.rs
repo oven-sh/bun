@@ -1,4 +1,4 @@
-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this only adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this only adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory. At the 1 s → 30 s transition it also requests up to two explicit Full collections, because the idle edens never promote to Full on their own (`Heap::updateAllocationLimits` ratchets `m_maxHeapSize` after every eden) and so dead old-gen and age-jettisonable JIT code would otherwise sit until allocation resumes. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::cell::Cell;
 use core::ffi::c_int;
@@ -17,6 +17,8 @@ pub struct GarbageCollectionController {
     /// Written by every `perform_gc()` caller, so the fast/slow comparison sees the last such call, not strictly the last fire; external callers are one-shot so worst case is one extra 30 s slow interval.
     pub(crate) gc_last_heap_size: Cell<usize>,
     pub(crate) heap_size_didnt_change_for_repeating_timer_ticks_count: Cell<u8>,
+    /// Full collections requested by the current idle transition (0 = not in reduction mode). Capped at 2, the same convergence rule as V8's `MemoryReducer`.
+    pub(crate) idle_full_gcs_fired: Cell<u8>,
     pub(crate) gc_timer_interval: Cell<i32>,
     pub(crate) gc_repeating_timer_fast: Cell<bool>,
     pub(crate) disabled: Cell<bool>,
@@ -33,6 +35,7 @@ impl Default for GarbageCollectionController {
             gc_repeating_timer: JsCell::new(EventLoopTimer::init_paused(TimerTag::GcRepeating)),
             gc_last_heap_size: Cell::new(0),
             heap_size_didnt_change_for_repeating_timer_ticks_count: Cell::new(0),
+            idle_full_gcs_fired: Cell::new(0),
             gc_timer_interval: Cell::new(0),
             gc_repeating_timer_fast: Cell::new(true),
             disabled: Cell::new(false),
@@ -131,7 +134,7 @@ impl GarbageCollectionController {
         self.gc_last_heap_size.set(vm.block_bytes_allocated());
     }
 
-    /// `Tag::GcRepeating` fire body: 1 s in fast mode, 30 s in slow mode; drops to slow after 30 fires with no heap growth.
+    /// `Tag::GcRepeating` fire body: 1 s in fast mode, 30 s in slow mode. After 30 fast fires with no heap growth it requests a Full collection; a second one if that freed more than 1 MiB; then drops to slow. Growth at any point returns to fast.
     ///
     /// # Safety
     /// `this` is the live per-VM controller; `vm` is the per-thread VM.
@@ -144,21 +147,51 @@ impl GarbageCollectionController {
             return;
         }
         let prev_heap_size = this.gc_last_heap_size.get();
-        this.perform_gc();
-        if prev_heap_size == this.gc_last_heap_size.get() {
+        let jsc_vm = VirtualMachine::get().jsc_vm();
+        let current = jsc_vm.block_bytes_allocated();
+        this.gc_last_heap_size.set(current);
+
+        let fulls_fired = this.idle_full_gcs_fired.get();
+        if fulls_fired > 0 {
+            if current > prev_heap_size {
+                this.idle_full_gcs_fired.set(0);
+                this.heap_size_didnt_change_for_repeating_timer_ticks_count
+                    .set(0);
+                this.gc_repeating_timer_fast.set(true);
+                jsc_vm.collect_async();
+            } else if fulls_fired < 2 && prev_heap_size - current > (1 << 20) {
+                this.idle_full_gcs_fired.set(fulls_fired + 1);
+                jsc_vm.collect_async_full();
+            } else {
+                this.idle_full_gcs_fired.set(0);
+                this.heap_size_didnt_change_for_repeating_timer_ticks_count
+                    .set(0);
+                this.gc_repeating_timer_fast.set(false);
+            }
+        } else if current <= prev_heap_size {
+            // A decrease is the previous tick's collection landing, not activity, so it counts as stable.
             let ticks = this
                 .heap_size_didnt_change_for_repeating_timer_ticks_count
                 .get()
                 .saturating_add(1);
             this.heap_size_didnt_change_for_repeating_timer_ticks_count
                 .set(ticks);
-            if ticks >= 30 {
-                this.gc_repeating_timer_fast.set(false);
+            if this.gc_repeating_timer_fast.get() && ticks >= 30 {
+                // Counter is cleared here so that if growth cancels reduction
+                // mode on the next tick we re-count 30 stable ticks instead of
+                // immediately requesting another Full.
+                this.heap_size_didnt_change_for_repeating_timer_ticks_count
+                    .set(0);
+                this.idle_full_gcs_fired.set(1);
+                jsc_vm.collect_async_full();
+            } else {
+                jsc_vm.collect_async();
             }
         } else {
             this.heap_size_didnt_change_for_repeating_timer_ticks_count
                 .set(0);
             this.gc_repeating_timer_fast.set(true);
+            jsc_vm.collect_async();
         }
         let interval = this.repeat_interval();
         Self::arm(

@@ -3167,6 +3167,12 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
+void JSC__VM__collectAsyncFull(JSC::VM* vm)
+{
+    JSC::JSLockHolder lock(*vm);
+    vm->heap.collectAsync(JSC::CollectionScope::Full);
+}
+
 size_t JSC__VM__heapSize(JSC::VM* arg0)
 {
     return arg0->heap.size();

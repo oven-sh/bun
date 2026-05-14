@@ -3554,8 +3554,29 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     // The C++ module loader now extracts `with.type` into a
     // ScriptFetchParameters before calling this hook, so `parameters` is
     // already the parsed RefPtr (or null). Just forward it.
+    //
+    // Pass the sourceOrigin-derived referrer key so JSC's
+    // requestImportModule can find the initiator CyclicModuleRecord in
+    // the registry (see #30651 — the initiator is used to tell the
+    // Nitro self-deadlock apart from unrelated parallel dynamic imports
+    // of the same TLA dep). Bun keys the registry by the file-system
+    // path (or the substring after `builtin://` for builtins), not the
+    // URL — mirror the resolve() path above.
+    JSC::Identifier referrerKey;
+    auto referrerURL = sourceOrigin.url();
+    if (!referrerURL.isEmpty()) {
+        String referrerKeyString;
+        if (referrerURL.protocolIsFile())
+            referrerKeyString = referrerURL.fileSystemPath();
+        else if (referrerURL.protocol() == "builtin"_s && referrerURL.string().startsWith("builtin://"_s))
+            referrerKeyString = referrerURL.string().substring(10);
+        else
+            referrerKeyString = referrerURL.string();
+        if (!referrerKeyString.isEmpty())
+            referrerKey = JSC::Identifier::fromString(vm, referrerKeyString);
+    }
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
-        JSC::Identifier(), WTF::move(parameters), nullptr);
+        referrerKey, WTF::move(parameters), nullptr);
     if (scope.exception()) [[unlikely]] {
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }

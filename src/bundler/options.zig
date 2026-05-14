@@ -1087,10 +1087,9 @@ pub const ESMConditions = struct {
         var require_condition_map = ConditionsMap.init(allocator);
         var style_condition_map = ConditionsMap.init(allocator);
 
-        const addons_extra: usize = if (allow_addons) 1 else 0;
-        try default_condition_amp.ensureTotalCapacity(defaults.len + 2 + addons_extra + conditions.len);
-        try import_condition_map.ensureTotalCapacity(defaults.len + 2 + addons_extra + conditions.len);
-        try require_condition_map.ensureTotalCapacity(defaults.len + 2 + addons_extra + conditions.len);
+        try default_condition_amp.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
+        try import_condition_map.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
+        try require_condition_map.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
         try style_condition_map.ensureTotalCapacity(defaults.len + 2 + conditions.len);
 
         import_condition_map.putAssumeCapacity("import", {});
@@ -1573,9 +1572,9 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?api.
         bun.StringArrayHashMap(Loader),
         allocator,
         input_loaders.extensions.len +
-            if (target.isBun()) default_loader_ext_bun.len else 0 +
-                if (target == .browser) default_loader_ext_browser.len else 0 +
-                    default_loader_ext.len,
+            (if (target.isBun()) default_loader_ext_bun.len else 0) +
+            (if (target == .browser) default_loader_ext_browser.len else 0) +
+            default_loader_ext.len,
         input_loaders.extensions,
         loader_values,
     );

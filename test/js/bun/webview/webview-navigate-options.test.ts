@@ -180,7 +180,7 @@ ${body}
 
 // --- waitUntil: 'domcontentloaded' -----------------------------------------
 
-test("navigate({waitUntil:'domcontentloaded'}) settles on Page.lifecycleEvent when load never fires", async () => {
+test.concurrent("navigate({waitUntil:'domcontentloaded'}) settles on Page.lifecycleEvent when load never fires", async () => {
   // The mock emits frameNavigated + lifecycleEvent(DOMContentLoaded) for
   // the main frame, and NEVER loadEventFired. Without waitUntil:
   // 'domcontentloaded', navigate() would hang until the 30s timeout.
@@ -207,7 +207,7 @@ test("navigate({waitUntil:'domcontentloaded'}) settles on Page.lifecycleEvent wh
   expect(exitCode).toBe(0);
 });
 
-test("navigate() default waitUntil:'load' settles on Page.loadEventFired", async () => {
+test.concurrent("navigate() default waitUntil:'load' settles on Page.loadEventFired", async () => {
   // Backward compat: no options → waitUntil:'load' → loadEventFired
   // settles. The lifecycleEvent(DOMContentLoaded) arrives first but is
   // ignored because m_navWaitUntil == Load.
@@ -223,7 +223,7 @@ test("navigate() default waitUntil:'load' settles on Page.loadEventFired", async
   expect(exitCode).toBe(0);
 });
 
-test("reload({waitUntil:'domcontentloaded'}) settles on lifecycleEvent", async () => {
+test.concurrent("reload({waitUntil:'domcontentloaded'}) settles on lifecycleEvent", async () => {
   // reload() shares the Navigate slot and the same lifecycle path as
   // navigate(). "dcl-only" never emits loadEventFired, so both the
   // initial navigate and the reload must settle via
@@ -243,7 +243,7 @@ test("reload({waitUntil:'domcontentloaded'}) settles on lifecycleEvent", async (
   expect(exitCode).toBe(0);
 });
 
-test("navigate({waitUntil:'domcontentloaded'}) on a fast page doesn't enqueue duplicate title fetches", async () => {
+test.concurrent("navigate({waitUntil:'domcontentloaded'}) on a fast page doesn't enqueue duplicate title fetches", async () => {
   // "load" mock emits DCL + load + loadEventFired all before the
   // first PageTitle response arrives. Without the m_navTitleChained
   // flag set by chainTitle(), each of the three would enqueue its
@@ -274,7 +274,7 @@ test("navigate({waitUntil:'domcontentloaded'}) on a fast page doesn't enqueue du
   expect(exitCode).toBe(0);
 });
 
-test("stale loadEventFired from a prior 'domcontentloaded' navigate does not settle the next one", async () => {
+test.concurrent("stale loadEventFired from a prior 'domcontentloaded' navigate does not settle the next one", async () => {
   // Regression: navigate(url1, {waitUntil:'domcontentloaded'}) settles
   // before url1's window `load` fires. A second navigate() can then
   // start, and url1's trailing lifecycleEvent(load)+loadEventFired
@@ -314,7 +314,7 @@ test("stale loadEventFired from a prior 'domcontentloaded' navigate does not set
 
 // --- timeout ---------------------------------------------------------------
 
-test("navigate({timeout}) rejects when no lifecycle event arrives", async () => {
+test.concurrent("navigate({timeout}) rejects when no lifecycle event arrives", async () => {
   // "silent" mock: Page.navigate reply + frameNavigated, but no
   // DCL/load/loadEventFired — navigate() has only the parent-side
   // dispatchAfter timer to save it.
@@ -349,7 +349,7 @@ test("navigate({timeout}) rejects when no lifecycle event arrives", async () => 
   expect(exitCode).toBe(0);
 });
 
-test("navigate({timeout}): stale timer does not reject a later navigation", async () => {
+test.concurrent("navigate({timeout}): stale timer does not reject a later navigation", async () => {
   // First navigate settles on DCL at ~0ms with a 400ms timeout armed.
   // Second navigate (silent mock would hang) starts immediately with
   // timeout:0 (disabled). The first navigate's 400ms timer FIRES while
@@ -378,7 +378,7 @@ test("navigate({timeout}): stale timer does not reject a later navigation", asyn
 
 // --- validation ------------------------------------------------------------
 
-test("navigate() option validation throws before I/O", async () => {
+test.concurrent("navigate() option validation throws before I/O", async () => {
   // No CDP traffic needed — the throws happen in parseNavOptions
   // before the slot check. Use the silent mock just to get a view.
   const { stdout, stderr, exitCode } = await run(

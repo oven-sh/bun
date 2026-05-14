@@ -91,6 +91,13 @@ pub mod kernel32 {
         pub fn WakeConditionVariable(ConditionVariable: *mut CONDITION_VARIABLE);
         pub fn WakeAllConditionVariable(ConditionVariable: *mut CONDITION_VARIABLE);
 
+        pub fn GetFullPathNameW(
+            lpFileName: LPCWSTR,
+            nBufferLength: DWORD,
+            lpBuffer: LPWSTR,
+            lpFilePart: *mut LPWSTR,
+        ) -> DWORD;
+
         /// No preconditions; reads the calling thread's ID.
         pub safe fn GetCurrentThreadId() -> DWORD;
     }
@@ -364,6 +371,8 @@ pub fn CreateIoCompletionPort(
 pub use bun_windows_sys::externs::BY_HANDLE_FILE_INFORMATION;
 pub use bun_windows_sys::externs::CreateFileW;
 pub use bun_windows_sys::externs::FILE_FLAG_BACKUP_SEMANTICS;
+pub use bun_windows_sys::externs::FILE_FLAG_OPEN_REPARSE_POINT;
+pub use bun_windows_sys::externs::GetFileAttributesW;
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
 pub use bun_windows_sys::externs::GetFileInformationByHandle;
 pub use bun_windows_sys::externs::OPEN_EXISTING;
@@ -4614,11 +4623,239 @@ pub extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *mut c_v
     };
     let len = data.len();
     buf.as_mut_slice()[len] = 0;
+    load_library_with_bun_node_fallback(&mut buf, len)
+}
+
+fn load_library_with_bun_node_fallback(
+    path: &mut bun_paths::WPathBuffer,
+    len: usize,
+) -> *mut c_void {
+    const LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR: DWORD = 0x00000100;
+    const LOAD_LIBRARY_SEARCH_DEFAULT_DIRS: DWORD = 0x00001000;
+    const LOAD_LIBRARY_FLAGS: DWORD =
+        LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS;
     const LOAD_WITH_ALTERED_SEARCH_PATH: DWORD = 0x00000008;
-    // SAFETY: buf NUL-terminated at [len]
-    unsafe {
-        kernel32::LoadLibraryExW(buf.as_ptr(), ptr::null_mut(), LOAD_WITH_ALTERED_SEARCH_PATH)
+
+    let (load_path, load_path_len) = resolve_absolute_load_library_path(path, len);
+    let path_slice = &load_path.as_slice()[..load_path_len];
+    let Some(addon_dir) = bun_paths::Dirname::dirname_u16(path_slice) else {
+        // SAFETY: load_path[load_path_len] is NUL-terminated.
+        let handle = unsafe {
+            kernel32::LoadLibraryExW(load_path.as_ptr(), ptr::null_mut(), LOAD_LIBRARY_FLAGS)
+        };
+        return handle;
+    };
+
+    let node_exe_name = bun_core::strings::w!("node.exe");
+    let node_alias_path_len = addon_dir.len() + 1 + node_exe_name.len();
+    if node_alias_path_len >= bun_paths::PATH_MAX_WIDE {
+        // SAFETY: load_path[load_path_len] is NUL-terminated.
+        return unsafe {
+            kernel32::LoadLibraryExW(load_path.as_ptr(), ptr::null_mut(), LOAD_LIBRARY_FLAGS)
+        };
     }
+
+    let mut node_alias_path = bun_paths::WPathBuffer::uninit();
+    node_alias_path.as_mut_slice()[..addon_dir.len()].copy_from_slice(addon_dir);
+    node_alias_path.as_mut_slice()[addon_dir.len()] = b'\\' as u16;
+    node_alias_path.as_mut_slice()[addon_dir.len() + 1..node_alias_path_len]
+        .copy_from_slice(node_exe_name);
+    node_alias_path.as_mut_slice()[node_alias_path_len] = 0;
+    let node_alias_path_ptr = node_alias_path.as_ptr();
+
+    // Ensure addons that hard-import "node.exe" bind to this Bun executable
+    // before the Windows loader can resolve that import to an external Node.js
+    // process.
+    let mut created_node_alias = false;
+    let mut existing_node_alias_handle = None;
+    let mut node_alias_already_existed = false;
+    if CreateHardLinkW(node_alias_path_ptr, exe_path_w().as_ptr(), None) != 0 {
+        created_node_alias = true;
+    } else {
+        let err = Win32Error::get();
+        if err == Win32Error::ALREADY_EXISTS || err == Win32Error::FILE_EXISTS {
+            existing_node_alias_handle = open_verified_bun_node_alias(node_alias_path_ptr);
+            node_alias_already_existed = existing_node_alias_handle.is_some();
+        } else if err == Win32Error::NOT_SAME_DEVICE {
+            if copy_bun_node_alias(node_alias_path_ptr) {
+                created_node_alias = true;
+            } else {
+                let copy_err = Win32Error::get();
+                if copy_err == Win32Error::ALREADY_EXISTS || copy_err == Win32Error::FILE_EXISTS {
+                    existing_node_alias_handle = open_verified_bun_node_alias(node_alias_path_ptr);
+                    node_alias_already_existed = existing_node_alias_handle.is_some();
+                }
+            }
+        }
+    }
+
+    struct NodeAliasGuard {
+        path: LPCWSTR,
+        created: bool,
+        handle: Option<HANDLE>,
+    }
+
+    impl Drop for NodeAliasGuard {
+        fn drop(&mut self) {
+            if let Some(handle) = self.handle.take() {
+                // SAFETY: handle was returned by CreateFileW and is owned by this guard.
+                unsafe {
+                    let _ = CloseHandle(handle);
+                }
+            }
+
+            if self.created {
+                // SAFETY: path points into node_alias_path, which outlives this guard.
+                unsafe {
+                    let _ = DeleteFileW(self.path);
+                }
+            }
+        }
+    }
+
+    let _node_alias_guard = NodeAliasGuard {
+        path: node_alias_path_ptr,
+        created: created_node_alias,
+        handle: existing_node_alias_handle,
+    };
+
+    // SAFETY: load_path[load_path_len] is NUL-terminated.
+    let handle = unsafe {
+        kernel32::LoadLibraryExW(load_path.as_ptr(), ptr::null_mut(), LOAD_LIBRARY_FLAGS)
+    };
+    if !handle.is_null() {
+        return handle;
+    }
+
+    // Compatibility fallback for addons that rely on PATH or CWD to find
+    // non-node.exe dependent DLLs. Avoid it when we could not make node.exe
+    // resolvable from the addon's directory.
+    if created_node_alias || node_alias_already_existed {
+        // SAFETY: load_path[load_path_len] is NUL-terminated.
+        return unsafe {
+            kernel32::LoadLibraryExW(
+                load_path.as_ptr(),
+                ptr::null_mut(),
+                LOAD_WITH_ALTERED_SEARCH_PATH,
+            )
+        };
+    }
+
+    ptr::null_mut()
+}
+
+fn resolve_absolute_load_library_path<'a>(
+    path: &'a mut bun_paths::WPathBuffer,
+    len: usize,
+) -> (&'a mut bun_paths::WPathBuffer, usize) {
+    if bun_paths::is_absolute_windows_wtf16(&path.as_slice()[..len]) {
+        return (path, len);
+    }
+
+    let mut cwd_buf = bun_paths::PathBuffer::uninit();
+    let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
+        return (path, len);
+    };
+    let mut relative_path_buf = bun_paths::PathBuffer::uninit();
+    let relative_path_len = {
+        let relative_path = bun_paths::strings::from_wpath(
+            relative_path_buf.as_mut_slice(),
+            &path.as_slice()[..len],
+        );
+        relative_path.len()
+    };
+    let mut absolute_path_buf = bun_paths::PathBuffer::uninit();
+    let Some(absolute_path) =
+        bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Windows>(
+            cwd.as_bytes(),
+            absolute_path_buf.as_mut_slice(),
+            &[&relative_path_buf.as_slice()[..relative_path_len]],
+        )
+    else {
+        return (path, len);
+    };
+    let absolute_path_len =
+        bun_core::strings::convert_utf8_to_utf16_in_buffer(path.as_mut_slice(), absolute_path)
+            .len();
+    path.as_mut_slice()[absolute_path_len] = 0;
+    (path, absolute_path_len)
+}
+
+fn copy_bun_node_alias(node_alias_path: LPCWSTR) -> bool {
+    unsafe { CopyFileW(exe_path_w().as_ptr(), node_alias_path, TRUE) != 0 }
+}
+
+fn open_verified_bun_node_alias(node_alias_path: LPCWSTR) -> Option<HANDLE> {
+    let existing_handle = unsafe {
+        CreateFileW(
+            node_alias_path,
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            ptr::null_mut(),
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+            ptr::null_mut(),
+        )
+    };
+    if existing_handle == INVALID_HANDLE_VALUE {
+        return None;
+    }
+
+    let attributes = unsafe { GetFileAttributesW(node_alias_path) };
+    if attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
+        unsafe {
+            let _ = CloseHandle(existing_handle);
+        }
+        return None;
+    }
+
+    let exe_handle = unsafe {
+        CreateFileW(
+            exe_path_w().as_ptr(),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            ptr::null_mut(),
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            ptr::null_mut(),
+        )
+    };
+    if exe_handle == INVALID_HANDLE_VALUE {
+        unsafe {
+            let _ = CloseHandle(existing_handle);
+        }
+        return None;
+    }
+
+    let same_file = same_file_by_handle(existing_handle, exe_handle);
+    unsafe {
+        let _ = CloseHandle(exe_handle);
+    }
+
+    if same_file {
+        Some(existing_handle)
+    } else {
+        unsafe {
+            let _ = CloseHandle(existing_handle);
+        }
+        None
+    }
+}
+
+fn same_file_by_handle(left: HANDLE, right: HANDLE) -> bool {
+    let mut left_info: BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
+    let mut right_info: BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
+
+    if unsafe { GetFileInformationByHandle(left, &mut left_info) } == 0 {
+        return false;
+    }
+    if unsafe { GetFileInformationByHandle(right, &mut right_info) } == 0 {
+        return false;
+    }
+
+    left_info.dwVolumeSerialNumber == right_info.dwVolumeSerialNumber
+        && left_info.nFileIndexHigh == right_info.nFileIndexHigh
+        && left_info.nFileIndexLow == right_info.nFileIndexLow
 }
 
 pub use bun_windows_sys::externs::windows_enable_stdio_inheritance;

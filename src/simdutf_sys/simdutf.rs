@@ -46,6 +46,7 @@ impl Status {
 }
 
 unsafe extern "C" {
+    pub fn simdutf__has_implementation() -> bool;
     pub fn simdutf__detect_encodings(input: *const u8, length: usize) -> c_int;
     pub(crate) fn simdutf__validate_utf8(buf: *const u8, len: usize) -> bool;
     pub(crate) fn simdutf__validate_utf8_with_errors(buf: *const u8, len: usize) -> SIMDUTFResult;
@@ -843,3 +844,20 @@ pub mod base64 {
         }
     }
 }
+
+/// Returns true if simdutf selected a real implementation for this CPU.
+///
+/// When the host CPU lacks every instruction set simdutf was compiled for
+/// (e.g. a pre-SSE4.2 x86_64 VM running the baseline build, which compiles
+/// out simdutf's scalar fallback because `-march=nehalem` defines
+/// `__SSE4_2__`), simdutf falls back to an `unsupported_implementation` stub
+/// that returns 0/false for everything. Bun and WebKit both assume simdutf
+/// never lies, so this silently corrupts string length computations and
+/// UTF-8 validation throughout the process. Call this once at startup to
+/// fail fast with a clear error instead.
+pub fn has_any_implementation() -> bool {
+    // SAFETY: reads a single static-lifetime byte inside the C++ shim.
+    unsafe { simdutf__has_implementation() }
+}
+
+// ported from: src/simdutf_sys/simdutf.zig

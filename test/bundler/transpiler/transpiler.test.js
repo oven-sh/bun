@@ -3788,9 +3788,11 @@ declare();`;
 
     const result = transpiler.transformSync(code);
     // The function body and the call must both survive; the bug erased both.
+    // Assert on the statement form (`declare()\s*;`) rather than `declare()`
+    // alone so the test can't be satisfied by the `function declare()` header.
     expect(result).toContain("function declare");
     expect(result).toContain('console.log("ran")');
-    expect(result).toMatch(/declare\s*\(\s*\)/);
+    expect(result).toMatch(/declare\s*\(\s*\)\s*;/);
   });
 
   it("keeps `declare.foo()` member-call statement", () => {
@@ -3900,9 +3902,12 @@ declare();`,
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(exitCode).toBe(0);
+    // stderr/stdout first so a build failure surfaces the actual diagnostic
+    // instead of just "expected 1 to be 0".
+    expect(stderr).toBe("");
     expect(stdout).toContain("function declare");
-    expect(stdout).toMatch(/declare\s*\(\s*\)/);
+    expect(stdout).toMatch(/declare\s*\(\s*\)\s*;/);
+    expect(exitCode).toBe(0);
   });
 
   it("preserves `interface()` instead of treating it as an ambient interface decl", () => {
@@ -3928,5 +3933,27 @@ declare();`,
     // Ambient class declarations with decorators remain valid.
     expect(() => transpiler.transformSync(`@dec declare class Foo {}`)).not.toThrow();
     expect(() => transpiler.transformSync(`@dec declare abstract class Foo {}`)).not.toThrow();
+  });
+
+  it("preserves `declare;` as an expression statement, not an ambient erase", () => {
+    // `declare` alone (no declaration introducer after it) is a plain identifier
+    // read. It must survive as an `SExpr` so the runtime sees the reference —
+    // dropping it into `S::TypeScript{}` hides TDZ / ReferenceError side effects
+    // and mis-reports the statement as type-only.
+    expect(transpiler.transformSync(`declare;`)).toContain("declare;");
+    // Same for `declare\n<something>` — ASI splits them into two statements.
+    const result = transpiler.transformSync(`declare\nfoo;`);
+    expect(result).toContain("declare;");
+    expect(result).toContain("foo;");
+  });
+
+  it("preserves ambient `export default interface\\nFoo {}` (newline after `interface`)", () => {
+    // The `export default` recursion sets `is_name_optional`. TypeScript
+    // explicitly accepts a newline between `interface` and the name in that
+    // one position because the parser has already committed to
+    // `export default`. Without the carve-out, my `!has_newline_before`
+    // guard would turn this into `export default interface;` (ReferenceError).
+    expect(transpiler.transformSync(`export default interface\nFoo {}\nconsole.log("x");`))
+      .toContain('console.log("x")');
   });
 });

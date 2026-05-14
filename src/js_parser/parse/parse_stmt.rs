@@ -1752,9 +1752,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `parse_expr_or_let_stmt` consumed a suffix (`interface()`,
                 // `interface.x`, etc.) this branch is skipped and we fall through to
                 // emit a normal expression statement. Also require no newline before
-                // the next token and that the next token is an identifier (the name
-                // we're about to skip over).
-                if !p.lexer.has_newline_before && p.lexer.token == T::TIdentifier {
+                // the next token (ASI splits `interface\nFoo{}`) and that the next
+                // token is an identifier (the name we're about to skip over) — UNLESS
+                // this is the `export default interface` recursion path, where
+                // TypeScript explicitly accepts a newline because the parser has
+                // already committed on `export default`. `is_name_optional` is the
+                // marker the `export default` branch sets on the recursed opts.
+                if (!p.lexer.has_newline_before || opts.is_name_optional)
+                    && p.lexer.token == T::TIdentifier
+                {
                     let mut stmt_opts = ParseStatementOptions {
                         is_module_scope: opts.is_module_scope,
                         ..Default::default()
@@ -1797,13 +1803,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // Only treat this as an ambient "declare" modifier if we actually
                 // parsed just the bare identifier "declare" with no suffix (the
-                // caller gates on `expr.data == .e_identifier`). `declare()`,
-                // `declare.foo()`, `declare[0]`, `declare = 42`, etc. all fall
-                // through to the normal expression statement path. Also require no
-                // newline before the next token: ASI splits `declare\nfoo()` into
-                // two statements so the `foo()` that follows is not part of an
-                // ambient declaration.
-                if p.lexer.has_newline_before {
+                // caller gates on `expr.data == .e_identifier`), AND the next token
+                // is one that can legitimately start an ambient declaration:
+                //   var / let / const   →  TVar / TIdentifier("let") / TConst
+                //   function / class / enum → TFunction / TClass / TEnum
+                //   namespace / module / interface / type / global / abstract / async
+                //                        → TIdentifier
+                //   declare module "fs"  → TStringLiteral (inside an outer declare)
+                // Anything else (`declare;`, `declare\n`, `declare =`, `declare +`)
+                // is regular JS referencing the identifier and must fall through
+                // so that a TDZ / ReferenceError fires at runtime, matching tsc's
+                // and Node's `--experimental-strip-types` behavior.
+                let next_ok = matches!(
+                    p.lexer.token,
+                    T::TVar | T::TConst | T::TFunction | T::TClass | T::TEnum | T::TIdentifier,
+                ) || (p.lexer.token == T::TStringLiteral && opts.is_typescript_declare);
+                if p.lexer.has_newline_before || !next_ok {
                     return Ok(None);
                 }
 

@@ -2264,27 +2264,49 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return *out != nullptr;
     };
 
+    auto unwrapGeneratorFromContext = [&](JSC::JSValue context) -> JSC::JSGenerator* {
+        JSC::InternalFieldTuple* tuple = nullptr;
+        if (dynamicCastValue(context, &tuple))
+            context = tuple->getInternalField(0);
+        JSC::JSGenerator* generator = nullptr;
+        dynamicCastValue(context, &generator);
+        return generator;
+    };
+
     // Walk reaction->context → generator. If context is not a generator (e.g.
     // thenable-chain from `return promise` without await inside an async
     // function), follow reaction->promise() to the next promise in the chain.
     // Cap hops to avoid pathological chains.
+    //
+    // The pending reaction can be stored two ways:
+    //  - Inline in the JSPromise itself (the common single-await / single-then
+    //    fast path). InternalMicrotask carries the await generator context in
+    //    m_slot; FulfillHandler/RejectHandler carry the result promise in
+    //    payloadCell() and the handler in m_slot.
+    //  - As a heap-allocated JSPromiseReaction list once a second handler is
+    //    attached, headed at payloadCell().
     auto getAwaitingGenerator = [&](JSC::JSPromise* p) -> JSC::JSGenerator* {
         for (unsigned hops = 0; p && hops < 32; hops++) {
             if (p->status() != JSC::JSPromise::Status::Pending)
                 return nullptr;
-            // Pending state: payloadCell() is the head of the heap-allocated
-            // reaction list, or null/an inline-reaction payload (a JSPromise).
-            // Async stack tracing only walks heap reactions; inline reactions
-            // never carry a generator context.
+            switch (p->inlineReactionKind()) {
+            case JSC::JSPromise::InlineReactionKind::InternalMicrotask: {
+                if (auto* generator = unwrapGeneratorFromContext(p->inlineReactionContext()))
+                    return generator;
+                return nullptr;
+            }
+            case JSC::JSPromise::InlineReactionKind::FulfillHandler:
+            case JSC::JSPromise::InlineReactionKind::RejectHandler: {
+                p = p->inlineHandlerResultPromise();
+                continue;
+            }
+            case JSC::JSPromise::InlineReactionKind::None:
+                break;
+            }
             auto* reaction = dynamicDowncast<JSC::JSPromiseReaction>(p->payloadCell());
             if (!reaction)
                 return nullptr;
-            JSC::JSValue context = JSC::JSPromiseReaction::tryGetContext(reaction);
-            JSC::InternalFieldTuple* tuple = nullptr;
-            if (dynamicCastValue(context, &tuple))
-                context = tuple->getInternalField(0);
-            JSC::JSGenerator* generator = nullptr;
-            if (dynamicCastValue(context, &generator))
+            if (auto* generator = unwrapGeneratorFromContext(JSC::JSPromiseReaction::tryGetContext(reaction)))
                 return generator;
             // No generator in context — follow the thenable chain to the
             // promise this reaction resolves/rejects.

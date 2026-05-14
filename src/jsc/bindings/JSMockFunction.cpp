@@ -1855,6 +1855,16 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
                     }
                 }
             }
+            // Establish the standard `Class.prototype.constructor === Class`
+            // back-reference. Matches Jest's auto-mock (`_generateMock` in
+            // jest-mock) and the ES2015 class descriptor: writable, DontEnum,
+            // configurable. Done after the loop so it wins over anything the
+            // source prototype happened to also name `constructor`.
+            mockProto->putDirect(vm, vm.propertyNames->constructor, mockFn,
+                static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+            }
             // Function.prototype's own `prototype` descriptor is writable +
             // non-enumerable + non-configurable — match that.
             mockFn->putDirect(vm, vm.propertyNames->prototype, mockProto,

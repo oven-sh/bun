@@ -737,8 +737,20 @@ it("should trigger error when aborted even if connection failed, and the signal 
 // is opened.
 describe("net.connect({ localPort }) with multiple lookup addresses #30697", () => {
   describe.each([
-    { label: "IPv4 first", addresses: [{ address: "127.0.0.1", family: 4 }, { address: "::1", family: 6 }] },
-    { label: "IPv6 first", addresses: [{ address: "::1", family: 6 }, { address: "127.0.0.1", family: 4 }] },
+    {
+      label: "IPv4 first",
+      addresses: [
+        { address: "127.0.0.1", family: 4 },
+        { address: "::1", family: 6 },
+      ],
+    },
+    {
+      label: "IPv6 first",
+      addresses: [
+        { address: "::1", family: 6 },
+        { address: "127.0.0.1", family: 4 },
+      ],
+    },
   ])("$label", ({ addresses }) => {
     it("does not throw ReferenceError", async () => {
       const { promise: listening, resolve: onListen, reject: onListenError } = Promise.withResolvers<Server>();

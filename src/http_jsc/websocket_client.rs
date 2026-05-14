@@ -466,7 +466,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                         return 0;
                     }
                 };
-                writable[..data.len()].copy_from_slice(data);
+                writable[..data.len()].write_copy_of_slice(data);
                 self.receive_buffer.update(data.len());
             }
 
@@ -533,7 +533,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             .receive_buffer
             .writable_with_size(data.len())
             .expect("unreachable");
-        writable[..data.len()].copy_from_slice(data);
+        writable[..data.len()].write_copy_of_slice(data);
         self.receive_buffer.update(data.len());
 
         if left_in_fragment >= data.len()
@@ -1154,7 +1154,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
                 // Create the compressed frame
                 let frame_size = WebsocketHeader::frame_size_including_mask(compressed.len());
-                let writable = match self.send_buffer.writable_with_size(frame_size) {
+                let writable = match self.send_buffer.writable_with_size_zeroed(frame_size) {
                     Ok(w) => w,
                     Err(_) => return false,
                 };
@@ -1193,7 +1193,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         let writable = self
             .send_buffer
-            .writable_with_size(write_len)
+            .writable_with_size_zeroed(write_len)
             .expect("unreachable");
         bytes.copy(
             &self.global_this,

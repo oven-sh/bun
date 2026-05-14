@@ -360,7 +360,7 @@ impl<'a> MiniEventLoop<'a> {
                 if task.is_null() {
                     break;
                 }
-                writable[0] = task;
+                writable[0].write(task);
                 writable = &mut writable[1..];
                 written += 1;
                 if writable.is_empty() {

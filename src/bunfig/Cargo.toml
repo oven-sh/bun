@@ -6,9 +6,6 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
-[lints]
-workspace = true
-
 # MOVE_DOWN(b0): bunfig parser + `Arguments::loadConfig` lifted out of
 # `bun_runtime::cli` so mid-tier crates (notably `bun_install`) can load
 # bunfig.toml without depending on tier-6. All deps below are already

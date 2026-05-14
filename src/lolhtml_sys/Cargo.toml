@@ -6,9 +6,6 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
-[lints]
-workspace = true
-
 [dependencies]
 bun_opaque.workspace = true
 # The C-API crate is pulled in as an rlib path dep so its `#[no_mangle]`

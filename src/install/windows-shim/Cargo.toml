@@ -59,10 +59,6 @@ shim_standalone = []
 # no `#[no_mangle]` symbols, and inlines to the same (ptr, len*2) arithmetic
 # the hand-written `from_raw_parts` casts compiled to — so it adds zero link
 # roots and lets the shared source's `&[u16] → &[u8]` views stay safe.
-
-[lints]
-workspace = true
-
 [dependencies]
 
 [target.'cfg(windows)'.dependencies]

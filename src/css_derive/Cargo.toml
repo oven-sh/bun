@@ -7,9 +7,6 @@ edition.workspace = true
 path = "lib.rs"
 proc-macro = true
 
-[lints]
-workspace = true
-
 [dependencies]
 proc-macro2 = "1"
 quote = "1"

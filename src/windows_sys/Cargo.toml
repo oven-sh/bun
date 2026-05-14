@@ -6,9 +6,6 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
-[lints]
-workspace = true
-
 # No dependencies. This is a tier-0 `#![no_std]` leaf crate of raw Win32
 # typedefs / consts / `extern "system"` blocks over `core::ffi` only. Keeping
 # the dep graph empty is load-bearing: `bun_shim_impl.exe` (the freestanding

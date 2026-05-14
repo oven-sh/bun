@@ -5,6 +5,3 @@ edition.workspace = true
 
 [lib]
 path = "lib.rs"
-
-[lints]
-workspace = true

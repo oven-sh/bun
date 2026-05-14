@@ -6,8 +6,10 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
-[lints]
-workspace = true
+# `bun_asan` is set via RUSTFLAGS (`--cfg=bun_asan`) by scripts/build/rust.ts
+# when building with address sanitizer; it is not a Cargo feature.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)'] }
 
 [dependencies]
 bun_opaque.workspace = true

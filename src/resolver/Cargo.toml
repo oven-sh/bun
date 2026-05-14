@@ -9,9 +9,6 @@ path = "lib.rs"
 [features]
 debug_logs = []
 
-[lints]
-workspace = true
-
 [dependencies]
 strum.workspace = true
 phf.workspace = true

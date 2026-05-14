@@ -9,9 +9,6 @@ workspace = true
 [lib]
 path = "lib.rs"
 
-[lints]
-workspace = true
-
 [dependencies]
 bun_opaque.workspace = true
 strum.workspace = true

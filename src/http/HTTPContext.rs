@@ -1157,8 +1157,10 @@ impl<const SSL: bool> Handler<SSL> {
                         .get_native_handle()
                         .map(|h| h.cast::<bun_boringssl_sys::SSL>())
                         .unwrap_or(core::ptr::null_mut());
-                    if !client.check_server_identity::<SSL>(socket, handshake_error, ssl_ptr, true)
-                    {
+                    // SAFETY: `ssl_ptr` is the open TLS socket's native handle.
+                    if !unsafe {
+                        client.check_server_identity::<SSL>(socket, handshake_error, ssl_ptr, true)
+                    } {
                         // checkServerIdentity already called closeAndFail() → fail()
                         // → result callback, which may have destroyed the
                         // AsyncHTTP that embeds `client`. Socket is terminated

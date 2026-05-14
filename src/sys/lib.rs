@@ -7426,6 +7426,67 @@ pub fn environ() -> &'static [*const c_char] {
     }
 }
 
+/// `environ` as a `[*:null]?[*:0]const u8`-shaped slice — same backing store
+/// as [`environ()`] but **including** the trailing NULL sentinel, so it can be
+/// passed directly as a `posix_spawn`/`execve` `envp` slice (`.as_ptr()` is
+/// the libc `environ` pointer).
+pub fn environ_envp() -> &'static [*const c_char] {
+    #[cfg(unix)]
+    {
+        // SAFETY: `environ` is a process-global NULL-terminated array.
+        unsafe {
+            let base: *const *const c_char = bun_core::c_environ();
+            if base.is_null() {
+                // `[0usize]` is layout-identical to `[*const c_char; 1]` with a
+                // null element and is `Sync` so it can back a `'static` slice.
+                static EMPTY: [usize; 1] = [0];
+                return core::slice::from_raw_parts(EMPTY.as_ptr().cast(), 1);
+            }
+            let mut n = 0usize;
+            while !(*base.add(n)).is_null() {
+                n += 1;
+            }
+            core::slice::from_raw_parts(base, n + 1)
+        }
+    }
+    #[cfg(windows)]
+    {
+        // `convert_env_to_wtf8` pushes a trailing null pointer, then stores the
+        // slice with length `len-1` (excluding the sentinel). The backing
+        // allocation is `len` elements; reconstruct the full slice here.
+        // SAFETY: written once at startup; backing allocation has `len()+1`
+        // elements with a NULL sentinel at `[len()]`.
+        let s = unsafe { bun_core::os::environ() };
+        if s.is_empty() {
+            static EMPTY: [usize; 1] = [0];
+            // SAFETY: layout-identical to `[*const c_char; 1]` with a null.
+            return unsafe { core::slice::from_raw_parts(EMPTY.as_ptr().cast(), 1) };
+        }
+        // SAFETY: `*mut c_char` and `*const c_char` have identical layout; the
+        // backing `Box::leak`'d allocation has a NULL at `s.len()`.
+        unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<*const c_char>(), s.len() + 1) }
+    }
+}
+
+/// Borrow a `*const *const c_char` (NULL-terminated `envp`-shape array) as a
+/// length-bounded slice that **includes** the trailing NULL sentinel. The
+/// returned slice borrows the caller's storage; pass `'static` for the libc
+/// `environ` global.
+///
+/// # Safety
+/// `ptr` must be non-null and point to a NULL-terminated array of C-string
+/// pointers valid for `'a`.
+pub unsafe fn envp_from_raw<'a>(ptr: *const *const c_char) -> &'a [*const c_char] {
+    let mut n = 0usize;
+    // SAFETY: caller contract — NULL-terminated.
+    unsafe {
+        while !(*ptr.add(n)).is_null() {
+            n += 1;
+        }
+        core::slice::from_raw_parts(ptr, n + 1)
+    }
+}
+
 /// `std.os.environ.ptr` — raw NULL-terminated `**c_char` for FFI envp args
 /// (e.g. `posix_spawn`). Unlike [`environ()`] this returns the raw libc
 /// global pointer (already NULL-terminated) rather than a length-bounded

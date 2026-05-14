@@ -105,7 +105,10 @@ impl ProgressStrings {
 }
 
 impl PackageManager {
-    pub fn set_node_name<const IS_FIRST: bool>(
+    /// # Safety
+    /// `node` must be `self.downloads_node` / `self.scripts_node` (storage owned
+    /// by or outliving this `PackageManager`).
+    pub unsafe fn set_node_name<const IS_FIRST: bool>(
         &mut self,
         node: *mut ProgressNode,
         name: &[u8],
@@ -144,11 +147,14 @@ impl PackageManager {
         // re-borrow `&mut self` for `set_node_name` / `progress.refresh()`.
         let node: *mut ProgressNode = self.progress.start(ProgressStrings::download(), 0);
         self.downloads_node = Some(node);
-        self.set_node_name::<true>(
-            node,
-            ProgressStrings::DOWNLOAD_NO_EMOJI_.as_bytes(),
-            ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
-        );
+        // SAFETY: `node` is `self.downloads_node` (just stashed above).
+        unsafe {
+            self.set_node_name::<true>(
+                node,
+                ProgressStrings::DOWNLOAD_NO_EMOJI_.as_bytes(),
+                ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
+            )
+        };
         // `downloads_node` was just stashed above; route through the accessor
         // (single unsafe site) instead of re-dereffing the raw `node` here.
         let dn = self.downloads_node_mut();
@@ -182,14 +188,17 @@ impl PackageManager {
 // `PackageManager.rs` resolves (matching the directories/enqueue pattern).
 // ──────────────────────────────────────────────────────────────────────────
 
+/// # Safety
+/// See [`PackageManager::set_node_name`].
 #[inline]
-pub fn set_node_name<const IS_FIRST: bool>(
+pub unsafe fn set_node_name<const IS_FIRST: bool>(
     this: &mut PackageManager,
     node: *mut ProgressNode,
     name: &[u8],
     emoji: &[u8],
 ) {
-    this.set_node_name::<IS_FIRST>(node, name, emoji)
+    // SAFETY: caller contract.
+    unsafe { this.set_node_name::<IS_FIRST>(node, name, emoji) }
 }
 
 #[inline]

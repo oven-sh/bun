@@ -1146,12 +1146,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         };
 
         // Zig: `try (try spawnProcess(...)).unwrap()` — propagate both layers silently.
-        let mut spawned = spawn::spawn_process(
-            &spawn_options,
-            argv.as_mut_ptr().cast(),
-            bun_sys::environ_ptr(),
-        )?
-        .map_err(|e| e.to_zig_err())?;
+        let mut spawned = spawn::spawn_process(&spawn_options, &argv[..], bun_sys::environ_envp())?
+            .map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
         ipc_output_fds[1].close();
@@ -1259,12 +1255,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         };
 
         // Zig: `try (try spawnProcess(...)).unwrap()` — propagate both layers silently.
-        let mut spawned = spawn::spawn_process(
-            &spawn_options,
-            argv.as_mut_ptr().cast(),
-            bun_sys::environ_ptr(),
-        )?
-        .map_err(|e| e.to_zig_err())?;
+        let mut spawned = spawn::spawn_process(&spawn_options, &argv[..], bun_sys::environ_envp())?
+            .map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
         ipc_output_fds[1].close();

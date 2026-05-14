@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use bun_core::Error;
 use bun_core::{MutableString, strings};
-use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::{AsyncHTTP, HTTPClientResult, Headers, Signals};
 use bun_io::KeepAlive;
@@ -37,7 +37,6 @@ pub struct S3HttpDownloadStreamingTask {
     pub reported_response_buffer: MutableString,
     pub state: AtomicU64,
 
-    pub concurrent_task: ConcurrentTask,
     pub range: Option<Box<[u8]>>,
     pub proxy_url: Box<[u8]>,
 }
@@ -72,7 +71,6 @@ impl Default for S3HttpDownloadStreamingTask {
             mutex: Mutex::default(),
             reported_response_buffer: MutableString::default(),
             state: AtomicU64::new(State::default().0),
-            concurrent_task: ConcurrentTask::default(),
         }
     }
 }
@@ -127,14 +125,18 @@ impl S3HttpDownloadStreamingTask {
 
                             if let Some(start) = strings::index_of(bytes, b"<Code>") {
                                 let value_start = start + b"<Code>".len();
-                                if let Some(end) = strings::index_of(&bytes[value_start..], b"</Code>") {
+                                if let Some(end) =
+                                    strings::index_of(&bytes[value_start..], b"</Code>")
+                                {
                                     code = &bytes[value_start..value_start + end];
                                     _has_body_code = true;
                                 }
                             }
                             if let Some(start) = strings::index_of(bytes, b"<Message>") {
                                 let value_start = start + b"<Message>".len();
-                                if let Some(end) = strings::index_of(&bytes[value_start..], b"</Message>") {
+                                if let Some(end) =
+                                    strings::index_of(&bytes[value_start..], b"</Message>")
+                                {
                                     message = &bytes[value_start..value_start + end];
                                     _has_body_message = true;
                                 }
@@ -335,16 +337,13 @@ impl S3HttpDownloadStreamingTask {
         let async_http = unsafe { &mut *async_http };
         if self_.process_http_callback(async_http, result) {
             // we are always unlocked here and its safe to enqueue
-            let task = std::ptr::from_mut::<ConcurrentTask>(
-                self_.concurrent_task.from(this, AutoDeinit::ManualDeinit),
-            );
             // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
             // is initialized for the request's lifetime and enqueue is thread-safe (`&self`).
             self_
                 .vm
                 .expect("vm set at task creation")
                 .event_loop_shared()
-                .enqueue_task_concurrent(task);
+                .enqueue_task_concurrent(ConcurrentTask::create_from(this));
         }
     }
 }

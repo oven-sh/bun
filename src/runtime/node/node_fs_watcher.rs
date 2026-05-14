@@ -90,7 +90,7 @@ impl FSWatcher {
         self.vm().event_loop()
     }
 
-    pub fn enqueue_task_concurrent(&self, task: *mut ConcurrentTask) {
+    pub fn enqueue_task_concurrent(&self, task: Box<ConcurrentTask>) {
         // `vm()` is the BACKREF accessor; `event_loop_shared()` is the audited
         // safe `&EventLoop` accessor. `enqueue_task_concurrent` is the
         // documented cross-thread entry point and only touches the lock-free
@@ -134,7 +134,6 @@ pub struct FSWatchTaskPosix {
     count: u8,
 
     entries: [MaybeUninit<Entry>; 8],
-    concurrent_task: ConcurrentTask,
 }
 
 #[cfg(not(windows))]
@@ -170,7 +169,6 @@ impl FSWatchTaskPosix {
                 ctx,
                 count: 0,
                 entries: [const { MaybeUninit::uninit() }; 8],
-                concurrent_task: ConcurrentTask::default(),
             };
         }
 
@@ -216,17 +214,10 @@ impl FSWatchTaskPosix {
                     &mut self.entries,
                     [const { MaybeUninit::uninit() }; 8],
                 ),
-                concurrent_task: ConcurrentTask::default(),
             }));
             self.count = 0;
-            // SAFETY: `that` is a freshly-boxed task; the concurrent queue takes
-            // ownership of the `ConcurrentTask` node (and transitively the box)
-            // until the JS thread drains and `heap::take`s it in `dispatch`.
-            unsafe {
-                (*that).concurrent_task.task = Task::init(that);
-                self.ctx()
-                    .enqueue_task_concurrent(core::ptr::addr_of_mut!((*that).concurrent_task));
-            }
+            self.ctx()
+                .enqueue_task_concurrent(ConcurrentTask::create_from(that));
             return;
         }
         // closed or detached so just cleanEntries
@@ -1147,7 +1138,6 @@ impl Default for FSWatchTaskPosix {
             ctx: None,
             count: 0,
             entries: [const { MaybeUninit::uninit() }; 8],
-            concurrent_task: ConcurrentTask::default(),
         }
     }
 }

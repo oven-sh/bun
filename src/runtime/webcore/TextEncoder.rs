@@ -280,7 +280,8 @@ pub extern "C" fn TextEncoder__encodeRopeString(
     };
     let mut iter = encoder.iter();
     array.ensure_still_alive();
-    rope_str.iterator(global_this, (&raw mut iter).cast::<c_void>());
+    // SAFETY: `iter` is a stack-local `Iterator` extern struct passed by address.
+    unsafe { rope_str.iterator(global_this, (&raw mut iter).cast::<c_void>()) };
     array.ensure_still_alive();
 
     if encoder.any_non_ascii {

@@ -2894,8 +2894,14 @@ impl Lockfile {
         }
 
         let mut sort_buf: Vec<PathToId> = Vec::with_capacity(l_len + r_len);
-        // SAFETY: capacity reserved; we fill via indexed writes below up to i.
-        unsafe { sort_buf.set_len(l_len + r_len) };
+        // SAFETY: capacity reserved; `PathToId` is plain `Copy` (u32 + raw
+        // ptr+len). Only the prefixes `l_buf[..i]` / `r_buf[..i]` written by
+        // the loops below are ever read; the uninit tail is sliced off before
+        // the sort.
+        #[allow(clippy::uninit_vec)]
+        unsafe {
+            sort_buf.set_len(l_len + r_len)
+        };
         let (l_buf_full, r_buf_full) = sort_buf.split_at_mut(l_len);
         let mut l_buf = &mut l_buf_full[..];
         let mut r_buf = &mut r_buf_full[..];

@@ -65,6 +65,8 @@ impl ProcessAutoKiller {
     /// Spec: `onSubprocessSpawn(*ProcessAutoKiller, *bun.spawn.Process)`.
     /// Takes a raw `*mut Process` (not `&Process`) to preserve Zig's pointer
     /// identity semantics for the map key without a const→mut provenance cast.
+    // 8 callers across spawn/shell paths; `process` identity is the map key.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_subprocess_spawn(&mut self, process: *mut Process) {
         if self.enabled {
             // Zig: `put(...) catch return` — alloc failure means we never took
@@ -79,6 +81,8 @@ impl ProcessAutoKiller {
     }
 
     /// Spec: `onSubprocessExit(*ProcessAutoKiller, *bun.spawn.Process)`.
+    // see `on_subprocess_spawn`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_subprocess_exit(&mut self, process: *mut Process) {
         if self.ever_enabled {
             if self.processes.swap_remove(&process) {

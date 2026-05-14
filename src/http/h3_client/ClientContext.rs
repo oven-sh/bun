@@ -70,12 +70,14 @@ impl ClientContext {
         unsafe { &mut *this.as_ptr() }
     }
 
-    pub fn get_or_create(loop_: *mut UwsLoop) -> Option<NonNull<ClientContext>> {
+    /// # Safety
+    /// `loop_` must be the live HTTP-thread uws loop.
+    pub unsafe fn get_or_create(loop_: *mut UwsLoop) -> Option<NonNull<ClientContext>> {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }
         LSQUIC_INIT_ONCE.call_once(|| quic::global_init());
-        // SAFETY: caller passes the live HTTP-thread uws loop.
+        // SAFETY: caller contract.
         let qctx = unsafe {
             quic::Context::create_client(
                 loop_,
@@ -175,7 +177,11 @@ impl ClientContext {
                     port,
                 );
                 self.unregister(session_mut(session));
-                PendingConnect::fail_session(session, bun_core::err!(ConnectionRefused));
+                // SAFETY: `session` is the fresh heap allocation from `ClientSession::new`
+                // above; this drops the connection-alive ref.
+                unsafe {
+                    PendingConnect::fail_session(session, bun_core::err!(ConnectionRefused))
+                };
                 return false;
             }
         }

@@ -213,6 +213,9 @@ pub extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
 }
 
 // BoringSSL always expects memory to be zero'd
+// not_unsafe_ptr_arg_deref: FFI export — only ever called by BoringSSL with
+// pointers it obtained from `OPENSSL_memory_alloc` above.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
     // SAFETY: BoringSSL guarantees ptr is non-null and was returned by

@@ -2088,11 +2088,11 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     }
     // PERF(port): was arena bulk-free for envp on Windows
     #[cfg(unix)]
-    let envp: *const *const c_char = bun_core::c_environ();
+    let envp: &[*const c_char] = bun_sys::environ_envp();
     #[cfg(windows)]
     let envp_owned;
     #[cfg(windows)]
-    let envp: *const *const c_char = {
+    let envp: &[*const c_char] = {
         // `Transpiler::env_mut()` is the audited safe `&mut Loader` accessor
         // (process-lifetime singleton; centralised single-unsafe deref).
         match vm_mut()
@@ -2103,7 +2103,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         {
             Ok(v) => {
                 envp_owned = v;
-                envp_owned.as_ptr().cast()
+                envp_owned.as_slice()
             }
             Err(_) => {
                 s.set_err(format_args!("Failed to create environment block"));
@@ -2155,7 +2155,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         ..SpawnOptions::default()
     };
 
-    let spawned = match spawn::spawn_process(&spawn_options, argv.as_mut_ptr().cast(), envp) {
+    let spawned = match spawn::spawn_process(&spawn_options, argv, envp) {
         Ok(Ok(sp)) => sp,
         Ok(Err(err)) => {
             // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`

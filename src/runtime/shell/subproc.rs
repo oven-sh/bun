@@ -702,8 +702,8 @@ impl ShellSubprocess {
 
         let spawn_result = match bun_process::spawn_process(
             &spawn_options,
-            spawn_args.argv.as_ptr(),
-            spawn_args.env_array.as_ptr(),
+            &spawn_args.argv,
+            &spawn_args.env_array,
         ) {
             Err(err) => {
                 // Zig: `spawn_options.deinit()`. WindowsSpawnOptions has no Drop

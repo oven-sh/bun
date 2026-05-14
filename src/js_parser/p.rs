@@ -57,6 +57,10 @@ type Map<K, V> = HashMap<K, V>;
 /// parse_* / visit_* sibling files un-gate.
 pub trait ParserLike<'a> {
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a>;
+    // mut_from_ref: see the SAFETY justification on the inherent `P::log()` —
+    // `self.log` is a `NonNull<Log>` to a caller-owned `&'a mut Log`; only one
+    // `&mut` is materialized at a time.
+    #[allow(clippy::mut_from_ref)]
     fn log(&self) -> &mut bun_ast::Log;
     fn bump(&self) -> &'a Bump;
     fn source(&self) -> &'a bun_ast::Source;

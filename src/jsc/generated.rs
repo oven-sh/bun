@@ -454,9 +454,9 @@ impl SSLConfigFile {
                     // when `ZigType == ExternType`. Phase A copies-then-frees the
                     // source buffer; in-place reuse deferred.
                     // PERF(port): was BindgenArray in-place convert — profile in Phase B
-                    // `arr.data` was allocated by `WTF::fastMalloc` ≡ mimalloc
+                    // SAFETY: `arr.data` was allocated by `WTF::fastMalloc` ≡ mimalloc
                     // (per crate prereq); `mi_free` is size-agnostic.
-                    bun_alloc::basic::free_without_size(arr.data.cast());
+                    unsafe { bun_alloc::basic::free_without_size(arr.data.cast()) };
                 }
                 Self::Array(GenList(out))
             }
@@ -1023,6 +1023,8 @@ macro_rules! js_class_module {
             /// Create a new JS wrapper instance owning `ptr`. The C++ side
             /// allocates the JSCell with the cached structure and stores `ptr`
             /// in `m_ctx`; ownership transfers to the GC (`finalize` frees it).
+            // codegen helper; `ptr` is a freshly boxed native payload from the construct path
+            #[allow(clippy::not_unsafe_ptr_arg_deref)]
             #[inline]
             pub fn to_js(ptr: *mut Payload, global: &JSGlobalObject) -> JSValue {
                 // SAFETY: `global` is an opaque ZST FFI handle (see

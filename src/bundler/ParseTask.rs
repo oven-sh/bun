@@ -44,12 +44,6 @@ use bun_resolver::{self as _resolver, Resolver};
 
 declare_scope!(ParseTask, hidden);
 
-/// `bun.jsc.EventLoopTask` (ParseTask.zig:Result.task). T6 type erased here.
-#[allow(non_snake_case)]
-mod EventLoop {
-    pub type Task = bun_event_loop::ConcurrentTask::ConcurrentTask;
-}
-
 // PORT NOTE: the per-file parse arena is held as `bump: &'static Bump` (the
 // worker arena is pinned for the entire bundle pass — see `run_with_source_code`),
 // so `bump.alloc_*` / `ArenaString::into_bump_str` already yield `&'static`
@@ -134,7 +128,9 @@ pub enum ParseTaskStage {
 
 /// The information returned to the Bundler thread when a parse finishes.
 pub struct Result {
-    pub task: EventLoop::Task,
+    /// Intrusive node for the mini-loop arm of `enqueue_task_concurrent_with_extra_ctx`;
+    /// the JS-loop arm allocates a fresh `Box<ConcurrentTask>` instead.
+    pub task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
     pub ctx: bun_ptr::ParentRef<BundleV2<'static>>,
     pub value: ResultValue,
     pub watcher_data: WatcherData,
@@ -2795,8 +2791,7 @@ pub mod parse_worker {
 
         let result = Box::new(Result {
             ctx: this.ctx.expect("ParseTask.ctx unset"),
-            // Zig `.task = .{}` (.zig:1407) — default-init, NOT `undefined`.
-            task: EventLoop::Task::default(),
+            task: Default::default(),
             value,
             // PORT NOTE: `ExternalFreeFunction` is POD in Zig (copied); Rust port
             // doesn't derive `Copy`, so move it out (task is consumed here).
@@ -2862,12 +2857,7 @@ pub mod parse_worker {
         // dealloc the box without running Drop.
         // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
         // above; uniquely owned. Dealloc with the same layout, no field Drop.
-        unsafe {
-            std::alloc::dealloc(
-                result.cast::<u8>(),
-                std::alloc::Layout::new::<Result>(),
-            )
-        };
+        unsafe { std::alloc::dealloc(result.cast::<u8>(), std::alloc::Layout::new::<Result>()) };
     }
 
     pub fn on_complete(result: *mut Result) {
@@ -2882,12 +2872,7 @@ pub mod parse_worker {
         // See `on_complete_mini` for why this is `dealloc`, not `drop(take(_))`.
         // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
         // above; uniquely owned. Dealloc with the same layout, no field Drop.
-        unsafe {
-            std::alloc::dealloc(
-                result.cast::<u8>(),
-                std::alloc::Layout::new::<Result>(),
-            )
-        };
+        unsafe { std::alloc::dealloc(result.cast::<u8>(), std::alloc::Layout::new::<Result>()) };
     }
 } // end mod parse_worker
 

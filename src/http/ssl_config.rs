@@ -9,8 +9,8 @@ use std::sync::{Arc, Weak};
 
 use bun_uws as uws;
 // Zig: `std.hash.Wyhash` (final4 variant). NOT `Wyhash11`.
-use bun_wyhash::Wyhash;
 use bun_threading::Guarded as Mutex;
+use bun_wyhash::Wyhash;
 
 /// Owned, NUL-terminated C-string slice (`?[*:0]const u8` in Zig). The
 /// pointer is heap-owned (allocated via `dupeZ`); freed via
@@ -376,27 +376,13 @@ impl SSLConfig {
     }
 
     pub fn take_protos(&mut self) -> Option<Box<[u8]>> {
-        if self.protos.is_null() {
-            return None;
-        }
-        let p = core::mem::replace(&mut self.protos, core::ptr::null());
-        let bytes = cstr_bytes(p);
         // TODO(port): bun.memory.dropSentinel — reuses the allocation in
         // place; here we copy. PERF(port).
-        let owned = bytes.to_vec().into_boxed_slice();
-        bun_core::free_sensitive(p);
-        Some(owned)
+        Some(take_string(&mut self.protos)?.as_bytes().into())
     }
 
     pub fn take_server_name(&mut self) -> Option<Box<[u8]>> {
-        if self.server_name.is_null() {
-            return None;
-        }
-        let p = core::mem::replace(&mut self.server_name, core::ptr::null());
-        let bytes = cstr_bytes(p);
-        let owned = bytes.to_vec().into_boxed_slice();
-        bun_core::free_sensitive(p);
-        Some(owned)
+        Some(take_string(&mut self.server_name)?.as_bytes().into())
     }
 }
 
@@ -466,19 +452,26 @@ fn cstr_eq(a: CStrPtr, b: CStrPtr) -> bool {
     }
 }
 
+/// Reclaim a `dupe_z`-allocated field as an owning [`DupedCStr`], leaving null
+/// in its place. Centralises the SSLConfig-field invariant: every non-null
+/// `CStrPtr` was produced by `dupe_z`/`clone_string` (mimalloc + NUL).
+#[inline]
+fn take_string(s: &mut CStrPtr) -> Option<bun_core::DupedCStr> {
+    // SAFETY: SSLConfig field invariant — see fn doc.
+    unsafe { bun_core::DupedCStr::from_raw(core::mem::replace(s, core::ptr::null())) }
+}
+
 fn free_strings(slice: &mut CStrSlice) {
-    if let Some(inner) = slice.take() {
-        for s in inner.iter() {
-            bun_core::free_sensitive(*s);
+    if let Some(mut inner) = slice.take() {
+        for s in inner.iter_mut() {
+            drop(take_string(s));
         }
     }
 }
 
+#[inline]
 fn free_string(s: &mut CStrPtr) {
-    if s.is_null() {
-        return;
-    }
-    bun_core::free_sensitive(core::mem::replace(s, core::ptr::null()));
+    drop(take_string(s));
 }
 
 fn clone_strings(slice: &CStrSlice) -> CStrSlice {

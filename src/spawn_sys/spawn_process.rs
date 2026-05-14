@@ -21,12 +21,9 @@ use crate::posix_spawn::posix_spawn;
 use posix_spawn::{Actions as PosixSpawnActions, Attr as PosixSpawnAttr};
 
 #[cfg(unix)]
-use crate::{Argv, Envp};
-
 // ──────────────────────────────────────────────────────────────────────────
 // PID / fd width aliases
 // ──────────────────────────────────────────────────────────────────────────
-
 #[cfg(unix)]
 pub type PidT = libc::pid_t;
 #[cfg(windows)]
@@ -670,9 +667,17 @@ impl Drop for PosixSpawnFdGuard {
 #[cfg(unix)]
 pub fn spawn_process_posix(
     options: &PosixSpawnOptions,
-    argv: Argv,
-    envp: Envp,
+    argv: &[*const c_char],
+    envp: &[*const c_char],
 ) -> Result<bun_sys::Result<PosixSpawnResult>, bun_core::Error> {
+    debug_assert!(
+        matches!(argv.last(), Some(p) if p.is_null()),
+        "argv must be null-terminated"
+    );
+    debug_assert!(
+        matches!(envp.last(), Some(p) if p.is_null()),
+        "envp must be null-terminated"
+    );
     bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
     let mut actions = PosixSpawnActions::init()?;
     // defer actions.deinit() — Drop
@@ -982,8 +987,7 @@ pub fn spawn_process_posix(
         }
     }
 
-    // SAFETY: argv is null-terminated, argv[0] is non-null
-    let argv0 = options.argv0.unwrap_or_else(|| unsafe { *argv });
+    let argv0 = options.argv0.unwrap_or(argv[0]);
     // SAFETY: argv0 is a valid NUL-terminated C string (caller contract).
     let argv0_cstr = unsafe { bun_core::ffi::cstr(argv0) };
     let spawn_result = posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp);

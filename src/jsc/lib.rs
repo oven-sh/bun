@@ -2034,6 +2034,8 @@ impl ZigStringJsc for bun_core::ZigString {
     fn to_json_object(&self, global: &JSGlobalObject) -> JSValue {
         ZigString__toJSONObject(self, global)
     }
+    // trait impl; `ctx`/`callback` are the caller-supplied finalizer pair
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     fn external(
         &self,

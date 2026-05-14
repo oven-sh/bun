@@ -172,18 +172,18 @@ fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike {
 mod ConcurrentTask {
     pub use bun_event_loop::ConcurrentTask::ConcurrentTask;
     #[inline]
-    pub fn create(task: bun_jsc::Task) -> *mut ConcurrentTask {
+    pub fn create(task: bun_jsc::Task) -> Box<ConcurrentTask> {
         ConcurrentTask::create(task)
     }
     #[inline]
-    pub fn create_from<T: bun_event_loop::Taskable>(task: *mut T) -> *mut ConcurrentTask {
+    pub fn create_from<T: bun_event_loop::Taskable>(task: *mut T) -> Box<ConcurrentTask> {
         ConcurrentTask::create_from(task)
     }
     #[inline]
     pub fn from_callback<T>(
         ptr: *mut T,
         cb: fn(*mut T) -> bun_event_loop::JsResult<()>,
-    ) -> *mut ConcurrentTask {
+    ) -> Box<ConcurrentTask> {
         ConcurrentTask::from_callback(ptr, cb)
     }
 }
@@ -1785,9 +1785,9 @@ mod _async_tasks {
                 // PORT NOTE: `ConcurrentTask::from_callback` expects `fn(*mut T) -> JsResult<()>`;
                 // Zig accepted `fn(*T) JSError!void` directly. Adapt the signature inline.
                 this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
-                    js: ConcurrentTask::from_callback(this, |p| unsafe {
+                    js: Box::into_raw(ConcurrentTask::from_callback(this, |p| unsafe {
                         (&mut *p).run_from_js_thread().map_err(Into::into)
-                    }),
+                    })),
                 });
             } else {
                 this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
@@ -2312,6 +2312,7 @@ mod _async_tasks {
     // alignment to `*mut Self`). `UnboundedQueue` only ever calls these with a
     // live, properly aligned `*mut ResultListEntry` it previously had pushed.
     unsafe impl bun_threading::Linked for ResultListEntry {
+        type Handle = Box<Self>;
         #[inline]
         unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
             // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
@@ -2567,11 +2568,10 @@ mod _async_tasks {
                     .fetch_add(clone.len(), Ordering::Relaxed);
                 // Zig `@unionInit(Value, @tagName(Field), clone)` →
                 // `IntoResultListEntry::into_variant` (trait dispatch on `T`).
-                let list = Box::new(ResultListEntry {
+                self.result_list_queue.push(Box::new(ResultListEntry {
                     next: bun_threading::Link::new(),
                     value: ResultListEntryValue::from_vec(clone),
-                });
-                self.result_list_queue.push(bun_core::heap::into_raw(list));
+                }));
             }
 
             if self.subtask_count.fetch_sub(1, Ordering::Relaxed) == 1 {
@@ -2603,34 +2603,16 @@ mod _async_tasks {
             }
 
             {
-                let mut list = self.result_list_queue.pop_batch();
-                let mut iter = list.iterator();
-                // we have to free only the previous one because the next value will
-                // be read by the iterator.
-                let mut to_destroy: Option<*mut ResultListEntry> = None;
-
+                let list = self.result_list_queue.pop_batch();
                 // Zig: `inline else => |tag| { var results = &@field(result_list, @tagName(tag));
                 // results.ensureTotalCapacityPrecise(count); … results.appendSliceAssumeCapacity(field) }`.
                 // `reserve_exact`/`append_from` dispatch on the runtime tag.
                 let cap = self.result_list_count.swap(0, Ordering::Relaxed);
                 self.result_list.reserve_exact(cap);
-                loop {
-                    let val = iter.next();
-                    if val.is_null() {
-                        break;
-                    }
-                    if let Some(dest) = to_destroy {
-                        // SAFETY: paired with heap::alloc in write_results()
-                        unsafe { drop(bun_core::heap::take(dest)) };
-                    }
-                    to_destroy = Some(val);
-                    // SAFETY: `val` came from the queue and is live until heap::take above on the next iter
-                    self.result_list
-                        .append_from(&mut unsafe { &mut *val }.value);
-                }
-                if let Some(dest) = to_destroy {
-                    // SAFETY: paired with heap::alloc in write_results()
-                    unsafe { drop(bun_core::heap::take(dest)) };
+                // `Batch::next` advances past the link before yielding, so the
+                // `Box` may drop at end-of-iteration without deferral.
+                for mut val in list {
+                    self.result_list.append_from(&mut val.value);
                 }
             }
 
@@ -2646,25 +2628,9 @@ mod _async_tasks {
 
         fn clear_result_list(&mut self) {
             self.result_list.deinit();
-            let mut batch = self.result_list_queue.pop_batch();
-            let mut iter = batch.iterator();
-            let mut to_destroy: Option<*mut ResultListEntry> = None;
-            loop {
-                let val = iter.next();
-                if val.is_null() {
-                    break;
-                }
-                // SAFETY: `val` is a live queue node until freed below
-                unsafe { &mut *val }.value.deinit();
-                // SAFETY: paired with heap::alloc in write_results()
-                if let Some(dest) = to_destroy {
-                    unsafe { drop(bun_core::heap::take(dest)) };
-                }
-                to_destroy = Some(val);
-            }
-            // SAFETY: paired with heap::alloc in write_results()
-            if let Some(dest) = to_destroy {
-                unsafe { drop(bun_core::heap::take(dest)) };
+            let batch = self.result_list_queue.pop_batch();
+            for mut val in batch {
+                val.value.deinit();
             }
             self.result_list_count.store(0, Ordering::Relaxed);
         }
@@ -7778,9 +7744,7 @@ impl NodeFS {
             let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
             #[cfg(not(windows))]
             let resolved = args.path.slice();
-            if let Err(err) =
-                zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::Directory)
-            {
+            if let Err(err) = zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::Directory) {
                 let mut errno: E = map_anyerror_to_errno(err);
                 if cfg!(windows) && errno == E::ENOTDIR {
                     errno = E::ENOENT;
@@ -7816,9 +7780,7 @@ impl NodeFS {
             let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
             #[cfg(not(windows))]
             let resolved = args.path.slice();
-            if let Err(err) =
-                zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::File)
-            {
+            if let Err(err) = zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::File) {
                 let errno = if err == bun_core::err!("FileNotFound") {
                     if args.force {
                         return Ok(());

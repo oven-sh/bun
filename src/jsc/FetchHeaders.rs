@@ -123,6 +123,9 @@ struct PicoHeaders {
 }
 
 impl FetchHeaders {
+    // Thin FFI passthrough — `names`/`values` are caller-owned buffers forwarded
+    // to C++ without Rust-side deref.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn create_value(
         global: &JSGlobalObject,
         names: *mut StringPointer,
@@ -167,6 +170,8 @@ impl FetchHeaders {
         self.put(name_, value, global)
     }
 
+    // Thin FFI passthrough — see `create_value`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn create(
         global: &JSGlobalObject,
         names: *mut StringPointer,
@@ -181,6 +186,8 @@ impl FetchHeaders {
         NonNull::new(p)
     }
 
+    // Thin FFI passthrough — see `create_value`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn from(
         global: &JSGlobalObject,
         names: *mut StringPointer,
@@ -344,6 +351,9 @@ impl FetchHeaders {
         WebCore__FetchHeaders__deref(self)
     }
 
+    // Thin FFI passthrough — `names`/`values`/`buf` are caller-sized out-params
+    // (per a prior `count()`) forwarded to C++ without Rust-side deref.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn copy_to(&mut self, names: *mut StringPointer, values: *mut StringPointer, buf: *mut u8) {
         // SAFETY: caller guarantees names/values/buf are sized per a prior `count()` call
         unsafe { WebCore__FetchHeaders__copyTo(self, names, values, buf) }

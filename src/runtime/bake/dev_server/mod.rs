@@ -416,7 +416,6 @@ pub struct HotReloadEvent {
     /// `*mut` (not `*const`) because `run` mutates the owning DevServer; Zig
     /// declares `owner: *DevServer`.
     pub owner: *mut DevServer,
-    pub concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask,
     pub files: StringArrayHashMap<()>,
     pub dirs: StringArrayHashMap<()>,
     /// NUL-joined absolute paths (`ArrayListUnmanaged(u8)` in Zig).
@@ -436,7 +435,6 @@ impl HotReloadEvent {
     pub fn init_empty(owner: *mut DevServer) -> HotReloadEvent {
         HotReloadEvent {
             owner,
-            concurrent_task: Default::default(),
             files: Default::default(),
             dirs: Default::default(),
             extra_files: Vec::new(),
@@ -959,15 +957,12 @@ impl WatcherAtomics {
                     // Not atomic because the dev server is not running events right now.
                     self.dbg_server_event = Some(ev);
                 }
-                ev_ref.concurrent_task = bun_event_loop::ConcurrentTask::ConcurrentTask {
-                    task: bun_event_loop::Task::init(ev),
-                    ..Default::default()
-                };
                 // SAFETY: `owner` BACKREF is valid; `vm` is a `BackRef` (safe
                 // Deref); `event_loop` points at a sibling field of `VirtualMachine`.
                 unsafe {
-                    (*(&(*ev_ref.owner).vm).event_loop)
-                        .enqueue_task_concurrent(&raw mut ev_ref.concurrent_task);
+                    (*(&(*ev_ref.owner).vm).event_loop).enqueue_task_concurrent(
+                        bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(ev),
+                    );
                 }
             }
 

@@ -250,11 +250,15 @@ impl WebSocketProxyTunnel {
                     // tier-neutral helper which does SNI + ALPN(h1) (no
                     // verify-hostname — that is checked manually in
                     // `on_handshake`, matching the Zig path).
-                    bun_http::configure_http_client_with_alpn(
-                        ssl_ptr.as_ptr(),
-                        hostname_z.as_ptr(),
-                        bun_http::AlpnOffer::H1,
-                    );
+                    // SAFETY: `ssl_ptr` is the live wrapper SSL handle;
+                    // `hostname_z` outlives this call.
+                    unsafe {
+                        bun_http::configure_http_client_with_alpn(
+                            ssl_ptr.as_ptr(),
+                            hostname_z.as_ptr(),
+                            bun_http::AlpnOffer::H1,
+                        )
+                    };
                     // hostname_z dropped here (owned NUL-terminated copy)
                 }
             }

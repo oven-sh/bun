@@ -187,7 +187,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
             ..SpawnOptions::default()
         };
 
-        let spawned = bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr())??;
+        let spawned = bun_spawn::spawn_process(&opts, &argv, &env)??;
 
         // SAFETY: vm is valid for the call.
         let event_loop = EventLoopHandle::init(unsafe { (*vm).event_loop() }.cast());

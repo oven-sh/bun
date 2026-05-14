@@ -1,4 +1,4 @@
-use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, TaskTag, Taskable};
+use bun_event_loop::ConcurrentTask::{ConcurrentTask, TaskTag, Taskable};
 use bun_io::{self as Async, KeepAlive};
 use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
 
@@ -39,7 +39,6 @@ pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
     // PORT NOTE: `allocator: std.mem.Allocator` field dropped — global mimalloc (non-AST crate)
     pub promise: JSPromiseStrong,
     pub global_this: &'a JSGlobalObject,
-    pub concurrent_task: ConcurrentTask,
 
     // This is a poll because we want it to enter the uSockets loop
     // PORT NOTE: `ref` is a Rust keyword; field renamed to `ref_`.
@@ -74,13 +73,14 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
             },
             promise: JSPromiseStrong::init(global_this),
             global_this,
-            concurrent_task: ConcurrentTask::default(),
             ref_: KeepAlive::default(),
         });
         this.ref_.ref_(Async::js_vm_ctx());
         this
     }
 
+    // callback thunk; `task` provenance is the registered `WorkPoolTask::callback`
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run_from_thread_pool(task: *mut WorkPoolTask) {
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `task` field initialised in
@@ -108,18 +108,8 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
     fn on_finish(this: *mut Self) {
         // SAFETY: only called from `run_from_thread_pool` above with the live
         // heap allocation recovered via `from_field_ptr!`.
-        // `concurrent_task` is an intrusive field of `*this`; `from`
-        // re-initializes it in place and returns the same address. Passing
-        // `this` while holding `&mut *this` is sound because `from` only stores
-        // the pointer (does not dereference it).
-        let this_ref = unsafe { &mut *this };
-        let event_loop = this_ref.event_loop;
-        let task = std::ptr::from_mut(
-            this_ref
-                .concurrent_task
-                .from(this, AutoDeinit::ManualDeinit),
-        );
-        event_loop.enqueue_task_concurrent(task);
+        let event_loop = unsafe { (*this).event_loop };
+        event_loop.enqueue_task_concurrent(ConcurrentTask::create_from(this));
     }
 
     /// Frees the heap allocation backing this task.

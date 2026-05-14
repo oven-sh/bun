@@ -1056,6 +1056,10 @@ mod draft {
             Ok(())
         }
 
+        // mut_from_ref: `Arena::alloc(&self) -> &mut T` is the typed-arena
+        // pattern (sound via interior mutability — each return aliases fresh
+        // memory). This fn just forwards that.
+        #[allow(clippy::mut_from_ref)]
         fn str_to_rope(ropealloc: &'a Arena, key: &[u8]) -> OOM<&'a mut Rope> {
             let Some(mut dot_idx) = next_dot(key) else {
                 let rope = ropealloc.alloc(Rope {

@@ -114,16 +114,16 @@ impl CachedStructure {
             // Every element in `ids[..]` was `.write()`n above; C++ reads them as
             // `ExternColumnIdentifier` by raw pointer, so pass the buffer through
             // without materialising a typed slice (avoids an unsafe assume-init cast).
-            self.set(
-                global_object,
-                Some(JSObject::create_structure(
+            // SAFETY: `ids[..ids.len()]` is fully initialized (see loop above).
+            let structure = unsafe {
+                JSObject::create_structure(
                     global_object,
                     owner,
                     ids.len() as u32,
                     ids.as_mut_ptr().cast::<ExternColumnIdentifier>(),
-                )),
-                None,
-            );
+                )
+            };
+            self.set(global_object, Some(structure), None);
         }
     }
 }

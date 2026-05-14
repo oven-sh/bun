@@ -916,13 +916,16 @@ pub enum AlpnOffer {
 /// the ALPN protocol list for `offer`, and enables SCT/OCSP stapling. Called
 /// from `on_open` for every TLS socket — must run even when the hostname is an
 /// IP literal (with empty SNI) so ALPN is still advertised.
-pub fn configure_http_client_with_alpn(
+///
+/// # Safety
+/// `ssl` must be a live `*mut SSL` for a just-opened socket; `hostname` must be
+/// either null or a NUL-terminated buffer that outlives this call.
+pub unsafe fn configure_http_client_with_alpn(
     ssl: *mut boringssl::c::SSL,
     hostname: *const core::ffi::c_char,
     offer: AlpnOffer,
 ) {
-    // SAFETY: caller passes a live *mut SSL for a just-opened socket; `hostname`
-    // is either null or a NUL-terminated buffer that outlives this call.
+    // SAFETY: caller contract.
     unsafe {
         if !hostname.is_null() && *hostname != 0 {
             boringssl::c::SSL_set_tlsext_host_name(ssl, hostname);
@@ -1455,7 +1458,9 @@ pub(crate) mod body_out {
 // ───────────────────────────── impl HTTPClient ─────────────────────────────
 
 impl<'a> HTTPClient<'a> {
-    pub fn check_server_identity<const IS_SSL: bool>(
+    /// # Safety
+    /// `ssl_ptr` must be a live `*mut SSL` while the TLS socket is open.
+    pub unsafe fn check_server_identity<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
         cert_error: HTTPCertError,
@@ -1598,7 +1603,9 @@ impl<'a> HTTPClient<'a> {
                     core::ptr::null()
                 };
 
-                configure_http_client_with_alpn(ssl_ptr, host_z, self.alpn_offer());
+                // SAFETY: `ssl_ptr` is the open TLS socket's native SSL handle;
+                // `host_z` is null or points into `temp`/`owned` which outlive this call.
+                unsafe { configure_http_client_with_alpn(ssl_ptr, host_z, self.alpn_offer()) };
             }
         } else {
             self.first_call::<IS_SSL>(socket);
@@ -2394,7 +2401,10 @@ impl<'a> HTTPClient<'a> {
                 if let Some(alt_port) =
                     h3::AltSvc::lookup(self.url.hostname, self.url.get_port_auto())
                 {
-                    if let Some(ctx) = h3::ClientContext::get_or_create(http_thread().uws_loop) {
+                    // SAFETY: `http_thread().uws_loop` is the live HTTP-thread uws loop.
+                    if let Some(ctx) =
+                        unsafe { h3::ClientContext::get_or_create(http_thread().uws_loop) }
+                    {
                         if !h3::ClientContext::as_mut(ctx).connect(
                             self,
                             self.url.hostname,
@@ -2421,7 +2431,9 @@ impl<'a> HTTPClient<'a> {
                 self.complete_connecting_process();
                 return;
             }
-            let Some(ctx) = h3::ClientContext::get_or_create(http_thread().uws_loop) else {
+            // SAFETY: `http_thread().uws_loop` is the live HTTP-thread uws loop.
+            let Some(ctx) = (unsafe { h3::ClientContext::get_or_create(http_thread().uws_loop) })
+            else {
                 self.fail(err!(HTTP3Unsupported));
                 self.complete_connecting_process();
                 return;
@@ -3620,6 +3632,8 @@ impl<'a> HTTPClient<'a> {
         };
         callback.run(async_http, result);
 
+        // Dev-time toggle: bump `PRINT_EVERY` to a nonzero const to enable.
+        #[allow(clippy::absurd_extreme_comparisons)]
         if PRINT_EVERY > 0 {
             let i = PRINT_EVERY_I.fetch_add(1, Ordering::Relaxed) + 1;
             if i % PRINT_EVERY == 0 {

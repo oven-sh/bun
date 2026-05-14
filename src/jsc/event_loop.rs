@@ -372,12 +372,16 @@ impl EventLoop {
 
     /// SAFETY: returns `&mut` into VM-owned scratch; two calls alias the same
     /// buffer. Caller must not hold another live `&mut` to it.
+    #[allow(clippy::mut_from_ref)]
     pub unsafe fn pipe_read_buffer(&self) -> &mut [u8] {
         // SAFETY: vm() is the live owning VM; rare_data() lazily inits the
         // per-VM scratch buffer. Caller contract (see doc): no concurrent &mut.
         unsafe { &mut (*self.vm()).rare_data().pipe_read_buffer()[..] }
     }
 
+    // `jsc_vm` is the live per-thread JSC::VM; making this `unsafe` would
+    // cascade through every microtask-drain caller in the runtime tier.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn drain_microtasks_with_global(
         &mut self,
         global_object: &JSGlobalObject,
@@ -554,47 +558,31 @@ impl EventLoop {
         self.run_imminent_gc_timer();
 
         let concurrent = self.concurrent_tasks.pop_batch();
-        let count = concurrent.count;
+        let count = concurrent.len();
         if count == 0 {
             return 0;
         }
 
-        let mut iter = concurrent.iterator();
         let start_count = self.tasks.readable_length();
         // PORT NOTE: Zig resets `head = 0` when empty as a micro-opt; LinearFifo
         // realigns internally on grow, so this is folded into `ensure_unused_capacity`.
 
         let _ = self.tasks.ensure_unused_capacity(count);
 
-        // Defer destruction of the ConcurrentTask to avoid issues with pointer aliasing
-        let mut to_destroy: Option<*mut ConcurrentTaskItem> = None;
+        // Defer destruction of the ConcurrentTask to avoid issues with pointer
+        // aliasing — `task.next` may still be read by the batch iterator until
+        // the next iteration's pop.
+        let mut to_destroy: Option<Box<ConcurrentTaskItem>> = None;
 
-        loop {
-            let task = iter.next();
-            if task.is_null() {
-                break;
-            }
-            if let Some(dest) = to_destroy.take() {
-                // SAFETY: dest was returned by iterator and marked auto_delete; uniquely owned here
-                let _ = unsafe { bun_core::heap::take(dest) };
-            }
-
-            // SAFETY: `task` is non-null (checked above) and owned by this batch.
-            let task_ref = unsafe { &mut *task };
-            if task_ref.auto_delete() {
-                to_destroy = Some(task);
-            }
-
+        for h in concurrent {
+            drop(to_destroy.take());
             // PERF(port): Zig wrote into `writable_slice(0)` and bumped `count`
             // directly; LinearFifo's fields are private — `write_item` is the
             // public path (single-slot copy, same complexity).
-            let _ = self.tasks.write_item(task_ref.task);
+            let _ = self.tasks.write_item(h.task);
+            to_destroy = Some(h);
         }
-
-        if let Some(dest) = to_destroy {
-            // SAFETY: see above
-            let _ = unsafe { bun_core::heap::take(dest) };
-        }
+        drop(to_destroy);
 
         self.tasks.readable_length() - start_count
     }
@@ -768,6 +756,9 @@ impl EventLoop {
     /// load-bearing for `auto_tick`'s `has_pending_immediate` read, which must
     /// observe the post-swap `immediate_tasks` (next-tick immediates), not the
     /// un-drained current batch (busy-spin hazard, spec Timer.zig:251-256).
+    // `virtual_machine` is the live owning VM; passed raw for the R-2 noalias
+    // mitigation documented in the body.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn tick_immediate_tasks(&mut self, virtual_machine: *mut VirtualMachine) {
         // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is `noalias`, and
@@ -929,7 +920,7 @@ impl EventLoop {
         }
     }
 
-    pub fn enqueue_task_concurrent(&self, task: *mut ConcurrentTaskItem) {
+    pub fn enqueue_task_concurrent(&self, task: Box<ConcurrentTaskItem>) {
         if cfg!(debug_assertions) {
             if self.vm_ref().has_terminated {
                 panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
@@ -995,6 +986,9 @@ impl EventLoop {
 }
 
 impl EventLoop {
+    // `*done` is mutated by re-entrant tick callbacks (cross-thread debugger
+    // resume), not by this loop body.
+    #[allow(clippy::while_immutable_condition)]
     pub fn tick_while_paused(&mut self, done: &mut bool) {
         while !*done {
             self.vm_ref()
@@ -1094,14 +1088,7 @@ impl EventLoop {
                 panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
             }
         }
-        // Spec event_loop.zig:667 unwraps `batch.front.?`/`batch.last.?` —
-        // preserve the panic-on-empty contract; `push_batch`'s first line is
-        // `set_next(last, null)`, so a null `last` would be UB, not a clean fail.
-        assert!(
-            !batch.front.is_null() && !batch.last.is_null(),
-            "enqueue_task_concurrent_batch: empty batch",
-        );
-        self.concurrent_tasks.push_batch(batch.front, batch.last);
+        self.concurrent_tasks.push_batch(batch);
         self.wakeup();
     }
 }

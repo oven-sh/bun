@@ -150,12 +150,15 @@ impl PackageManager {
                         let package_json_source =
                             &bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
 
-                        if let Err(err) = pkg.parse_from_real_manager(
-                            std::ptr::from_mut::<PackageManager>(self),
-                            package_json_source,
-                            &mut resolver,
-                            Features::NPM,
-                        ) {
+                        // SAFETY: `self` is the live PackageManager singleton.
+                        if let Err(err) = unsafe {
+                            pkg.parse_from_real_manager(
+                                std::ptr::from_mut::<PackageManager>(self),
+                                package_json_source,
+                                &mut resolver,
+                                Features::NPM,
+                            )
+                        } {
                             if log_level != LogLevel::Silent {
                                 let string_buf = self.lockfile.buffers.string_bytes.as_slice();
                                 Output::err(
@@ -243,12 +246,15 @@ impl PackageManager {
                     resolution,
                 };
 
-                if let Err(err) = package.parse_from_real_manager(
-                    std::ptr::from_mut::<PackageManager>(self),
-                    package_json_source,
-                    &mut resolver,
-                    Features::NPM,
-                ) {
+                // SAFETY: `self` is the live PackageManager singleton.
+                if let Err(err) = unsafe {
+                    package.parse_from_real_manager(
+                        std::ptr::from_mut::<PackageManager>(self),
+                        package_json_source,
+                        &mut resolver,
+                        Features::NPM,
+                    )
+                } {
                     if log_level != LogLevel::Silent {
                         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
                         Output::pretty_errorln(format_args!(

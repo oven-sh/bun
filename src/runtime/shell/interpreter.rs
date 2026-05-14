@@ -3030,7 +3030,7 @@ impl ShellTask {
     /// [`schedule`](Self::schedule); not touched again on the worker thread
     /// after this returns.
     pub unsafe fn on_finish<C: ShellTaskCtx>(ctx: *mut C) {
-        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask, EventLoopTaskPtr};
+        use bun_event_loop::{ConcurrentTask::ConcurrentTask, EventLoopTask, EventLoopTaskPtr};
         log!("ShellTask onFinish");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         // Stay on raw pointers: once `enqueue_task_concurrent` returns, the
@@ -3041,14 +3041,11 @@ impl ShellTask {
             let this = ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>();
             let event_loop = (*this).event_loop;
             let task_ptr = match &mut (*this).concurrent_task {
-                EventLoopTask::Js(ct) => {
+                EventLoopTask::Js => EventLoopTaskPtr {
                     // Zig: `concurrent_task.js.from(ctx, .manual_deinit)` —
                     // tag resolved via `C: Taskable`.
-                    ct.from(ctx, AutoDeinit::ManualDeinit);
-                    EventLoopTaskPtr {
-                        js: std::ptr::from_mut(ct),
-                    }
-                }
+                    js: Box::into_raw(ConcurrentTask::create_from(ctx)),
+                },
                 EventLoopTask::Mini(at) => {
                     // Zig: `concurrent_task.mini.from(this, "runFromMainThreadMini")`.
                     // Rust passes the monomorphised callback explicitly.

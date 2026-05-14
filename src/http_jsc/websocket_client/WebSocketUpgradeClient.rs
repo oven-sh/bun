@@ -792,15 +792,19 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     let handle = handle.cast::<boringssl::c::SSL>();
                     // `configureHTTPClient` ext-method hasn't landed on
                     // boringssl::SSL; use bun_http's helper.
-                    bun_http::configure_http_client_with_alpn(
-                        handle,
-                        if strings::is_ip_address(me.hostname.as_bytes()) {
-                            core::ptr::null()
-                        } else {
-                            me.hostname.as_ptr()
-                        },
-                        bun_http::AlpnOffer::H1,
-                    );
+                    // SAFETY: `handle` is the open TLS socket's native SSL ptr;
+                    // `me.hostname` is a NUL-terminated `ZBox` that outlives this call.
+                    unsafe {
+                        bun_http::configure_http_client_with_alpn(
+                            handle,
+                            if strings::is_ip_address(me.hostname.as_bytes()) {
+                                core::ptr::null()
+                            } else {
+                                me.hostname.as_ptr()
+                            },
+                            bun_http::AlpnOffer::H1,
+                        )
+                    };
                 }
             }
         }

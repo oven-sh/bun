@@ -188,6 +188,9 @@ unsafe extern "C" {
 }
 
 impl InspectorHTTPServerAgent {
+    // Thin FFI passthrough — `agent`/`server_instance` are forwarded to the
+    // `[[ZIG_EXPORT(nothrow)]]` C++ shim (see body SAFETY).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn notify_server_started(
         agent: *mut InspectorHTTPServerAgent,
         server_id: ServerId,

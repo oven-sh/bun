@@ -72,12 +72,18 @@ bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 // same VM, so a `&mut VirtualMachine` would be a data race AND would alias the
 // caller's `&mut TranspilerJob` (which is stored inside `vm.transpiler_store`).
 // Only the `source_mappings` leaf field is touched, under its own internal lock.
-pub fn dump_source(vm: *mut VirtualMachine, specifier: &[u8], printer: &BufferPrinter) {
-    dump_source_string(vm, specifier, printer.ctx.get_written());
+/// # Safety
+/// See [`dump_source_string_failiable`].
+pub unsafe fn dump_source(vm: *mut VirtualMachine, specifier: &[u8], printer: &BufferPrinter) {
+    // SAFETY: caller contract.
+    unsafe { dump_source_string(vm, specifier, printer.ctx.get_written()) };
 }
 
-pub fn dump_source_string(vm: *mut VirtualMachine, specifier: &[u8], written: &[u8]) {
-    if let Err(e) = dump_source_string_failiable(vm, specifier, written) {
+/// # Safety
+/// See [`dump_source_string_failiable`].
+pub unsafe fn dump_source_string(vm: *mut VirtualMachine, specifier: &[u8], written: &[u8]) {
+    // SAFETY: caller contract.
+    if let Err(e) = unsafe { dump_source_string_failiable(vm, specifier, written) } {
         bun_core::output::debug_warn(&format_args!("Failed to dump source string: {}", e.name()));
     }
 }
@@ -88,7 +94,9 @@ pub fn dump_source_string(vm: *mut VirtualMachine, specifier: &[u8], written: &[
 // safe code (replaces the prior split `Mutex` + `RacyCell` pair).
 static BUN_DEBUG_HOLDER: Guarded<Option<Dir>> = Guarded::new(None);
 
-pub fn dump_source_string_failiable(
+/// # Safety
+/// `vm` must be the live per-thread VM (BACKREF).
+pub unsafe fn dump_source_string_failiable(
     vm: *mut VirtualMachine,
     specifier: &[u8],
     written: &[u8],
@@ -275,6 +283,9 @@ impl RuntimeTranspilerStore {
         }
     }
 
+    // dispatch thunk; called only from `bun_runtime::dispatch::run_task` with
+    // the live VM/event-loop.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run_from_js_thread(
         &mut self,
         event_loop: *mut EventLoop,
@@ -284,28 +295,22 @@ impl RuntimeTranspilerStore {
         let mut batch = self.queue.pop_batch();
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
         let jsc_vm = unsafe { (*vm).jsc_vm };
-        let mut iter = batch.iterator();
-        let first = iter.next();
-        if first.is_null() {
+        let Some(first) = batch.next() else {
             return;
-        }
+        };
         // we run just one job first to see if there are more
         // SAFETY: `first` is a live job popped from the intrusive queue.
-        if let Err(err) = unsafe { (*first).run_from_js_thread() } {
+        if let Err(err) = unsafe { (*first.into_raw()).run_from_js_thread() } {
             global.report_uncaught_exception_from_error(err);
         }
-        loop {
-            let job = iter.next();
-            if job.is_null() {
-                break;
-            }
+        for job in batch {
             // if there are more, we need to drain the microtasks from the previous run
             // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
             if unsafe { (*event_loop).drain_microtasks_with_global(global, jsc_vm) }.is_err() {
                 return;
             }
             // SAFETY: `job` is a live job popped from the intrusive queue.
-            if let Err(err) = unsafe { (*job).run_from_js_thread() } {
+            if let Err(err) = unsafe { (*job.into_raw()).run_from_js_thread() } {
                 global.report_uncaught_exception_from_error(err);
             }
         }
@@ -436,6 +441,7 @@ pub struct TranspilerJob {
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<TranspilerJob>`.
 unsafe impl unbounded_queue::Linked for TranspilerJob {
+    type Handle = unbounded_queue::Owned<Self>;
     #[inline]
     unsafe fn link(item: *mut Self) -> *const unbounded_queue::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
@@ -536,7 +542,7 @@ impl TranspilerJob {
         unsafe {
             (*transpiler_store)
                 .queue
-                .push(std::ptr::from_mut::<TranspilerJob>(self))
+                .push(unbounded_queue::Owned::from(self))
         };
         // Another thread may free `self` at any time after .push, so we cannot use it any more.
         // SAFETY: vm outlives the job; event_loop() returns the live self-pointer.
@@ -610,6 +616,8 @@ impl TranspilerJob {
         WorkPool::schedule(&raw mut self.work_task);
     }
 
+    // callback thunk; `work_task` provenance is the registered `WorkPoolTask::callback`
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `work_task` field initialised in
@@ -1010,7 +1018,9 @@ impl TranspilerJob {
             );
 
             if bun_core::env::DUMP_SOURCE {
-                dump_source_string(vm, specifier, entry.output_code.byte_slice());
+                // SAFETY: `vm` is the live per-thread VM (see PORT NOTE on
+                // `dump_source` re: worker-thread access).
+                unsafe { dump_source_string(vm, specifier, entry.output_code.byte_slice()) };
             }
 
             let module_info: *mut c_void = if use_isolation_source_provider_cache
@@ -1175,7 +1185,9 @@ impl TranspilerJob {
         }
 
         if bun_core::env::DUMP_SOURCE {
-            dump_source(vm, specifier, source_code_printer);
+            // SAFETY: `vm` is the live per-thread VM (see PORT NOTE on
+            // `dump_source` re: worker-thread access).
+            unsafe { dump_source(vm, specifier, source_code_printer) };
         }
 
         let source_code = 'brk: {

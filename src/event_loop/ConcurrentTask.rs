@@ -5,13 +5,14 @@
 //!
 //! The task is run on a thread pool and then the result is returned to the main JavaScript thread.
 //!
-//! If `auto_delete` is true, the task is automatically deallocated when it's finished.
-//! Otherwise, it's expected that the containing struct will deallocate the task.
+//! Every `ConcurrentTask` is its own `Box` allocation; the consumer drops it
+//! after copying out the inner `Task`. There is no embedded-field /
+//! `ManualDeinit` mode — callers that previously embedded a `ConcurrentTask`
+//! now allocate one per enqueue via `ConcurrentTask::create*`.
 
 use crate::ManagedTask;
-// TODO(port): confirm crate for UnboundedQueue (bun.UnboundedQueue) — assuming bun_threading
-use bun_threading::unbounded_queue::{Link, Linked};
 use bun_threading::UnboundedQueue;
+use bun_threading::unbounded_queue::{Link, Linked};
 
 // ─── Module-level constructor forwarders ────────────────────────────────────
 // Zig spelled these as namespace calls (`ConcurrentTask.createFrom(...)`,
@@ -21,18 +22,18 @@ use bun_threading::UnboundedQueue;
 // inherent-method call. Provide thin module-level forwarders so both spellings
 // work — the struct's inherent methods remain the canonical impls below.
 #[inline]
-pub fn create(task: Task) -> *mut ConcurrentTask {
+pub fn create(task: Task) -> Box<ConcurrentTask> {
     ConcurrentTask::create(task)
 }
 #[inline]
-pub fn create_from<T: Taskable>(task: *mut T) -> *mut ConcurrentTask {
+pub fn create_from<T: Taskable>(task: *mut T) -> Box<ConcurrentTask> {
     ConcurrentTask::create_from(task)
 }
 #[inline]
 pub fn from_callback<T>(
     ptr: *mut T,
     callback: fn(*mut T) -> crate::JsResult<()>,
-) -> *mut ConcurrentTask {
+) -> Box<ConcurrentTask> {
     ConcurrentTask::from_callback(ptr, callback)
 }
 
@@ -255,35 +256,12 @@ pub struct ConcurrentTask {
     /// path (`atomic_store_next`, called once per completed work-pool task via
     /// `enqueue_task_concurrent`) is a single release-store — no read-modify-write.
     pub next: Link<ConcurrentTask>,
-    /// If `true`, the task is heap-owned and freed by the event loop after
-    /// dispatch. Immutable after construction; read only on the consumer thread,
-    /// so it does not need to share a word with the contended `next` link.
-    pub auto_delete: bool,
 }
 
-impl Default for ConcurrentTask {
-    fn default() -> Self {
-        Self {
-            // SAFETY: matches Zig `task: Task = undefined` — caller must set before use.
-            task: unsafe { bun_core::ffi::zeroed_unchecked() },
-            next: Link::new(),
-            auto_delete: false,
-        }
-    }
-}
-
-// PORT NOTE: Zig packs `auto_delete` into bit 0 of `next` (`PackedNextPtr`) to
-// keep `ConcurrentTask` at 16 bytes. The Rust port deliberately splits it back
-// out: `Task` is already two words here (tag is not packed into the pointer),
-// so the struct was never 16B, and profiling (build/create-next benches) showed
-// the packed form costs a Relaxed load + OR on every `atomic_store_next` —
-// turning the MPSC enqueue's single release-store into a load-then-store on a
-// cache line that is bouncing between producer threads and the JS-thread
-// consumer. The extra word of padding is cheap; the contended RMW is not.
 const _: () = assert!(
     core::mem::size_of::<ConcurrentTask>()
-        == core::mem::size_of::<Task>() + 2 * core::mem::size_of::<usize>(),
-    "ConcurrentTask = Task + next ptr + auto_delete (padded)"
+        == core::mem::size_of::<Task>() + core::mem::size_of::<usize>(),
+    "ConcurrentTask = Task + next ptr"
 );
 
 // SAFETY: `link()` always projects to the same embedded `next: Link<Self>`
@@ -291,6 +269,7 @@ const _: () = assert!(
 // The blanket `impl<T: Linked> Node for T` supplies the four accessors as
 // straight `AtomicPtr` load/store — no bit-masking, no preservation load.
 unsafe impl Linked for ConcurrentTask {
+    type Handle = Box<Self>;
     #[inline]
     unsafe fn link(item: *mut Self) -> *const Link<Self> {
         // SAFETY: caller (UnboundedQueue) guarantees `item` is valid; we only
@@ -300,42 +279,17 @@ unsafe impl Linked for ConcurrentTask {
 }
 pub type Queue = UnboundedQueue<ConcurrentTask>;
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum AutoDeinit {
-    ManualDeinit,
-    AutoDeinit,
-}
-
 impl ConcurrentTask {
-    /// `bun.TrivialNew(@This())` — heap-allocate a ConcurrentTask and return a raw pointer.
-    /// The pointer is intrusive (linked into `Queue`), so we use `heap::alloc` rather than `Box<T>`.
     #[inline]
-    pub fn new(init: ConcurrentTask) -> *mut ConcurrentTask {
-        bun_core::heap::into_raw(Box::new(init))
-    }
-
-    /// `bun.TrivialDeinit(@This())` — free a ConcurrentTask previously returned by `new`.
-    ///
-    /// # Safety
-    /// `this` must have been produced by `ConcurrentTask::new` and not yet freed.
-    #[inline]
-    pub unsafe fn destroy(this: *mut ConcurrentTask) {
-        // SAFETY: caller contract above.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-
-    pub fn create(task: Task) -> *mut ConcurrentTask {
-        ConcurrentTask::new(ConcurrentTask {
+    pub fn create(task: Task) -> Box<ConcurrentTask> {
+        Box::new(ConcurrentTask {
             task,
             next: Link::new(),
-            auto_delete: true,
         })
     }
 
-    pub fn create_from<T: Taskable>(task: *mut T) -> *mut ConcurrentTask {
-        // TODO(port): re-enable once `mark_binding!` macro arity matches
-        // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
-        // bun_core::mark_binding!();
+    #[inline]
+    pub fn create_from<T: Taskable>(task: *mut T) -> Box<ConcurrentTask> {
         Self::create(Task::init(task))
     }
 
@@ -344,7 +298,7 @@ impl ConcurrentTask {
     /// The matching `heap::take` lives in `bun_runtime::dispatch::run_task`
     /// (or the variant's own `run_from_js_thread`), keyed by `T::TAG`.
     #[inline]
-    pub fn create_boxed<T: Taskable>(task: Box<T>) -> *mut ConcurrentTask {
+    pub fn create_boxed<T: Taskable>(task: Box<T>) -> Box<ConcurrentTask> {
         Self::create(Task::from_boxed(task))
     }
 
@@ -357,33 +311,8 @@ impl ConcurrentTask {
     pub fn from_callback<T>(
         ptr: *mut T,
         callback: fn(*mut T) -> crate::JsResult<()>,
-    ) -> *mut ConcurrentTask {
-        // TODO(port): re-enable once `mark_binding!` macro arity matches
-        // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
-        // bun_core::mark_binding!();
+    ) -> Box<ConcurrentTask> {
         Self::create(ManagedTask::ManagedTask::new(ptr, callback))
-    }
-
-    pub fn from<T: Taskable>(
-        &mut self,
-        of: *mut T,
-        auto_deinit: AutoDeinit,
-    ) -> &mut ConcurrentTask {
-        // TODO(port): re-enable once `mark_binding!` macro arity matches
-        // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
-        // bun_core::mark_binding!();
-        *self = ConcurrentTask {
-            task: Task::init(of),
-            next: Link::new(),
-            auto_delete: auto_deinit == AutoDeinit::AutoDeinit,
-        };
-        self
-    }
-
-    /// Returns whether this task should be automatically deallocated after execution.
-    #[inline]
-    pub fn auto_delete(&self) -> bool {
-        self.auto_delete
     }
 }
 

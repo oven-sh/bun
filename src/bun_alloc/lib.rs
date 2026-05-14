@@ -1511,13 +1511,17 @@ pub fn free_sensitive<T: Copy>(mut slice: Box<[T]>) {
 
 /// Port of `bun.freeSensitive(bun.default_allocator, slice)` for the C-string
 /// case used by http SSLConfig. Zeros the allocation before freeing
-/// (defence-in-depth for keys/passphrases). `p` must have been allocated by
-/// `dupe_z` (i.e. mimalloc, NUL-terminated).
-pub fn free_sensitive_cstr(p: *const core::ffi::c_char) {
+/// (defence-in-depth for keys/passphrases).
+///
+/// # Safety
+/// `p` must be null, or point to a live NUL-terminated allocation from
+/// [`dupe_z`] (i.e. mimalloc-backed). The bytes up to the first NUL are
+/// overwritten before `mi_free`.
+pub unsafe fn free_sensitive_cstr(p: *const core::ffi::c_char) {
     if p.is_null() {
         return;
     }
-    // SAFETY: p is a NUL-terminated mimalloc'd buffer per `dupe_z` contract.
+    // SAFETY: caller precondition — `p` is a NUL-terminated mimalloc'd buffer.
     unsafe {
         let len = libc::strlen(p);
         secure_zero(p as *mut u8, len);

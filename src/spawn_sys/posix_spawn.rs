@@ -508,27 +508,33 @@ pub mod posix_spawn {
     pub(super) fn spawn_bun(
         path: &CStr,
         req_: BunSpawnRequest,
-        argv: *const *const c_char,
-        envp: *const *const c_char,
+        argv: &[*const c_char],
+        envp: &[*const c_char],
     ) -> sys::Result<pid_t> {
         let mut req = req_;
         let mut pid: c_int = 0;
 
+        debug_assert!(matches!(argv.last(), Some(p) if p.is_null()));
+        debug_assert!(matches!(envp.last(), Some(p) if p.is_null()));
         // SAFETY: path is NUL-terminated; argv/envp are NULL-terminated arrays of C strings
-        let rc =
-            unsafe { posix_spawn_bun(&raw mut pid, path.as_ptr(), &raw const req, argv, envp) };
+        let rc = unsafe {
+            posix_spawn_bun(
+                &raw mut pid,
+                path.as_ptr(),
+                &raw const req,
+                argv.as_ptr(),
+                envp.as_ptr(),
+            )
+        };
         let _ = &mut req; // keep req alive across the call (matches Zig taking &req of a local copy)
 
+        let arg0 = if argv[0].is_null() {
+            &b""[..]
+        } else {
+            // SAFETY: argv[0] is a valid NUL-terminated C string (caller contract).
+            unsafe { bun_core::ffi::cstr(argv[0]) }.to_bytes()
+        };
         if cfg!(debug_assertions) {
-            // SAFETY: argv has at least one element (the NULL terminator)
-            let arg0 = unsafe {
-                let p = *argv;
-                if p.is_null() {
-                    &b""[..]
-                } else {
-                    bun_core::ffi::cstr(p).to_bytes()
-                }
-            };
             sys::syslog!(
                 "posix_spawn_bun({}) = {} ({})",
                 bstr::BStr::new(arg0),
@@ -541,15 +547,6 @@ pub mod posix_spawn {
             return sys::Result::Ok(pid_t::try_from(pid).expect("int cast"));
         }
 
-        // SAFETY: argv has at least one element (the NULL terminator)
-        let arg0 = unsafe {
-            let p = *argv;
-            if p.is_null() {
-                &b""[..]
-            } else {
-                bun_core::ffi::cstr(p).to_bytes()
-            }
-        };
         sys::Result::Err(sys::Error {
             // @truncate(@intFromEnum(@as(std.c.E, @enumFromInt(rc))))
             errno: rc as sys::ErrorInt,
@@ -564,8 +561,8 @@ pub mod posix_spawn {
         path: &CStr,
         actions: Option<&Actions>,
         attr: Option<&Attr>,
-        argv: *const *const c_char,
-        envp: *const *const c_char,
+        argv: &[*const c_char],
+        envp: &[*const c_char],
     ) -> sys::Result<pid_t> {
         let pty_slave_fd = attr.map_or(-1, |a| a.pty_slave_fd);
         let detached = attr.map_or(false, |a| a.detached);
@@ -737,8 +734,8 @@ pub mod posix_spawn {
                     path.as_ptr(),
                     &posix_actions.actions,
                     &posix_attr.attr,
-                    argv as *const *mut c_char,
-                    envp as *const *mut c_char,
+                    argv.as_ptr() as *const *mut c_char,
+                    envp.as_ptr() as *const *mut c_char,
                 )
             };
             if cfg!(debug_assertions) {

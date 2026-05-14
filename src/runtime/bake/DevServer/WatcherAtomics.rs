@@ -187,17 +187,12 @@ impl WatcherAtomics {
                     // Not atomic because the dev server is not running events right now.
                     self.dbg_server_event = Some(ev);
                 }
-                // PORT NOTE: `jsc::ConcurrentTask` is a module; the struct lives at
-                // `jsc::ConcurrentTask::ConcurrentTask`.
-                ev_ref.concurrent_task = jsc::ConcurrentTask::ConcurrentTask {
-                    task: jsc::Task::init(ev),
-                    ..Default::default()
-                };
                 // SAFETY: `owner` BACKREF is valid; `vm` is a `BackRef` (safe
                 // Deref); `event_loop` points at a sibling field of `VirtualMachine`.
                 unsafe {
-                    (*(&(*ev_ref.owner).vm).event_loop)
-                        .enqueue_task_concurrent(&raw mut ev_ref.concurrent_task);
+                    (*(&(*ev_ref.owner).vm).event_loop).enqueue_task_concurrent(
+                        jsc::ConcurrentTask::ConcurrentTask::create_from(ev),
+                    );
                 }
             }
 

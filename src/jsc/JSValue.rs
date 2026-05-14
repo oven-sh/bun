@@ -630,6 +630,8 @@ impl JSValue {
     /// `JSValue.createBufferWithCtx` (JSValue.zig) — wrap a foreign-owned byte
     /// range in a Node `Buffer`, transferring ownership to JS. `free(ctx, ptr)`
     /// runs when the Buffer's backing store is collected.
+    // `ctx`/`free` are the caller-supplied finalizer pair forwarded to C++.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn create_buffer_with_ctx(
         global: &JSGlobalObject,
         bytes: core::ptr::NonNull<[u8]>,

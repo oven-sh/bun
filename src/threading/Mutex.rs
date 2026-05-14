@@ -402,6 +402,9 @@ impl FutexImpl {
 pub fn spin_cycle() {}
 
 // These have to be a size known to C.
+// not_unsafe_ptr_arg_deref: FFI export — only called from C++ with a pointer
+// to its own `ReleaseImpl` storage.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer.
@@ -409,6 +412,7 @@ pub extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
 }
 
 // These have to be a size known to C.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer that this thread locked.

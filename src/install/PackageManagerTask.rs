@@ -84,6 +84,7 @@ pub fn uninit() -> Task<'static> {
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`;
 // `link()` always projects to it. Mirrors Zig's `@field(item, "next")`.
 unsafe impl<'a> bun_threading::Linked for Task<'a> {
+    type Handle = bun_threading::Owned<Self>;
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
@@ -210,6 +211,8 @@ impl<'a> Task<'a> {
 }
 
 impl<'a> Task<'a> {
+    // callback thunk; `task` provenance is the `thread_pool::Task` we registered.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn callback(task: *mut thread_pool::Task) {
         Output::Source::configure_thread();
 
@@ -554,10 +557,12 @@ impl<'a> Task<'a> {
         // a phantom on `&mut NetworkTask` borrows that the queue never reads
         // through); erasing to `'static` matches Zig's lifetime-less queue.
         // `UnboundedQueue::push` takes `&self` (lock-free), so reach it via a
-        // shared raw deref — no `&mut PackageManager` is formed.
+        // shared raw deref — no `&mut PackageManager` is formed. `this` is a
+        // `preallocated_resolve_tasks` pool slot owned through the matching pop.
         unsafe {
-            (*core::ptr::addr_of!((*manager).resolve_tasks))
-                .push(std::ptr::from_mut::<Task<'a>>(this).cast::<Task<'static>>());
+            (*core::ptr::addr_of!((*manager).resolve_tasks)).push(bun_threading::Owned::new(
+                std::ptr::from_mut::<Task<'a>>(this).cast::<Task<'static>>(),
+            ));
             PackageManager::wake_raw(manager);
         }
 

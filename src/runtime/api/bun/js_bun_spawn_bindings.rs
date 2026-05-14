@@ -1115,8 +1115,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         ..Default::default()
     };
 
-    let mut spawned = match spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
-    {
+    let mut spawned = match spawn::spawn_process(&spawn_options, &argv, &env_array) {
         Err(err) if err == bun_core::err!("EMFILE") || err == bun_core::err!("ENFILE") => {
             // Windows: close+free the heap `uv::Pipe` handles that
             // `as_spawn_option` allocated and `spawn_process_windows` may have

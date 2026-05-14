@@ -66,7 +66,7 @@ pub struct BundleThread<C: Node> {
 /// fields (`.result`, `.log`, `.plugins`, `.config.files`, `.transpiler`); in
 /// Rust those become trait accessors so the generic `BundleThread<C>` stays
 /// layout-agnostic. The concrete impl lives in T6 (`bun_bundler_jsc`).
-pub trait CompletionStruct: Node + Send + 'static {
+pub trait CompletionStruct: Node<Handle = bun_threading::Owned<Self>> + Send + 'static {
     /// Zig: `completion.configureBundler(transpiler, arena)` — `arena`
     /// is the per-build mimalloc heap that backs `transpiler`, so the two
     /// share lifetime `'a` (option fields like `optimize_imports: &'a StringSet`
@@ -192,7 +192,7 @@ impl<C: CompletionStruct> BundleThread<C> {
     /// # Safety
     /// `instance` must point to a live `BundleThread` whose bundle thread has been
     /// spawned (so `waker` is initialized). Called concurrently with `thread_main`.
-    pub unsafe fn enqueue(instance: *mut Self, completion: *mut C) {
+    pub unsafe fn enqueue(instance: *mut Self, completion: bun_threading::Owned<C>) {
         // SAFETY: field projections via raw ptr — `thread_main` on the bundle thread
         // accesses the same struct concurrently, so we never materialize `&mut Self`.
         // `UnboundedQueue::push` takes `&self` (lock-free MPSC). `Waker::wake` takes
@@ -238,16 +238,12 @@ impl<C: CompletionStruct> BundleThread<C> {
 
         let mut has_bundled = false;
         loop {
-            loop {
-                // SAFETY: `UnboundedQueue::pop` takes `&self`; concurrent `push` from
-                // `enqueue` is the lock-free queue's intended use.
-                let completion = unsafe { (*instance).queue.pop() };
-                if completion.is_null() {
-                    break;
-                }
+            // SAFETY: `UnboundedQueue::pop` takes `&self`; concurrent `push` from
+            // `enqueue` is the lock-free queue's intended use.
+            while let Some(h) = unsafe { (*instance).queue.pop() } {
                 // SAFETY: queue stores non-null *mut C pushed via enqueue(); owner keeps it alive
                 // until complete_on_bundle_thread() signals completion.
-                let completion = unsafe { &mut *completion };
+                let completion = unsafe { &mut *h.into_raw() };
                 // SAFETY: `generation` is only read/written on this (bundle) thread.
                 let generation = unsafe { (*instance).generation };
                 // `panic = "abort"` → a Rust panic on this thread enters the
@@ -430,7 +426,8 @@ pub mod singleton {
     pub fn enqueue<C: CompletionStruct>(completion: *mut C) {
         // SAFETY: `get()` returns the leaked 'static singleton whose bundle thread is
         // running; `BundleThread::enqueue` only performs raw-ptr field projections.
-        unsafe { BundleThread::enqueue(get::<C>(), completion) };
+        // `completion` is a refcounted heap allocation kept live by the JS-thread ref.
+        unsafe { BundleThread::enqueue(get::<C>(), bun_threading::Owned::new(completion)) };
     }
 }
 

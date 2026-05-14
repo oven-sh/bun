@@ -111,9 +111,12 @@ impl crate::Allocator for CAllocator {}
 pub use z::ALLOCATOR as z_allocator;
 
 /// libc can free allocations without being given their size.
-pub fn free_without_size(ptr: *mut c_void) {
-    // SAFETY: `ptr` was allocated by libc malloc/calloc/realloc (or is null, which
-    // libc free accepts as a no-op) — same precondition as Zig `std.c.free`.
+///
+/// # Safety
+/// `ptr` must be null or point to a live allocation from libc
+/// `malloc`/`calloc`/`realloc`/`aligned_alloc`. Same contract as `std.c.free`.
+pub unsafe fn free_without_size(ptr: *mut c_void) {
+    // SAFETY: caller precondition.
     unsafe { libc::free(ptr) }
 }
 

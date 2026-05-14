@@ -93,14 +93,16 @@ impl PendingConnect {
             // handle; `cancel()` consumes it.
             this.pc_mut().cancel();
             if !s.closed {
-                Self::fail_session(session, bun_core::err!("Aborted"));
+                // SAFETY: `session` is the live ref `this` holds (see above).
+                unsafe { Self::fail_session(session, bun_core::err!("Aborted")) };
             }
             return;
         }
         // `pc_mut` upgrades the owned C handle; `resolved()` consumes it and
         // returns the connected quic socket or None on DNS failure.
         let Some(qs) = this.pc_mut().resolved() else {
-            Self::fail_session(session, bun_core::err!("DNSResolutionFailed"));
+            // SAFETY: `session` is the live ref `this` holds (see above).
+            unsafe { Self::fail_session(session, bun_core::err!("DNSResolutionFailed")) };
             return;
         };
         s.qsocket = Some(NonNull::from(&mut *qs));
@@ -140,7 +142,11 @@ impl PendingConnect {
 
     /// Tear down a session that never reached `on_conn_close` (DNS failure or
     /// every waiter aborted while DNS was in flight).
-    pub fn fail_session(session: *mut ClientSession, err: bun_core::Error) {
+    ///
+    /// # Safety
+    /// `session` must be a live intrusive-refcounted heap allocation; callee
+    /// drops one ref.
+    pub unsafe fn fail_session(session: *mut ClientSession, err: bun_core::Error) {
         // Caller guarantees `session` is live (held by an intrusive ref) —
         // `session_mut` centralises the backref upgrade.
         let s = session_mut(session);

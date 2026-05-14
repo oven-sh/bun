@@ -2203,7 +2203,11 @@ pub struct Version {
 }
 
 impl Version {
-    pub const ZERO: Self = Self { major: 0, minor: 0, patch: 0 };
+    pub const ZERO: Self = Self {
+        major: 0,
+        minor: 0,
+        patch: 0,
+    };
 
     /// Parse leading `"MAJOR.MINOR.PATCH"` from a byte slice. Per field:
     /// accumulate ASCII digits (wrapping on overflow), stop at the first
@@ -2233,7 +2237,11 @@ impl Version {
                 break;
             }
         }
-        Self { major: nums[0], minor: nums[1], patch: nums[2] }
+        Self {
+            major: nums[0],
+            minor: nums[1],
+            patch: nums[2],
+        }
     }
 }
 
@@ -4132,6 +4140,48 @@ pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
         *p.add(bytes.len()) = 0;
         p as *const core::ffi::c_char
+    }
+}
+
+/// Owning handle to a [`dupe_z`]-allocated NUL-terminated C string. `Drop`
+/// secure-zeroes the bytes then `mi_free`s — the RAII form of
+/// [`free_sensitive`]. Use this to reclaim a `*const c_char` field with one
+/// `unsafe` at construction (`from_raw`) instead of one per `free_sensitive`
+/// call site.
+#[repr(transparent)]
+pub struct DupedCStr(core::ptr::NonNull<core::ffi::c_char>);
+
+impl DupedCStr {
+    /// # Safety
+    /// `ptr` must have been produced by [`dupe_z`] (or an equivalent mimalloc
+    /// NUL-terminated allocation) and not yet freed. Returns `None` for null.
+    #[inline]
+    pub unsafe fn from_raw(ptr: *const core::ffi::c_char) -> Option<Self> {
+        core::ptr::NonNull::new(ptr as *mut core::ffi::c_char).map(Self)
+    }
+    #[inline]
+    pub fn as_ptr(&self) -> *const core::ffi::c_char {
+        self.0.as_ptr()
+    }
+    /// Leak — for handing to C that will free it (or storing in a raw field).
+    #[inline]
+    pub fn into_raw(self) -> *const core::ffi::c_char {
+        let p = self.0.as_ptr();
+        core::mem::forget(self);
+        p
+    }
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        // SAFETY: invariant — NUL-terminated mimalloc allocation.
+        unsafe { core::ffi::CStr::from_ptr(self.0.as_ptr()) }.to_bytes()
+    }
+}
+
+impl Drop for DupedCStr {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: invariant — NUL-terminated mimalloc allocation.
+        unsafe { bun_alloc::free_sensitive_cstr(self.0.as_ptr()) }
     }
 }
 

@@ -89,7 +89,6 @@ macro_rules! jsc_host_abi {
 // Capitalized re-exports — Zig spells these `JSHostFn*` (acronym-caps); the
 // PORTING.md acronym rule lowercases to `Js…`, but enough call sites (and the
 // crate-root re-export in lib.rs) use the Zig spelling that both must resolve.
-#[allow(non_camel_case_types)]
 pub use {
     JsHostFn as JSHostFn, JsHostFnZig as JSHostFnZig,
     JsHostFnZigWithContext as JSHostFnZigWithContext,
@@ -395,6 +394,9 @@ pub fn host_fn_static_passthrough(
 /// from the running VM and `callFrame` is the on-stack frame pointer — so the
 /// unchecked `_nn` variant is used to drop the two `testq; je <panic>` pairs
 /// from every `HOST_EXPORT` entry (`debug_assert!`ed in debug builds).
+// Codegen thunk entry — only called from generated `extern "C"` shims with the
+// JSC host-function ABI's non-null `global`/`callframe`.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[track_caller]
 #[inline]
 pub fn host_fn_static_raw<R: IntoHostFnReturn>(
@@ -410,6 +412,8 @@ pub fn host_fn_static_raw<R: IntoHostFnReturn>(
 
 /// Raw-pointer entry for `host`-shape exports, no exception scope.
 /// See [`host_fn_static_raw`].
+// Codegen thunk entry — see `host_fn_static_raw`.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[inline]
 pub fn host_fn_static_passthrough_raw(
     global: *mut JSGlobalObject,
@@ -618,6 +622,9 @@ pub fn host_fn_internal_props_shared<T, R: IntoHostFnReturn>(
 /// impl MUST `Box::leak`/`Box::into_raw` as its FIRST step (before any
 /// fallible work) so the allocation is not freed by Box drop on panic while
 /// other ref holders still alias it.
+// Codegen thunk entry — only called from generated `extern "C"` finalizers with
+// the GC-owned `m_ctx` produced by `Box::into_raw` in the construct path.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[inline]
 pub fn host_fn_finalize<T>(this: *mut T, f: impl FnOnce(alloc::boxed::Box<T>)) {
     // SAFETY: `this` is the GC-owned `m_ctx` pointer, valid and not

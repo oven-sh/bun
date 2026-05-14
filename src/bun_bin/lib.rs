@@ -179,6 +179,8 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
 /// empty and the binary would see argc=0. Capturing the C-runtime-provided
 /// pair here is the only portable source — same contract as Zig's
 /// `bun.initArgv` wrapping `std.os.argv`.
+// FFI export — only called by the C runtime with a valid argv block.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
     // 0. Capture argv FIRST — before the crash handler, whose panic path

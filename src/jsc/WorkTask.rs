@@ -1,4 +1,4 @@
-use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, TaskTag, Taskable};
+use bun_event_loop::ConcurrentTask::{ConcurrentTask, TaskTag, Taskable};
 use bun_io::{self as Async, KeepAlive};
 use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
 
@@ -41,7 +41,6 @@ pub struct WorkTask<Context: WorkTaskContext> {
     pub event_loop: BackRef<EventLoop>,
     // allocator field dropped — global mimalloc (see PORTING.md §Allocators)
     pub global_this: BackRef<JSGlobalObject>,
-    pub concurrent_task: ConcurrentTask,
     pub async_task_tracker: AsyncTaskTracker,
 
     // This is a poll because we want it to enter the uSockets loop
@@ -73,7 +72,6 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
                 node: Default::default(),
                 callback: Self::run_from_thread_pool,
             },
-            concurrent_task: ConcurrentTask::default(),
             async_task_tracker: AsyncTaskTracker::init(vm),
             ref_: KeepAlive::default(),
         });
@@ -96,6 +94,8 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // drop(this) — Box freed at scope exit
     }
 
+    // callback thunk; `task` provenance is the registered `WorkPoolTask::callback`
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run_from_thread_pool(task: *mut WorkPoolTask) {
         crate::mark_binding();
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
@@ -111,6 +111,9 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         Context::run(ctx, this);
     }
 
+    // dispatch thunk; called only from `bun_runtime::dispatch::run_task` with
+    // the heap allocation produced by `create_on_js_thread`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run_from_js(this: *mut Self) -> Result<(), crate::JsTerminated> {
         // SAFETY: `this` is the live heap allocation from create_on_js_thread,
         // exclusively owned by the JS thread at this point.
@@ -124,6 +127,9 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         Context::then(ctx, global_this)
     }
 
+    // `this` is the live heap allocation from `create_on_js_thread`; making
+    // `unsafe fn` would cascade through every `Context` impl's call site.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn schedule(this: *mut Self) {
         // SAFETY: `this` is the live heap allocation from create_on_js_thread.
         let this = unsafe { &mut *this };
@@ -132,20 +138,13 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         WorkPool::schedule(&raw mut this.task);
     }
 
+    // called only from `Context::run` on the thread pool with the same heap
+    // allocation `run_from_thread_pool` recovered.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_finish(this: *mut Self) {
         // SAFETY: `this` is alive (called from `Context::run` on the thread pool).
-        // `concurrent_task` is an intrusive field of `*this`; `from`
-        // re-initializes it in place and returns the same address. Passing
-        // `this` while holding `&mut *this` is sound because `from` only stores
-        // the pointer (does not dereference it).
-        let this_ref = unsafe { &mut *this };
-        let event_loop = this_ref.event_loop;
-        let task = std::ptr::from_mut(
-            this_ref
-                .concurrent_task
-                .from(this, AutoDeinit::ManualDeinit),
-        );
-        event_loop.enqueue_task_concurrent(task);
+        let event_loop = unsafe { (*this).event_loop };
+        event_loop.enqueue_task_concurrent(ConcurrentTask::create_from(this));
     }
 }
 

@@ -42,7 +42,7 @@ pub use semaphore::Semaphore;
 /// just re-export it for callers migrating off `parking_lot::Once`.
 pub use std::sync::Once;
 pub use thread_pool::ThreadPool;
-pub use unbounded_queue::{Link, Linked, UnboundedQueue};
+pub use unbounded_queue::{Batch, Handle, Link, Linked, Owned, UnboundedQueue};
 pub use wait_group::WaitGroup;
 /// Zig: `bun.jsc.WorkPoolTask` = `ThreadPool.Task` (work_pool.zig:2).
 pub use work_pool::Task as WorkPoolTask;

@@ -514,7 +514,7 @@ fn spawn(
         };
 
         // TODO(port): narrow error set — outer Result + inner bun_sys::Result
-        let spawned = bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast())??;
+        let spawned = bun_spawn::spawn_process(&opts, &argv, env.as_slice())??;
 
         // PORT NOTE: reshaped for borrowck — Zig's errdefer stays armed past
         // this point (and would re-close fds on the WatchFailed path below);

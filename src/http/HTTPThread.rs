@@ -874,10 +874,10 @@ impl HttpThread {
             }
         }
 
-        loop {
-            let Some(http) = NonNull::new(self.queued_tasks.pop()) else {
-                break;
-            };
+        while let Some(h) = self.queued_tasks.pop() {
+            // SAFETY: `h` was pushed via `Owned::new` on a live caller-owned
+            // `AsyncHttp` that stays alive until its completion callback.
+            let http = unsafe { NonNull::new_unchecked(h.into_raw()) };
             // AsyncHttp is heap-owned by the caller and alive until its
             // completion callback; the MPSC pop hands sole access to this
             // thread, so a transient `ParentRef` shared deref is sound.
@@ -993,7 +993,8 @@ impl HttpThread {
                 // SAFETY: task points to AsyncHttp.task; recover parent via field offset.
                 let http: *mut AsyncHttp =
                     unsafe { bun_core::from_field_ptr!(AsyncHttp, task, task.as_ptr()) };
-                this.queued_tasks.push(http);
+                // SAFETY: heap-owned by the caller; alive until its completion callback.
+                this.queued_tasks.push(unsafe { bun_threading::Owned::new(http) });
             }
         }
         this.wakeup();

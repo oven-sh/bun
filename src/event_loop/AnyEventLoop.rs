@@ -317,22 +317,26 @@ pub union EventLoopTaskPtr {
 }
 
 /// Owned storage for either kind of concurrent task (Zig `EventLoopTask`).
+///
+/// `Js` carries no inline storage: `ConcurrentTask` is always `Box`-allocated
+/// per enqueue (`ConcurrentTask::create*`). The `Mini` variant still embeds
+/// its task because `AnyTaskWithExtraContext` is field-of-parent by design.
 pub enum EventLoopTask {
-    Js(ConcurrentTask),
+    Js,
     Mini(AnyTaskWithExtraContext),
 }
 
 impl EventLoopTask {
     pub fn init(kind: EventLoopKind) -> EventLoopTask {
         match kind {
-            EventLoopKind::Js => EventLoopTask::Js(ConcurrentTask::default()),
+            EventLoopKind::Js => EventLoopTask::Js,
             EventLoopKind::Mini => EventLoopTask::Mini(AnyTaskWithExtraContext::default()),
         }
     }
 
     pub fn from_event_loop(loop_: EventLoopHandle) -> EventLoopTask {
         match loop_ {
-            EventLoopHandle::Js { .. } => EventLoopTask::Js(ConcurrentTask::default()),
+            EventLoopHandle::Js { .. } => EventLoopTask::Js,
             EventLoopHandle::Mini(_) => EventLoopTask::Mini(AnyTaskWithExtraContext::default()),
         }
     }
@@ -561,13 +565,16 @@ impl EventLoopHandle {
 
     pub fn enqueue_task_concurrent(self, task: EventLoopTaskPtr) {
         match self {
-            // SAFETY: caller guarantees `task.js` is the active union member when `self` is `Js`.
-            EventLoopHandle::Js { owner } => owner.enqueue_task_concurrent(unsafe { task.js }),
-            // SAFETY: caller guarantees `task.mini` is the active union member
-            // when `self` is `Mini`.
-            EventLoopHandle::Mini(mut mini) => {
-                mini_mut(&mut mini).enqueue_task_concurrent(unsafe { task.mini })
+            // SAFETY: caller guarantees `task.js` is the active union member when
+            // `self` is `Js`, pointing at a `Box<ConcurrentTask>` leaked via
+            // `Box::into_raw` for the union round-trip.
+            EventLoopHandle::Js { owner } => {
+                owner.enqueue_task_concurrent(unsafe { Box::from_raw(task.js) })
             }
+            // SAFETY: caller guarantees `task.mini` is the active union member when `self` is
+            // `Mini`, pointing at a live `AnyTaskWithExtraContext` owned through the matching pop.
+            EventLoopHandle::Mini(mut mini) => mini_mut(&mut mini)
+                .enqueue_task_concurrent(unsafe { bun_threading::Owned::new(task.mini) }),
         }
     }
 

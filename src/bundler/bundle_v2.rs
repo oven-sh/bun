@@ -1529,7 +1529,7 @@ pub mod bv2_impl {
             /// the field access + enqueue so the bundler needn't name `*jsc.EventLoop`.
             pub enqueue_task_concurrent: unsafe fn(
                 core::ptr::NonNull<super::JSBundleCompletionTask>,
-                *mut bun_event_loop::ConcurrentTask::ConcurrentTask,
+                Box<bun_event_loop::ConcurrentTask::ConcurrentTask>,
             ),
         }
         #[derive(Copy, Clone)]
@@ -1551,7 +1551,7 @@ pub mod bv2_impl {
             #[inline]
             pub fn enqueue_task_concurrent(
                 &self,
-                task: *mut bun_event_loop::ConcurrentTask::ConcurrentTask,
+                task: Box<bun_event_loop::ConcurrentTask::ConcurrentTask>,
             ) {
                 // SAFETY: vtable contract.
                 unsafe { (self.vtable.enqueue_task_concurrent)(self.owner, task) }
@@ -1618,7 +1618,7 @@ pub mod bv2_impl {
         /// PERF(port): was inline `switch (this.loop().*)` + direct field access.
         pub fn enqueue_on_js_loop_for_plugins(
             &mut self,
-            task: *mut bun_event_loop::ConcurrentTask::ConcurrentTask,
+            task: Box<bun_event_loop::ConcurrentTask::ConcurrentTask>,
         ) {
             debug_assert!(self.plugins.is_some());
             if let Some(completion) = self.completion {

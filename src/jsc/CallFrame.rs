@@ -152,7 +152,8 @@ impl CallFrame {
                 len: 0,
             }
         } else {
-            Arguments::<MAX>::init(count.min(MAX), slice.as_ptr())
+            // SAFETY: `slice` is `self.arguments()`; `count <= slice.len().min(MAX)`.
+            unsafe { Arguments::<MAX>::init(count.min(MAX), slice.as_ptr()) }
         }
     }
 
@@ -169,7 +170,8 @@ impl CallFrame {
                 len: 0,
             }
         } else {
-            Arguments::<MAX>::init_undef(count.min(MAX), slice.as_ptr())
+            // SAFETY: `slice` is `self.arguments()`; `count <= slice.len().min(MAX)`.
+            unsafe { Arguments::<MAX>::init_undef(count.min(MAX), slice.as_ptr()) }
         }
     }
 
@@ -234,18 +236,22 @@ pub struct Arguments<const MAX: usize> {
 }
 
 impl<const MAX: usize> Arguments<MAX> {
+    /// # Safety
+    /// `ptr[0..i]` must be valid for reads; `i <= MAX`.
     #[inline]
-    pub fn init(i: usize, ptr: *const JSValue) -> Self {
+    pub unsafe fn init(i: usize, ptr: *const JSValue) -> Self {
         let mut args: [JSValue; MAX] = [JSValue::ZERO; MAX];
-        // SAFETY: caller guarantees `ptr[0..i]` is valid; i <= MAX.
+        // SAFETY: caller contract.
         args[0..i].copy_from_slice(unsafe { bun_core::ffi::slice(ptr, i) });
         Self { ptr: args, len: i }
     }
 
+    /// # Safety
+    /// `ptr[0..i]` must be valid for reads; `i <= MAX`.
     #[inline]
-    pub fn init_undef(i: usize, ptr: *const JSValue) -> Self {
+    pub unsafe fn init_undef(i: usize, ptr: *const JSValue) -> Self {
         let mut args: [JSValue; MAX] = [JSValue::UNDEFINED; MAX];
-        // SAFETY: caller guarantees `ptr[0..i]` is valid; i <= MAX.
+        // SAFETY: caller contract.
         args[0..i].copy_from_slice(unsafe { bun_core::ffi::slice(ptr, i) });
         Self { ptr: args, len: i }
     }

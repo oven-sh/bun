@@ -75,6 +75,7 @@ type WatcherQueue = UnboundedQueue<StatWatcher>;
 // atomic variants reinterpret it as `AtomicPtr<StatWatcher>` (same size/align,
 // `addr_of!` preserves provenance).
 unsafe impl bun_threading::Linked for StatWatcher {
+    type Handle = bun_threading::Owned<Self>;
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
@@ -200,7 +201,10 @@ impl StatWatcherScheduler {
         StatWatcher::ref_(watcher);
         // BACKREF — `this` is live (caller holds a ref).
         let this_ref = ParentRef::from(NonNull::new(this).expect("append: scheduler"));
-        this_ref.watchers.push(watcher);
+        // SAFETY: refcounted heap allocation; the +1 above is released on pop.
+        this_ref
+            .watchers
+            .push(unsafe { bun_threading::Owned::new(watcher) });
         log!("push watcher {:x}", watcher as usize);
         let current = this_ref.get_interval();
         if current == 0 || current > w.interval {
@@ -343,16 +347,12 @@ impl StatWatcherScheduler {
         let now = Instant::now();
 
         let batch = this_ref.watchers.pop_batch();
-        log!("pop batch of {} watchers", batch.count);
-        let mut iter = batch.iterator();
+        log!("pop batch of {} watchers", batch.len());
         let mut min_interval: i32 = i32::MAX;
         let mut closest_next_check: u64 = u64::try_from(min_interval).expect("int cast");
         let mut contain_watchers = false;
-        loop {
-            let watcher = iter.next();
-            if watcher.is_null() {
-                break;
-            }
+        for h in batch {
+            let watcher = h.into_raw();
             // BACKREF — `watcher` is a live `*mut StatWatcher` from the intrusive
             // queue; alive because we hold a ref on it (taken in `append`).
             // R-2: shared `&` only — `restat()` may enqueue a main-thread task
@@ -377,7 +377,10 @@ impl StatWatcherScheduler {
                 closest_next_check = (interval - time_since).min(closest_next_check);
             }
             min_interval = min_interval.min(w.interval);
-            this_ref.watchers.push(watcher);
+            // SAFETY: still holds the +1 from `append`; re-queued for the next tick.
+            this_ref
+                .watchers
+                .push(unsafe { bun_threading::Owned::new(watcher) });
             log!("reinsert watcher {:x}", watcher as usize);
         }
 
@@ -557,7 +560,7 @@ impl StatWatcher {
 
     pub fn enqueue_task_concurrent(
         &self,
-        task: *mut bun_event_loop::ConcurrentTask::ConcurrentTask,
+        task: Box<bun_event_loop::ConcurrentTask::ConcurrentTask>,
     ) {
         // `event_loop_shared()` returns the VM's live `&EventLoop`;
         // `enqueue_task_concurrent` takes `&self`.

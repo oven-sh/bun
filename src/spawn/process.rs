@@ -1050,6 +1050,7 @@ pub mod waiter_thread_posix {
 
     // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<TaskQueueEntry<T>>`.
     unsafe impl<T: 'static> bun_threading::Linked for TaskQueueEntry<T> {
+        type Handle = Box<Self>;
         #[inline]
         unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
             // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
@@ -1117,6 +1118,8 @@ pub mod waiter_thread_posix {
 
         /// Stored thunk for `AnyTaskWithExtraContext` (`fn(*mut T, *mut C)`
         /// shape — `C = ()`). Default Rust ABI.
+        // callback thunk; `this` provenance is `Owned::new` in `loop_()`
+        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
             // SAFETY: `this` was heap-allocated in `loop_()` below; the mini
             // event loop hands ownership back here exactly once.
@@ -1166,11 +1169,10 @@ pub mod waiter_thread_posix {
 
     impl<T: ProcessLike> NewQueue<T> {
         pub fn append(&self, process: *mut T) {
-            self.queue
-                .push(bun_core::heap::into_raw(Box::new(TaskQueueEntry {
-                    process,
-                    next: bun_threading::Link::new(),
-                })));
+            self.queue.push(Box::new(TaskQueueEntry {
+                process,
+                next: bun_threading::Link::new(),
+            }));
         }
 
         pub fn loop_(&self) {
@@ -1181,15 +1183,8 @@ pub mod waiter_thread_posix {
             let active = unsafe { &mut *self.active.get() };
             {
                 let batch = self.queue.pop_batch();
-                active.reserve(batch.count);
-                let mut iter = batch.iterator();
-                loop {
-                    let task = iter.next();
-                    if task.is_null() {
-                        break;
-                    }
-                    // SAFETY: task was heap-allocated in append().
-                    let task = unsafe { bun_core::heap::take(task) };
+                active.reserve(batch.len());
+                for task in batch {
                     // PERF(port): was assume_capacity
                     active.push(task.process);
                     // task drops here (TrivialDeinit)
@@ -1246,8 +1241,12 @@ pub mod waiter_thread_posix {
                                         out,
                                         ResultTaskMini::<T>::run_from_main_thread_mini,
                                     );
+                                    // SAFETY: embedded field of `*out` (heap-allocated above);
+                                    // freed in `run_from_main_thread_mini`.
                                     mini.get_mut().enqueue_task_concurrent(
-                                        core::ptr::addr_of_mut!((*out).task),
+                                        bun_threading::Owned::new(core::ptr::addr_of_mut!(
+                                            (*out).task
+                                        )),
                                     );
                                 }
                                 // PORT NOTE: `out` is now owned by the mini queue;
@@ -1797,8 +1796,8 @@ mod spawn_process_body {
 
     pub fn spawn_process(
         options: &SpawnOptions,
-        argv: Argv, // [*:null]?[*:0]const u8
-        envp: Envp,
+        argv: &[*const c_char],
+        envp: &[*const c_char],
     ) -> Result<bun_sys::Result<SpawnProcessResult>, bun_core::Error> {
         #[cfg(unix)]
         {
@@ -1813,19 +1812,26 @@ mod spawn_process_body {
     #[cfg(windows)]
     pub fn spawn_process_windows(
         options: &WindowsSpawnOptions,
-        argv: *const *const c_char,
-        envp: *const *const c_char,
+        argv: &[*const c_char],
+        envp: &[*const c_char],
     ) -> Result<bun_sys::Result<WindowsSpawnResult>, bun_core::Error> {
+        debug_assert!(
+            matches!(argv.last(), Some(p) if p.is_null()),
+            "argv must be null-terminated"
+        );
+        debug_assert!(
+            matches!(envp.last(), Some(p) if p.is_null()),
+            "envp must be null-terminated"
+        );
         bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
 
         // SAFETY: all-zero is a valid uv_process_options_t
         let mut uv_process_options: uv::uv_process_options_t =
             unsafe { bun_core::ffi::zeroed_unchecked() };
 
-        uv_process_options.args = argv;
-        uv_process_options.env = envp;
-        // SAFETY: argv is null-terminated, argv[0] is non-null
-        uv_process_options.file = options.argv0.unwrap_or_else(|| unsafe { *argv });
+        uv_process_options.args = argv.as_ptr();
+        uv_process_options.env = envp.as_ptr();
+        uv_process_options.file = options.argv0.unwrap_or(argv[0]);
         uv_process_options.exit_cb = Some(Process::on_exit_uv);
         // PERF(port): was stack-fallback allocator (8192)
         // `WindowsOptions::default()` leaves `loop_` zeroed (Zig: `= undefined`;
@@ -2667,8 +2673,8 @@ mod spawn_process_body {
         #[cfg(windows)]
         fn spawn_windows_without_pipes(
             options: &Options,
-            argv: *const *const c_char,
-            envp: *const *const c_char,
+            argv: &[*const c_char],
+            envp: &[*const c_char],
         ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
             let loop_ = options.windows.loop_.platform_event_loop();
             let mut spawned =
@@ -2712,8 +2718,8 @@ mod spawn_process_body {
         #[cfg(windows)]
         fn spawn_windows_with_pipes(
             options: &Options,
-            argv: *const *const c_char,
-            envp: *const *const c_char,
+            argv: &[*const c_char],
+            envp: &[*const c_char],
         ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
             let loop_: EventLoopHandle = options.windows.loop_;
             let mut spawned =
@@ -2822,8 +2828,8 @@ mod spawn_process_body {
 
         pub fn spawn_with_argv(
             options: &Options,
-            argv: *const *const c_char,
-            envp: *const *const c_char,
+            argv: &[*const c_char],
+            envp: &[*const c_char],
         ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
             #[cfg(windows)]
             {
@@ -2842,8 +2848,12 @@ mod spawn_process_body {
 
         pub fn spawn(options: &Options) -> core::result::Result<Maybe<Result>, bun_core::Error> {
             // [*:null]?[*:0]const u8
-            // SAFETY: std.c.environ is the C environ array
-            let envp: *const *const c_char = options.envp.unwrap_or_else(|| bun_sys::environ_ptr());
+            let envp: &[*const c_char] = match options.envp {
+                None => bun_sys::environ_envp(),
+                // SAFETY: `Options::envp` contract — NULL-terminated array of
+                // NUL-terminated C strings, valid for the duration of the spawn.
+                Some(ptr) => unsafe { bun_sys::envp_from_raw(ptr) },
+            };
             let argv = &options.argv;
             let mut string_builder = bun_core::StringBuilder::default();
             for arg in argv {
@@ -2879,7 +2889,7 @@ mod spawn_process_body {
             debug_assert_eq!(off, string_builder.len);
             args.push(core::ptr::null());
 
-            spawn_with_argv(options, args.as_ptr(), envp)
+            spawn_with_argv(options, &args, envp)
         }
 
         // Forward signals from parent to the child process.
@@ -3023,8 +3033,8 @@ mod spawn_process_body {
         #[cfg(unix)]
         fn spawn_posix(
             options: &Options,
-            argv: *const *const c_char,
-            envp: *const *const c_char,
+            argv: &[*const c_char],
+            envp: &[*const c_char],
         ) -> core::result::Result<Maybe<Result>, bun_core::Error> {
             // --no-orphans: put the script in its own process group so we can
             // `kill(-pgid, SIGKILL)` on every exit path. Pgroup membership is

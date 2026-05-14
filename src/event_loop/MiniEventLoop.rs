@@ -28,7 +28,7 @@ use bun_core::Output;
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
 use bun_io::file_poll::{FilePoll, Store as FilePollStore};
 use bun_sys::{self as sys, Fd, Mode};
-use bun_threading::UnboundedQueue;
+use bun_threading::{Owned, UnboundedQueue};
 use bun_uws::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New};
@@ -69,6 +69,7 @@ pub type ConcurrentTaskQueue = UnboundedQueue<AnyTaskWithExtraContext>;
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<AnyTaskWithExtraContext>`.
 unsafe impl bun_threading::Linked for AnyTaskWithExtraContext {
+    type Handle = Owned<Self>;
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
@@ -331,12 +332,11 @@ impl<'a> MiniEventLoop<'a> {
 
     pub fn tick_concurrent_with_count(&mut self) -> usize {
         let concurrent = self.concurrent_tasks.pop_batch();
-        let count = concurrent.count;
+        let count = concurrent.len();
         if count == 0 {
             return 0;
         }
 
-        let mut iter = concurrent.iterator();
         let start_count = self.tasks.readable_length();
         // Zig resets `self.tasks.head = 0` when `start_count == 0` so
         // `writableSlice(0)` spans the whole buffer. That reset is
@@ -355,12 +355,8 @@ impl<'a> MiniEventLoop<'a> {
         let mut written: usize = 0;
         {
             let mut writable = self.tasks.writable_with_size(count).expect("unreachable");
-            loop {
-                let task = iter.next();
-                if task.is_null() {
-                    break;
-                }
-                writable[0] = task;
+            for task in concurrent {
+                writable[0] = task.into_raw();
                 writable = &mut writable[1..];
                 written += 1;
                 if writable.is_empty() {
@@ -454,7 +450,7 @@ impl<'a> MiniEventLoop<'a> {
         self.tasks.write_item(task).expect("unreachable");
     }
 
-    pub fn enqueue_task_concurrent(&mut self, task: *mut AnyTaskWithExtraContext) {
+    pub fn enqueue_task_concurrent(&mut self, task: Owned<AnyTaskWithExtraContext>) {
         self.concurrent_tasks.push(task);
         // SAFETY: see `loop_ptr()` invariant.
         unsafe { (*self.loop_ptr()).wakeup() };
@@ -485,7 +481,8 @@ impl<'a> MiniEventLoop<'a> {
         // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
         unsafe { task.write(New::<C, P>::init(ctx, callback)) };
 
-        self.concurrent_tasks.push(task);
+        // SAFETY: embedded field of `*ctx`, which the caller keeps live past the matching pop.
+        self.concurrent_tasks.push(unsafe { Owned::new(task) });
 
         // SAFETY: see `loop_ptr()` invariant.
         unsafe { (*self.loop_ptr()).wakeup() };

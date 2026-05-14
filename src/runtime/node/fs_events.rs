@@ -358,6 +358,7 @@ pub struct FSEventsLoop {
     pub has_scheduled_watchers: bool,
 }
 
+#[derive(Copy, Clone)]
 pub struct Task {
     pub ctx: *mut (),
     pub callback: fn(*mut ()),
@@ -387,11 +388,11 @@ impl Task {
 pub struct ConcurrentTask {
     pub task: Task,
     pub next: bun_threading::Link<ConcurrentTask>,
-    pub auto_delete: bool,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<ConcurrentTask>`.
 unsafe impl bun_threading::Linked for ConcurrentTask {
+    type Handle = Box<Self>;
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
@@ -400,17 +401,6 @@ unsafe impl bun_threading::Linked for ConcurrentTask {
 }
 
 pub type ConcurrentTaskQueue = UnboundedQueue<ConcurrentTask>;
-
-impl ConcurrentTask {
-    pub fn from(this: &mut ConcurrentTask, task: Task, auto_delete: bool) -> &mut ConcurrentTask {
-        *this = ConcurrentTask {
-            task,
-            next: bun_threading::Link::new(),
-            auto_delete,
-        };
-        this
-    }
-}
 
 impl FSEventsLoop {
     pub fn cf_thread_loop(&mut self) {
@@ -443,25 +433,15 @@ impl FSEventsLoop {
         // SAFETY: arg was set to `this: *mut FSEventsLoop` in init()
         let this = unsafe { bun_ptr::callback_ctx::<FSEventsLoop>(arg) };
 
-        let mut concurrent = this.tasks.pop_batch();
-        let count = concurrent.count;
-        if count == 0 {
+        let concurrent = this.tasks.pop_batch();
+        if concurrent.is_empty() {
             return;
         }
 
-        let mut iter = concurrent.iterator();
-        loop {
-            let task = iter.next();
-            if task.is_null() {
-                break;
-            }
-            // SAFETY: task is a valid *mut ConcurrentTask from the queue
-            let task = unsafe { &mut *task };
-            task.task.run();
-            if task.auto_delete {
-                // SAFETY: was heap-allocated in enqueue_task_concurrent
-                drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<ConcurrentTask>(task)) });
-            }
+        for h in concurrent {
+            let mut task = h.task;
+            drop(h);
+            task.run();
         }
     }
 
@@ -524,18 +504,12 @@ impl FSEventsLoop {
 
     fn enqueue_task_concurrent(&mut self, task: Task) {
         let cf = CoreFoundation::get();
-        let concurrent = bun_core::heap::into_raw(Box::new(ConcurrentTask {
-            task: Task {
-                ctx: ptr::null_mut(),
-                callback: |_| {},
-            },
+        self.tasks.push(Box::new(ConcurrentTask {
+            task,
             next: bun_threading::Link::new(),
-            auto_delete: false,
         }));
-        // SAFETY: concurrent is a valid freshly-boxed pointer
+        // SAFETY: CF fn pointers loaded via dlsym; signal_source/loop_ set in init.
         unsafe {
-            ConcurrentTask::from(&mut *concurrent, task, true);
-            self.tasks.push(concurrent);
             (cf.run_loop_source_signal)(self.signal_source);
             (cf.run_loop_wake_up)(self.loop_);
         }

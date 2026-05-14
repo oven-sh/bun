@@ -22,7 +22,6 @@ use bun_jsc::ConcurrentTask::ConcurrentTask;
 pub struct ShellAsyncTask {
     pub interp: *mut Interpreter,
     pub node: NodeId,
-    pub concurrent_task: ConcurrentTask,
 }
 
 /// Spec: `Interpreter.Cmd.ShellAsyncSubprocessDone`. Posted from the
@@ -32,7 +31,6 @@ pub struct ShellAsyncSubprocessDone {
     pub interp: *mut Interpreter,
     pub cmd: NodeId,
     pub exit_code: crate::shell::ExitCode,
-    pub concurrent_task: ConcurrentTask,
 }
 
 impl ShellAsyncSubprocessDone {
@@ -60,7 +58,6 @@ impl ShellAsyncSubprocessDone {
 #[repr(C)]
 pub struct AsyncDeinitWriter {
     pub writer: *mut crate::shell::io_writer::IOWriter,
-    pub concurrent_task: ConcurrentTask,
 }
 
 impl AsyncDeinitWriter {
@@ -79,7 +76,6 @@ impl AsyncDeinitWriter {
 #[repr(C)]
 pub struct AsyncDeinitReader {
     pub reader: *mut crate::shell::io_reader::IOReader,
-    pub concurrent_task: ConcurrentTask,
 }
 
 impl AsyncDeinitReader {

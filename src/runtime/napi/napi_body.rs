@@ -8,7 +8,6 @@ use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU32, Ordering};
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_event_loop::AnyTask::AnyTask;
-use bun_event_loop::ConcurrentTask::AutoDeinit;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
 #[allow(unused_imports)]
@@ -1823,7 +1822,6 @@ pub enum AsyncWorkStatus {
 /// must be globally allocated
 pub struct napi_async_work {
     pub task: WorkPoolTask,
-    pub concurrent_task: ConcurrentTask,
     // PORT NOTE: BackRef — `enqueue_task` needs `&mut EventLoop`; reborrowed at use sites.
     pub event_loop: bun_ptr::BackRef<EventLoop>,
     pub global: GlobalRef, // JSC_BORROW (lives for vm lifetime)
@@ -1852,7 +1850,6 @@ impl napi_async_work {
                 node: bun_threading::thread_pool::Node::default(),
                 callback: Self::run_from_thread_pool,
             },
-            concurrent_task: ConcurrentTask::default(),
             global: GlobalRef::from(global),
             // SAFETY: env outlives the async work; clone bumps the C++ refcount.
             env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
@@ -1899,10 +1896,8 @@ impl napi_async_work {
             Ordering::SeqCst,
         ) {
             if state == AsyncWorkStatus::Cancelled as u32 {
-                self.event_loop.enqueue_task_concurrent(
-                    self.concurrent_task
-                        .from(self_ptr, AutoDeinit::ManualDeinit),
-                );
+                self.event_loop
+                    .enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
                 return;
             }
         }
@@ -1910,10 +1905,8 @@ impl napi_async_work {
         self.status
             .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
 
-        self.event_loop.enqueue_task_concurrent(
-            self.concurrent_task
-                .from(self_ptr, AutoDeinit::ManualDeinit),
-        );
+        self.event_loop
+            .enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
     }
 
     pub fn cancel(&mut self) -> bool {

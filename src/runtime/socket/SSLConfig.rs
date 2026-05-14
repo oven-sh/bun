@@ -277,9 +277,8 @@ fn handle_path(
     // routes to `access(2)` on POSIX and `GetFileAttributesW` on Windows
     // (via `sys_uv`), so this is the cross-platform existence probe.
     if bun_sys::access(&name, bun_sys::posix::F_OK).is_err() {
-        // errdefer: free_sensitive(name) — zero before drop. Route through
-        // the canonical helper so the secure-zero core stays single-sourced.
-        bun_core::free_sensitive(zbox_into_raw(name));
+        // errdefer: free_sensitive(name) — zero before drop.
+        bun_alloc::free_sensitive(name.into_boxed_slice_with_nul());
         return Err(global.throw_invalid_arguments(format_args!("Unable to access {} path", field)));
     }
     Ok(zbox_into_raw(name))
@@ -345,7 +344,9 @@ fn handle_file_array(
     // errdefer { free_sensitive each; drop result } — need zeroing on error:
     let mut guard = scopeguard::guard(&mut result, |r| {
         for p in r.drain(..) {
-            bun_core::free_sensitive(p);
+            // SAFETY: every pushed element comes from `handle_single_file`,
+            // which returns a `dupe_z`-allocated NUL-terminated buffer.
+            drop(unsafe { bun_core::DupedCStr::from_raw(p) });
         }
     });
     for elem in elements {

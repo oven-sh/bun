@@ -14,7 +14,7 @@ use bun_core::{ZigString, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_glob as glob;
 use bun_io::KeepAlive;
-use bun_jsc::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSPropertyIterator,
@@ -679,7 +679,6 @@ pub struct AsyncTask<C: TaskContext> {
     promise: JSPromiseStrong,
     vm: *mut VirtualMachine,
     task: WorkPoolTask,
-    concurrent_task: ConcurrentTask,
     keep_alive: KeepAlive,
 }
 
@@ -702,7 +701,6 @@ impl<C: TaskContext> AsyncTask<C> {
                 callback: Self::run_callback,
                 node: Default::default(),
             },
-            concurrent_task: ConcurrentTask::default(),
             keep_alive: KeepAlive::default(),
         });
         let raw = bun_core::heap::into_raw(this);
@@ -741,11 +739,9 @@ impl<C: TaskContext> AsyncTask<C> {
         let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, work_task) };
         // SAFETY: thread-pool has exclusive access to ctx until it enqueues the concurrent task.
         unsafe { (*this).ctx.run() };
-        // SAFETY: vm points to the live owning VM; concurrent_task is intrusive on the same allocation.
+        // SAFETY: vm points to the live owning VM.
         unsafe {
-            let ct: *mut ConcurrentTask =
-                (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit);
-            (*(*this).vm).enqueue_task_concurrent(ct);
+            (*(*this).vm).enqueue_task_concurrent(ConcurrentTask::create_from(this));
         }
     }
 

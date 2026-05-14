@@ -434,9 +434,10 @@ impl<'a> GlobalMini<'a> {
         // SAFETY: `anytask` was just heap-allocated and is exclusively owned here.
         unsafe { (*anytask).from(task, run_from_main_thread_mini) };
         // SAFETY: `mini` is a long-lived loop; the concurrent queue is thread-safe.
+        // `anytask` is a fresh heap allocation owned through the matching pop.
         unsafe {
             (*(std::ptr::from_ref::<MiniEventLoop<'a>>(self.mini) as *mut MiniEventLoop<'a>))
-                .enqueue_task_concurrent(anytask)
+                .enqueue_task_concurrent(bun_threading::Owned::new(anytask))
         };
     }
 

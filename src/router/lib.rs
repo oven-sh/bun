@@ -858,9 +858,8 @@ impl<'a> RouteLoader<'a> {
                 // Zig `Entry.Kind` is exactly `{dir, file}` (resolver/fs.zig:378).
                 // SAFETY: no other live borrow of `*entry_ptr` here.
                 let kind = unsafe { &mut *entry_ptr }.kind(resolver.fs_impl(), false);
-                // SAFETY: shared read-only borrow for the match arms; the only
-                // subsequent mutation is via `Route::parse` which takes the raw
-                // pointer and reborrows internally.
+                // SAFETY: shared read-only borrow for the match arms; dead
+                // before the `&mut *entry_ptr` reborrow `Route::parse` takes.
                 let entry: &Fs::Entry = unsafe { &*entry_ptr };
                 match kind {
                     Fs::EntryKind::Dir => {
@@ -879,38 +878,41 @@ impl<'a> RouteLoader<'a> {
                     }
 
                     Fs::EntryKind::File => {
-                        let extname = bun_paths::extension(entry.base());
-                        // exclude "." or ""
-                        if extname.len() < 2 {
+                        // `entry.dir()` is interned (`&'static`), so the slice
+                        // outlives the shared `entry` borrow taken below.
+                        let entry_dir = entry.dir();
+                        let matched = {
+                            let extname = bun_paths::extension(entry.base());
+                            // exclude "." or ""
+                            extname.len() >= 2
+                                && self
+                                    .config
+                                    .extensions
+                                    .iter()
+                                    .any(|e| extname[1..] == *e.as_ref())
+                        };
+                        if !matched {
                             continue;
                         }
+                        // length is extended by one
+                        // entry.dir is a string with a trailing slash
+                        if cfg!(debug_assertions) {
+                            debug_assert!(bun_paths::resolve_path::is_sep_any(
+                                entry_dir[base_dir.len() - 1]
+                            ));
+                        }
+                        let public_dir = &entry_dir[base_dir.len() - 1..entry_dir.len()];
 
-                        for _extname in self.config.extensions.iter() {
-                            if &extname[1..] == _extname.as_ref() {
-                                // length is extended by one
-                                // entry.dir is a string with a trailing slash
-                                let entry_dir = entry.dir();
-                                if cfg!(debug_assertions) {
-                                    debug_assert!(bun_paths::resolve_path::is_sep_any(
-                                        entry_dir[base_dir.len() - 1]
-                                    ));
-                                }
-
-                                // SAFETY: entry.dir is at least base_dir.len()-1 bytes; verified above in debug
-                                let public_dir = &entry_dir[base_dir.len() - 1..entry_dir.len()];
-
-                                if let Some(route) = Route::parse(
-                                    entry.base(),
-                                    extname,
-                                    entry_ptr,
-                                    self.log,
-                                    public_dir,
-                                    self.route_dirname_len,
-                                ) {
-                                    self.append_route(route);
-                                }
-                                break;
-                            }
+                        // SAFETY: `entry_ptr` is `EntryStore`-owned
+                        // (process-lifetime); the shared `entry` borrow above
+                        // is dead (last use was inside `matched`).
+                        if let Some(route) = Route::parse(
+                            unsafe { &mut *entry_ptr },
+                            self.log,
+                            public_dir,
+                            self.route_dirname_len,
+                        ) {
+                            self.append_route(route);
                         }
                     }
                 }
@@ -1030,25 +1032,19 @@ pub type RoutePtr = TinyPtr;
 impl Route {
     pub const INDEX_ROUTE_NAME: &'static [u8] = b"/";
 
+    /// `entry` is `&mut` for the single `abs_path` write; every read goes
+    /// through disjoint field borrows (`entry.base_` / `entry.dir` /
+    /// `entry.cache`) so the inline `base_` slice (fs.zig:333) and the
+    /// `abs_path` write never alias.
     pub fn parse(
-        base_: &[u8],
-        extname: &[u8],
-        entry: *mut Fs::Entry,
+        entry: &mut Fs::Entry,
         log: &mut bun_ast::Log,
         public_dir_: &[u8],
         routes_dirname_len: u16,
     ) -> Option<Route> {
-        // PORT NOTE: `entry` is a raw `*mut Entry` (matching Zig's `*Entry`)
-        // because `base_`/`extname` may borrow `(*entry).base_` (tiny inline
-        // string, fs.zig:333) and a `&mut Entry` parameter would alias them.
-        // Reads go through `unsafe { &*entry }`; the single mutation
-        // (`set_abs_path`) goes through `unsafe { &mut *entry }` after
-        // `base_`/`extname` are no longer used.
         // PORT NOTE: reshaped for borrowck — bind the `PathString` so the
         // `.slice()` borrow lives across the closure below.
-        // SAFETY: caller passes an EntryStore-owned pointer valid for the
-        // process lifetime; no other live `&mut` to it during this call.
-        let entry_abs_path_ps = unsafe { &*entry }.abs_path();
+        let entry_abs_path_ps = entry.abs_path;
         let entry_abs_path = entry_abs_path_ps.slice();
         let mut abs_path_str: &[u8] = if entry_abs_path.is_empty() {
             b""
@@ -1056,6 +1052,8 @@ impl Route {
             entry_abs_path
         };
 
+        let base_ = entry.base_.slice();
+        let extname = bun_paths::extension(base_);
         let base = &base_[0..base_.len() - extname.len()];
 
         let public_dir = strings::trim(public_dir_, SEP_STR.as_bytes());
@@ -1183,14 +1181,11 @@ impl Route {
                     }
                 });
 
-                // SAFETY: see fn-level PORT NOTE — read-only reborrow.
-                if let Some(valid) = unsafe { &*entry }.cache().fd.unwrap_valid() {
+                if let Some(valid) = entry.cache.get().fd.unwrap_valid() {
                     *file = Some(bun_sys::File::from_fd(valid));
                     needs_close.set(false);
                 } else {
-                    // SAFETY: see fn-level PORT NOTE — read-only reborrow.
-                    let entry_r = unsafe { &*entry };
-                    let parts = [entry_r.dir(), entry_r.base()];
+                    let parts = [entry.dir, entry.base_.slice()];
                     let abs_len = FileSystem::instance().abs_buf(&parts, route_file_buf).len();
                     // Zig: `abs_path_str = FileSystem.instance.absBuf(...)`
                     // (router.zig:743). Rebind so the later getFdPath error
@@ -1247,9 +1242,9 @@ impl Route {
                     .expect("unreachable");
 
                 // Zig: `entry.abs_path = PathString.init(abs_path_str)`.
-                // SAFETY: sole mutation; `base_`/`extname` (which may borrow
-                // `(*entry).base_.remainder_buf`) are not used after this.
-                unsafe { &mut *entry }.set_abs_path(bun_core::PathString::init(abs_path_str));
+                // Disjoint field borrow: `base_` borrows `entry.base_`, this
+                // writes `entry.abs_path`.
+                entry.abs_path = bun_core::PathString::init(abs_path_str);
             }
 
             #[cfg(windows)]
@@ -1276,18 +1271,16 @@ impl Route {
                 debug_assert!(!strings::index_of_char(public_path, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(match_name, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(abs_path.slice(), b'\\').is_some());
-                // SAFETY: read-only reborrow; the `&mut` write above is dead.
-                debug_assert!(!strings::index_of_char(unsafe { &*entry }.base(), b'\\').is_some());
+                debug_assert!(!strings::index_of_char(entry.base_.slice(), b'\\').is_some());
             }
 
             // PORT NOTE: name/match_name/public_path are already `&'static` via
             // DirnameStore::append above. `entry.base()` borrows the entry (it
             // may be inline-stored for ≤31-byte names, fs.zig:333); intern it
             // explicitly to get `&'static` without a lifetime transmute.
-            // SAFETY: read-only reborrow; the `&mut` write above is dead.
             let basename: &'static [u8] = FileSystem::instance()
                 .dirname_store()
-                .append(unsafe { &*entry }.base())
+                .append(entry.base_.slice())
                 .expect("unreachable");
 
             Some(Route {

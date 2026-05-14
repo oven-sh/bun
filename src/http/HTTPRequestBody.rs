@@ -41,7 +41,8 @@ impl Stream {
     pub fn detach(&mut self) {
         if let Some(buffer) = self.buffer.take() {
             // matches Zig `buffer.deref()` — intrusive refcount decrement.
-            ThreadSafeStreamBuffer::deref(buffer.as_ptr());
+            // SAFETY: this side holds one ref taken at attach.
+            unsafe { ThreadSafeStreamBuffer::deref(buffer.as_ptr()) };
         }
     }
 }

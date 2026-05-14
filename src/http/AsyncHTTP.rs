@@ -77,6 +77,7 @@ bun_threading::intrusive_work_task!(['a] AsyncHTTP<'a>, task);
 // Only implemented for the lifetime-erased form — the queue is heterogeneous
 // over borrow scopes and `next` is always stored as `Link<AsyncHTTP<'static>>`.
 unsafe impl bun_threading::Linked for AsyncHTTP<'static> {
+    type Handle = bun_threading::Owned<Self>;
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.

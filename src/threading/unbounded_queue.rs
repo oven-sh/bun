@@ -1,5 +1,6 @@
 use core::hint;
 use core::ptr;
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 #[cfg(any(
@@ -29,6 +30,86 @@ pub const CACHE_LINE_LENGTH: usize = 256;
 )))]
 pub const CACHE_LINE_LENGTH: usize = 64;
 
+/// Conversion between an ownership token and the raw pointer the queue stores.
+///
+/// [`UnboundedQueue`] holds `NonNull<T>` internally; producers hand in a
+/// `T::Handle` and consumers get one back. The handle type encodes the node's
+/// ownership model (heap `Box`, pool slot, slab element, embedded field) so
+/// `push`/`pop` are safe and the one `unsafe` lives at the handle's
+/// construction point — where the storage invariant is actually established.
+pub trait Handle<T>: Sized {
+    fn into_queue(self) -> NonNull<T>;
+    /// # Safety
+    /// `ptr` was produced by [`into_queue`](Self::into_queue) on this same
+    /// queue and has not been reconstructed since.
+    unsafe fn from_queue(ptr: NonNull<T>) -> Self;
+}
+
+impl<T> Handle<T> for Box<T> {
+    #[inline]
+    fn into_queue(self) -> NonNull<T> {
+        // SAFETY: Box::into_raw never returns null.
+        unsafe { NonNull::new_unchecked(Box::into_raw(self)) }
+    }
+    #[inline]
+    unsafe fn from_queue(ptr: NonNull<T>) -> Self {
+        // SAFETY: caller contract — ptr came from Box::into_raw above.
+        unsafe { Box::from_raw(ptr.as_ptr()) }
+    }
+}
+
+/// [`Handle`] for nodes that are *not* individually `Box`-allocated — pool
+/// slots, slab elements, refcounted objects, or fields of a larger heap
+/// object. The invariant ("`.0` is a valid live `T` whose backing storage
+/// outlives the matching pop") is established once at `unsafe fn new()`.
+///
+/// Prefer `type Handle = Box<Self>` when the node *is* a standalone heap
+/// allocation; reach for `Owned<Self>` only when it isn't.
+#[repr(transparent)]
+pub struct Owned<T>(NonNull<T>);
+
+impl<T> Owned<T> {
+    /// # Safety
+    /// `ptr` must be non-null, aligned, point to a live `T`, and that
+    /// storage must remain live and unmoved until this handle (or one
+    /// reconstructed from it by `pop`) is consumed.
+    #[inline]
+    pub unsafe fn new(ptr: *mut T) -> Self {
+        debug_assert!(!ptr.is_null());
+        // SAFETY: caller contract.
+        Self(unsafe { NonNull::new_unchecked(ptr) })
+    }
+    #[inline]
+    pub fn as_ptr(&self) -> *mut T {
+        self.0.as_ptr()
+    }
+    #[inline]
+    pub fn into_raw(self) -> *mut T {
+        self.0.as_ptr()
+    }
+}
+
+impl<T> Handle<T> for Owned<T> {
+    #[inline]
+    fn into_queue(self) -> NonNull<T> {
+        self.0
+    }
+    #[inline]
+    unsafe fn from_queue(ptr: NonNull<T>) -> Self {
+        Owned(ptr)
+    }
+}
+
+impl<T> From<&mut T> for Owned<T> {
+    /// A live `&mut T` is proof of validity; the queue's contract requires the
+    /// backing storage to outlive the matching pop, which the caller's pool /
+    /// slab / parent allocation guarantees.
+    #[inline]
+    fn from(r: &mut T) -> Self {
+        Self(NonNull::from(r))
+    }
+}
+
 /// Intrusive next-pointer accessors for `UnboundedQueue<T>` nodes.
 ///
 /// Zig's `UnboundedQueue(T, next_field)` is parametric on the *field name* and
@@ -46,6 +127,9 @@ pub const CACHE_LINE_LENGTH: usize = 64;
 // TODO(port): the Zig `has_custom_accessors` comptime branch is folded into
 // this trait — verify each concrete `T` picks the right impl in Phase B.
 pub unsafe trait Node: Sized {
+    /// Ownership token producers hand to `push` and consumers receive from
+    /// `pop`. See [`Handle`].
+    type Handle: Handle<Self>;
     /// Zig: `getNext(item: *T) ?*T`
     unsafe fn get_next(item: *mut Self) -> *mut Self;
     /// Zig: `setNext(item: *T, ptr: ?*T) void`
@@ -103,6 +187,8 @@ impl<T> Default for Link<T> {
 /// `*item`. `item` is guaranteed valid, non-null, and properly aligned by
 /// [`UnboundedQueue`].
 pub unsafe trait Linked: Sized {
+    /// See [`Node::Handle`].
+    type Handle: Handle<Self>;
     unsafe fn link(item: *mut Self) -> *const Link<Self>;
 }
 
@@ -112,6 +198,7 @@ pub unsafe trait Linked: Sized {
 // requested ordering and the non-atomic get/set degrade to Relaxed (matching
 // Zig's plain `?*T` field access — never concurrent with the atomic path).
 unsafe impl<T: Linked> Node for T {
+    type Handle = <T as Linked>::Handle;
     #[inline]
     unsafe fn get_next(item: *mut Self) -> *mut Self {
         // SAFETY: `Linked::link` contract — points at a live `Link<Self>` in `*item`.
@@ -134,10 +221,13 @@ unsafe impl<T: Linked> Node for T {
     }
 }
 
+/// Owned chain of linked nodes — built by producers via [`Batch::push`] and
+/// handed to [`UnboundedQueue::push_batch`], or returned by
+/// [`UnboundedQueue::pop_batch`] and drained as `Iterator<Item = T::Handle>`.
 pub struct Batch<T: Node> {
-    pub front: *mut T,
-    pub last: *mut T,
-    pub count: usize,
+    front: *mut T,
+    last: *mut T,
+    count: usize,
 }
 
 impl<T: Node> Default for Batch<T> {
@@ -150,30 +240,51 @@ impl<T: Node> Default for Batch<T> {
     }
 }
 
-pub struct BatchIterator<T: Node> {
-    pub batch: Batch<T>,
+impl<T: Node> Batch<T> {
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.count
+    }
+    /// Append `item` to the chain. Ownership transfers to the batch.
+    pub fn push(&mut self, item: T::Handle) {
+        let raw = item.into_queue().as_ptr();
+        // SAFETY: `raw` is a valid live node by `Handle::into_queue`'s contract.
+        unsafe { T::set_next(raw, ptr::null_mut()) };
+        if self.last.is_null() {
+            self.front = raw;
+        } else {
+            // SAFETY: `self.last` is the previous tail, owned by this batch.
+            unsafe { T::set_next(self.last, raw) };
+        }
+        self.last = raw;
+        self.count += 1;
+    }
 }
 
-impl<T: Node> BatchIterator<T> {
-    pub fn next(&mut self) -> *mut T {
-        if self.batch.count == 0 {
-            return ptr::null_mut();
+impl<T: Node> Iterator for Batch<T> {
+    type Item = T::Handle;
+    fn next(&mut self) -> Option<T::Handle> {
+        if self.count == 0 {
+            return None;
         }
-        let front = self.batch.front;
+        let front = self.front;
         debug_assert!(!front.is_null()); // Zig: `orelse unreachable`
         // SAFETY: `front` is non-null (count > 0 invariant) and points to a
-        // live node previously linked into this batch by `pop_batch`.
-        self.batch.front = unsafe { T::get_next(front) };
-        self.batch.count -= 1;
-        front
+        // live node owned by this batch (via `push` or `pop_batch`).
+        self.front = unsafe { T::get_next(front) };
+        self.count -= 1;
+        // SAFETY: `front` entered the batch via `Handle::into_queue`.
+        Some(unsafe { T::Handle::from_queue(NonNull::new_unchecked(front)) })
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.count, Some(self.count))
     }
 }
-
-impl<T: Node> Batch<T> {
-    pub fn iterator(self) -> BatchIterator<T> {
-        BatchIterator { batch: self }
-    }
-}
+impl<T: Node> ExactSizeIterator for Batch<T> {}
 
 /// Per-arch cache-half-line aligned wrapper — Zig's `align(queue_padding_length)`
 /// on `UnboundedQueue.back`/`.front`. Rust cannot express per-field alignment
@@ -236,12 +347,28 @@ impl<T: Node> UnboundedQueue<T> {
         }
     }
 
-    pub fn push(&self, item: *mut T) {
-        self.push_batch(item, item);
+    pub fn push(&self, item: T::Handle) {
+        let raw = item.into_queue().as_ptr();
+        // SAFETY: `raw` is a valid live node by `Handle::into_queue`'s contract;
+        // single-node chain (`first == last`) trivially satisfies `link_chain`.
+        unsafe { self.link_chain(raw, raw) };
     }
 
-    pub fn push_batch(&self, first: *mut T, last: *mut T) {
-        // SAFETY: caller guarantees `last` is a valid live node (Zig `*T` is non-null).
+    /// Atomically append a pre-linked chain. Empty batches are a no-op.
+    pub fn push_batch(&self, batch: Batch<T>) {
+        if batch.count == 0 {
+            return;
+        }
+        // SAFETY: a non-empty `Batch` owns a `front..=last` chain of valid
+        // nodes linked by `Batch::push` (each via `Handle::into_queue`).
+        unsafe { self.link_chain(batch.front, batch.last) };
+    }
+
+    /// # Safety
+    /// `first` and `last` are valid live nodes; `last` is reachable from
+    /// `first` via the `next` link chain (every interior node also valid).
+    unsafe fn link_chain(&self, first: *mut T, last: *mut T) {
+        // SAFETY: caller contract — `last` is valid.
         unsafe { T::set_next(last, ptr::null_mut()) };
         if cfg!(debug_assertions) {
             let mut item = first;
@@ -266,11 +393,14 @@ impl<T: Node> UnboundedQueue<T> {
         }
     }
 
-    pub fn pop(&self) -> *mut T {
+    pub fn pop(&self) -> Option<T::Handle> {
         let mut first = self.front.0.load(Ordering::Acquire);
         if first.is_null() {
-            return ptr::null_mut();
+            return None;
         }
+        // SAFETY (applies to every `from_queue` below): `first` is non-null and
+        // entered the queue via `Handle::into_queue` in `push`/`push_batch`.
+        let into_handle = |p: *mut T| unsafe { T::Handle::from_queue(NonNull::new_unchecked(p)) };
         let next_item = loop {
             // SAFETY: `first` is non-null (checked above / from failed CAS below).
             let next_ptr = unsafe { T::atomic_load_next(first, Ordering::Acquire) };
@@ -284,14 +414,14 @@ impl<T: Node> UnboundedQueue<T> {
                 Ok(_) => break next_ptr,
                 Err(maybe_first) => {
                     if maybe_first.is_null() {
-                        return ptr::null_mut();
+                        return None;
                     }
                     first = maybe_first;
                 }
             }
         };
         if !next_item.is_null() {
-            return first;
+            return Some(into_handle(first));
         }
         // `first` was the only item in the queue, so we need to clear `self.back`.
 
@@ -310,7 +440,7 @@ impl<T: Node> UnboundedQueue<T> {
                     "`back` should not be null while popping an item"
                 );
             }
-            Ok(_) => return first,
+            Ok(_) => return Some(into_handle(first)),
         }
 
         // Another item was added to the queue before we could finish removing this one.
@@ -325,7 +455,7 @@ impl<T: Node> UnboundedQueue<T> {
         };
 
         self.front.0.store(new_first, Ordering::Release);
-        first
+        Some(into_handle(first))
     }
 
     pub fn pop_batch(&self) -> Batch<T> {

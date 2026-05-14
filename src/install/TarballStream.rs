@@ -988,7 +988,10 @@ impl TarballStream {
             // is `*mut` (Zig spec: mutable `*PackageManager`) and shared across
             // threads, so we mutate via raw-ptr deref without forming a
             // long-lived `&mut PackageManager`.
-            (*manager).resolve_tasks.push(task);
+            // SAFETY: `task` is a `preallocated_resolve_tasks` pool slot owned through the pop.
+            (*manager)
+                .resolve_tasks
+                .push(bun_threading::Owned::new(task));
             PackageManager::wake_raw(manager);
         } // unsafe
     }

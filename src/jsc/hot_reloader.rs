@@ -328,11 +328,11 @@ pub trait HotReloaderEventLoop {
     /// on every concrete event loop). Takes `&Self` so the raw-pointer
     /// dereference of the `Ctx`-owned `*mut EventLoopType` is narrowed to the
     /// two call sites, not spread across the trait + impls.
-    fn enqueue_task_concurrent(this: &Self, task: *mut ConcurrentTask);
+    fn enqueue_task_concurrent(this: &Self, task: Box<ConcurrentTask>);
 }
 
 impl HotReloaderEventLoop for EventLoop {
-    fn enqueue_task_concurrent(this: &Self, task: *mut ConcurrentTask) {
+    fn enqueue_task_concurrent(this: &Self, task: Box<ConcurrentTask>) {
         // Inherent `EventLoop::enqueue_task_concurrent(&self, ..)` — inherent
         // methods take precedence over trait methods, so this is not recursive.
         this.enqueue_task_concurrent(task)
@@ -346,7 +346,7 @@ impl HotReloaderEventLoop for EventLoop {
 /// `BundleV2` doesn't even define `eventLoop()` — Zig's lazy compilation never
 /// instantiates it. Match that here.
 impl HotReloaderEventLoop for bun_event_loop::AnyEventLoop<'static> {
-    fn enqueue_task_concurrent(_this: &Self, _task: *mut ConcurrentTask) {
+    fn enqueue_task_concurrent(_this: &Self, _task: Box<ConcurrentTask>) {
         unreachable!()
     }
 }
@@ -571,8 +571,6 @@ pub struct Task<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     // type on a generic parameter without specialization; storing it
     // unconditionally for now.
     pub paths: [&'static [u8]; 8],
-    /// Left `None` until [`Self::enqueue`] populates it on the heap copy.
-    pub concurrent_task: Option<ConcurrentTask>,
     pub reloader: *mut NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
 }
 
@@ -591,7 +589,6 @@ where
             // TODO(port): was `if (Ctx == bun.bake.DevServer) [_][]const u8{&.{}} ** 8`
             paths: [b"".as_slice(); 8],
             count: 0,
-            concurrent_task: None,
         }
     }
 
@@ -704,30 +701,21 @@ where
             count: self.count,
             paths: self.paths,
             hashes: self.hashes,
-            concurrent_task: None,
         }));
-        // SAFETY: `that` was just allocated above and is exclusively owned here.
-        unsafe {
-            // PORT NOTE: `JscTask::init` requires `Taskable`, but const-generic
-            // `Task<Ctx, _, _>` can't implement it (one tag per monomorphization).
-            // The Zig source tagged the concrete `HotReloader.HotReloadTask` —
-            // use the raw `(tag, ptr)` constructor.
-            let concurrent = (*that).concurrent_task.insert(ConcurrentTask {
-                task: JscTask::new(task_tag::HotReloadTask, that.cast::<()>()),
-                ..Default::default()
-            });
-            // TODO(port): `&that.concurrent_task` is an interior pointer into a
-            // Box-allocated Task; event loop must not outlive `that`. Matches Zig.
-            //
-            // Inlines `NewHotReloader::enqueue_task_concurrent` to avoid forming
-            // a whole-struct `&NewHotReloader` (see `Self::pending_count` doc).
-            // `RELOAD_IMMEDIATELY` already diverged above so its guard is dead here.
-            let ctx = self.ctx_ptr();
-            // SAFETY: ctx outlives reloader (BACKREF); `event_loop()` returns
-            // the live event-loop pointer owned by `Ctx`.
-            let event_loop = &*(*ctx).event_loop();
-            EventLoopType::enqueue_task_concurrent(event_loop, std::ptr::from_mut(concurrent));
-        }
+        // PORT NOTE: `JscTask::init` requires `Taskable`, but const-generic
+        // `Task<Ctx, _, _>` can't implement it (one tag per monomorphization).
+        // The Zig source tagged the concrete `HotReloader.HotReloadTask` —
+        // use the raw `(tag, ptr)` constructor.
+        let concurrent =
+            ConcurrentTask::create(JscTask::new(task_tag::HotReloadTask, that.cast::<()>()));
+        // Inlines `NewHotReloader::enqueue_task_concurrent` to avoid forming
+        // a whole-struct `&NewHotReloader` (see `Self::pending_count` doc).
+        // `RELOAD_IMMEDIATELY` already diverged above so its guard is dead here.
+        let ctx = self.ctx_ptr();
+        // SAFETY: ctx outlives reloader (BACKREF); `event_loop()` returns
+        // the live event-loop pointer owned by `Ctx`.
+        let event_loop = unsafe { &*(*ctx).event_loop() };
+        EventLoopType::enqueue_task_concurrent(event_loop, concurrent);
         self.count = 0;
     }
 }
@@ -738,7 +726,9 @@ where
     Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
     EventLoopType: HotReloaderEventLoop,
 {
-    pub fn init(
+    /// # Safety
+    /// `ctx` must be the live owning context that outlives the reloader.
+    pub unsafe fn init(
         ctx: *mut Ctx,
         fs: &'static FileSystem,
         verbose: bool,
@@ -790,7 +780,7 @@ where
         self.ctx.event_loop()
     }
 
-    pub fn enqueue_task_concurrent(&self, task: *mut ConcurrentTask) {
+    pub fn enqueue_task_concurrent(&self, task: Box<ConcurrentTask>) {
         if RELOAD_IMMEDIATELY {
             unreachable!();
         }
@@ -801,6 +791,8 @@ where
         EventLoopType::enqueue_task_concurrent(self.ctx.event_loop_ref(), task);
     }
 
+    // 17 callers across cli/server; `this` is the live VirtualMachine/DevServer.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn enable_hot_module_reloading(this: *mut Ctx, entry_path: Option<&'static [u8]>) {
         // SAFETY: caller passes the live `Ctx` (VirtualMachine / DevServer)
         // pointer; it outlives the reloader allocated below.
@@ -1161,8 +1153,7 @@ where
                         // of whether the per-file watchlist entry survived. The per-file
                         // watch itself is re-armed on the JS thread by
                         // `VirtualMachine::add_main_to_watcher_if_needed` after the reload.
-                        if !IS_KQUEUE && self.main.hash != 0 && self.main.dir_hash == current_hash
-                        {
+                        if !IS_KQUEUE && self.main.hash != 0 && self.main.dir_hash == current_hash {
                             let main_basename = bun_paths::basename(self.main.file);
                             for changed_name_ in affected_inotify {
                                 let changed_name: &[u8] = match changed_name_ {

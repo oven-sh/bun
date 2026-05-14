@@ -376,6 +376,9 @@ impl MimallocArena {
     }
 
     /// Zig: `MimallocArena.ownsPtr()` → `mi_heap_contains(heap, p)`.
+    // not_unsafe_ptr_arg_deref: `mi_heap_contains` only compares `p` against
+    // page-metadata ranges; it never dereferences it. Any pointer value is valid.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub fn owns_ptr(&self, p: *const c_void) -> bool {
         // SAFETY: `self.heap` is a live heap; `p` may be any pointer.

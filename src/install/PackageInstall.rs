@@ -492,12 +492,15 @@ impl<TaskType> NewTaskQueue<TaskType> {
         self.wait_group.finish();
     }
 
-    pub fn push(&self, task: *mut TaskType)
+    /// # Safety
+    /// `task` must be a valid Box-allocated task whose `.task` field is the
+    /// intrusive node.
+    pub unsafe fn push(&self, task: *mut TaskType)
     where
         TaskType: HasWorkPoolTask,
     {
         self.wait_group.add_one();
-        // SAFETY: task is a valid Box-allocated task; .task field is the intrusive node.
+        // SAFETY: caller contract.
         self.thread_pool.schedule(Batch::from(unsafe {
             std::ptr::from_mut::<WorkPoolTask>((*task).task())
         }));

@@ -33,7 +33,7 @@ use super::store::{self, Store};
 use super::store::{EntryColumns as _, NodeColumns as _};
 use super::symlinker::{self, Symlinker};
 use crate::bun_fs;
-use crate::lockfile_real::package::{PackageColumns as _};
+use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::directories;
 use crate::package_manager_real::package_manager_options::Do;
 
@@ -635,6 +635,7 @@ pub struct Task {
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`.
 unsafe impl bun_threading::Linked for Task {
+    type Handle = bun_threading::Owned<Self>;
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
@@ -1941,6 +1942,8 @@ impl Task {
     }
 
     /// Called from task thread
+    // callback thunk; `task` provenance is the `thread_pool::Task` we registered.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn callback(task: *mut thread_pool::Task) {
         // SAFETY: task points to Task.task field
         let this: &mut Task = unsafe { &mut *bun_core::from_field_ptr!(Task, task, task) };
@@ -1977,7 +1980,7 @@ impl Task {
                     );
                 }
                 this.result = Result::RunScripts(list);
-                installer.task_queue.push(this);
+                installer.task_queue.push(bun_threading::Owned::from(this));
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Done => {
@@ -1991,7 +1994,7 @@ impl Task {
                     );
                 }
                 this.result = Result::Done;
-                installer.task_queue.push(this);
+                installer.task_queue.push(bun_threading::Owned::from(this));
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Blocked => {
@@ -2005,7 +2008,7 @@ impl Task {
                     );
                 }
                 this.result = Result::Blocked;
-                installer.task_queue.push(this);
+                installer.task_queue.push(bun_threading::Owned::from(this));
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Fail(err) => {
@@ -2021,7 +2024,7 @@ impl Task {
                 installer.store.entries.items_step()[this.entry_id.get() as usize]
                     .store(Step::Done as u32, Ordering::Release);
                 this.result = Result::Err(err);
-                installer.task_queue.push(this);
+                installer.task_queue.push(bun_threading::Owned::from(this));
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
         }

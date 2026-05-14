@@ -193,6 +193,20 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
     restat: true,
   });
 
+  // `cargo check` / `cargo clippy` for the whole workspace. Backs the
+  // `rust-check` / `rust-clippy` ninja targets so `bun run rust:clippy`
+  // works on a fresh checkout — the targets depend on the lol-html fetch
+  // stamp and the codegen `.rs` outputs, so cargo never sees a missing
+  // path dep or unrunnable `include!`. The declared output ($out) is never
+  // created: ninja then always re-runs the edge, and cargo's own
+  // incremental cache (plus its diagnostic replay) makes that cheap while
+  // still showing warnings on a no-edit re-run.
+  n.rule("rust_lint", {
+    command: `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} $subcmd --workspace --keep-going $args`,
+    description: "cargo $subcmd --workspace",
+    pool: "console",
+  });
+
   // Variant that ensures the pinned toolchain (and `rust-std` for
   // `$rust_target` when it has a prebuilt one) is fully installed before
   // building. CI agents pin the toolchain via `RUSTUP_TOOLCHAIN`, which
@@ -729,6 +743,45 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     },
   });
   n.phony("bun-rust", [lib]);
+  n.blank();
+
+  // ─── check / clippy ───
+  // `rust-prereqs`: vendor path-dep sources + codegen `.rs` outputs only —
+  // everything cargo needs to *resolve and type-check* the workspace, with
+  // no cargo invocation. Lets `rust:check-all` (and a bare `cargo build`)
+  // bootstrap a fresh checkout without pulling the whole `bun-rust` build.
+  n.phony("rust-prereqs", [...inputs.vendorStamps, ...inputs.codegenInputs, ...inputs.codegenOrderOnly]);
+
+
+  // Minimal env: just what `include!`/`option_env!` and toolchain pinning
+  // need. Codegen rustflags (target-cpu, relocation-model, asan, lto, pgo)
+  // are irrelevant to type-checking and would pull in `-Zbuild-std` /
+  // sanitizer machinery for no benefit.
+  const lintEnv: Record<string, string> = {
+    CARGO_TERM_COLOR: "always",
+    BUN_CODEGEN_DIR: cfg.codegenDir,
+  };
+  if (cfg.cargoHome !== undefined) lintEnv.CARGO_HOME = cfg.cargoHome;
+  if (cfg.rustupHome !== undefined) lintEnv.RUSTUP_HOME = cfg.rustupHome;
+  if (cfg.rustToolchain !== undefined) lintEnv.RUSTUP_TOOLCHAIN = cfg.rustToolchain;
+  const lintEnvStr = Object.entries(lintEnv)
+    .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
+    .join(" ");
+  // Same prerequisites as the build edge (minus the shim — clippy/check
+  // never embed it). $out is never created → always re-runs.
+  const lintInputs = [cfg.cargo, ...inputs.rustSources, ...inputs.codegenInputs, ...inputs.vendorStamps];
+  for (const subcmd of ["check", "clippy"] as const) {
+    const stale = resolve(cfg.buildDir, `.rust-${subcmd}.always-stale`);
+    n.build({
+      outputs: [stale],
+      rule: "rust_lint",
+      inputs: [],
+      implicitInputs: lintInputs,
+      orderOnlyInputs: inputs.codegenOrderOnly,
+      vars: { cwd: cfg.cwd, subcmd, args: "", env: lintEnvStr },
+    });
+    n.phony(`rust-${subcmd}`, [stale]);
+  }
   n.blank();
 
   return [lib];

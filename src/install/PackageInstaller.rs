@@ -1588,7 +1588,9 @@ impl<'a> PackageInstaller<'a> {
                             path: self.node_modules.path.clone(),
                         });
                     }
-                    package_manager::enqueue_patch_task(self.manager_mut(), task);
+                    // SAFETY: `task` is a fresh heap allocation from
+                    // `PatchTask::new_apply_patch_hash`; we hold the only pointer.
+                    unsafe { package_manager::enqueue_patch_task(self.manager_mut(), task) };
                     return;
                 }
             }
@@ -2233,11 +2235,14 @@ impl<'a> PackageInstaller<'a> {
             let m = self.manager_mut();
             m.total_scripts += scripts_list.total as usize;
             if let Some(scripts_node) = m.scripts_node_mut() {
-                m.set_node_name::<true>(
-                    scripts_node,
-                    &scripts_list.package_name,
-                    ProgressStrings::SCRIPT_EMOJI.as_bytes(),
-                );
+                // SAFETY: `scripts_node` is `m.scripts_node`.
+                unsafe {
+                    m.set_node_name::<true>(
+                        scripts_node,
+                        &scripts_list.package_name,
+                        ProgressStrings::SCRIPT_EMOJI.as_bytes(),
+                    )
+                };
                 scripts_node.set_estimated_total_items(
                     scripts_node
                         .unprotected_estimated_total_items

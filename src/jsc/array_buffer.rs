@@ -348,6 +348,9 @@ impl ArrayBuffer {
         })
     }
 
+    // Returned `&mut [u8]` is into freshly-allocated JSC backing storage, not
+    // derived from `global`.
+    #[allow(clippy::mut_from_ref)]
     pub fn alloc<const KIND: JSType>(
         global: &JSGlobalObject,
         len: u32,
@@ -1010,7 +1013,6 @@ impl MarkedArrayBuffer {
 // ──────────────────────────────────────────────────────────────────────────
 
 // `no_mangle` dropped: 0 C++ refs (phase_c_exports.rs mention is a comment).
-#[allow(non_upper_case_globals)]
 pub use bun_alloc::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
 
 // LAYERING: `BlobArrayBuffer_deallocator` (array_buffer.zig:646) releases a

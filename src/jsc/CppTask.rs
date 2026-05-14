@@ -44,6 +44,8 @@ bun_opaque::opaque_ffi! { pub struct EventLoopTaskNoContext; }
 
 impl EventLoopTaskNoContext {
     /// Deallocates `this`
+    // dispatch thunk; `this` provenance is the C++ task pointer stashed in `Task`
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run(this: *mut EventLoopTaskNoContext) {
         // SAFETY: `this` is a valid C++ EventLoopTaskNoContext; performTask consumes/frees it.
         unsafe { Bun__EventLoopTaskNoContext__performTask(this) }

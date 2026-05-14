@@ -62,6 +62,9 @@ pub fn static_(s: &'static [u8]) -> ZigString {
 /// SAFETY: `ptr` must have been allocated by the global mimalloc allocator
 /// (via `heap::alloc`/`Vec::into_raw_parts`/`bun.default_allocator`) and
 /// must not be used by the caller after this returns.
+// 12 callers across String/encoding paths; making `unsafe fn` would cascade
+// through `bun_core::String` `to_js` helpers.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
     if len > BunString::max_length() {
         // SAFETY: caller contract — `ptr` came from the global mimalloc
@@ -84,6 +87,7 @@ pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> 
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
 pub extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c_void) {
     let Some(allocator_) = core::ptr::NonNull::new(allocator_) else {
         return;
@@ -103,6 +107,7 @@ pub extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
 pub extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
     // SAFETY: ptr/len describe a valid slice.
     let s = unsafe { bun_core::ffi::slice(ptr, len) };

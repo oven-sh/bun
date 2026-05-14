@@ -203,16 +203,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     };
 
     let patch_tasks_batch = manager.patch_task_queue.pop_batch();
-    let mut patch_tasks_iter = patch_tasks_batch.iterator();
-    loop {
-        let ptask_ptr = patch_tasks_iter.next();
-        if ptask_ptr.is_null() {
-            break;
-        }
-        // SAFETY: `next()` returned non-null; node is exclusively owned by this
-        // batch. `ptask_ptr` was produced by `heap::alloc` in `PatchTask::new_*`
-        // — reclaim ownership exactly once here so the `Box` drops at end of
-        // iteration on every path (Zig: `defer ptask.deinit();`).
+    for h in patch_tasks_batch {
+        let ptask_ptr = h.into_raw();
+        // SAFETY: node is exclusively owned by this batch. `ptask_ptr` was
+        // produced by `heap::alloc` in `PatchTask::new_*` — reclaim ownership
+        // exactly once here so the `Box` drops at end of iteration on every
+        // path (Zig: `defer ptask.deinit();`).
         let mut ptask = unsafe { bun_core::heap::take(ptask_ptr) };
         if cfg!(debug_assertions) {
             debug_assert!(manager.pending_task_count() > 0);
@@ -267,13 +263,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         let installer: &mut Store::Installer<'_> = C::as_store_installer(extract_ctx);
         let installer_ptr: *mut Store::Installer<'_> = installer;
         let batch = installer.task_queue.pop_batch();
-        let mut iter = batch.iterator();
-        loop {
-            let task_ptr = iter.next();
-            if task_ptr.is_null() {
-                break;
-            }
-            // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
+        for h in batch {
+            let task_ptr = h.into_raw();
+            // SAFETY: node is exclusively owned by this batch.
             let task = unsafe { &mut *task_ptr };
             match &task.result {
                 store_installer::Result::None => {
@@ -347,13 +339,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     }
 
     let network_tasks_batch = manager.async_network_task_queue.pop_batch();
-    let mut network_tasks_iter = network_tasks_batch.iterator();
-    loop {
-        let task_ptr = network_tasks_iter.next();
-        if task_ptr.is_null() {
-            break;
-        }
-        // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
+    for h in network_tasks_batch {
+        let task_ptr = h.into_raw();
+        // SAFETY: node is exclusively owned by this batch.
         let task = unsafe { &mut *task_ptr };
         if cfg!(debug_assertions) {
             debug_assert!(manager.pending_task_count() > 0);
@@ -379,11 +367,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let is_extended_manifest = *is_extended_manifest;
                 if log_level.show_progress() {
                     if !has_updated_this_run.get() {
-                        manager.set_node_name::<true>(
-                            manager.downloads_node_mut(),
-                            name,
-                            ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
-                        );
+                        // SAFETY: `downloads_node_mut()` returns `manager.downloads_node`.
+                        unsafe {
+                            manager.set_node_name::<true>(
+                                manager.downloads_node_mut(),
+                                name,
+                                ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
+                            )
+                        };
                         has_updated_this_run.set(true);
                     }
                 }
@@ -624,8 +615,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 .expect("unreachable");
                 // PORT NOTE: reshaped for borrowck — split the nested `&mut
                 // manager` borrows (`task_batch.push` vs. `enqueue_*`).
-                let queued =
-                    enqueue::enqueue_parse_npm_package(manager, task.task_id, name_tiny, task_ptr);
+                // SAFETY: `task_ptr` is the live pool-slot popped from
+                // `async_network_task_queue` at the top of this loop.
+                let queued = unsafe {
+                    enqueue::enqueue_parse_npm_package(manager, task.task_id, name_tiny, task_ptr)
+                };
                 manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
             NetworkTaskCallback::Extract(extract) => {
@@ -901,11 +895,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if log_level.show_progress() {
                     if !has_updated_this_run.get() {
-                        manager.set_node_name::<true>(
-                            manager.downloads_node_mut(),
-                            extract.name.slice(),
-                            ProgressStrings::EXTRACT_EMOJI.as_bytes(),
-                        );
+                        // SAFETY: `downloads_node_mut()` returns `manager.downloads_node`.
+                        unsafe {
+                            manager.set_node_name::<true>(
+                                manager.downloads_node_mut(),
+                                extract.name.slice(),
+                                ProgressStrings::EXTRACT_EMOJI.as_bytes(),
+                            )
+                        };
                         has_updated_this_run.set(true);
                     }
                 }
@@ -919,12 +916,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     }
 
     let resolve_tasks_batch = manager.resolve_tasks.pop_batch();
-    let mut resolve_tasks_iter = resolve_tasks_batch.iterator();
-    loop {
-        let task_ptr = resolve_tasks_iter.next();
-        if task_ptr.is_null() {
-            break;
-        }
+    for h in resolve_tasks_batch {
+        let task_ptr = h.into_raw();
         if cfg!(debug_assertions) {
             debug_assert!(manager.pending_task_count() > 0);
         }
@@ -1032,11 +1025,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if log_level.show_progress() {
                     if !has_updated_this_run.get() {
-                        manager.set_node_name::<true>(
-                            manager.downloads_node_mut(),
-                            manifest.name(),
-                            ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
-                        );
+                        // SAFETY: `downloads_node_mut()` returns `manager.downloads_node`.
+                        unsafe {
+                            manager.set_node_name::<true>(
+                                manager.downloads_node_mut(),
+                                manifest.name(),
+                                ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
+                            )
+                        };
                         has_updated_this_run.set(true);
                     }
                 }
@@ -1258,11 +1254,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if log_level.show_progress() {
                     if !has_updated_this_run.get() {
-                        manager.set_node_name::<true>(
-                            manager.downloads_node_mut(),
-                            alias,
-                            ProgressStrings::EXTRACT_EMOJI.as_bytes(),
-                        );
+                        // SAFETY: `downloads_node_mut()` returns `manager.downloads_node`.
+                        unsafe {
+                            manager.set_node_name::<true>(
+                                manager.downloads_node_mut(),
+                                alias,
+                                ProgressStrings::EXTRACT_EMOJI.as_bytes(),
+                            )
+                        };
                         has_updated_this_run.set(true);
                     }
                 }
@@ -1429,11 +1428,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if log_level.show_progress() {
                     if !has_updated_this_run.get() {
-                        manager.set_node_name::<true>(
-                            manager.downloads_node_mut(),
-                            name,
-                            ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
-                        );
+                        // SAFETY: `downloads_node_mut()` returns `manager.downloads_node`.
+                        unsafe {
+                            manager.set_node_name::<true>(
+                                manager.downloads_node_mut(),
+                                name,
+                                ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
+                            )
+                        };
                         has_updated_this_run.set(true);
                     }
                 }
@@ -1563,11 +1565,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 if log_level.show_progress() {
                     if !has_updated_this_run.get() {
-                        manager.set_node_name::<true>(
-                            manager.downloads_node_mut(),
-                            alias.slice(),
-                            ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
-                        );
+                        // SAFETY: `downloads_node_mut()` returns `manager.downloads_node`.
+                        unsafe {
+                            manager.set_node_name::<true>(
+                                manager.downloads_node_mut(),
+                                alias.slice(),
+                                ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
+                            )
+                        };
                         has_updated_this_run.set(true);
                     }
                 }

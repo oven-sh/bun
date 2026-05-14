@@ -7,7 +7,7 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::Yield;
 
-use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -232,19 +232,17 @@ impl YesTask {
             match (*this).evtloop {
                 EventLoopHandle::Js { owner } => {
                     owner.tick();
-                    let ct: *mut ConcurrentTask = match &mut (*this).concurrent_task {
-                        EventLoopTask::Js(ct) => ct.from(this, AutoDeinit::ManualDeinit),
-                        EventLoopTask::Mini(_) => unreachable!(),
-                    };
-                    owner.enqueue_task_concurrent(ct);
+                    owner.enqueue_task_concurrent(ConcurrentTask::create_from(this));
                 }
                 EventLoopHandle::Mini(mut mini) => {
                     (*mini.loop_).tick();
                     let at = match &mut (*this).concurrent_task {
                         EventLoopTask::Mini(at) => at.from(this, Self::run_from_main_thread_mini),
-                        EventLoopTask::Js(_) => unreachable!(),
+                        EventLoopTask::Js => unreachable!(),
                     };
-                    mini.get_mut().enqueue_task_concurrent(at);
+                    // SAFETY: embedded `concurrent_task.Mini` field of the heap `Box<Yes>`.
+                    mini.get_mut()
+                        .enqueue_task_concurrent(bun_threading::Owned::new(at));
                 }
             }
         }

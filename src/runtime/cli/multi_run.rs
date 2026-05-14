@@ -155,12 +155,8 @@ impl<'a> ProcessHandle<'a> {
             });
             // SAFETY: same loader; the `_restore` guard's closure has not fired yet.
             envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
-            spawn::spawn_process(
-                &self.options,
-                argv.as_ptr(),
-                envp.as_ptr().cast::<*const c_char>(),
-            )?
-            .map_err(|e| Error::from(e))?
+            spawn::spawn_process(&self.options, &argv, envp.as_slice())?
+                .map_err(|e| Error::from(e))?
         };
         // POSIX-only: pipe FDs are read before `to_process` consumes `spawned`.
         // On Windows the readers are wired via `Source::Pipe` taken from

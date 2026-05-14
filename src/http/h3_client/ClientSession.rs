@@ -144,6 +144,10 @@ impl ClientSession {
         }
     }
 
+    // `stream` is always an element of `self.pending` (heap-allocated by
+    // `Stream::new`); making this `unsafe fn` would cascade through every
+    // `*mut Stream`-taking caller in this module.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn detach(&mut self, stream: *mut Stream) {
         let st = stream_mut(stream);
         if let Some(cl) = st.client {

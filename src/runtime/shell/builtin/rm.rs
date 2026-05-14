@@ -1533,7 +1533,7 @@ impl DirTask {
     /// `this` is a live DirTask; the pending-main-callback count on the
     /// owning ShellRmTask was bumped before calling.
     unsafe fn queue_for_write(this: *mut DirTask) {
-        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask, EventLoopTaskPtr};
+        use bun_event_loop::{ConcurrentTask::ConcurrentTask, EventLoopTask, EventLoopTaskPtr};
         // SAFETY: caller contract — `this` is live; `task_manager` is live
         // (pending count > 0). On the early-return path `deinit` reclaims a
         // non-root Box and `decr_pending_and_maybe_deinit` releases the
@@ -1556,12 +1556,9 @@ impl DirTask {
             (me, event_loop)
         };
         let task_ptr = match &mut me.concurrent_task {
-            EventLoopTask::Js(ct) => {
-                ct.from(this, AutoDeinit::ManualDeinit);
-                EventLoopTaskPtr {
-                    js: std::ptr::from_mut(ct),
-                }
-            }
+            EventLoopTask::Js => EventLoopTaskPtr {
+                js: Box::into_raw(ConcurrentTask::create_from(this)),
+            },
             EventLoopTask::Mini(at) => EventLoopTaskPtr {
                 mini: at.from(this, dir_task_run_from_main_thread_mini),
             },

@@ -256,6 +256,7 @@ pub fn find_longest_registered_extension<'a>(
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
 pub extern "C" fn NodeModuleModule__onRequireExtensionModify(
     global: &JSGlobalObject,
     str: *const BunString,
@@ -271,6 +272,7 @@ pub extern "C" fn NodeModuleModule__onRequireExtensionModify(
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
 pub extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
     global: &JSGlobalObject,
     str: *const BunString,

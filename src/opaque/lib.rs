@@ -269,6 +269,9 @@ macro_rules! assert_ffi_discr {
 /// Hot paths where the foreign caller contractually guarantees non-null (JSC
 /// host-fn thunks, `.classes.ts`-generated trampolines) should use
 /// [`opaque_deref_nn`] instead to elide the release-mode `testq; je <panic>`.
+// not_unsafe_ptr_arg_deref: sound — see doc above. The only validity invariant
+// for `&T` here is non-null (ZST, align-1), and that is `assert!`ed.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[inline(always)]
 pub fn opaque_deref<'a, T>(p: *const T) -> &'a T {
     assert!(!p.is_null(), "opaque_deref: null FFI handle");
@@ -312,6 +315,8 @@ pub unsafe fn opaque_deref_nn<'a, T>(p: *const T) -> &'a T {
 /// handle. See [`opaque_deref`] for the full soundness argument; the `&mut`
 /// case additionally relies on the ZST property to discharge `noalias` (a
 /// mutable borrow of zero bytes cannot overlap any other borrow).
+// not_unsafe_ptr_arg_deref: sound — see [`opaque_deref`].
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[inline(always)]
 pub fn opaque_deref_mut<'a, T>(p: *mut T) -> &'a mut T {
     assert!(!p.is_null(), "opaque_deref_mut: null FFI handle");

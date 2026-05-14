@@ -421,12 +421,14 @@ pub extern "C" fn AbortSignal__Timeout__create(
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
 pub extern "C" fn AbortSignal__Timeout__run(this: *mut Timeout, vm: *mut VirtualMachine) {
     // SAFETY: C++ caller passes a live boxed Timeout and the live per-thread VM.
     unsafe { Timeout::run(this, vm) }
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
 pub extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
     // Called from ~AbortSignal() / cancelTimer(). The AbortSignal's
     // ScriptExecutionContext may be a dead global under --isolate, so

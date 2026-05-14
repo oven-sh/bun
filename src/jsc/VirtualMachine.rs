@@ -1840,6 +1840,8 @@ bun_io::link_impl_EventLoopCtx! {
 }
 
 impl VirtualMachine {
+    // 100+ callers; making `unsafe fn` would cascade through all `Async::js_vm_ctx()`-style sites.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub fn event_loop_ctx(this: *mut Self) -> bun_io::EventLoopCtx {
         // SAFETY: `this` is a live VM (per-thread or a worker's parent ref);
@@ -2807,7 +2809,10 @@ impl IPCInstance {
         Some(self.global_this)
     }
     /// Only reached from the `get_ipc_instance` error path.
-    pub fn deinit(this: *mut IPCInstance) {
+    ///
+    /// # Safety
+    /// `this` must have been produced by `IPCInstance::new`.
+    pub unsafe fn deinit(this: *mut IPCInstance) {
         // SAFETY: `this` was produced by `IPCInstance::new` (heap::alloc).
         // `SendQueue` cleans itself up via `Drop`.
         drop(unsafe { bun_core::heap::take(this) });
@@ -3047,6 +3052,8 @@ impl VirtualMachine {
     /// higher `bun_runtime` tier (forward-dep on `bun_jsc`), so they're
     /// type-erased here and dispatched through [`RuntimeHooks`]. Callers in
     /// `bun_runtime` cast back.
+    // §Dispatch hook indirection; 8 callers across server/webcore.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn init_request_body_value(&mut self, body: *mut c_void) -> *mut c_void {
         let hooks = runtime_hooks().expect("runtime hooks not installed");
         // SAFETY: hook contract — `body` is a `Body::Value` allocated by the
@@ -3499,7 +3506,7 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:1020 `enqueueTaskConcurrent`.
     #[inline]
-    pub fn enqueue_task_concurrent(&mut self, task: *mut crate::event_loop::ConcurrentTaskItem) {
+    pub fn enqueue_task_concurrent(&mut self, task: Box<crate::event_loop::ConcurrentTaskItem>) {
         self.event_loop_mut().enqueue_task_concurrent(task);
     }
 
@@ -4958,7 +4965,10 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:2904 `remapStackFramePositions`.
-    pub fn remap_stack_frame_positions(
+    ///
+    /// # Safety
+    /// `frames` must point at `frames_count` valid `ZigStackFrame`s.
+    pub unsafe fn remap_stack_frame_positions(
         &mut self,
         frames: *mut crate::ZigStackFrame,
         frames_count: usize,
@@ -6381,7 +6391,8 @@ impl VirtualMachine {
                 )
             };
             let Some(socket) = socket else {
-                IPCInstance::deinit(instance);
+                // SAFETY: `instance` was just produced by `IPCInstance::new`.
+                unsafe { IPCInstance::deinit(instance) };
                 self.ipc = None;
                 bun_core::output::warn("Unable to start IPC socket");
                 return None;
@@ -6430,7 +6441,8 @@ impl VirtualMachine {
             // stored inline in `*instance`; no other live `&mut` aliases it.
             if let Err(_) = unsafe { crate::ipc::SendQueue::windows_configure_client(data_ptr, fd) }
             {
-                IPCInstance::deinit(instance);
+                // SAFETY: `instance` was just produced by `IPCInstance::new`.
+                unsafe { IPCInstance::deinit(instance) };
                 self.ipc = None;
                 bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
                 return None;

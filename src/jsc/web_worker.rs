@@ -462,6 +462,7 @@ impl WebWorker {
     /// set and nothing to clean up (no keep-alive held, no allocation
     /// outstanding).
     #[unsafe(export_name = "WebWorker__create")]
+    #[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
     pub extern "C" fn create(
         cpp_worker: *mut c_void,
         parent: *mut VirtualMachine,
@@ -619,6 +620,7 @@ impl WebWorker {
     /// allocator is mimalloc (thread-safe), so the caller's thread doesn't
     /// matter.
     #[unsafe(export_name = "WebWorker__destroy")]
+    #[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
     pub extern "C" fn destroy(this: *mut WebWorker) {
         // SAFETY: this was heap-allocated in create(); C++ owns it and calls
         // destroy exactly once.

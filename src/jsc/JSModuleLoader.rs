@@ -44,7 +44,10 @@ unsafe extern "C" {
 }
 
 impl JSModuleLoader {
-    pub fn evaluate(
+    /// # Safety
+    /// `*_ptr`/`*_len` pairs must be valid for reads; `exception` must point to a
+    /// writable `JSValue` slot.
+    pub unsafe fn evaluate(
         global_object: &JSGlobalObject,
         source_code_ptr: *const u8,
         source_code_len: usize,

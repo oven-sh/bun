@@ -1009,6 +1009,7 @@ impl TestReporterHandle {
 }
 
 // HOST_EXPORT(Bun__TestReporterAgentEnable, c)
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // HOST_EXPORT — generated extern "C" thunk establishes validity
 pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread.

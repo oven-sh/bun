@@ -64,6 +64,7 @@ pub extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
 pub extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
     crate::mark_binding!();
     // SAFETY: `paused` points to a live bool for the duration of the call.

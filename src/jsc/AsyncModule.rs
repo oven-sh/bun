@@ -332,6 +332,8 @@ impl Queue {
         self.vm().package_manager().drain_dependency_list();
     }
 
+    // callback thunk; `ctx` was registered as `*Queue` when installing this callback
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_dependency_error(
         ctx: *mut c_void,
         dependency: &Dependency,
@@ -729,6 +731,9 @@ impl AsyncModule {
         }
     }
 
+    // callback thunk; `this` provenance is `done()`'s heap allocation handed
+    // back via the `AnyTask` dispatch
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_done(this: *mut AsyncModule) {
         jsc::mark_binding();
         // SAFETY: `this` was heap-allocated in `done`; reclaimed at end of this fn.

@@ -299,6 +299,9 @@ pub fn transpile_source_code(
 }
 
 /// `ModuleLoader.fetchBuiltinModule(jsc_vm, specifier)`.
+// `global` is forwarded to the §Dispatch hook fn-ptr without deref here;
+// only the hook body (in `bun_runtime`) dereferences it.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn fetch_builtin_module(
     jsc_vm: &mut VirtualMachine,
     global: *mut JSGlobalObject,
@@ -324,6 +327,8 @@ pub fn fetch_builtin_module(
 /// boundary. The branch is a single length-check / `dirWithTrailingSlash` —
 /// PERF(port): was inline switch; the fn-ptr indirection is one call per
 /// `import` / `require.resolve`, dominated by the resolver's dir-cache walk.
+// `global` is forwarded to the §Dispatch hook fn-ptr (see body SAFETY).
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn resolve_maybe_needs_trailing_slash(
     res: &mut ErrorableString,
     global: *mut JSGlobalObject,
@@ -413,6 +418,7 @@ pub fn process_fetch_log(
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
 pub extern "C" fn Bun__transpileFile(
     jsc_vm: *mut VirtualMachine,
     global_object: *mut JSGlobalObject,
@@ -451,6 +457,7 @@ pub extern "C" fn Bun__transpileFile(
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
 pub extern "C" fn Bun__fetchBuiltinModule(
     jsc_vm: *mut VirtualMachine,
     global_object: *mut JSGlobalObject,
@@ -488,6 +495,7 @@ fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
 
 /// Spec ModuleLoader.zig:828-848.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
 pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
     jsc_vm: *mut VirtualMachine,
     specifier: *mut bun_core::String,
@@ -520,6 +528,7 @@ pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
 
 /// Spec ModuleLoader.zig:1332-1342. Support embedded .node files.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
 pub extern "C" fn Bun__resolveEmbeddedNodeFile(
     vm: *mut VirtualMachine,
     in_out_str: *mut bun_core::String,
@@ -545,6 +554,7 @@ pub extern "C" fn Bun__resolveEmbeddedNodeFile(
 
 /// Spec ModuleLoader.zig:1344-1347.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
 pub extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
     // SAFETY: C++ guarantees `data[..len]` is a valid UTF-8 specifier slice.
     let str = unsafe { bun_core::ffi::slice(data, len) };
@@ -590,6 +600,7 @@ pub extern "C" fn Bun__getDefaultLoader(
 
 /// Spec ModuleLoader.zig:1234-1304.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
 pub extern "C" fn Bun__transpileVirtualModule(
     global: *mut JSGlobalObject,
     specifier: *const bun_core::String,
@@ -620,6 +631,7 @@ pub extern "C" fn Bun__transpileVirtualModule(
 
 /// Spec ModuleLoader.zig:1122-1143.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
 pub extern "C" fn Bun__runVirtualModule(
     global: &JSGlobalObject,
     specifier_ptr: *const bun_core::String,

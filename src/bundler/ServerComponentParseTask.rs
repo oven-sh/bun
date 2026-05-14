@@ -98,7 +98,6 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         // `ctx` already a `ParentRef<BundleV2>` with write provenance
         // (constructed from `NonNull::from(&mut self)` in `bundle_v2.rs`).
         ctx,
-        // SAFETY: Zig leaves `.task = undefined`; consumer overwrites before read.
         task: Default::default(),
         value,
         external: ExternalFreeFunction::NONE,

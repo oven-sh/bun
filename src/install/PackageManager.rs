@@ -237,7 +237,6 @@ pub use self::package_manager_options::Options;
 // Zig's `PackageJSONEditor` is a file-level namespace (no struct) — re-export
 // the module itself so `PackageJSONEditor::edit(...)` resolves to the free fns.
 pub use self::install_with_manager::install_with_manager;
-#[allow(non_snake_case)]
 pub use self::package_json_editor as PackageJSONEditor;
 pub use self::update_request::UpdateRequest;
 pub use self::workspace_package_json_cache::WorkspacePackageJSONCache;

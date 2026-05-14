@@ -107,6 +107,7 @@ pub struct NetworkTask {
 // these accessors by `UnboundedQueue<NetworkTask>`. Mirrors Zig's
 // `@field(item, "next")` over `bun.UnboundedQueue(NetworkTask, .next)`.
 unsafe impl bun_threading::Linked for NetworkTask {
+    type Handle = bun_threading::Owned<Self>;
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
@@ -180,6 +181,8 @@ impl NetworkTask {
     // PORT NOTE: signature matches `HTTPClientResultCallback::new::<NetworkTask>`'s
     // `fn(*mut T, *mut AsyncHTTP, HTTPClientResult<'_>)` shape so it can be
     // installed directly without a separate trampoline.
+    // callback thunk; `this` provenance is `get_completion_callback`'s ctx.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn notify(
         this: *mut NetworkTask,
         async_http: *mut AsyncHTTP<'static>,
@@ -321,7 +324,7 @@ impl NetworkTask {
         // SAFETY: `pm` is a live BACKREF; `async_network_task_queue` is
         // internally synchronized (`UnboundedQueue::push` takes `&self`).
         unsafe {
-            (*ptr::addr_of!((*pm).async_network_task_queue)).push(this);
+            (*ptr::addr_of!((*pm).async_network_task_queue)).push(bun_threading::Owned::from(this));
             PackageManager::wake_raw(pm);
         }
     }

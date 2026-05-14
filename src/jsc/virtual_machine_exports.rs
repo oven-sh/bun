@@ -233,6 +233,7 @@ pub fn get_tls_reject_unauthorized_value() -> i32 {
 }
 
 // HOST_EXPORT(Bun__isNoProxy, c)
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // HOST_EXPORT — generated extern "C" thunk establishes validity
 pub fn is_no_proxy(
     hostname_ptr: *const u8,
     hostname_len: usize,

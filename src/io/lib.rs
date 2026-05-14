@@ -812,6 +812,10 @@ impl IoRequestLoop {
         Self::ensure_init();
         debug_assert!(!request.scheduled);
         request.scheduled = true;
+        // `request` is an embedded `Request` field of a heap `ReadFile`/
+        // `WriteFile`/`CopyFile`; the parent's poll/finalize machinery keeps
+        // it live past the IO thread's matching `pop_batch`.
+        let handle = bun_threading::Owned::from(request);
         // SAFETY: `ONCE` above established happens-before for `load()`'s
         // init of `pending`/`waker`. We use `get_unchecked` (no owner assert)
         // and stay in raw-ptr land via `addr_of_mut!` so we never materialize
@@ -820,7 +824,7 @@ impl IoRequestLoop {
         // is async-signal-safe by design.
         unsafe {
             let loop_p = (*LOOP.get_unchecked()).as_mut_ptr();
-            (*core::ptr::addr_of!((*loop_p).pending)).push(request);
+            (*core::ptr::addr_of!((*loop_p).pending)).push(handle);
             (*core::ptr::addr_of_mut!((*loop_p).waker)).wake();
         }
     }
@@ -856,16 +860,11 @@ impl IoRequestLoop {
         loop {
             // Process pending requests
             {
-                let mut pending = self.pending.pop_batch().iterator();
                 let watcher_fd = self.pollfd();
 
-                loop {
-                    let request_ptr = pending.next();
-                    if request_ptr.is_null() {
-                        break;
-                    }
+                for owned in self.pending.pop_batch() {
                     // SAFETY: pop_batch yields live nodes pushed by `schedule()`.
-                    let request = unsafe { &mut *request_ptr };
+                    let request = unsafe { &mut *owned.into_raw() };
                     request.scheduled = false;
                     match (request.callback)(request) {
                         Action::Readable(readable) => {
@@ -998,8 +997,8 @@ impl IoRequestLoop {
 
             // Process pending requests
             {
-                let mut pending = self.pending.pop_batch().iterator();
-                events_list.reserve(pending.batch.count);
+                let pending = self.pending.pop_batch();
+                events_list.reserve(pending.len());
                 // Zig: `addOneAssumeCapacity`. `reserve` above ⇒ no realloc; apply_kqueue
                 // fully overwrites the slot so the zero is a safe placeholder.
                 #[inline(always)]
@@ -1009,13 +1008,9 @@ impl IoRequestLoop {
                     list.last_mut().unwrap()
                 }
 
-                loop {
-                    let request_ptr = pending.next();
-                    if request_ptr.is_null() {
-                        break;
-                    }
+                for owned in pending {
                     // SAFETY: pop_batch yields live nodes pushed by `schedule()`.
-                    let request = unsafe { &mut *request_ptr };
+                    let request = unsafe { &mut *owned.into_raw() };
                     request.scheduled = false;
                     match (request.callback)(request) {
                         Action::Readable(readable) => {
@@ -1280,6 +1275,11 @@ impl Default for Request {
 // no weaker than the original.
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue(Request, .next)`.
 unsafe impl bun_threading::Linked for Request {
+    // `Request` is an embedded field of `ReadFile`/`WriteFile`/`CopyFile`; the
+    // parent owns the storage, so the queue holds a borrow-like `Owned`, not a
+    // `Box`. The invariant ("parent outlives the matching pop") is established
+    // at the one `Owned::new` in `schedule()`.
+    type Handle = bun_threading::Owned<Self>;
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
@@ -1290,7 +1290,6 @@ unsafe impl bun_threading::Linked for Request {
 /// Zig: `pub const Queue = bun.UnboundedQueue(Request, .next);`
 pub type RequestQueue = bun_threading::UnboundedQueue<Request>;
 pub type RequestBatch = bun_threading::unbounded_queue::Batch<Request>;
-pub type RequestBatchIter = bun_threading::unbounded_queue::BatchIterator<Request>;
 
 // ─── Action ───────────────────────────────────────────────────────────────────
 
@@ -2300,11 +2299,11 @@ pub mod closer {
     // ── Windows ──────────────────────────────────────────────────────────────
 
     #[cfg(windows)]
+    use crate::IntrusiveUvFs as _;
+    #[cfg(windows)]
     use bun_sys::windows::libuv as uv;
     #[cfg(windows)]
     use core::ffi::c_void;
-    #[cfg(windows)]
-    use crate::IntrusiveUvFs as _;
 
     #[cfg(windows)]
     #[repr(C)]

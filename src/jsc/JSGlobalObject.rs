@@ -1410,7 +1410,9 @@ impl JSGlobalObject {
         }
     }
 
-    pub fn create(
+    /// # Safety
+    /// `v` must be the live VM under construction.
+    pub unsafe fn create(
         v: *mut VirtualMachine,
         console: *mut c_void,
         context_id: i32,
@@ -1567,6 +1569,7 @@ use bun_core::fmt::VecWriter as WriteVec;
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
 pub extern "C" fn Zig__GlobalObject__resolve(
     res: *mut ErrorableString,
     global: *const JSGlobalObject,
@@ -1590,6 +1593,7 @@ pub extern "C" fn Zig__GlobalObject__resolve(
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // extern "C" export — C++ caller establishes validity
 pub extern "C" fn Zig__GlobalObject__reportUncaughtException(
     global: *const JSGlobalObject,
     exception: *mut Exception,

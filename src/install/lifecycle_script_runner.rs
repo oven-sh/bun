@@ -332,6 +332,9 @@ impl<'a> io_heap::HeapNode for LifecycleScriptSubprocess<'a> {
 }
 
 impl<'a> io_heap::HeapContext<LifecycleScriptSubprocess<'a>> for StartedAtCtx {
+    // trait method signature is fixed by `io_heap::HeapContext`; nodes are
+    // live heap entries handed in via `insert`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     fn less(
         &self,
@@ -383,6 +386,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     /// SAFETY: see [`Self::manager`]. Mutable access is sound because Zig's
     /// `*PackageManager` is a non-exclusive pointer; no `&PackageManager`
     /// outlives the brief field accesses below on the install thread.
+    #[allow(clippy::mut_from_ref)]
     #[inline]
     fn manager_mut(&self) -> &mut PackageManager {
         // SAFETY: see fn doc.
@@ -704,37 +708,32 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*manager)
                 .active_lifecycle_scripts
                 .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
-            let mut spawned = match bun_spawn::spawn_process(
-                &spawn_options,
-                // argv is `[*const c_char; 4]` with trailing null — exactly the
-                // `[*:null]?[*:0]const u8` layout `spawn_process` expects (1 word/elt).
-                argv.as_mut_ptr().cast(),
-                (*this).envp.as_ptr().cast::<*const c_char>(),
-            ) {
-                Ok(Ok(s)) => s,
-                res => {
-                    // TODO(port): Zig was `try (try spawnProcess(...)).unwrap()` — outer
-                    // `!Maybe(Spawned)`. Modeled here as `Result<bun_sys::Result<Spawned>, _>`.
-                    #[cfg(windows)]
-                    {
-                        // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
-                        // raw `*mut uv::Pipe` allocations on the SUCCESS path; on every
-                        // error return (uv_pipe_init failure, uv_spawn failure) ownership
-                        // stays with the caller. `WindowsStdio` has no `Drop`, so reclaim
-                        // and `uv_close`+free them explicitly here — otherwise the heap
-                        // `uv::Pipe`s leak (and, if already `uv_pipe_init`'d, remain
-                        // linked in the libuv loop's handle queue forever). Zig avoided
-                        // this by stashing the pipes in `this.{stdout,stderr}.source`
-                        // BEFORE building `SpawnOptions` (lifecycle_script_runner.zig:190);
-                        // the Rust ordering moved allocation inline (see PORT NOTE above)
-                        // and must therefore handle the error path explicitly.
-                        spawn_options.stdout.deinit();
-                        spawn_options.stderr.deinit();
+            let mut spawned =
+                match bun_spawn::spawn_process(&spawn_options, &argv, (*this).envp.as_slice()) {
+                    Ok(Ok(s)) => s,
+                    res => {
+                        // TODO(port): Zig was `try (try spawnProcess(...)).unwrap()` — outer
+                        // `!Maybe(Spawned)`. Modeled here as `Result<bun_sys::Result<Spawned>, _>`.
+                        #[cfg(windows)]
+                        {
+                            // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
+                            // raw `*mut uv::Pipe` allocations on the SUCCESS path; on every
+                            // error return (uv_pipe_init failure, uv_spawn failure) ownership
+                            // stays with the caller. `WindowsStdio` has no `Drop`, so reclaim
+                            // and `uv_close`+free them explicitly here — otherwise the heap
+                            // `uv::Pipe`s leak (and, if already `uv_pipe_init`'d, remain
+                            // linked in the libuv loop's handle queue forever). Zig avoided
+                            // this by stashing the pipes in `this.{stdout,stderr}.source`
+                            // BEFORE building `SpawnOptions` (lifecycle_script_runner.zig:190);
+                            // the Rust ordering moved allocation inline (see PORT NOTE above)
+                            // and must therefore handle the error path explicitly.
+                            spawn_options.stdout.deinit();
+                            spawn_options.stderr.deinit();
+                        }
+                        res??;
+                        unreachable!();
                     }
-                    res??;
-                    unreachable!();
-                }
-            };
+                };
 
             #[cfg(unix)]
             {

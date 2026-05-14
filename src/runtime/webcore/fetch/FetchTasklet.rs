@@ -5,11 +5,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_boringssl as boringssl;
 use bun_core::{Error as BunError, err};
 use bun_core::{MutableString, OwnedString, String as BunString, ZigStringSlice};
-use bun_event_loop::{
-    AnyTask::AnyTask,
-    ConcurrentTask::{AutoDeinit, ConcurrentTask},
-    Task, Taskable,
-};
+use bun_event_loop::{AnyTask::AnyTask, ConcurrentTask::ConcurrentTask, Task, Taskable};
 use bun_http as http;
 use bun_http::Method;
 use bun_http::{
@@ -89,7 +85,6 @@ pub struct FetchTasklet {
     pub readable_stream_ref: ReadableStreamStrong,
     pub request_headers: Headers,
     pub promise: jsc::JSPromiseStrong,
-    pub concurrent_task: ConcurrentTask,
     pub poll_ref: KeepAlive,
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
@@ -299,7 +294,7 @@ impl FetchTasklet {
     /// is valid for the VM's lifetime; `enqueue_task_concurrent` takes `&self`
     /// and is thread-safe (lock-free MPSC push).
     #[inline]
-    fn enqueue_concurrent(vm: &VirtualMachine, task: *mut ConcurrentTask) {
+    fn enqueue_concurrent(vm: &VirtualMachine, task: Box<ConcurrentTask>) {
         vm.event_loop_shared().enqueue_task_concurrent(task);
     }
 
@@ -1586,7 +1581,6 @@ impl FetchTasklet {
             readable_stream_ref: ReadableStreamStrong::default(),
             request_headers: fetch_options.headers,
             promise,
-            concurrent_task: ConcurrentTask::default(),
             poll_ref: KeepAlive::default(),
             body_size: http::BodySize::Unknown,
             url_proxy_buffer: fetch_options.url_proxy_buffer,
@@ -2140,10 +2134,7 @@ impl FetchTasklet {
             }
             return;
         }
-        let ct = task_ref
-            .concurrent_task
-            .from(task, AutoDeinit::ManualDeinit);
-        Self::enqueue_concurrent(task_ref.javascript_vm, ct);
+        Self::enqueue_concurrent(task_ref.javascript_vm, ConcurrentTask::create_from(task));
 
         task_ref.mutex.unlock();
         // we are done with the http client so we can deref our side

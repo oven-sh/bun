@@ -204,6 +204,12 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
             }
         });
         quote! {
+            // The dispatcher only *forwards* its args to the per-variant extern
+            // fn; it never dereferences them. The `unsafe` block is for the
+            // extern call itself, whose validity (`self.owner` matches `kind`)
+            // is established once at `unsafe fn new()`. Clippy's heuristic
+            // ("raw-ptr arg used inside an `unsafe` block") can't see that.
+            #[allow(clippy::not_unsafe_ptr_arg_deref)]
             #[inline]
             pub fn #mn(&self #(, #an: #at)*) #ret {
                 match self.kind { #(#arms),* }

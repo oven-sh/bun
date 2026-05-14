@@ -144,8 +144,8 @@ impl Worker {
             // anyerror, inner map for the bun_sys::Result.
             let mut spawned = spawn::spawn_process(
                 &options,
-                coord.argv.as_ptr(),
-                coord.envps[this.idx as usize].as_ptr(),
+                &coord.argv,
+                coord.envps[this.idx as usize].as_slice(),
             )?
             .map_err(|e| {
                 Output::err(e, "spawnProcess failed for test worker", ());
@@ -229,8 +229,8 @@ impl Worker {
             // anyerror, inner map for the bun_sys::Result.
             let mut spawned = spawn::spawn_process(
                 &options,
-                coord.argv.as_ptr(),
-                coord.envps[this.idx as usize].as_ptr(),
+                &coord.argv,
+                coord.envps[this.idx as usize].as_slice(),
             )?
             .map_err(|e| {
                 Output::err(e, "spawnProcess failed for test worker", ());

@@ -323,6 +323,7 @@ fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
 /// host call, so the `&mut` is exclusive for the duration). Callers that need
 /// to interleave borrows across a deferred guard (`message_with_type_and_level_`)
 /// keep using the raw [`vm_console`] pointer instead.
+#[allow(clippy::mut_from_ref)]
 #[inline]
 fn vm_console_mut(global: &JSGlobalObject) -> &mut ConsoleObject {
     // SAFETY: see [`vm_console`] — `VirtualMachine.console` is initialized once
@@ -1471,6 +1472,9 @@ impl FormatOptions {
 // format2
 // ───────────────────────────────────────────────────────────────────────────
 
+// `vals`/`len` are an FFI-shaped (ptr,len) pair for the JSValue argv on the
+// stack; making this `unsafe` would cascade through every `console.*` host fn.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn format2(
     level: MessageLevel,
     global: &JSGlobalObject,

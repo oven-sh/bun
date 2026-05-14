@@ -117,11 +117,7 @@ impl<'a> ProcessHandle<'a> {
             }
             // SAFETY: see above; reborrow through raw ptr to avoid overlapping &mut with guard.
             let envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
-            break 'brk spawn::spawn_process(
-                &handle.options,
-                argv.as_ptr(),
-                envp.as_ptr().cast::<*const c_char>(),
-            )??;
+            break 'brk spawn::spawn_process(&handle.options, &argv, envp.as_slice())??;
             // `_guard` drops here (or on `?` above), restoring PATH — matches Zig `defer`.
         };
         #[cfg(unix)]

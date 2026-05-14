@@ -405,6 +405,9 @@ impl hooks::AutoInstaller for PackageManager {
 
     // ── Dependency parsing ────────────────────────────────────────────────
 
+    // trait method signature is fixed by `hooks::AutoInstaller`; `log` is the
+    // resolver's owned `*mut Log` (or null).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn parse_dependency(
         &mut self,
         name: SemverString,
@@ -421,6 +424,8 @@ impl hooks::AutoInstaller for PackageManager {
         dependency::parse(name, name_hash, version, sliced, log, Some(self))
     }
 
+    // trait method signature is fixed by `hooks::AutoInstaller`; see `parse_dependency`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn parse_dependency_with_tag(
         &mut self,
         name: SemverString,

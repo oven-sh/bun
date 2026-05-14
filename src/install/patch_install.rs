@@ -66,6 +66,7 @@ bun_threading::intrusive_work_task!(PatchTask, task);
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue(PatchTask, .next)`.
 unsafe impl bun_threading::Linked for PatchTask {
+    type Handle = bun_threading::Owned<Self>;
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
@@ -172,6 +173,7 @@ impl PatchTask {
     // guarantees `task` is live and points at `PatchTask.task`, so the
     // precondition is discharged locally. Safe `fn` coerces to the
     // `unsafe fn(*mut Task)` field type.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run_from_thread_pool(task: *mut ThreadPoolTask) {
         // SAFETY: thread-pool callback contract — `task` points to the `task`
         // field of a live `PatchTask` (set at construction); the pool runs
@@ -210,7 +212,7 @@ impl PatchTask {
         unsafe {
             (*mgr)
                 .patch_task_queue
-                .push(std::ptr::from_mut::<Self>(self));
+                .push(bun_threading::Owned::from(self));
             PackageManager::wake_raw(mgr);
         }
     }
@@ -401,7 +403,9 @@ impl PatchTask {
                     );
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::ApplyPatch {
                         manager.set_preinstall_state(pkg_meta_id, PreinstallState::ApplyingPatch);
-                        package_manager::enqueue_patch_task(manager, patch_task);
+                        // SAFETY: `patch_task` is a fresh heap allocation from
+                        // `PatchTask::new_apply_patch_hash` above.
+                        unsafe { package_manager::enqueue_patch_task(manager, patch_task) };
                     }
                 }
                 _ => {}
@@ -754,7 +758,7 @@ impl PatchTask {
         unsafe {
             (*mgr)
                 .patch_task_queue
-                .push(std::ptr::from_mut::<Self>(self));
+                .push(bun_threading::Owned::from(self));
             PackageManager::wake_raw(mgr);
         }
     }

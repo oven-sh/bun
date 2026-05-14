@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use bun_core::MutableString;
 use bun_core::strings;
-use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::async_http::Options as HttpOptions;
 use bun_http::{
@@ -131,7 +131,6 @@ pub struct S3HttpSimpleTask {
     // PORT NOTE: `'static` here because `result.body` (when set) points at our own
     // `response_buffer` — self-referential, so the borrow lives as long as the task.
     pub result: HTTPClientResult<'static>,
-    pub concurrent_task: ConcurrentTask,
     pub range: Option<Box<[u8]>>,
     /// Owned dupe of the proxy URL. The env-derived proxy slice can be freed
     /// by a concurrent process.env.HTTP_PROXY write while the HTTP thread is
@@ -161,7 +160,6 @@ impl Default for S3HttpSimpleTask {
             callback: Callback::Upload(unset_callback),
             response_buffer: MutableString::default(),
             result: HTTPClientResult::default(),
-            concurrent_task: ConcurrentTask::default(),
             range: None,
             proxy_url: Box::default(),
             poll_ref: KeepAlive::default(),
@@ -456,19 +454,13 @@ impl S3HttpSimpleTask {
         // (UAF + double-free), so we simply omit it — `this.response_buffer` already holds the
         // body.
         if is_done {
-            // PORT NOTE: compute the raw self-pointer before borrowing `this.concurrent_task`
-            // to avoid a stacked-borrows / aliasing diagnostic on `*this`.
             let this_ptr = std::ptr::from_mut::<Self>(this);
-            let task = std::ptr::from_mut::<ConcurrentTask>(
-                this.concurrent_task
-                    .from(this_ptr, AutoDeinit::ManualDeinit),
-            );
             // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
             // is set during VM init and outlives this task. `enqueue_task_concurrent` is `&self`.
             this.vm
                 .expect("vm set at task creation")
                 .event_loop_shared()
-                .enqueue_task_concurrent(task);
+                .enqueue_task_concurrent(ConcurrentTask::create_from(this_ptr));
         }
     }
 }
@@ -607,7 +599,6 @@ pub fn execute_simple_s3_request(
         vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
         response_buffer: MutableString::default(),
         result: HTTPClientResult::default(),
-        concurrent_task: ConcurrentTask::default(),
         proxy_url: Box::default(),
         poll_ref: KeepAlive::init(),
     });

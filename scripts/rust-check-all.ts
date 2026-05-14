@@ -15,6 +15,12 @@
 import { spawnSync } from "node:child_process";
 import { allRustTargets } from "./build/rust.ts";
 
+// Ensure cargo can resolve the workspace: vendor path-dep sources fetched and
+// codegen `.rs` outputs generated. Goes through the build system so a fresh
+// checkout works; ninja no-ops when they already exist.
+const prereqs = spawnSync(process.execPath, ["scripts/build.ts", "--target=rust-prereqs"], { stdio: "inherit" });
+if (prereqs.status !== 0) process.exit(prereqs.status ?? 1);
+
 let failed = 0;
 let skipped = 0;
 

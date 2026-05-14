@@ -313,7 +313,6 @@ pub fn list_objects(
         vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
         response_buffer: MutableString::default(),
         result: bun_http::HTTPClientResult::default(),
-        concurrent_task: Default::default(),
         proxy_url: Box::default(),
         poll_ref: bun_io::KeepAlive::init(),
     }));
@@ -1048,7 +1047,6 @@ pub fn download_stream(
             state: core::sync::atomic::AtomicU64::new(
                 crate::webcore::s3::download_stream::State::default().0,
             ),
-            concurrent_task: Default::default(),
         },
     ));
     // SAFETY: just allocated via heap::alloc, non-null; lifetime owned by HTTP callback

@@ -44,7 +44,6 @@ pub mod workspace_map;
 
 pub use meta::Meta;
 pub use scripts::Scripts;
-#[allow(non_snake_case)]
 pub use workspace_map as WorkspaceMap;
 
 bun_output::declare_scope!(Lockfile, hidden);
@@ -1664,17 +1663,19 @@ impl Package<u64> {
     /// `manager.lockfile`, `manager`, `manager.log` as three separate args;
     /// Rust borrowck rejects the overlap on `&mut self`, so split via raw
     /// pointer here once instead of at every call site.
-    pub fn parse_from_real_manager<R: ResolverContext>(
+    /// # Safety
+    /// `manager` must point to a live `PackageManager` for the duration of this
+    /// call (caller passes `self as *mut _`); `lockfile` and `log` are disjoint
+    /// fields, and `parse_with_json` only reaches `manager` through the `pm`
+    /// argument it receives here — no re-entrancy.
+    pub unsafe fn parse_from_real_manager<R: ResolverContext>(
         &mut self,
         manager: *mut crate::package_manager_real::PackageManager,
         source: &bun_ast::Source,
         resolver: &mut R,
         features: Features,
     ) -> Result<(), bun_core::Error> {
-        // SAFETY: `manager` points to a live `PackageManager` for the duration
-        // of this call (caller passes `self as *mut _`); `lockfile` and `log`
-        // are disjoint fields, and `parse_with_json` only reaches `manager`
-        // through the `pm` argument it receives here — no re-entrancy.
+        // SAFETY: caller contract.
         let (lockfile, pm, log) = unsafe {
             let m = &mut *manager;
             let lockfile: *mut Lockfile = &raw mut *m.lockfile;

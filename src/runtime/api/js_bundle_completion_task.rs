@@ -809,6 +809,7 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
 // Hands BundleThread the field accessors it needs without exposing the layout.
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<JSBundleCompletionTask>`.
 unsafe impl bun_threading::Linked for JSBundleCompletionTask {
+    type Handle = bun_threading::Owned<Self>;
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.

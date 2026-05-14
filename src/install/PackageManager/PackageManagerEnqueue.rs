@@ -349,7 +349,9 @@ pub fn enqueue_git_for_checkout(
     }
 }
 
-pub fn enqueue_parse_npm_package(
+/// # Safety
+/// `network_task` must be a live `preallocated_network_tasks` pool slot.
+pub unsafe fn enqueue_parse_npm_package(
     this: &mut PackageManager,
     task_id: Task::Id,
     name: StringOrTinyString,
@@ -612,7 +614,9 @@ pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
     this.network_task_fifo.write_item_assume_capacity(task);
 }
 
-pub fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask) {
+/// # Safety
+/// `task` must be a live heap allocation from `PatchTask::new_*`.
+pub unsafe fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask) {
     bun_output::scoped_log!(
         PackageManager,
         "Enqueue patch task: 0x{:x} {}",
@@ -629,7 +633,10 @@ pub fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask) {
 }
 
 /// We need to calculate all the patchfile hashes at the beginning so we don't run into problems with stale hashes
-pub fn enqueue_patch_task_pre(this: &mut PackageManager, task: *mut PatchTask) {
+///
+/// # Safety
+/// `task` must be a live heap allocation from `PatchTask::new_*`.
+pub unsafe fn enqueue_patch_task_pre(this: &mut PackageManager, task: *mut PatchTask) {
     bun_output::scoped_log!(
         PackageManager,
         "Enqueue patch task pre: 0x{:x} {}",
@@ -964,7 +971,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             result.package.meta.id,
                                             install::PreinstallState::CalcingPatchHash,
                                         );
-                                        enqueue_patch_task(this, patch_task);
+                                        // SAFETY: fresh heap allocation from `PatchTask::new_*`.
+                                        unsafe { enqueue_patch_task(this, patch_task) };
                                     } else if cb.is_apply()
                                         && get_preinstall_state(this, result.package.meta.id)
                                             == install::PreinstallState::ApplyPatch
@@ -974,7 +982,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             result.package.meta.id,
                                             install::PreinstallState::ApplyingPatch,
                                         );
-                                        enqueue_patch_task(this, patch_task);
+                                        // SAFETY: fresh heap allocation from `PatchTask::new_*`.
+                                        unsafe { enqueue_patch_task(this, patch_task) };
                                     }
                                 }
                             }
@@ -2950,24 +2959,33 @@ impl PackageManager {
         enqueue_network_task(self, task)
     }
 
+    /// # Safety
+    /// See [`enqueue_patch_task`].
     #[inline]
-    pub fn enqueue_patch_task(&mut self, task: *mut PatchTask) {
-        enqueue_patch_task(self, task)
+    pub unsafe fn enqueue_patch_task(&mut self, task: *mut PatchTask) {
+        // SAFETY: caller contract.
+        unsafe { enqueue_patch_task(self, task) }
     }
 
+    /// # Safety
+    /// See [`enqueue_patch_task_pre`].
     #[inline]
-    pub fn enqueue_patch_task_pre(&mut self, task: *mut PatchTask) {
-        enqueue_patch_task_pre(self, task)
+    pub unsafe fn enqueue_patch_task_pre(&mut self, task: *mut PatchTask) {
+        // SAFETY: caller contract.
+        unsafe { enqueue_patch_task_pre(self, task) }
     }
 
+    /// # Safety
+    /// See [`enqueue_parse_npm_package`].
     #[inline]
-    pub fn enqueue_parse_npm_package(
+    pub unsafe fn enqueue_parse_npm_package(
         &mut self,
         task_id: Task::Id,
         name: StringOrTinyString,
         network_task: *mut NetworkTask,
     ) -> *mut ThreadPool::Task {
-        enqueue_parse_npm_package(self, task_id, name, network_task)
+        // SAFETY: caller contract.
+        unsafe { enqueue_parse_npm_package(self, task_id, name, network_task) }
     }
 
     #[inline]

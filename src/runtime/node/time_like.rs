@@ -115,9 +115,9 @@ fn from_now() -> TimeLike {
     //        timestamps are not modified, but other error conditions may still
     libc::timespec {
         tv_sec: 0,
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         tv_nsec: libc::UTIME_NOW as _,
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         tv_nsec: bun_sys::c::UTIME_NOW as _,
     }
 }

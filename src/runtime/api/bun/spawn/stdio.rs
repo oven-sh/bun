@@ -110,13 +110,13 @@ impl Stdio {
     }
 
     pub fn can_use_memfd(&self, is_sync: bool, has_max_buffer: bool) -> bool {
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let _ = (is_sync, has_max_buffer);
             return false;
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         match self {
             Self::Blob(blob) => !blob.needs_to_read_file(),
             Self::Memfd(_) | Self::ArrayBuffer(_) => true,
@@ -126,13 +126,13 @@ impl Stdio {
     }
 
     pub fn use_memfd(&mut self, index: u32) -> bool {
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let _ = index;
             return false;
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             use crate::api::bun_process::spawn_sys;
             if !spawn_sys::can_use_memfd() {

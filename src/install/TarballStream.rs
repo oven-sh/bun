@@ -810,7 +810,7 @@ impl TarballStream {
                 let fd = open_output_file(dest, path, path_slice, mode)?;
                 self.entry_count += 1;
 
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
                     let size: usize = usize::try_from(entry.size().max(0)).expect("int cast");
                     if size > 1_000_000 {

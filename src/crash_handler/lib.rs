@@ -144,6 +144,7 @@ pub mod debug {
             }
             #[cfg(any(
                 target_os = "linux",
+                target_os = "android",
                 target_os = "freebsd",
                 target_os = "netbsd",
                 target_os = "dragonfly",
@@ -1102,6 +1103,7 @@ mod draft {
                             #[cfg(any(
                                 target_os = "macos",
                                 target_os = "linux",
+                                target_os = "android",
                                 target_os = "freebsd"
                             ))]
                             { /* no-op */ }
@@ -1510,7 +1512,7 @@ mod draft {
                         limit.rlim_cur,
                     );
 
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
                     {
                         if let Some(user) = env_var::USER::get() {
                             if !user.is_empty() {
@@ -1764,7 +1766,7 @@ mod draft {
                     .store(handle as *mut core::ffi::c_void, Ordering::Relaxed);
             }
         }
-        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
             reset_on_posix();
         }
@@ -2905,7 +2907,7 @@ mod draft {
             let _ = spawn_result;
             let _ = url;
         }
-        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
             let mut buf = bun_core::PathBuffer::default();
             let mut buf2 = bun_core::PathBuffer::default();
@@ -3168,7 +3170,7 @@ mod draft {
                 }
             }
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // In non-debug builds, use WTF's stack trace printer and return early
             if !cfg!(debug_assertions) {
@@ -3180,7 +3182,7 @@ mod draft {
             }
             // Otherwise fall through to llvm-symbolizer for debug builds
         }
-        #[cfg(not(any(windows, target_os = "linux")))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "android")))]
         {
             // Assume debug symbol tooling is reliable.
             let debug_info = match debug::get_self_debug_info() {

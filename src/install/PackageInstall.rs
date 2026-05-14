@@ -2108,7 +2108,7 @@ impl<'a> PackageInstall<'a> {
     }
 
     pub fn is_dangling_symlink(path: &ZStr) -> bool {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             match sys::open(path, sys::O::PATH, 0) {
                 Err(_) => return true,
@@ -2128,7 +2128,7 @@ impl<'a> PackageInstall<'a> {
                 }
             }
         }
-        #[cfg(not(any(target_os = "linux", windows)))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
         {
             match sys::open(path, sys::O::PATH, 0) {
                 Err(_) => return true,

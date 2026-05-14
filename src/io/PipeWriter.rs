@@ -238,7 +238,7 @@ pub trait PosixPipeWriter {
 /// Zig: `fn writeToFileType(comptime file_type: FileType) *const fn(...)` — folded into
 /// `try_write` above. Kept here as a free fn for the blocking-pipe path.
 fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         if bun_sys::linux::RWFFlagSupport::is_maybe_supported() {
             return sys::write_nonblocking(fd, buf);

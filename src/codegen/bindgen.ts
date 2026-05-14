@@ -1167,15 +1167,6 @@ for (const fileName of [...unsortedFiles].sort()) {
   const rustFilePath = path.join(src, rustFile);
 
   const exports = import.meta.require(fileName);
-  // Some `.bind.ts` files (e.g. `bake.bind.ts`) are placeholders with their
-  // contents commented out — they declare nothing, so there's no sibling
-  // module to demand. Only require the Rust sibling once a binding actually
-  // references it.
-  const hasBindings = Object.values(exports).some(
-    value => value != null && typeof value === "object" && (value instanceof TypeImpl || value[isFunc]),
-  );
-  if (!hasBindings && !files.has(rustFile)) continue;
-
   let file = files.get(rustFile);
   if (!fs.existsSync(rustFilePath)) {
     // It would be nice if this would generate the file with the correct boilerplate

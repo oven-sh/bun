@@ -53,7 +53,11 @@ async function run() {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
-          OVERLAY_CSS: css("../runtime/bake/client/overlay.css", !!debug),
+          // JSON.stringify so the bundler's JSON-backed `define:` parser accepts
+          // this as a string literal — raw minified CSS starts with `*{...}`,
+          // which trips the lexer's operator-in-JSON check. See PR #30679 for
+          // the proper upstream fix (falling through to the auto-quote path).
+          OVERLAY_CSS: JSON.stringify(css("../runtime/bake/client/overlay.css", !!debug)),
         },
         minify: {
           syntax: !debug,

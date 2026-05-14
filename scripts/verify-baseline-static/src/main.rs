@@ -25,7 +25,7 @@ use object::{Object, ObjectSection, ObjectSymbol, SectionKind, SymbolKind, Symbo
 ///
 /// Nehalem (Core i7, 2008) is the last Intel microarch before AVX. Bun's
 /// baseline build targets it via `-march=nehalem` (cmake/CompilerFlags.cmake:33)
-/// and `std.Target.x86.cpu.nehalem` (build.zig).
+/// and the Rust crates' `target-cpu=nehalem` equivalent.
 ///
 /// Notably ABSENT: AES-NI and PCLMULQDQ are Westmere (2010), not Nehalem.
 /// This trips people up because they're legacy-encoded (no VEX prefix) and

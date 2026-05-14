@@ -1,8 +1,32 @@
 [toolchain]
-channel = "nightly-2025-12-10"
+channel = "nightly-2026-05-06"
 # rust-src is needed for -Zbuild-std (Tier 3 targets like
 # aarch64-unknown-freebsd have no prebuilt std). targets ensures the
 # Tier 2 cross-targets' prebuilt std is installed for THIS toolchain
-# (bootstrap.sh installs for the default toolchain only).
+# (bootstrap.sh / Dockerfile install only for the *default* toolchain at
+# image-build time, so a `channel` bump here would otherwise leave the
+# pinned nightly without them). Note: rustup ignores this whole file when
+# RUSTUP_TOOLCHAIN is set in the env (which CI does to pin across worktree
+# symlinks) — the ninja `rust_build_cross` rule's `rustup target add`
+# self-heals that path. Keep this list as a fallback for direct
+# `cargo build`/`cargo check`/rust-analyzer use.
+# Mirrors `allRustTargets` in scripts/build/rust.ts minus aarch64-unknown-freebsd
+# (Tier 3 — no prebuilt rust-std, cargo `-Zbuild-std` builds it from rust-src).
+# darwin/windows triples build natively on their own agents, so the host std
+# comes with the toolchain install regardless; they're listed here so a dev
+# running `bun run rust:check-all` or `cargo check --target` from any host
+# still gets prebuilt std for every Tier 1/2 triple.
 components = ["rust-src"]
-targets = ["x86_64-unknown-freebsd", "aarch64-linux-android", "x86_64-linux-android"]
+targets = [
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-musl",
+  "x86_64-unknown-linux-musl",
+  "aarch64-linux-android",
+  "x86_64-linux-android",
+  "x86_64-unknown-freebsd",
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+  "aarch64-pc-windows-msvc",
+  "x86_64-pc-windows-msvc",
+]

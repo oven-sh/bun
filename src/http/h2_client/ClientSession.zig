@@ -330,8 +330,7 @@ fn rearmTimeout(this: *ClientSession) void {
         }
         break :blk false;
     };
-    this.socket.timeout(0);
-    this.socket.setTimeoutMinutes(if (want) 5 else 0);
+    this.socket.setTimeout(if (want) HTTPClient.idle_timeout_seconds else 0);
 }
 
 /// HTTP-thread wake-up from `scheduleResponseBodyDrain`: JS just enabled
@@ -798,7 +797,7 @@ fn applyHeaders(_: *ClientSession, stream: *Stream, client: *HTTPClient) !Header
 const Stream = @import("./Stream.zig");
 const dispatch = @import("./dispatch.zig");
 const encode = @import("./encode.zig");
-const lshpack = @import("../../bun.js/api/bun/lshpack.zig");
+const lshpack = @import("../lshpack.zig");
 const std = @import("std");
 const wire = @import("../H2FrameParser.zig");
 

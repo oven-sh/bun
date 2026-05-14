@@ -357,6 +357,39 @@ describe("Bun.build", () => {
   //   throw new Error("test was not fully written");
   // });
 
+  test.concurrent("loader map with an empty-string key is ignored without leaving uninitialized slots", async () => {
+    // `JSPropertyIterator` skips empty-name properties, but `loader_names` was being
+    // indexed by the property position instead of a dense counter, leaving garbage in
+    // the skipped slot that was later read/freed. Run in a subprocess so a crash in the
+    // bundler thread surfaces as a test failure instead of taking down the test runner.
+    const dir = tempDirWithFiles("bun-build-loader-empty-key", {
+      "entry.ts": `export const x: number = 42;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const result = await Bun.build({
+            entrypoints: [${JSON.stringify(join(dir, "entry.ts"))}],
+            loader: { "": "js", ".ts": "ts", ".js": "js" },
+          });
+          if (!result.success) throw new AggregateError(result.logs, "build failed");
+          console.log(JSON.stringify({ success: result.success, outputs: result.outputs.length }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ success: true, outputs: 1 });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("rebuilding busts the directory entries cache", async () => {
     Bun.gc(true);
     const tmpdir = tempDirWithFiles("rebuild-bust-dirent-cache", {
@@ -1178,3 +1211,86 @@ test.skipIf(!isDebug && !isASAN)(
   },
   120_000,
 );
+
+// Regression: src/js_printer/renamer.zig:592 `assignNamesRecursiveWithNumberScope`
+// walks a linear single-child scope chain in a `while(true)` loop, allocating a
+// fresh `NumberScope` from `number_scope_pool` for every level that declares
+// symbols. The trailing `defer if (s != initial_scope) { s.deinit; pool.put(s) }`
+// only returns the FINAL `s` to the pool — every intermediate NumberScope (and its
+// `name_counts` map) is abandoned. In Zig this is harmless: `name_counts` is backed
+// by the per-chunk worker arena (renamer.zig:533 `number_scope_pool = .init(arena)`,
+// findUnusedName puts via `r.allocator` = worker MimallocArena) and is bulk-freed
+// when the build completes. A port that drops the arena and backs `name_counts`
+// with the global heap leaks one HashMap per intermediate nested scope, per build,
+// forever — watch-mode / dev-server rebuilds grow unbounded.
+//
+// This test asserts the Zig invariant: repeated builds of a file with many deep
+// linear `{ let ...; { ... } }` chains must not grow RSS proportionally to
+// (chain depth × build count). Gated to debug/ASAN like the sourcemap-leak test
+// above because release mimalloc page retention makes RSS too noisy to threshold.
+// TODO(zig-rust-divergence): currently times out on the Rust debug build (the
+// per-chunk arena backing for NumberScope.name_counts was dropped — see
+// docs/ZIG_RUST_DIVERGENCE_AUDIT.md). Skipped instead of `.todo` because the
+// body never reaches its assertion before the 120s timeout, so `.todo` would
+// just burn two minutes of CI per run without exercising the check.
+test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_counts across builds", async () => {
+  // 8 independent linear chains, each 150 blocks deep, 80 `let` bindings per
+  // block. Every block has exactly one child block → renamer takes the linear
+  // fast-path and allocates a NumberScope per level; 149 of 150 are the
+  // "intermediate" ones the Zig defer never puts back. 80 bindings/level means
+  // each leaked `name_counts` holds 80 boxed-key entries.
+  const CHAINS = 8;
+  const DEPTH = 150;
+  const VARS_PER_SCOPE = 80;
+  let entry = "";
+  for (let c = 0; c < CHAINS; c++) {
+    for (let d = 0; d < DEPTH; d++) {
+      let decls = "";
+      for (let v = 0; v < VARS_PER_SCOPE; v++) decls += `c${c}_d${d}_v${v}=${v},`;
+      entry += `{let ${decls.slice(0, -1)};\n`;
+    }
+    entry += "}\n".repeat(DEPTH);
+  }
+
+  const dir = tempDirWithFiles("bun-build-number-renamer-leak", {
+    "entry.js": entry,
+    "run.ts": `
+        const entry = process.argv[2];
+        async function build() {
+          // No identifier minification → NumberRenamer path (not MinifyRenamer).
+          const res = await Bun.build({ entrypoints: [entry], minify: false });
+          if (!res.success) throw new AggregateError(res.logs, "build failed");
+        }
+        async function settle() {
+          for (let i = 0; i < 4; i++) { Bun.gc(true); await Bun.sleep(10); }
+        }
+        // Warm up: fill any one-shot caches and let the worker arenas reach
+        // steady-state so the measured window only reflects per-build retention.
+        for (let i = 0; i < 2; i++) await build();
+        await settle();
+        const before = process.memoryUsage.rss();
+        for (let i = 0; i < 20; i++) await build();
+        await settle();
+        const after = process.memoryUsage.rss();
+        console.log(JSON.stringify({ before, after, growth: after - before }));
+      `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", join(dir, "run.ts"), join(dir, "entry.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { growth } = JSON.parse(stdout.trim());
+  // With arena-backed scopes (Zig spec) the 20 measured builds reuse the same
+  // worker heap and settle near zero net growth. With global-heap name_counts
+  // and intermediate scopes never returned to the pool, each build abandons
+  // ~8×149 maps × 80 entries — roughly 4-5 MB/build, ~90-100 MB over 20
+  // iterations. 48 MB sits comfortably between the two with headroom for
+  // ASAN/LSan metadata noise.
+  expect(growth).toBeLessThan(48 * 1024 * 1024);
+  expect(exitCode).toBe(0);
+}, 120_000);

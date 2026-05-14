@@ -284,7 +284,11 @@ describe("bundler", () => {
     minifyWhitespace: true,
   });
   // https://github.com/oven-sh/bun/issues/30654 — drop parens around a
-  // single simple identifier arrow parameter when minifying syntax.
+  // single simple identifier arrow parameter when minifying whitespace
+  // (matches esbuild). Gated on minify_whitespace rather than minify_syntax
+  // because bun's runtime transpiler enables minify_syntax silently for
+  // inlining/tree-shaking, and the paren shape is visible through
+  // `Function.prototype.toString()`.
   itBundled("minify/ArrowSingleParamParensDropped", {
     files: {
       "/entry.js": /* js */ `
@@ -316,17 +320,16 @@ describe("bundler", () => {
     minifyWhitespace: true,
     minifyIdentifiers: true,
   });
-  // Arrow parens must be preserved when syntax minification is off, even
-  // with whitespace/identifier minification.
-  itBundled("minify/ArrowSingleParamParensKeptWithoutSyntax", {
+  // Parens must be preserved when only syntax minification is on (matches
+  // esbuild's `--minify-syntax`, and keeps runtime `.toString()` stable).
+  itBundled("minify/ArrowSingleParamParensKeptWithoutWhitespace", {
     files: {
       "/entry.js": /* js */ `
         capture((x) => x);
       `,
     },
-    capture: ["(a)=>a"],
-    minifyWhitespace: true,
-    minifyIdentifiers: true,
+    capture: ["(x) => x"],
+    minifySyntax: true,
   });
   itBundled("minify/ForAndWhileLoopsWithMissingBlock", {
     files: {

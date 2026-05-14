@@ -1382,9 +1382,15 @@ fn NewPrinter(
             // Only safe when there's exactly one argument, it's a plain
             // identifier binding (not destructuring), no default value, no
             // rest/spread, and no decorators.
+            //
+            // Gated on minify_whitespace (matches esbuild): the bun runtime
+            // transpiler enables minify_syntax silently to get tree-shaking
+            // and inlining, but that path must not alter `Function.prototype
+            // .toString()` output that user code may parse. Whitespace-level
+            // minification is opt-in via `--minify`/`--minify-whitespace`.
             const wrap = wrap: {
                 if (!is_arrow) break :wrap true;
-                if (!p.options.minify_syntax) break :wrap true;
+                if (!p.options.minify_whitespace) break :wrap true;
                 if (args.len != 1) break :wrap true;
                 if (has_rest_arg) break :wrap true;
                 const arg = args[0];

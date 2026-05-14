@@ -907,7 +907,14 @@ export function setRefreshRuntime(runtime: HMRModule) {
 // react-refresh/runtime does not provide this function for us
 // https://github.com/facebook/metro/blob/febdba2383113c88296c61e28e4ef6a7f4939fda/packages/metro/src/lib/polyfills/require.js#L748-L774
 function isReactRefreshBoundary(esmExports): boolean {
-  const { isLikelyComponentType } = refreshRuntime;
+  // `refreshRuntime` is populated during bootstrap by `setRefreshRuntime`
+  // (gated on `config.refresh` being present in the emitted chunk). If the
+  // bundler ships a module with `hmr.reactRefreshAccept()` while omitting
+  // `refresh:` from the chunk config, this function runs before
+  // `setRefreshRuntime` ever did — a destructure of `undefined` here would
+  // crash every accept boundary. Treat the missing-runtime case the same as
+  // the missing-function case just below and let the module self-accept.
+  const { isLikelyComponentType } = refreshRuntime ?? {};
   if (!isLikelyComponentType) return true;
   if (isLikelyComponentType(esmExports)) {
     return true;

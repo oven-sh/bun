@@ -190,9 +190,7 @@ describe("ReadStream.prototype.setRawMode", () => {
     const stripped = Bun.stripANSI(output).replace(/[\r\n]/g, "");
     const match = stripped.match(/KEY (\[[^\]]*\])/);
     if (!match) {
-      throw new Error(
-        "child never received a keystroke in raw mode; terminal output was: " + JSON.stringify(output),
-      );
+      throw new Error("child never received a keystroke in raw mode; terminal output was: " + JSON.stringify(output));
     }
     // The essential property is that the child's data handler fired for the
     // first bare keystroke after re-entering raw mode — i.e. it was not

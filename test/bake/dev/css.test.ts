@@ -570,6 +570,40 @@ devTest("css import before create project relative", {
   },
 });
 
+devTest("css import order is preserved (#28117)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<div class="test">hello</div>`,
+    }),
+    "index.ts": `
+      import './foo.css';
+      import './bar.css';
+      export default function () { return "hello"; }
+      import.meta.hot.accept();
+    `,
+    "foo.css": `
+      .test {
+        color: red;
+      }
+    `,
+    "bar.css": `
+      .test {
+        color: blue;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    // bar.css is imported after foo.css, so blue should win the cascade
+    const color = await c.js`getComputedStyle(document.querySelector(".test")).color`;
+    expect(color).toBe("#00f");
+    await c.hardReload();
+    const color2 = await c.js`getComputedStyle(document.querySelector(".test")).color`;
+    expect(color2).toBe("#00f");
+  },
+});
+
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);
   if (!url) {

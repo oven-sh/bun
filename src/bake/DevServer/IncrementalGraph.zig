@@ -761,9 +761,10 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             // removing edges.
             const quick_lookup_values_to_care_len = quick_lookup.count();
 
-            // A new import linked list is constructed. A side effect of this
-            // approach is that the order of the imports is reversed on every
-            // save. However, the ordering here doesn't matter.
+            // A new import linked list is constructed. Edges are prepended
+            // (stack-style) during processing, then reversed afterward to
+            // preserve the original source order. This matters for CSS,
+            // where import order determines the cascade.
             var new_imports: EdgeIndex.Optional = .none;
             defer g.first_import.items[file_index.get()] = new_imports;
 
@@ -789,6 +790,22 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             switch (mode) {
                 .normal => try g.processChunkImportRecords(ctx, temp_alloc, &quick_lookup, &new_imports, file_index, bundle_graph_index),
                 .css => try g.processCSSChunkImportRecords(ctx, temp_alloc, &quick_lookup, &new_imports, file_index, bundle_graph_index),
+            }
+
+            // Reverse the linked list so that imports are in source order.
+            // The list was built by prepending (stack-style), so it ends up
+            // reversed relative to the order import records were processed.
+            {
+                var prev: EdgeIndex.Optional = .none;
+                var current = new_imports;
+                while (current.unwrap()) |edge_index| {
+                    const edge = &g.edges.items[edge_index.get()];
+                    const next = edge.next_import;
+                    edge.next_import = prev;
+                    prev = current;
+                    current = next;
+                }
+                new_imports = prev;
             }
 
             // We need to add this here to not trip up

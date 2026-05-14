@@ -477,7 +477,14 @@ pub use CustomIdent as CustomIdentFns;
 pub fn is_reserved_custom_ident(s: &[u8]) -> bool {
     strings::eql_any_case_insensitive_ascii(
         s,
-        &[b"initial", b"inherit", b"unset", b"default", b"revert", b"revert-layer"],
+        &[
+            b"initial",
+            b"inherit",
+            b"unset",
+            b"default",
+            b"revert",
+            b"revert-layer",
+        ],
     )
 }
 

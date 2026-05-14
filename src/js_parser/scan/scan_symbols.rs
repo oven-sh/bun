@@ -1,6 +1,6 @@
 use crate::js_lexer;
 use crate::p::P;
-use crate::parser::{FindSymbolResult};
+use crate::parser::FindSymbolResult;
 use bun_ast as js_ast;
 use bun_ast::{Ref, Scope};
 

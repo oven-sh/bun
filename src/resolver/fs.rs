@@ -906,9 +906,11 @@ impl DirEntry {
             if name_slice.len() <= MAX_PATH_BYTES {
                 None
             } else {
-                Some(bun_collections::StringHashMapContext::PrehashedCaseInsensitive::init(
-                    name_slice,
-                ))
+                Some(
+                    bun_collections::StringHashMapContext::PrehashedCaseInsensitive::init(
+                        name_slice,
+                    ),
+                )
             };
         let name_lc: &[u8] = match &name_lc_heap {
             Some(p) => &p.input[..],
@@ -2086,9 +2088,8 @@ impl RealFS {
         // `while (try iter.next()) |*e| dir.addEntry(e)`. Floor at 64 even when
         // a `prev_map` exists but is tiny/empty — a directory that just grew
         // would otherwise rebuild `data` from a zero-capacity table.
-        dir.data.ensure_unused_capacity(
-            prev_map.as_deref().map(|m| m.count()).unwrap_or(0).max(64),
-        )?;
+        dir.data
+            .ensure_unused_capacity(prev_map.as_deref().map(|m| m.count()).unwrap_or(0).max(64))?;
 
         // Hoist the `FilenameStore` singleton resolution (Once + LazyLock atomic
         // checks) out of the per-entry loop.

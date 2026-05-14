@@ -1562,7 +1562,6 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     Ok(opts)
 }
 
-
 /// Cold path: `bun test` option-group parsing — timeout / coverage / reporter /
 /// shard / parallel / seed / etc. Split out of [`parse`] so the `bun run <script>`
 /// and bare-`bun <file>` hot path (`USES_GLOBAL_OPTIONS` ⇒ `parse` runs on every
@@ -1572,34 +1571,33 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     if let Some(timeout_ms) = args.option(b"--timeout") {
         if !timeout_ms.is_empty() {
-            ctx.test_options.default_timeout_ms =
-                match strings::parse_int::<u32>(timeout_ms, 10) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        Output::pretty_errorln(format_args!(
-                            "<r><red>error<r>: Invalid timeout: \"{}\"",
-                            BStr::new(timeout_ms)
-                        ));
-                        Output::flush();
-                        Global::exit(1);
-                    }
-                };
+            ctx.test_options.default_timeout_ms = match strings::parse_int::<u32>(timeout_ms, 10) {
+                Ok(v) => v,
+                Err(_) => {
+                    Output::pretty_errorln(format_args!(
+                        "<r><red>error<r>: Invalid timeout: \"{}\"",
+                        BStr::new(timeout_ms)
+                    ));
+                    Output::flush();
+                    Global::exit(1);
+                }
+            };
         }
     }
 
     if let Some(max_concurrency) = args.option(b"--max-concurrency") {
         if !max_concurrency.is_empty() {
-            ctx.test_options.max_concurrency =
-                match strings::parse_int::<u32>(max_concurrency, 10) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        Output::pretty_errorln(format_args!(
-                            "<r><red>error<r>: Invalid max-concurrency: \"{}\"",
-                            BStr::new(max_concurrency)
-                        ));
-                        Global::exit(1);
-                    }
-                };
+            ctx.test_options.max_concurrency = match strings::parse_int::<u32>(max_concurrency, 10)
+            {
+                Ok(v) => v,
+                Err(_) => {
+                    Output::pretty_errorln(format_args!(
+                        "<r><red>error<r>: Invalid max-concurrency: \"{}\"",
+                        BStr::new(max_concurrency)
+                    ));
+                    Global::exit(1);
+                }
+            };
         }
     }
 
@@ -2401,9 +2399,7 @@ fn parse_build_command_options(
                     "Cannot use client-side --target={} with --server-components",
                     format_args!(
                         "{:?}",
-                        <bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(
-                            target
-                        ))
+                        <bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
                     ),
                 );
                 Global::crash();

@@ -1077,8 +1077,7 @@ impl<'a> Lexer<'a> {
 
                                     if c3 == '}' as CodePoint {
                                         if is_first {
-                                            self.end =
-                                                start + iter.i as usize - width3 as usize;
+                                            self.end = start + iter.i as usize - width3 as usize;
                                             return self.syntax_error();
                                         }
                                         break 'variable_length;

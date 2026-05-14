@@ -548,7 +548,9 @@ pub fn braces(
         Ok(()) => {}
         Err(Braces::ParserError::OutOfMemory) => return Err(jsc::JsError::OutOfMemory),
         Err(Braces::ParserError::UnexpectedToken) => {
-            return Err(global.throw_pretty(format_args!("Unexpected token while expanding braces")));
+            return Err(
+                global.throw_pretty(format_args!("Unexpected token while expanding braces"))
+            );
         }
     }
 

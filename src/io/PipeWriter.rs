@@ -345,7 +345,10 @@ impl<Parent: PosixBufferedWriterParent> PosixPipeWriter for PosixBufferedWriter<
 
 // SAFETY: writer is an intrusive field of `Parent`; `Parent::on_write`
 // re-entry writes `is_done`/`handle` but never frees it; single JS thread.
-unsafe impl<Parent: PosixBufferedWriterParent> bun_ptr::LaunderedSelf for PosixBufferedWriter<Parent> {}
+unsafe impl<Parent: PosixBufferedWriterParent> bun_ptr::LaunderedSelf
+    for PosixBufferedWriter<Parent>
+{
+}
 
 impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     /// Raw backref to the owning `Parent`. Returned as `*mut` (never `&mut`)
@@ -685,7 +688,10 @@ impl<Parent: PosixStreamingWriterParent> PosixPipeWriter for PosixStreamingWrite
 }
 
 // SAFETY: see `PosixBufferedWriter`'s `LaunderedSelf` impl — identical shape.
-unsafe impl<Parent: PosixStreamingWriterParent> bun_ptr::LaunderedSelf for PosixStreamingWriter<Parent> {}
+unsafe impl<Parent: PosixStreamingWriterParent> bun_ptr::LaunderedSelf
+    for PosixStreamingWriter<Parent>
+{
+}
 
 impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     // TODO: configurable?
@@ -1513,7 +1519,10 @@ impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBuffe
 // SAFETY: libuv write-complete callbacks re-enter via `FileSink::on_write` →
 // JS → `writer.with_mut(|w| w.end())`; writer is intrusive in `Parent`, never
 // freed during the callback; single JS thread.
-unsafe impl<Parent: WindowsBufferedWriterParent> bun_ptr::LaunderedSelf for WindowsBufferedWriter<Parent> {}
+unsafe impl<Parent: WindowsBufferedWriterParent> bun_ptr::LaunderedSelf
+    for WindowsBufferedWriter<Parent>
+{
+}
 
 #[cfg(windows)]
 impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
@@ -2018,7 +2027,10 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter
 
 #[cfg(windows)]
 // SAFETY: see `WindowsBufferedWriter`'s `LaunderedSelf` impl — identical shape.
-unsafe impl<Parent: WindowsStreamingWriterParent> bun_ptr::LaunderedSelf for WindowsStreamingWriter<Parent> {}
+unsafe impl<Parent: WindowsStreamingWriterParent> bun_ptr::LaunderedSelf
+    for WindowsStreamingWriter<Parent>
+{
+}
 
 #[cfg(windows)]
 impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {

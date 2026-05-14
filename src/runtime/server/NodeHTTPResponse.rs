@@ -709,8 +709,7 @@ impl NodeHTTPResponse {
         let state = raw_response.state();
         handle_ended_if_necessary(state, global_object)?;
 
-        let status_code_value: JSValue =
-            arguments.first().copied().unwrap_or(JSValue::UNDEFINED);
+        let status_code_value: JSValue = arguments.first().copied().unwrap_or(JSValue::UNDEFINED);
         let status_message_value: JSValue = match arguments.get(1).copied() {
             Some(v) if v != JSValue::NULL => v,
             _ => JSValue::UNDEFINED,
@@ -743,9 +742,8 @@ impl NodeHTTPResponse {
         let status_message_str;
         let status_message_slice;
         let status_message_bytes: &[u8] = if !status_message_value.is_undefined() {
-            status_message_str = bun_core::OwnedString::new(
-                status_message_value.to_bun_string(global_object)?,
-            );
+            status_message_str =
+                bun_core::OwnedString::new(status_message_value.to_bun_string(global_object)?);
             status_message_slice = status_message_str.to_utf8_without_ref();
             status_message_slice.slice()
         } else {
@@ -823,12 +821,7 @@ impl NodeHTTPResponse {
                 heap.extend_from_slice(code);
                 heap.push(b' ');
                 heap.extend_from_slice(message);
-                write_head_internal(
-                    &raw_response,
-                    global_object,
-                    &heap,
-                    headers_object_value,
-                );
+                write_head_internal(&raw_response, global_object, &heap, headers_object_value);
             }
         }
 

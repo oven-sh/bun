@@ -1908,6 +1908,39 @@ describe("rm", () => {
     rmSync(join(path, "../../"), { recursive: true });
     expect(existsSync(path)).toBe(false);
   });
+
+  // On Windows a leading-separator, drive-less path like "/foo/bar" is
+  // "rooted" and must be resolved against the cwd's drive. existsSync/
+  // statSync/unlinkSync all do this; recursive rmSync/rmdirSync must agree
+  // or cleanup helpers (rmSync(dir, { recursive: true, force: true })) silently
+  // no-op on directories existsSync just said were there.
+  //
+  // Derive the driveless-but-rooted path from tmpdir() so all writes stay
+  // inside the existing temp area instead of creating <drive>:\tmp at the
+  // drive root. Only meaningful when cwd and tmpdir share a drive (always
+  // true on CI); otherwise the driveless path resolves to a different
+  // physical location, so skip.
+  const cwdDrive = process.cwd().slice(0, 2);
+  const tmpDrive = tmpdir().slice(0, 2);
+  const sameDriveAsCwd = isWindows && cwdDrive.toLowerCase() === tmpDrive.toLowerCase();
+  const drivelessTmp = tmpdir().replace(/^[a-zA-Z]:/, "").replaceAll("\\", "/");
+
+  it.skipIf(!sameDriveAsCwd)("rmSync recursive agrees with existsSync for rooted POSIX-style paths", () => {
+    const dir = `${drivelessTmp}/bun-rm-posix-path-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(dir + "/inner.txt", "x");
+    expect(fs.existsSync(dir)).toBe(true);
+    fs.rmSync(dir, { recursive: true, force: true });
+    expect(fs.existsSync(dir)).toBe(false);
+  });
+
+  it.skipIf(!sameDriveAsCwd)("rmdirSync recursive agrees with existsSync for rooted POSIX-style paths", () => {
+    const dir = `${drivelessTmp}/bun-rmdir-posix-path-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    fs.mkdirSync(dir + "/nested", { recursive: true });
+    expect(fs.existsSync(dir)).toBe(true);
+    fs.rmdirSync(dir, { recursive: true });
+    expect(fs.existsSync(dir)).toBe(false);
+  });
 });
 
 describe("rmdir", () => {

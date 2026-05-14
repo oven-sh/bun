@@ -7766,8 +7766,20 @@ impl NodeFS {
 
     pub fn rmdir(&mut self, args: &args::RmDir, _: Flavor) -> Maybe<ret::Rmdir> {
         if args.recursive {
+            // Zig passed args.path.slice() to std.fs.Dir.openDir/deleteFile/deleteDir,
+            // which on Windows resolve a rooted-but-driveless path ("/tmp/foo")
+            // against the cwd drive via wToPrefixedFileW → RtlGetFullPathName_U.
+            // Our dt_* helpers go through Syscall::*at → to_nt_path /
+            // normalize_path_windows, which do NOT add the cwd drive, turning
+            // "/tmp/foo" into a nonexistent NT name (ENOENT). Pre-resolve with
+            // slice_z so the path already carries a drive letter, the same way
+            // existsSync/statSync/unlinkSync see it.
+            #[cfg(windows)]
+            let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
+            #[cfg(not(windows))]
+            let resolved = args.path.slice();
             if let Err(err) =
-                zig_delete_tree(sys::Dir::cwd(), args.path.slice(), sys::FileKind::Directory)
+                zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::Directory)
             {
                 let mut errno: E = map_anyerror_to_errno(err);
                 if cfg!(windows) && errno == E::ENOTDIR {
@@ -7796,8 +7808,16 @@ impl NodeFS {
     pub fn rm(&mut self, args: &args::Rm, _: Flavor) -> Maybe<ret::Rm> {
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if args.recursive {
+            // See the matching comment in `rmdir`: pre-resolve the path on
+            // Windows so rooted-but-driveless paths ("/tmp/foo") get the cwd
+            // drive prepended before reaching the dt_* / Syscall::*at helpers,
+            // which (unlike Zig's std.fs.Dir.*) do not do that themselves.
+            #[cfg(windows)]
+            let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
+            #[cfg(not(windows))]
+            let resolved = args.path.slice();
             if let Err(err) =
-                zig_delete_tree(sys::Dir::cwd(), args.path.slice(), sys::FileKind::File)
+                zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::File)
             {
                 let errno = if err == bun_core::err!("FileNotFound") {
                     if args.force {

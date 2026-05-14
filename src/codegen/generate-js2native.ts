@@ -342,17 +342,20 @@ export function getJS2NativeRust() {
 }
 
 export function getJS2NativeDTS() {
+  // `resolveNativeFileId` matches `$rust()` filenames by suffix
+  // (`file.endsWith(sep + filename)`), so callers may pass either a bare
+  // basename (when unique) or a `src/`-relative subpath (when the basename
+  // is ambiguous — 107× `lib.rs`, 26× `mod.rs`, …). A union of basenames
+  // can't represent the subpath form, so use a template literal type that
+  // accepts any `.rs` suffix; the codegen still validates the actual file
+  // exists.
   return [
     "declare type NativeFilenameCPP = " +
       sourceFiles
         .filter(x => x.endsWith("cpp"))
         .map(x => JSON.stringify(basename(x)))
         .join("|"),
-    "declare type NativeFilenameRust = " +
-      sourceFiles
-        .filter(x => x.endsWith(".rs"))
-        .map(x => JSON.stringify(basename(x)))
-        .join("|"),
+    "declare type NativeFilenameRust = `${string}.rs`",
     "",
   ].join("\n");
 }

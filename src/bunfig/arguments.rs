@@ -118,35 +118,43 @@ fn load_bunfig(
     // freed stack memory — stack-use-after-return under ASAN. Mirrors the Zig
     // fix in 6c7bdf5de2 for src/runtime/cli/Arguments.zig::loadBunfig.
     //
-    // `Box::leak` makes the `&'static [u8]` lifetime fabricated by
-    // `IntoStr::into_str` honest — the path lives for the rest of the
-    // process, matching how ctx.log messages hold borrowed path slices
-    // across `load_config`'s control flow.
-    let owned_path_leaked: &'static ZStr = {
-        let boxed = bun_core::ZBox::from_bytes(config_path.as_bytes())
-            .into_boxed_slice_with_nul();
-        let leaked: &'static [u8] = Box::leak(boxed);
-        // SAFETY: invariant — last byte is 0, written by `ZBox::from_bytes`.
-        unsafe { ZStr::from_raw(leaked.as_ptr(), leaked.len() - 1) }
-    };
+    // Hold the `Box` un-leaked across `to_source()` so the `auto_loaded` ENOENT
+    // early-return (the common case: every `bun install` probes both
+    // /etc/bunfig.toml and ~/.bunfig.toml, neither of which usually exists)
+    // drops the allocation naturally. Only `Box::leak` on the `Ok` arm where
+    // `Bunfig::parse` actually borrows from it. Mirrors the Zig
+    // `allocator.free(owned_path)` added in 25066f8808.
+    let boxed_path = bun_core::ZBox::from_bytes(config_path.as_bytes())
+        .into_boxed_slice_with_nul();
+    // SAFETY: invariant — last byte is 0, written by `ZBox::from_bytes`.
+    let owned_path = unsafe { ZStr::from_raw(boxed_path.as_ptr(), boxed_path.len() - 1) };
 
     let source = match bun_ast::to_source(
-        owned_path_leaked,
+        owned_path,
         bun_ast::ToSourceOptions { convert_bom: true },
     ) {
         Ok(s) => s,
         Err(err) => {
             if auto_loaded {
+                // `boxed_path` drops here — no leak on the common ENOENT probe.
                 return Ok(());
             }
             Output::pretty_errorln(format_args!(
                 "{}\nwhile reading config \"{}\"",
                 err,
-                BStr::new(owned_path_leaked.as_bytes()),
+                BStr::new(owned_path.as_bytes()),
             ));
             Global::exit(1);
         }
     };
+
+    // Success: `source.path.text` (and any `ctx.log` location borrowed by
+    // `Bunfig::parse`) points into `boxed_path`. `Box::leak` promotes the
+    // `&'static [u8]` lifetime fabricated by `IntoStr::into_str` from lie to
+    // truth — the path lives for the rest of the process, matching how
+    // `ctx.log` messages hold borrowed path slices across `load_config`'s
+    // control flow.
+    let _: &'static [u8] = Box::leak(boxed_path);
 
     bun_ast::stmt::data::Store::create();
     bun_ast::expr::data::Store::create();

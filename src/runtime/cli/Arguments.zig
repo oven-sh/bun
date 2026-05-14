@@ -255,71 +255,14 @@ pub const test_only_params = [_]ParamType{
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
-pub fn loadSystemBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !void {
-    if (ctx.has_loaded_system_config) return;
-    ctx.has_loaded_system_config = true;
-
-    var config_buf: bun.PathBuffer = undefined;
-    const result = getSystemConfigPath(&config_buf);
-    if (result.is_explicit and result.path == null) {
-        Output.errGeneric("BUN_SYSTEM_CONFIG path is too long", .{});
-        Global.exit(1);
-    }
-    if (result.path) |path| {
-        const errors_before = ctx.log.errors;
-        // Explicit BUN_SYSTEM_CONFIG should fail loudly; auto-discovered default is optional.
-        // System config is not project-level, so don't set ctx.debug.loaded_bunfig.
-        // loadBunfig dupes `path` onto the allocator, so it's safe for `config_buf`
-        // to go out of scope after loadBunfig returns.
-        //
-        // Bunfig errors arrive in two shapes: (1) TOML lexer errors that only
-        // append to ctx.log and return void (handled after this call), and
-        // (2) validation errors (e.g. Bunfig.Parser.addError) that return
-        // `error.@"Invalid Bunfig"`. For an auto-discovered /etc/bunfig.toml,
-        // both paths must warn-and-continue — crashing every package-manager
-        // invocation on the box because of a sysadmin typo is not acceptable.
-        loadBunfig(allocator, !result.is_explicit, false, path, ctx, comptime cmd) catch |err| {
-            if (result.is_explicit) return err;
-            if (ctx.log.hasAny()) ctx.log.print(Output.errorWriter()) catch {};
-            // Bunfig.parse mutates ctx in place as it walks keys, so any settings
-            // before the failing key are already applied. We can't "ignore" the
-            // file — we can only abort the rest of the parse.
-            Output.warn("aborted parsing auto-discovered system bunfig at \"{s}\" ({s}); keys before the error may have been applied", .{ path, @errorName(err) });
-            // Clear the log so the warning doesn't get re-printed later by
-            // the caller's `ctx.log.print` paths or dumpBuildError.
-            ctx.log.reset();
-            return;
-        };
-
-        // TOML parser errors that never return a Zig error land in ctx.log
-        // above. For explicit BUN_SYSTEM_CONFIG fail loudly; for auto-discovered
-        // /etc/bunfig.toml the same warn-and-continue policy applies.
-        if (ctx.log.errors > errors_before) {
-            if (result.is_explicit) {
-                ctx.log.print(Output.errorWriter()) catch {};
-                Output.errGeneric("failed to parse BUN_SYSTEM_CONFIG at \"{s}\"", .{path});
-                Global.exit(1);
-            }
-            ctx.log.print(Output.errorWriter()) catch {};
-            Output.warn("aborted parsing auto-discovered system bunfig at \"{s}\"; keys before the error may have been applied", .{path});
-            ctx.log.reset();
-        }
-    }
-}
-
 fn loadGlobalBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !void {
     if (ctx.has_loaded_global_config) return;
 
     ctx.has_loaded_global_config = true;
 
-    // Load system-wide config first (lowest priority).
-    try loadSystemBunfig(allocator, ctx, cmd);
-
-    // Then load user/home config (overrides system config).
-    // Home config is not project-level, so don't set ctx.debug.loaded_bunfig.
     var config_buf: bun.PathBuffer = undefined;
     if (getHomeConfigPath(&config_buf)) |path| {
-        try loadBunfig(allocator, true, false, path, ctx, comptime cmd);
+        try loadBunfig(allocator, true, path, ctx, comptime cmd);
     }
 }
 
@@ -336,29 +279,17 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
         };
     }
 
-    // This is the project-level config path.
-    try loadBunfig(allocator, auto_loaded, true, config_path, ctx, cmd);
+    try loadBunfig(allocator, auto_loaded, config_path, ctx, cmd);
 }
 
-fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, is_project: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
-    // Dupe config_path onto the allocator so ctx.log can safely borrow it after
-    // the caller's PathBuffer goes out of scope. Errors logged by Bunfig.parse
-    // store Location.file = source.path.text as a borrowed slice, and those
-    // messages are often printed later (e.g. via dumpBuildError on entry-point
-    // load). Without duping, the later print reads freed stack memory.
-    const owned_path = try allocator.dupeZ(u8, config_path);
-    const source = switch (bun.sys.File.toSource(owned_path, allocator, .{ .convert_bom = true })) {
+fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    const source = switch (bun.sys.File.toSource(config_path, allocator, .{ .convert_bom = true })) {
         .result => |s| s,
         .err => |err| {
-            if (auto_loaded) {
-                // Auto-discovered probe of a missing file is best-effort; release
-                // owned_path since ctx.log won't borrow from this unused path.
-                allocator.free(owned_path);
-                return;
-            }
+            if (auto_loaded) return;
             Output.prettyErrorln("{f}\nwhile reading config \"{s}\"", .{
                 err,
-                owned_path,
+                config_path,
             });
             Global.exit(1);
         },
@@ -374,90 +305,26 @@ fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, is_project: bool,
         ctx.log.level = original_level;
     }
     ctx.log.level = logger.Log.Level.warn;
-    // Only mark loaded_bunfig for project-level configs so guards in
-    // run_command.zig, bun.js.zig, repl_command.zig don't skip project bunfig.toml
-    // when a system or home config was loaded.
-    if (is_project) {
-        ctx.debug.loaded_bunfig = true;
-    }
+    ctx.debug.loaded_bunfig = true;
     try Bunfig.parse(allocator, &source, ctx, cmd);
 }
 
 fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
     var paths = [_]string{".bunfig.toml"};
 
-    // getNotEmpty() matches XDG Base Directory Spec: treat empty string as unset.
-    if (bun.env_var.XDG_CONFIG_HOME.getNotEmpty()) |data_dir| {
+    if (bun.env_var.XDG_CONFIG_HOME.get()) |data_dir| {
         return resolve_path.joinAbsStringBufZ(data_dir, buf, &paths, .auto);
     }
 
-    if (bun.env_var.HOME.getNotEmpty()) |home_dir| {
+    if (bun.env_var.HOME.get()) |home_dir| {
         return resolve_path.joinAbsStringBufZ(home_dir, buf, &paths, .auto);
     }
 
     return null;
 }
-
-const SystemConfigResult = struct {
-    path: ?[:0]const u8,
-    is_explicit: bool,
-};
-
-fn getSystemConfigPath(buf: *bun.PathBuffer) SystemConfigResult {
-    // Allow overriding the system config path via environment variable.
-    // getNotEmpty() treats BUN_SYSTEM_CONFIG="" as unset.
-    if (bun.env_var.BUN_SYSTEM_CONFIG.getNotEmpty()) |custom_path| {
-        // Require absolute paths so system-wide policy is not cwd-dependent.
-        if (!resolve_path.Platform.auto.isAbsolute(custom_path)) {
-            Output.errGeneric("BUN_SYSTEM_CONFIG must be an absolute path, got: \"{s}\"", .{custom_path});
-            Global.exit(1);
-        }
-        if (custom_path.len < bun.MAX_PATH_BYTES) {
-            @memcpy(buf[0..custom_path.len], custom_path);
-            buf[custom_path.len] = 0;
-            return .{ .path = buf[0..custom_path.len :0], .is_explicit = true };
-        }
-        return .{ .path = null, .is_explicit = true };
-    }
-
-    if (comptime bun.Environment.isWindows) {
-        // On Windows, use %ALLUSERSPROFILE%\bunfig.toml (typically C:\ProgramData\bunfig.toml).
-        if (bun.env_var.ALLUSERSPROFILE.getNotEmpty()) |all_users| {
-            var paths = [_]string{"bunfig.toml"};
-            return .{ .path = resolve_path.joinAbsStringBufZ(all_users, buf, &paths, .auto), .is_explicit = false };
-        }
-        return .{ .path = null, .is_explicit = false };
-    } else {
-        // On POSIX systems, use /etc/bunfig.toml.
-        const system_path = "/etc/bunfig.toml";
-        @memcpy(buf[0..system_path.len], system_path);
-        buf[system_path.len] = 0;
-        return .{ .path = buf[0..system_path.len :0], .is_explicit = false };
-    }
-}
-
 pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) OOM!void {
-    // BUN_SYSTEM_CONFIG is an explicit administrator policy override — it must be
-    // honored even in standalone executables compiled with disable_autoload_bunfig.
-    // getNotEmpty() treats BUN_SYSTEM_CONFIG="" as unset.
-    const has_explicit_system_config = bun.env_var.BUN_SYSTEM_CONFIG.getNotEmpty() != null;
-
-    // Load system-wide config BEFORE the standalone disable check so that
-    // BUN_SYSTEM_CONFIG is honored even for compiled binaries, while still
-    // allowing disable_autoload_bunfig to block home/project config loading.
-    if (has_explicit_system_config or comptime cmd.readGlobalConfig()) {
-        loadSystemBunfig(allocator, ctx, cmd) catch |err| {
-            if (ctx.log.hasAny()) {
-                ctx.log.print(Output.errorWriter()) catch {};
-            }
-            if (ctx.log.hasAny()) Output.printError("\n", .{});
-            Output.err(err, "failed to load bunfig", .{});
-            Global.crash();
-        };
-    }
-
-    // If running as a standalone executable with autoloadBunfig disabled, skip further config loading
-    // unless an explicit config path was provided via --config. System config was already loaded above.
+    // If running as a standalone executable with autoloadBunfig disabled, skip config loading
+    // unless an explicit config path was provided via --config
     if (user_config_path_ == null) {
         if (bun.StandaloneModuleGraph.get()) |graph| {
             if (graph.flags.disable_autoload_bunfig) {
@@ -472,8 +339,7 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
             ctx.has_loaded_global_config = true;
 
             if (getHomeConfigPath(&config_buf)) |path| {
-                // Home config is not project-level, so don't mark loaded_bunfig.
-                loadBunfig(allocator, true, false, path, ctx, comptime cmd) catch |err| {
+                loadConfigPath(allocator, true, path, ctx, comptime cmd) catch |err| {
                     if (ctx.log.hasAny()) {
                         ctx.log.print(Output.errorWriter()) catch {};
                     }

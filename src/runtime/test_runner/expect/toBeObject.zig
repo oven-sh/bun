@@ -2,7 +2,7 @@ pub fn toBeObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
     defer this.postMatch(globalThis);
 
     const thisValue = callFrame.this();
-    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeObject", "")) orelse return this.deferredResult(thisValue);
+    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeObject", "");
 
     this.incrementExpectCallCounter();
 

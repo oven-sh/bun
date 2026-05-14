@@ -32,8 +32,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
 
     const not = this.flags.not;
 
-    const received = (try this.getValue(globalThis, thisValue, callFrame, "toThrow", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
-    const result_, const return_value_from_function = try this.getValueAsToThrow(globalThis, received);
+    const result_, const return_value_from_function = try this.getValueAsToThrow(globalThis, try this.getValue(globalThis, thisValue, "toThrow", "<green>expected<r>"));
 
     const did_throw = result_ != null;
 

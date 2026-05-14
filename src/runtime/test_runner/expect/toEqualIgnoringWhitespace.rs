@@ -15,8 +15,7 @@ pub(crate) fn to_equal_ignoring_whitespace(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let (this, value, not) =
-        this.matcher_prelude(global, frame.this(), "toEqualIgnoringWhitespace", "<green>expected<r>")?;
+    let (this, value, not) = crate::ready_matcher!(this.matcher_prelude(global, frame.this(), frame, "toEqualIgnoringWhitespace", "<green>expected<r>")?);
 
     let arguments_ = frame.arguments_old::<1>(); let arguments: &[JSValue] = arguments_.slice();
 

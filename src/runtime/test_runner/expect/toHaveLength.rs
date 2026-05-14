@@ -8,8 +8,7 @@ pub(crate) fn to_have_length(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let (this, value, not) =
-        this.matcher_prelude(global, frame.this(), "toHaveLength", "<green>expected<r>")?;
+    let (this, value, not) = crate::ready_matcher!(this.matcher_prelude(global, frame.this(), frame, "toHaveLength", "<green>expected<r>")?);
 
     let arguments_ = frame.arguments_old::<1>();
     let arguments = arguments_.slice();

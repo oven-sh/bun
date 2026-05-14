@@ -40,7 +40,7 @@ impl Expect {
         }
 
         let received_: JSValue =
-            this.get_value(global, this_value, "toBeCloseTo", "<green>expected<r>, precision")?;
+            crate::ready_value!(this.get_value(global, this_value, call_frame, "toBeCloseTo", "<green>expected<r>, precision")?);
         if !received_.is_number() {
             return Err(global.throw_invalid_argument_type("expect", "received", "number"));
         }

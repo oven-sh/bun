@@ -1383,7 +1383,7 @@ pub use self::js_object::{ExternColumnIdentifier, ExternColumnIdentifierValue, J
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "CallFrame.rs"]
 pub mod call_frame;
-pub use self::call_frame::{ArgumentsSlice, CallFrame};
+pub use self::call_frame::{ArgumentsSlice, CallFrame, CallerSrcLoc};
 
 /// Lives here (not in `bun_sys_jsc`) because the orphan
 /// rule requires either the trait or the type to be local; `FromJsEnum` is.

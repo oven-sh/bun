@@ -912,9 +912,18 @@ function isReactRefreshBoundary(esmExports): boolean {
   // bundler ships a module with `hmr.reactRefreshAccept()` while omitting
   // `refresh:` from the chunk config, this function runs before
   // `setRefreshRuntime` ever did — a destructure of `undefined` here would
-  // crash every accept boundary. Treat the missing-runtime case the same as
-  // the missing-function case just below and let the module self-accept.
-  const { isLikelyComponentType } = refreshRuntime ?? {};
+  // crash every accept boundary.
+  //
+  // Return `false` instead of treating the missing-runtime case as a
+  // refresh boundary: self-accepting here would later skip
+  // `refreshRuntime.performReactRefresh()` (see line ~791, guarded by
+  // `if (refreshRuntime)`) and the React tree would never re-render after
+  // a hot update — silently swallowing every edit. Declining to
+  // self-accept instead lets `replaceModules` walk importers to the root,
+  // hit `importers.size === 0`, and fall back to `fullReload()` — a
+  // normal page refresh, which is strictly better than a silent no-op.
+  if (!refreshRuntime) return false;
+  const { isLikelyComponentType } = refreshRuntime;
   if (!isLikelyComponentType) return true;
   if (isLikelyComponentType(esmExports)) {
     return true;

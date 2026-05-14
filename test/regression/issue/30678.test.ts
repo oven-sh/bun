@@ -106,7 +106,15 @@ test("hmr client does not crash when config.refresh is missing", { timeout: 30_0
       }
       // Drop the \`refresh: "..."\` line so \`setRefreshRuntime\` never
       // runs, exactly mirroring the bundler state that triggered #30678.
+      // Re-check \`refresh:\` after the strip: if the bundler's emission
+      // format ever drifts from the current \`,\\n  refresh: "..."\`, the
+      // strip would silently no-op and this test would degrade into a
+      // tautology that no longer exercises the crash path.
       bundle = bundle.replace(/,\\n\\s*refresh:\\s*"[^"]+"/, "");
+      if (/\\brefresh:\\s*"/.test(bundle)) {
+        console.error("STRIP_FAILED (bundle refresh emission format changed; update the regex)");
+        process.exit(14);
+      }
 
       const window = new Window({ url, width: 1024, height: 768 });
       window.document.documentElement.innerHTML = '<head></head><body><div id="root"></div></body>';
@@ -157,6 +165,20 @@ test("hmr client does not crash when config.refresh is missing", { timeout: 30_0
       if (offenders.length > 0) {
         console.error("ISLIKELY_CRASH:", ...offenders);
         process.exit(13);
+      }
+      // Any unexpected error means something else broke on the path
+      // from bootstrap to \`main.tsx\`'s body; we'd be printing CLIENT_OK
+      // without actually exercising the regression.
+      if (errors.length > 0) {
+        console.error("UNEXPECTED_CLIENT_ERRORS:", ...errors);
+        process.exit(15);
+      }
+      // \`main.tsx\` sets \`window.__authProvider\` at the end of its
+      // module body; if it isn't set, the eval never reached the user
+      // module and the fix wasn't actually exercised.
+      if (!window.__authProvider) {
+        console.error("CLIENT_DID_NOT_REACH_TERMINAL_SUCCESS (poll deadline expired)");
+        process.exit(16);
       }
       console.log("CLIENT_OK");
     `,

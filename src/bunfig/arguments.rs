@@ -50,7 +50,15 @@ fn get_system_config_path(buf: &mut PathBuffer) -> SystemConfigResult<'_> {
         return SystemConfigResult { path: None, is_explicit: true };
     }
 
-    if cfg!(windows) {
+    // `ALLUSERSPROFILE` is declared `posix = None`, so calling
+    // `env_var::ALLUSERSPROFILE.get_not_empty()` on POSIX would trip the
+    // macro's `debug_assert` today and break compilation outright once the
+    // planned `#[cfg(unix)] compile_error!` lands (see env_var.rs:871-873).
+    // Gate with attribute-`#[cfg]` so the body is removed before type-check,
+    // matching the established pattern for other `posix = None` accessors
+    // (SYSTEMROOT in resolver/lib.rs + resolver/fs.rs, WINDIR in upgrade_command.rs).
+    #[cfg(windows)]
+    {
         // Windows: use %ALLUSERSPROFILE%\bunfig.toml (typically C:\ProgramData\bunfig.toml).
         if let Some(all_users) = env_var::ALLUSERSPROFILE.get_not_empty() {
             let paths: [&[u8]; 1] = [b"bunfig.toml"];
@@ -59,7 +67,9 @@ fn get_system_config_path(buf: &mut PathBuffer) -> SystemConfigResult<'_> {
             return SystemConfigResult { path: Some(joined), is_explicit: false };
         }
         SystemConfigResult { path: None, is_explicit: false }
-    } else {
+    }
+    #[cfg(not(windows))]
+    {
         // POSIX: /etc/bunfig.toml.
         let system_path: &[u8] = b"/etc/bunfig.toml";
         buf[..system_path.len()].copy_from_slice(system_path);

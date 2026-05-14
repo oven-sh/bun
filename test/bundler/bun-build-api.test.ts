@@ -422,6 +422,17 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toEqual(null);
   });
 
+  test.concurrent("many custom conditions do not crash", async () => {
+    const dir = tempDirWithFiles("bun-build-many-conditions", {
+      "index.ts": `export const a = 1;`,
+    });
+    const x = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      conditions: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"],
+    });
+    expect(x.success).toBe(true);
+  });
+
   test.concurrent("warnings do not fail a build", async () => {
     const x = await Bun.build({
       entrypoints: [join(import.meta.dir, "./fixtures/jsx-warning/index.jsx")],

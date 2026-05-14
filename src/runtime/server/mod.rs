@@ -276,7 +276,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub pending_requests: usize,
     pub request_pool: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
     /// Zig: `if (has_h3) *H3RequestContext.RequestContextStackAllocator else void`.
-    /// Null until the H3 listen path runs (`HAS_H3 && config.h3`); never
+    /// Null until the H3 listen path runs (`HAS_H3 && config.http3`); never
     /// allocated when `!SSL`. Kept as a raw nullable pointer rather than a
     /// conditional field so the struct stays uniform across monomorphizations.
     pub h3_request_pool: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>,
@@ -1870,7 +1870,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // Zig gates this on `comptime has_h3` (server.zig:1827) so plain
             // HTTP servers never allocate the ~816 KB H3 pool. We go one step
             // further and defer to the H3-listen path (`listen()` below) so
-            // HTTPS servers that don't enable `config.h3` don't pay either.
+            // HTTPS servers that don't enable `config.http3` don't pay either.
             h3_request_pool: core::ptr::null_mut(),
             all_closed_promise: jsc::JSPromiseStrong::default(),
             listen_callback: jsc::AnyTask::AnyTask {
@@ -2455,7 +2455,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             };
             unsafe { (*this).app = Some(app) };
 
-            if Self::HAS_H3 && this_ref.config.h3 {
+            if Self::HAS_H3 && this_ref.config.http3 {
                 let idle_timeout = this_ref.config.idle_timeout as u32;
                 let h3 = match uws_sys::h3::App::create(ssl_options, idle_timeout) {
                     Some(a) => Some(a),
@@ -2629,7 +2629,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             Tcp { port: u16, host: *const c_char },
             Unix { ptr: *const u8, len: usize },
         }
-        let (addr, h1, options) = {
+        let (addr, http1, options) = {
             let cfg = &this_ref.get().config;
             let addr = match &cfg.address {
                 server_config::Address::Tcp { port, hostname } => {
@@ -2653,19 +2653,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     len: unix.as_bytes().len(),
                 },
             };
-            (addr, cfg.h1, cfg.get_usockets_options())
+            (addr, cfg.http1, cfg.get_usockets_options())
         };
 
         match addr {
             Addr::Tcp { port, host } => {
                 // diverges from Zig: makes port:0 reliable for H3.
-                // With `{port: 0, h3: true}` we bind TCP:0 (kernel picks N),
+                // With `{port: 0, http3: true}` we bind TCP:0 (kernel picks N),
                 // then must bind UDP:N for QUIC so Alt-Svc works. UDP:N may
                 // already be held by an unrelated process. When the user asked
                 // for "any port" (0), close TCP:N and retry the whole TCP+UDP
                 // bind so the kernel picks a fresh N. Never retry a
                 // user-specified non-zero port.
-                let max_attempts: u8 = if Self::HAS_H3 && h1 && port == 0 {
+                let max_attempts: u8 = if Self::HAS_H3 && http1 && port == 0 {
                     3
                 } else {
                     1
@@ -2673,7 +2673,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let mut attempt: u8 = 0;
                 loop {
                     attempt += 1;
-                    if h1 {
+                    if http1 {
                         // SAFETY: app is a live uws handle owned by this server. No
                         // `&*this` is live across this call; the trampoline's
                         // `&mut *this` is the sole borrow while it runs.
@@ -2736,7 +2736,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                     // deinit + return ZERO.
                                 }
                             }
-                            if !this_ref.config.h1 {
+                            if !this_ref.config.http1 {
                                 // SAFETY: per-thread VM singleton; no aliasing `&mut`.
                                 jsc::VirtualMachine::get().as_mut().event_loop_handle =
                                     Some(bun_io::Loop::get());
@@ -2753,7 +2753,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         // advertise it; drop the H3 listener instead of wiring
                         // an exotic transport nobody can reach.
                         bun_core::Output::warn(format_args!(
-                            "h3: true with a unix socket — HTTP/3 listener skipped"
+                            "http3: true with a unix socket — HTTP/3 listener skipped"
                         ));
                         // SAFETY: h3a is a live H3::App handle just taken from self.h3_app.
                         unsafe { uws_sys::h3::App::destroy(h3a) };

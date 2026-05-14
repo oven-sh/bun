@@ -1,6 +1,6 @@
 //! `us_quic_socket_context_t` — one lsquic engine + its event-loop wiring.
 //! For the client there is exactly one of these per HTTP-thread loop and it
-//! lives for the process; the server creates one per `Bun.serve({h3:true})`.
+//! lives for the process; the server creates one per `Bun.serve({http3:true})`.
 
 use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
 

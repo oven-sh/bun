@@ -1163,22 +1163,31 @@ const unsortedFiles = readdirRecursiveWithExclusionsAndExtensionsSync(src, ["nod
 
 // Sort for deterministic output
 for (const fileName of [...unsortedFiles].sort()) {
-  const zigFile = path.relative(src, fileName.replace(/\.bind\.ts$/, ".zig"));
-  const zigFilePath = path.join(src, zigFile);
-  let file = files.get(zigFile);
-  if (!fs.existsSync(zigFilePath)) {
+  const rustFile = path.relative(src, fileName.replace(/\.bind\.ts$/, ".rs"));
+  const rustFilePath = path.join(src, rustFile);
+
+  const exports = import.meta.require(fileName);
+  // Some `.bind.ts` files (e.g. `bake.bind.ts`) are placeholders with their
+  // contents commented out — they declare nothing, so there's no sibling
+  // module to demand. Only require the Rust sibling once a binding actually
+  // references it.
+  const hasBindings = Object.values(exports).some(
+    value => value != null && typeof value === "object" && (value instanceof TypeImpl || value[isFunc]),
+  );
+  if (!hasBindings && !files.has(rustFile)) continue;
+
+  let file = files.get(rustFile);
+  if (!fs.existsSync(rustFilePath)) {
     // It would be nice if this would generate the file with the correct boilerplate
     const bindName = path.basename(fileName);
     throw new Error(
-      `${bindName} is missing a corresponding Zig file at ${zigFile}. Please create it and make sure it matches signatures in ${bindName}.`,
+      `${bindName} is missing a corresponding Rust file at ${rustFile}. Please create it and make sure it matches signatures in ${bindName}.`,
     );
   }
   if (!file) {
     file = { functions: [], typedefs: [] };
-    files.set(zigFile, file);
+    files.set(rustFile, file);
   }
-
-  const exports = import.meta.require(fileName);
 
   // Mark all exported TypeImpl as reachable
   for (let [key, value] of Object.entries(exports)) {
@@ -1244,10 +1253,10 @@ const fileMap = new Map<string, string>();
 const fileNames = new Set<string>();
 
 for (const [filename, { functions, typedefs }] of files) {
-  const basename = path.basename(filename, ".zig");
+  const basename = path.basename(filename, ".rs");
   let varName = basename;
   if (fileNames.has(varName)) {
-    throw new Error(`File name collision: ${basename}.zig`);
+    throw new Error(`File name collision: ${basename}.rs`);
   }
   fileNames.add(varName);
   fileMap.set(filename, varName);
@@ -1588,7 +1597,11 @@ writeIfNotChanged(
   path.join(codegenRoot, "GeneratedBindings.cpp"),
   [...headers].map(name => `#include ${str(name)}\n`).join("") + "\n" + cppInternal.buffer + "\n" + cpp.buffer,
 );
-writeIfNotChanged(path.join(src, "jsc/bindings/GeneratedBindings.zig"), zig.buffer + zigInternal.buffer);
+// NOTE: the Zig-era `GeneratedBindings.zig` mirror was dropped when the Rust
+// port landed (the file was gitignored and never compiled). The `zig` /
+// `zigInternal` CodeWriters above remain populated — their emit calls are
+// interleaved with the C++ writers and pulling them out would be far churnier
+// than letting them write to a buffer that's discarded here.
 
 // Headers
 for (const [filename, { functions, typedefs }] of files) {

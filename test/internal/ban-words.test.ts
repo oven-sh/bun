@@ -61,11 +61,11 @@ const words_keys = [...Object.keys(words)];
 const limits = await Bun.file(import.meta.dir + "/ban-limits.json").json();
 
 const root = path.resolve(import.meta.dir, "..", "..");
-const zigSources = globAllSources().zig;
+const sources = globAllSources().rustSourceFiles;
 
 let counts: Record<string, [number, string][]> = {};
 
-for (const abs of zigSources) {
+for (const abs of sources) {
   const source = path.relative(root, abs);
   if (/^src[/\\][a-z_]+_sys[/\\]/.test(source)) continue;
   if (source.startsWith("src" + path.sep + "codegen")) continue;
@@ -137,17 +137,26 @@ describe("banned words", () => {
 });
 
 describe("required words", () => {
-  const expectDir = path.join(root, "src/runtime/test_runner/expect");
-  const files = readdirSync(expectDir);
-  for (const file of files) {
-    if (!file.endsWith(".zig") || file.startsWith(".") || file === "toHaveReturnedTimes.zig") continue;
-    test(file, async () => {
-      const content = await Bun.file(path.join(expectDir, file)).text();
-      if (!content.includes("incrementExpectCallCounter")) {
-        throw new Error(
-          `${expectDir}/${file} is missing string "incrementExpectCallCounter"\nAll expect() functions must call incrementExpectCallCounter()`,
-        );
-      }
-    });
-  }
+  // The Zig expect matchers each open-coded the `incrementExpectCallCounter()`
+  // call, so the per-file string check above used to catch a forgotten one.
+  // The Rust port consolidated that boilerplate into a small set of shared
+  // helpers (`matcher_prelude`, `run_unary_predicate`, `mock_prologue`,
+  // `numeric_ordering_matcher`, `contain_matcher`, …), each of which bumps
+  // the counter exactly once. Per-file scanning would only see the handful
+  // of bespoke matchers that bump it directly. Guard the centralization
+  // points instead.
+  const exprFiles = ["src/runtime/test_runner/expect.rs", "src/runtime/test_runner/mod.rs"];
+  test("matcher entry points call increment_expect_call_counter", async () => {
+    let found = 0;
+    for (const rel of exprFiles) {
+      const content = await Bun.file(path.join(root, rel)).text();
+      found += (content.match(/increment_expect_call_counter/g) ?? []).length;
+    }
+    if (found === 0) {
+      throw new Error(
+        `Expected at least one call to increment_expect_call_counter in ${exprFiles.join(", ")}.\n` +
+          "Every expect() matcher must increment the per-test call counter (directly or via a shared prelude helper).",
+      );
+    }
+  });
 });

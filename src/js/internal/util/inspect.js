@@ -143,8 +143,8 @@ const ONLY_ENUMERABLE = 2;
  *
  * @type {(value: string) => string[] | undefined}
  */
-const extractedSplitNewLinesFastPathStringsOnly = $newZigFunction(
-  "node_util_binding.zig",
+const extractedSplitNewLinesFastPathStringsOnly = $newRustFunction(
+  "node_util_binding.rs",
   "extractedSplitNewLinesFastPathStringsOnly",
   1,
 );
@@ -2644,7 +2644,7 @@ function formatWithOptionsInternal(inspectOptions, args) {
   return str;
 }
 const stripANSI = Bun.stripANSI;
-const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
+const internalGetStringWidth = $newRustFunction("string.rs", "String.jsGetStringWidth", 1);
 /**
  * Returns the number of columns required to display the given string.
  */

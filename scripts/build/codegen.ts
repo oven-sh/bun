@@ -44,21 +44,12 @@ import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
 
-/**
- * Codegen outputs that land in `src/` instead of `codegenDir`. The zig
- * compiler refuses to import files outside its source tree, so these two
- * generated `.zig` files live in `src/jsc/bindings/` (gitignored).
- *
- * Consumers of `sources.zig` (the `src/**\/*.zig` glob) must filter these
- * out — they're OUTPUTS of codegen, not inputs.
- *
- * Paths are relative to repo root. This list is the single source of truth;
- * `globAllSources()` does NOT hardcode these.
- */
-export const zigFilesGeneratedIntoSrc = [
-  "src/jsc/bindings/GeneratedBindings.zig",
-  "src/jsc/bindings/GeneratedJS2Native.zig",
-] as const;
+// Historical note: the Zig-era build generated `GeneratedBindings.zig` and
+// `GeneratedJS2Native.zig` into `src/jsc/bindings/` (gitignored) because the
+// Zig compiler refused to `@import` files outside its source tree. Those
+// outputs were dropped when the Rust port landed — the Rust dispatch surface
+// is `${codegenDir}/generated_js2native.rs` and the bindgen tables live in
+// `${codegenDir}/GeneratedBindings.cpp`.
 
 // The individual emit functions take these four params. Bundled to keep
 // signatures short.
@@ -753,9 +744,6 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // InternalModuleRegistry.cpp is read by the script (for a sanity check).
   const extraInput = resolve(cfg.cwd, "src", "jsc", "bindings", "InternalModuleRegistry.cpp");
 
-  // Written into src/ (not codegenDir) — see zigFilesGeneratedIntoSrc at top.
-  const js2nativeZig = resolve(cfg.cwd, zigFilesGeneratedIntoSrc[1]);
-
   const outputs = [
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.cpp"),
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.h"),
@@ -767,9 +755,8 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "ResolvedSourceTag.zig"),
     resolve(cfg.codegenDir, "SyntheticModuleType.h"),
     resolve(cfg.codegenDir, "GeneratedJS2Native.h"),
-    js2nativeZig,
-    // Rust sibling: include!()'d by src/runtime/generated_js2native.rs. Must be
-    // a declared output so the cargo edge re-invokes when bundle-modules.ts /
+    // include!()'d by src/runtime/generated_js2native.rs. Must be a declared
+    // output so the cargo edge re-invokes when bundle-modules.ts /
     // generate-js2native.ts changes — the includer shim's mtime never moves.
     resolve(cfg.codegenDir, "generated_js2native.rs"),
   ];
@@ -898,28 +885,25 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
 function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
 
-  // Written into src/ (not codegenDir) — see zigFilesGeneratedIntoSrc at top.
-  const zigOut = resolve(cfg.cwd, zigFilesGeneratedIntoSrc[0]);
   const cppOut = resolve(cfg.codegenDir, "GeneratedBindings.cpp");
 
   // bindgen.ts scans src/ for .bind.ts files itself — this list is only for
   // ninja dependency tracking. New .bind.ts files need a reconfigure to be
   // picked up (next glob gets them).
   n.build({
-    outputs: [cppOut, zigOut],
+    outputs: [cppOut],
     rule: "codegen",
     inputs: [script, ...sources.bindgen],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: ".bind.ts → GeneratedBindings.{cpp,zig}",
+      desc: ".bind.ts → GeneratedBindings.cpp",
       args: shJoin(cfg, ["run", script, debugFlag(cfg), `--codegen-root=${cfg.codegenDir}`]),
     },
   });
 
-  o.all.push(cppOut, zigOut);
+  o.all.push(cppOut);
   o.cppSources.push(cppOut);
-  o.rustInputs.push(zigOut);
 }
 
 function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {

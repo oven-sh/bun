@@ -96,11 +96,11 @@ export class ClassDefinition {
    *
    * The C++ wrapper output (`ZigGeneratedClasses.{h,cpp}`) is byte-identical
    * regardless of this flag — it only selects whether the implementer thunks
-   * land in `ZigGeneratedClasses.zig` or `generated_classes.rs`.
+   * land in `generated_classes.rs`.
    *
-   * @default "zig"
+   * @default "rust"
    */
-  lang?: "zig" | "rust";
+  lang?: "rust";
   /**
    * Fully-qualified Rust path of the native struct backing this class, e.g.
    * `crate::webcore::request::Request`. The codegen emits

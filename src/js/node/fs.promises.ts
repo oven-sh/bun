@@ -1,7 +1,7 @@
 // Hardcoded module "node:fs/promises"
 const types = require("node:util/types");
 const EventEmitter = require("node:events");
-const fs = $zig("node_fs_binding.zig", "createBinding") as $ZigGeneratedClasses.NodeJSFS;
+const fs = $rust("node_fs_binding.rs", "createBinding") as $ZigGeneratedClasses.NodeJSFS;
 const { glob } = require("internal/fs/glob");
 const { validateInteger } = require("internal/validators");
 

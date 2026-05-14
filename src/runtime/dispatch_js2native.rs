@@ -51,9 +51,12 @@ pub use bun_jsc::virtual_machine_exports::Bun__setSyntheticAllocationLimitForTes
 // (`ipc_host.rs`) because it dereferences `Subprocess`, a runtime type.
 pub use crate::ipc_host::emit_handle_ipc_message as jsc_ipc_emit_handle_ipc_message;
 
-// ── src/string/*.zig ────────────────────────────────────────────────────────
-pub use bun_jsc::bun_string_jsc::js_escape_reg_exp as string_escape_reg_exp_js_escape_reg_exp;
-pub use bun_jsc::bun_string_jsc::js_escape_reg_exp_for_package_name_matching as string_escape_reg_exp_js_escape_reg_exp_for_package_name_matching;
+// ── src/string/* / src/bun_core/string/* ────────────────────────────────────
+// `$rust("escapeRegExp.rs", …)` resolves to `src/bun_core/string/escapeRegExp.rs`
+// (the only `escapeRegExp.rs` on disk; the Zig file lived at `src/string/`),
+// so the codegen mangles the dispatch name with the `bun_core_string_` prefix.
+pub use bun_jsc::bun_string_jsc::js_escape_reg_exp as bun_core_string_escape_reg_exp_js_escape_reg_exp;
+pub use bun_jsc::bun_string_jsc::js_escape_reg_exp_for_package_name_matching as bun_core_string_escape_reg_exp_js_escape_reg_exp_for_package_name_matching;
 pub use bun_jsc::bun_string_jsc::js_get_string_width as string_string_string_js_get_string_width;
 pub use bun_jsc::bun_string_jsc::unicode_testing_apis::to_utf16_alloc_sentinel as bun_core_string_immutable_unicode_testing_ap_is_to_utf16_alloc_sentinel;
 

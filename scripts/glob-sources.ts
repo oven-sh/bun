@@ -74,7 +74,16 @@ const patterns = {
     paths: ["src/codegen/bindgenv2/**/*.ts"],
   },
   /**
-   * NOT filtered; includes codegen-written files (see bun.ts).
+   * all `*.rs` + workspace manifests — implicit inputs to the cargo step.
+   * `rust-toolchain.toml` is included so a nightly bump invalidates the
+   * staticlib (cargo's own fingerprinting then forces a full rebuild).
+   */
+  rust: {
+    paths: ["src/**/*.rs", "src/**/Cargo.toml", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml"],
+  },
+  /**
+   * `.rs` only — for source scanners that read file *contents*
+   * (`test/internal/ban-words.test.ts`). Excludes manifests/lockfiles.
    *
    * `src/cli/**` is excluded: it is a committed symlink → `runtime/cli`
    * which `node:fs.globSync` follows on POSIX (double-counts every file)
@@ -82,17 +91,9 @@ const patterns = {
    * as a text file. Excluding the alias keeps the file set platform-stable
    * for ban-words count pinning.
    */
-  zig: {
-    paths: ["src/**/*.zig"],
+  rustSourceFiles: {
+    paths: ["src/**/*.rs"],
     exclude: ["src/cli/**"],
-  },
-  /**
-   * all `*.rs` + workspace manifests — implicit inputs to the cargo step.
-   * `rust-toolchain.toml` is included so a nightly bump invalidates the
-   * staticlib (cargo's own fingerprinting then forces a full rebuild).
-   */
-  rust: {
-    paths: ["src/**/*.rs", "src/**/Cargo.toml", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml"],
   },
   /** all `*.cpp` compiled into bun (bindings, webcore, v8 shim, usockets) */
   cxx: {

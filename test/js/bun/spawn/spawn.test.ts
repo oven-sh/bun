@@ -515,11 +515,7 @@ for (let [gcTick, label] of [
               stderr: "ignore",
               stdin: "ignore",
             });
-            // Wait for the child to exit before reading stdout. Using a real
-            // signal (process exit) instead of a fixed timer keeps this
-            // deterministic: it exercises "stdout is fully readable after the
-            // child has exited" without depending on timing.
-            await proc.exited;
+            await Bun.sleep(1);
             const out = await proc.stdout.text();
             expect(out).not.toBe("");
           }

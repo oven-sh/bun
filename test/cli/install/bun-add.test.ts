@@ -2474,10 +2474,7 @@ it("should install tarball with tarball dependencies", async () => {
 it("`bun add -g` ignores package.json/package-lock.json above the global dir", async () => {
   const home = tmpdirSync();
   // stray files in the parent of <home>/.bun/install/global
-  await writeFile(
-    join(home, "package.json"),
-    JSON.stringify({ name: "stray-root", version: "1.0.0" }),
-  );
+  await writeFile(join(home, "package.json"), JSON.stringify({ name: "stray-root", version: "1.0.0" }));
   await writeFile(
     join(home, "package-lock.json"),
     JSON.stringify({
@@ -2512,7 +2509,5 @@ it("`bun add -g` ignores package.json/package-lock.json above the global dir", a
   await exited;
 
   // And the stray root's package.json must not have been mutated.
-  expect(await file(join(home, "package.json")).text()).toBe(
-    JSON.stringify({ name: "stray-root", version: "1.0.0" }),
-  );
+  expect(await file(join(home, "package.json")).text()).toBe(JSON.stringify({ name: "stray-root", version: "1.0.0" }));
 });

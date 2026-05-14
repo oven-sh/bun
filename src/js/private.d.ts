@@ -223,7 +223,10 @@ declare function $cpp<T = any>(filename: NativeFilenameCPP, symbol: string): T;
  * @see {@link $cpp} for native c++ bindings.
  * @see `src/codegen/replacements.ts` for the script that performs replacement of this funciton.
  *
- * @param filename name of the Rust file containing the function. Do not pass a path.
+ * @param filename The Rust file containing the function. Pass a path relative
+ *                 to `src/` (e.g. `"runtime/socket/socket_body.rs"`) when the
+ *                 basename is ambiguous; a bare filename is accepted only if
+ *                 unique under `src/`.
  * @param symbol   The name of the binding function. Use `dot.notation` to access
  *                 member symbols.
  *

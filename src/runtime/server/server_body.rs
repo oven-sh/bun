@@ -2605,10 +2605,12 @@ where
         if let Some(resp) = <Response as bun_jsc::JsClass>::from_js(response_value) {
             // SAFETY: `from_js` returns a live `*mut Response` (owned by its
             // JS wrapper, which `response_value` keeps alive). `request` is
-            // kept alive by `request_value` (its JS wrapper) for the duration
-            // of this synchronous frame.
+            // kept alive by `request_value` (its JS wrapper), which
+            // `ensure_still_alive()` below keeps rooted on the stack for the
+            // conservative GC scan until after this read.
             unsafe { (*resp).set_url((*request).url.get().clone()) };
         }
+        request_value.ensure_still_alive();
         Ok(JSPromise::resolved_promise_value(ctx, response_value))
     }
 

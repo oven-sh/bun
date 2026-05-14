@@ -606,7 +606,7 @@ pub fn VersionType(comptime IntType: type) type {
             }
 
             pub fn eql(lhs: Tag, rhs: Tag) bool {
-                return lhs.pre.hash == rhs.pre.hash;
+                return lhs.pre.hash == rhs.pre.hash and lhs.build.hash == rhs.build.hash;
             }
 
             pub const TagResult = struct {

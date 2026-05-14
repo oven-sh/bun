@@ -51,24 +51,6 @@ type Str = &'static [u8]; // arena-backed `[]const u8` source slice
 // which are identity-copied (matches generics.zig "const strings" fast-path).
 use css::generics::{CssEql, CssHash};
 
-/// Drain a `SmallList<T, N>` into a `Box<[T]>`. `SmallList` has no `into_vec`;
-/// this bitwise-moves each element out and `set_len(0)`s the source so its
-/// `Drop` doesn't double-free. Mirrors Zig `toOwnedSlice`.
-fn small_list_into_box<T, const N: usize>(mut sl: SmallList<T, N>) -> Box<[T]> {
-    let len = sl.len() as usize;
-    let mut v: Vec<T> = Vec::with_capacity(len);
-    {
-        let src = sl.slice();
-        for i in 0..len {
-            // SAFETY: each index is read exactly once; `set_len(0)` below
-            // prevents `SmallList::drop` from re-dropping the moved elements.
-            unsafe { v.push(core::ptr::read(src.get_unchecked(i))) };
-        }
-    }
-    sl.set_len(0);
-    v.into_boxed_slice()
-}
-
 /// Allocate an ASCII-lowercased copy of `name` in the parse-session bump arena.
 /// Zig used `parser.arena().alloc(u8, n)` (the bump arena owns the buffer
 /// for the parse session and frees it on arena reset). Returns a raw arena
@@ -1659,10 +1641,10 @@ impl<Impl: SelectorImpl> Default for GenericSelector<Impl> {
 impl<Impl: SelectorImpl> GenericSelectorList<Impl> {
     /// Consume `self.v` and return a heap slice — used by `:is()`/`:where()`/
     /// `:has()`/`:not()`/`:nth-*(.. of ..)` which store `Box<[Selector]>` to
-    /// keep `Component` small. See `small_list_into_box`.
+    /// keep `Component` small.
     #[inline]
     pub fn into_boxed_selectors(self) -> Box<[GenericSelector<Impl>]> {
-        small_list_into_box(self.v)
+        self.v.to_owned_slice()
     }
 }
 

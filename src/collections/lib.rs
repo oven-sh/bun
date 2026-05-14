@@ -431,6 +431,17 @@ impl<T, const N: usize> SmallList<T, N> {
         self.0.clear()
     }
     #[inline]
+    pub fn truncate(&mut self, new_len: u32) {
+        self.0.truncate(new_len as usize)
+    }
+    #[inline]
+    pub fn drain<R: core::ops::RangeBounds<usize>>(
+        &mut self,
+        range: R,
+    ) -> smallvec::Drain<'_, [T; N]> {
+        self.0.drain(range)
+    }
+    #[inline]
     pub fn reserve(&mut self, additional: u32) {
         self.0.reserve(additional as usize)
     }
@@ -440,15 +451,6 @@ impl<T, const N: usize> SmallList<T, N> {
         if (new_capacity as usize) > cur {
             self.0.reserve_exact(new_capacity as usize - cur);
         }
-    }
-    /// Zig `setLen` — exposed as safe for API parity with the previous port
-    /// (whose only external caller shrinks to 0). Growing past the initialised
-    /// region is the caller's responsibility, same as before.
-    #[inline]
-    pub fn set_len(&mut self, new_len: u32) {
-        // SAFETY: matches the previous bun_css::SmallList::set_len contract
-        // (Zig callers treat this as a raw length store).
-        unsafe { self.0.set_len(new_len as usize) }
     }
 
     // ── conversion / clone ─────────────────────────────────────────────────

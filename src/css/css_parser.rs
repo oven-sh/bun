@@ -968,7 +968,8 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     }
 
     fn reset_enclosing_layer(this: &mut Self, len: u32) {
-        this.enclosing_layer.v.set_len(len);
+        debug_assert!(len <= this.enclosing_layer.v.len());
+        this.enclosing_layer.v.truncate(len);
     }
 
     fn bump_anon_layer_count(this: &mut Self, amount: i32) {

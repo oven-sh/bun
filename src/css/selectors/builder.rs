@@ -153,76 +153,26 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
         &mut self,
         spec: SpecificityAndFlags,
     ) -> BuildResult<Impl> {
-        // PORT NOTE: reshaped for borrowck — capture combinators.len()
-        // before borrowing simple_selectors.slice().
-        let combinators_len = self.combinators.len();
-
-        let (rest, current) = split_from_end::<GenericComponent<Impl>>(
-            self.simple_selectors.slice(),
-            self.current_len,
-        );
-        let combinators = self.combinators.slice();
-
         let mut components: Vec<GenericComponent<Impl>> = Vec::new();
 
-        let mut current_simple_selectors_i: usize = 0;
-        let mut combinator_i: i64 = i64::try_from(combinators_len).expect("int cast") - 1;
-        let mut rest_of_simple_selectors = rest;
-        let mut current_simple_selectors = current;
-
-        loop {
-            if current_simple_selectors_i < current_simple_selectors.len() {
-                // PORT NOTE: Zig copies the component by value here (struct copy).
-                // `GenericComponent<Impl>` is not `Copy`; we bitwise-move it out
-                // via `ptr::read` — sound because every element of
-                // `simple_selectors` is consumed exactly once across the loop,
-                // and `set_len(0)` below suppresses the source slice's `Drop`.
-                // SAFETY: each index is read at most once (the cursor
-                // monotonically advances; `rest_of_simple_selectors` is the
-                // disjoint prefix of the previous `current` slice). The source
-                // storage is leaked-then-truncated via `set_len(0)`.
-                let moved = unsafe {
-                    core::ptr::read(&raw const current_simple_selectors[current_simple_selectors_i])
-                };
-                components.push(moved);
-                current_simple_selectors_i += 1;
-            } else {
-                if combinator_i >= 0 {
-                    let (combo, len) =
-                        combinators[usize::try_from(combinator_i).expect("int cast")];
-                    let (rest2, current2) =
-                        split_from_end::<GenericComponent<Impl>>(rest_of_simple_selectors, len);
-                    rest_of_simple_selectors = rest2;
-                    current_simple_selectors_i = 0;
-                    current_simple_selectors = current2;
-                    combinator_i -= 1;
-                    components.push(GenericComponent::Combinator(combo));
-                    continue;
-                }
-                break;
-            }
+        // Emit compounds right-to-left (matching order), each compound's simple
+        // selectors left-to-right. `drain(at..)` moves the suffix out by value;
+        // draining a suffix is shift-free.
+        let at = self.simple_selectors.len() as usize - self.current_len;
+        components.extend(self.simple_selectors.drain(at..));
+        for &(combo, len) in self.combinators.slice().iter().rev() {
+            components.push(GenericComponent::Combinator(combo));
+            let at = self.simple_selectors.len() as usize - len;
+            components.extend(self.simple_selectors.drain(at..));
         }
-
-        // This function should take every component from `self.simple_selectors`
-        // and place it into `components` and return it.
-        //
-        // This means that we shouldn't leak any `GenericComponent<Impl>`, so
-        // it is safe to just set the length to 0.
-        //
-        // Combinators don't need to be deinitialized because they are simple enums.
-        self.simple_selectors.set_len(0);
-        self.combinators.set_len(0);
+        debug_assert_eq!(self.simple_selectors.len(), 0);
+        self.combinators.clear_retaining_capacity();
 
         BuildResult {
             specificity_and_flags: spec,
             components,
         }
     }
-}
-
-pub fn split_from_end<T>(s: &[T], at: usize) -> (&[T], &[T]) {
-    let midpoint = s.len() - at;
-    (&s[0..midpoint], &s[midpoint..])
 }
 
 // ported from: src/css/selectors/builder.zig

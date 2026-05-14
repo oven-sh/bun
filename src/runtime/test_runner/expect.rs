@@ -460,13 +460,6 @@ impl Expect {
         .map(MaybeDeferred::Value)
     }
 
-    /// Returns the promise that a deferred matcher should return to its
-    /// caller. Only valid when `get_value()` returned
-    /// `MaybeDeferred::Deferred`.
-    pub fn deferred_result(&self, this_value: JSValue) -> JSValue {
-        super::expect::js::result_value_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
-    }
-
     /// If `.resolves`/`.rejects` is set and `value` is a still-pending
     /// promise, sets up a `.then()` callback to re-invoke the current matcher
     /// once the promise settles, stores the returned-to-caller promise in the
@@ -1674,9 +1667,6 @@ impl Expect {
     /// and we can known which case it is based on if the `callFrame.this()` value is an instance of Expect
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn apply_custom_matcher(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
-
         // retrieve the user-provided matcher function (matcher_fn)
         let func: JSValue = call_frame.callee();
         let mut matcher_fn: JSValue = get_custom_matcher_fn(func, global_this).unwrap_or(JSValue::UNDEFINED);
@@ -1692,6 +1682,8 @@ impl Expect {
         let this_value: JSValue = call_frame.this();
         let Some(expect_ptr) = Expect::from_js(this_value) else {
             // if no Expect instance, assume it is a static call (`expect.myMatcher()`), so create an ExpectCustomAsymmetricMatcher instance
+            // SAFETY: bun_vm() returns the live VM pointer for this global.
+            let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
             return ExpectCustomAsymmetricMatcher::create(global_this, call_frame, matcher_fn);
         };
         // SAFETY: from_js returned a non-null live m_ctx pointer owned by the JS wrapper.

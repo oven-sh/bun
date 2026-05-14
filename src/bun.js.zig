@@ -14,152 +14,6 @@ pub fn applyStandaloneRuntimeFlags(b: *bun.Transpiler, graph: *const bun.Standal
     b.resolver.opts.load_package_json = !graph.flags.disable_autoload_package_json;
 }
 
-/// Read a small file at an absolute path into `buf`, returning the bytes read
-/// (or `null` on any error). Uses `bun.sys.File`/`bun.FD.cwd()` rather than
-/// `std.fs.cwd()` per the codebase convention; absolute paths ignore the dir fd.
-fn readSmallFileAbs(path: [:0]const u8, buf: []u8) ?[]const u8 {
-    const file = switch (bun.sys.File.openat(bun.FD.cwd(), path, bun.O.RDONLY, 0)) {
-        .result => |f| f,
-        .err => return null,
-    };
-    defer file.close();
-    return switch (file.readAll(buf)) {
-        .result => |n| buf[0..n],
-        .err => null,
-    };
-}
-
-/// Pin JSC/ICU's default timezone before anything constructs a `Date` or touches
-/// `Intl`. Honors `$TZ` from the process environment; with `$TZ` unset, resolves
-/// the host IANA/POSIX-TZ id cheaply (without walking `/usr/share/zoneinfo/**`):
-///
-///   1a. `/etc/localtime` symlink target containing `.../zoneinfo/<id>`
-///   1b. `/etc/localtime` regular file — the POSIX-TZ string in the TZif v2+
-///       footer (the newline-framed last line of the file)
-///   2.  `/etc/timezone` (Debian/Ubuntu) — file content is the IANA id
-///   3.  `ZONE="..."` in `/etc/sysconfig/clock` (older RHEL/CentOS)
-///
-/// Goes through `WTF::setTimeZoneOverride` (`ucal_setDefaultTimeZone`), a
-/// process-global ICU setting, so it can run before `VirtualMachine.init` and
-/// needs no `JSGlobalObject`. If none resolve, do nothing and let ICU
-/// auto-detect lazily. Otherwise ICU runs that auto-detection the first time a
-/// `Date` is constructed, and on systems where `/etc/localtime` is a regular
-/// file (not a symlink into `/usr/share/zoneinfo`) it content-matches every zone
-/// file under `/usr/share/zoneinfo/**` — thousands of openat/read/close syscalls.
-/// A `$TZ` that only appears in a `.env` file is applied separately, after the
-/// env loader runs (see `Run.boot`).
-fn seedHostTimeZone() void {
-    if (comptime !bun.Environment.isPosix) return;
-
-    if (std.posix.getenv("TZ")) |tz| {
-        if (tz.len > 0) _ = jsc.wtf.setTimeZoneOverride(tz);
-        return;
-    }
-
-    const zoneinfo_marker = "zoneinfo/";
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
-
-    // 1) /etc/localtime
-    if (std.fs.readLinkAbsolute("/etc/localtime", &buf)) |target| {
-        // 1a) symlink -> .../zoneinfo/<id> (the usual layout)
-        if (std.mem.lastIndexOf(u8, target, zoneinfo_marker)) |idx| {
-            if (applyHostTimeZone(target[idx + zoneinfo_marker.len ..])) return;
-        }
-    } else |err| switch (err) {
-        // 1b) regular file (readlink -> EINVAL): a TZif file. v2+ files carry a
-        // newline-framed POSIX-TZ string as their last line (e.g. `\nUTC0\n`,
-        // `\nEST5EDT,M3.2.0,M11.1.0\n`); prefer it to the directory content-match
-        // scan ICU would otherwise perform.
-        error.NotLink => switch (bun.sys.File.readFrom(bun.FD.cwd(), "/etc/localtime", bun.default_allocator)) {
-            .result => |data| {
-                defer if (data.len > 0) bun.default_allocator.free(data);
-                if (tzifV2Footer(data)) |footer| {
-                    if (applyHostTimeZone(normalizePosixTzZone(footer))) return;
-                }
-            },
-            .err => {},
-        },
-        else => {},
-    }
-
-    // 2) /etc/timezone (Debian/Ubuntu) — file content is the IANA id
-    if (readSmallFileAbs("/etc/timezone", &buf)) |contents| {
-        if (applyHostTimeZone(contents)) return;
-    }
-
-    // 3) ZONE="..." in /etc/sysconfig/clock (older RHEL/CentOS)
-    if (readSmallFileAbs("/etc/sysconfig/clock", &buf)) |contents| {
-        var lines = std.mem.tokenizeAny(u8, contents, "\r\n");
-        while (lines.next()) |line| {
-            const trimmed = std.mem.trim(u8, line, " \t");
-            if (!std.mem.startsWith(u8, trimmed, "ZONE")) continue;
-            var rest = std.mem.trim(u8, trimmed["ZONE".len..], " \t");
-            if (rest.len == 0 or rest[0] != '=') continue;
-            rest = std.mem.trim(u8, rest[1..], " \t");
-            rest = std.mem.trim(u8, rest, "\"'");
-            if (applyHostTimeZone(rest)) return;
-        }
-    }
-}
-
-/// Trim surrounding whitespace and hand the id to `WTF::setTimeZoneOverride`
-/// (`ucal_setDefaultTimeZone`). Returns whether ICU accepted it — a rejected id
-/// (e.g. a POSIX-TZ string ICU cannot canonicalize) yields `false` so the caller
-/// falls through to the next source.
-fn applyHostTimeZone(id_raw: []const u8) bool {
-    const id = std.mem.trim(u8, id_raw, " \t\r\n");
-    if (id.len == 0) return false;
-    return jsc.wtf.setTimeZoneOverride(id);
-}
-
-/// Returns the newline-framed footer (the last line) of a TZif v2/v3/v4 file —
-/// a POSIX-TZ string such as `UTC0` or `EST5EDT,M3.2.0,M11.1.0`. `null` for v1
-/// files (no footer), non-TZif input, or a missing/empty/non-printable footer.
-fn tzifV2Footer(data: []const u8) ?[]const u8 {
-    if (data.len < 5 or !strings.hasPrefixComptime(data, "TZif")) return null;
-    switch (data[4]) {
-        '2', '3', '4' => {},
-        else => return null,
-    }
-    // The footer is `...\n<POSIX-TZ>\n` at EOF.
-    if (data[data.len - 1] != '\n') return null;
-    const body = data[0 .. data.len - 1];
-    const nl = std.mem.lastIndexOfScalar(u8, body, '\n') orelse return null;
-    const footer = body[nl + 1 ..];
-    if (footer.len == 0) return null;
-    // A well-formed footer is printable ASCII with no spaces.
-    for (footer) |c| {
-        if (c < '!' or c > '~') return null;
-    }
-    return footer;
-}
-
-/// Maps the zero-offset, no-DST UTC aliases ICU does not canonicalize from a
-/// bare POSIX-TZ footer (`UTC0`, `UCT0`, `UT0`, …) onto `UTC`, which it does.
-/// Everything else passes through unchanged: `GMT0` → `Etc/GMT` and
-/// `GMT+05:00` → a custom zone are handled by ICU, an actual IANA id needs no
-/// help, and a DST-bearing footer ICU rejects so the caller falls through.
-fn normalizePosixTzZone(footer: []const u8) []const u8 {
-    // A POSIX-TZ string with a DST rule has a comma; never a plain UTC alias.
-    // Quoted `<...>` abbreviations are left for ICU to interpret.
-    if (std.mem.indexOfScalar(u8, footer, ',') != null) return footer;
-    if (footer.len > 0 and footer[0] == '<') return footer;
-    var split: usize = 0;
-    while (split < footer.len and std.ascii.isAlphabetic(footer[split])) : (split += 1) {}
-    if (split == 0) return footer;
-    const abbr = footer[0..split];
-    const offset = footer[split..];
-    const is_utc_abbr = std.ascii.eqlIgnoreCase(abbr, "UT") or
-        std.ascii.eqlIgnoreCase(abbr, "UTC") or
-        std.ascii.eqlIgnoreCase(abbr, "UCT");
-    if (!is_utc_abbr) return footer;
-    for (offset) |c| switch (c) {
-        '0', '+', '-', ':' => {},
-        else => return footer,
-    };
-    return "UTC";
-}
-
 pub const Run = struct {
     ctx: Command.Context,
     vm: *VirtualMachine,
@@ -173,10 +27,6 @@ pub const Run = struct {
     pub fn bootStandalone(ctx: Command.Context, entry_path: string, graph_ptr: *bun.StandaloneModuleGraph) !void {
         jsc.markBinding(@src());
         bun.jsc.initialize(false);
-        // Pin the timezone before anything can construct a `Date` or touch
-        // `Intl` so ICU never falls back to its expensive lazy host-zone
-        // auto-detection. See `seedHostTimeZone`.
-        seedHostTimeZone();
         bun.analytics.Features.standalone_executable += 1;
 
         js_ast.Expr.Data.Store.create();
@@ -255,14 +105,6 @@ pub const Run = struct {
         vm.is_main_thread = true;
         jsc.VirtualMachine.is_main_thread_vm = true;
 
-        // Honor an explicit $TZ (e.g. from a bundled `.env`); the host fallback
-        // was already seeded early.
-        if (vm.transpiler.env.get("TZ")) |tz| {
-            if (tz.len > 0) {
-                _ = vm.global.setTimeZone(&jsc.ZigString.init(tz));
-            }
-        }
-
         bun.http.experimental_http2_client_from_cli = ctx.runtime_options.experimental_http2_fetch;
         bun.http.experimental_http3_client_from_cli = ctx.runtime_options.experimental_http3_fetch;
         doPreconnect(ctx.runtime_options.preconnect);
@@ -329,14 +171,6 @@ pub const Run = struct {
         }
 
         bun.jsc.initialize(ctx.runtime_options.eval.eval_and_print);
-
-        // Pin the timezone before VirtualMachine.init — and therefore before
-        // anything can construct a `Date` or touch `Intl` — so ICU never falls
-        // back to its expensive lazy host-zone auto-detection. Reads `$TZ`
-        // straight from the process environment (vm.transpiler.env isn't built
-        // yet); a `$TZ` that only appears in a `.env` file is honored below,
-        // after the env loader runs.
-        seedHostTimeZone();
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
@@ -449,12 +283,7 @@ pub const Run = struct {
         vm.is_main_thread = true;
         jsc.VirtualMachine.is_main_thread_vm = true;
 
-        // Honor an explicit $TZ — including one loaded from a `.env` file above,
-        // which the early `seedHostTimeZone()` (process environment only) could
-        // not see. Going through `vm.global.setTimeZone` also resets the date
-        // cache; the bare `WTF::setTimeZoneOverride` used by the early seed does
-        // not, but nothing has constructed a `Date` that early so it doesn't
-        // matter. With $TZ unset, the host fallback was already applied early.
+        // Allow setting a custom timezone
         if (vm.transpiler.env.get("TZ")) |tz| {
             if (tz.len > 0) {
                 _ = vm.global.setTimeZone(&jsc.ZigString.init(tz));

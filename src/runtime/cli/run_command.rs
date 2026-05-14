@@ -99,164 +99,6 @@ impl Default for ExecCfg {
 
 pub struct RunCommand;
 
-/// Resolve the host IANA timezone id cheaply (without walking
-/// `/usr/share/zoneinfo/**`) and seed it as JSC's default timezone via
-/// `set_time_zone()`. Called only when `$TZ` is unset.
-///
-/// Resolution order matches the common Unix conventions:
-///   1a. `/etc/localtime` symlink target containing `.../zoneinfo/<id>`
-///   1b. `/etc/localtime` regular file — id from the TZif v2+ footer (the
-///       newline-framed last line of the file)
-///   2.  `/etc/timezone` (Debian/Ubuntu) — file content is the IANA id
-///   3.  `ZONE="..."` in `/etc/sysconfig/clock` (older RHEL/CentOS)
-///
-/// If none resolve, do nothing and let JSC/ICU auto-detect lazily.
-///
-/// Seeding *before* anything constructs a `Date` or touches `Intl` is the whole
-/// point: otherwise ICU runs its lazy host-zone auto-detection, and on systems
-/// where `/etc/localtime` is a regular file (not a symlink into
-/// `/usr/share/zoneinfo`) that detection content-matches every zone file under
-/// `/usr/share/zoneinfo/**` — thousands of `openat`/`read`/`close` syscalls.
-/// Hence the call site runs this right after the env loader is ready, before the
-/// HTTP env copy / source-code printer / entry-point transpile.
-/// Zig: `seedHostTimeZone` in `src/bun.js.zig`.
-#[cfg(unix)]
-fn seed_host_time_zone(global: &JSGlobalObject) {
-    use bun_jsc::zig_string::ZigString;
-    use std::os::unix::ffi::OsStrExt as _;
-
-    const ZONEINFO_MARKER: &[u8] = b"zoneinfo/";
-
-    // Returns `true` once JSC accepted the id (so the caller stops looking). A
-    // rejected id — e.g. a POSIX-TZ string ICU cannot canonicalize — yields
-    // `false` so the next source is tried instead.
-    let apply = |id: &[u8]| -> bool {
-        let id = id.trim_ascii();
-        !id.is_empty() && global.set_time_zone(&ZigString::init(id))
-    };
-
-    match std::fs::read_link("/etc/localtime") {
-        // 1a) symlink: `/etc/localtime` -> `.../zoneinfo/<id>` (the usual layout)
-        Ok(target) => {
-            let bytes = target.as_os_str().as_bytes();
-            if let Some(pos) = bytes
-                .windows(ZONEINFO_MARKER.len())
-                .rposition(|w| w == ZONEINFO_MARKER)
-            {
-                if apply(&bytes[pos + ZONEINFO_MARKER.len()..]) {
-                    return;
-                }
-            }
-        }
-        // 1b) regular file (`read_link` -> EINVAL): it is a TZif file. v2+ files
-        // carry a newline-framed POSIX-TZ string as their last line (e.g.
-        // `\nUTC0\n`, `\nEST5EDT,M3.2.0,M11.1.0\n`); use it rather than the
-        // directory content-match scan ICU would otherwise perform.
-        Err(_) => {
-            if let Ok(data) = std::fs::read("/etc/localtime") {
-                if let Some(footer) = tzif_v2_footer(&data) {
-                    if apply(normalize_posix_tz_zone(footer)) {
-                        return;
-                    }
-                }
-            }
-        }
-    }
-
-    // 2) /etc/timezone (Debian/Ubuntu) — file content is the IANA id
-    if let Ok(contents) = std::fs::read("/etc/timezone") {
-        if apply(&contents) {
-            return;
-        }
-    }
-
-    // 3) ZONE="..." in /etc/sysconfig/clock (older RHEL/CentOS)
-    if let Ok(contents) = std::fs::read("/etc/sysconfig/clock") {
-        for line in contents.split(|&b| b == b'\r' || b == b'\n') {
-            let trimmed = line.trim_ascii();
-            let Some(rest) = trimmed.strip_prefix(b"ZONE") else {
-                continue;
-            };
-            let Some(rest) = rest.trim_ascii_start().strip_prefix(b"=") else {
-                continue;
-            };
-            // Zig: `std.mem.trim(u8, rest, " \t")` then `std.mem.trim(u8, rest, "\"'")`.
-            let mut value = rest.trim_ascii();
-            while let Some((&c, tail)) = value.split_first() {
-                if c == b'"' || c == b'\'' {
-                    value = tail;
-                } else {
-                    break;
-                }
-            }
-            while let Some((&c, head)) = value.split_last() {
-                if c == b'"' || c == b'\'' {
-                    value = head;
-                } else {
-                    break;
-                }
-            }
-            if apply(value) {
-                return;
-            }
-        }
-    }
-}
-
-/// Returns the newline-framed footer (the last line) of a TZif v2/v3/v4 file —
-/// a POSIX-TZ string such as `UTC0` or `EST5EDT,M3.2.0,M11.1.0`. `None` for v1
-/// files (no footer), non-TZif input, or a missing/empty footer.
-#[cfg(unix)]
-fn tzif_v2_footer(data: &[u8]) -> Option<&[u8]> {
-    if data.len() < 5 || &data[..4] != b"TZif" {
-        return None;
-    }
-    if !matches!(data[4], b'2' | b'3' | b'4') {
-        return None;
-    }
-    // The footer is `...\n<POSIX-TZ>\n` at EOF.
-    let body = data.strip_suffix(b"\n")?;
-    let nl = body.iter().rposition(|&b| b == b'\n')?;
-    let footer = &body[nl + 1..];
-    // A well-formed footer is printable ASCII with no spaces; reject anything else.
-    if footer.is_empty() || footer.iter().any(|&b| !(b'!'..=b'~').contains(&b)) {
-        return None;
-    }
-    Some(footer)
-}
-
-/// Maps the zero-offset, no-DST UTC aliases ICU does not canonicalize from a
-/// bare POSIX-TZ string (`UTC0`, `UCT0`, `UT0`, …) onto `UTC`, which it does.
-/// Everything else passes through unchanged: `GMT0` → `Etc/GMT` and
-/// `GMT+05:00` → a custom zone are handled by ICU, an actual IANA id needs no
-/// help, and a DST-bearing footer ICU rejects so the caller falls through.
-#[cfg(unix)]
-fn normalize_posix_tz_zone(footer: &[u8]) -> &[u8] {
-    // A POSIX-TZ string with a DST rule has a comma; never a plain UTC alias.
-    // Quoted `<...>` abbreviations are left for ICU to interpret.
-    if footer.contains(&b',') || footer.first() == Some(&b'<') {
-        return footer;
-    }
-    let split = footer.iter().take_while(|b| b.is_ascii_alphabetic()).count();
-    if split == 0 {
-        return footer;
-    }
-    let (abbr, offset) = footer.split_at(split);
-    let abbr = abbr.to_ascii_uppercase();
-    let is_utc_abbr = abbr == b"UT" || abbr == b"UTC" || abbr == b"UCT";
-    let zero_offset = offset
-        .iter()
-        .all(|&b| matches!(b, b'0' | b'+' | b'-' | b':'));
-    if is_utc_abbr && zero_offset {
-        b"UTC"
-    } else {
-        footer
-    }
-}
-
-#[cfg(not(unix))]
-fn seed_host_time_zone(_global: &JSGlobalObject) {}
-
 impl RunCommand {
     /// `bun run --help` body.
     pub fn print_help(package_json: Option<&PackageJSON>) {
@@ -1201,28 +1043,16 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             crate::run_main::fail_with_build_error(vm);
         }
 
-        // Pin the timezone before anything can construct a `Date` or touch
-        // `Intl` (the HTTP env copy, the source-code printer, the entry-point
-        // transpile — let alone user code), so ICU never falls back to its lazy
-        // host-zone auto-detection. `.env` files are loaded by `configure_defines`
-        // above, so `$TZ` set in one is honored.
-        // Zig: `bun.js.zig` performs the equivalent after `loadExtraEnvAndSourceCodePrinter`.
+        // Allow setting a custom timezone. Without `$TZ`, JSC/ICU lazily
+        // auto-detects the host zone the first time a `Date` is constructed —
+        // matching upstream Bun. `.env` files are loaded by
+        // `configure_defines` above, so `$TZ` set in one is honored.
         if let Some(tz) = vm.env_loader().get(b"TZ") {
             if !tz.is_empty() {
                 let _ = vm
                     .global()
                     .set_time_zone(&bun_jsc::zig_string::ZigString::init(tz));
             }
-        } else {
-            // No $TZ in the environment: eagerly seed the default timezone from
-            // the host configuration. Otherwise ICU lazily auto-detects the host
-            // zone the first time a `Date` is constructed, and on systems where
-            // `/etc/localtime` is a regular file (rather than a symlink into
-            // `/usr/share/zoneinfo`) that detection content-matches every zone
-            // file under `/usr/share/zoneinfo/**` — thousands of
-            // `openat`/`read`/`close` syscalls.
-            // Zig: `seedHostTimeZone(vm.global)` in `src/bun.js.zig`.
-            seed_host_time_zone(vm.global());
         }
 
         // Zig: `AsyncHTTP.loadEnv(allocator, vm.log, b.env)`.

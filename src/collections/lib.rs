@@ -32,7 +32,7 @@ pub mod linear_fifo;
 // stable: enum const params → const usize/bool, inherent assoc → free aliases.
 pub mod bit_set;
 pub mod pool;
-pub use pool::{ObjectPool, ObjectPoolTrait, ObjectPoolType, PoolGuard};
+pub use pool::{ObjectPool, ObjectPoolType, PoolGuard};
 pub mod comptime_string_map;
 pub use comptime_string_map::{ComptimeStringMap, ComptimeStringMapWithKeyType};
 #[path = "StaticHashMap.rs"]
@@ -48,8 +48,8 @@ pub use paste::paste as __mal_paste;
 pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt, prepend_from};
 
 pub use bit_set::{
-    AutoBitSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,
-    StaticBitSet,
+    AutoBitSet, BitSetMut, BitSetRef, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged,
+    IntegerBitSet, StaticBitSet,
 };
 
 // Re-export for back-compat (`bun_jsc::host_fn`, `multi_array_list` import

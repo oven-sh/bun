@@ -201,30 +201,27 @@ test.concurrent(
   },
 );
 
-test.concurrent(
-  "anonymous `export default class` with a static accessor does not panic",
-  async () => {
-    // Regression: `export default class { static accessor x = 1 }` used
-    // to trip a null-ref panic in `lower_standard_decorators_stmt` because
-    // `class.class_name` was only injected from `default_name` when the
-    // class had decorators. Auto-accessors go through the same lowering,
-    // so the name injection now also runs when any property is an
-    // `AutoAccessor`.
-    using dir = tempDir("issue-29197-default-export", {
-      "tsconfig.json": JSON.stringify({
-        compilerOptions: { experimentalDecorators: false },
-      }),
-      "base.ts": "export default class { static accessor x = 1; }\n",
-      "main.ts":
-        "import Base from './base';\n" +
-        "console.log('x=', Base.x);\n" +
-        "Base.x = 42;\n" +
-        "console.log('x=', Base.x);\n",
-    });
+test.concurrent("anonymous `export default class` with a static accessor does not panic", async () => {
+  // Regression: `export default class { static accessor x = 1 }` used
+  // to trip a null-ref panic in `lower_standard_decorators_stmt` because
+  // `class.class_name` was only injected from `default_name` when the
+  // class had decorators. Auto-accessors go through the same lowering,
+  // so the name injection now also runs when any property is an
+  // `AutoAccessor`.
+  using dir = tempDir("issue-29197-default-export", {
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { experimentalDecorators: false },
+    }),
+    "base.ts": "export default class { static accessor x = 1; }\n",
+    "main.ts":
+      "import Base from './base';\n" +
+      "console.log('x=', Base.x);\n" +
+      "Base.x = 42;\n" +
+      "console.log('x=', Base.x);\n",
+  });
 
-    const [stdout, stderr, exitCode] = await runBun(String(dir), "main.ts");
-    expect(stderr).not.toContain("panic");
-    expect(stdout).toBe("x= 1\nx= 42\n");
-    expect(exitCode).toBe(0);
-  },
-);
+  const [stdout, stderr, exitCode] = await runBun(String(dir), "main.ts");
+  expect(stderr).not.toContain("panic");
+  expect(stdout).toBe("x= 1\nx= 42\n");
+  expect(exitCode).toBe(0);
+});

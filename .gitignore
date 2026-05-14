@@ -200,7 +200,6 @@ scripts/lldb-inline
 
 test/integration/bun-types/fixture/bun.lock
 .claude/scheduled_tasks.lock
-.claude/workflows
 src/runtime/bake/generated.ts
 /target/
 *.heapsnapshot

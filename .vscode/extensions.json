@@ -3,9 +3,6 @@
     // Rust
     "rust-lang.rust-analyzer",
 
-    // Zig (legacy .zig files kept as porting reference)
-    "ziglang.vscode-zig",
-
     // C/C++
     "clang.clangd",
     "ms-vscode.cmake-tools",

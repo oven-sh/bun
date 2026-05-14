@@ -1268,6 +1268,7 @@ impl DynamicBitSetUnmanaged {
         let other = other.into();
         let third = third.into();
         debug_assert!(other.bit_length == self.bit_length);
+        debug_assert!(third.bit_length == self.bit_length);
         for ((a, &b), &c) in self
             .masks_slice_mut()
             .iter_mut()

@@ -2440,6 +2440,10 @@ ServerResponse.prototype.destroy = function (err?: Error) {
   this?.socket?.destroy(err);
   if (!this._closed) {
     // res.closed must already be true inside the 'close' listeners.
+    // Setting _closed before emitting also gates out the async socket-close
+    // path (NodeHTTPServerSocket.emit → callCloseCallback → onServerResponseClose
+    // → emitCloseNT), so res 'close' fires exactly once when destroy() is
+    // called from outside the synchronous request handler (e.g. a setTimeout).
     this._closed = true;
     this.emit("close");
   }

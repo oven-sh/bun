@@ -132,3 +132,57 @@ test("res.on('close') / socket.on('close') / socket.on('end') fire after client 
     stderr: expect.any(String),
   });
 }, 30_000);
+
+// Guards against a regression of the companion bug: res.destroy() called
+// asynchronously (e.g. from a setTimeout / error path) must emit 'close' on
+// the response exactly once, not twice. A naïve version of the fix above
+// (which teaches the socket's close event to drive the internal
+// one-shot setCloseCallback path) would fire res.emit('close') a second
+// time when the async socket close arrives. The guard is
+// ServerResponse.prototype.destroy setting _closed=true before emitting.
+const DESTROY_SCRIPT = /* js */ `
+const http = require("node:http");
+
+let resCloseCount = 0;
+
+const server = http.createServer((req, res) => {
+  res.on("close", () => { resCloseCount++; });
+  res.writeHead(200);
+  // Defer the destroy so it doesn't happen inside the synchronous
+  // request handler — that's the path that used to emit twice.
+  setImmediate(() => res.destroy());
+});
+
+server.listen(0, () => {
+  const { port } = server.address();
+  const req = http.get({ port }, () => {});
+  req.on("error", () => {});
+  setTimeout(() => {
+    console.log("RES_CLOSE_COUNT=" + resCloseCount);
+    server.close();
+    process.exit(0);
+  }, 500);
+});
+`;
+
+test("res.destroy() emits 'close' exactly once when called asynchronously (#28976)", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", DESTROY_SCRIPT],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const line = stdout
+    .split("\n")
+    .map(l => l.trim())
+    .find(l => l.startsWith("RES_CLOSE_COUNT="));
+
+  expect({ exitCode, line, stderr }).toEqual({
+    exitCode: 0,
+    line: "RES_CLOSE_COUNT=1",
+    stderr: expect.any(String),
+  });
+}, 15_000);

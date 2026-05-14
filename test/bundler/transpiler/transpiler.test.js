@@ -1703,6 +1703,33 @@ export default <>hi</>
     expect(exitCode).toBe(0);
   });
 
+  it("transformSync with minify.identifiers does not crash on empty source", async () => {
+    // An empty/whitespace-only source produces an empty AST with no symbol table; with
+    // minify.identifiers the printer used to look up module_ref/exports_ref and crash.
+    // Run in a subprocess so a crash surfaces as a test failure instead of taking down
+    // the test runner.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const t = new Bun.Transpiler({ minify: { identifiers: true } });
+          for (const src of ["", " ", "\\n\\t"]) {
+            if (t.transformSync(src) !== "") throw new Error("expected empty output for " + JSON.stringify(src));
+          }
+          process.stdout.write("ok");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
+
   it("JSX keys", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",

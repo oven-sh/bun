@@ -172,7 +172,7 @@ impl JestPrettyFormat {
         options: FormatOptions,
     ) -> JsResult<()> {
         let mut fmt: Formatter;
-        // Zig: defer { if (fmt.map_node) |node| { node.data = fmt.map; node.data.clearRetainingCapacity(); node.release(); } }
+        // Zig: defer { if (fmt.map_node) |node| { ... node.release(); } } — handled by `Drop`.
         // (.zig:79-85). Realized as `impl Drop for Formatter` below — the pool
         // node is acquired lazily inside `print_as` and swapped back on every
         // exit path of this function (early return, `?` propagation, happy path).
@@ -290,7 +290,7 @@ impl JestPrettyFormat {
             let _ = writer.flush();
         }
 
-        // map_node release handled by `impl Drop for Formatter`.
+        // pooled map release handled by `impl Drop for Formatter`.
         result
     }
 }
@@ -326,11 +326,13 @@ pub mod visited {
     }
 
     // `ObjectPool<T, ..>` requires `T: ObjectPoolType`. Mirrors Zig's
-    // `ObjectPool(Map, Map.init, true, 16)` — `INIT` allocates an empty map,
-    // `reset` is `clearRetainingCapacity` (handled by callers via `.clear()`).
+    // `ObjectPool(Map, Map.init, true, 16)` — `init` allocates an empty map,
+    // `reset` is `clearRetainingCapacity`.
     impl bun_collections::pool::ObjectPoolType for Map {
-        const INIT: Option<fn() -> Result<Self, bun_core::Error>> =
-            Some(|| Ok(Map::default()));
+        #[inline]
+        fn init() -> Self {
+            Map::default()
+        }
         #[inline]
         fn reset(&mut self) {
             self.0.clear();
@@ -338,18 +340,18 @@ pub mod visited {
     }
 
     // Mirrors Zig's `ObjectPool(Map, Map.init, true, 16)` — thread-local free
-    // list, capped at 16 nodes. `object_pool!` wires the per-monomorphization
+    // list, capped at 16 entries. `object_pool!` wires the per-monomorphization
     // storage; without it `ObjectPool<Map, true, 16>` defaults to
-    // `UnwiredStorage` which panics on first `get_node()`.
+    // `UnwiredStorage` which panics on first use.
     bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
-    pub type PoolNode = <Pool as bun_collections::pool::ObjectPoolTrait>::Node;
 }
 
 pub struct Formatter<'a> {
     pub remaining_values: &'a [JSValue],
     pub map: visited::Map,
-    /// Lazily acquired from `visited::Pool`; released back in `Drop`.
-    pub map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
+    /// `true` once `map`'s allocation was taken from `visited::Pool`; `Drop`
+    /// returns it there.
+    pub map_from_pool: bool,
     pub hide_native: bool,
     pub global_this: &'a JSGlobalObject,
     pub indent: u32,
@@ -364,7 +366,7 @@ impl<'a> Formatter<'a> {
         Self {
             remaining_values: &[],
             map: visited::Map::default(),
-            map_node: None,
+            map_from_pool: false,
             hide_native: false,
             global_this: global,
             indent: 0,
@@ -394,23 +396,17 @@ impl<'a> Formatter<'a> {
 
 // Mirrors the top-level Zig defer in `JestPrettyFormat.format` (.zig:79-85):
 // `defer { if (fmt.map_node) |node| { node.data = fmt.map; node.data.clearRetainingCapacity(); node.release(); } }`
-// The node is acquired lazily inside `print_as` via `visited::Pool::get_node()`;
+// The map is acquired lazily inside `print_as` via `visited::Pool::take()`;
 // releasing here covers every exit path of `format` (early `len == 1` return,
 // `?` propagation from `Tag::get`/`fmt.format`, and the happy path) without
 // the borrow-aliasing a `scopeguard` would introduce.
 impl Drop for Formatter<'_> {
     fn drop(&mut self) {
-        if let Some(node) = self.map_node.take() {
-            // SAFETY: `node` came from `visited::Pool::get_node()` and is
-            // exclusively owned for this `Formatter`'s lifetime; its `data` was
-            // initialized by `Map::INIT`, so `assume_init_mut` observes a valid
-            // `Map`.
-            unsafe {
-                let data = (*node.as_ptr()).data.assume_init_mut();
-                *data = core::mem::take(&mut self.map);
-                data.clear();
-                visited::Pool::release(node.as_ptr());
-            }
+        if self.map_from_pool {
+            self.map_from_pool = false;
+            let mut map = core::mem::take(&mut self.map);
+            map.clear();
+            visited::Pool::put(map);
         }
     }
 }
@@ -1212,25 +1208,13 @@ impl<'a> Formatter<'a> {
         let mut writer = WrappedWriter::new(writer_);
 
         if FORMAT.can_have_circular_references() {
-            if self.map_node.is_none() {
+            if !self.map_from_pool {
                 // PORT NOTE: `visited::Pool::get()` returns an RAII `PoolGuard` that
-                // would release on scope exit; the Zig spec stashes the raw node on
+                // would release on scope exit; the Zig spec stashes the map on
                 // `self` and releases it from `JestPrettyFormat::format`'s defer, so
-                // take the raw node directly. `data` is initialized by
-                // `Map::INIT` (see `visited::Map: ObjectPoolType`).
-                let node = core::ptr::NonNull::new(visited::Pool::get_node())
-                    .expect("ObjectPool::get_node never returns null");
-                self.map_node = Some(node);
-                // PORT NOTE: Zig (.zig:878-880) does a struct copy aliasing the same
-                // backing buffer. Rust takes the map here and swaps it back into
-                // `node.data` at release time (see JestPrettyFormat::format tail),
-                // so the pooled allocation is retained across uses.
-                // SAFETY: see above.
-                unsafe {
-                    let data = (*node.as_ptr()).data.assume_init_mut();
-                    data.clear();
-                    self.map = core::mem::take(data);
-                }
+                // take the value directly and put it back in `Drop`.
+                self.map = visited::Pool::take();
+                self.map_from_pool = true;
             }
 
             let entry = self.map.get_or_put(value).expect("unreachable");

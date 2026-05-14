@@ -91,11 +91,9 @@ pub fn buffered_reader_size<const SIZE: usize, R: DeprecatedRead>(
 // ──────────────────────────────────────────────────────────────────────────
 //
 // DEDUP(D050): the Rust port of `SinglyLinkedList` / `SinglyLinkedNode` was
-// removed — the canonical implementation lives at
-// `bun_collections::pool::{SinglyLinkedList, Node}`. The two had diverged
-// (`data: T` vs `data: MaybeUninit<T>`, `*mut`-null vs `Option<*mut>` returns)
-// and this copy had zero callers outside its own unit test. New consumers
-// should depend on `bun_collections::pool` directly.
+// removed — the only consumer (`bun_collections::pool::ObjectPool`) now uses a
+// `Vec<T>` free list, and `DevServer` carries its own local `Vec<NonNull<Node>>`.
+// New consumers should use `Vec` directly.
 
 // ──────────────────────────────────────────────────────────────────────────
 // DoublyLinkedList

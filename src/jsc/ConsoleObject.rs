@@ -901,10 +901,10 @@ impl<'a> TablePrinter<'a> {
                 ));
 
                 // `defer` block: release pooled visit map after formatting.
-                // PORT NOTE: Zig's `defer` body also nulls
+                // PORT NOTE: Zig's `defer` body also clears
                 // `this.value_formatter.map_node`, but `shallow_clone()`
-                // already guarantees the source's `map_node` is `None`, so
-                // only the local clone needs draining. `Formatter::Drop` does
+                // already guarantees the source isn't pooled, so only the
+                // local clone needs draining. `Formatter::Drop` does
                 // the same release, so a plain scope is sufficient.
                 {
                     let result = value_formatter.format::<ENABLE_ANSI_COLORS>(
@@ -913,15 +913,16 @@ impl<'a> TablePrinter<'a> {
                         value,
                         self.global_object,
                     );
-                    if let Some(mut node) = value_formatter.map_node.take() {
-                        self.value_formatter.map_node = None;
-                        let data = formatter::visited::node_data_mut(&mut node);
-                        if data.capacity() > 512 {
-                            data.deinit();
+                    if value_formatter.map_from_pool {
+                        value_formatter.map_from_pool = false;
+                        self.value_formatter.map_from_pool = false;
+                        let mut map = core::mem::take(&mut value_formatter.map);
+                        if map.capacity() > 512 {
+                            map.deinit();
                         } else {
-                            data.clear();
+                            map.clear();
                         }
-                        formatter::visited::Pool::release(node.as_ptr());
+                        formatter::visited::Pool::put(map);
                     }
                     result?;
                 }
@@ -1743,12 +1744,9 @@ pub mod formatter {
         /// `RawSlice` carries the outlives-holder invariant instead.
         pub remaining_values: bun_ptr::RawSlice<JSValue>,
         pub map: visited::Map,
-        /// Pooled backing for `map`. `None` until the first cell that can have
-        /// circular refs is formatted; `Drop` returns it to `visited::Pool`.
-        /// Raw pointer (not `Box`) because `visited::Pool` owns the
-        /// `heap::alloc`/`from_raw` lifecycle — mirrors Zig
-        /// `?*Visited.Pool.Node`.
-        pub map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
+        /// `true` once `map`'s allocation was taken from `visited::Pool`;
+        /// `Drop` returns it there. Mirrors Zig `?*Visited.Pool.Node`.
+        pub map_from_pool: bool,
         pub hide_native: bool,
         pub indent: u32,
         pub depth: u16,
@@ -1778,7 +1776,7 @@ pub mod formatter {
                 global_this,
                 remaining_values: bun_ptr::RawSlice::EMPTY,
                 map: visited::Map::default(),
-                map_node: None,
+                map_from_pool: false,
                 hide_native: false,
                 indent: 0,
                 depth: 0,
@@ -1803,21 +1801,21 @@ pub mod formatter {
         }
 
         /// Zig copies `Formatter` by value (`var f = this.value_formatter;`).
-        /// In Rust `Formatter` has a `Drop` impl and owns `map`/`map_node`,
-        /// so a bit-copy via `ptr::read` would double-free. The Zig copy
-        /// only ever ships scalar config — `map`/`map_node` are always empty
-        /// on the source at the call sites — so we copy those fields
-        /// explicitly and leave `map`/`map_node` fresh on the clone.
+        /// In Rust `Formatter` has a `Drop` impl and owns `map`, so a bit-copy
+        /// via `ptr::read` would double-free. The Zig copy only ever ships
+        /// scalar config — `map` is always empty on the source at the call
+        /// sites — so we copy those fields explicitly and leave `map` fresh on
+        /// the clone.
         pub(super) fn shallow_clone(&self) -> Self {
             debug_assert!(
-                self.map_node.is_none(),
+                !self.map_from_pool,
                 "shallow_clone source must not own a visited map"
             );
             Self {
                 global_this: self.global_this,
                 remaining_values: self.remaining_values,
                 map: visited::Map::default(),
-                map_node: None,
+                map_from_pool: false,
                 hide_native: self.hide_native,
                 indent: self.indent,
                 depth: self.depth,
@@ -1858,22 +1856,17 @@ pub mod formatter {
 
     impl Drop for Formatter<'_> {
         fn drop(&mut self) {
-            if let Some(mut node) = self.map_node.take() {
-                // Move the working map back into the pooled node, shrink if it
-                // ballooned, then return the node to the thread-local pool.
-                // Mirrors `Formatter.deinit` (ConsoleObject.zig:1016-1024).
-                let map = core::mem::take(&mut self.map);
-                // `node_data_mut` is safe: `Map::INIT` is `Some`, so the
-                // pooled slot already holds an (empty, post-`take`) `Map`;
-                // assigning over it drops that empty value and moves `map` in.
-                let data = visited::node_data_mut(&mut node);
-                *data = map;
-                if data.capacity() > 512 {
-                    data.deinit();
+            if self.map_from_pool {
+                // Move the working map back into the pool, shrinking if it
+                // ballooned. Mirrors `Formatter.deinit` (ConsoleObject.zig:1016-1024).
+                self.map_from_pool = false;
+                let mut map = core::mem::take(&mut self.map);
+                if map.capacity() > 512 {
+                    map.deinit();
                 } else {
-                    data.clear();
+                    map.clear();
                 }
-                visited::Pool::release(node.as_ptr());
+                visited::Pool::put(map);
             }
         }
     }
@@ -1981,31 +1974,18 @@ pub mod formatter {
         }
 
         impl bun_collections::pool::ObjectPoolType for Map {
-            // Zig: `ObjectPool(Map, Map.init, true, 16)` — fresh nodes start
+            // Zig: `ObjectPool(Map, Map.init, true, 16)` — fresh entries start
             // with an empty map so `clearRetainingCapacity()` on first use is
             // well-defined.
-            const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(|| Ok(Map::default()));
+            #[inline]
+            fn init() -> Self {
+                Map::default()
+            }
         }
 
-        // Thread-local free list, capped at 16 nodes — matches Zig
+        // Thread-local free list, capped at 16 entries — matches Zig
         // `threadsafe = true, max_count = 16`.
         bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
-        pub type PoolNode = bun_collections::pool::Node<Map>;
-
-        /// Safe `&mut Map` accessor for a pooled node. `Map::INIT` is `Some`,
-        /// so every node returned by [`Pool::get_node`] carries an initialized
-        /// `data` payload, and the caller exclusively owns the node until
-        /// [`Pool::release`]. Centralises the `NonNull::as_mut()` +
-        /// `assume_init_mut()` pair so the four call sites in this file (and
-        /// the cause-chain guard in `VirtualMachine::print_error_instance`)
-        /// don't each open-code two `unsafe` operations.
-        #[inline]
-        pub fn node_data_mut(node: &mut core::ptr::NonNull<PoolNode>) -> &mut Map {
-            // SAFETY: `Map::INIT` is `Some`, so `data` is initialized for
-            // every node from `Pool::get_node()`; the caller owns `node`
-            // exclusively until `Pool::release`, so forming `&mut` is sound.
-            unsafe { node.as_mut().data.assume_init_mut() }
-        }
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -3503,13 +3483,9 @@ pub mod formatter {
                 return Ok(false);
             }
 
-            if self.map_node.is_none() {
-                let mut node = core::ptr::NonNull::new(visited::Pool::get_node())
-                    .expect("ObjectPool::get_node always returns a valid heap node");
-                let data = visited::node_data_mut(&mut node);
-                data.clear();
-                self.map = core::mem::take(data);
-                self.map_node = Some(node);
+            if !self.map_from_pool {
+                self.map = visited::Pool::take();
+                self.map_from_pool = true;
             }
 
             let entry = self.map.get_or_put(value).expect("unreachable");
@@ -4121,7 +4097,7 @@ pub mod formatter {
             // Temporarily remove from the visited map to allow
             // printErrorlikeObject to process it. The circular reference
             // check is already done in print_as, so we know it's safe.
-            let was_in_map = if self.map_node.is_some() {
+            let was_in_map = if self.map_from_pool {
                 self.map.remove(&value).is_some()
             } else {
                 false

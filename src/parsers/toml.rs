@@ -166,9 +166,8 @@ mod hash_map_pool {
     pub(super) type HashMap = bun_collections::HashMap<u64, ()>;
 
     // bun.deprecated.SinglyLinkedList(HashMap)
-    // The Rust mapping is `bun_collections::pool::{SinglyLinkedList, Node}`, but
-    // that stores `MaybeUninit<T>`; this freelist wants `data: T` directly, so it
-    // keeps a local intrusive node with a raw `next` pointer to match shape.
+    // Local intrusive node with a raw `next` pointer; `bun_collections::ObjectPool`
+    // would work here too, but this preserves the Zig freelist shape verbatim.
     pub(super) struct Node {
         pub data: HashMap,
         pub next: *mut Node,

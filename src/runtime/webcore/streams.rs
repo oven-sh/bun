@@ -22,10 +22,6 @@ use crate::webcore::{AutoFlusher, ByteListPool};
 bun_core::declare_scope!(HTTPServerWritableLog, visible);
 bun_core::declare_scope!(NetworkSinkLog, visible);
 
-/// `bun.ObjectPool(bun.Vec<u8>, ...)::Node` — pooled buffer node type used by
-/// `HTTPServerWritable.pooled_buffer`.
-pub type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
-
 // NetworkSink stores a borrowed `*MultiPartUpload`. Now that `webcore::s3` is
 // wired, alias the module to the real type so `bun_s3::MultiPartUpload` resolves
 // for callers that still spell it that way.
@@ -1081,7 +1077,9 @@ pub type UwsResponse<const SSL: bool, const HTTP3: bool> = c_void;
 pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub res: Option<*mut UwsResponse<SSL, HTTP3>>,
     pub buffer: Vec<u8>,
-    pub pooled_buffer: Option<NonNull<ByteListPoolNode>>,
+    /// `true` ⇒ `buffer`'s allocation came from `ByteListPool` and should be
+    /// returned there on `unregister_auto_flusher`.
+    pub buffer_from_pool: bool,
     pub offset: BlobSizeType,
 
     pub is_listening_for_abort: bool,
@@ -1114,7 +1112,7 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
         Self {
             res: None,
             buffer: Vec::<u8>::default(),
-            pooled_buffer: None,
+            buffer_from_pool: false,
             offset: 0,
             is_listening_for_abort: false,
             wrote: 0,
@@ -1240,8 +1238,8 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
 // TODO(b2-blocked): full impl depends on `bun_uws::Response<SSL>`
 // const-generic dispatch (the body casts `res` to `*mut uws::Response` without
 // the SSL/H3 parameter), `bun_event_loop::AutoFlusher` free-fns (the local
-// `crate::webcore::AutoFlusher` is a fieldless stub), and `ByteListPool::Node`
-// data access. Un-gate once the UwsResponse type-dispatch trait lands.
+// `crate::webcore::AutoFlusher` is a fieldless stub). Un-gate once the
+// UwsResponse type-dispatch trait lands.
 
 impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     /// Const-generic → runtime dispatch for the type-erased `res` field.
@@ -1524,21 +1522,11 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         let _ = self.flush_promise(); // TODO: properly propagate exception upwards
 
         if self.buffer.capacity() == 0 {
-            debug_assert!(self.pooled_buffer.is_none());
+            debug_assert!(!self.buffer_from_pool);
             if FeatureFlags::HTTP_BUFFER_POOLING {
-                if let Some(pooled_node) = ByteListPool::get_if_exists() {
-                    let pooled_node = NonNull::new(pooled_node)
-                        .expect("ByteListPool::get_if_exists returns a live heap node when Some");
-                    self.pooled_buffer = Some(pooled_node);
-                    // SAFETY: pooled_node is a valid pool checkout; `data` was
-                    // written by `ByteListPool::push` (or zero-initialized).
-                    // Move the Vec<u8> out by bitwise read and reset the slot.
-                    self.buffer = unsafe {
-                        core::mem::replace(
-                            (*pooled_node.as_ptr()).data.assume_init_mut(),
-                            Vec::<u8>::default(),
-                        )
-                    };
+                if let Some(pooled) = ByteListPool::take_if_exists() {
+                    self.buffer = pooled;
+                    self.buffer_from_pool = true;
                 }
             }
         }
@@ -1955,30 +1943,20 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         if !FeatureFlags::HTTP_BUFFER_POOLING {
-            debug_assert!(self.pooled_buffer.is_none());
+            debug_assert!(!self.buffer_from_pool);
         }
 
-        if let Some(pooled) = self.pooled_buffer {
+        if self.buffer_from_pool {
             self.buffer.clear();
             if self.buffer.capacity() > 64 * 1024 {
                 self.buffer.clear_and_free();
             }
-            // SAFETY: pooled is a valid pool node checkout
-            unsafe {
-                (*pooled.as_ptr()).data =
-                    core::mem::MaybeUninit::new(core::mem::take(&mut self.buffer));
-            }
-
-            self.buffer = Vec::<u8>::default();
-            self.pooled_buffer = None;
-            // PORT NOTE: Zig `pooled.release()` → Rust `ObjectPool::release(node)`
-            // (the Node `Parent` back-ref was dropped in the port; see pool.rs).
-            ByteListPool::release(pooled.as_ptr());
+            self.buffer_from_pool = false;
+            ByteListPool::put(core::mem::take(&mut self.buffer));
         } else if self.buffer.capacity() == 0 {
             //
         } else if FeatureFlags::HTTP_BUFFER_POOLING && !ByteListPool::full() {
-            let buffer = core::mem::take(&mut self.buffer);
-            ByteListPool::push(buffer);
+            ByteListPool::put(core::mem::take(&mut self.buffer));
         } else {
             // Don't release this buffer until destroy() is called
             self.buffer.clear();

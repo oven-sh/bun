@@ -165,7 +165,7 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // .current_bundle
     if let Some(bundle) = &dev.current_bundle {
         // PORT NOTE: Zig walked the intrusive list (`while (r) |req| : (r = req.next)`)
-        // only to count nodes; `SinglyLinkedList::len()` does the same O(N) walk.
+        // only to count nodes.
         other_bytes += bundle.requests.len() * size_of::<deferred_request::Node>();
     }
     // .next_bundle

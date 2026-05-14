@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunExe, isPosix, tempDirWithFiles } from "harness";
+import { isPosix, tempDirWithFiles } from "harness";
 import { createTestBuilder } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -13,9 +13,8 @@ beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
 });
 
-const BUN = bunExe();
+const BUN = process.argv0;
 const DEV_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
-const isRoot = process.getuid?.() === 0;
 
 let node_modules_tempdir: string;
 let nodeModulesSetup: Promise<string[]>;
@@ -272,7 +271,7 @@ describe.concurrent("bunshell ls", () => {
         .run();
     });
 
-    test.if(isPosix && !isRoot)("permission denied directory", async () => {
+    test.if(isPosix)("permission denied directory", async () => {
       const tempdir = tempDirWithFiles("ls-permission", {});
       await $`mkdir restricted; chmod 000 restricted`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls restricted`
@@ -283,7 +282,7 @@ describe.concurrent("bunshell ls", () => {
       await $`chmod 755 restricted`.quiet().throws(true).cwd(tempdir); // cleanup
     });
 
-    test.if(isPosix && !isRoot)("permission denied directory recursive", async () => {
+    test.if(isPosix)("permission denied directory recursive", async () => {
       const tempdir = tempDirWithFiles("ls-permission-recursive", {});
       // Create 3-level deep directory structure with 3+ items per level
       await $`mkdir -p level1/level2/level3; 

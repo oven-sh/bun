@@ -184,50 +184,38 @@ describe("bun:jsc", () => {
     expect({ ...input }).toStrictEqual({ "0": 2 });
   });
 
-  it.todoIf(isBuildKite && isWindows)(
-    "profile can be called multiple times",
-    () => {
-      // Fibonacci generates deep stacks and is CPU-intensive
-      function fib(n: number): number {
-        if (n <= 1) return n;
-        return fib(n - 1) + fib(n - 2);
-      }
+  it.todoIf(isBuildKite && isWindows)("profile can be called multiple times", () => {
+    // Fibonacci generates deep stacks and is CPU-intensive
+    function fib(n: number): number {
+      if (n <= 1) return n;
+      return fib(n - 1) + fib(n - 2);
+    }
 
-      // After the JIT warms up fib() can finish within the default 1ms sample
-      // interval, yielding zero traces. Use a short interval so every call is
-      // sampled regardless of how fast the optimized code runs.
-      // fib(26) (~200k calls) is large enough to yield >10 samples at 50µs in a
-      // JIT'd release build. In debug/ASAN builds the interpreter plus 50µs
-      // sampler overhead makes each of the three calls take ~1.5-2s, putting
-      // the test right at the 5s default per-test timeout — hence the explicit
-      // 30s timeout below for headroom on loaded runners. Do not shrink fibN to
-      // fit the default timeout: it would risk zero stack traces in a JIT'd
-      // release build and undermine the traces.length assertions.
-      const sampleInterval = 50;
-      const fibN = 26;
+    // After the JIT warms up fib() can finish within the default 1ms sample
+    // interval, yielding zero traces. Use a short interval so every call is
+    // sampled regardless of how fast the optimized code runs.
+    const sampleInterval = 50;
 
-      // First profile call
-      const result1 = profile(() => fib(fibN), sampleInterval);
-      expect(result1).toBeDefined();
-      expect(result1.functions).toBeDefined();
-      expect(result1.stackTraces).toBeDefined();
-      expect(result1.stackTraces.traces.length).toBeGreaterThan(0);
+    // First profile call
+    const result1 = profile(() => fib(30), sampleInterval);
+    expect(result1).toBeDefined();
+    expect(result1.functions).toBeDefined();
+    expect(result1.stackTraces).toBeDefined();
+    expect(result1.stackTraces.traces.length).toBeGreaterThan(0);
 
-      // Second profile call - should work after first one completed
-      // This verifies that shutdown() -> pause() fix works
-      const result2 = profile(() => fib(fibN), sampleInterval);
-      expect(result2).toBeDefined();
-      expect(result2.functions).toBeDefined();
-      expect(result2.stackTraces).toBeDefined();
-      expect(result2.stackTraces.traces.length).toBeGreaterThan(0);
+    // Second profile call - should work after first one completed
+    // This verifies that shutdown() -> pause() fix works
+    const result2 = profile(() => fib(30), sampleInterval);
+    expect(result2).toBeDefined();
+    expect(result2.functions).toBeDefined();
+    expect(result2.stackTraces).toBeDefined();
+    expect(result2.stackTraces.traces.length).toBeGreaterThan(0);
 
-      // Third profile call - verify profiler can be reused multiple times
-      const result3 = profile(() => fib(fibN), sampleInterval);
-      expect(result3).toBeDefined();
-      expect(result3.functions).toBeDefined();
-      expect(result3.stackTraces).toBeDefined();
-      expect(result3.stackTraces.traces.length).toBeGreaterThan(0);
-    },
-    30_000,
-  );
+    // Third profile call - verify profiler can be reused multiple times
+    const result3 = profile(() => fib(30), sampleInterval);
+    expect(result3).toBeDefined();
+    expect(result3.functions).toBeDefined();
+    expect(result3.stackTraces).toBeDefined();
+    expect(result3.stackTraces.traces.length).toBeGreaterThan(0);
+  });
 });

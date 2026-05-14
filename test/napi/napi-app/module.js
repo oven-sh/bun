@@ -817,15 +817,9 @@ nativeTests.test_get_value_string = () => {
     // ["\ud801", "unpaired high surrogate"],
     // ["\udc02", "unpaired low surrogate"],
   ]) {
-    // The native fn() below uses C printf (sync write(2) via libc FILE*).
-    // console.log() is async on a piped stdout under load, so the headers can
-    // interleave non-deterministically with the printf output on the Node.js
-    // reference run, making the napi.test.ts checkSameOutput comparison flaky.
-    // fs.writeSync goes through the same blocking write(2), so headers and
-    // native output stay in submission order on both runtimes.
-    require("fs").writeSync(1, `test napi_get_value_string on ${string} (${description})\n`);
+    console.log(`test napi_get_value_string on ${string} (${description})`);
     for (const encoding of ["latin1", "utf8", "utf16"]) {
-      require("fs").writeSync(1, encoding + "\n");
+      console.log(encoding);
       const fn = nativeTests[`test_get_value_string_${encoding}`];
       fn(string);
     }

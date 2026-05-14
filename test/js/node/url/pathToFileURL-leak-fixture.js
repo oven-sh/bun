@@ -1,5 +1,5 @@
 var longPath = Buffer.alloc(1021, "Z").toString();
-const isDebugBuildOfBun = globalThis?.Bun?.version?.includes("debug");
+const isDebugBuildOfBun = globalThis?.Bun?.revision?.includes("debug");
 import { pathToFileURL } from "url";
 for (let i = 0; i < 1024 * (isDebugBuildOfBun ? 32 : 256); i++) {
   pathToFileURL(longPath);

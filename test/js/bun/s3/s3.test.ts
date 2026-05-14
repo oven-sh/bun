@@ -27,38 +27,32 @@ const allCredentials: S3Credentials[] = [
 ];
 
 if (isDockerEnabled()) {
-  try {
-    // Use docker-compose to start MinIO
-    const minioInfo = await dockerCompose.ensure("minio");
+  // Use docker-compose to start MinIO
+  const minioInfo = await dockerCompose.ensure("minio");
 
-    // Get container name for docker exec
-    const containerName = child_process
-      .execSync(
-        `docker ps --filter "ancestor=minio/minio:latest" --filter "status=running" --format "{{.Names}}" | head -1`,
-        { encoding: "utf-8" },
-      )
-      .trim();
+  // Get container name for docker exec
+  const containerName = child_process
+    .execSync(
+      `docker ps --filter "ancestor=minio/minio:latest" --filter "status=running" --format "{{.Names}}" | head -1`,
+      { encoding: "utf-8" },
+    )
+    .trim();
 
-    if (containerName) {
-      // Create a bucket using mc inside the container
-      child_process.spawnSync(dockerCLI, [`exec`, containerName, `mc`, `mb`, `data/buntest`], {
-        stdio: "ignore",
-      });
-    }
-
-    minioCredentials = {
-      endpoint: `http://${minioInfo.host}:${minioInfo.ports[9000]}`, // MinIO endpoint from docker-compose
-      accessKeyId: "minioadmin",
-      secretAccessKey: "minioadmin",
-      bucket: "buntest",
-      service: "MinIO" as string,
-    };
-    allCredentials.push(minioCredentials);
-  } catch (err) {
-    // Docker is present but compose v2 (or the minio service) is unavailable in
-    // this environment; skip MinIO-backed tests instead of failing the whole file.
-    console.warn(`Skipping MinIO S3 tests: ${err}`);
+  if (containerName) {
+    // Create a bucket using mc inside the container
+    child_process.spawnSync(dockerCLI, [`exec`, containerName, `mc`, `mb`, `data/buntest`], {
+      stdio: "ignore",
+    });
   }
+
+  minioCredentials = {
+    endpoint: `http://${minioInfo.host}:${minioInfo.ports[9000]}`, // MinIO endpoint from docker-compose
+    accessKeyId: "minioadmin",
+    secretAccessKey: "minioadmin",
+    bucket: "buntest",
+    service: "MinIO" as string,
+  };
+  allCredentials.push(minioCredentials);
 }
 const r2Credentials = allCredentials[0];
 describe.concurrent.skipIf(!r2Credentials.endpoint && !isCI)("Virtual Hosted-Style", () => {

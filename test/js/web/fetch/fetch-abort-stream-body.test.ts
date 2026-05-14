@@ -15,4 +15,4 @@ test("aborting fetch with a ReadableStream request body does not double-cancel t
   expect(stderr).toBe("");
   expect(stdout).toBe("done 50\n");
   expect(exitCode).toBe(0);
-}, 30000);
+});

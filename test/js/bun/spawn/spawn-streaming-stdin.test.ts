@@ -25,20 +25,8 @@ test("spawn can write to stdin multiple chunks", async () => {
           env: { ...bunEnv },
         });
 
-        // Don't start the timed write loop until the child has actually
-        // begun reading stdin — otherwise on slow builds the child's
-        // startup can outlast the entire write window and every chunk
-        // arrives coalesced into one read. The child echoes each chunk,
-        // so the first byte on stdout is our ready signal.
-        const childReady = Promise.withResolvers<void>();
-
         const prom2 = (async function () {
-          // First write goes out immediately; the echo of it resolves
-          // childReady below, after which we pace the remaining writes.
-          proc.stdin!.write("Wrote to stdin!\n");
-          await proc.stdin!.flush();
-          await childReady.promise;
-          let inCounter = 1;
+          let inCounter = 0;
           while (true) {
             proc.stdin!.write("Wrote to stdin!\n");
             await proc.stdin!.flush();
@@ -55,7 +43,6 @@ test("spawn can write to stdin multiple chunks", async () => {
 
           try {
             for await (var chunk of proc.stdout) {
-              childReady.resolve();
               chunks.push(chunk);
             }
           } catch (e: any) {

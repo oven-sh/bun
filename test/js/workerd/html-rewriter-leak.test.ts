@@ -35,12 +35,10 @@ test.skipIf(isDebug)(
         return process.memoryUsage.rss();
       }
 
-      // High-water-mark comparison: musl mimalloc oscillates ±27 MB as it
-      // purges/recommits whole segments between passes. A single before/after
-      // snapshot can land on opposite phases (false +27 MB). A real leak
-      // raises the CEILING every pass; allocator oscillation does not.
-      const before = Math.max(pass(), pass(), pass());
-      const after  = Math.max(pass(), pass(), pass());
+      pass(); pass();
+      const before = pass();
+      pass(); pass();
+      const after = pass();
 
       process.stdout.write(
         JSON.stringify({ before, after, deltaMB: (after - before) / 1024 / 1024 }) + "\\n",
@@ -75,10 +73,8 @@ test.skipIf(isDebug)(
     const { deltaMB } = JSON.parse(stdout.trim());
 
     // Unfixed: ~50 MB over 3 measured passes. Fixed: ±1 MB plateau.
-    // Threshold sits well below the unfixed signal but above musl's
-    // mimalloc segment-purge oscillation (the high-water-mark sampling
-    // bounds it but alpine-aarch64 still showed 25.3 MB on a clean run).
-    expect(deltaMB).toBeLessThan(30);
+    // Threshold sits at ~half the unfixed signal.
+    expect(deltaMB).toBeLessThan(25);
     expect(exitCode).toBe(0);
   },
   15_000,

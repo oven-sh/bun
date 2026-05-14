@@ -1,30 +1,29 @@
-import { afterEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import { join } from "node:path";
 import * as v8 from "v8";
 import * as v8HeapSnapshot from "v8-heapsnapshot";
 
-// Generating + parsing a v8 heap snapshot is an inherently expensive operation
-// (full sync GC + serialize the entire heap to JSON + parse it back). Make sure
-// the large object graphs these tests build don't linger between subtests.
-afterEach(() => {
-  Bun.gc(true);
-});
-
 test("v8 heap snapshot", async () => {
   const snapshot = Bun.generateHeapSnapshot("v8");
-  // The full parseSnapshot() validation is exercised by "v8 heap snapshot
-  // arraybuffer"; here just make sure the string output is valid JSON with the
-  // expected top-level shape.
-  const parsed = JSON.parse(snapshot);
+  // Sanity check: run the validations from this library
+  const parsed = await v8HeapSnapshot.parseSnapshot(JSON.parse(snapshot));
 
-  expect(parsed.snapshot).toBeDefined();
-  expect(parsed.snapshot.meta).toBeDefined();
-  expect(parsed.nodes).toBeInstanceOf(Array);
-  expect(parsed.edges).toBeInstanceOf(Array);
+  // Loop over all edges and nodes as another sanity check.
+  for (const edge of parsed.edges) {
+    if (!edge.to) {
+      throw new Error("Edge has no 'to' property");
+    }
+  }
+  for (const node of parsed.nodes) {
+    if (!node) {
+      throw new Error("Node is undefined");
+    }
+  }
+
   expect(parsed.nodes.length).toBeGreaterThan(0);
   expect(parsed.edges.length).toBeGreaterThan(0);
-}, 30_000);
+});
 
 test("v8.getHeapSnapshot()", async () => {
   const snapshot = v8.getHeapSnapshot();
@@ -68,7 +67,7 @@ test("v8 heap snapshot arraybuffer", async () => {
   const parsedSnapshot = await v8HeapSnapshot.parseSnapshot(parsed);
   expect(parsedSnapshot.nodes.length).toBeGreaterThan(0);
   expect(parsedSnapshot.edges.length).toBeGreaterThan(0);
-}, 30_000);
+});
 
 test("v8 heap snapshot arraybuffer matches string output", async () => {
   // The arraybuffer output should produce valid JSON identical in structure to the string output

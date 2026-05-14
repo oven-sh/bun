@@ -70,23 +70,22 @@ async function startServer(): Promise<Server> {
         rmSync(tmpDir, { recursive: true, force: true });
       } catch {}
     }
-    // Accumulate stdout until "Listening on" appears — `cargo run` may emit
-    // compile-progress lines on cold cache before the server's own output, and
-    // the previous first-chunk-or-reject logic killed the server on the first
-    // such line.
-    let acc = "";
     while (true) {
       const { done, value } = await reader.read();
       if (done) {
-        await killServer();
-        reject(new Error("Server exited before printing 'Listening on'"));
         break;
       }
-      acc += decoder.decode(value);
-      const i = acc.indexOf("Listening on ");
-      if (i !== -1) {
-        const address = acc.slice(i + "Listening on ".length).split(/\s/)[0];
-        resolve({ address, kill: killServer });
+      const text = decoder.decode(value);
+      if (text.includes("Listening on")) {
+        const [_, address] = text.split("Listening on ");
+        resolve({
+          address: address?.trim(),
+          kill: killServer,
+        });
+        break;
+      } else {
+        await killServer();
+        reject(new Error("Server not started"));
         break;
       }
     }
@@ -97,14 +96,9 @@ async function startServer(): Promise<Server> {
 describe.skipIf(!cargoBin || !releases[release])("test tonic server", () => {
   let server: Server;
 
-  // `startServer()` does a cold `cargo build` of the tonic example server (plus a
-  // protoc download + unzip) on every run; on a slow CI runner that can take
-  // several minutes, well past the per-test `--timeout`. Give the hook its own
-  // generous budget so it isn't killed mid-build (also covers local runs that
-  // don't go through the CI `--timeout` plumbing).
   beforeAll(async () => {
     server = await startServer();
-  }, 150_000);
+  });
 
   afterAll(() => {
     server.kill();

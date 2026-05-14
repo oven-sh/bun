@@ -26,17 +26,7 @@ test("WebSocket should send Blob data", async () => {
 
   const url = `ws://localhost:${server.port}`;
 
-  const { promise, resolve: resolvePromise, reject: rejectPromise } = Promise.withResolvers<void>();
-  // Track settlement so a late onclose (after resolve) can't surface a spurious failure.
-  let settled = false;
-  const resolve = () => {
-    settled = true;
-    resolvePromise();
-  };
-  const reject = (err?: unknown) => {
-    settled = true;
-    rejectPromise(err);
-  };
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
   const ws = new WebSocket(url);
   ws.binaryType = "blob";
   let messageReceived = false;
@@ -78,14 +68,13 @@ test("WebSocket should send Blob data", async () => {
 
   ws.onclose = event => {
     console.log("Client: WebSocket closed", event.code, event.reason);
-    if (!messageReceived && !settled) {
+    if (!messageReceived) {
       reject(new Error("Connection closed without receiving message"));
     }
   };
 
   await promise;
-  // Generous timeout: localhost WS round-trip can be slow under ASAN + heavy parallel load.
-}, 30_000);
+});
 
 test("WebSocket should send empty Blob", async () => {
   await using server = Bun.serve({
@@ -106,17 +95,7 @@ test("WebSocket should send empty Blob", async () => {
 
   const url = `ws://localhost:${server.port}`;
 
-  const { promise, resolve: resolvePromise, reject: rejectPromise } = Promise.withResolvers<void>();
-  // Track settlement so a late onclose (after resolve) can't surface a spurious failure.
-  let settled = false;
-  const resolve = () => {
-    settled = true;
-    resolvePromise();
-  };
-  const reject = (err?: unknown) => {
-    settled = true;
-    rejectPromise(err);
-  };
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
   const ws = new WebSocket(url);
   ws.binaryType = "blob";
   let messageReceived = false;
@@ -155,14 +134,13 @@ test("WebSocket should send empty Blob", async () => {
 
   ws.onclose = event => {
     console.log("Client: WebSocket closed", event.code, event.reason);
-    if (!messageReceived && !settled) {
+    if (!messageReceived) {
       reject(new Error("Connection closed without receiving message"));
     }
   };
 
   await promise;
-  // Generous timeout: localhost WS round-trip can be slow under ASAN + heavy parallel load.
-}, 30_000);
+});
 
 test("WebSocket should ping with Blob", async () => {
   await using server = Bun.serve({
@@ -184,17 +162,7 @@ test("WebSocket should ping with Blob", async () => {
 
   const url = `ws://localhost:${server.port}`;
 
-  const { promise, resolve: resolvePromise, reject: rejectPromise } = Promise.withResolvers<void>();
-  // Track settlement so a late onclose (after resolve) can't surface a spurious failure.
-  let settled = false;
-  const resolve = () => {
-    settled = true;
-    resolvePromise();
-  };
-  const reject = (err?: unknown) => {
-    settled = true;
-    rejectPromise(err);
-  };
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
   const ws = new WebSocket(url);
   ws.binaryType = "blob";
   let pongReceived = false;
@@ -235,11 +203,10 @@ test("WebSocket should ping with Blob", async () => {
 
   ws.onclose = event => {
     console.log("Client: WebSocket closed", event.code, event.reason);
-    if (!pongReceived && !settled) {
+    if (!pongReceived) {
       reject(new Error("Connection closed without receiving pong"));
     }
   };
 
   await promise;
-  // Generous timeout: localhost WS round-trip can be slow under ASAN + heavy parallel load.
-}, 30_000);
+});

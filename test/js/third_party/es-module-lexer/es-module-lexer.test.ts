@@ -16,7 +16,6 @@ test("es-module-lexer consistently loads", async () => {
     const { stdout, exited } = spawn({
       cmd: [bunExe(), join(import.meta.dir, "index.ts")],
       env: bunEnv,
-      cwd: import.meta.dir,
     });
     expect(await new Response(stdout).json()).toEqual({
       imports: [
@@ -43,5 +42,4 @@ test("es-module-lexer consistently loads", async () => {
     });
     expect(await exited).toBe(42);
   }
-}, 30_000); // 10 subprocess spawns + a WebAssembly compile each; the default 5s
-// timeout is too tight on loaded CI runners and debug/ASAN builds (~8s observed).
+});

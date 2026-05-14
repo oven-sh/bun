@@ -20,19 +20,7 @@ export const isEnabled =
       });
       if (info.exitCode !== 0) return false;
       if (info.signalCode) return false;
-      if (info.stdout.toString().indexOf("Server Version:") === -1) return false;
-      // beforeAll() requires Compose v2 (test/docker/index.ts ensureDockerAvailable);
-      // gate on it here too so hosts with docker but no compose plugin skip cleanly.
-      const compose = Bun.spawnSync({
-        cmd: [dockerCLI, "compose", "version"],
-        stdout: "pipe",
-        stderr: "pipe",
-        env: bunEnv,
-        timeout: 5_000,
-      });
-      if (compose.exitCode !== 0) return false;
-      if (compose.signalCode) return false;
-      return true;
+      return info.stdout.toString().indexOf("Server Version:") !== -1;
     } catch (error) {
       return false;
     }

@@ -113,17 +113,11 @@ function corruptCSS(css: string): string {
 
 // TODO:
 if (!isCI) {
-  // Each iteration spins up a full Bun.build pipeline; debug builds are ~20x slower,
-  // so scale the fuzz volume down to keep the suite under the per-test timeout.
-  const scale = isDebug ? 20 : 1;
   // Main fuzzing test suite for invalid inputs
   test.each(
-    [
-      ["syntax", Math.ceil(1000 / scale)],
-      ["structure", Math.ceil(1000 / scale)],
-      ["encoding", Math.ceil(500 / scale)],
-      !isDebug ? ["memory", 100] : [],
-    ].filter(xs => xs.length > 0),
+    [["syntax", 1000], ["structure", 1000], ["encoding", 500], !isDebug ? ["memory", 100] : []].filter(
+      xs => xs.length > 0,
+    ),
   )(
     "CSS Parser Invalid Input Fuzzing - %s (%d iterations)",
     async (strategy, iterations) => {
@@ -236,7 +230,7 @@ if (!isCI) {
   test("CSS Parser Mixed Input Fuzzing", async () => {
     const validCSS = ".test{color:red}";
 
-    for (let i = 0; i < Math.ceil(100 / scale); i++) {
+    for (let i = 0; i < 100; i++) {
       const mixedCSS = `
       ${validCSS}
       ${corruptCSS(validCSS)}

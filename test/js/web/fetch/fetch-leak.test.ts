@@ -134,8 +134,7 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
         },
       });
 
-      const exitCode = await process.exited;
-      expect(exitCode).toBe(0);
+      await process.exited;
 
       const first = rss[0];
       const last = rss[rss.length - 1];
@@ -144,10 +143,7 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
       }
       expect(last).toBeLessThan(first * 10);
     },
-    // 50 iterations of (batch of 10 streamed 2 MiB POSTs + 2x full GC + a 100ms
-    // settle sleep) is slow on a debug build under CI load; 20s was tight enough
-    // to flake as a timeout. The fixture itself runs in ~2-5s when unloaded.
-    60 * 1000,
+    20 * 1000,
   );
 });
 
@@ -392,7 +388,7 @@ test("should not leak using readable stream", async () => {
     env: {
       ...bunEnv,
       SERVER_URL: server.url.href,
-      MAX_MEMORY_INCREASE: "20", // in MB (loose: Windows RSS/GC jitter)
+      MAX_MEMORY_INCREASE: "5", // in MB
     },
     stdout: "pipe",
     stderr: "pipe",

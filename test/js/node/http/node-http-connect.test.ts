@@ -441,9 +441,6 @@ describe("HTTP server socket access via normal requests", () => {
 });
 
 describe("Should be compatible with node.js", () => {
-  // This spawns an entire child test suite which legitimately takes several
-  // seconds; the default 5s per-test timeout is too tight under parent/child
-  // CPU contention and on slower CI/ASAN runners.
   test("tests should run on node.js", async () => {
     const process = Bun.spawn({
       cmd: [nodeExe(), "--test", join(import.meta.dir, "node-http-connect.node.mts")],
@@ -453,10 +450,7 @@ describe("Should be compatible with node.js", () => {
       env: bunEnv,
     });
     expect(await process.exited).toBe(0);
-  }, 30_000);
-  // This spawns an entire child test suite which legitimately takes several
-  // seconds; the default 5s per-test timeout is too tight under parent/child
-  // CPU contention and on slower CI/ASAN runners.
+  });
   test("tests should run on bun", async () => {
     const process = Bun.spawn({
       cmd: [bunExe(), "test", join(import.meta.dir, "node-http-connect.node.mts")],
@@ -466,5 +460,5 @@ describe("Should be compatible with node.js", () => {
       env: bunEnv,
     });
     expect(await process.exited).toBe(0);
-  }, 30_000);
+  });
 });

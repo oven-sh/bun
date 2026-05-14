@@ -21,7 +21,7 @@ async function driveErrorReloadCycle(
   opts: {
     targetCount: number;
     onReload: (counter: number) => void;
-    verifyLine?: (errorLine: string, nextLine: string | undefined, counter: number) => void | "retry";
+    verifyLine?: (errorLine: string, nextLine: string | undefined, counter: number) => void;
   },
 ): Promise<number> {
   const { targetCount, onReload, verifyLine } = opts;
@@ -40,14 +40,7 @@ async function driveErrorReloadCycle(
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      if (!line.includes("error:")) {
-        // Don't silently swallow a watcher-thread death-rattle — surface it so the
-        // post-loop "Expected 50, Received N" becomes an actionable failure.
-        if (/Watcher crashed|panic:|oh no:/.test(line)) {
-          throw new Error("child --hot died: " + line);
-        }
-        continue;
-      }
+      if (!line.includes("error:")) continue;
 
       if (reloadCounter >= targetCount) {
         runner.kill();
@@ -71,19 +64,7 @@ async function driveErrorReloadCycle(
 
       const nextLine = lines[i + 1];
       if (verifyLine) {
-        const result = verifyLine(line, nextLine, reloadCounter);
-        if (result === "retry") {
-          // Partial bundle read (e.g. --hot picked up the outfile before the
-          // inline sourcemap trailer was flushed). Re-trigger the write and
-          // re-buffer remaining lines, same as the stale-counter branch above.
-          const remaining = lines.slice(i + 1).join("\n");
-          if (remaining) {
-            str = `${remaining}\n${str}`;
-          }
-          onReload(reloadCounter);
-          triggered = false;
-          break;
-        }
+        verifyLine(line, nextLine, reloadCounter);
         i++; // Skip the next line (stack trace)
       }
 
@@ -338,40 +319,47 @@ it(
         stdin: "ignore",
       });
 
-      // First await the initial run's output — racing this against a fixed
-      // sleep meant a slow CI box's >200 ms subprocess startup lost the race
-      // and `reloadCounter` stayed 0.
-      const reader = runner.stdout.getReader();
-      const dec = new TextDecoder();
-      let buf = "";
-      while (!/\[#!root\] Reloaded: 1\n/.test(buf)) {
-        const { value, done } = await reader.read();
-        if (done) throw new Error("subprocess exited before initial run output");
-        buf += dec.decode(value);
-      }
-      // Now write+unlink an unrelated file and assert it does NOT trigger a
-      // second reload. Only the bounded "did anything else arrive?" check is
-      // time-based; the condition we care about (initial output) is awaited.
+      let reloadCounter = 0;
       const code = readFileSync(root, "utf-8");
-      writeFileSync(root + ".another.yet.js", code);
-      unlinkSync(root + ".another.yet.js");
-      buf = "";
-      const sawSecond = await Promise.race([
-        Bun.sleep(200).then(() => false),
+      async function onReload() {
+        writeFileSync(root + ".another.yet.js", code);
+        unlinkSync(root + ".another.yet.js");
+      }
+      var finished = false;
+      await Promise.race([
+        Bun.sleep(200),
         (async () => {
-          while (true) {
-            const { value, done } = await reader.read();
-            if (done) return false;
-            buf += dec.decode(value);
-            if (/\[#!root\] Reloaded: 2/.test(buf)) return true;
+          if (finished) {
+            return;
+          }
+          var str = "";
+          for await (const line of runner.stdout) {
+            if (finished) {
+              return;
+            }
+
+            str += new TextDecoder().decode(line);
+            if (!/\[#!root\].*[0-9]\n/g.test(str)) continue;
+
+            for (let line of str.split("\n")) {
+              if (!line.includes("[#!root]")) continue;
+              if (finished) {
+                return;
+              }
+              await onReload();
+
+              reloadCounter++;
+              str = "";
+              expect(line).toContain(`[#!root] Reloaded: ${reloadCounter}`);
+            }
           }
         })(),
       ]);
-      reader.releaseLock();
+      finished = true;
       runner.kill(0);
       runner.unref();
 
-      expect(sawSecond).toBe(false);
+      expect(reloadCounter).toBe(1);
     } finally {
       // @ts-ignore
       runner?.unref?.();
@@ -506,25 +494,6 @@ it(
 
 const comment_line = "//" + Buffer.alloc(2000, "B").toString() + "\n";
 const comment_spam = Buffer.alloc(comment_line.length * 1000, comment_line).toString();
-
-// writeFileSync of a ~2MB file is non-atomic (truncate + N×write); each write
-// emits a watcher event so --hot can re-read mid-write (Linux: EBADF /
-// "Unexpected ..." / :1:12 mis-remap; Windows: ReadDirectoryChangesW
-// internal-buffer overflow → nbytes==0 → WindowsWatcher.next() ESHUTDOWN →
-// watcher thread dies → child exits → reloadCounter<50). Atomic write+rename
-// so the watched path only ever flips between complete versions.
-function writeHotFileAtomicSync(path: string, content: string) {
-  const tmp = path + ".next";
-  writeFileSync(tmp, content);
-  // rmSync first on Windows so renameSync doesn't EPERM on the existing target
-  if (process.platform === "win32") {
-    try {
-      rmSync(path);
-    } catch {}
-  }
-  renameSync(tmp, path);
-}
-
 it(
   "should work with sourcemap generation",
   async () => {
@@ -545,7 +514,7 @@ throw new Error('0');`,
     const reloadCounter = await driveErrorReloadCycle(runner, {
       targetCount: 50,
       onReload: counter => {
-        writeHotFileAtomicSync(
+        writeFileSync(
           hotRunnerRoot,
           `// source content
 ${comment_spam}
@@ -581,7 +550,7 @@ it(
     // comment-only stub immediately before throwing, guaranteeing a fresh
     // watcher event lands between reject and report.
     const writeFull = (counter: number) =>
-      writeHotFileAtomicSync(
+      writeFileSync(
         hotRunnerRoot,
         `// source content
 ${comment_spam}require("fs").writeFileSync(__filename, "// stub ${counter}\\n");
@@ -657,9 +626,6 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
         },
         verifyLine: (_errorLine, nextLine, counter) => {
           if (!nextLine) throw new Error(_errorLine);
-          // Partial bundle read: --hot picked up the outfile before --watch finished
-          // writing the inline sourcemap trailer. Retry the write.
-          if (nextLine.includes("hot-runner-root.js")) return "retry";
           expect(nextLine).toInclude("bundle_in.ts");
           const match = nextLine.match(/\s*at.*?:4:(\d+)$/);
           if (!match) throw new Error("invalid stack trace: " + nextLine);
@@ -732,7 +698,7 @@ throw new Error('0');`,
       driveErrorReloadCycle(runner, {
         targetCount: 50,
         onReload: counter => {
-          writeHotFileAtomicSync(
+          writeFileSync(
             bundleIn,
             `// ${long_comment}
 console.error("RSS: %s", process.memoryUsage().rss);
@@ -742,9 +708,6 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
         },
         verifyLine: (_errorLine, nextLine, counter) => {
           if (!nextLine) throw new Error(_errorLine);
-          // Partial bundle read: --hot picked up the outfile before --watch finished
-          // writing the inline sourcemap trailer. Retry the write.
-          if (nextLine.includes("hot-runner-root.js")) return "retry";
           expect(nextLine).toInclude("bundle_in.ts");
           const match = nextLine.match(/\s*at.*?:4:(\d+)$/);
           if (!match) throw new Error("invalid stack trace: " + nextLine);

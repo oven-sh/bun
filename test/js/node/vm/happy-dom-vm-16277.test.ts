@@ -24,4 +24,4 @@ test("reproduction", async (): Promise<undefined> => {
 
   // This test passes by simply not crashing.
   expect().pass();
-}, 30_000);
+});

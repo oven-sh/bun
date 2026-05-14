@@ -1,16 +1,7 @@
 // Avoid using String.prototype.repeat in this file because it's very slow in
 // debug builds of JavaScriptCore
-//
-// Measure RSS *growth* against a baseline captured up front, not absolute RSS:
-// the debug+ASAN build's process baseline is already >300 MB, which would trip
-// any reasonable absolute threshold before the loop even allocates. A real leak
-// (issue #10588) accretes ~1 MB per Bun.write(), i.e. ~100 MB per run() — a
-// 64 MB ceiling on growth catches that with headroom for allocator slack.
-const MAX_ALLOWED_MEMORY_GROWTH = 64;
+const MAX_ALLOWED_MEMORY_USAGE = 256;
 const dest = process.argv.at(-1);
-
-Bun.gc(true);
-const baselineRss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
 
 async function run(inputType) {
   for (let i = 0; i < 100; i++) {
@@ -18,9 +9,8 @@ async function run(inputType) {
     await Bun.write(dest, largeFile);
     Bun.gc(true);
     const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-    const growth = rss - baselineRss;
-    console.log("Memory usage:", rss, "MB (+" + growth + " MB)");
-    if (growth > MAX_ALLOWED_MEMORY_GROWTH) {
+    console.log("Memory usage:", rss, "MB");
+    if (rss > MAX_ALLOWED_MEMORY_USAGE) {
       throw new Error("Memory usage is too high");
     }
   }

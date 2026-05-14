@@ -16,8 +16,6 @@ if (isDockerEnabled()) {
       return text?.includes("squid") ?? false;
     }
     if (!(await isSquidRunning())) {
-      // remove any stale container so the recreate below is guaranteed to succeed
-      await execAsync(`${dockerCLI} rm -f squid-container`).catch(() => {});
       // try to create or error if is already created
       await execAsync(
         `${dockerCLI} run -d --name squid-container -e TZ=UTC -p 3128:3128 ubuntu/squid:5.2-22.04_beta`,
@@ -39,7 +37,7 @@ if (isDockerEnabled()) {
       // wait for squid to start
       await waitForSquid();
     }
-  }, 90_000);
+  });
 
   it("bun install with proxy with big packages", async () => {
     const files = {

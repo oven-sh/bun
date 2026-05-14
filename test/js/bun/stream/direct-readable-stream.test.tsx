@@ -312,8 +312,8 @@ describe("ReactDOM", () => {
         server = serve({
           port: 0,
           tls,
-          http3: true,
-          http1: false,
+          h3: true,
+          h1: false,
           routes: {
             "/:i": async req =>
               new Response(await renderToReadableStream(cases[Number(req.params.i)][1]), {

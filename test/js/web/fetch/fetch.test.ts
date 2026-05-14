@@ -7,9 +7,7 @@ import {
   exampleSite,
   exampleHtml as fixture,
   gc,
-  isASAN,
   isBroken,
-  isDebug,
   isFlaky,
   isMacOS,
   isWindows,
@@ -727,48 +725,35 @@ describe("fetch", () => {
   });
 });
 
-it.concurrent(
-  "simultaneous HTTPS fetch",
-  async () => {
-    const urls = [httpsServer.url.href, httpsServer.url.href];
-    for (let batch = 0; batch < 4; batch++) {
-      const promises = new Array(20);
-      for (let i = 0; i < 20; i++) {
-        promises[i] = fetch(urls[i % 2], { tls: { ca: httpsServer.ca } });
-      }
-      const result = await Promise.all(promises);
-      expect(result.length).toBe(20);
-      for (let i = 0; i < 20; i++) {
-        expect(result[i].status).toBe(200);
-        expect(await result[i].text()).toBe(fixture);
-      }
+it.concurrent("simultaneous HTTPS fetch", async () => {
+  const urls = [httpsServer.url.href, httpsServer.url.href];
+  for (let batch = 0; batch < 4; batch++) {
+    const promises = new Array(20);
+    for (let i = 0; i < 20; i++) {
+      promises[i] = fetch(urls[i % 2], { tls: { ca: httpsServer.ca } });
     }
-  },
-  30_000,
-);
+    const result = await Promise.all(promises);
+    expect(result.length).toBe(20);
+    for (let i = 0; i < 20; i++) {
+      expect(result[i].status).toBe(200);
+      expect(await result[i].text()).toBe(fixture);
+    }
+  }
+});
 
-it.concurrent(
-  "website with tlsextname",
-  async () => {
-    using server = Bun.serve({
-      port: 0,
-      tls,
-      fetch() {
-        return new Response("OK");
-      },
-    });
-    const resp = await fetch(server.url, { method: "HEAD", tls: { ca: tls.cert } });
-    expect(resp.status).toBe(200);
-  },
-  30_000,
-);
+it.concurrent("website with tlsextname", async () => {
+  using server = Bun.serve({
+    port: 0,
+    tls,
+    fetch() {
+      return new Response("OK");
+    },
+  });
+  const resp = await fetch(server.url, { method: "HEAD", tls: { ca: tls.cert } });
+  expect(resp.status).toBe(200);
+});
 
 function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?: boolean) {
-  // Per-byte forced full GC under debug/ASAN is ~10-20ms each; with the utf16 emoji
-  // payload (~250 bytes) that's ~500 sync GCs ≈ 5-10s, which blows the 5s default
-  // timeout and starves concurrent TLS tests. Keep the outer gc() calls for coverage
-  // but skip the inner per-byte ones on slow builds.
-  const perByteGC = !isDebug && !isASAN;
   for (let withGC of [false, true]) {
     for (let jsonObject of [
       { hello: true },
@@ -848,10 +833,10 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
 
         withoutAggressiveGC(() => {
           for (let i = 0; i < compare.length; i++) {
-            if (withGC && perByteGC) gc();
+            if (withGC) gc();
 
             expect(compare[i]).toBe(bytes[i]);
-            if (withGC && perByteGC) gc();
+            if (withGC) gc();
           }
         });
         if (withGC) gc();
@@ -871,10 +856,10 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
 
         withoutAggressiveGC(() => {
           for (let i = 0; i < compare.length; i++) {
-            if (withGC && perByteGC) gc();
+            if (withGC) gc();
 
             expect(compare[i]).toBe(bytes[i]);
-            if (withGC && perByteGC) gc();
+            if (withGC) gc();
           }
         });
         if (withGC) gc();
@@ -896,10 +881,10 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
 
         withoutAggressiveGC(() => {
           for (let i = 0; i < compare.length; i++) {
-            if (withGC && perByteGC) gc();
+            if (withGC) gc();
 
             expect(compare[i]).toBe(bytes[i]);
-            if (withGC && perByteGC) gc();
+            if (withGC) gc();
           }
         });
         if (withGC) gc();
@@ -921,10 +906,10 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
 
         withoutAggressiveGC(() => {
           for (let i = 0; i < compare.length; i++) {
-            if (withGC && perByteGC) gc();
+            if (withGC) gc();
 
             expect(compare[i]).toBe(bytes[i]);
-            if (withGC && perByteGC) gc();
+            if (withGC) gc();
           }
         });
         if (withGC) gc();
@@ -991,8 +976,7 @@ describe.concurrent("Bun.file", () => {
   }
 
   // on Windows the creator of the file will be able to read from it so this test is disabled on it
-  // root (uid 0) bypasses DAC permission bits on Linux, so chmod 000 still reads fine — skip there too
-  describe.skipIf(isWindows || process.getuid?.() === 0)("bad permissions throws", () => {
+  describe.skipIf(isWindows)("bad permissions throws", () => {
     const path = join(tmp_dir, "my-new-file");
     beforeAll(async () => {
       await Bun.write(path, "hey");
@@ -1939,37 +1923,33 @@ describe("should handle relative location in the redirect, issue#5635", () => {
   });
 });
 
-it.concurrent(
-  "should allow very long redirect URLS",
-  async () => {
-    const Location = "/" + "B".repeat(7 * 1024);
-    using server = Bun.serve({
-      port: 0,
-      async fetch(request: Request) {
-        gc();
-        const url = new URL(request.url);
-        if (url.pathname == "/redirect") {
-          return new Response("redirecting", {
-            headers: {
-              Location,
-            },
-            status: 302,
-          });
-        }
-        return new Response("Not Found", {
-          status: 404,
+it.concurrent("should allow very long redirect URLS", async () => {
+  const Location = "/" + "B".repeat(7 * 1024);
+  using server = Bun.serve({
+    port: 0,
+    async fetch(request: Request) {
+      gc();
+      const url = new URL(request.url);
+      if (url.pathname == "/redirect") {
+        return new Response("redirecting", {
+          headers: {
+            Location,
+          },
+          status: 302,
         });
-      },
-    });
-    // run it more times to check Malformed_HTTP_Response errors
-    for (let i = 0; i < 100; i++) {
-      const { url, status } = await fetch(`${server.url.origin}/redirect`);
-      expect(url).toBe(`${server.url.origin}${Location}`);
-      expect(status).toBe(404);
-    }
-  },
-  30_000,
-);
+      }
+      return new Response("Not Found", {
+        status: 404,
+      });
+    },
+  });
+  // run it more times to check Malformed_HTTP_Response errors
+  for (let i = 0; i < 100; i++) {
+    const { url, status } = await fetch(`${server.url.origin}/redirect`);
+    expect(url).toBe(`${server.url.origin}${Location}`);
+    expect(status).toBe(404);
+  }
+});
 
 it.concurrent("304 not modified with missing content-length does not cause a request timeout", async () => {
   const server = await Bun.listen({

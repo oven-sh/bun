@@ -1206,11 +1206,8 @@ test.skipIf(!isDebug && !isASAN)(
     expect(exitCode).toBe(0);
     const { growth } = JSON.parse(stdout.trim());
     // Observed (2 warmup + 8 measured, settled): ~220-250MB with the free,
-    // ~590-650MB without it. Threshold accounts for `detect_leaks=1` overhead
-    // on CI ASAN lanes (LSan metadata retention adds ~130 MB RSS noise even
-    // though the per-iter leak itself is LSan-verified at <100 MB total — see
-    // bundle_v2.rs `deinit_without_freeing_arena`).
-    expect(growth).toBeLessThan(550 * 1024 * 1024);
+    // ~590-650MB without it.
+    expect(growth).toBeLessThan(400 * 1024 * 1024);
   },
   120_000,
 );

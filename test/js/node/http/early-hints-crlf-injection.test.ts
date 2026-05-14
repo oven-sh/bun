@@ -44,7 +44,7 @@ describe.concurrent("writeEarlyHints", () => {
     expect(stdout).toContain("error_code:ERR_INVALID_HTTP_TOKEN");
     expect(stdout).toContain("body:ok");
     expect(exitCode).toBe(0);
-  }, 30_000);
+  });
 
   test("rejects CRLF injection in header value", async () => {
     await using proc = Bun.spawn({
@@ -88,7 +88,7 @@ describe.concurrent("writeEarlyHints", () => {
     expect(stdout).toContain("error_code:ERR_INVALID_CHAR");
     expect(stdout).toContain("body:ok");
     expect(exitCode).toBe(0);
-  }, 30_000);
+  });
 
   test("allows valid non-link headers in early hints", async () => {
     await using proc = Bun.spawn({
@@ -133,5 +133,5 @@ describe.concurrent("writeEarlyHints", () => {
     expect(stdout).toContain("OK: no error");
     expect(stdout).toContain("body:ok");
     expect(exitCode).toBe(0);
-  }, 30_000);
+  });
 });

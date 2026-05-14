@@ -10,15 +10,8 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 
 describe("backpressure", () => {
-  // INT_MAX is the maximum we can send to the socket in one call. uWS's
-  // BackPressure buffer transiently doubles during std::string shrink_to_fit,
-  // so the test peaks at ~3× the payload in resident memory; on 8 GiB CI
-  // machines (debian-13/alpine aarch64) a 2 GiB payload OOM-kills the process
-  // before the assertion can run. 1 GiB still exercises the >INT_MAX/2
-  // single-write path the test was added for.
-  const totalmem = require("node:os").totalmem();
-  const payloadSize = totalmem > 12 * 1024 ** 3 ? 2 * 1024 ** 3 : 1024 ** 3;
-  const TwoGBPayload = Buffer.allocUnsafe(payloadSize);
+  // INT_MAX is the maximum we can sent to the socket in one call
+  const TwoGBPayload = Buffer.allocUnsafe(1024 * 1024 * 1024 * 2);
   it("should handle backpressure", async () => {
     await using server = http.createServer((req, res) => {
       res.writeHead(200, {

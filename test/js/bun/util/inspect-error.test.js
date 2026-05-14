@@ -72,19 +72,19 @@ note: "duplicateConstDecl" was originally declared here
 });
 
 const normalizeError = str => {
-  // remove debug-only stack trace frames (BUN_DEBUG sets showPrivateScriptsInStackTraces)
-  // like "at require (:1:21)" or "at require (50:24)"
-  const debugOnlyFrame = / \(:?\d+:\d+\)/;
-  if (debugOnlyFrame.test(str)) {
+  // remove debug-only stack trace frames
+  // like "at require (:1:21)"
+  if (str.includes(" (:")) {
     const splits = str.split("\n");
     for (let i = 0; i < splits.length; i++) {
-      if (debugOnlyFrame.test(splits[i])) {
+      if (splits[i].includes(" (:")) {
         splits.splice(i, 1);
         i--;
       }
     }
     return splits.join("\n");
   }
+
   return str;
 };
 

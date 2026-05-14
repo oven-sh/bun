@@ -1,9 +1,5 @@
 import { file, spawn, version } from "bun";
-import { afterAll, describe, expect, test } from "bun:test";
-import { exampleSite } from "harness";
-
-const site = exampleSite("http");
-afterAll(() => site.stop());
+import { describe, expect, test } from "bun:test";
 
 const bodyTypes = [
   {
@@ -211,7 +207,7 @@ for (const { body, fn } of bodyTypes) {
           {
             label: "fetch() stream",
             stream: async () => {
-              const { body } = await fetch(site.url);
+              const { body } = await fetch("http://example.com/");
               expect(body).not.toBeNull();
               return body as ReadableStream;
             },

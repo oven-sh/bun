@@ -42,8 +42,10 @@ expect.extend({
   },
 });
 
-setDefaultTimeout(1000 * 60 * 5);
-beforeAll(dummyBeforeAll);
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+  dummyBeforeAll();
+});
 
 afterAll(dummyAfterAll);
 
@@ -62,39 +64,6 @@ async function withContext(
 
 // Default context options for most tests
 const defaultOpts = { linker: "hoisted" as const };
-
-// Re-read a JSON file until it parses successfully. Works around a transient
-// filesystem visibility race (seen on Windows under concurrent test execution)
-// where a freshly-written file can briefly read back empty/truncated. Only JSON
-// parse failures are retried, and only for a bounded window, so a genuinely
-// wrong/missing file still fails the test.
-async function readJsonWithRetry(path: string, timeoutMs = 5000): Promise<any> {
-  const deadline = Date.now() + timeoutMs;
-  let lastErr: unknown;
-  for (;;) {
-    try {
-      return await file(path).json();
-    } catch (err) {
-      lastErr = err;
-      if (Date.now() >= deadline) throw lastErr;
-      await Bun.sleep(50);
-    }
-  }
-}
-
-// Re-read a text file until it reads back non-empty. Same Windows
-// filesystem-visibility race as readJsonWithRetry: a freshly-written file can
-// briefly read back empty under concurrent test execution. Only an empty read
-// is retried (and only for a bounded window), so a genuine content mismatch
-// still fails the test immediately on the first non-empty read.
-async function readTextWithRetry(path: string, timeoutMs = 5000): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const result = await file(path).text();
-    if (result.length > 0 || Date.now() >= deadline) return result;
-    await Bun.sleep(50);
-  }
-}
 
 describe.concurrent("bun-install", () => {
   for (let input of ["abcdef", "65537", "-1"]) {
@@ -331,7 +300,7 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins([exeName]);
       expect(join(ctx.package_dir, "node_modules", ".bin", exeName)).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: chosen,
         bin: {
@@ -866,7 +835,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
@@ -1937,7 +1906,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
@@ -2019,7 +1988,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
@@ -2139,7 +2108,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
@@ -2338,7 +2307,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
@@ -2384,7 +2353,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
@@ -2430,7 +2399,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
@@ -2476,7 +2445,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
@@ -2525,7 +2494,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
@@ -2587,7 +2556,7 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -2783,7 +2752,7 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "Bar", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "Bar"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "Bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -2842,7 +2811,7 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "Bar", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "Bar"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "Bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -2901,7 +2870,7 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "Bar", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "Bar"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "Bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -2964,7 +2933,7 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "Bar", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "Bar"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "Bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -3001,7 +2970,7 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "Bar", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "Bar"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "Bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -3079,7 +3048,7 @@ describe.concurrent("bun-install", () => {
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -3088,7 +3057,7 @@ describe.concurrent("bun-install", () => {
       });
       expect(await readdirSorted(join(ctx.package_dir, "bar"))).toEqual(["package.json"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "moo"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "moo", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "moo", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -3165,7 +3134,7 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "bar", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -3176,7 +3145,7 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "moo"))).toEqual(["node_modules", "package.json"]);
       expect(await readdirSorted(join(ctx.package_dir, "moo", "node_modules"))).toEqual(["bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "moo", "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "moo", "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "moo", "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
@@ -3238,7 +3207,7 @@ describe.concurrent("bun-install", () => {
       expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.5.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "boba", "moo"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "boba", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "boba", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.5",
         bin: {
@@ -3293,7 +3262,7 @@ describe.concurrent("bun-install", () => {
       expect(await exited).toBe(0);
       expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
       expect(ctx.requested).toBe(2);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -3344,7 +3313,7 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "@barn", "moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
         // not installed as these are absent from manifest above
@@ -3354,7 +3323,7 @@ describe.concurrent("bun-install", () => {
         },
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "moo"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "moo", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
         dependencies: {
@@ -3406,12 +3375,12 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "@baz", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@baz"))).toEqual(["bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@baz", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "@baz", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "@baz", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
@@ -3492,12 +3461,12 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -3505,7 +3474,7 @@ describe.concurrent("bun-install", () => {
         },
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "moz"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "moz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "moz", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
         dependencies: {
@@ -3556,12 +3525,12 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -3569,7 +3538,7 @@ describe.concurrent("bun-install", () => {
         },
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "moz"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "moz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "moz", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
         dependencies: {
@@ -3634,7 +3603,7 @@ describe.concurrent("bun-install", () => {
         "test",
         "tools",
       ]);
-      const package_json = await readJsonWithRetry(join(ctx.package_dir, "node_modules", "uglify", "package.json"));
+      const package_json = await file(join(ctx.package_dir, "node_modules", "uglify", "package.json")).json();
       expect(package_json.name).toBe("uglify-js");
       await access(join(ctx.package_dir, "bun.lockb"));
     });
@@ -3703,7 +3672,7 @@ describe.concurrent("bun-install", () => {
         "test",
         "tools",
       ]);
-      const package_json = await readJsonWithRetry(join(ctx.package_dir, "node_modules", "uglify", "package.json"));
+      const package_json = await file(join(ctx.package_dir, "node_modules", "uglify", "package.json")).json();
       expect(package_json.name).toBe("uglify-js");
       expect(package_json.version).toBe("3.14.1");
       await access(join(ctx.package_dir, "bun.lockb"));
@@ -3773,7 +3742,7 @@ describe.concurrent("bun-install", () => {
         "test",
         "tools",
       ]);
-      const package_json = await readJsonWithRetry(join(ctx.package_dir, "node_modules", "uglify", "package.json"));
+      const package_json = await file(join(ctx.package_dir, "node_modules", "uglify", "package.json")).json();
       expect(package_json.name).toBe("uglify-js");
       expect(package_json.version).toBe("3.14.1");
       await access(join(ctx.package_dir, "bun.lockb"));
@@ -4011,7 +3980,7 @@ describe.concurrent("bun-install", () => {
         "test",
         "tools",
       ]);
-      const package_json = await readJsonWithRetry(join(ctx.package_dir, "node_modules", "uglify", "package.json"));
+      const package_json = await file(join(ctx.package_dir, "node_modules", "uglify", "package.json")).json();
       expect(package_json.name).toBe("uglify-js");
       expect(package_json.version).toBe("3.14.1");
       await access(join(ctx.package_dir, "bun.lockb"));
@@ -4071,7 +4040,7 @@ describe.concurrent("bun-install", () => {
         "test",
         "tools",
       ]);
-      const package_json = await readJsonWithRetry(join(ctx.package_dir, "node_modules", "uglify", "package.json"));
+      const package_json = await file(join(ctx.package_dir, "node_modules", "uglify", "package.json")).json();
       expect(package_json.name).toBe("uglify-js");
       await access(join(ctx.package_dir, "bun.lockb"));
     });
@@ -4143,7 +4112,7 @@ describe.concurrent("bun-install", () => {
         "test",
         "tools",
       ]);
-      const package_json = await readJsonWithRetry(join(ctx.package_dir, "node_modules", "uglify", "package.json"));
+      const package_json = await file(join(ctx.package_dir, "node_modules", "uglify", "package.json")).json();
       expect(package_json.name).toBe("uglify-js");
       expect(package_json.version).toBe("3.14.1");
       await access(join(ctx.package_dir, "bun.lockb"));
@@ -4203,7 +4172,7 @@ describe.concurrent("bun-install", () => {
         "test",
         "tools",
       ]);
-      const package_json = await readJsonWithRetry(join(ctx.package_dir, "node_modules", "uglify", "package.json"));
+      const package_json = await file(join(ctx.package_dir, "node_modules", "uglify", "package.json")).json();
       expect(package_json.name).toBe("uglify-js");
       await access(join(ctx.package_dir, "bun.lockb"));
     });
@@ -4261,7 +4230,7 @@ describe.concurrent("bun-install", () => {
         "timeout.js",
         "when.js",
       ]);
-      const package_json = await readJsonWithRetry(join(ctx.package_dir, "node_modules", "when", "package.json"));
+      const package_json = await file(join(ctx.package_dir, "node_modules", "when", "package.json")).json();
       expect(package_json.name).toBe("when");
       await access(join(ctx.package_dir, "bun.lockb"));
     });
@@ -4322,7 +4291,7 @@ describe.concurrent("bun-install", () => {
         "timeout.js",
         "when.js",
       ]);
-      const package_json = await readJsonWithRetry(join(ctx.package_dir, "node_modules", "when", "package.json"));
+      const package_json = await file(join(ctx.package_dir, "node_modules", "when", "package.json")).json();
       expect(package_json.name).toBe("when");
       await access(join(ctx.package_dir, "bun.lockb"));
     });
@@ -4617,7 +4586,7 @@ describe.concurrent("bun-install", () => {
         "index.js",
         "package.json",
       ]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "bar", "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "bar", "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -4625,7 +4594,7 @@ describe.concurrent("bun-install", () => {
         },
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.5",
         bin: {
@@ -4729,7 +4698,7 @@ describe.concurrent("bun-install", () => {
         join("..", "baz", "index.js"),
       );
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.5",
         bin: {
@@ -4738,7 +4707,7 @@ describe.concurrent("bun-install", () => {
       });
       expect(await readlink(join(ctx.package_dir, "node_modules", "moo"))).toBeWorkspaceLink(join("..", "moo"));
       expect(await readdirSorted(join(ctx.package_dir, "moo"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "bar", "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "bar", "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -4789,7 +4758,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
@@ -5020,7 +4989,7 @@ describe.concurrent("bun-install", () => {
         "test",
         "tools",
       ]);
-      const package_json = await readJsonWithRetry(join(ctx.package_dir, "node_modules", "uglify-js", "package.json"));
+      const package_json = await file(join(ctx.package_dir, "node_modules", "uglify-js", "package.json")).json();
       expect(package_json.name).toBe("uglify-js");
       await access(join(ctx.package_dir, "bun.lockb"));
     });
@@ -5083,7 +5052,7 @@ describe.concurrent("bun-install", () => {
         "test",
         "tools",
       ]);
-      const package_json = await readJsonWithRetry(join(ctx.package_dir, "node_modules", "uglify", "package.json"));
+      const package_json = await file(join(ctx.package_dir, "node_modules", "uglify", "package.json")).json();
       expect(package_json.name).toBe("uglify-js");
       await access(join(ctx.package_dir, "bun.lockb"));
     });
@@ -5147,7 +5116,7 @@ describe.concurrent("bun-install", () => {
         "test",
         "tools",
       ]);
-      const package_json = await readJsonWithRetry(join(ctx.package_dir, "node_modules", "uglify", "package.json"));
+      const package_json = await file(join(ctx.package_dir, "node_modules", "uglify", "package.json")).json();
       expect(package_json.name).toBe("uglify-js");
       expect(package_json.version).toBe("3.14.1");
       await access(join(ctx.package_dir, "bun.lockb"));
@@ -5335,7 +5304,7 @@ describe.concurrent("bun-install", () => {
         "test",
         "tools",
       ]);
-      const hash_json = await readJsonWithRetry(join(ctx.package_dir, "node_modules", "uglify-hash", "package.json"));
+      const hash_json = await file(join(ctx.package_dir, "node_modules", "uglify-hash", "package.json")).json();
       expect(hash_json.name).toBe("uglify-js");
       expect(hash_json.version).toBe("3.14.1");
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "uglify-ver"))).toEqual([
@@ -5352,7 +5321,7 @@ describe.concurrent("bun-install", () => {
         "test",
         "tools",
       ]);
-      const ver_json = await readJsonWithRetry(join(ctx.package_dir, "node_modules", "uglify-ver", "package.json"));
+      const ver_json = await file(join(ctx.package_dir, "node_modules", "uglify-ver", "package.json")).json();
       expect(ver_json.name).toBe("uglify-js");
       expect(ver_json.version).toBe("3.14.1");
       await access(join(ctx.package_dir, "bun.lockb"));
@@ -5615,7 +5584,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "baz"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -5671,7 +5640,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "baz"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.5",
         bin: {
@@ -5720,7 +5689,7 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -5769,7 +5738,7 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -5819,7 +5788,7 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "bar", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -5868,7 +5837,7 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "bar", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -5943,7 +5912,7 @@ describe.concurrent("bun-install", () => {
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
         dependencies: {
@@ -5952,12 +5921,12 @@ describe.concurrent("bun-install", () => {
         },
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -6034,7 +6003,7 @@ describe.concurrent("bun-install", () => {
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
         dependencies: {
@@ -6043,12 +6012,12 @@ describe.concurrent("bun-install", () => {
         },
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -6099,7 +6068,7 @@ describe.concurrent("bun-install", () => {
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
         dependencies: {
@@ -6108,12 +6077,12 @@ describe.concurrent("bun-install", () => {
         },
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -6189,7 +6158,7 @@ describe.concurrent("bun-install", () => {
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
         dependencies: {
@@ -6198,12 +6167,12 @@ describe.concurrent("bun-install", () => {
         },
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -6250,7 +6219,7 @@ describe.concurrent("bun-install", () => {
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
         dependencies: {
@@ -6259,12 +6228,12 @@ describe.concurrent("bun-install", () => {
         },
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
         bin: {
@@ -6321,14 +6290,12 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "moo"))).toEqual(["package.json"]);
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "moo", "package.json"))).toEqual(
-        moo_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "moo", "package.json")).text()).toEqual(moo_package);
       await access(join(ctx.package_dir, "bun.lockb"));
     });
   });
@@ -6381,14 +6348,12 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "moo"))).toEqual(["package.json"]);
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "moo", "package.json"))).toEqual(
-        moo_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "moo", "package.json")).text()).toEqual(moo_package);
       await access(join(ctx.package_dir, "bun.lockb"));
     });
   });
@@ -6437,14 +6402,12 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "moo"))).toEqual(["package.json"]);
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "moo", "package.json"))).toEqual(
-        moo_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "moo", "package.json")).text()).toEqual(moo_package);
       await access(join(ctx.package_dir, "bun.lockb"));
     });
   });
@@ -6493,14 +6456,12 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "moo"))).toEqual(["package.json"]);
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "moo", "package.json"))).toEqual(
-        moo_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "moo", "package.json")).text()).toEqual(moo_package);
       await access(join(ctx.package_dir, "bun.lockb"));
     });
   });
@@ -6550,17 +6511,17 @@ describe.concurrent("bun-install", () => {
       expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(ctx.package_dir)).toEqual(["bunfig.toml", "moo", "package.json"]);
-      expect(await readTextWithRetry(join(ctx.package_dir, "package.json"))).toEqual(foo_package);
+      expect(await file(join(ctx.package_dir, "package.json")).text()).toEqual(foo_package);
       expect(await readdirSorted(join(ctx.package_dir, "moo"))).toEqual([
         "bun.lockb",
         "bunfig.toml",
         "node_modules",
         "package.json",
       ]);
-      expect(await readTextWithRetry(join(ctx.package_dir, "moo", "package.json"))).toEqual(moo_package);
+      expect(await file(join(ctx.package_dir, "moo", "package.json")).text()).toEqual(moo_package);
       expect(await readdirSorted(join(ctx.package_dir, "moo", "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "moo", "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "moo", "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "moo", "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
@@ -6611,17 +6572,17 @@ describe.concurrent("bun-install", () => {
       expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(ctx.package_dir)).toEqual(["bunfig.toml", "moo", "package.json"]);
-      expect(await readTextWithRetry(join(ctx.package_dir, "package.json"))).toEqual(foo_package);
+      expect(await file(join(ctx.package_dir, "package.json")).text()).toEqual(foo_package);
       expect(await readdirSorted(join(ctx.package_dir, "moo"))).toEqual([
         "bun.lockb",
         "bunfig.toml",
         "node_modules",
         "package.json",
       ]);
-      expect(await readTextWithRetry(join(ctx.package_dir, "moo", "package.json"))).toEqual(moo_package);
+      expect(await file(join(ctx.package_dir, "moo", "package.json")).text()).toEqual(moo_package);
       expect(await readdirSorted(join(ctx.package_dir, "moo", "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "moo", "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "moo", "node_modules", "bar", "package.json"))).toEqual({
+      expect(await file(join(ctx.package_dir, "moo", "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
       });
@@ -6853,7 +6814,7 @@ describe.concurrent("bun-install", () => {
         "node_modules",
         "package.json",
       ]);
-      expect(await readTextWithRetry(join(ctx.package_dir, "package.json"))).toEqual(foo_package);
+      expect(await file(join(ctx.package_dir, "package.json")).text()).toEqual(foo_package);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
         ".bin",
         ".cache",
@@ -6995,7 +6956,7 @@ describe.concurrent("bun-install", () => {
         "node_modules",
         "package.json",
       ]);
-      expect(await readTextWithRetry(join(ctx.package_dir, "package.json"))).toEqual(foo_package);
+      expect(await file(join(ctx.package_dir, "package.json")).text()).toEqual(foo_package);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toBeEmpty();
     });
   });
@@ -7064,13 +7025,9 @@ describe.concurrent("bun-install", () => {
       expect(await exited).toBe(0);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "moo"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual(
-        bar_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "moo"))).toEqual(["package.json"]);
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "moo", "package.json"))).toEqual(
-        moo_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "moo", "package.json")).text()).toEqual(moo_package);
       await access(join(ctx.package_dir, "bun.lockb"));
     });
   });
@@ -7119,9 +7076,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(0);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual(
-        bar_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
       await access(join(ctx.package_dir, "bun.lockb"));
       // Perform `bun install` again but with lockfile from before
       await rm(join(ctx.package_dir, "node_modules"), { force: true, recursive: true });
@@ -7150,9 +7105,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(0);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual(
-        bar_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
       await access(join(ctx.package_dir, "bun.lockb"));
     });
   });
@@ -7197,9 +7150,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(0);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual(
-        bar_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
       await access(join(ctx.package_dir, "bun.lockb"));
     });
   });
@@ -7244,9 +7195,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(0);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual(
-        bar_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
       await access(join(ctx.package_dir, "bun.lockb"));
     });
   });
@@ -7291,9 +7240,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(0);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual(
-        bar_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
       await access(join(ctx.package_dir, "bun.lockb"));
     });
   });
@@ -8035,9 +7982,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(0);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual(
-        bar_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
       await access(join(ctx.package_dir, "bun.lockb"));
     });
   });
@@ -8132,7 +8077,7 @@ describe.concurrent("bun-install", () => {
       expect(await readlink(join(ctx.package_dir, "node_modules", "@bar", "baz"))).toBeWorkspaceLink(
         join("..", "..", "packages", "bar-baz"),
       );
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "@bar", "baz", "package.json"))).toEqual(
+      expect(await file(join(ctx.package_dir, "node_modules", "@bar", "baz", "package.json")).text()).toEqual(
         baz_package,
       );
       await access(join(ctx.package_dir, "bun.lockb"));
@@ -8182,9 +8127,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(0);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "baz"]);
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "baz"));
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual(
-        baz_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).text()).toEqual(baz_package);
       await access(join(ctx.package_dir, "bun.lockb"));
     });
   });
@@ -8238,9 +8181,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(0);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "baz"]);
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual(
-        bar_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
       expect(await readlink(join(ctx.package_dir, "node_modules", "baz"))).toBeWorkspaceLink(join("..", "baz"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["package.json"]);
       await access(join(ctx.package_dir, "bun.lockb"));
@@ -8296,16 +8237,14 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "baz"]);
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual(
-        bar_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
       expect(await readlink(join(ctx.package_dir, "node_modules", "baz"))).toBeWorkspaceLink(join("..", "baz"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz", "node_modules"))).toEqual(["bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz", "node_modules", "bar"))).toEqual([
         "package.json",
       ]);
       expect(
-        await readJsonWithRetry(join(ctx.package_dir, "node_modules", "baz", "node_modules", "bar", "package.json")),
+        await file(join(ctx.package_dir, "node_modules", "baz", "node_modules", "bar", "package.json")).json(),
       ).toEqual({
         name: "bar",
         version: "0.0.2",
@@ -8365,7 +8304,7 @@ describe.concurrent("bun-install", () => {
       expect(await readlink(join(ctx.package_dir, "node_modules", "@moo", "bar"))).toBeWorkspaceLink(
         join("..", "..", "packages", "moo-bar"),
       );
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "@moo", "bar", "package.json"))).toEqual(
+      expect(await file(join(ctx.package_dir, "node_modules", "@moo", "bar", "package.json")).text()).toEqual(
         bar_package,
       );
       expect(await readlink(join(ctx.package_dir, "node_modules", "@moo", "baz"))).toBeWorkspaceLink(
@@ -8428,7 +8367,7 @@ describe.concurrent("bun-install", () => {
       expect(await readlink(join(ctx.package_dir, "node_modules", "@moo", "bar"))).toBeWorkspaceLink(
         join("..", "..", "packages", "bar"),
       );
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "@moo", "bar", "package.json"))).toEqual(
+      expect(await file(join(ctx.package_dir, "node_modules", "@moo", "bar", "package.json")).text()).toEqual(
         bar_package,
       );
       expect(await readlink(join(ctx.package_dir, "node_modules", "baz"))).toBeWorkspaceLink(
@@ -8491,9 +8430,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(0);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "baz"]);
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual(
-        bar_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
       expect(await readlink(join(ctx.package_dir, "node_modules", "baz"))).toBeWorkspaceLink(join("..", "baz"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["package.json"]);
       await access(join(ctx.package_dir, "bun.lockb"));
@@ -8551,7 +8488,7 @@ describe.concurrent("bun-install", () => {
       expect(await readlink(join(ctx.package_dir, "node_modules", "@moo", "bar"))).toBeWorkspaceLink(
         join("..", "..", "packages", "bar"),
       );
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "@moo", "bar", "package.json"))).toEqual(
+      expect(await file(join(ctx.package_dir, "node_modules", "@moo", "bar", "package.json")).text()).toEqual(
         bar_package,
       );
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@moz"))).toEqual(["bar", "baz"]);
@@ -8626,16 +8563,12 @@ describe.concurrent("bun-install", () => {
         join("..", "packages", "bar"),
       );
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual(
-        bar_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
       expect(await readlink(join(ctx.package_dir, "node_modules", "baz"))).toBeWorkspaceLink(
         join("..", "packages", "baz"),
       );
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["package.json"]);
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual(
-        baz_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).text()).toEqual(baz_package);
       await access(join(ctx.package_dir, "bun.lockb"));
       // Perform `bun install` again but with lockfile from before
       await rm(join(ctx.package_dir, "node_modules"), { force: true, recursive: true });
@@ -8669,16 +8602,12 @@ describe.concurrent("bun-install", () => {
         join("..", "packages", "bar"),
       );
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "bar", "package.json"))).toEqual(
-        bar_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
       expect(await readlink(join(ctx.package_dir, "node_modules", "baz"))).toBeWorkspaceLink(
         join("..", "packages", "baz"),
       );
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["package.json"]);
-      expect(await readTextWithRetry(join(ctx.package_dir, "node_modules", "baz", "package.json"))).toEqual(
-        baz_package,
-      );
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).text()).toEqual(baz_package);
       await access(join(ctx.package_dir, "bun.lockb"));
     });
   });
@@ -9076,7 +9005,7 @@ describe.concurrent("bun-install", () => {
       expect(out).toContain("Checked 3 installs across 2 packages (no changes)");
 
       expect(await exited).toBe(0);
-      expect(await readJsonWithRetry(join(ctx.package_dir, "node_modules", "pkg-one", "package.json"))).toEqual({
+      expect(await Bun.file(join(ctx.package_dir, "node_modules", "pkg-one", "package.json")).json()).toEqual({
         name: "pkg-one",
         version: "1.0.0",
       });

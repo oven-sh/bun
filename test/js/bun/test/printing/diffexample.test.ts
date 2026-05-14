@@ -3,7 +3,7 @@ import { bunEnv, bunExe } from "harness";
 
 function cleanOutput(output: string) {
   return output
-    .replaceAll(/ \[[0-9\.]+m?s\]/g, "")
+    .replaceAll(/ \[[0-9\.]+ms\]/g, "")
     .replaceAll(/at <anonymous> \(.*\)/g, "at <anonymous> (FILE:LINE)")
     .replaceAll(
       "test\\js\\bun\\test\\printing\\diffexample.fixture.ts:",

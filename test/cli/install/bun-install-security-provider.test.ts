@@ -729,10 +729,7 @@ describe("Large payload via ipc pipe", () => {
   });
 
   test("handles packages JSON larger than max arg length (>1MB)", {
-    // Windows-aarch64 CI hits ~124s for 3000 manifest+tarball+extract round
-    // trips; budget is the install pipeline, not the IPC write (single
-    // uv_write of 1.3 MB). 120s was Zig-calibrated.
-    testTimeout: 180_000,
+    testTimeout: 120_000,
     scanner: async ({ packages }) => {
       const jsonSize = JSON.stringify(packages).length;
       console.log(`Received JSON payload of ${jsonSize} bytes from ${packages.length} packages`);

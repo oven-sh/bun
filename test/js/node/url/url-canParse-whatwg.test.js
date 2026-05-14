@@ -22,5 +22,5 @@ describe("URL.canParse", () => {
     for (let i = 0; i < 1e5; i++) {
       assert(URL.canParse("https://www.example.com/path/?query=param#hash"));
     }
-  }, 30_000);
+  });
 });

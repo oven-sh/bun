@@ -17,8 +17,7 @@ test.todo("E", () => { expect("hello").toBe("hello") });
     `.trim(),
   });
 
-  // Run describe.todo() and test.todo() with --todo flag concurrently so the
-  // outer test stays under the default timeout on slow debug builds.
+  // Run describe.todo() with --todo flag
   await using proc1 = Bun.spawn({
     cmd: [bunExe(), "test", "--todo", "describe-todo.test.js"],
     env: bunEnv,
@@ -26,6 +25,10 @@ test.todo("E", () => { expect("hello").toBe("hello") });
     stderr: "pipe",
     stdout: "pipe",
   });
+
+  const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
+
+  // Run test.todo() with --todo flag for comparison
   await using proc2 = Bun.spawn({
     cmd: [bunExe(), "test", "--todo", "test-todo.test.js"],
     env: bunEnv,
@@ -34,10 +37,7 @@ test.todo("E", () => { expect("hello").toBe("hello") });
     stdout: "pipe",
   });
 
-  const [[stdout1, stderr1, exitCode1], [stdout2, stderr2, exitCode2]] = await Promise.all([
-    Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]),
-    Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]),
-  ]);
+  const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
 
   // test.todo() correctly fails when the test passes (expected behavior)
   expect(exitCode2).not.toBe(0);
@@ -49,4 +49,4 @@ test.todo("E", () => { expect("hello").toBe("hello") });
   const output1 = stdout1 + stderr1;
   expect(output1).toContain("todo");
   expect(output1).toMatch(/this test is marked as todo but passes/i);
-}, 20_000);
+});

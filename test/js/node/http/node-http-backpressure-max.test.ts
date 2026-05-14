@@ -45,9 +45,6 @@ describe("backpressure", () => {
 
       expect(totalBytes).toBe(payloadSize);
     },
-    // 4 GiB over loopback with pause/resume; uWS BackPressure memmove +
-    // shrink_to_fit on a multi-GiB std::string adds ~8-13% overhead, which on
-    // a loaded darwin-14-x64 mini pushes past 60 s ~1/20 runs.
-    120_000,
+    60_000,
   );
 });

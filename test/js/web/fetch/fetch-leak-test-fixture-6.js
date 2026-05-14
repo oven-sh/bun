@@ -14,10 +14,8 @@ for (let i = 0; i < 500; i++) {
   }
   await Bun.sleep(1);
   const memoryUsage = process.memoryUsage().rss / 1024 / 1024;
-  // memory should be stable after X iterations; sample the high-water mark over
-  // a window of late iterations rather than a single point so a transient RSS
-  // dip doesn't make the final comparison spuriously fail (Windows GC jitter).
-  if (i >= 250) rssSample = Math.max(rssSample, memoryUsage);
+  // memory should be stable after X iterations
+  if (i == 250) rssSample = memoryUsage;
 }
 await Bun.sleep(1);
 Bun.gc(true);

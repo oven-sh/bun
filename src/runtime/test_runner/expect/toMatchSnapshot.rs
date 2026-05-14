@@ -95,12 +95,13 @@ pub fn to_match_snapshot(
     let hint = hint_string.to_slice();
     // `defer hint.deinit()` — Drop handles it.
 
-    let value: JSValue = this.get_value(
+    let value: JSValue = crate::ready_value!(this.get_value(
         global,
         this_value,
+        frame,
         "toMatchSnapshot",
         "<green>properties<r><d>, <r>hint",
-    )?;
+    )?);
 
     Expect::snapshot(&**this, global, value, property_matchers, hint.slice(), "toMatchSnapshot")
 }

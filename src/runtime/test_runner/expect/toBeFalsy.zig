@@ -3,7 +3,7 @@ pub fn toBeFalsy(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
 
     const thisValue = callFrame.this();
 
-    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toBeFalsy", "")) orelse return this.deferredResult(thisValue);
+    const value: JSValue = try this.getValue(globalThis, thisValue, "toBeFalsy", "");
 
     this.incrementExpectCallCounter();
 

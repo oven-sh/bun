@@ -36,8 +36,7 @@ pub fn to_be_one_of(
     global_this: &JSGlobalObject,
     call_frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let (this, expected, not) =
-        this.matcher_prelude(global_this, call_frame.this(), "toBeOneOf", "<green>expected<r>")?;
+    let (this, expected, not) = crate::ready_matcher!(this.matcher_prelude(global_this, call_frame.this(), call_frame, "toBeOneOf", "<green>expected<r>")?);
 
     let arguments_ = call_frame.arguments_old::<1>();
     let arguments = arguments_.slice();

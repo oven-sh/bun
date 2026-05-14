@@ -11,7 +11,7 @@ pub fn to_be_valid_date(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     let this_value = frame.this();
-    let (this, value, not) = this.matcher_prelude(global, this_value, "toBeValidDate", "")?;
+    let (this, value, not) = crate::ready_matcher!(this.matcher_prelude(global, this_value, frame, "toBeValidDate", "")?);
     let mut pass = value.is_date() && !value.get_unix_timestamp().is_nan();
     if not {
         pass = !pass;

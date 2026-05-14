@@ -5,7 +5,7 @@ inline fn toHaveReturnedTimesFn(this: *Expect, globalThis: *JSGlobalObject, call
     const arguments = callframe.arguments();
     defer this.postMatch(globalThis);
 
-    const value: JSValue = (try this.getValue(globalThis, thisValue, callframe, @tagName(mode), "<green>expected<r>")) orelse return this.deferredResult(thisValue);
+    const value: JSValue = try this.getValue(globalThis, thisValue, @tagName(mode), "<green>expected<r>");
 
     this.incrementExpectCallCounter();
 

@@ -59,6 +59,40 @@ pub struct Expect {
     pub flags: Cell<Flags>,
     pub parent: Option<bun_test::RefDataPtr>,
     pub custom_label: bun_core::String,
+    /// Set to true while re-invoking a matcher from a `.resolves`/`.rejects`
+    /// `.then()` callback so we don't try to defer again.
+    pub is_async_rerun: Cell<bool>,
+    /// Set by `increment_expect_call_counter()` so a deferred re-run doesn't
+    /// count the same expectation twice. Reset by `post_match()` so multiple
+    /// matchers on the same `expect()` each count; `PendingMatcher` snapshots
+    /// it at defer time and restores it before the re-run.
+    pub counted_expect_call: Cell<bool>,
+    /// The caller's source location for the currently-executing deferred
+    /// re-run, borrowed from `PendingMatcher.srcloc_at_defer`. Written by
+    /// `PendingMatcher::rerun()` for the duration of the re-invoked matcher
+    /// call and restored afterwards. `inline_snapshot()` reads it (gated on
+    /// `is_async_rerun`) because the user's frame is no longer on the stack.
+    /// Owned by the `PendingMatcher`, not by `Expect`.
+    pub async_rerun_srcloc: Cell<Option<bun_jsc::CallerSrcLoc>>,
+}
+
+/// Result of `Expect::get_value()`: either the (promise-unwrapped) value the
+/// matcher should operate on, or a deferred promise that the matcher must
+/// return to its caller because `.resolves`/`.rejects` was used on a
+/// still-pending input promise.
+pub enum MaybeDeferred {
+    Value(JSValue),
+    /// The input promise is still pending. A `PendingMatcher` has been
+    /// attached via `.then()` to re-invoke the matcher once it settles; the
+    /// matcher must return this promise to its caller now.
+    Deferred(JSValue),
+}
+
+/// Result of `Expect::matcher_prelude()`.
+pub enum MatcherStart<'a> {
+    Ready(PostMatchGuard<'a>, JSValue, bool),
+    /// See [`MaybeDeferred::Deferred`].
+    Deferred(JSValue),
 }
 
 pub struct TestScope<'a> {
@@ -219,6 +253,10 @@ impl Expect {
     }
 
     pub fn increment_expect_call_counter(&self) {
+        if self.counted_expect_call.get() {
+            return;
+        }
+        self.counted_expect_call.set(true);
         let Some(parent) = self.parent.as_ref() else { return }; // not in bun:test
         let Some(mut buntest_strong) = parent.bun_test() else { return }; // the test file this expect() call was for is no longer
         let buntest = buntest_strong.get();
@@ -379,15 +417,23 @@ impl Expect {
         Ok(this_value)
     }
 
+    /// Retrieves the captured value passed to `expect(...)`, processing
+    /// `.resolves`/`.rejects` if set.
+    ///
+    /// Returns `MaybeDeferred::Deferred` when the captured value is a
+    /// still-pending promise. In that case the matcher is deferred: a
+    /// `.then()` is attached that re-invokes the matcher once the promise
+    /// settles, and the matcher must immediately return the deferred promise.
     pub fn get_value(
         &self,
         global_this: &JSGlobalObject,
         this_value: JSValue,
+        callframe: &CallFrame,
         // PORT NOTE: Zig took `[]const u8`; every caller passes a string literal,
         // so accept `&str` (BStr::new below takes `AsRef<[u8]>`, so no copy).
         matcher_name: &str,
         matcher_params_fmt: &'static str,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<MaybeDeferred> {
         let Some(value) = super::expect::js::captured_value_get_cached(this_value) else {
             return Err(global_this.throw2(
                 "Internal error: the expect(value) was garbage collected but it should not have been!",
@@ -395,6 +441,10 @@ impl Expect {
             ));
         };
         value.ensure_still_alive();
+
+        if let Some(deferred) = self.maybe_defer_matcher(global_this, this_value, callframe, value)? {
+            return Ok(MaybeDeferred::Deferred(deferred));
+        }
 
         // PERF(port): was comptime bool dispatch — profile if hot.
         let matcher_params = Output::pretty_fmt_rt(matcher_params_fmt, Output::enable_ansi_colors_stderr());
@@ -407,6 +457,56 @@ impl Expect {
             matcher_params,
             false,
         )
+        .map(MaybeDeferred::Value)
+    }
+
+    /// Returns the promise that a deferred matcher should return to its
+    /// caller. Only valid when `get_value()` returned
+    /// `MaybeDeferred::Deferred`.
+    pub fn deferred_result(&self, this_value: JSValue) -> JSValue {
+        super::expect::js::result_value_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
+    }
+
+    /// If `.resolves`/`.rejects` is set and `value` is a still-pending
+    /// promise, sets up a `.then()` callback to re-invoke the current matcher
+    /// once the promise settles, stores the returned-to-caller promise in the
+    /// `resultValue` slot, and returns it. Returns `None` otherwise.
+    ///
+    /// This replaces the old synchronous `wait_for_promise()` which would
+    /// hang forever if the promise could only be resolved by JavaScript
+    /// sitting above the matcher on the call stack (#14950).
+    fn maybe_defer_matcher(
+        &self,
+        global_this: &JSGlobalObject,
+        this_value: JSValue,
+        callframe: &CallFrame,
+        value: JSValue,
+    ) -> JsResult<Option<JSValue>> {
+        if self.flags.get().promise() == Promise::None {
+            return Ok(None);
+        }
+        if self.is_async_rerun.get() {
+            return Ok(None);
+        }
+        let Some(promise) = value.as_any_promise() else {
+            return Ok(None);
+        };
+        if promise.status() != js_promise::Status::Pending {
+            return Ok(None);
+        }
+
+        promise.set_handled(global_this.vm());
+
+        let deferred = PendingMatcher::create(
+            global_this,
+            this_value,
+            callframe,
+            value,
+            self.counted_expect_call.get(),
+            self.flags.get(),
+        )?;
+        super::expect::js::result_value_set_cached(this_value, global_this, deferred);
+        Ok(Some(deferred))
     }
 
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
@@ -667,6 +767,9 @@ impl Expect {
             flags: Cell::new(Flags::default()),
             custom_label,
             parent: active_execution_entry_ref,
+            is_async_rerun: Cell::new(false),
+            counted_expect_call: Cell::new(false),
+            async_rerun_srcloc: Cell::new(None),
         };
         // `JsClass::to_js` boxes `self` and hands the pointer to `${T}__create`.
         let expect_js_value = expect.to_js(global_this);
@@ -1097,11 +1200,19 @@ impl Expect {
             let buntest = buntest_strong.get();
 
             // 1. find the src loc of the snapshot
-            let srcloc = call_frame.get_caller_src_loc(global_this);
+            // When re-running from a deferred `.resolves`/`.rejects`
+            // `.then()` callback, the user's frame is no longer on the
+            // stack; `PendingMatcher::rerun()` lends its captured location
+            // via `async_rerun_srcloc` for the duration of the call.
+            let (srcloc, owns_srcloc) = match (this.is_async_rerun.get(), this.async_rerun_srcloc.get()) {
+                (true, Some(loc)) => (loc, false),
+                _ => (call_frame.get_caller_src_loc(global_this), true),
+            };
             // .zig:763 `defer srcloc.str.deref();` — bun_core::String is Copy
             // with no Drop, so wrap in the RAII guard to release the +1 on
-            // every exit path (including the early returns below).
-            let _srcloc_str_guard = bun_core::OwnedString::new(srcloc.str);
+            // every exit path (including the early returns below). When the
+            // srcloc is borrowed from `PendingMatcher`, it owns the deref.
+            let _srcloc_str_guard = owns_srcloc.then(|| bun_core::OwnedString::new(srcloc.str));
             let file_id = buntest.file_id;
             // PORT NOTE: MultiArrayList::get requires MultiArrayElement (derive pending);
             // use the column accessor which already compiles in jest.rs.
@@ -1588,6 +1699,7 @@ impl Expect {
         // thenable's user-defined `then`), which can call another matcher on this same
         // `expect()` chain; aliased `&Expect` is sound, aliased `&mut Expect` is not.
         let expect = unsafe { &*expect_ptr };
+        let expect = expect.post_match_guard(global_this);
 
         // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
         // so now execute the symmetric matching
@@ -1607,6 +1719,9 @@ impl Expect {
                 "Internal consistency error: failed to retrieve the captured value"
             )));
         };
+        if let Some(deferred) = expect.maybe_defer_matcher(global_this, this_value, call_frame, value)? {
+            return Ok(deferred);
+        }
         value = Self::process_promise(
             expect.custom_label.clone(),
             expect.flags.get(),
@@ -1738,6 +1853,10 @@ impl Expect {
     }
 
     pub fn post_match(&self, global_this: &JSGlobalObject) {
+        // Reset so the *next* matcher on this `expect()` instance counts
+        // independently. `PendingMatcher` snapshots the pre-reset value so
+        // a deferred rerun observes the state at the point of defer.
+        self.counted_expect_call.set(false);
         let vm = global_this.bun_vm();
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         unsafe { (*vm).auto_garbage_collect() };
@@ -1768,14 +1887,18 @@ impl Expect {
         &'a self,
         global: &'a JSGlobalObject,
         this_value: JSValue,
+        callframe: &CallFrame,
         matcher_name: &str,
         matcher_params: &'static str,
-    ) -> JsResult<(PostMatchGuard<'a>, JSValue, bool)> {
+    ) -> JsResult<MatcherStart<'a>> {
         let this = self.post_match_guard(global);
-        let value = this.get_value(global, this_value, matcher_name, matcher_params)?;
+        let value = match this.get_value(global, this_value, callframe, matcher_name, matcher_params)? {
+            MaybeDeferred::Value(v) => v,
+            MaybeDeferred::Deferred(p) => return Ok(MatcherStart::Deferred(p)),
+        };
         this.increment_expect_call_counter();
         let not = this.flags.get().not();
-        Ok((this, value, not))
+        Ok(MatcherStart::Ready(this, value, not))
     }
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
@@ -1819,6 +1942,204 @@ impl core::ops::Deref for PostMatchGuard<'_> {
 impl Drop for PostMatchGuard<'_> {
     fn drop(&mut self) {
         self.expect.post_match(self.global);
+    }
+}
+
+/// State for a `.resolves`/`.rejects` matcher call whose promise hasn't
+/// settled yet. When it does, we re-invoke the matcher and resolve/reject
+/// `deferred` with the outcome.
+pub struct PendingMatcher {
+    /// The `Expect` JS instance (also keeps capturedValue alive).
+    expect_this: bun_jsc::Strong,
+    /// The native matcher function being called (e.g. `toBe`).
+    matcher_fn: bun_jsc::Strong,
+    /// JSArray of the arguments the matcher was called with.
+    matcher_args: bun_jsc::Strong,
+    /// The promise returned to the caller of the matcher.
+    deferred: bun_jsc::JSPromiseStrong,
+    /// Whether `increment_expect_call_counter()` had already run by the
+    /// time we deferred. Restored on re-run so the counter is bumped
+    /// exactly once regardless of whether this matcher calls it before or
+    /// after `get_value()`.
+    was_counted_before_defer: bool,
+    /// The `Expect.flags` at the time we deferred. `.not` / `.resolves` /
+    /// `.rejects` mutate flags in place on the shared instance, so a later
+    /// matcher call on the same `expect()` could flip them before this
+    /// re-run fires; restore so the re-run observes the flags the user
+    /// wrote for *this* matcher call.
+    flags_at_defer: Flags,
+    /// The caller's source location at the time we deferred, captured
+    /// while the user's frame is still on the stack. `inline_snapshot()`
+    /// needs it on the re-run to know which line to write the snapshot
+    /// back to. Stored per-PendingMatcher (not on the shared `Expect`) so
+    /// two deferred inline-snapshot matchers on the same `expect()`
+    /// instance each write to their own call site.
+    srcloc_at_defer: bun_jsc::CallerSrcLoc,
+}
+
+impl PendingMatcher {
+    fn create(
+        global_this: &JSGlobalObject,
+        this_value: JSValue,
+        callframe: &CallFrame,
+        promise_value: JSValue,
+        was_counted: bool,
+        flags: Flags,
+    ) -> JsResult<JSValue> {
+        let args = callframe.arguments();
+        let args_array = JSValue::create_empty_array(global_this, args.len())?;
+        for (i, arg) in args.iter().enumerate() {
+            args_array.put_index(global_this, i as u32, *arg)?;
+        }
+
+        let pending = Box::new(PendingMatcher {
+            expect_this: bun_jsc::Strong::create(this_value, global_this),
+            matcher_fn: bun_jsc::Strong::create(callframe.callee(), global_this),
+            matcher_args: bun_jsc::Strong::create(args_array, global_this),
+            deferred: bun_jsc::JSPromiseStrong::init(global_this),
+            was_counted_before_defer: was_counted,
+            flags_at_defer: flags,
+            srcloc_at_defer: callframe.get_caller_src_loc(global_this),
+        });
+        let deferred_value = pending.deferred.value();
+
+        promise_value.then(
+            global_this,
+            Box::into_raw(pending),
+            Bun__Expect__PendingMatcher__onResolve,
+            Bun__Expect__PendingMatcher__onReject,
+        );
+
+        Ok(deferred_value)
+    }
+
+    fn on_settle(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<2>();
+        let ctx = args.ptr[1];
+        if ctx.is_empty_or_undefined_or_null() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        // SAFETY: `ctx` was produced by `Box::into_raw` in `create()` and is
+        // consumed exactly once here (onResolve and onReject are mutually
+        // exclusive for a given promise settlement).
+        let mut this =
+            unsafe { Box::from_raw(ctx.as_ptr_address() as *mut PendingMatcher) };
+        this.settle(global_this);
+        // `Box` drop releases all `Strong` refs and the srcloc string.
+        Ok(JSValue::UNDEFINED)
+    }
+
+    fn settle(&mut self, global_this: &JSGlobalObject) {
+        match self.rerun(global_this) {
+            Ok(result) => {
+                let _ = self.deferred.resolve(global_this, result);
+            }
+            Err(_) => {
+                let exception = global_this
+                    .try_take_exception()
+                    .unwrap_or(JSValue::UNDEFINED);
+                let _ = self.deferred.reject(global_this, Ok(exception));
+            }
+        }
+    }
+
+    fn rerun(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        let expect_this = self.expect_this.get();
+        let matcher_fn = self.matcher_fn.get();
+        let args_array = self.matcher_args.get();
+
+        // Extract the original arguments back out of the array. Most
+        // built-in matchers take 0-2 arguments, but `toHaveBeenCalledWith`
+        // and `expect.extend()` custom matchers are variadic.
+        // PERF(port): was stack-fallback allocator — profile in Phase B
+        let args_len = args_array.get_length(global_this)? as usize;
+        let mut args_buf: Vec<JSValue> = Vec::with_capacity(args_len);
+        for i in 0..args_len {
+            args_buf.push(args_array.get_index(global_this, i as u32)?);
+        }
+
+        // Mark the re-run so we don't try to defer a second time. The
+        // captured promise is now settled, so `process_promise` will extract
+        // its result synchronously.
+        //
+        // `is_async_rerun`, `flags`, and `async_rerun_srcloc` are
+        // saved/restored (not hard-reset) because a sibling `PendingMatcher`
+        // on the same input promise can rerun *inside* `matcher_fn.call()`
+        // when the matcher re-enters the event loop (e.g. `toThrow` →
+        // `get_value_as_to_throw` → `wait_for_promise` → `tick` drains the
+        // microtask queue), and the inner restore must not clobber the
+        // outer's state. `counted_expect_call` is restored to its value at
+        // the point of defer so the counter is bumped exactly once.
+        struct RerunGuard {
+            expect: *mut Expect,
+            saved_is_rerun: bool,
+            saved_flags: Flags,
+            saved_srcloc: Option<bun_jsc::CallerSrcLoc>,
+        }
+        impl Drop for RerunGuard {
+            fn drop(&mut self) {
+                // SAFETY: `expect` came from `Expect::from_js` on a value
+                // held live by `self.expect_this: Strong` for the duration
+                // of this scope.
+                unsafe {
+                    (*self.expect).is_async_rerun.set(self.saved_is_rerun);
+                    (*self.expect).flags.set(self.saved_flags);
+                    (*self.expect).async_rerun_srcloc.set(self.saved_srcloc);
+                }
+            }
+        }
+        let _guard = Expect::from_js(expect_this).map(|expect| {
+            // SAFETY: `expect_this` is held live by `self.expect_this`.
+            let e = unsafe { &*expect };
+            let guard = RerunGuard {
+                expect,
+                saved_is_rerun: e.is_async_rerun.get(),
+                saved_flags: e.flags.get(),
+                saved_srcloc: e.async_rerun_srcloc.get(),
+            };
+            e.is_async_rerun.set(true);
+            e.counted_expect_call.set(self.was_counted_before_defer);
+            e.flags.set(self.flags_at_defer);
+            e.async_rerun_srcloc.set(Some(self.srcloc_at_defer));
+            guard
+        });
+
+        matcher_fn.call(global_this, expect_this, &args_buf)
+    }
+}
+
+impl Drop for PendingMatcher {
+    fn drop(&mut self) {
+        // Release the +1 on the captured srcloc string.
+        self.srcloc_at_defer.str.deref();
+        // `Strong` / `JSPromiseStrong` fields release via their own Drop.
+    }
+}
+
+// `ZigGlobalObject::promiseHandlerID` (C++) compares the fn-ptr passed to
+// `JSValue::then` against these by identity, so the Rust thunk MUST be the
+// exported symbol itself — see the PORT NOTE on `Bun__TestScope__*` in
+// `bun_test.rs`.
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn Bun__Expect__PendingMatcher__onResolve(
+        global: *mut JSGlobalObject,
+        frame: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC passes non-null live pointers for both.
+        let (global, frame) = unsafe { (&*global, &*frame) };
+        bun_jsc::host_fn::to_js_host_fn_result(global, PendingMatcher::on_settle(global, frame))
+    }
+}
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn Bun__Expect__PendingMatcher__onReject(
+        global: *mut JSGlobalObject,
+        frame: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC passes non-null live pointers for both.
+        let (global, frame) = unsafe { (&*global, &*frame) };
+        bun_jsc::host_fn::to_js_host_fn_result(global, PendingMatcher::on_settle(global, frame))
     }
 }
 
@@ -2046,7 +2367,7 @@ impl Expect {
         matcher_name: &'static str,
         pred: impl FnOnce(JSValue) -> bool,
     ) -> JsResult<JSValue> {
-        let (this, value, not) = self.matcher_prelude(global, frame.this(), matcher_name, "")?;
+        let (this, value, not) = crate::ready_matcher!(self.matcher_prelude(global, frame.this(), frame, matcher_name, "")?);
         if pred(value) != not {
             return Ok(JSValue::UNDEFINED);
         }
@@ -2097,7 +2418,7 @@ impl Expect {
             )));
         }
 
-        let value = this.get_value(global, frame.this(), matcher_name, "<green>expected<r>")?;
+        let value = crate::ready_value!(this.get_value(global, frame.this(), frame, matcher_name, "<green>expected<r>")?);
         this.increment_expect_call_counter();
 
         let mut pass = value.is_string();
@@ -2225,7 +2546,7 @@ impl Expect {
         }
         expected.ensure_still_alive();
 
-        let value = this.get_value(global, this_value, matcher_name, "<green>expected<r>")?;
+        let value = crate::ready_value!(this.get_value(global, this_value, frame, matcher_name, "<green>expected<r>")?);
         if matches!(expected_array, ExpectedArray::AfterValue) && !expected.js_type().is_array() {
             return Err(global.throw_invalid_argument_type(matcher_name, "expected", "array"));
         }
@@ -3093,12 +3414,15 @@ pub mod mock {
         pub fn mock_prologue<'a>(
             &'a self,
             global: &'a JSGlobalObject,
-            this_value: JSValue,
+            frame: &CallFrame,
             matcher_name: &'static str,
             matcher_params: &'static str,
             kind: MockKind,
-        ) -> JsResult<(PostMatchGuard<'a>, JSValue, JSValue)> {
-            let (this, value, _) = self.matcher_prelude(global, this_value, matcher_name, matcher_params)?;
+        ) -> JsResult<MockStart<'a>> {
+            let (this, value, _) = match self.matcher_prelude(global, frame.this(), frame, matcher_name, matcher_params)? {
+                MatcherStart::Ready(t, v, n) => (t, v, n),
+                MatcherStart::Deferred(p) => return Ok(MockStart::Deferred(p)),
+            };
             let arr = match kind {
                 MockKind::Calls | MockKind::CallsWithSig => JSMockFunction__getCalls(global, value)?,
                 MockKind::Returns => JSMockFunction__getReturns(global, value)?,
@@ -3122,8 +3446,15 @@ pub mod mock {
                     )),
                 });
             }
-            Ok((this, arr, value))
+            Ok(MockStart::Ready(this, arr, value))
         }
+    }
+
+    /// Result of `Expect::mock_prologue()`.
+    pub enum MockStart<'a> {
+        Ready(PostMatchGuard<'a>, JSValue, JSValue),
+        /// See [`MaybeDeferred::Deferred`].
+        Deferred(JSValue),
     }
 
     pub fn jest_mock_return_object_type(global_this: &JSGlobalObject, value: JSValue) -> JsResult<ReturnStatus> {

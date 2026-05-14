@@ -13,13 +13,9 @@ pub fn to_have_nth_returned_with(
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
     let [nth_arg, expected] = frame.arguments_as_array::<2>();
-    let (this, returns, _value) = this.mock_prologue(
-        global,
-        frame.this(),
-        "toHaveNthReturnedWith",
-        "<green>n<r>, <green>expected<r>",
-        super::mock::MockKind::Returns,
-    )?;
+    let (this, returns, _value) = crate::ready_mock!(this.mock_prologue(
+        global, frame, "toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", super::mock::MockKind::Returns,
+    )?);
 
     // Validate n is a number
     if !nth_arg.is_any_int() {

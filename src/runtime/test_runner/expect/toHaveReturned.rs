@@ -32,13 +32,13 @@ fn to_have_returned_times_fn(
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
     let arguments = callframe.arguments();
-    let (this, returns_arr, _value) = this.mock_prologue(
+    let (this, returns_arr, _value) = crate::ready_mock!(this.mock_prologue(
         global,
-        callframe.this(),
+        callframe,
         mode.tag_name(),
         "<green>expected<r>",
         mock::MockKind::Returns,
-    )?;
+    )?);
     let mut returns = returns_arr.array_iterator(global)?;
 
     let expected_success_count: i32 = if mode == Mode::ToHaveReturned {

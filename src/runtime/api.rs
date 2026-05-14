@@ -173,7 +173,7 @@ pub mod bun {
         /// type — no opaque-ZST cast layer. The body provides the real
         /// `RefCounted` impl + `on_native_{read,writable,close}` bodies.
         pub use crate::api::h2_frame_parser_body::H2FrameParser;
-        // js2native thunks (`$zig(h2_frame_parser.zig, …)` in generated_js2native.rs).
+        // js2native thunks (`$rust(h2_frame_parser.rs, …)` in generated_js2native.rs).
         pub use crate::api::h2_frame_parser_body::h2_frame_parser_constructor;
         pub use crate::api::h2_frame_parser_body::js_assert_settings;
         pub use crate::api::h2_frame_parser_body::js_get_packed_settings;

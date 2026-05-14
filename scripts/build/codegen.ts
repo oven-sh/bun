@@ -800,10 +800,17 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "bake.error.js"),
   ];
 
+  // bake-codegen.ts reads dev_server/mod.rs to extract `MessageId` /
+  // `IncomingMessageId` variants into `generated.ts` (which is then bundled
+  // into the outputs). The `bakeRuntime` glob only matches .ts/.css, so the
+  // .rs file must be declared explicitly or edits to the wire-protocol enums
+  // won't retrigger the bundle.
+  const devServerMod = resolve(cfg.cwd, "src", "runtime", "bake", "dev_server", "mod.rs");
+
   n.build({
     outputs,
     rule: "codegen",
-    inputs: [script, ...sources.bakeRuntime],
+    inputs: [script, devServerMod, ...sources.bakeRuntime],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

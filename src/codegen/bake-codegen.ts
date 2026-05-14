@@ -48,9 +48,10 @@ function convertRustEnum(rust: string, names: string[]) {
         (_, variant, value) => `\n  ${rustVariantToSnakeCase(variant)} = ${value.charCodeAt(0)},`,
       );
     // Look at the attribute block immediately preceding `pub enum <name>` for
-    // `#[non_exhaustive]`.
+    // `#[non_exhaustive]`. Only match standalone attribute lines so that
+    // `///` doc-comment prose mentioning the literal string doesn't trip it.
     const attrs = rust.slice(rust.lastIndexOf("\n\n", startIdx) + 1, startIdx);
-    if (attrs.includes("#[non_exhaustive]")) {
+    if (/^\s*#\[non_exhaustive\]\s*$/m.test(attrs)) {
       values += "\n\n  /// Invalid data\n  _,";
     } else {
       values += "\n";

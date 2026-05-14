@@ -421,6 +421,10 @@ pub struct TestOptions {
     pub coverage: CodeCoverageOptions,
     pub path_ignore_patterns: Vec<Box<[u8]>>,
     pub path_ignore_patterns_from_cli: bool,
+    /// True if `pathIgnorePatterns` was explicitly set by the user via the
+    /// CLI flag or `bunfig.toml`. When false, the scanner falls back to its
+    /// built-in defaults (e.g. `**/dist/**`, `**/build/**`).
+    pub path_ignore_patterns_configured: bool,
     pub test_filter_pattern: Option<Box<[u8]>>,
     /// `?*bun.jsc.RegularExpression` — typed as opaque to keep this file free
     /// of `jsc/` references. Read via `test_filter_regex()`.
@@ -501,6 +505,7 @@ impl Default for TestOptions {
             coverage: CodeCoverageOptions::default(),
             path_ignore_patterns: Vec::new(),
             path_ignore_patterns_from_cli: false,
+            path_ignore_patterns_configured: false,
             test_filter_pattern: None,
             test_filter_regex: None,
             // Under ASAN every spawned `bun` child is several-× heavier in

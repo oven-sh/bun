@@ -61,7 +61,7 @@ impl<T: Copy, const N: usize> Channel<T, StaticBuffer<T, N>> {
 
 impl<'a, T: Copy> Channel<T, SliceBuffer<'a, T>> {
     #[inline]
-    pub fn init_slice(buf: &'a mut [T]) -> Self {
+    pub fn init_slice(buf: &'a mut [MaybeUninit<T>]) -> Self {
         Self::with_buffer(LinearFifo::<T, SliceBuffer<'a, T>>::init(buf))
     }
 }

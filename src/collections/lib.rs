@@ -8,7 +8,8 @@
     const_cmp,
     const_trait_impl,
     core_intrinsics,
-    allocator_api
+    allocator_api,
+    maybe_uninit_fill
 )]
 #![allow(incomplete_features, internal_features)]
 #![allow(unused, non_snake_case, clippy::all)]

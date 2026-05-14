@@ -148,8 +148,8 @@ describe("postgres pool fast-fails on non-retryable auth errors (#30632)", () =>
     // queue on the same tick `connect()` enqueues onto it. If we push
     // AFTER triggering the retry path, the waiter is lost and the query
     // hangs forever. Guard against that: both queries must resolve with
-    // the thrown error. (The `bun:test` per-test timeout fails the test
-    // if anything hangs, which is the failure mode we're guarding.)
+    // the thrown error. The runner's default per-test timeout fails the
+    // test if anything hangs, which is the failure mode we're guarding.
     await using sql = new SQL({
       adapter: "postgres",
       host: "127.0.0.1",
@@ -171,5 +171,5 @@ describe("postgres pool fast-fails on non-retryable auth errors (#30632)", () =>
       }
       expect(err?.message).toBe("boom");
     }
-  }, 5000);
+  });
 });

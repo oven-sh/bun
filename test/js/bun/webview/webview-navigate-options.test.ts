@@ -245,11 +245,11 @@ test("reload({waitUntil:'domcontentloaded'}) settles on lifecycleEvent", async (
 
 test("navigate({waitUntil:'domcontentloaded'}) on a fast page doesn't enqueue duplicate title fetches", async () => {
   // "load" mock emits DCL + load + loadEventFired all before the
-  // first PageTitle response arrives. Without the m_loaderId clear
-  // in chainTitle(), each of the three passes the gate and enqueues
-  // its own PageTitle — and a duplicate response can settle the
-  // NEXT navigate's promise early. With the clear, only the first
-  // trigger chains; the rest hit m_loaderId.isEmpty() and drop.
+  // first PageTitle response arrives. Without the m_navTitleChained
+  // flag set by chainTitle(), each of the three would enqueue its
+  // own PageTitle — and a duplicate response can settle the NEXT
+  // navigate's promise early. With the flag, only the first trigger
+  // chains; the rest see m_navTitleChained and drop.
   //
   // Two back-to-back DCL navigates: if duplicate PageTitle from
   // nav1 leaked and settled nav2, nav2 would resolve with

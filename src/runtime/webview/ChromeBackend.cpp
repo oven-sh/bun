@@ -710,6 +710,14 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     JSWebView* view = viewFor(entry.viewId);
     if (!view) return; // user dropped both view and the awaited promise
 
+    // PageTitle is generation-gated via m_navTitleChained: chainTitle()
+    // set it; a subsequent beginChromeNavigation() (new navigate, or
+    // navigate retried from a timeout .catch()) cleared it. If a
+    // PageTitle response — success OR error ("Execution context was
+    // destroyed") — arrives after that, settling Navigate would hit
+    // the NEW navigation's promise. Drop instead.
+    if (entry.method == Method::PageTitle && !view->m_navTitleChained) return;
+
     if (!error.empty()) {
         // {"code":-32000,"message":"..."}
         auto msgSlice = jsonString(jsonField(error, { "message", 7 }));

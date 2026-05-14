@@ -251,8 +251,11 @@ static bool parseNavOptions(JSGlobalObject* g, ThrowScope& scope, JSValue opts,
             return false;
         }
         // Clamp to uint32 ms range (~49.7 days). Anything larger is
-        // effectively "no timeout" anyway.
-        timeout = static_cast<uint32_t>(std::min(tn, static_cast<double>(std::numeric_limits<uint32_t>::max())));
+        // effectively "no timeout" anyway. ceil so a positive sub-ms
+        // value (e.g. a computed `deadline - now` that lands at 0.3)
+        // still arms a 1ms timer instead of truncating to the 0 =
+        // "disable" sentinel.
+        timeout = static_cast<uint32_t>(std::min(std::ceil(tn), static_cast<double>(std::numeric_limits<uint32_t>::max())));
     }
     return true;
 }

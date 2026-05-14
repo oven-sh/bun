@@ -46,15 +46,16 @@ The workflow runs all three formatters simultaneously:
 
 ##### Rustfmt
 
-- The pinned nightly toolchain comes from `rust-toolchain.toml` (which lists `rustfmt` in `components`); `cargo fmt --all` runs against the workspace at the repo root.
-- `rustup` auto-installs the pinned toolchain + components on the first `cargo`/`rustup` invocation, so no separate install step is needed.
+- The pinned nightly is set via `RUSTUP_TOOLCHAIN` in the step `env:` (kept in sync with `channel` in `rust-toolchain.toml`); `cargo fmt --all` runs against the workspace at the repo root.
+- `RUSTUP_TOOLCHAIN` makes rustup ignore `rust-toolchain.toml` entirely, so the workflow installs only the host toolchain + `rustfmt` (`rustup toolchain install --profile minimal --component rustfmt`) rather than the file's full cross-target list.
 
 ### Updating the Workflow
 
 #### To update the Rust toolchain:
 
 1. Bump `channel` in `rust-toolchain.toml` (and `Dockerfile`/`bootstrap.sh` to match).
-2. `cargo fmt` formatting can change between nightlies; run `cargo fmt --all` locally on the new toolchain and include the resulting diff in the same PR.
+2. Bump `RUSTUP_TOOLCHAIN` in the `Format Code` step's `env:` block in `format.yml` to the same value.
+3. `cargo fmt` formatting can change between nightlies; run `cargo fmt --all` locally on the new toolchain and include the resulting diff in the same PR.
 
 #### To update clang-format version:
 
@@ -70,9 +71,8 @@ The workflow runs all three formatters simultaneously:
 
 1. **Parallel execution**: All formatters run simultaneously
 2. **Minimal installations**: Only required packages, no extras
-3. **Temp directories**: Tools downloaded to temp dirs, cleaned up after use
-4. **Streaming output**: Real-time feedback without buffering
-5. **Early start**: Formatting begins immediately after each tool is ready
+3. **Streaming output**: Real-time feedback without buffering
+4. **Early start**: Formatting begins immediately after each tool is ready
 
 ### Troubleshooting
 

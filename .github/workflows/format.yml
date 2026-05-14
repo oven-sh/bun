@@ -36,10 +36,19 @@ jobs:
         run: |
           bun install
       - name: Format Code
+        env:
+          # Pin the toolchain explicitly so rustup ignores rust-toolchain.toml's
+          # `targets` list (11 cross triples ≈ 450 MB of prebuilt std we don't
+          # need just to run rustfmt). Keep this in sync with `channel` there.
+          RUSTUP_TOOLCHAIN: nightly-2026-05-06
         run: |
+          # Without pipefail, `cmd | sed` always reports sed's exit status, so a
+          # failing formatter is invisible to the `wait $PID` checks below.
+          set -o pipefail
+
           # Start prettier in background with prefixed output
           echo "::group::Prettier"
-          (bun run prettier 2>&1 | sed 's/^/[prettier] /' || echo "[prettier] Failed with exit code $?") &
+          (bun run prettier 2>&1 | sed 's/^/[prettier] /') &
           PRETTIER_PID=$!
 
           # Start clang-format installation and formatting in background with prefixed output
@@ -55,13 +64,13 @@ jobs:
           ) &
           CLANG_PID=$!
 
-          # Run cargo fmt in background with prefixed output. The pinned
-          # nightly + rustfmt component come from rust-toolchain.toml; rustup
-          # auto-installs on first cargo invocation.
+          # Run cargo fmt in background with prefixed output. RUSTUP_TOOLCHAIN
+          # (step env) overrides rust-toolchain.toml, so install only the host
+          # toolchain + rustfmt instead of the file's 11 cross-target std libs.
           echo "::group::Cargo fmt"
           (
-            echo "[rustfmt] Installing toolchain from rust-toolchain.toml..."
-            rustup show active-toolchain 2>&1 | sed 's/^/[rustfmt] /'
+            echo "[rustfmt] Installing toolchain $RUSTUP_TOOLCHAIN..."
+            rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --no-self-update 2>&1 | sed 's/^/[rustfmt] /'
             echo "[rustfmt] Running cargo fmt --all..."
             cargo fmt --all 2>&1 | sed 's/^/[rustfmt] /'
           ) &

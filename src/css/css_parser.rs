@@ -968,6 +968,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     }
 
     fn reset_enclosing_layer(this: &mut Self, len: u32) {
+        debug_assert!(len <= this.enclosing_layer.v.len());
         this.enclosing_layer.v.truncate(len);
     }
 

@@ -2678,11 +2678,11 @@ function getOwnNonIndexProperties(a, filter = ONLY_ENUMERABLE) {
   return ret;
 }
 function getPromiseDetails(promise) {
-  const state = $getPromiseInternalField(promise, $promiseFieldFlags) & $promiseStateMask;
-  if (state !== $promiseStatePending) {
+  const state = $peekPromiseStatus(promise);
+  if (state !== 0) {
     return [
-      state === $promiseStateRejected ? kRejected : kFulfilled,
-      $getPromiseInternalField(promise, $promiseFieldReactionsOrResult),
+      state === 2 ? kRejected : kFulfilled,
+      $peekPromiseSettledValue(promise),
     ];
   }
   return [kPending, undefined];

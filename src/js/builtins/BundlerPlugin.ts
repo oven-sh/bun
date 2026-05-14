@@ -255,7 +255,7 @@ export function runSetupFunction(
 
     const ret = callback();
     if ($isPromise(ret)) {
-      if (($getPromiseInternalField(ret, $promiseFieldFlags) & $promiseStateMask) != $promiseStateFulfilled) {
+      if (($peekPromiseStatus(ret)) != 1) {
         self.promises ??= [];
         self.promises.push(ret);
       }
@@ -369,8 +369,8 @@ export function runSetupFunction(
   } as PluginBuilderExt);
 
   if (setupResult && $isPromise(setupResult)) {
-    if ($getPromiseInternalField(setupResult, $promiseFieldFlags) & $promiseStateFulfilled) {
-      setupResult = $getPromiseInternalField(setupResult, $promiseFieldReactionsOrResult);
+    if ($peekPromiseStatus(setupResult) === 1) {
+      setupResult = $peekPromiseSettledValue(setupResult);
     } else {
       return setupResult.$then(() => {
         if (is_last && self.promises !== undefined && self.promises.length > 0) {
@@ -416,9 +416,9 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
         while (
           result &&
           $isPromise(result) &&
-          ($getPromiseInternalField(result, $promiseFieldFlags) & $promiseStateMask) === $promiseStateFulfilled
+          ($peekPromiseStatus(result)) === 1
         ) {
-          result = $getPromiseInternalField(result, $promiseFieldReactionsOrResult);
+          result = $peekPromiseSettledValue(result);
         }
 
         if (result && $isPromise(result)) {
@@ -483,9 +483,9 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
   while (
     promiseResult &&
     $isPromise(promiseResult) &&
-    ($getPromiseInternalField(promiseResult, $promiseFieldFlags) & $promiseStateMask) === $promiseStateFulfilled
+    ($peekPromiseStatus(promiseResult)) === 1
   ) {
-    promiseResult = $getPromiseInternalField(promiseResult, $promiseFieldReactionsOrResult);
+    promiseResult = $peekPromiseSettledValue(promiseResult);
   }
 
   if (promiseResult && $isPromise(promiseResult)) {
@@ -532,9 +532,9 @@ export function runOnLoadPlugins(
         while (
           result &&
           $isPromise(result) &&
-          ($getPromiseInternalField(result, $promiseFieldFlags) & $promiseStateMask) === $promiseStateFulfilled
+          ($peekPromiseStatus(result)) === 1
         ) {
-          result = $getPromiseInternalField(result, $promiseFieldReactionsOrResult);
+          result = $peekPromiseSettledValue(result);
         }
 
         if (result && $isPromise(result)) {
@@ -583,9 +583,9 @@ export function runOnLoadPlugins(
   while (
     promiseResult &&
     $isPromise(promiseResult) &&
-    ($getPromiseInternalField(promiseResult, $promiseFieldFlags) & $promiseStateMask) === $promiseStateFulfilled
+    ($peekPromiseStatus(promiseResult)) === 1
   ) {
-    promiseResult = $getPromiseInternalField(promiseResult, $promiseFieldReactionsOrResult);
+    promiseResult = $peekPromiseSettledValue(promiseResult);
   }
 
   if (promiseResult && $isPromise(promiseResult)) {

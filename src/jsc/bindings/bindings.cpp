@@ -2272,11 +2272,14 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         for (unsigned hops = 0; p && hops < 32; hops++) {
             if (p->status() != JSC::JSPromise::Status::Pending)
                 return nullptr;
-            JSC::JSValue reactionsValue = p->reactionsOrResult();
-            JSC::JSPromiseReaction* reaction = nullptr;
-            if (!dynamicCastValue(reactionsValue, &reaction))
+            // Pending state: payloadCell() is the head of the heap-allocated
+            // reaction list, or null/an inline-reaction payload (a JSPromise).
+            // Async stack tracing only walks heap reactions; inline reactions
+            // never carry a generator context.
+            auto* reaction = dynamicDowncast<JSC::JSPromiseReaction>(p->payloadCell());
+            if (!reaction)
                 return nullptr;
-            JSC::JSValue context = JSC::JSPromiseReaction::tryGetContext(reactionsValue);
+            JSC::JSValue context = JSC::JSPromiseReaction::tryGetContext(reaction);
             JSC::InternalFieldTuple* tuple = nullptr;
             if (dynamicCastValue(context, &tuple))
                 context = tuple->getInternalField(0);
@@ -3748,13 +3751,13 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
 
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    uint32_t flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
+    uint16_t flags = promise->flags();
     if (!(flags & JSC::JSPromise::isFirstResolvingFunctionCalledFlag)) {
         if (handled) {
             flags |= JSC::JSPromise::isHandledFlag;
         }
 
-        promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isFirstResolvingFunctionCalledFlag));
+        promise->setFlags(static_cast<uint16_t>(flags | JSC::JSPromise::isFirstResolvingFunctionCalledFlag));
         auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(promise->globalObject());
         auto rejectPromiseFunction = globalObject->rejectPromiseFunction();
 
@@ -3784,22 +3787,22 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
-    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, JSC::JSValue::decode(JSValue1));
+    promise->setFlags(static_cast<uint16_t>(JSC::JSPromise::Status::Fulfilled));
+    promise->setSlot(vm, JSC::JSValue::decode(JSValue1));
     return promise;
 }
 
 [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSPromise__result(JSC::JSPromise* promise, JSC::VM* arg1)
 {
-    auto& vm = *arg1;
+    UNUSED_PARAM(arg1);
 
     // if the promise is rejected we automatically mark it as handled so it
     // doesn't end up in the promise rejection tracker
     switch (promise->status()) {
     case JSC::JSPromise::Status::Rejected: {
-        uint32_t flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
+        uint16_t flags = promise->flags();
         if (!(flags & JSC::JSPromise::isFirstResolvingFunctionCalledFlag)) {
-            promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isHandledFlag));
+            promise->setFlags(static_cast<uint16_t>(flags | JSC::JSPromise::isHandledFlag));
         }
     }
     // fallthrough intended
@@ -3910,9 +3913,9 @@ bool JSC__JSInternalPromise__isHandled(const JSC::JSPromise* arg0)
 }
 void JSC__JSInternalPromise__setHandled(JSC::JSPromise* promise, JSC::VM* arg1)
 {
-    auto& vm = *arg1;
-    auto flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
-    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isHandledFlag));
+    UNUSED_PARAM(arg1);
+    uint16_t flags = promise->flags();
+    promise->setFlags(static_cast<uint16_t>(flags | JSC::JSPromise::isHandledFlag));
 }
 
 #pragma mark - JSC::JSGlobalObject
@@ -5032,8 +5035,8 @@ JSC::EncodedJSValue JSC__JSPromise__rejectedPromiseValue(JSC::JSGlobalObject* gl
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Rejected)));
-    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, JSC::JSValue::decode(JSValue1));
+    promise->setFlags(static_cast<uint16_t>(JSC::JSPromise::Status::Rejected));
+    promise->setSlot(vm, JSC::JSValue::decode(JSValue1));
     JSC::ensureStillAliveHere(promise);
     JSC::ensureStillAliveHere(JSC::JSValue::decode(JSValue1));
     return JSC::JSValue::encode(promise);
@@ -5044,8 +5047,8 @@ JSC::EncodedJSValue JSC__JSPromise__resolvedPromiseValue(JSC::JSGlobalObject* gl
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
-    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, JSC::JSValue::decode(JSValue1));
+    promise->setFlags(static_cast<uint16_t>(JSC::JSPromise::Status::Fulfilled));
+    promise->setSlot(vm, JSC::JSValue::decode(JSValue1));
     JSC::ensureStillAliveHere(promise);
     JSC::ensureStillAliveHere(JSC::JSValue::decode(JSValue1));
     return JSC::JSValue::encode(promise);

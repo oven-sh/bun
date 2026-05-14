@@ -205,6 +205,10 @@ test("mock.module without a factory auto-mocks exported functions", () => {
   expect(mocked.MyClass.prototype.greet.mock).toBeDefined();
   expect(mocked.MyClass.prototype.greet()).toBeUndefined();
 
+  // `Class.prototype.constructor === Class` — Jest preserves this invariant on
+  // auto-mocks so `instance.constructor === MockedClass` holds in consumer code.
+  expect(mocked.MyClass.prototype.constructor).toBe(mocked.MyClass);
+
   // Primitives are preserved.
   expect(mocked.CONSTANT).toBe(42);
   expect(mocked.STRING_CONSTANT).toBe("hello");

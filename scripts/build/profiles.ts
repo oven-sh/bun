@@ -100,31 +100,15 @@ export const profiles = {
   },
 
   /**
-   * Bench-till-green profile. Must match the official release binary's
-   * codegen so PORT-vs-SYS comparisons are apples-to-apples: lto=true so
-   * the `-lto` WebKit prebuilt (LLVM bitcode, re-codegen'd `-fno-pic`
-   * under `-flto=full -fwhole-program-vtables`) is selected and cross-TU
-   * inlining runs. Without this the non-LTO WebKit .a (native ELF, PIC)
-   * lands ~555 KB of C++ vtables in `.data.rel.ro` instead of `.rodata`,
-   * .eh_frame is retained (+962 KB), and JSC slow-paths
-   * (CallFrame::setCurrentVPC, Dependency::loadAndFence) stay outlined —
-   * the bench suite then reports a ~6-8% time / ~1 MB RSS "regression"
-   * that is pure binary layout, not src/ code.
-   *
-   * One gap a plain `--profile=btg` link does NOT close by itself: the shipped
-   * upstream `bun` is additionally PGO+BOLT-ordered, so its cold-start working
-   * set is packed into a contiguous run of `.text`; a profile-less link is not,
-   * leaving ~+1.3 MB resident `.text` and (at `bun --version`) ~+0.7-1.2 MB
-   * peak RSS — hot fns scattered across the ~54 MB `.text`, each dragging in a
-   * 64 KB fault-around window of cold neighbours, including the WebKit/ICU/JSC
-   * C++ global-ctor bodies `.init_array` runs before `print_version_and_exit`.
-   * So `bun run build:btg` runs the two-stage PGO build (driver:
-   * scripts/build-pgo.ts): build an instrumented `bun`, train it,
-   * `llvm-profdata merge`, then relink `build/btg/bun` with `--pgo-use` (which
-   * also flips on `-z keep-text-section-prefix`; see scripts/build/flags.ts) —
-   * that is the apples-to-apples binary for PORT-vs-SYS. `bun run
-   * build:btg:plain` does the fast profile-less link (faster iteration, but its
-   * layout is not comparable to a BOLT/PGO'd release).
+   * Bench-till-green profile. Mirrors the codegen the CI release build
+   * actually ships (`ci-release` resolves `lto: true` for ci+release+linux),
+   * so PORT-vs-SYS comparisons measure what we'd actually ship — no PGO, no
+   * symbol ordering, no special-case linker layout. lto=true selects the
+   * `-lto` WebKit prebuilt (LLVM bitcode, re-codegen'd `-fno-pic` under
+   * `-flto=full -fwhole-program-vtables`) so cross-TU inlining runs; without
+   * it the non-LTO WebKit .a lands ~555 KB of C++ vtables in `.data.rel.ro`,
+   * keeps `.eh_frame` (+962 KB), and outlines JSC slow-paths — the bench then
+   * reports a ~6-8% time / ~1 MB RSS "regression" that is pure binary layout.
    */
   btg: {
     buildType: "Release",

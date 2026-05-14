@@ -249,7 +249,8 @@ impl WindowsNamedPipe {
 
     fn on_read_alloc(&mut self, suggested_size: usize) -> &mut [u8] {
         // SAFETY: libuv writes into this region before on_read commits.
-        let spare = unsafe { self.incoming.uv_alloc_spare_u8(suggested_size) };
+        let spare =
+            unsafe { bun_core::vec::reserve_spare_bytes(&mut self.incoming, suggested_size) };
         &mut spare[..suggested_size]
     }
 
@@ -261,7 +262,7 @@ impl WindowsNamedPipe {
     fn on_read(&mut self, nread: usize) {
         bun_output::scoped_log!(WindowsNamedPipe, "onRead ({})", nread);
         // SAFETY: `nread` bytes written by libuv into on_read_alloc's slice.
-        unsafe { self.incoming.uv_commit(nread) };
+        unsafe { bun_core::vec::commit_spare(&mut self.incoming, nread) };
 
         self.reset_timeout();
 

@@ -9,8 +9,6 @@ use crate::webcore::blob::{
     Blob, ClosingState, FileCloser, FileOpener, MAX_SIZE, SizeType, StoreRef,
 };
 use crate::webcore::node_types::PathOrFileDescriptor;
-#[cfg(windows)]
-use bun_collections::ByteVecExt as _;
 use bun_core::String as BunString;
 use bun_core::{self, Error};
 use bun_io::{self as io, FileAction};
@@ -1410,8 +1408,10 @@ impl<'a> ReadFileUV<'a> {
         this.read_off += SizeType::try_from(result.int()).expect("int cast");
         // SAFETY: libuv wrote result.int() bytes into remaining_buffer()'s spare slice.
         unsafe {
-            this.buffer
-                .uv_commit(usize::try_from(result.int()).expect("int cast"))
+            bun_core::vec::commit_spare(
+                &mut this.buffer,
+                usize::try_from(result.int()).expect("int cast"),
+            )
         };
 
         this.req.deinit();

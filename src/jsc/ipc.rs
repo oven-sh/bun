@@ -2148,12 +2148,15 @@ pub mod IPCHandlers {
             match &mut send_queue.incoming {
                 IncomingBuffer::Json(json_buf) => {
                     // SAFETY: libuv writes into this region before notify_written reads.
-                    let spare = unsafe { json_buf.data.uv_alloc_spare_u8(suggested_size) };
+                    let spare = unsafe {
+                        bun_core::vec::reserve_spare_bytes(&mut json_buf.data, suggested_size)
+                    };
                     &mut spare[..suggested_size]
                 }
                 IncomingBuffer::Advanced(adv_buf) => {
                     // SAFETY: libuv writes into this region before on_read commits.
-                    let spare = unsafe { adv_buf.uv_alloc_spare_u8(suggested_size) };
+                    let spare =
+                        unsafe { bun_core::vec::reserve_spare_bytes(adv_buf, suggested_size) };
                     &mut spare[..suggested_size]
                 }
             }
@@ -2238,7 +2241,7 @@ pub mod IPCHandlers {
                         unreachable!()
                     };
                     // SAFETY: `on_read_alloc` reserved ≥ nread bytes; libuv initialised them.
-                    unsafe { adv_buf.uv_commit(nread) };
+                    unsafe { bun_core::vec::commit_spare(adv_buf, nread) };
                     let total_len = adv_buf.len() as usize;
                     let mut slice_start: usize = 0;
 
@@ -2252,7 +2255,7 @@ pub mod IPCHandlers {
                                 Ok(r) => r,
                                 Err(IPCDecodeError::NotEnoughBytes) => {
                                     // copy the remaining bytes to the start of the buffer
-                                    // `total_len == adv_buf.len()` (captured post-uv_commit, never
+                                    // `total_len == adv_buf.len()` (captured post-commit_spare, never
                                     // grown in this loop) ⇒ exact `len - slice_start` truncate.
                                     adv_buf.drain_front(slice_start);
                                     log!("hit NotEnoughBytes3");

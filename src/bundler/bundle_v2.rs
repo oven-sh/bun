@@ -7514,13 +7514,12 @@ pub mod bv2_impl {
                     .slice_mut()
                     .sort_by(|a, b| strings::order(&a.export_alias, &b.export_alias));
 
-                // Zig value-copies the Vec header so both `result[_]` and the
-                // map slot share the backing buffer; `rename_symbols_in_chunk`
-                // re-reads `imports_from_other_chunks.values()` afterwards. Taking
-                // would leave the map slot empty and break that consumer.
+                // `rename_symbols_in_chunk` re-reads
+                // `imports_from_other_chunks.values()` afterwards, so we can't
+                // take ownership of the map slot here.
                 list.push(CrossChunkImport {
                     chunk_index,
-                    sorted_import_items: import_items.shallow_copy(),
+                    sorted_import_items: import_items.clone(),
                 });
             }
 

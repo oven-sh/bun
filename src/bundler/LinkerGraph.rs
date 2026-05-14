@@ -343,19 +343,13 @@ pub fn generate_symbol_import_and_use(
     );
     let dependencies =
         &mut parts[source_index as usize].slice_mut()[part_index as usize].dependencies;
-    // SAFETY: every element of `new_dependencies` is overwritten in the
-    // zip-loop immediately below before any read/drop.
-    let new_dependencies = unsafe { dependencies.writable_slice(part_ids.len()) };
-    debug_assert_eq!(part_ids.len(), new_dependencies.len());
-    for (part_id, dependency) in part_ids.iter().zip(new_dependencies.iter_mut()) {
-        *dependency = Dependency {
-            // PORT NOTE: `Dependency.source_index` is the structurally
-            // identical `bun_ast::Index`; convert by value until the
-            // two `Index` newtypes unify (Phase B-3).
-            source_index: bun_ast::Index::init(source_index_to_import_from.get()),
-            part_index: *part_id, // @truncate (already u32)
-        };
-    }
+    bun_core::vec::extend_from_fn(dependencies, part_ids.len(), |i| Dependency {
+        // PORT NOTE: `Dependency.source_index` is the structurally
+        // identical `bun_ast::Index`; convert by value until the
+        // two `Index` newtypes unify (Phase B-3).
+        source_index: bun_ast::Index::init(source_index_to_import_from.get()),
+        part_index: part_ids[i], // @truncate (already u32)
+    });
     Ok(())
 }
 

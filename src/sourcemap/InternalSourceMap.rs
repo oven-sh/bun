@@ -1240,15 +1240,14 @@ impl Builder {
             let total: usize = stream_offset as usize + self.win_stream.len() + STREAM_TAIL_PAD;
 
             let mut out = MutableString::init_empty();
-            // Zig: `out.list.resize(allocator, total)` leaves new bytes undefined.
-            // Every byte in [0..total) is written below: [0..24] zero-filled,
-            // [24..32] header u32s, [32..32+sync_bytes] sync table memcpy,
+            // One-shot blob; pre-size exactly. Every byte in [0..total) is
+            // overwritten below: [0..24] zero-filled, [24..32] header u32s,
+            // [32..32+sync_bytes] sync table memcpy,
             // [stream_offset..stream_offset+win_stream.len()] stream memcpy,
-            // [total-STREAM_TAIL_PAD..total] zero-filled. These ranges are
-            // contiguous (HEADER_SIZE==32, stream_offset==32+sync_bytes), so
-            // no uninit bytes are exposed by set_len.
-            // SAFETY: every byte in [0..total) is written below (see comment above).
-            let blob = unsafe { out.list.writable_slice_exact(total) };
+            // [total-STREAM_TAIL_PAD..total] zero-filled.
+            out.list.reserve_exact(total);
+            out.list.resize(total, 0);
+            let blob = &mut out.list[..];
 
             blob[0..24].fill(0);
             blob[24..28].copy_from_slice(

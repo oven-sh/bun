@@ -732,40 +732,19 @@ it("should trigger error when aborted even if connection failed, and the signal 
   expect(err.name).toBe("TimeoutError");
 });
 
-// https://github.com/oven-sh/bun/issues/30697 — internalConnectMultiple (the
-// happy-eyeballs / auto-select-family path) used to reference two undefined
-// identifiers (DEFAULT_IPV4_ADDR / DEFAULT_IPV6_ADDR) when the caller passed
-// `localPort` together with a `lookup` that returned multiple addresses. The
-// bug only surfaced on the multi-address path — `internalConnect` had been
-// fixed inline but the copy in `internalConnectMultiple` was missed, so any
-// call to net.connect with a non-zero `localPort` that went through the
-// auto-select-family / happy-eyeballs path threw a ReferenceError before a
-// socket operation was even attempted.
+// Regression test for #30697: net.connect({ localPort, lookup }) on the
+// happy-eyeballs path must not throw a ReferenceError before the socket
+// is opened.
 describe("net.connect({ localPort }) with multiple lookup addresses #30697", () => {
   it.each([
-    {
-      label: "IPv4 first (exercises the 0.0.0.0 branch)",
-      addresses: [
-        { address: "127.0.0.1", family: 4 },
-        { address: "::1", family: 6 },
-      ],
-    },
-    {
-      label: "IPv6 first (exercises the :: branch)",
-      addresses: [
-        { address: "::1", family: 6 },
-        { address: "127.0.0.1", family: 4 },
-      ],
-    },
+    { label: "IPv4 first", addresses: [{ address: "127.0.0.1", family: 4 }, { address: "::1", family: 6 }] },
+    { label: "IPv6 first", addresses: [{ address: "::1", family: 6 }, { address: "127.0.0.1", family: 4 }] },
   ])("does not throw ReferenceError ($label)", async ({ addresses }) => {
-    // Server on 127.0.0.1 only — the IPv6 attempt (when it is tried first)
-    // will fail fast with connection refused and happy-eyeballs will fall
-    // through to the IPv4 address, which succeeds. Before the fix this
-    // never got that far: a ReferenceError was surfaced as a client
-    // "error" event before any socket call was made.
     const { promise: listening, resolve: onListen, reject: onListenError } = Promise.withResolvers<Server>();
     const server = createServer();
     server.once("error", onListenError);
+    // Listen on 127.0.0.1 only; an IPv6-first attempt fails fast and
+    // happy-eyeballs falls through to the IPv4 address.
     server.listen(0, "127.0.0.1", () => onListen(server));
     await using _server = await listening;
     const { port } = server.address() as { port: number };
@@ -778,10 +757,8 @@ describe("net.connect({ localPort }) with multiple lookup addresses #30697", () 
     client.connect({
       port,
       host: "localhost",
-      // Non-zero localPort is what forces internalConnectMultiple to enter
-      // the bind branch that used to reference DEFAULT_IPV*_ADDR. The bind
-      // itself is not actually applied by net.ts today, so any non-zero
-      // value is fine here and won't collide.
+      // Non-zero localPort is required to enter the branch that used to
+      // crash; the bind itself is not enforced today so any value works.
       localPort: 1,
       lookup: (_hostname, _opts, cb) => cb(null, addresses),
     } as any);

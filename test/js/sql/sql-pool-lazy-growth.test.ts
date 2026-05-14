@@ -142,38 +142,34 @@ describe("postgres pool fast-fails on non-retryable auth errors (#30632)", () =>
     expect(server.opened).toBe(3);
   });
 
-  test(
-    "synchronous `password()` throw does not hang subsequent queries",
-    async () => {
-      // `createConnection` in postgres.ts catches a thrown `password()`
-      // and invokes `onClose` synchronously, so `release()` drains the
-      // queue on the same tick `connect()` enqueues onto it. If we push
-      // AFTER triggering the retry path, the waiter is lost and the query
-      // hangs forever. Guard against that: both queries must resolve with
-      // the thrown error. (The `bun:test` per-test timeout fails the test
-      // if anything hangs, which is the failure mode we're guarding.)
-      await using sql = new SQL({
-        adapter: "postgres",
-        host: "127.0.0.1",
-        port: 1,
-        username: "x",
-        database: "x",
-        max: 1,
-        password: () => {
-          throw new Error("boom");
-        },
-      });
+  test("synchronous `password()` throw does not hang subsequent queries", async () => {
+    // `createConnection` in postgres.ts catches a thrown `password()`
+    // and invokes `onClose` synchronously, so `release()` drains the
+    // queue on the same tick `connect()` enqueues onto it. If we push
+    // AFTER triggering the retry path, the waiter is lost and the query
+    // hangs forever. Guard against that: both queries must resolve with
+    // the thrown error. (The `bun:test` per-test timeout fails the test
+    // if anything hangs, which is the failure mode we're guarding.)
+    await using sql = new SQL({
+      adapter: "postgres",
+      host: "127.0.0.1",
+      port: 1,
+      username: "x",
+      database: "x",
+      max: 1,
+      password: () => {
+        throw new Error("boom");
+      },
+    });
 
-      for (let i = 0; i < 2; i++) {
-        let err: any;
-        try {
-          await sql`SELECT ${i}`;
-        } catch (e) {
-          err = e;
-        }
-        expect(err?.message).toBe("boom");
+    for (let i = 0; i < 2; i++) {
+      let err: any;
+      try {
+        await sql`SELECT ${i}`;
+      } catch (e) {
+        err = e;
       }
-    },
-    5000,
-  );
+      expect(err?.message).toBe("boom");
+    }
+  }, 5000);
 });

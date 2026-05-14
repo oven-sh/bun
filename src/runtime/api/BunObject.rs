@@ -532,6 +532,16 @@ pub fn braces(
         return bun_string_jsc::to_js_array(global, &[brace_str]);
     }
 
+    // Hard cap before preallocation: `calculate_expanded_amount` saturates to
+    // `u32::MAX`, so a tiny nested input can otherwise request a huge `Vec`.
+    const MAX_BRACE_EXPANSIONS: u32 = 65536;
+    if expansion_count > MAX_BRACE_EXPANSIONS {
+        return Err(global.throw_pretty(format_args!(
+            "Too many brace expansions ({} > {})",
+            expansion_count, MAX_BRACE_EXPANSIONS
+        )));
+    }
+
     // Non-AST crate: result containers use plain Vec (arena is only for Braces::* internals).
     let expansion_count = expansion_count as usize;
     let mut expanded_strings: Vec<Vec<u8>> = Vec::with_capacity(expansion_count);
@@ -548,7 +558,9 @@ pub fn braces(
         Ok(()) => {}
         Err(Braces::ParserError::OutOfMemory) => return Err(jsc::JsError::OutOfMemory),
         Err(Braces::ParserError::UnexpectedToken) => {
-            return Err(global.throw_pretty(format_args!("Unexpected token while expanding braces")));
+            return Err(
+                global.throw_pretty(format_args!("Unexpected token while expanding braces"))
+            );
         }
     }
 
@@ -1030,7 +1042,8 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                         // directly into the persistent EditorContext (latent
                         // UAF in spec). Own the bytes in `name_storage` and
                         // hand back a thread-lifetime borrow.
-                        slot.name_storage = sliced.slice().to_vec();
+                        let prev_storage =
+                            core::mem::replace(&mut slot.name_storage, sliced.slice().to_vec());
                         // SAFETY: `name_storage` lives in a thread_local that
                         // outlives any caller; we never reallocate it while
                         // `edit.name` is observed (single-threaded JS VM).
@@ -1039,6 +1052,7 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                         edit.detect_editor(env);
                         editor_choice = edit.editor;
                         if editor_choice.is_none() {
+                            slot.name_storage = prev_storage;
                             *edit = prev;
                             return Err(global_this.throw(format_args!(
                                 "Could not find editor \"{}\"",

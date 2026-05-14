@@ -1211,7 +1211,10 @@ impl<'bump> Parser<'bump> {
 
     fn is_if_clause_text_token(&mut self, if_clause_token: IfClauseTok) -> bool {
         match self.peek() {
-            Token::Text(range) => self.is_if_clause_text_token_impl(range, if_clause_token),
+            Token::Text(range) => {
+                self.delimits(self.peek_n(1))
+                    && self.is_if_clause_text_token_impl(range, if_clause_token)
+            }
             _ => false,
         }
     }

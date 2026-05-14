@@ -923,6 +923,29 @@ impl BunxCommand {
                     // If this directory was installed by bunx, we want to perform cache invalidation on it
                     // this way running `bunx hello` will update hello automatically to the latest version
                     if strings::has_prefix(out, bunx_cache_dir) {
+                        // The bunx cache lives under the world-writable temp dir at a
+                        // predictable path. Refuse to execute a cached binary that is a
+                        // symlink or not owned by the current user (another local user
+                        // could have pre-created the path); fall through to a fresh
+                        // install instead.
+                        #[cfg(unix)]
+                        {
+                            let trustworthy = match bun_sys::lstat(destination) {
+                                Ok(st) => {
+                                    st.st_uid == uid && (st.st_mode & libc::S_IFMT) == libc::S_IFREG
+                                }
+                                Err(_) => false,
+                            };
+                            if !trustworthy {
+                                bun_output::scoped_log!(
+                                    bunx,
+                                    "refusing untrusted cached binary: {}",
+                                    BStr::new(out)
+                                );
+                                do_cache_bust = true;
+                                break 'try_run_existing;
+                            }
+                        }
                         let is_stale: bool = 'is_stale: {
                             #[cfg(windows)]
                             {

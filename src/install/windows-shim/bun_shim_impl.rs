@@ -992,6 +992,13 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flag!!!!!'
             let argument_start_ptr: *mut u8 =
                 read_ptr.cast::<u8>().wrapping_sub(2 * 1 /* "\x00".len */);
+            if (argument_start_ptr as usize) - (buf1_u8 as usize)
+                + user_arguments_u8.len()
+                + 2 /* "\x00".len */
+                > BUF1_LEN * 2
+            {
+                return LauncherMode::fail(MODE, FailReason::InvalidShimBounds);
+            }
             if !user_arguments_u8.is_empty() {
                 // SAFETY: argument_start_ptr is within buf1 with room for user_arguments_u8.
                 unsafe {
@@ -1139,6 +1146,15 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             let length_of_filename_u8 = (read_ptr as usize)
                 - (buf1_u8 as usize)
                 - 2 * (NT_OBJECT_PREFIX.len() + 1/* "\x00".len */);
+            if shebang_arg_len_u8 as usize
+                + 2 /* "\"".len */
+                + length_of_filename_u8
+                + user_arguments_u8.len()
+                + 2 /* "\x00".len */
+                > BUF2_U16_LEN * 2
+            {
+                return LauncherMode::fail(MODE, FailReason::InvalidShimBounds);
+            }
             // SAFETY: slice within buf1.
             let filename: &[u8] = unsafe {
                 bun_core::ffi::slice(

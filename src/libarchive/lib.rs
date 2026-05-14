@@ -1316,6 +1316,30 @@ fn is_symlink_target_safe(
     resolved.starts_with(fake_root)
 }
 
+/// Returns true if any leading component of `path` (including the full path)
+/// matches a symlink already created by this extraction. `is_symlink_target_safe`
+/// is purely lexical, so once a symlink is on disk the kernel will follow it
+/// during later `mkdirat`/`openat`/`symlinkat` calls — such entries must be
+/// rejected rather than resolved.
+#[cfg(unix)]
+fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>]) -> bool {
+    if created_symlinks.is_empty() {
+        return false;
+    }
+    let sep = b'/';
+    let mut end = 0usize;
+    while end <= path.len() {
+        if end == path.len() || path[end] == sep {
+            let prefix = &path[..end];
+            if !prefix.is_empty() && created_symlinks.iter().any(|s| s.as_slice() == prefix) {
+                return true;
+            }
+        }
+        end += 1;
+    }
+    false
+}
+
 /// Port of `bun.MakePath.makePath(u16, dir, sub_path)` (bun.zig:2481) — the
 /// Windows arm calls `makeOpenPathAccessMaskW`, which component-iterates the
 /// wide path and `NtCreateFile`s each prefix with `FILE_OPEN_IF`, walking back
@@ -1617,6 +1641,9 @@ impl Archiver {
         let mut symlink_join_buf: Option<bun_paths::path_buffer_pool::Guard> = None;
         // (guard Drop puts the buffer back to the pool)
 
+        #[cfg(unix)]
+        let mut created_symlinks: Vec<Vec<u8>> = Vec::new();
+
         let mut normalized_buf = OSPathBuffer::uninit();
         let mut use_pwrite = cfg!(unix);
         let mut use_lseek = true;
@@ -1778,6 +1805,17 @@ impl Archiver {
 
                     let path_slice: &[OSPathChar] = &path[..];
 
+                    #[cfg(unix)]
+                    if path_traverses_created_symlink(path_slice, &created_symlinks) {
+                        if options.log {
+                            Output::warn(&format_args!(
+                                "Skipping entry that traverses a previously extracted symlink: {}\n",
+                                bun_core::fmt::fmt_os_path(path_slice, Default::default()),
+                            ));
+                        }
+                        continue;
+                    }
+
                     if options.log {
                         bun_core::prettyln!(
                             " {}",
@@ -1889,6 +1927,7 @@ impl Archiver {
                                         _ => return Err(err.into()),
                                     },
                                 }
+                                created_symlinks.push(path_slice.to_vec());
                             }
                             #[cfg(not(unix))]
                             {

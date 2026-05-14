@@ -287,15 +287,13 @@ impl<const SSL: bool> WebSocket<SSL> {
             if reject_unauthorized {
                 // Check for SSL errors
                 if ssl_error.error_no != 0 {
-                    self.outgoing_websocket = None;
-                    ws_ref.did_abrupt_close(ErrorCode::FailedToConnect);
+                    self.fail(ErrorCode::FailedToConnect);
                     return;
                 }
 
                 // Check authorization status
                 if !authorized {
-                    self.outgoing_websocket = None;
-                    ws_ref.did_abrupt_close(ErrorCode::FailedToConnect);
+                    self.fail(ErrorCode::FailedToConnect);
                     return;
                 }
 
@@ -317,8 +315,8 @@ impl<const SSL: bool> WebSocket<SSL> {
                     if !ssl_ptr.is_null()
                         && !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
                     {
-                        self.outgoing_websocket = None;
-                        ws_ref.did_abrupt_close(ErrorCode::FailedToConnect);
+                        self.fail(ErrorCode::FailedToConnect);
+                        return;
                     }
                 }
             }
@@ -1322,6 +1320,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn send_close_with_body(&mut self, code: u16, body: Option<&mut [u8; 125]>, body_len: usize) {
+        let body_len = body_len.min(125);
         log!("Sending close with code {}", code);
         if !self.has_tcp() {
             self.dispatch_abrupt_close(ErrorCode::Ended);
@@ -1667,6 +1666,9 @@ impl<const SSL: bool> WebSocket<SSL> {
                     cursor.set_position((pos + result.written as usize) as u64);
                 }
                 let wrote_len = cursor.position() as usize;
+                if wrote_len > 125 {
+                    break 'inner;
+                }
                 // SAFETY: close_reason_buf has 128 bytes; reinterpret first 125 as fixed array
                 let buf_ptr = close_reason_buf.as_mut_ptr().cast::<[u8; 125]>();
                 this.send_close_with_body(code, Some(unsafe { &mut *buf_ptr }), wrote_len);

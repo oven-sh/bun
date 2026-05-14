@@ -3477,6 +3477,31 @@ pub mod serializer {
                         }
                     }
                 }
+                if matches!(field, PackageField::Resolution) {
+                    let resolutions: &mut [ResolutionType<SemverIntType>] = unsafe {
+                        sliced.items_mut::<"resolution", ResolutionType<SemverIntType>>()
+                    };
+                    for resolution in resolutions {
+                        if !matches!(
+                            resolution.tag,
+                            ResolutionTag::Uninitialized
+                                | ResolutionTag::Root
+                                | ResolutionTag::Npm
+                                | ResolutionTag::Folder
+                                | ResolutionTag::LocalTarball
+                                | ResolutionTag::Github
+                                | ResolutionTag::Git
+                                | ResolutionTag::Symlink
+                                | ResolutionTag::Workspace
+                                | ResolutionTag::RemoteTarball
+                                | ResolutionTag::SingleFileModule
+                        ) {
+                            return Err(bun_core::err!(
+                                "Lockfile validation failed: invalid resolution tag"
+                            ));
+                        }
+                    }
+                }
             } else if matches!(field, PackageField::Scripts) {
                 bytes.fill(0);
             } else {

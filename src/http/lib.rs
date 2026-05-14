@@ -2315,6 +2315,7 @@ impl<'a> HTTPClient<'a> {
             Self::ssl_ctx_mut(ctx).release_socket(
                 socket,
                 self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
+                self.flags.reject_unauthorized,
                 self.connected_url.hostname,
                 self.connected_url.get_port_auto(),
                 self.tls_props.as_ref(),
@@ -3591,6 +3592,7 @@ impl<'a> HTTPClient<'a> {
                 Self::ssl_ctx_mut(ctx).release_socket(
                     socket,
                     self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
+                    self.flags.reject_unauthorized,
                     self.connected_url.hostname,
                     self.connected_url.get_port_auto(),
                     self.tls_props.as_ref(),
@@ -3812,6 +3814,7 @@ impl<'a> HTTPClient<'a> {
         Self::ssl_ctx_mut(ctx).release_socket(
             socket,
             self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
+            self.flags.reject_unauthorized,
             self.url.hostname,
             self.url.get_port_auto(),
             self.tls_props.as_ref(),

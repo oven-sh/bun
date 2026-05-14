@@ -1636,10 +1636,11 @@ impl UDPSocket {
         if this.closed.get() {
             return JSValue::UNDEFINED;
         }
+        let Some(socket) = this.socket.get() else {
+            return JSValue::UNDEFINED;
+        };
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        JSValue::js_number(
-            uws::udp::Socket::opaque_mut(this.socket.get().unwrap()).bound_port() as f64,
-        )
+        JSValue::js_number(uws::udp::Socket::opaque_mut(socket).bound_port() as f64)
     }
 
     fn create_sock_addr(global_this: &JSGlobalObject, address_bytes: &[u8], port: u16) -> JSValue {
@@ -1655,10 +1656,13 @@ impl UDPSocket {
         if this.closed.get() {
             return JSValue::UNDEFINED;
         }
+        let Some(socket) = this.socket.get() else {
+            return JSValue::UNDEFINED;
+        };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let socket = uws::udp::Socket::opaque_mut(this.socket.get().unwrap());
+        let socket = uws::udp::Socket::opaque_mut(socket);
         socket.bound_ip(buf.as_mut_ptr(), &mut length);
 
         let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
@@ -1678,11 +1682,13 @@ impl UDPSocket {
         let Some(connect_info) = this.connect_info.get() else {
             return JSValue::UNDEFINED;
         };
+        let Some(socket) = this.socket.get() else {
+            return JSValue::UNDEFINED;
+        };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        uws::udp::Socket::opaque_mut(this.socket.get().unwrap())
-            .remote_ip(buf.as_mut_ptr(), &mut length);
+        uws::udp::Socket::opaque_mut(socket).remote_ip(buf.as_mut_ptr(), &mut length);
 
         let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
         Self::create_sock_addr(global_this, address_bytes, connect_info.port)

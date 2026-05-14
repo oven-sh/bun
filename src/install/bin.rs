@@ -783,7 +783,9 @@ impl<'a> Linker<'a> {
     pub fn ensure_umask() {
         if !HAS_SET_UMASK.load(Ordering::Acquire) {
             HAS_SET_UMASK.store(true, Ordering::Release);
-            UMASK.store(sys::umask(0) as u32, Ordering::Release);
+            let prev = sys::umask(0);
+            sys::umask(prev);
+            UMASK.store(prev as u32, Ordering::Release);
         }
     }
 
@@ -1269,7 +1271,7 @@ impl<'a> Linker<'a> {
     fn chmod_on_ok(err: &Option<Error>, abs_target: &ZStr) {
         // PORT NOTE: hoisted from `defer` block in create_symlink
         if err.is_none() {
-            let _ = sys::chmod(abs_target, UMASK.load(Ordering::Acquire) as Mode | 0o777);
+            let _ = sys::chmod(abs_target, 0o777 & !(UMASK.load(Ordering::Acquire) as Mode));
         }
     }
 
@@ -1444,6 +1446,12 @@ impl<'a> Linker<'a> {
                         ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
                     };
 
+                    if unscoped_package_name.len()
+                        >= self.abs_dest_buf.len().saturating_sub(dest_off)
+                    {
+                        self.err = Some(bun_core::err!("NameTooLong"));
+                        return;
+                    }
                     self.abs_dest_buf[dest_off..dest_off + unscoped_package_name.len()]
                         .copy_from_slice(unscoped_package_name);
                     dest_off += unscoped_package_name.len();
@@ -1596,6 +1604,12 @@ impl<'a> Linker<'a> {
                                     ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
                                 };
 
+                                if entry_name.len()
+                                    >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
+                                {
+                                    self.err = Some(bun_core::err!("NameTooLong"));
+                                    return;
+                                }
                                 dest_off = abs_dest_dir_end;
                                 self.abs_dest_buf[dest_off..dest_off + entry_name.len()]
                                     .copy_from_slice(entry_name);
@@ -1633,6 +1647,12 @@ impl<'a> Linker<'a> {
                 Tag::File => {
                     let unscoped_package_name =
                         Dependency::unscoped_package_name(self.package_name.slice());
+                    if unscoped_package_name.len()
+                        >= self.abs_dest_buf.len().saturating_sub(dest_off)
+                    {
+                        self.err = Some(bun_core::err!("NameTooLong"));
+                        return;
+                    }
                     self.abs_dest_buf[dest_off..dest_off + unscoped_package_name.len()]
                         .copy_from_slice(unscoped_package_name);
                     dest_off += unscoped_package_name.len();
@@ -1714,6 +1734,12 @@ impl<'a> Linker<'a> {
                         match entry.kind {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {
                                 let entry_name = entry.name.slice_u8();
+                                if entry_name.len()
+                                    >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
+                                {
+                                    self.err = Some(bun_core::err!("NameTooLong"));
+                                    return;
+                                }
                                 dest_off = abs_dest_dir_end;
                                 self.abs_dest_buf[dest_off..dest_off + entry_name.len()]
                                     .copy_from_slice(entry_name);

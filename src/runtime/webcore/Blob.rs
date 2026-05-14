@@ -1729,7 +1729,11 @@ impl BlobExt for Blob {
             let proxy_url: Option<bun_url::URL<'_>> = unsafe {
                 (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
             };
-            let proxy = proxy_url.as_ref().map(|p| p.href);
+            // Copy the href out of the env map before any reentrant JS (the
+            // `get_truthy`/credential getters below) can mutate `process.env`
+            // and free the backing allocation.
+            let proxy_owned: Option<Vec<u8>> = proxy_url.as_ref().map(|p| p.href.to_vec());
+            let proxy = proxy_owned.as_deref();
 
             if has_args && arg0.is_object() {
                 let options = arg0;

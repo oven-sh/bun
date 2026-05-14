@@ -1643,16 +1643,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `vm.node_fs()` accessor is gated behind a jsc↔runtime cycle and
             // the buffer is just NUL-termination scratch).
             let mut open_path_buf = PathBuffer::uninit();
-            let pathlike_is_path: bool;
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
                 match &store.data.as_file().pathlike {
-                    PathOrFileDescriptor::Fd(fd) => {
-                        pathlike_is_path = false;
-                        bun_sys::dup(*fd)
-                    }
+                    PathOrFileDescriptor::Fd(fd) => bun_sys::dup(*fd),
                     PathOrFileDescriptor::Path(path) => {
-                        pathlike_is_path = true;
                         let zpath = path.slice_z(&mut open_path_buf);
                         let flags = if cfg!(windows) {
                             bun_sys::O::RDONLY
@@ -1749,9 +1744,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             rf_args.max_size = Some(blob_size);
             let res = node_fs.read_file(&rf_args, node::fs::Flavor::Sync);
 
-            if pathlike_is_path {
-                opened_fd.close();
-            }
+            // `opened_fd` is always freshly created here (dup'd from a user FD or
+            // opened from a path), and `read_file` is given it as an `Fd` so it
+            // does not take ownership; close it unconditionally.
+            opened_fd.close();
 
             match res {
                 Err(err) => {

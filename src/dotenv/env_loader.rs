@@ -1448,12 +1448,18 @@ impl Map {
         let mut i: usize = 0;
         let mut it = self.map.iterator();
         while let Some(pair) = it.next() {
+            if i + pair.key_ptr.len() + 7 >= result.len() {
+                return Err(bun_core::Error::from_name("TooManyEnvironmentVariables"));
+            }
             i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], pair.key_ptr).len();
             if i + 7 >= result.len() {
                 return Err(bun_core::Error::from_name("TooManyEnvironmentVariables"));
             }
             result[i] = b'=' as u16;
             i += 1;
+            if i + pair.value_ptr.value.len() + 5 >= result.len() {
+                return Err(bun_core::Error::from_name("TooManyEnvironmentVariables"));
+            }
             i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], &pair.value_ptr.value)
                 .len();
             if i + 5 >= result.len() {

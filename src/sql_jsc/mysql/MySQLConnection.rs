@@ -821,7 +821,7 @@ impl MySQLConnection {
                                 Auth::caching_sha2_password::FastAuthStatus::CONTINUE_AUTH => {
                                     bun_core::scoped_log!(MySQLConnection, "continue auth");
 
-                                    if self.ssl_mode == SSLMode::Disable {
+                                    if self.tls_status != TLSStatus::SslOk {
                                         // we are in plain TCP so we need to request the public key
                                         self.set_status(ConnectionState::AuthenticationAwaitingPk);
                                         bun_core::scoped_log!(

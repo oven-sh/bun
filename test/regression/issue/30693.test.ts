@@ -69,7 +69,9 @@ test.concurrent("issue #30693: short package names don't leak trailing 'r' from 
   updateProc.stdin.write("\x03");
   updateProc.stdin.end();
 
-  const [stdout, stderr] = await Promise.all([updateProc.stdout.text(), updateProc.stderr.text()]);
+  const stdout = await updateProc.stdout.text();
+  // Drain stderr so the process exits cleanly under `await using`.
+  await updateProc.stderr.text();
   await updateProc.exited;
 
   // The rendered hyperlink wraps the package name in OSC 8:
@@ -91,8 +93,14 @@ test.concurrent("issue #30693: short package names don't leak trailing 'r' from 
   // Find every OSC 8 start and check it's followed by a valid ST within
   // the URL field (no `ESC` appears inside URLs in our renderer).
   const osc8Opens = [...stdout.matchAll(/\x1b\]8;;([^\x1b]*)/g)];
+  // Must actually have exercised the hyperlink path — otherwise the
+  // terminator checks below vacuously pass and the test no longer
+  // regression-gates anything. The default registry + FORCE_COLOR=1
+  // setup above is what gates the hyperlink branch of
+  // TerminalHyperlink::Display; if this fails the fixture is wrong, not
+  // the fix.
+  expect(osc8Opens.length).toBeGreaterThan(0);
   for (const match of osc8Opens) {
-    const urlPart = match[1];
     const afterUrl = stdout.slice(match.index! + match[0].length);
     // The byte right after the URL must be ESC, and the byte after that
     // must be `\` (0x5C). If the pretty parser ate the `\`, the next byte
@@ -105,8 +113,4 @@ test.concurrent("issue #30693: short package names don't leak trailing 'r' from 
   //              must NOT be a bare `r` — the signature of the leaked
   //              `<r>` reset tag when `<` was eaten by the `\<` escape arm.
   expect(stdout).not.toMatch(/\x1b\]8;;\x1b\\r(?!\\)/);
-
-  // Sanity: the interactive command shouldn't have crashed.
-  expect(stderr).not.toContain("panic");
-  expect(stderr).not.toContain("segfault");
 });

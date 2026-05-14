@@ -25,6 +25,12 @@ pub struct Scanner<'a> {
     /// Glob patterns for paths to ignore. Matched against the path relative to the
     /// project root (top_level_dir). When a file matches any pattern, it is excluded.
     pub path_ignore_patterns: &'a [&'a [u8]],
+    /// Whether `path_ignore_patterns` are the built-in defaults (see
+    /// `DEFAULT_PATH_IGNORE_PATTERNS`) vs a list configured by the user via
+    /// `--path-ignore-patterns` or `bunfig.toml`. When true, explicit file/directory
+    /// arguments bypass the patterns — otherwise running `bun test build/foo.test.ts`
+    /// would silently match nothing.
+    pub path_ignore_patterns_are_defaults: bool,
     pub dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub test_files: Vec<Interned>,
@@ -87,6 +93,7 @@ impl<'a> Scanner<'a> {
             exclusion_names: &[],
             filter_names: &[],
             path_ignore_patterns: &[],
+            path_ignore_patterns_are_defaults: false,
             dirs_to_scan: Fifo::new(),
             options: &transpiler.options,
             fs: transpiler.fs,
@@ -132,6 +139,56 @@ impl<'a> Scanner<'a> {
     }
 
     pub fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
+        self.scan_internal(path_literal, ScanMode::AutoDiscover)
+    }
+
+    /// Like `scan`, but the path came from an explicit command-line argument
+    /// (`bun test ./build/foo.test.ts`). When the only patterns in play are the
+    /// Scanner's built-in defaults, skip them for this invocation — the user
+    /// pointed at this file/directory, so silently dropping it would be
+    /// surprising. Any patterns the user configured themselves still apply.
+    pub fn scan_explicit(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
+        self.scan_internal(path_literal, ScanMode::ExplicitPath)
+    }
+
+    fn scan_internal(
+        &mut self,
+        path_literal: &[u8],
+        mode: ScanMode,
+    ) -> Result<(), ScanError> {
+        // Explicit paths bypass the built-in defaults only. User-configured
+        // patterns stay in effect either way. Swap the field in place and
+        // restore it on scope exit so `?` early-returns also clean up.
+        let saved_patterns = self.path_ignore_patterns;
+        let bypass_defaults =
+            matches!(mode, ScanMode::ExplicitPath) && self.path_ignore_patterns_are_defaults;
+        if bypass_defaults {
+            self.path_ignore_patterns = &[];
+        }
+        // RAII guard so early-returns still restore the field.
+        struct RestorePatterns<'r, 'a> {
+            scanner: *mut Scanner<'a>,
+            saved: &'a [&'a [u8]],
+            active: bool,
+            _m: core::marker::PhantomData<&'r ()>,
+        }
+        impl<'r, 'a> Drop for RestorePatterns<'r, 'a> {
+            fn drop(&mut self) {
+                if self.active {
+                    // SAFETY: the guard is only alive for the duration of
+                    // `scan_internal`, which holds `&mut self`; no other
+                    // aliasing exists.
+                    unsafe { (*self.scanner).path_ignore_patterns = self.saved };
+                }
+            }
+        }
+        let _restore: RestorePatterns<'_, 'a> = RestorePatterns {
+            scanner: self as *mut _,
+            saved: saved_patterns,
+            active: bypass_defaults,
+            _m: core::marker::PhantomData,
+        };
+
         let parts: [&[u8]; 2] = [self.fs().top_level_dir, path_literal];
         // reshaped for borrowck — abs_buf's return keeps a &mut borrow
         // of scan_dir_buf alive across the &mut self calls below. Capture only the
@@ -458,3 +515,16 @@ impl<'a> Scanner<'a> {
 }
 
 pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];
+
+/// Glob patterns applied when the user has not configured
+/// `pathIgnorePatterns` (neither in `bunfig.toml` nor via
+/// `--path-ignore-patterns`). Matches the relative path from the project
+/// root, so these patterns prune the conventional output directories at any
+/// depth. An explicit (even empty) user configuration replaces this list.
+pub(crate) const DEFAULT_PATH_IGNORE_PATTERNS: [&[u8]; 2] = [b"**/dist/**", b"**/build/**"];
+
+#[derive(Copy, Clone)]
+enum ScanMode {
+    AutoDiscover,
+    ExplicitPath,
+}

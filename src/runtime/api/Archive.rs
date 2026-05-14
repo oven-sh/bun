@@ -1166,7 +1166,18 @@ impl FilesContext {
                 continue;
             }
 
-            let pathname = entry_ref.pathname_utf8().as_bytes();
+            // libarchive's archive_entry_pathname_utf8() returns NULL (surfaced
+            // here as an empty ZStr) when the stored name cannot be converted
+            // to UTF-8. Fall back to the raw multibyte pathname so the entry is
+            // still reachable instead of ending up under an empty key.
+            let mut pathname_z = entry_ref.pathname_utf8();
+            if pathname_z.is_empty() {
+                pathname_z = entry_ref.pathname();
+            }
+            if pathname_z.is_empty() {
+                continue;
+            }
+            let pathname = pathname_z.as_bytes();
             // Apply glob pattern filtering (supports both positive and negative patterns)
             if let Some(patterns) = &self.glob_patterns {
                 if !match_glob_patterns(patterns, pathname) {
@@ -1468,7 +1479,14 @@ fn extract_to_disk_filtered(
 
     while archive.read_next_header(&mut entry) == lib::Result::Ok {
         let entry_ref = lib::Entry::opaque_ref(entry);
-        let pathname_z = entry_ref.pathname_utf8();
+        // libarchive's archive_entry_pathname_utf8() returns NULL (surfaced
+        // here as an empty ZStr) when the stored name cannot be converted to
+        // UTF-8. Fall back to the raw multibyte pathname so the entry is still
+        // extracted instead of being silently dropped by is_safe_path("").
+        let mut pathname_z = entry_ref.pathname_utf8();
+        if pathname_z.is_empty() {
+            pathname_z = entry_ref.pathname();
+        }
         let pathname = pathname_z.as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)

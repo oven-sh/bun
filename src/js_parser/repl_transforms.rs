@@ -256,10 +256,10 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     //   import { a, b } from 'mod' -> var {a, b} = await import('mod')
                     //   import * as X from 'mod'   -> var X = await import('mod')
                     //   import 'mod'              -> await import('mod')
-                    let path_str: &'static [u8] = self.import_records.items()
-                        [import_data.import_record_index as usize]
-                        .path
-                        .text;
+                    let import_record =
+                        &self.import_records.items()[import_data.import_record_index as usize];
+                    let path_str: &'static [u8] = import_record.path.text;
+                    let phase = import_record.phase;
                     let str_expr = self.new_expr(
                         E::String {
                             data: path_str.into(),
@@ -272,6 +272,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             expr: str_expr,
                             options: Expr::EMPTY,
                             import_record_index: u32::MAX,
+                            phase,
                         },
                         stmt.loc,
                     );

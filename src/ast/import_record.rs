@@ -13,6 +13,27 @@ use bun_paths::fs::Path;
 // `import_record.zig` namespace — keep resolving.
 pub use crate::{ImportKind, Index, Loader};
 
+/// https://github.com/tc39/proposal-defer-import-eval
+/// https://github.com/tc39/proposal-source-phase-imports
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+pub enum ImportPhase {
+    #[default]
+    Evaluation = 0,
+    Defer = 1,
+    Source = 2,
+}
+
+impl ImportPhase {
+    pub fn keyword(self) -> &'static [u8] {
+        match self {
+            ImportPhase::Evaluation => b"",
+            ImportPhase::Defer => b"defer",
+            ImportPhase::Source => b"source",
+        }
+    }
+}
+
 pub struct ImportRecord {
     pub range: Range,
     // TODO(port): lifetime — `bun_paths::fs::Path<'a>` borrows resolver-owned
@@ -21,6 +42,7 @@ pub struct ImportRecord {
     pub kind: ImportKind,
     pub tag: Tag,
     pub loader: Option<Loader>,
+    pub phase: ImportPhase,
 
     pub source_index: Index,
 

@@ -966,6 +966,7 @@ pub struct TransposeState {
     pub import_record_tag: Option<bun_ast::ImportRecordTag>,
     pub import_loader: Option<bun_ast::Loader>,
     pub import_options: Expr,
+    pub phase: bun_ast::ImportPhase,
 }
 
 impl Default for TransposeState {
@@ -978,6 +979,7 @@ impl Default for TransposeState {
             import_record_tag: None,
             import_loader: None,
             import_options: Expr::EMPTY,
+            phase: bun_ast::ImportPhase::Evaluation,
         }
     }
 }

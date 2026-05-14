@@ -73,6 +73,8 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                 RecordKind::ImportInfoSingle
                 | RecordKind::ImportInfoSingleTypeScript
                 | RecordKind::ImportInfoNamespace
+                | RecordKind::ImportInfoNamespaceDefer
+                | RecordKind::RequestedModuleDefer
                 | RecordKind::ExportInfoIndirect
                 | RecordKind::ExportInfoLocal
                 | RecordKind::ExportInfoNamespace
@@ -149,6 +151,16 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                     buffer[i + 2],
                     buffer[i],
                 ),
+                RecordKind::ImportInfoNamespaceDefer => module_record
+                    .add_import_entry_namespace_defer(
+                        identifiers,
+                        buffer[i + 1],
+                        buffer[i + 2],
+                        buffer[i],
+                    ),
+                RecordKind::RequestedModuleDefer => {
+                    module_record.add_requested_module_defer(identifiers, buffer[i])
+                }
                 RecordKind::ExportInfoIndirect => {
                     if buffer[i + 1] == StringID::STAR_NAMESPACE {
                         module_record.add_namespace_export(
@@ -335,6 +347,18 @@ unsafe extern "C" {
         local_name: StringID,
         module_name: StringID,
     );
+    fn JSC_JSModuleRecord__addImportEntryNamespaceDefer(
+        module_record: *mut JSModuleRecord,
+        identifier_array: *mut IdentifierArray,
+        import_name: StringID,
+        local_name: StringID,
+        module_name: StringID,
+    );
+    fn JSC_JSModuleRecord__addRequestedModuleDefer(
+        module_record: *mut JSModuleRecord,
+        identifier_array: *mut IdentifierArray,
+        module_name: StringID,
+    );
 }
 impl JSModuleRecord {
     #[inline]
@@ -437,6 +461,14 @@ trait JSModuleRecordExt {
         local_name: StringID,
         module_name: StringID,
     );
+    fn add_import_entry_namespace_defer(
+        self,
+        ia: *mut IdentifierArray,
+        import_name: StringID,
+        local_name: StringID,
+        module_name: StringID,
+    );
+    fn add_requested_module_defer(self, ia: *mut IdentifierArray, module_name: StringID);
 }
 impl JSModuleRecordExt for *mut JSModuleRecord {
     // SAFETY (all below): `self` is the non-null pointer returned by JSC_JSModuleRecord__create;
@@ -558,6 +590,28 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
                 module_name,
             )
         }
+    }
+    #[inline]
+    fn add_import_entry_namespace_defer(
+        self,
+        ia: *mut IdentifierArray,
+        import_name: StringID,
+        local_name: StringID,
+        module_name: StringID,
+    ) {
+        unsafe {
+            JSC_JSModuleRecord__addImportEntryNamespaceDefer(
+                self,
+                ia,
+                import_name,
+                local_name,
+                module_name,
+            )
+        }
+    }
+    #[inline]
+    fn add_requested_module_defer(self, ia: *mut IdentifierArray, module_name: StringID) {
+        unsafe { JSC_JSModuleRecord__addRequestedModuleDefer(self, ia, module_name) }
     }
 }
 

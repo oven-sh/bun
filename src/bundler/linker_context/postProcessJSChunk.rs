@@ -153,6 +153,7 @@ pub fn post_process_js_chunk(
                 // Remaining fields take their Zig defaults (no Default impl):
                 tag: ImportRecordTag::None,
                 loader: None,
+                phase: Default::default(),
                 source_index: Index::INVALID,
                 module_id: 0,
                 original_path: b"",

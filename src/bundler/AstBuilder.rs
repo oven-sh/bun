@@ -193,6 +193,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             range: Range::default(),
             tag: Default::default(),
             loader: None,
+            phase: Default::default(),
             source_index: Default::default(),
             module_id: 0,
             original_path: b"",

@@ -3953,7 +3953,8 @@ declare();`,
     // one position because the parser has already committed to
     // `export default`. Without the carve-out, my `!has_newline_before`
     // guard would turn this into `export default interface;` (ReferenceError).
-    expect(transpiler.transformSync(`export default interface\nFoo {}\nconsole.log("x");`))
-      .toContain('console.log("x")');
+    expect(transpiler.transformSync(`export default interface\nFoo {}\nconsole.log("x");`)).toContain(
+      'console.log("x")',
+    );
   });
 });

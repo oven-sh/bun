@@ -13,7 +13,7 @@ use bun_collections::VecExt;
 // erasure that forced every bundler/linker call site to `.cast()` back.
 pub use bun_css::BundlerStyleSheet;
 
-/// Arena-owned handle to a parsed CSS stylesheet (Zig: `*bun.css.BundlerStyleSheet`).
+/// Arena-owned handle to a parsed CSS stylesheet (a raw `*bun.css.BundlerStyleSheet`).
 ///
 /// The pointee lives in a per-file `Bump` whose ownership is held by
 /// `Graph.heap` (PORT_NOTES_PLAN B-1: bumps are `Pin<Box<Bump>>` owned by the
@@ -43,9 +43,9 @@ pub type NamedExports = bun_ast::ast_result::NamedExports;
 pub type NamedImports = bun_ast::ast_result::NamedImports;
 pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 
-// PORT NOTE: Zig stores `MultiArrayList(BundledAst)` on `Graph.ast` /
+// PORT NOTE: this is stored as `MultiArrayList(BundledAst)` on `Graph.ast` /
 // `LinkerGraph.ast` and the bundler indexes columns via `.items(.field)`
-// (see `linker_context/scanImportsAndExports.zig`, `LinkerContext.zig`).
+// (see `linker_context/scan_imports_and_exports`, `LinkerContext`).
 // `` generates the `BundledAstField` enum +
 // `BundledAstColumns`/`BundledAstColumns` (`items_named_imports()`,
 // `items_named_exports()`, …) that those callers expect at
@@ -67,13 +67,13 @@ pub struct BundledAst<'arena> {
     // round-trip.
     pub hashbang: StoreStr,
     pub parts: part::List,
-    // Zig: `?*bun.css.BundlerStyleSheet`. See `CssAstRef` doc for the arena
+    // `?*bun.css.BundlerStyleSheet`. See `CssAstRef` doc for the arena
     // drop-order invariant that backs the safe `Deref`.
     pub css: CssCol,
     pub url_for_css: &'arena [u8],
     pub symbols: symbol::List,
     pub module_scope: Scope,
-    // TODO(port): Zig used `= undefined`; only valid when flags.HAS_CHAR_FREQ is set.
+    // TODO(port): only valid when flags.HAS_CHAR_FREQ is set.
     pub char_freq: CharFreq,
     pub exports_ref: Ref,
     pub module_ref: Ref,
@@ -88,7 +88,7 @@ pub struct BundledAst<'arena> {
     pub named_imports: NamedImports,
     pub named_exports: NamedExports,
     // PORT NOTE: Ast owns Box<[u32]>; matching it here avoids the &'arena↔Box
-    // re-alloc on init/to_ast (Zig's `[]u32` is a fat-ptr move either way).
+    // re-alloc on init/to_ast (a `[]u32` slice is a fat-ptr move either way).
     pub export_star_import_records: Box<[u32]>,
 
     pub top_level_symbols_to_parts: TopLevelSymbolToParts,
@@ -147,7 +147,7 @@ bitflags::bitflags! {
         // closure.
         const USES_EXPORTS_REF = 1 << 0;
         const USES_MODULE_REF = 1 << 1;
-        // const USES_REQUIRE_REF = 1 << 2; (commented out in Zig; bit positions still match field order)
+        // const USES_REQUIRE_REF = 1 << 2; (commented out upstream; bit positions still match field order)
         const USES_EXPORT_KEYWORD = 1 << 2;
         const HAS_CHAR_FREQ = 1 << 3;
         const FORCE_CJS_TO_ESM = 1 << 4;
@@ -160,14 +160,14 @@ bitflags::bitflags! {
 }
 
 impl<'arena> BundledAst<'arena> {
-    // TODO(port): Zig `pub const empty = BundledAst.init(Ast.empty);` — cannot be a `const` in Rust
+    // TODO(port): `pub const empty = BundledAst.init(Ast.empty);` — cannot be a `const` in Rust
     // because `init` is not const-evaluable. Phase B: consider a `static` via `OnceLock` or make
     // `init`/`Ast::empty` const fn if feasible.
     pub fn empty() -> Self {
         Self::init(Ast::empty())
     }
 
-    // PORT NOTE: Zig's `*const BundledAst` bitwise-copies every field; the Rust
+    // PORT NOTE: a `*const BundledAst` bitwise-copy of every field; the Rust
     // collection types aren't Copy, so consume `self` to move them (toAST is a
     // one-shot conversion back to the fat Ast).
     pub fn to_ast(self) -> Ast {
@@ -282,7 +282,7 @@ impl<'arena> BundledAst<'arena> {
             // This list may be mutated later, so we should store the capacity
             symbols: ast.symbols,
             module_scope: ast.module_scope,
-            // Only read when flags.HAS_CHAR_FREQ is set; Zig used `orelse undefined`.
+            // Only read when flags.HAS_CHAR_FREQ is set.
             char_freq: ast.char_freq.unwrap_or_default(),
             exports_ref: ast.exports_ref,
             module_ref: ast.module_ref,
@@ -349,7 +349,7 @@ impl<'arena> BundledAst<'arena> {
                 let total_buffer_len = data_url_prefix_len + encode_len;
                 // PERF(port): was arena alloc via `arena.alloc(u8, n)`; using bumpalo here.
                 let encoded: &mut [u8] = bump.alloc_slice_fill_copy(total_buffer_len, 0u8);
-                // PORT NOTE: Zig's std.fmt.bufPrint with `{s}` writes raw bytes; BStr's Display
+                // PORT NOTE: a `bufPrint` with `{s}` writes raw bytes; BStr's Display
                 // would emit 3-byte U+FFFD for non-UTF-8 input and overflow the fixed prefix slice.
                 encoded[..5].copy_from_slice(b"data:");
                 encoded[5..5 + mime_type.len()].copy_from_slice(mime_type);
@@ -360,5 +360,3 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 }
-
-// ported from: src/js_parser/ast/BundledAst.zig

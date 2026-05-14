@@ -14,8 +14,8 @@ use crate::values::protocol::{
 
 use core::cmp::Ordering;
 
-// TODO(port): `needsDeinit` / `needsDeepclone` were comptime type predicates used to gate
-// per-variant cleanup/clone in Zig. In Rust, `Drop` on `Box<V>` and `V: Clone` subsume
+// TODO(port): `needsDeinit` / `needsDeepclone` were compile-time type predicates used to gate
+// per-variant cleanup/clone. In Rust, `Drop` on `Box<V>` and `V: Clone` subsume
 // these. Kept as stubs for parity; Phase B may delete.
 pub const fn needs_deinit<V>() -> bool {
     // TODO(port): comptime type switch — not expressible in Rust; subsumed by Drop.
@@ -69,10 +69,9 @@ pub enum CalcUnit {
 }
 
 impl CalcUnit {
-    /// Zig: `bun.ComptimeEnumMap(CalcUnit).getAnyCase(f)`
     // TODO(port): phf custom hasher — case-insensitive lookup over &[u8].
     pub fn get_any_case(f: &[u8]) -> Option<Self> {
-        // PERF(port): Zig used a comptime perfect hash; this is a linear match on a
+        // PERF(port): originally a compile-time perfect hash; this is a linear match on a
         // stack-lowercased byte slice. Phase B: phf_map! over &[u8].
         // §Strings: source bytes are &[u8], never &str/String — no from_utf8/to_ascii_lowercase().
         let (buf, len) = bun_core::strings::ascii_lowercase_buf::<5>(f)?;
@@ -128,7 +127,7 @@ pub enum Calc<V> {
 }
 
 // ───────────────────────────── CalcValue trait ─────────────────────────────
-// Replaces the Zig `switch (V)` / `@hasDecl(V, ...)` comptime-type dispatch.
+// Replaces the original duck-typed compile-time type dispatch.
 // Every type that can appear inside `Calc<V>` implements this.
 //
 // The numeric protocol (`mul_f32`/`try_sign`/`try_map`/`try_op`/`try_op_to`/
@@ -152,9 +151,9 @@ pub trait CalcValue:
     + protocol::IsCompatible
 {
     fn add_internal(self, rhs: Self) -> Self;
-    /// Wrap a value as a `Calc<Self>` (Zig: `intoCalc`).
+    /// Wrap a value as a `Calc<Self>` (`intoCalc`).
     fn into_calc(self) -> Calc<Self>;
-    /// Convert a `Calc<Self>` into `Self` if representable (Zig: `intoValue`).
+    /// Convert a `Calc<Self>` into `Self` if representable (`intoValue`).
     fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self>;
     fn eql(&self, other: &Self) -> bool;
 }
@@ -207,8 +206,7 @@ impl<V> Calc<V> {
     {
         match self {
             Calc::Value(v) => {
-                // Zig: if (needs_deepclone) v.deepClone(arena) else v.*
-                // Rust: V: Clone covers both — V's Clone impl is the deep clone.
+                // V: Clone covers both POD and owning payloads — V's Clone impl is the deep clone.
                 Calc::Value(Box::new((**v).clone()))
             }
             Calc::Number(n) => Calc::Number(*n),
@@ -231,7 +229,7 @@ impl<V> Calc<V> {
         Box::new(self.deep_clone())
     }
 
-    // Zig `deinit` only freed owned Box fields → handled by Drop on Box<V>/Box<Calc<V>>/
+    // Cleanup only freed owned Box fields → handled by Drop on Box<V>/Box<Calc<V>>/
     // Box<MathFunction<V>>. No explicit Drop impl needed.
 
     pub fn eql(&self, other: &Self) -> bool
@@ -272,24 +270,24 @@ impl<V> Calc<V> {
 
 impl<V: CalcValue> Calc<V> {
     fn mul_value_f32(lhs: V, rhs: f32) -> V {
-        // Zig: `f32 => lhs * rhs, else => lhs.mulF32(...)` — folded into trait.
+        // f32 fast-path vs `mulF32` dispatch — folded into trait.
         lhs.mul_f32(rhs)
     }
 
     // TODO: addValueOwned
     pub fn add_value(lhs: V, rhs: V) -> V {
-        // Zig: `f32 => lhs + rhs, else => lhs.addInternal(...)` — folded into trait.
+        // f32 fast-path vs `addInternal` dispatch — folded into trait.
         lhs.add_internal(rhs)
     }
 
     // TODO: intoValueOwned
     pub fn into_value(self, input: &mut css::Parser) -> CssResult<V> {
-        // Zig comptime type switch on V → trait method `V::from_calc`.
+        // Compile-time type dispatch on V → trait method `V::from_calc`.
         V::from_calc(self, input)
     }
 
     pub fn into_calc(val: V) -> Self {
-        // Zig: `f32 => .{ .value = box(val) }, else => val.intoCalc()` — folded into trait.
+        // f32 fast-path vs `intoCalc` dispatch — folded into trait.
         val.into_calc()
     }
 
@@ -366,7 +364,7 @@ impl<V: CalcValue> Calc<V> {
             other => return Err(location.new_unexpected_token_error(other)),
         };
 
-        // PORT NOTE: Zig used explicit `Closure` structs because Zig lacks closures.
+        // PORT NOTE: the original used explicit `Closure` structs.
         // Rust closures capture `ctx` + `parse_ident` directly.
         match unit {
             CalcUnit::Calc => {
@@ -470,7 +468,7 @@ impl<V: CalcValue> Calc<V> {
                     i,
                     (),
                     |_, a, b| {
-                        // Zig `@mod(a, b)`: floored modulo, result takes sign of divisor.
+                        // Floored modulo: result takes sign of divisor.
                         // Equivalent to `a - b * floor(a / b)`. Rust `%` is truncated (sign of
                         // dividend) and `rem_euclid` is non-negative, so neither matches for
                         // negative `b` — use the explicit floor formula.
@@ -490,7 +488,7 @@ impl<V: CalcValue> Calc<V> {
                     (),
                     |_, a, b| {
                         // return ((a % b) + b) % b;
-                        // TODO(port): Zig used nested `@mod`; using Rust `%` per the commented
+                        // TODO(port): originally nested floored modulo; using Rust `%` per the commented
                         // formula. Verify edge cases (negative b, NaN).
                         ((a % b) + b) % b
                     },
@@ -757,8 +755,8 @@ impl<V: CalcValue> Calc<V> {
         };
 
         input.parse_nested_block(|i| {
-            // PORT NOTE: Zig wrapped `parse_ident` to project `Calc<V>::Number` into
-            // `Calc<Angle>::Number`. Rust closure does the same.
+            // PORT NOTE: `parse_ident` is wrapped to project `Calc<V>::Number` into
+            // `Calc<Angle>::Number`.
             let parse_ident_fn = |_self: (), ident: &[u8]| -> Option<Calc<Angle>> {
                 let v = parse_ident(ctx, ident)?;
                 if let Calc::Number(n) = v {
@@ -767,7 +765,7 @@ impl<V: CalcValue> Calc<V> {
                     None
                 }
             };
-            // TODO(port): Zig passed `&closure` (a *@This()) as ctx; here we use `()` and
+            // TODO(port): the original passed a closure pointer as ctx; here we use `()` and
             // capture `ctx` via the outer closure. Verify `Calc<Angle>::parse_sum` signature.
             let v = Calc::<Angle>::parse_sum(i, (), parse_ident_fn)?;
 
@@ -811,7 +809,7 @@ impl<V: CalcValue> Calc<V> {
         // blocked_on: values/length.rs un-gate — until Length is real,
         // `atan2(10px, 5px)` (and any other length-dimension pair) falls
         // through to the CSSNumber path below and errors with `invalid_value`,
-        // diverging from Zig (`Angle::Rad(atan2(10,5))`). Tracked as a known
+        // diverging from spec (`Angle::Rad(atan2(10,5))`). Tracked as a known
         // incompleteness; no behaviour stub is added because a partial
         // dimension matcher would mis-reduce mixed-unit lengths.
         if let Ok(v) = try_parse_atan2_args::<C, Length>(input, ctx) {
@@ -835,7 +833,7 @@ impl<V: CalcValue> Calc<V> {
                 None
             }
         };
-        // TODO(port): Zig threaded `&closure` here; Rust captures via fn-pointer wrapper.
+        // TODO(port): originally threaded a closure pointer here; Rust captures via fn-pointer wrapper.
         Calc::<CSSNumber>::parse_atan2_args(input, ctx, parse_ident_fn)
     }
 
@@ -876,7 +874,7 @@ impl<V: CalcValue> Calc<V> {
                 None
             }
         };
-        // TODO(port): Zig threaded `&closure` here; same reshape as parse_trig/parse_atan2.
+        // TODO(port): originally threaded a closure pointer here; same reshape as parse_trig/parse_atan2.
         let v: Calc<CSSNumber> = Calc::<CSSNumber>::parse_sum(input, ctx, parse_ident_fn)?;
         let val = match v {
             Calc::Number(n) => n,
@@ -1081,7 +1079,7 @@ impl<V: CalcValue> Calc<V> {
                 }
             }
 
-            // PORT NOTE: reshaped for borrowck — Zig stored `?*This`; Rust stores index.
+            // PORT NOTE: reshaped for borrowck — originally stored a raw self pointer; Rust stores index.
             if let Some(maybe_idx) = found {
                 if let Some(idx) = maybe_idx {
                     reduced[idx] = core::mem::replace(arg, Calc::Number(420.0));
@@ -1092,11 +1090,11 @@ impl<V: CalcValue> Calc<V> {
                 // PERF(port): was assume_capacity-free append
                 continue;
             }
-            // arg dropped here (Zig: arg.deinit + dummy)
+            // arg dropped here (replaced with a dummy)
             *arg = Calc::Number(420.0);
         }
 
-        // Zig: css.deepDeinit(This, arena, args) — Rust: Drop on replace handles it.
+        // Replaced contents are dropped by the assignment.
         *args = reduced;
     }
 
@@ -1344,7 +1342,7 @@ impl<V> MathFunction<V> {
         }
     }
 
-    // Zig `deinit` only freed owned Vec/Calc fields → handled by Drop. No explicit impl.
+    // Cleanup only freed owned Vec/Calc fields → handled by Drop. No explicit impl.
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr>
     where
@@ -1518,7 +1516,7 @@ fn sqrtf32(v: f32) -> f32 {
     v.sqrt()
 }
 
-/// Zig `std.math.sign` — returns -1.0, 0.0, or 1.0 (NOT Rust's `f32::signum`, which
+/// Mathematical sign — returns -1.0, 0.0, or 1.0 (NOT Rust's `f32::signum`, which
 /// returns ±1.0 for ±0.0).
 fn std_math_sign(v: f32) -> f32 {
     if v > 0.0 {
@@ -1567,7 +1565,7 @@ fn absf(a: f32) -> f32 {
 // numeric-protocol surface (`mul_f32`/`try_sign`/`try_map`/`try_op{,_to}`/
 // `partial_cmp`/`try_from_angle`/`parse`/`to_css`/`is_compatible`) is
 // satisfied via `crate::values::protocol::*` supertraits; only the
-// calc-specific Zig `switch (V)` arms (`intoValue` / `addValue` / `intoCalc`
+// calc-specific per-`V` arms (`intoValue` / `addValue` / `intoCalc`
 // / `eql`) live here.
 //
 // Any type whose protocol impls don't already exist elsewhere gets them
@@ -1620,9 +1618,9 @@ impl CalcValue for Angle {
 // ─────────────────────────────────────────────────────────────────────────────
 // `protocol::*` forwarder stamper for `CalcValue` leaf types.
 //
-// Rust analogue of Zig's single comptime dispatcher in `src/css/generics.zig`
-// (`tryFromAngle`/`trySign`/`tryMap`/`tryOp`/`tryOpTo`/`partialCmp`, lines
-// ~489-570), which duck-types via `@hasDecl(T, "sign")` etc. Here each leaf
+// Rust analogue of the single duck-typed dispatcher in `generics`
+// (`tryFromAngle`/`trySign`/`tryMap`/`tryOp`/`tryOpTo`/`partialCmp`).
+// Here each leaf
 // opts in per-trait; only the listed arms are stamped — `Parse`/`ToCss`/
 // `IsCompatible` already supplied by `impl_parse_tocss_via_inherent!` /
 // `bridge_is_compatible!` stay out of the invocation.
@@ -1738,7 +1736,7 @@ impl CalcValue for Percentage {
     fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
         match c {
             Calc::Value(v) => Ok(*v),
-            // Zig: else → Percentage { v: NaN }
+            // else → Percentage { v: NaN }
             _ => Ok(Percentage { v: f32::NAN }),
         }
     }
@@ -1827,7 +1825,6 @@ impl CalcValue for Length {
         Length::into_calc(self)
     }
     fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
-        // Zig: Length { .calc = Box::new(self) }
         Ok(Length::Calc(Box::new(c)))
     }
     #[inline]
@@ -1888,5 +1885,3 @@ macro_rules! dim_pct_protocol {
 }
 dim_pct_protocol!(LengthValue);
 dim_pct_protocol!(Angle, parse_to_css: forward,);
-
-// ported from: src/css/values/calc.zig

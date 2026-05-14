@@ -1,8 +1,8 @@
 #include "JSNodeHTTPServerSocketPrototype.h"
 #include "JSNodeHTTPServerSocket.h"
 #include "JSSocketAddressDTO.h"
-#include "ZigGlobalObject.h"
-#include "ZigGeneratedClasses.h"
+#include "BunGlobalObject.h"
+#include "BunGeneratedClasses.h"
 #include "helpers.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/text/WTFString.h>

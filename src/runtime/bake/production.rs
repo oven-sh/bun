@@ -43,7 +43,7 @@ bun_core::define_scoped_log!(log, production, visible);
 
 /// Local shim: `bun_core::Error` has no `From<bun_jsc::JsError>` (tier-0 cannot
 /// depend on tier-6). Map every JS-side failure to the `"JSError"` sentinel the
-/// caller already pattern-matches on (production.zig: `error.JSError`).
+/// caller already pattern-matches on.
 #[inline(always)]
 fn js_err(_: bun_jsc::JsError) -> bun_core::Error {
     bun_core::err!("JSError")
@@ -60,17 +60,16 @@ fn side_name(s: bun_bundler::options::Side) -> &'static str {
     }
 }
 
-/// Process-lifetime backing storage for the dotenv singleton (mirrors Zig's
-/// `allocator.create(DotEnv.Map)` + `allocator.create(DotEnv.Loader)` that are
-/// never freed). PORTING.md §Forbidden bans leaking; `OnceLock` owns the
-/// allocation instead. `Loader` self-borrows `Map`, so both live in one cell.
+/// Process-lifetime backing storage for the dotenv singleton (the Map and
+/// Loader are created once and never freed). PORTING.md §Forbidden bans
+/// leaking; `OnceLock` owns the allocation instead. `Loader` self-borrows
+/// `Map`, so both live in one cell.
 struct DotenvSingleton {
     map: UnsafeCell<dotenv::Map>,
     loader: UnsafeCell<MaybeUninit<dotenv::Loader<'static>>>,
 }
 // SAFETY: `build_command` runs single-threaded during CLI init; the singleton
-// is set exactly once before any reader exists (same invariant the Zig
-// `pub var instance: ?*Loader` had).
+// is set exactly once before any reader exists.
 unsafe impl Sync for DotenvSingleton {}
 static DOTENV_SINGLETON: OnceLock<DotenvSingleton> = OnceLock::new();
 
@@ -96,8 +95,8 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         }
     };
     // PORT NOTE: reshaped for borrowck — clone the cwd slice so the PathBuffer
-    // borrow doesn't span the rest of the function (matches `cwd: []const u8`
-    // semantics in the Zig spec since the buffer is never reused).
+    // borrow doesn't span the rest of the function (the buffer is never reused
+    // afterward, so the clone preserves the spec semantics).
     let cwd: Box<[u8]> = Box::from(cwd);
 
     // Create a VM + global for loading the config file, plugins, and
@@ -135,15 +134,15 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     {
         let b = &mut vm.transpiler;
         // TODO(port): preload/argv are `Vec<Box<[u8]>>` on both sides; clone since
-        // ctx outlives vm but Zig assigned slices directly (no ownership transfer).
-        // Phase B may change VM fields to borrow from ctx.
+        // ctx outlives vm and the spec assigns slices directly with no ownership
+        // transfer. Phase B may change VM fields to borrow from ctx.
         vm.preload = ctx.preloads.clone();
         vm.argv = ctx.passthrough.clone();
         vm.arena = NonNull::new(&raw mut arena);
         // vm.allocator = arena.arena() — dropped per §Allocators
-        // Spec production.zig:50: `b.options.install = ctx.install` (raw
-        // `?*const Api.BunInstall` copy). `BundleOptions.install` is now
-        // `Option<NonNull<_>>`, so no lifetime-extension cast is needed.
+        // `b.options.install = ctx.install` (raw `?*const Api.BunInstall` copy).
+        // `BundleOptions.install` is now `Option<NonNull<_>>`, so no
+        // lifetime-extension cast is needed.
         let install_ptr = ctx.install.as_deref().map(NonNull::from);
         b.options.install = install_ptr;
         b.resolver.opts.install =
@@ -156,7 +155,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
             == OfflineMode::Offline;
         // PORT NOTE: `bun_resolver::options::BundleOptions` has no
         // `prefer_latest_install` field in the Rust port; compute the value once
-        // and assign only to `b.options` (which does carry it). The Zig source
+        // and assign only to `b.options` (which does carry it). The spec also
         // mirrored it onto resolver.opts but the resolver never reads it.
         let prefer_latest = ctx
             .debug
@@ -166,8 +165,8 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         b.options.global_cache = b.resolver.opts.global_cache;
         b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
         b.options.prefer_latest_install = prefer_latest;
-        // SAFETY: spec production.zig:56 `b.resolver.env_loader = b.env` — raw
-        // pointer copy. `b.env` is the Transpiler-owned `*mut Loader`; store it
+        // SAFETY: `b.resolver.env_loader = b.env` is a raw pointer copy.
+        // `b.env` is the Transpiler-owned `*mut Loader`; store it
         // as `NonNull` (not `&Loader`) because `configure_defines()` below
         // reborrows the same allocation as `&mut Loader` via `run_env_loader()`,
         // which would alias a live `&Loader` here. The Loader outlives the
@@ -177,7 +176,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
         // PORT NOTE: `bun_resolver::options::BundleOptions` has no
-        // `minify_identifiers`/`minify_whitespace` fields; the Zig mirror onto
+        // `minify_identifiers`/`minify_whitespace` fields; the mirror onto
         // resolver.opts is dropped (the resolver never reads them).
         b.options.env.behavior = bundler_options::EnvBehavior::LoadAllWithoutInlining;
     }
@@ -187,7 +186,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
             vm.transpiler.options.no_macros = true;
         }
         MacroOptions::Map(macros) => {
-            // PORT NOTE: Zig spec is `b.options.macro_remap = macros;` — a
+            // PORT NOTE: spec is `b.options.macro_remap = macros;` — a
             // shallow struct copy where both maps share the same backing
             // string slices owned by `ctx`. The two Rust types are nominally
             // distinct (`ArrayHashMap<Box<[u8]>, ArrayHashMap<Box<[u8]>, Box<[u8]>>>`
@@ -221,12 +220,12 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     //
     // Declaration order matters: `_api_lock` is bound before `pt` so LIFO drop
     // detaches `pt` (a JSC FFI call) *while the API lock is still held*, then
-    // releases the lock — matching Zig's `defer api_lock.release()` ordering.
+    // releases the lock — preserving the deferred `api_lock.release()` ordering.
     let _api_lock = unsafe { (*vm.jsc_vm).get_api_lock() };
 
-    // PORT NOTE: `PerThread` owns its data in Rust (Zig held borrowed slices
-    // into `buildWithVm` locals, which is fine in Zig but unrepresentable for a
-    // value living in this frame). Start with an empty placeholder so Drop
+    // PORT NOTE: `PerThread` owns its data in Rust (the spec held borrowed
+    // slices into `buildWithVm` locals, which is unrepresentable for a value
+    // living in this frame). Start with an empty placeholder so Drop
     // (which detaches the C++-side per-thread pointer) runs in this frame's
     // LIFO order — under the API lock, before the VM is destroyed.
     let mut pt = PerThread::placeholder(vm_ptr);
@@ -455,7 +454,7 @@ pub fn build_with_vm(
     loader.map.put(b"NODE_ENV", b"production")?;
     dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader<'static>>(loader));
 
-    // TODO(port): Zig used `var x: Transpiler = undefined;` + out-param init.
+    // TODO(port): the spec uses out-param init into uninitialized memory.
     // PORTING.md §Exception — out-param constructors: reshape to a returned
     // value once `init_transpiler_with_options` is reshaped; for now use
     // `MaybeUninit` to mirror the in-place-init contract.
@@ -614,7 +613,7 @@ pub fn build_with_vm(
                 .map(|s| Box::<[u8]>::from(*s))
                 .collect(),
             // `Style` is `Clone` (the `JavascriptDefined` arm panics inside
-            // `clone()`, matching the Zig spec's `@panic("TODO")`).
+            // `clone()`, matching the spec's TODO panic).
             style: fsr.style.clone(),
             allow_layouts: fsr.allow_layouts,
             server_file: OpaqueFileId::init(server_file.get()),
@@ -652,12 +651,12 @@ pub fn build_with_vm(
             server_ptr
         };
 
-        // Zig: `.{ .js = vm.event_loop }` — construct the `AnyEventLoop` enum
-        // value (NOT a pointer-cast: the bundler matches on its discriminant).
-        // Lives in this block's stack frame, outliving the bundle call.
+        // Construct the `AnyEventLoop` enum value (NOT a pointer-cast: the
+        // bundler matches on its discriminant). Lives in this block's stack
+        // frame, outliving the bundle call.
         let mut any_loop = bun_event_loop::AnyEventLoop::js(vm.event_loop().cast());
 
-        // Spec production.zig:312 — plain `try`; propagate via `?`. Do NOT
+        // Propagate via `?`. Do NOT
         // catch-and-exit here: the bake path expects this call to succeed for
         // valid inputs, and any `BuildFailed` indicates a port bug upstream
         // (in the bundler), not a user-facing diagnostic to swallow.
@@ -684,8 +683,7 @@ pub fn build_with_vm(
     bun_core::pretty_errorln!("Rendering routes");
     Output::flush();
 
-    // Zig: `try std.fs.cwd().makeOpenPath("dist", .{})` — mkdir -p + open.
-    // `OwnedDir` closes the fd on Drop (Zig: `defer root_dir.close()`).
+    // mkdir -p + open. `OwnedDir` closes the fd on Drop.
     let root_dir =
         bun_sys::OwnedDir::new(bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?);
 
@@ -1286,10 +1284,10 @@ fn load_module(
     // S012: `JSInternalPromise` (= `JSPromise`) is an `opaque_ffi!` ZST —
     // safe `*mut → &mut` deref via the const-asserted accessor.
     jsc::JSInternalPromise::opaque_mut(promise).set_handled();
-    // PORT NOTE: Zig's `*VirtualMachine` is a freely-aliasing mutable pointer.
-    // We take `*mut VirtualMachine` (not `&VirtualMachine`) so the provenance
-    // permits mutation — casting a `&T` to `*mut T` and writing through it is
-    // UB. The raw pointer flows from `VirtualMachine::init_bake` unchanged.
+    // PORT NOTE: take `*mut VirtualMachine` (not `&VirtualMachine`) so the
+    // provenance permits mutation — casting a `&T` to `*mut T` and writing
+    // through it is UB. The raw pointer flows from `VirtualMachine::init_bake`
+    // unchanged.
     //
     let _ = vm;
     let vm_ref = VirtualMachine::get();
@@ -1486,11 +1484,10 @@ impl framework_router::InsertionHandler for EntryPointMap {
         _rel_path: &[u8],
         _fail: framework_router::TinyLog,
     ) -> Result<(), bun_alloc::AllocError> {
-        // Zig: `InsertionContext.wrap` compiles this slot to
-        // `@panic("TODO: onRouterSyntaxError for " ++ @typeName(T))` when the
-        // wrapped type lacks the decl (FrameworkRouter.zig:966). EntryPointMap
-        // does not define it, so a malformed route pattern during a production
-        // build must crash loudly rather than be swallowed.
+        // The reference `InsertionContext.wrap` panics
+        // "TODO: onRouterSyntaxError for <T>" when the wrapped type lacks the
+        // decl. EntryPointMap does not define it, so a malformed route pattern
+        // during a production build must crash loudly rather than be swallowed.
         bun_core::todo_panic!("onRouterSyntaxError for EntryPointMap")
     }
 
@@ -1523,9 +1520,9 @@ impl framework_router::InsertionHandler for EntryPointMap {
 /// Data used on each rendering thread. Contains all information in the bundle needed to render.
 /// This is referred to as `pt` in variable/field naming, and Bake::ProductionPerThread in C++
 ///
-/// PORT NOTE: Zig held borrowed slices into `buildWithVm` locals; the Rust port
-/// owns the backing storage so the value can outlive `build_with_vm` in the
-/// caller's frame without dangling references.
+/// PORT NOTE: the spec held borrowed slices into `buildWithVm` locals; the Rust
+/// port owns the backing storage so the value can outlive `build_with_vm` in
+/// the caller's frame without dangling references.
 pub struct PerThread {
     // Shared Data (owned)
     /// Owns `input_files` (keys) and `output_indexes` (values).
@@ -1538,16 +1535,15 @@ pub struct PerThread {
     pub source_maps: StringArrayHashMap<OutputFileIndex>,
 
     // Thread-local
-    // PORT NOTE: Zig's `vm: *jsc.VirtualMachine`. Stored as `BackRef` (the VM
-    // is process-lifetime and outlives every `PerThread`); `load_module`
-    // re-derives a mutable VM via the per-thread singleton, so no write
-    // provenance is needed here.
+    // PORT NOTE: stored as `BackRef` (the VM is process-lifetime and outlives
+    // every `PerThread`); `load_module` re-derives a mutable VM via the
+    // per-thread singleton, so no write provenance is needed here.
     pub vm: bun_ptr::BackRef<VirtualMachine>,
     /// Indexed by entry point index (OpaqueFileId)
     pub loaded_files: AutoBitSet,
     /// JSArray of JSString, indexed by entry point index (OpaqueFileId)
-    // Zig protects/unprotects this manually; PORTING.md mandates Strong for
-    // JSValue struct fields. `None` mirrors the pre-init `.null` state;
+    // Manual protect/unprotect would also work; PORTING.md mandates Strong for
+    // JSValue struct fields. `None` mirrors the pre-init null state;
     // `PerThread::init` fills it. Strong's Drop releases the GC root.
     pub all_server_files: Option<bun_jsc::Strong>,
     /// `attach()` was called and Drop should detach. The placeholder created in
@@ -1763,5 +1759,3 @@ impl TypeAndFlags {
 }
 
 // `fn @"export"()` force-reference block dropped — Rust links what's `pub`.
-
-// ported from: src/bake/production.zig

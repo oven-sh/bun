@@ -55,7 +55,7 @@ impl<'a> FilterType<'a> {
         }
     }
     // *NOTE*: Currently `deinit` does nothing since name and path are not
-    // allocated (Zig `deinit` was a no-op → no Drop impl needed).
+    // allocated (original cleanup was a no-op → no Drop impl needed).
 }
 
 impl OutdatedCommand {
@@ -93,7 +93,7 @@ impl OutdatedCommand {
         original_cwd: &[u8],
         manager: &mut PackageManager,
     ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — Zig calls
+        // PORT NOTE: reshaped for borrowck — the original called
         // `manager.lockfile.loadFromCwd(manager, alloc, manager.log, true)` which
         // aliases `*PackageManager` with its `*Lockfile` field. Project disjoint
         // raw pointers from the singleton first; `load_from_cwd` only reads
@@ -110,7 +110,7 @@ impl OutdatedCommand {
         let log = unsafe { &mut *log_ptr };
         match lockfile.load_from_cwd::<true>(
             // SAFETY: see PORT NOTE above — `load_from_cwd` accesses `manager`
-            // fields disjoint from `lockfile` (Zig invariant).
+            // fields disjoint from `lockfile` (preserved invariant).
             Some(unsafe { &mut *pm_ptr }),
             log,
         ) {
@@ -151,7 +151,7 @@ impl OutdatedCommand {
                 Global::crash();
             }
             LoadResult::Ok(_) => {
-                // PORT NOTE: Zig reassigns `manager.lockfile = ok.lockfile`
+                // PORT NOTE: the original reassigned `manager.lockfile = ok.lockfile`
                 // (pointer field). `load_from_cwd(&mut self, ..)` populates the
                 // lockfile in place, so the `ok.lockfile: &mut Lockfile` reborrow
                 // is the same storage and no reassignment is needed.
@@ -249,7 +249,7 @@ impl OutdatedCommand {
         // `defer { filter.deinit(allocator); allocator.free(...) }` — implicit via Drop.
 
         // SAFETY: `FileSystem::init` runs during `PackageManager::init` so the
-        // process-singleton is populated; mirrors Zig `FileSystem.instance.top_level_dir`.
+        // process-singleton is populated; reads `FileSystem.instance.top_level_dir`.
         let top_level_dir = FileSystem::get().top_level_dir;
 
         // move all matched workspaces to front of array
@@ -459,7 +459,7 @@ impl OutdatedCommand {
         let mut max_workspace: usize = 0;
         let mut has_filtered_versions: bool = false;
 
-        // PORT NOTE: reshaped for borrowck — Zig threads `*PackageManager`
+        // PORT NOTE: reshaped for borrowck — the original threads `*PackageManager`
         // into `manifests.byNameAllowExpired`, freely aliasing the receiver.
         // Hoist the four scalars that path reads into a by-value
         // `DiskCacheCtx` so the loop body holds only disjoint field borrows
@@ -912,5 +912,3 @@ type _AssertImports = (
     package_manager::ManifestCacheOptions<'static>,
     bun_install::package_manifest_map::CacheBehavior,
 );
-
-// ported from: src/cli/outdated_command.zig

@@ -19,9 +19,9 @@ use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
 use bun_js_parser::{self as JSAst};
 use bun_js_printer as JSPrinter;
-use bun_jsc::ZigStringJsc as _;
+use bun_jsc::UnsafeStringViewJsc as _;
+use bun_jsc::unsafe_string_view::UnsafeStringView as JscUnsafeStringView;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::zig_string::ZigString as JscZigString;
 use bun_jsc::{
     self as jsc, ArgumentsSlice, CallFrame, ComptimeStringMapExt, JSArrayIterator, JSGlobalObject,
     JSPromise, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsError, JsResult,
@@ -31,7 +31,7 @@ use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 use bun_collections::ArrayHashMapExt;
-use bun_core::{String as BunString, ZigString};
+use bun_core::{String as BunString, UnsafeStringView};
 use bun_options_types::schema::api;
 
 // TODO(port): `pub const js = jsc.Codegen.JSTranspiler;` and the toJS/fromJS/fromJSDirect
@@ -122,8 +122,8 @@ impl Default for Config {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `from_js` enum lookups for `Loader`/`Target`. The canonical port of
-// `bundler_jsc/options_jsc.zig` lives in `bun_bundler_jsc::options_jsc` and
+// `from_js` enum lookups for `Loader`/`Target`. The canonical implementation
+// lives in `bun_bundler_jsc::options_jsc` and
 // carries the spec'd error semantics (throw `TypeError` on non-string / unknown
 // loader). The earlier local shims here only did a bare `phf` lookup and
 // silently returned `None` for unknown loaders, breaking
@@ -143,9 +143,9 @@ fn level_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun
     bun_ast::Level::MAP.from_js(global, value)
 }
 
-/// Deep-clone a [`MacroMap`]. Zig's `=` on `StringArrayHashMap` is a struct copy
-/// that shares the backing slice; Rust's keys are `Box<[u8]>` so an owned copy
-/// is needed wherever the spec assigns by value.
+/// Deep-clone a [`MacroMap`]. The keys are `Box<[u8]>` so an owned copy is
+/// needed wherever the original spec assigned by value (which only shared the
+/// backing slice).
 fn clone_macro_map(src: &MacroMap) -> MacroMap {
     let mut out = MacroMap::default();
     bun_core::handle_oom(out.ensure_unused_capacity(src.count()));
@@ -222,10 +222,10 @@ impl Config {
 
                     // PERF(port): was appendAssumeCapacity — profile in Phase B
                     names.push(prop.to_owned_slice().into());
-                    let mut val = ZigString::init(b"");
-                    property_value.to_zig_string(&mut val, global)?;
+                    let mut val = UnsafeStringView::init(b"");
+                    property_value.to_unsafe_string_view(&mut val, global)?;
                     if val.len == 0 {
-                        val = ZigString::init(b"\"\"");
+                        val = UnsafeStringView::init(b"\"\"");
                     }
                     let mut buf = Vec::new();
                     write!(&mut buf, "{}", val).expect("unreachable");
@@ -248,14 +248,14 @@ impl Config {
 
                 let toplevel_type = external.js_type();
                 if toplevel_type.is_string_like() {
-                    let mut zig_str = ZigString::init(b"");
-                    external.to_zig_string(&mut zig_str, global)?;
-                    if zig_str.len == 0 {
+                    let mut unsafe_str_view = UnsafeStringView::init(b"");
+                    external.to_unsafe_string_view(&mut unsafe_str_view, global)?;
+                    if unsafe_str_view.len == 0 {
                         break 'external;
                     }
                     let mut single_external: Vec<Box<[u8]>> = Vec::with_capacity(1);
                     let mut buf = Vec::new();
-                    write!(&mut buf, "{}", zig_str).expect("unreachable");
+                    write!(&mut buf, "{}", unsafe_str_view).expect("unreachable");
                     single_external.push(buf.into_boxed_slice());
                     self.transform.external = single_external;
                 } else if toplevel_type.is_array() {
@@ -273,13 +273,13 @@ impl Config {
                             )));
                         }
 
-                        let mut zig_str = ZigString::init(b"");
-                        entry.to_zig_string(&mut zig_str, global)?;
-                        if zig_str.len == 0 {
+                        let mut unsafe_str_view = UnsafeStringView::init(b"");
+                        entry.to_unsafe_string_view(&mut unsafe_str_view, global)?;
+                        if unsafe_str_view.len == 0 {
                             continue;
                         }
                         let mut buf = Vec::new();
-                        write!(&mut buf, "{}", zig_str).expect("unreachable");
+                        write!(&mut buf, "{}", unsafe_str_view).expect("unreachable");
                         externals.push(buf.into_boxed_slice());
                     }
 
@@ -524,7 +524,7 @@ impl Config {
                             if !value.is_string() {
                                 continue;
                             }
-                            let str = value.get_zig_string(global)?;
+                            let str = value.get_unsafe_string_view(global)?;
                             if str.len == 0 {
                                 continue;
                             }
@@ -573,8 +573,8 @@ impl Config {
 
                     // We cannot set the exception before `?` because it could be
                     // a double free with the errdefer.
-                    // TODO(port): the Zig `defer if (globalThis.hasException()) { free keys; clear }`
-                    // is a conditional cleanup at scope exit. Model with scopeguard in Phase B
+                    // TODO(port): conditional cleanup at scope exit (`if hasException
+                    // { free keys; clear }`). Model with scopeguard in Phase B
                     // (captures &mut replacements + &global; borrowck conflict with the loop
                     // below — needs restructuring). Keys are Box<[u8]> in Rust, so dropping
                     // `replacements` on `?` already frees them; only the explicit
@@ -600,8 +600,8 @@ impl Config {
                         // PORT NOTE: reshaped — `StringArrayHashMap::get_or_put` is gated on
                         // `V: Default` upstream and `ReplaceableExport` has no Default. Compute
                         // the value first, then `put` (which upserts without needing a default
-                        // slot). The Zig getOrPut left the slot uninitialized on the error path
-                        // anyway, so this is strictly safer.
+                        // slot). The original get-or-put left the slot uninitialized on the
+                        // error path anyway, so this is strictly safer.
                         if let Some(expr) = export_replacement_value(value, global, arena)? {
                             replacements
                                 .put(&key, bun_ast::runtime::ReplaceableExport::Replace(expr))
@@ -678,7 +678,7 @@ pub struct TransformTask<'a> {
     /// [`bun_jsc::ThreadSafe`] guard unprotects on drop.
     pub input_code: bun_jsc::ThreadSafe<StringOrBuffer>,
     pub output_code: BunString,
-    /// Bitwise copy of `js_instance.transpiler` (Zig: `= transpiler.transpiler`).
+    /// Bitwise copy of `js_instance.transpiler`.
     /// Heap-owned fields (`Box<Define>`, resolver caches, …) are *shared* with
     /// `js_instance`, which is kept alive by the `IntrusiveRc` below for the
     /// task's lifetime. `ManuallyDrop` prevents double-free; the original owns.
@@ -698,7 +698,7 @@ pub struct TransformTask<'a> {
 
 pub type AsyncTransformTask<'a> =
     jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, TransformTask<'a>>;
-// Zig: `AsyncTransformTask.EventLoopTask` — same wrapper type at this tier.
+// `AsyncTransformTask.EventLoopTask` — same wrapper type at this tier.
 pub type AsyncTransformEventLoopTask<'a> = AsyncTransformTask<'a>;
 
 impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
@@ -724,7 +724,7 @@ impl<'a> TransformTask<'a> {
         let mut log = bun_ast::Log::init();
         log.level = config.log.level;
 
-        // SAFETY: bitwise struct copy mirroring Zig's by-value
+        // SAFETY: bitwise struct copy of
         // `transform_task.transpiler = transpiler.transpiler`. Heap-owned fields
         // are shared with `js_instance` (kept alive via IntrusiveRc); the copy is
         // wrapped in `ManuallyDrop` so only the original frees them.
@@ -746,14 +746,13 @@ impl<'a> TransformTask<'a> {
                 entries: config.runtime.replace_exports.entries.clone().expect("OOM"),
             },
             // SAFETY: `transpiler` is the live `m_ctx` payload; `init_ref` bumps the
-            // `Cell<u32>`-backed count (Zig: `transpiler.ref()`). `as_ctx_ptr`
+            // `Cell<u32>`-backed count. `as_ctx_ptr`
             // yields `*mut Self` from `&Self` — signature-only; the only mutation
             // is to the `RefCount` field, which is interior-mutable.
             js_instance: unsafe { bun_ptr::IntrusiveRc::init_ref(transpiler.as_ctx_ptr()) },
         });
 
-        // Zig: `transform_task.transpiler.linker.resolver = &transform_task.transpiler.resolver`
-        // — re-point the linker's resolver backref into the heap-allocated copy.
+        // Re-point the linker's resolver backref into the heap-allocated copy.
         // Must happen AFTER the move into the Box so the address is stable.
         let resolver_ptr: *mut _ = &raw mut transform_task.transpiler.resolver;
         transform_task.transpiler.linker.resolver = resolver_ptr;
@@ -854,7 +853,7 @@ impl<'a> TransformTask<'a> {
         if printed > 0 {
             buffer_writer = printer.ctx;
             // TODO(port): `buffer_writer.buffer.list.items = buffer_writer.written;` —
-            // Zig truncates the Vec's view to `written`. Map to `.truncate(written.len())` or
+            // truncates the Vec's view to `written`. Map to `.truncate(written.len())` or
             // a slice copy depending on BufferWriter shape.
             self.output_code = BunString::clone_utf8(buffer_writer.written());
         } else {
@@ -864,7 +863,7 @@ impl<'a> TransformTask<'a> {
 
     pub fn then(&mut self, promise: &mut JSPromise) -> Result<(), bun_jsc::JsTerminated> {
         // defer this.deinit() — handled by caller / Drop on Box<TransformTask>
-        // TODO(port): Zig `defer this.deinit()` here destroys self at end of `then`. In Rust,
+        // TODO(port): `self` should be destroyed at end of `then` —
         // ConcurrentPromiseTask should own the Box and drop it after `then` returns.
 
         if self.log.has_any() || self.err.is_some() {
@@ -948,10 +947,10 @@ fn export_replacement_value(
     }
 
     if value.is_string() {
-        let zig_str = value.get_zig_string(global)?;
+        let unsafe_str_view = value.get_unsafe_string_view(global)?;
         let mut buf = Vec::new();
-        write!(&mut buf, "{}", zig_str).expect("unreachable");
-        // Zig allocPrint'd into the caller's arena. Bump-allocate so the bytes
+        write!(&mut buf, "{}", unsafe_str_view).expect("unreachable");
+        // Bump-allocate into the caller's arena so the bytes
         // live as long as the JSTranspiler arena that owns the resulting Expr;
         // `E::EString::init` erases the borrow to `'static` per the Phase-A
         // `Str` convention (see ast/E.rs).
@@ -975,8 +974,7 @@ impl JSTranspiler {
     ) -> JsResult<*mut JSTranspiler> {
         let arguments = callframe.arguments_old::<3>();
 
-        // PORT NOTE: reshaped — Zig allocates `this` first with `transpiler = undefined` and
-        // assigns it later. Rust cannot leave a non-POD field uninitialized in a live Box
+        // PORT NOTE: reshaped — Rust cannot leave a non-POD field uninitialized in a live Box
         // (zeroed()/assume_init() on Transpiler is UB), so build `config` + `transpiler` on the
         // stack first, then move both into the Box.
         // TODO(port): in-place init — if Phase B needs the Box allocated up-front (e.g. stable
@@ -1044,8 +1042,8 @@ impl JSTranspiler {
         });
         // errdefer past this point → `this: Box<_>` drops and runs Drop for JSTranspiler.
 
-        // PORT NOTE: reshaped — Zig allocated `this` on the heap FIRST and passed `&this.config.log`
-        // into `Transpiler::init`, giving a stable address. We built `config` on the stack and
+        // PORT NOTE: reshaped — earlier code allocated `this` on the heap FIRST and passed `&this.config.log`
+        // into `Transpiler::init`, giving a stable address. We build `config` on the stack and
         // moved it into the Box, so `transpiler.log` (a `*mut Log`) still points at the moved-from
         // stack slot. Re-point it at the heap-stable field now that the Box exists.
         // SAFETY: `this: Box<_>` is exclusively owned (init-time, before the JS
@@ -1118,8 +1116,8 @@ impl Drop for JSTranspiler {
     }
 }
 
-/// RAII guard mirroring Zig's
-/// `defer { setLog(&this.config.log); setAllocator(prev); arena.deinit(); }`
+/// RAII guard for the cleanup
+/// `{ setLog(&this.config.log); setAllocator(prev); arena.deinit(); }`
 /// (and `transformSync`'s full-snapshot `defer { this.transpiler = prev_bundler; }`).
 ///
 /// `scan` / `transform_sync` / `scan_imports` temporarily point the long-lived
@@ -1209,7 +1207,7 @@ impl JSTranspiler {
     /// borrow's lifetime. `Transpiler::parse` may re-enter JS via macros; if
     /// that JS calls back into a `JSTranspiler` host-fn on *this same instance*
     /// the inner `Transpiler` is re-borrowed — a pre-existing spec-level hazard
-    /// (Zig holds a raw `*Transpiler` across the same call) that R-2's
+    /// (a raw `*Transpiler` is held across the same call) that R-2's
     /// outer-struct fix does not address. The R-2 invariant this upholds is
     /// that no `noalias &mut JSTranspiler` is live across that re-entry.
     #[inline]
@@ -1233,8 +1231,8 @@ impl JSTranspiler {
         // If code starts with { and doesn't end with ; it might be an object literal
         // that would otherwise be parsed as a block statement
         //
-        // Zig: `allocPrint(allocator, "({s})", .{code}) catch code` — allocated in the
-        // CALLER's arena so the bytes outlive `parse()` and the returned `ParseResult`
+        // The wrapper is allocated in the CALLER's arena so the bytes outlive
+        // `parse()` and the returned `ParseResult`
         // (whose AST may hold slices into the source). A stack-local `Vec` would drop at
         // the end of this fn and leave dangling references.
         let processed_code: &[u8] = if config.repl_mode && is_likely_object_literal(code) {
@@ -1360,8 +1358,8 @@ impl JSTranspiler {
             return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
         }
 
-        let exports_label = ZigString::static_(b"exports");
-        let imports_label = ZigString::static_(b"imports");
+        let exports_label = UnsafeStringView::static_(b"exports");
+        let imports_label = UnsafeStringView::static_(b"imports");
         let named_imports_value = named_imports_to_js(
             global,
             parse_result.ast.import_records.slice(),
@@ -1553,7 +1551,7 @@ impl JSTranspiler {
         let mut buffer_writer = self.buffer_writer.replace(None).unwrap_or_else(|| {
             let mut writer = JSPrinter::BufferWriter::init();
             bun_core::handle_oom(writer.buffer.grow_if_needed(code.len()));
-            // Zig: `writer.buffer.list.expandToCapacity()` — Vec<u8> can grow lazily; skip.
+            // Vec<u8> can grow lazily; no need to pre-expand to capacity.
             writer
         });
 
@@ -1574,7 +1572,7 @@ impl JSTranspiler {
 
         // TODO: benchmark if pooling this way is faster or moving is faster
         buffer_writer = printer.ctx;
-        let mut out = JscZigString::init(buffer_writer.written());
+        let mut out = JscUnsafeStringView::init(buffer_writer.written());
         out.set_output_encoding();
 
         let result = out.to_js(global);
@@ -1592,8 +1590,7 @@ fn named_exports_to_js(
     }
 
     // PERF(port): was stack-fallback allocator — profile in Phase B
-    // PORT NOTE: Zig sorted the map in-place via `StringArrayByIndexSorter` then iterated.
-    // `StringArrayHashMap` in Rust has no in-place sort, so collect the keys, sort them
+    // PORT NOTE: `StringArrayHashMap` has no in-place sort, so collect the keys, sort them
     // lexicographically (matching `strings.order`), then emit `BunString`s in that order.
     let mut keys: Vec<&[u8]> = Vec::with_capacity(named_exports.count());
     let mut named_exports_iter = named_exports.iterator();
@@ -1611,8 +1608,8 @@ fn named_imports_to_js(
     import_records: &[ImportRecord],
     trim_unused_imports: bool,
 ) -> JsResult<JSValue> {
-    let path_label = ZigString::static_(b"path");
-    let kind_label = ZigString::static_(b"kind");
+    let path_label = UnsafeStringView::static_(b"path");
+    let kind_label = UnsafeStringView::static_(b"kind");
 
     let mut count: u32 = 0;
     for record in import_records {
@@ -1638,8 +1635,8 @@ fn named_imports_to_js(
         }
 
         array.ensure_still_alive();
-        let path = JscZigString::init(record.path.text.as_ref()).to_js(global);
-        let kind = JscZigString::init(record.kind.label()).to_js(global);
+        let path = JscUnsafeStringView::init(record.path.text.as_ref()).to_js(global);
+        let kind = JscUnsafeStringView::init(record.kind.label()).to_js(global);
         let entry = JSValue::create_object2(global, &path_label, &kind_label, path, kind)?;
         array.put_index(global, i, entry)?;
         i += 1;
@@ -1745,7 +1742,7 @@ impl JSTranspiler {
 
         // SAFETY: `options.define` is `Box<Define>` owned by the long-lived
         // `Transpiler`; the parser borrows it for the arena lifetime. Erase to
-        // satisfy `JavaScript::scan`'s `&'a Define` param (Zig held `*const Define`).
+        // satisfy `JavaScript::scan`'s `&'a Define` param.
         let define = unsafe { &*(&raw const *transpiler.options.define) };
 
         // PORT NOTE: spec calls `transpiler.resolver.caches.js.scan`. The
@@ -1763,7 +1760,7 @@ impl JSTranspiler {
             &source,
         );
 
-        // Zig: `defer this.scan_pass_result.reset()` covers every exit past this
+        // The scan-pass reset must cover every exit past this
         // point (including the catch arm and the `try namedImportsToJS` error
         // path). Compute the result, then reset unconditionally before returning.
         let result = (|| -> JsResult<JSValue> {
@@ -1810,5 +1807,3 @@ pub fn is_likely_object_literal(code: &[u8]) -> bool {
     // Check if ends with semicolon - if so, it's likely a block statement
     !(end > 0 && code[end - 1] == b';')
 }
-
-// ported from: src/runtime/api/JSTranspiler.zig

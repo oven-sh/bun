@@ -1,11 +1,10 @@
-//! Port of src/shell/shell.zig + interpreter.zig
 //! Shell lexer, parser, AST, and tree-walking state-machine interpreter.
 //!
-//! ## NodeId arena architecture (Rust port)
+//! ## NodeId arena architecture
 //!
-//! The Zig interpreter uses parent-pointer mixin structs (`*Parent` back-refs
-//! everywhere — borrow-checker hostile). The Rust port replaces this with an
-//! **arena + NodeId index** scheme:
+//! Earlier interpreter designs used parent-pointer mixin structs (`*Parent`
+//! back-refs everywhere — borrow-checker hostile). The current design replaces
+//! this with an **arena + NodeId index** scheme:
 //!
 //! - `Interpreter` owns `nodes: Vec<Node>` (a flat arena of state nodes)
 //! - Each state struct stores `parent: NodeId` (a `u32` index), NOT `*Parent`
@@ -25,8 +24,7 @@
 
 #[path = "shell_body.rs"]
 pub mod shell_body;
-// Codegen (`generated_js2native.rs`) addresses this as `crate::shell::shell::*`
-// (Zig path `src/runtime/shell/shell.zig`).
+// Codegen (`generated_js2native.rs`) addresses this as `crate::shell::shell::*`.
 pub use shell_body as shell;
 
 // ─── compiling submodules ────────────────────────────────────────────────────
@@ -184,11 +182,11 @@ pub mod ast {
     pub type CmdOrAssigns = p::CmdOrAssigns<'static>;
 }
 
-// Canonical 4-variant error enum (shell.zig `ShellErr`). Defined in
-// `shell_body.rs` and re-exported so subproc/state nodes use the same type.
+// Canonical 4-variant error enum (`ShellErr`). Defined in `shell_body.rs` and
+// re-exported so subproc/state nodes use the same type.
 pub use shell_body::ShellErr;
 
-/// Spec: shell.zig `bun.shell.Result(T)`.
+/// Shell result type — `bun.shell.Result(T)`.
 pub type Result<T, E = ShellErr> = core::result::Result<T, E>;
 
 pub use parsed_shell_script::ParsedShellScript;
@@ -202,5 +200,3 @@ pub use parsed_shell_script::ParsedShellScript;
 /// Distinct from [`ShellSubprocess`](subproc::ShellSubprocess), the shell
 /// interpreter's internal process node.
 pub type Subprocess = crate::api::bun::subprocess::Subprocess<'static>;
-
-// ported from: src/shell/shell.zig

@@ -13,10 +13,9 @@ impl SIMDUTFResult {
     }
 }
 
-// Zig: `enum(i32) { ..., _ }` — the `_` arm means *any* i32 is a valid bit
-// pattern (C++ may return values outside the named set). A `#[repr(i32)] enum`
-// in Rust would be UB on unknown discriminants, so we use a transparent newtype
-// with associated consts instead.
+// Any i32 is a valid bit pattern (C++ may return values outside the named
+// set). A `#[repr(i32)] enum` in Rust would be UB on unknown discriminants, so
+// we use a transparent newtype with associated consts instead.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Status(pub i32);
@@ -630,8 +629,8 @@ pub mod length {
         pub mod from {
             use super::*;
             pub fn utf8(input: &[u8]) -> usize {
-                // TODO(port): Zig had `if (@inComptime())` branch using std.unicode.utf8CountCodepoints
-                // for compile-time evaluation; Rust has no equivalent — runtime path only.
+                // TODO(port): originally had a compile-time evaluation branch;
+                // Rust has no equivalent — runtime path only.
                 // SAFETY: input is a valid slice; FFI reads exactly len bytes.
                 unsafe { simdutf__utf16_length_from_utf8(input.as_ptr(), input.len()) }
             }
@@ -822,5 +821,3 @@ pub mod base64 {
         }
     }
 }
-
-// ported from: src/simdutf_sys/simdutf.zig

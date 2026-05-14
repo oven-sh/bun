@@ -1,9 +1,9 @@
 use bun_core::ZStr;
 use bun_sys::{self, Fd, FdExt, Mode};
 
-// PORT NOTE: Zig's `input_path: anytype` type-switches on `@TypeOf(input_path)` between
-// `bun.webcore.PathOrFileDescriptor` and `[:0]const u8` / `[:0]u8`. Rust has no type-switch,
-// so this is expressed as a sealed trait whose impls encode each `switch (PathT)` arm.
+// PORT NOTE: the input path can be either a `bun.webcore.PathOrFileDescriptor`
+// or a NUL-terminated byte slice. This is expressed as a sealed trait whose
+// impls encode each input-type arm.
 // TODO(port): verify callers — if only one input type is ever used per call site, consider
 // monomorphizing into two free fns instead of the trait.
 pub trait OpenForWritingInput {
@@ -186,5 +186,3 @@ where
         return Ok(fd);
     }
 }
-
-// ported from: src/io/openForWriting.zig

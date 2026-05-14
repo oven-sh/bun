@@ -46,15 +46,15 @@ macro_rules! arena_slice_newtype {
             }
 
             pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-                // PORT NOTE: Zig `css.implementDeepClone` — field-wise. The
+                // PORT NOTE: `css.implementDeepClone` — field-wise. The
                 // `*const [u8]` slice is arena-owned (never mutated, freed on
-                // arena reset), so identity copy is correct (matches generics.zig
+                // arena reset), so identity copy is correct (matches the generics
                 // "const strings" fast-path).
                 *self
             }
 
             pub fn hash(&self, hasher: &mut Wyhash) {
-                // PORT NOTE: Zig `css.implementHash` (comptime field-walk) → arena slice bytes.
+                // PORT NOTE: `css.implementHash` (field-walk) → arena slice bytes.
                 hasher.update(self.v());
             }
 
@@ -93,9 +93,9 @@ pub struct DashedIdentReference {
 
 impl DashedIdentReference {
     pub fn eql(&self, rhs: &Self) -> bool {
-        // PORT NOTE: Zig `css.implementEql` — field-wise. `from` is a CSS-modules
+        // PORT NOTE: `css.implementEql` — field-wise. `from` is a CSS-modules
         // resolution hint, not part of value identity, so compare on `ident` only
-        // (matches Zig `Specifier`-less comparison in the dashed-ident dedup path).
+        // (matches the `Specifier`-less comparison in the dashed-ident dedup path).
         use crate::generics::CssEql;
         self.ident.eql(&rhs.ident) && self.from.eql(&rhs.from)
     }
@@ -149,11 +149,11 @@ impl DashedIdentReference {
             let ident_v = unsafe { crate::arena_str(self.ident.v) };
             let source_index = dest.loc.source_index;
             let bump = dest.arena;
-            // PORT NOTE: Zig `referenceDashed` took `*Printer` and called
+            // PORT NOTE: `referenceDashed` originally took `*Printer` and called
             // `dest.importRecord()` internally. Rust borrowck forbids handing
             // `dest` to a method on `dest.css_module`, so resolve the path
-            // here and pass the slice down. The `?` preserves the Zig
-            // `try dest.importRecord(...)` error path.
+            // here and pass the slice down. The `?` preserves the
+            // `dest.importRecord(...)` error path.
             use crate::properties::css_modules::Specifier;
             let specifier_path: Option<&[u8]> = match &self.from {
                 Some(Specifier::ImportRecordIndex(idx)) => {
@@ -187,11 +187,11 @@ arena_slice_newtype! {
     DashedIdent
 }
 
-// TODO(port): Zig `pub fn HashMap(comptime V: type) type` returned an
-// ArrayHashMapUnmanaged with a custom string-hash context. Inherent assoc
+// TODO(port): originally a comptime-parameterized hash-map type returned an
+// array hash map with a custom string-hash context. Inherent assoc
 // type aliases are unstable in Rust; expose as a free type alias instead.
 // bun_collections::ArrayHashMap is wyhash-keyed; Phase B must verify the
-// hasher matches std.array_hash_map.hashString or supply a custom Hash impl.
+// hasher matches the original string hash or supply a custom Hash impl.
 // blocked_on: bun_collections::ArrayHashMap surface
 pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V>;
 
@@ -254,7 +254,7 @@ impl Default for IdentOrRef {
     }
 }
 
-// Zig packed struct(u128) field layout, LSB-first:
+// Packed `u128` field layout, LSB-first:
 //   __ptrbits: u63  -> bits  0..63
 //   __ref_bit: bool -> bit   63
 //   __len:     u64  -> bits 64..128
@@ -326,10 +326,10 @@ impl IdentOrRef {
         }
     }
 
-    // NOTE: no `#[cfg(not(debug_assertions))]` variant. Zig's `@compileError` is lazy (fires only
-    // if the body is analyzed); Rust's `compile_error!` fires at expansion and would break every
-    // release build. Omitting the fn in release yields a name-resolution error at the call site,
-    // which is the closest Rust equivalent.
+    // NOTE: no `#[cfg(not(debug_assertions))]` variant. The original used a lazy compile-time
+    // error (fires only if the body is analyzed); Rust's `compile_error!` fires at expansion and
+    // would break every release build. Omitting the fn in release yields a name-resolution error
+    // at the call site, which is the closest Rust equivalent.
 
     pub fn from_ident(ident: Ident) -> Self {
         let s = ident.v();
@@ -427,8 +427,8 @@ impl IdentOrRef {
         if let Some(ident) = self.as_ident() {
             hasher.update(ident.v());
         } else {
-            // SAFETY: self is #[repr(transparent)] u128; reading first 2 bytes matches Zig's
-            // `slice_u8[0..2]` (which is almost certainly a Zig bug — hashes 2 bytes, not 16).
+            // SAFETY: self is #[repr(transparent)] u128; reading first 2 bytes matches the original
+            // `slice_u8[0..2]` (which is almost certainly an upstream bug — hashes 2 bytes, not 16).
             // TODO(port): verify upstream intent; preserving behavior verbatim.
             let bytes = unsafe {
                 core::slice::from_raw_parts(std::ptr::from_ref::<Self>(self).cast::<u8>(), 2)
@@ -532,5 +532,3 @@ impl CustomIdent {
 
 /// A list of CSS [`<custom-ident>`](https://www.w3.org/TR/css-values-4/#custom-idents) values.
 pub type CustomIdentList = SmallList<CustomIdent, 1>;
-
-// ported from: src/css/values/ident.zig

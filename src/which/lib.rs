@@ -139,10 +139,10 @@ fn search_bin(
     path_size: usize,
     check_windows_extensions: bool,
 ) -> Option<&mut [u16]> {
-    // PORT NOTE: Zig `existsOSPath` takes `bun.OSPathSliceZ`, which is `[:0]const u16`
-    // on Windows and `[:0]const u8` on POSIX. `searchBin` only ever runs on Windows
-    // (whichWin is dead-by-lazy-eval elsewhere); the POSIX arm here is just to keep
-    // the public `which_win` symbol type-checking on all targets.
+    // PORT NOTE: `exists_os_path` takes a NUL-terminated u16 slice on Windows
+    // and a NUL-terminated u8 slice on POSIX. `search_bin` only ever runs on
+    // Windows; the POSIX arm here is just to keep the public `which_win`
+    // symbol type-checking on all targets.
     #[cfg(windows)]
     {
         if !check_windows_extensions {
@@ -198,7 +198,7 @@ fn search_bin_in_path<'a>(
         path
     };
     // PORT NOTE: PosixToWinNormalizer is a no-op on posix; resolve_cwd_with_external_buf
-    // takes `&mut ()` there, so just pass through (matches Zig lazy-eval behaviour).
+    // takes `&mut ()` there, so just pass through.
     #[cfg(not(windows))]
     let segment: &[u8] = {
         let _ = path_buf;
@@ -296,5 +296,3 @@ pub fn which_win<'a>(
 
     None
 }
-
-// ported from: src/which/which.zig

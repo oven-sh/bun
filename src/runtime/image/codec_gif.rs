@@ -27,7 +27,7 @@ struct Bits<'a> {
     /// Bytes remaining in the current sub-block. 0 ⇒ need to read a length.
     block: usize,
     acc: u32,
-    // Zig: u5
+    /// LZW code width; logically 1..=12 (fits in 5 bits).
     nbits: u8,
     /// We hit the 0-length terminator or ran off the end — every subsequent
     /// `read` returns 0 so the LZW loop sees an EOI-shaped value and stops
@@ -248,11 +248,11 @@ fn decode_frame(
     let mut avail: u16 = eoi + 1;
     let mut prev: Option<u16> = None;
 
-    // PERF(port): Zig left this uninitialized; zero-init here for safety.
+    // PERF(port): zero-init here for safety; uninitialized would be sufficient.
     let mut dict: Box<Dict> = bun_core::boxed_zeroed();
     let mut scratch = [0u8; 4096];
 
-    // PERF(port): Zig left this uninitialized; zero-init here for safety.
+    // PERF(port): zero-init here for safety; uninitialized would be sufficient.
     let mut idx = vec![0u8; npix];
     let mut written: usize = 0;
 
@@ -383,5 +383,3 @@ fn expand_row(idx: &[u8], out: &mut [u8], pal: &[[u8; 4]; 256]) {
         out[x * 4..][..4].copy_from_slice(&pal[c as usize]);
     }
 }
-
-// ported from: src/runtime/image/codec_gif.zig

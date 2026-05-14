@@ -38,7 +38,7 @@ use core::ptr::NonNull;
 // In the AST crate, ListManaged is arena-backed.
 type ListManaged<'bump, T> = BumpVec<'bump, T>;
 
-// Zig: `pub fn Visit(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
+// Originally `pub fn Visit(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
 
@@ -54,7 +54,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmts: &mut ListManaged<'a, Stmt>,
         opts: &mut PrependTempRefsOpts,
     ) -> Result<(), bun_core::Error> {
-        // Zig: `if (only_scan_imports_and_do_not_visit) @compileError(...)`
+        // Originally `if (only_scan_imports_and_do_not_visit) @compileError(...)`
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
@@ -91,7 +91,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub fn visit_func(&mut self, mut func: G::Fn, open_parens_loc: bun_ast::Loc) -> G::Fn {
-        // Zig: `if (only_scan_imports_and_do_not_visit) @compileError(...)`
+        // Originally `if (only_scan_imports_and_do_not_visit) @compileError(...)`
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
@@ -155,7 +155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if self.options.features.react_fast_refresh {
             // PORT NOTE: react_refresh.hook_ctx_storage is `Option<NonNull<Option<HookContext>>>`
-            // pointing at a stack-local on the visitStmt caller frame (Zig: `*?Hook`).
+            // pointing at a stack-local on the visitStmt caller frame (originally `*?Hook`).
             // `ReactRefresh::hook_ctx_mut` centralises the raw-pointer deref and returns a
             // borrow detached from `self` (the storage is on the caller's stack frame), so
             // it can be held across the `&mut self` method call below.
@@ -187,7 +187,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn visit_args(&mut self, args: &mut [G::Arg], opts: VisitArgsOpts) {
         let strict_loc = fn_body_contains_use_strict(opts.body);
         let has_simple_args = Self::is_simple_parameter_list(args, opts.has_rest_arg);
-        // StringVoidMap::get returns a pool guard; Drop releases (replaces Zig `defer release`).
+        // StringVoidMap::get returns a pool guard; Drop releases (replaces the original `defer release`).
         let mut duplicate_args_check: Option<
             bun_collections::pool::PoolGuard<'static, StringVoidMap>,
         > = None;
@@ -221,7 +221,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.visit_ts_decorators(&mut arg.ts_decorators);
             }
 
-            // PORT NOTE: reborrow per-iter (Zig passes the same pointer each time).
+            // PORT NOTE: reborrow per-iter (original passes the same pointer each time).
             let dup: Option<&mut StringVoidMap> = duplicate_args_check.as_mut().map(|g| &mut **g);
             self.visit_binding(arg.binding, dup);
             if let Some(default) = arg.default.as_mut() {
@@ -230,7 +230,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // PORT NOTE: Zig returned the list by value (`ExprNodeList` is a fat ptr there).
+    // PORT NOTE: original returned the list by value (`ExprNodeList` is a fat ptr there).
     // `Vec<Expr>` is not `Copy` in Rust; mutate in place instead.
     pub fn visit_ts_decorators(&mut self, decs: &mut ExprNodeList) {
         for dec in decs.slice_mut() {
@@ -244,7 +244,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         was_const: bool,
     ) -> usize {
         let mut j: usize = 0;
-        // PORT NOTE: reshaped for borrowck — Zig aliased `out_decls = decls` and
+        // PORT NOTE: reshaped for borrowck — original aliased `out_decls = decls` and
         // iterated `decls` while writing through `out_decls[j]`. We iterate by index.
         let len = decls.len();
         let mut i: usize = 0;
@@ -262,7 +262,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let prev_require_to_convert_count = self.imports_to_convert_from_require.len();
                 let prev_macro_call_count = self.macro_call_count;
                 let orig_dead = self.is_control_flow_dead;
-                // PORT NOTE: `replacement` is a `BackRef` (Zig `?*ReplaceableExport`) so the
+                // PORT NOTE: `replacement` is a `BackRef` (originally `?*ReplaceableExport`) so the
                 // borrow of `self.options` does not survive across `visit_expr_in_out(&mut self)`.
                 // `BackRef` invariant: `self.options.features.replace_exports` is never mutated
                 // during the visit pass, so the entry strictly outlives this loop body.
@@ -756,7 +756,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             b.stmts = bun_ast::StoreSlice::new_mut(items);
         }
         if self.options.features.minify_syntax {
-            // PORT NOTE: reshaped for borrowck — `stmts` was consumed above; in Zig
+            // PORT NOTE: reshaped for borrowck — `stmts` was consumed above; the original
             // `stmts.items` aliases the slice now stored in `s_block.stmts`.
             new_stmt = self.stmts_to_single_stmt_(stmt.loc, items);
         }
@@ -797,7 +797,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         class: &mut G::Class,
         default_name_ref: Ref,
     ) -> Ref {
-        // Zig: `if (only_scan_imports_and_do_not_visit) @compileError(...)`
+        // Originally `if (only_scan_imports_and_do_not_visit) @compileError(...)`
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
@@ -816,7 +816,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.vis_scope()
             .recursive_set_strict_mode(StrictModeKind::ImplicitStrictModeClass);
         // PORT NOTE: `FnOnlyDataVisit::class_name_ref` is `Option<&'a Cell<Ref>>`, so the
-        // shadow ref must outlive the parser borrow. Allocate it in the bump arena (Zig kept
+        // shadow ref must outlive the parser borrow. Allocate it in the bump arena (original kept
         // it on the stack and passed `&shadow_ref` — Rust's `'a` bound on the field forbids
         // that). `Cell` lets us hand out a shared `&'a Cell<Ref>` to nested frames while
         // still reading/writing it here, with no raw-pointer `unsafe`.
@@ -964,7 +964,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 (value.data, key.data)
                             {
                                 if e_str.eql_comptime(b"constructor") {
-                                    // PORT NOTE: Zig keeps a `*E.Function` into property.value's
+                                    // PORT NOTE: original keeps a `*E.Function` into property.value's
                                     // arena slot, then re-reads it after visit_expr overwrites
                                     // the value below. `StoreRef` carries the same arena pointer.
                                     constructor_function_ = Some(e_func);
@@ -1087,7 +1087,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             old_props_len + to_add,
                             self.arena,
                         );
-                        // PORT NOTE: Zig `fromOwnedSlice` adopts the existing buffer in-place.
+                        // PORT NOTE: original `fromOwnedSlice` adopts the existing buffer in-place.
                         // Rust BumpVec can't adopt a foreign arena slice, so move each element
                         // out by `ptr::read` (G::Property has no Drop; old slice becomes dead
                         // arena bytes).
@@ -1143,7 +1143,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             stmts.insert(insert_at, Stmt::assign(dot, arg_ident));
 
                             // O(N)
-                            // Zig: `class_body.items.len += 1; bun.copy(...)` — open a 1-slot
+                            // Originally `class_body.items.len += 1; bun.copy(...)` — open a 1-slot
                             // gap at j and write the new field. `Vec::insert` is the same
                             // memmove + write.
                             // Copy the argument name symbol to prevent the class field
@@ -1207,7 +1207,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmts: &mut ListManaged<'a, Stmt>,
         kind: StmtsKind,
     ) -> Result<(), bun_core::Error> {
-        // Zig: `if (only_scan_imports_and_do_not_visit) @compileError(...)`
+        // Originally `if (only_scan_imports_and_do_not_visit) @compileError(...)`
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
@@ -1222,7 +1222,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Save the current control-flow liveness. This represents if we are
             // currently inside an "if (false) { ... }" block.
             let old_is_control_flow_dead = p.is_control_flow_dead;
-            // PORT NOTE: Zig `defer` — manually restored at block end. The error
+            // PORT NOTE: original `defer` — manually restored at block end. The error
             // path (`?`) skips restore; acceptable because callers `.expect()` or
             // propagate fatally (parse abort) — no resumption after error.
 
@@ -1242,7 +1242,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 for stmt in stmts.iter_mut() {
                     if matches!(stmt.data, StmtData::SEnum(_)) {
                         // `scope_order_to_visit: &'a [ScopeOrder<'a>]` is `Copy`;
-                        // save/restore matches the Zig slice-copy directly.
+                        // save/restore matches the original slice-copy directly.
                         let old_scopes_in_order = p.scope_order_to_visit;
 
                         // `Loc` lacks `Hash` (logger crate) so `ArrayHashMap::get`
@@ -1254,7 +1254,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         let mut temp = ListManaged::new_in(p.arena);
                         let res = p.visit_and_append_stmt(&mut temp, stmt);
-                        // Zig: `defer p.scope_order_to_visit = old_scopes_in_order`.
+                        // Originally `defer p.scope_order_to_visit = old_scopes_in_order`.
                         p.scope_order_to_visit = old_scopes_in_order;
                         res?;
                         preprocessed_enums.push(temp.into_bump_slice());
@@ -1265,7 +1265,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.current_scope == p.module_scope {
                 // TODO(port): `MacroState::prepend_stmts` is `&'a mut Vec<Stmt>` but
                 // `before` is a `BumpVec<'a, Stmt>` — type-shape divergence in
-                // parser.rs. Zig: `p.macro.prepend_stmts = &before;`. The macro
+                // parser.rs. Originally `p.macro.prepend_stmts = &before;`. The macro
                 // expansion path is gated; this BACKREF is restored when MacroState
                 // switches to `BumpVec` / `NonNull`.
                 let _ = &mut before;
@@ -1321,7 +1321,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             let enum_scope_count =
                                 scopes_for_enum_at(&p.scopes_in_order_for_enum, stmt.loc).len();
-                            // Zig: `p.scope_order_to_visit = p.scope_order_to_visit[enum_scope_count..]`
+                            // Originally `p.scope_order_to_visit = p.scope_order_to_visit[enum_scope_count..]`
                             p.scope_order_to_visit = &p.scope_order_to_visit[enum_scope_count..];
                             continue 'stmt_loop;
                         }
@@ -1400,7 +1400,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // The last function statement for a given symbol wins
                             data.func.name = None;
                             // SAFETY: `G::Fn`'s fields are POD (`StoreSlice<T>`, ints, flags) but
-                            // lacks `derive(Copy)`; bitwise read matches Zig struct copy.
+                            // lacks `derive(Copy)`; bitwise read matches the original struct copy.
                             let func = unsafe { core::ptr::read(&raw const data.func) };
                             let_decls[index as usize].value =
                                 Some(p.new_expr(E::Function { func }, stmt.loc));
@@ -1470,7 +1470,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 visited_count = end;
             }
 
-            // PORT NOTE: reshaped — Zig `resize`+slice-walk; `Stmt: Copy` so the
+            // PORT NOTE: reshaped — original `resize`+slice-walk; `Stmt: Copy` so the
             // simpler clear+extend is equivalent and avoids a `Stmt::default()`
             // filler value.
             stmts.clear();
@@ -1488,7 +1488,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if kind != StmtsKind::SwitchStmt && p.should_lower_using_declarations(stmts.as_slice()) {
             let mut ctx = LowerUsingDeclarationsContext::init(p)?;
             ctx.scan_stmts(p, stmts.as_mut_slice());
-            // PORT NOTE: Zig's `stmts.* = ctx.finalize(p, stmts.items, ...)`
+            // PORT NOTE: the original `stmts.* = ctx.finalize(p, stmts.items, ...)`
             // overwrote the ArrayList struct without freeing the old buffer.
             // `finalize` stores a sub-slice of that buffer as the lowered
             // S.Try `body`, so the buffer must outlive the assignment. Leak
@@ -1626,7 +1626,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // by now since they are scoped to this block which we just finished
                     // visiting.
                     let prev_idx = output.len() - 1;
-                    // PORT NOTE: reshaped for borrowck — Zig held `&mut output[..]`
+                    // PORT NOTE: reshaped for borrowck — original held `&mut output[..]`
                     // across `p.substitute...` (which borrows `&mut p`). We read the
                     // `StoreRef` (Copy) first, then re-borrow `output` only when
                     // truncating.
@@ -1709,12 +1709,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if local.can_merge_with(&prev_local) {
                                 // PORT NOTE: `Vec::append_slice` requires `T: Clone`
                                 // but `G::Decl` lacks the derive (its fields are all
-                                // `Copy`). Per-element bitwise copy matches Zig
+                                // `Copy`). Per-element bitwise copy matches the original
                                 // `appendSlice` semantics.
                                 //
                                 // The parse pass allocates `decls` in the bump arena
                                 // (`from_bump_slice` → `Origin::Borrowed`); promote to a
-                                // global-heap buffer before growing it. In Zig both ends
+                                // global-heap buffer before growing it. In the original both ends
                                 // are mimalloc so `appendSlice` just reallocs in place.
                                 for d in local.decls.slice() {
                                     // SAFETY: Decl is field-wise Copy (Binding, Option<Expr>).

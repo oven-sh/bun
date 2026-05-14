@@ -1,6 +1,6 @@
 #![feature(inherent_associated_types)]
 #![feature(adt_const_params, allocator_api)]
-#![allow(incomplete_features)] // inherent_associated_types — used only for ThreadPool::Worker path compat with Zig
+#![allow(incomplete_features)] // inherent_associated_types — used only for ThreadPool::Worker path compat
 #![allow(
     unused,
     non_snake_case,
@@ -78,12 +78,12 @@ pub mod transpiler;
 /// `linker_context/` submodule directory. Un-gated B-2: only
 /// `scanImportsAndExports.rs` so far; remaining files un-gate as their
 /// `LinkerGraph` SoA accessors land. Declared inline (no `mod.rs`) so paths
-/// stay 1:1 with the Zig directory.
+/// stay 1:1 with the directory layout.
 pub mod linker_context {
     #[path = "scanImportsAndExports.rs"]
     pub mod scan_imports_and_exports;
 
-    // ── Gated drafts (B-1). Each maps 1:1 to a `.zig` of the same basename.
+    // ── Gated drafts (B-1). Each maps 1:1 to a source file of the same basename.
     //    Un-gate per-file as the crate-root surface they import (Fs / JSMeta /
     //    ImportData / GenerateChunkCtx / thread_pool::Worker / …) lands.
     //    Re-exports from these into `linker_context::*` stay blocked until
@@ -159,7 +159,7 @@ pub mod linker_context {
     pub mod static_route_visitor;
 
     // ── Re-exports so `crate::linker_context::{debug, LinkerContext, …}`
-    //    resolves at every submodule call-site (mirrors Zig's `@import("./LinkerContext.zig")`).
+    //    resolves at every submodule call-site.
     pub use crate::linker_context_mod::{
         ChunkMeta, GenerateChunkCtx, LinkerContext, PendingPartRange,
     };
@@ -202,14 +202,14 @@ pub use transpiler::Transpiler;
 /// associated type on the struct (not a sibling module — that would collide
 /// with this re-export).
 pub use ungate_support::entry_point::EntryPoint;
-/// Stub: defined in gated `bundle_v2` module (`bundle_v2.zig:AdditionalFile`).
+/// Stub: defined in the gated `bundle_v2` module (`bundle_v2::AdditionalFile`).
 pub enum AdditionalFile {
     SourceIndex(u32),
     OutputFile(u32),
 }
 
-/// `bun.ast.Index` — source-index newtype. Re-exported here because every
-/// `*.zig` in this crate aliases it as `pub const Index = bun.ast.Index`.
+/// `bun.ast.Index` — source-index newtype. Re-exported here because the
+/// original modules in this crate aliased it as `Index = bun.ast.Index`.
 pub(crate) use bun_ast::{Index, IndexInt};
 
 // Re-export the real `options` module (un-gated B-2). `Loader`/`Target` were
@@ -222,7 +222,7 @@ pub mod options {
     pub use super::options_impl::*;
     pub use super::output_file::BakeExtra;
     pub use super::output_file::IndexOptional;
-    /// `OutputFile.init` argument struct (`options.zig:OutputFile.Options`).
+    /// `OutputFile.init` argument struct (`options::OutputFile::Options`).
     pub use super::output_file::Options as OutputFileInit;
     pub use super::output_file::OptionsData as OutputFileData;
     pub use super::output_file::Value as OutputValue;
@@ -232,8 +232,8 @@ pub mod options {
     pub use bun_options_types::schema::api::DotEnvBehavior as EnvBehavior;
     pub type Options<'a> = super::BundleOptions<'a>;
 
-    /// `jsc.API.BuildArtifact.OutputKind` (JSBundler.zig:1799). Re-exported by
-    /// `options.zig` callers via `OutputFile.output_kind`.
+    /// `jsc.API.BuildArtifact.OutputKind`. Re-exported by
+    /// `options` callers via `OutputFile.output_kind`.
     ///
     /// `IntoStaticStr` provides the JS-facing tag (`"entry-point"` etc.) so
     /// `bun_runtime::api::BuildArtifact` can spell `<&str>::from(kind)` without
@@ -261,7 +261,6 @@ pub mod options {
     }
 
     impl OutputKind {
-        /// JSBundler.zig:1809.
         pub fn is_file_in_standalone_mode(self) -> bool {
             !matches!(
                 self,
@@ -274,7 +273,7 @@ pub mod options {
         }
     }
 
-    /// `bun.bake.Side` (bake.zig:874) — which graph an output belongs to.
+    /// `bun.bake.Side` — which graph an output belongs to.
     /// Re-export of the canonical def in `crate::bake_types` (bundle_v2.rs).
     pub use crate::bake_types::Side;
 
@@ -282,7 +281,7 @@ pub mod options {
     /// alias of the canonical `options_impl::EnvEntry` brought in via the glob.
     pub type EnvDefault = EnvEntry;
 
-    /// Legacy `options::Framework` (referenced by `resolver/package_json.zig`'s
+    /// Legacy `options::Framework` (referenced by `resolver::package_json`'s
     /// `FrameworkRouterPair`). The full struct is `bun.bake.Framework` which
     /// lives in a higher-tier crate; minimal real struct lives in `bake_types`.
     pub use crate::bake_types::Framework;
@@ -293,7 +292,7 @@ pub mod options {
     // inline shadows produced 4+ incompatible `jsx::Pragma`/`Runtime` types and
     // a `&'static [&'static [u8]]` `factory`/`fragment` that could not hold the
     // heap allocation from `member_list_to_components_if_different`
-    // (options.zig:1296) without `Box::leak` (PORTING.md §Forbidden patterns).
+    // without `Box::leak` (PORTING.md §Forbidden patterns).
 }
 
 /// Re-export so `crate::RuntimeTranspilerCache` resolves for `transpiler::ParseOptions`
@@ -320,7 +319,7 @@ pub use bundle_v2::dispatch;
 // ── link-interfaces (must be at crate root so `$crate::__alias` resolves) ──
 // Re-exported through `bundle_v2::dispatch` for existing call sites.
 
-// Erased handle to `bake::DevServer`. PORT NOTE: Zig takes
+// Erased handle to `bake::DevServer`. PORT NOTE: original takes
 // `*const DevServerOutput` but mutates through the `chunks: []Chunk` slice it
 // holds; in Rust the struct stores `&'a mut [Chunk]`, hence `*mut`.
 bun_dispatch::link_interface! {
@@ -361,8 +360,8 @@ bun_dispatch::link_interface! {
     }
 }
 
-// `OutputFile.Options` defaults (`options.zig:OutputFile.Options` field
-// default-initializers). Kept here rather than in `OutputFile.rs` so the
+// `OutputFile.Options` field default-initializers.
+// Kept here rather than in `OutputFile.rs` so the
 // derive-free struct stays codegen-friendly while every `init(..)` call site
 // can use struct-update syntax.
 impl Default for output_file::OptionsData {

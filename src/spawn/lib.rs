@@ -1,7 +1,7 @@
 //! `bun_spawn` — process-spawn implementation extracted from
-//! `src/runtime/api/bun/process.zig` so that `bun_install`, `bun_jsc`, and
-//! `bun_patch` can construct/track child processes without depending on
-//! `bun_runtime` (cycle: `bun_runtime → bun_install`/`bun_jsc`).
+//! `bun_runtime` so that `bun_install`, `bun_jsc`, and `bun_patch` can
+//! construct/track child processes without depending on `bun_runtime`
+//! (cycle: `bun_runtime → bun_install`/`bun_jsc`).
 //!
 //! LAYERING: this crate **owns** the spawn implementation (not just data
 //! shapes). `Process`, `Poller`, `WaiterThread`, `spawn_process`, and
@@ -11,10 +11,6 @@
 //! (`ThreadSafeRefCount`), `bun_io` (`BufferedWriter`), `bun_event_loop`,
 //! `bun_threading`, and `bun_crash_handler` — none of which depend back on
 //! this crate, so no cycle.
-//!
-//! Zig source of truth: `src/runtime/api/bun/process.zig`,
-//! `src/runtime/api/bun/spawn.zig`,
-//! `src/runtime/api/bun/subprocess/StaticPipeWriter.zig`.
 
 #![allow(dead_code)]
 #![warn(unreachable_pub)]
@@ -47,13 +43,11 @@ pub mod posix_spawn {
 }
 
 /// `Process` / `Poller` / `WaiterThread` / `spawn_process` / `sync` /
-/// `Status` / `SpawnOptions` / `SpawnResult`. Port of
-/// `src/runtime/api/bun/process.zig`.
+/// `Status` / `SpawnOptions` / `SpawnResult`.
 #[path = "process.rs"]
 pub mod process;
 
 /// Generic `StaticPipeWriter<P>` (`jsc.Subprocess.NewStaticPipeWriter`).
-/// Port of `src/runtime/api/bun/subprocess/StaticPipeWriter.zig`.
 #[path = "static_pipe_writer.rs"]
 pub mod static_pipe_writer;
 
@@ -146,7 +140,7 @@ pub mod windows {
     pub type UvPipePtr = *mut bun_sys::windows::libuv::Pipe;
 }
 
-/// `bun.spawnSync` (process.zig `pub const sync`).
+/// `bun.spawnSync`.
 pub mod sync {
     #[cfg(windows)]
     pub use crate::process::WindowsOptions;
@@ -172,8 +166,8 @@ pub mod subprocess {
     pub use crate::process::StdioKind;
     pub use crate::static_pipe_writer::{StaticPipeWriter, StaticPipeWriterProcess};
 
-    /// Port of `bun.jsc.Subprocess.StdioResult` (subprocess.zig). On POSIX the
-    /// Zig type is `?bun.FD`; on Windows it is the `WindowsStdioResult` union.
+    /// Port of `bun.jsc.Subprocess.StdioResult`. On POSIX it is `Option<Fd>`;
+    /// on Windows it is the `WindowsStdioResult` union.
     #[cfg(not(windows))]
     pub type StdioResult = Option<Fd>;
     #[cfg(windows)]
@@ -193,7 +187,7 @@ pub mod subprocess {
     /// Port of `bun.jsc.Subprocess.Source` — the in-memory payload that a
     /// `StaticPipeWriter` drains into the child's stdin/extra-fd.
     ///
-    /// The Zig original is a tagged union over `Blob`/`ArrayBuffer`/detached;
+    /// The original is a tagged union over `Blob`/`ArrayBuffer`/detached;
     /// at this tier those are JSC-owned and unreachable, so the high-tier
     /// variants are carried via a `Box<dyn SourceData>` (per-object vtable —
     /// §Dispatch cold path). `bun_install` uses [`Source::from_owned_bytes`].
@@ -221,18 +215,17 @@ pub mod subprocess {
             Self::OwnedBytes(bytes)
         }
 
-        /// Zig: `Source.slice()`.
         pub fn slice(&self) -> &[u8] {
             match self {
                 Source::OwnedBytes(b) => b,
                 Source::Any(s) => s.slice(),
-                // Zig: `else => @panic("Invalid source")` — slice() after detach() is a bug.
+                // slice() after detach() is a bug.
                 Source::Detached => unreachable!("Source::slice on Detached"),
             }
         }
 
-        /// Zig: `Source.detach()` — release the payload and flip to
-        /// `.Detached`. Calling `slice()` afterwards is invalid (panics).
+        /// Release the payload and flip to `.Detached`.
+        /// Calling `slice()` afterwards is invalid (panics).
         pub fn detach(&mut self) {
             if let Source::Any(s) = self {
                 s.detach();
@@ -252,7 +245,7 @@ pub mod subprocess {
 
 // ──────────────────────────────────────────────────────────────────────────
 // `std.process.Child.run` shim — port of the blocking `run` helper used by
-// `bun_install::repository::exec` (src/install/repository.zig:360). Per
+// `bun_install::repository::exec`. Per
 // `src/CLAUDE.md` ("Prefer `bun.spawnSync` over `std.process.Child`") and the
 // `std::process` ban in PORTING.md, this is rewritten on top of
 // [`sync::spawn`] (= `bun.spawnSync`).
@@ -268,7 +261,7 @@ pub enum Term {
 }
 
 /// Options for [`run`] — port of `std.process.Child.RunOptions` (subset used
-/// by `repository.zig`).
+/// by the repository runner).
 pub struct RunOptions<'a> {
     pub argv: &'a [&'a [u8]],
     pub env_map: &'a bun_sys::EnvMap,
@@ -288,7 +281,7 @@ pub struct RunResult {
 /// flattened to `KEY=VALUE\0`.
 #[cfg_attr(windows, allow(unreachable_code, unused_variables, unused_mut))]
 pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Error> {
-    // Windows: Zig's `std.process.Child.run` (the spec for this fn) calls
+    // Windows: `std.process.Child.run` (the spec for this fn) calls
     // `CreateProcessW`+`ReadFile` directly — no libuv. `process::sync::spawn`
     // below is libuv-based on Windows and reads `options.windows.loop_` to get
     // the `uv_loop_t*`, but the only caller (`repository::exec`) runs on a
@@ -296,10 +289,10 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
     // `MiniEventLoop::init_global` from a worker thread would create a second
     // `us_loop` wrapping the *process-global* `uv_default_loop()` and then
     // `uv_run` it concurrently with the main install thread (libuv UB). Route
-    // through `std::process` here instead to faithfully port the Zig spec —
+    // through `std::process` here instead to faithfully port the spec —
     // the PORTING.md `std::process` ban is about not bypassing Bun's event
-    // loop, which is exactly what the Zig call site already does intentionally
-    // for off-thread `git`.
+    // loop, which is exactly what the original call site already does
+    // intentionally for off-thread `git`.
     #[cfg(windows)]
     {
         use std::ffi::OsString;
@@ -348,14 +341,14 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
     // `std.process.Child.spawnPosix` resolves `argv[0]` against `$PATH` (it
     // calls `posix.execvpeZ_expandArg0`). `process::sync::spawn` below execs
     // via `execve` (no PATH search), so do the lookup here. Use the *child's*
-    // env PATH — that's what Zig's expandArg0 walks.
+    // env PATH — that's what `expandArg0` walks.
     let mut argv0_buf = bun_core::PathBuffer::uninit();
     let mut argv0_storage: Option<Box<[u8]>> = None;
     'argv0: {
         let Some(&first) = opts.argv.first() else {
             break 'argv0;
         };
-        // Only PATH-search bare names — Zig's expandArg0 expands only when no
+        // Only PATH-search bare names — `expandArg0` expands only when no
         // separator is present.
         if first.iter().any(|&b| b == b'/') {
             break 'argv0;
@@ -410,11 +403,11 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         stdout: process::sync::SyncStdio::Buffer,
         stderr: process::sync::SyncStdio::Buffer,
         argv0: argv0_ptr,
-        // Zig `std.process.Child.run` (the spec for this fn) spawns via raw
+        // `std.process.Child.run` (the spec for this fn) spawns via raw
         // `CreateProcessW`+`ReadFile` and needs no uv loop. The Rust port
         // routes through `process::sync::spawn` → `spawn_process_windows`,
         // which *does* read `options.windows.loop_` to get the `uv_loop_t*`.
-        // `WindowsOptions::default()` leaves `loop_` zeroed (Zig: `= undefined`),
+        // `WindowsOptions::default()` leaves `loop_` zeroed,
         // so the deref segfaults at the `uv_loop` field offset. Supply the
         // thread's mini event loop — `init_global` is idempotent and, for the
         // sole caller (`repository.exec` under `bun add`/`install`), returns
@@ -432,7 +425,7 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         ..Default::default()
     };
 
-    // `!Maybe(Result)` → outer `Result<_, bun_core::Error>` for the Zig `try`,
+    // Two-layer error: outer `Result<_, bun_core::Error>` for fallible setup,
     // inner `Maybe` for the syscall error.
     let result = match process::sync::spawn(&sync_opts)? {
         Ok(r) => r,

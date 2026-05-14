@@ -23,7 +23,7 @@ use bun_js_parser::lexer as js_lexer;
 use super::convert_stmts_for_chunk::convert_stmts_for_chunk;
 use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
 
-// PORT NOTE: MultiArrayList column access — Zig `list.items(.field)` is mapped here as
+// PORT NOTE: MultiArrayList column access — `list.items(.field)` is mapped here as
 // `list.items_field()` method calls (codegen'd accessors on the SoA wrappers).
 
 #[allow(clippy::too_many_arguments)]
@@ -45,7 +45,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
     // PORT NOTE: reshaped for borrowck — grab raw pointers to the SoA columns up front so
     // subsequent `&mut c` borrows (convert_stmts_for_chunk, print_code_for_file_in_chunk_js)
-    // don't conflict. Matches Zig which slices once at the top.
+    // don't conflict. Matches the original which slices once at the top.
     // SAFETY: the underlying MultiArrayList storage is not resized for the duration of this
     // function (linking has already sized everything).
     let parts: *mut [Part] = unsafe {
@@ -110,7 +110,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             // PORT NOTE: reshaped for borrowck — capture pointer/len now, re-slice after pushes.
             // SAFETY: `inner` aliases the first `main_stmts_len` elements of `all_stmts`;
             // subsequent pushes only append past this range and capacity was reserved above
-            // so no reallocation occurs. Matches Zig which slices then continues appending.
+            // so no reallocation occurs. Matches the original which slices then continues appending.
             let inner = bun_ast::StoreSlice::new_mut(
                 &mut stmts.all_stmts.as_mut_slice()[0..main_stmts_len],
             );
@@ -190,7 +190,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             // TODO: there is a weird edge case where the pretty path is not computed
             // it does not reproduce when debugging.
             let source_ref = c.get_source(source_index as u32);
-            // PORT NOTE: reshaped for borrowck — Zig copies the `Source` by value,
+            // PORT NOTE: reshaped for borrowck — original copies the `Source` by value,
             // mutates `.path`, and passes `&source`. `bun_ast::Source` is not `Clone`
             // (its `Cow` fields would deep-copy `Owned` data); instead, build a
             // borrowed-field shadow only when the path needs fixing.
@@ -395,9 +395,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             // Be careful: the top-level value in a JSON file is not necessarily an object
             if let ExprData::EObject(e_object) = default_expr.data {
-                // PORT NOTE: Zig `properties.clone(temp_arena)` is a memcpy into the
+                // PORT NOTE: original `properties.clone(temp_arena)` is a memcpy into the
                 // temp arena. `G::Property` is not `Clone` (it embeds a `Vec`), so
-                // mirror the Zig bitwise copy directly. JSON object properties carry no
+                // mirror the bitwise copy directly. JSON object properties carry no
                 // owned heap data (`ts_decorators` is always empty, `class_static_block`
                 // is `None`), so the duplicated bits do not alias any allocation.
                 let src_len = e_object.properties.len();
@@ -751,7 +751,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 // PORT NOTE: `class` is `StoreRef<S::Class>` — an arena-owned pointer.
                                 // `&mut class.class` (via DerefMut) yields a `&mut G::Class` into arena
                                 // memory, so wrapping it in a StoreRef for `EClass` is sound and matches
-                                // Zig's `&class.class`.
+                                // the original `&class.class`.
                                 if class.class.can_be_moved() {
                                     stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
                                     continue 'hoist;
@@ -1053,7 +1053,7 @@ impl DeclCollector {
         if name.is_empty() {
             return;
         }
-        // Zig: `catch return` — silently drop on alloc failure. With std Vec
+        // Original silently dropped on alloc failure. With std Vec
         // push aborts on OOM, so there is nothing to catch.
         self.decls.push(DeclInfo {
             name: name.to_vec().into_boxed_slice(),
@@ -1119,10 +1119,8 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
     stmts.truncate(end);
 }
 
-// Type aliases / re-imports for readability of match arms (mirrors Zig naming).
+// Type aliases / re-imports for readability of match arms (mirrors original naming).
 use bun_ast::LocalKind;
 use bun_ast::binding::Data as BindingData;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
-
-// ported from: src/bundler/linker_context/generateCodeForFileInChunkJS.zig

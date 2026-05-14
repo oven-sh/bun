@@ -52,7 +52,7 @@ use super::bun_test::{
 use crate::cli::test_command;
 
 // ── local shims for upstream Timespec methods not yet ported ───────────────
-// Zig: `bun.timespec.now(.force_real_time)` etc. — bun_core exposes the
+// `bun.timespec.now(.force_real_time)` etc. — bun_core exposes the
 // generic `now(mode)` form; wrap the convenience names here.
 pub(crate) trait TimespecExt {
     fn now_force_real_time() -> Timespec;
@@ -88,7 +88,7 @@ pub struct Execution {
     // PORT NOTE: was `pub(self)`; widened so `RefDataValue::sequence` can
     // split-borrow `groups`/`sequences` without re-entering `sequences_mut`.
     /// the entries themselves are owned by BunTest, which owns Execution.
-    // Zig: `#sequences` (private field)
+    // Originally a private field (`#sequences`).
     pub sequences: Box<[ExecutionSequence]>,
     pub group_index: usize,
 }
@@ -293,17 +293,17 @@ impl Execution {
         }
     }
 
-    // Zig `deinit` only freed `groups` and `#sequences` via the parent allocator.
+    // `deinit` only freed `groups` and `#sequences` via the parent allocator.
     // Both are now `Box<[T]>` and drop automatically — no explicit Drop impl needed.
 
     pub fn load_from_order(&mut self, order: &mut Order::Order) -> JsResult<()> {
         debug_assert!(self.groups.is_empty());
         debug_assert!(self.sequences.is_empty());
-        // Zig: bun.safety.CheckedAllocator asserts that order's lists used the same gpa.
+        // The original asserted that order's lists used the same gpa.
         // In Rust the global allocator is unified — nothing to check.
         self.groups = core::mem::take(&mut order.groups).into_boxed_slice();
         self.sequences = core::mem::take(&mut order.sequences).into_boxed_slice();
-        // TODO(port): narrow error set — Zig `try toOwnedSlice()` was OOM-only; Rust Vec→Box is infallible.
+        // TODO(port): narrow error set — `try toOwnedSlice()` was OOM-only; Rust Vec→Box is infallible.
         Ok(())
     }
 
@@ -508,8 +508,8 @@ impl Execution {
         Some((NonNull::from(sequence), NonNull::from(group)))
     }
 
-    /// `sequence` / `group` are carried as `NonNull` (raw-pointer semantics, matching the Zig
-    /// spec's `*ExecutionSequence` / `*ConcurrentGroup`) because they point into
+    /// `sequence` / `group` are carried as `NonNull` (raw-pointer semantics, matching the
+    /// original `*ExecutionSequence` / `*ConcurrentGroup`) because they point into
     /// `buntest.execution.{sequences,groups}` and would otherwise alias any live `&mut Execution`.
     fn advance_sequence(
         buntest: NonNull<BunTest>,
@@ -615,7 +615,7 @@ impl Execution {
             scoped_log!(
                 jest,
                 "Running test: \"{}\"",
-                // TODO(port): std.zig.fmtString — escapes string for display; using BStr for now
+                // TODO(port): escape string for display; using BStr for now
                 bstr::BStr::new(entry.base.name.as_deref().unwrap_or(b"(unnamed)"))
             );
 
@@ -769,7 +769,7 @@ impl Execution {
         // not exist (https://github.com/oven-sh/bun/issues/23705).
         // Zeroing all entries matches Jest (SnapshotState.clear() on test_retry,
         // jestjs/jest#7493). Concurrent tests never touch the counts map — see
-        // SnapshotInConcurrentGroup in expect.zig.
+        // SnapshotInConcurrentGroup in the expect module.
         if let Some(runner) = super::jest::Jest::runner() {
             runner.snapshots.reset_counts();
         }
@@ -833,7 +833,7 @@ pub fn step_group(
 
     loop {
         // Carry the active group as NonNull so it does not alias `&mut Execution` re-derived
-        // inside step_group_one (Zig spec uses raw `*ConcurrentGroup`).
+        // inside step_group_one (the original uses a raw `*ConcurrentGroup`).
         let group_ptr: NonNull<ConcurrentGroup> = match this.active_group() {
             Some(g) => NonNull::from(g),
             None => return Ok(StepResult::Complete),
@@ -1082,5 +1082,3 @@ fn step_sequence_one(
         return Ok(None); // run again
     }
 }
-
-// ported from: src/test_runner/Execution.zig

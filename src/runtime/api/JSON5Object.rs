@@ -2,7 +2,7 @@ use bun_ast::{E, Expr, expr::Data as ExprData};
 use bun_collections::HashMap;
 use bun_collections::VecExt;
 use bun_core::StackCheck;
-use bun_core::{String as BunString, ZigString};
+use bun_core::{String as BunString, UnsafeStringView};
 use bun_js_parser::{self as ast, lexer};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, wtf};
 use bun_parsers::json5;
@@ -88,7 +88,7 @@ struct Stringifier {
     space: Space,
     // PORT NOTE: `JSValue` keys live on the heap here, but every entry is also
     // live on the native stack via the `stringify_value` recursion chain, so the
-    // conservative GC scan keeps them alive. Matches the Zig.
+    // conservative GC scan keeps them alive.
     visiting: HashMap<JSValue, ()>,
 }
 
@@ -216,9 +216,9 @@ impl Stringifier {
                 .throw(format_args!("Converting circular structure to JSON5"))
                 .into());
         }
-        // PORT NOTE: reshaped for borrowck — Zig used `defer visiting.remove`;
-        // a scopeguard here would hold `&mut self.visiting` across the recursive
-        // `&mut self` calls below, so remove manually after the call instead.
+        // PORT NOTE: reshaped for borrowck — a scopeguard here would hold
+        // `&mut self.visiting` across the recursive `&mut self` calls below, so
+        // remove manually after the call instead.
         let result = if unwrapped.is_array() {
             self.stringify_array(global, unwrapped)
         } else {
@@ -430,12 +430,12 @@ impl Stringifier {
 }
 
 fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue> {
-    // PORT NOTE: shim for `EString::to_js(allocator, global)` (lives in
-    // `bun_ast::e::String` Zig-side). The JSON5 parser never builds
-    // ropes, so the simple slice → JS path is sufficient.
+    // PORT NOTE: shim for `EString::to_js(allocator, global)` on
+    // `bun_ast::e::String`. The JSON5 parser never builds ropes, so the
+    // simple slice → JS path is sufficient.
     if str.is_utf16 {
-        let zig = ZigString::init_utf16(str.slice16());
-        let bun_s = BunString::init(zig);
+        let view = UnsafeStringView::init_utf16(str.slice16());
+        let bun_s = BunString::init(view);
         bun_s.to_js(global)
     } else {
         jsc::bun_string_jsc::create_utf8_for_js(global, str.slice8())
@@ -467,5 +467,3 @@ fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
         _ => Ok(JSValue::UNDEFINED),
     }
 }
-
-// ported from: src/runtime/api/JSON5Object.zig

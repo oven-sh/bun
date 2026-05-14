@@ -87,7 +87,7 @@ const _: () = {
         fn to_js(self, _global: &JSGlobalObject) -> JSValue {
             // HTMLBundle is *only* constructed via `init()` → `IntrusiveRc::new`
             // (heap-boxed, intrusive-refcounted) and wrapped via the inherent
-            // `HTMLBundle::to_js(*mut Self, …)` below. The Zig codegen `toJS`
+            // `HTMLBundle::to_js(*mut Self, …)` below. The codegen `toJS`
             // wraps the *existing* `*HTMLBundle` allocation; re-boxing a
             // by-value `self` here would split the allocation from its refcount
             // and make `finalize`'s `deref` target the wrong heap block. No
@@ -114,7 +114,7 @@ const _: () = {
 impl HTMLBundle {
     /// Initialize an HTMLBundle given a path.
     pub fn init(global: &JSGlobalObject, path: &[u8]) -> IntrusiveRc<HTMLBundle> {
-        // Zig `try allocator.dupe` was the only fallible op; Box::from aborts on OOM.
+        // The only fallible op is the path dupe; Box::from aborts on OOM.
         IntrusiveRc::new(HTMLBundle {
             ref_count: RefCount::init(),
             global,
@@ -127,7 +127,6 @@ impl HTMLBundle {
         bun_ptr::finalize_js_box_noop(self);
     }
 
-    // Zig `deinit`: only `allocator.free(this.path)` + `bun.destroy(this)`.
     // `path: Box<[u8]>` auto-drops; dealloc handled by IntrusiveRc — no explicit Drop body.
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)] once codegen attribute lands for this class.
@@ -193,7 +192,7 @@ pub enum State {
     Html(*mut StaticRoute),
 }
 
-// PORT NOTE: Zig's `State.deinit` is *only* invoked from `Route.deinit` and the
+// PORT NOTE: `State.deinit` is *only* invoked from `Route.deinit` and the
 // dev-mode reset in `onAnyRequest`; ordinary `this.state = ...` overwrites in
 // `onComplete`/`onPluginsResolved`/etc. do NOT run it. Mapping it to `impl Drop`
 // would fire on every assignment — in particular `on_complete`'s
@@ -315,8 +314,7 @@ impl Route {
             }
         }
 
-        // Zig `state: switch (this.state) { ... continue :state this.state; }` — one re-dispatch
-        // after `.pending` schedules the bundle.
+        // Loop re-dispatches once after `.pending` schedules the bundle.
         loop {
             match route.state.get() {
                 State::Pending => {
@@ -327,7 +325,7 @@ impl Route {
                             bstr::BStr::new(req.url())
                         );
                     }
-                    // TODO(dezig-oom): verify route.schedule_bundle is fallible
+                    // TODO(port-oom): verify route.schedule_bundle is fallible
                     bun_core::handle_oom(route.schedule_bundle(server));
                     continue;
                 }
@@ -370,7 +368,7 @@ impl Route {
                             bstr::BStr::new(req.url())
                         );
                     }
-                    // TODO: use the code from DevServer.zig to render the error
+                    // TODO: use the DevServer error-rendering code to render the error
                     resp.end_without_body(true);
                 }
                 State::Html(html) => {
@@ -476,9 +474,9 @@ impl Route {
 
         if let Some(define) = &cli.args.serve_define {
             debug_assert_eq!(define.keys.len(), define.values.len());
-            // PORT NOTE: Zig bulk-set `entries.len` + `@memcpy` + `reIndex` against
-            // `StringArrayHashMap`; Rust `StringMap` exposes only put/insert. Same
-            // result, slightly more hash work.
+            // PORT NOTE: previously a bulk-set + reIndex against `StringArrayHashMap`;
+            // Rust `StringMap` exposes only put/insert. Same result, slightly more
+            // hash work.
             // PERF(port): was bulk reIndex — profile in Phase B.
             for (k, v) in define.keys.iter().zip(define.values.iter()) {
                 config.define.put(k, v)?;
@@ -538,7 +536,7 @@ impl Route {
                 }
                 let mut log = Log::init();
                 completion_task.log.clone_to_with_recycled(&mut log, true);
-                // PORT NOTE: reshaped for borrowck — Zig wrote
+                // PORT NOTE: reshaped for borrowck — original wrote
                 // `this.state = .{ .err = ... }` then mutated `this.state.err`.
                 if let Some(server) = self.server.get() {
                     if server.config().is_development() {
@@ -584,7 +582,7 @@ impl Route {
                     bun_output::flush();
                 }
 
-                // PORT NOTE: reshaped for borrowck — Zig appended every route in
+                // PORT NOTE: reshaped for borrowck — original appended every route in
                 // iteration order then mutably called `html_route.clone()` through
                 // a raw ptr aliasing the route table. `AnyRoute::Static` carries
                 // an intrusive `*mut StaticRoute` here; defer appending the HTML
@@ -597,7 +595,7 @@ impl Route {
                 // Create static routes for each output file
                 // PORT NOTE: index loop because the SourceMap branch reads a sibling entry.
                 for i in 0..output_files.len() {
-                    // TODO(dezig-oom): verify OutputFile::to_blob is fallible
+                    // TODO(port-oom): verify OutputFile::to_blob is fallible
                     let blob =
                         AnyBlob::Blob(bun_core::handle_oom(output_files[i].to_blob(global_this)));
                     let mut headers = Headers::default();
@@ -682,7 +680,7 @@ impl Route {
                         continue;
                     }
 
-                    // TODO(dezig-oom): verify server.append_static_route is fallible
+                    // TODO(port-oom): verify server.append_static_route is fallible
                     bun_core::handle_oom(server.append_static_route(
                         route_path,
                         AnyRoute::Static(static_route),
@@ -695,10 +693,10 @@ impl Route {
                 });
                 // SAFETY: html_route is a fresh heap::alloc with ref_count=1;
                 // sole owner before registration.
-                // TODO(dezig-oom): verify StaticRoute::clone is fallible
+                // TODO(port-oom): verify StaticRoute::clone is fallible
                 let html_route_clone =
                     bun_core::handle_oom(unsafe { &mut *html_route.as_ptr() }.clone(global_this));
-                // TODO(dezig-oom): verify server.append_static_route is fallible
+                // TODO(port-oom): verify server.append_static_route is fallible
                 bun_core::handle_oom(server.append_static_route(
                     &html_route_path,
                     AnyRoute::Static(html_route),
@@ -706,7 +704,7 @@ impl Route {
                 ));
                 self.state.set(State::Html(html_route_clone));
 
-                // TODO(dezig-oom): verify server.reload_static_routes is fallible
+                // TODO(port-oom): verify server.reload_static_routes is fallible
                 if !bun_core::handle_oom(server.reload_static_routes()) {
                     // Server has shutdown, so it won't receive any new requests
                     // TODO: handle this case
@@ -761,7 +759,7 @@ impl Route {
                         .config()
                         .is_development()
                     {
-                        // TODO: use the code from DevServer.zig to render the error
+                        // TODO: use the DevServer error-rendering code to render the error
                     } else {
                         // To protect privacy, do not show errors to end users in production.
                         // TODO: Show a generic error page.
@@ -783,7 +781,7 @@ impl Drop for Route {
         debug_assert!(self.pending_responses.get().is_empty());
         // `pending_responses` (Vec) and `bundle` (IntrusiveRc) auto-drop.
         // `state` has no `Drop` glue for the intrusive-pointer variants — release
-        // them explicitly (mirrors Zig `Route.deinit` calling `this.state.deinit()`).
+        // them explicitly via `state.deinit()`.
         // `with_mut` is fine here — refcount==0 so no other `&Route` exists.
         self.state.with_mut(|s| s.deinit());
         // `bun.destroy(this)` handled by IntrusiveRc dealloc.
@@ -829,7 +827,7 @@ impl PendingResponse {
         // `ScopedRef` bumps the count and derefs on every exit path.
         let _keep_route = unsafe { bun_ptr::ScopedRef::new(route_ptr) };
 
-        // PORT NOTE: reshaped for borrowck — Zig accessed this.route.pending_responses through
+        // PORT NOTE: reshaped for borrowck — access `this.route.pending_responses` through
         // raw ptr; mutate via raw ptr (single-threaded).
         // SAFETY: single-threaded; Route is alive (we hold a ref). R-2: deref as
         // shared (`&*`); `pending_responses` is `JsCell`-wrapped.
@@ -851,5 +849,3 @@ impl PendingResponse {
         }
     }
 }
-
-// ported from: src/runtime/server/HTMLBundle.zig

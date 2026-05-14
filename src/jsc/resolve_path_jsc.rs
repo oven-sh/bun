@@ -21,7 +21,7 @@ pub extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
 
     // The input is user-controlled and may be arbitrarily long. The
     // threadlocal `join_buf` is only 4096 bytes, so allocate a buffer sized
-    // to fit. Zig used a StackFallbackAllocator(4096) here.
+    // to fit.
     // PERF(port): was stack-fallback alloc — profile in Phase B
     let mut buf = vec![0u8; cwd.len() + str.slice().len() + 2];
 
@@ -33,5 +33,3 @@ pub extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
 
     BunString::clone_utf8(out_slice)
 }
-
-// ported from: src/jsc/resolve_path_jsc.zig

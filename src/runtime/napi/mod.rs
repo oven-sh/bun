@@ -1,5 +1,4 @@
 //! Node-API (N-API) implementation.
-//! Port of src/napi/napi.zig.
 //!
 //! B-2: full draft (2962 lines, preserved in `napi_body.rs`) depends on
 //! `bun_jsc::{AnyTask, ConcurrentTask, Debugger, EventLoop, Strong, Task,
@@ -66,5 +65,3 @@ pub enum NapiStatus {
 pub struct ThreadsafeFunction(());
 pub struct AsyncWork(());
 pub struct Ref(());
-
-// ported from: src/napi/napi.zig

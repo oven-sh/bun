@@ -1,6 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 #[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_core::ZigString;
+use bun_core::UnsafeStringView;
 
 use super::Expect;
 use super::get_signature;
@@ -46,13 +46,13 @@ pub fn to_match_snapshot(
     };
     let _ = buntest_strong; // Drop at scope exit replaces `defer buntest_strong.deinit()`.
 
-    let mut hint_string: ZigString = ZigString::EMPTY;
+    let mut hint_string: UnsafeStringView = UnsafeStringView::EMPTY;
     let mut property_matchers: Option<JSValue> = None;
     match arguments.len() {
         0 => {}
         1 => {
             if arguments[0].is_string() {
-                arguments[0].to_zig_string(&mut hint_string, global)?;
+                arguments[0].to_unsafe_string_view(&mut hint_string, global)?;
             } else if arguments[0].is_object() {
                 property_matchers = Some(arguments[0]);
             } else {
@@ -80,7 +80,7 @@ pub fn to_match_snapshot(
             property_matchers = Some(arguments[0]);
 
             if arguments[1].is_string() {
-                arguments[1].to_zig_string(&mut hint_string, global)?;
+                arguments[1].to_unsafe_string_view(&mut hint_string, global)?;
             } else {
                 return this.throw_fmt(
                     global,
@@ -104,5 +104,3 @@ pub fn to_match_snapshot(
 
     Expect::snapshot(&**this, global, value, property_matchers, hint.slice(), "toMatchSnapshot")
 }
-
-// ported from: src/test_runner/expect/toMatchSnapshot.zig

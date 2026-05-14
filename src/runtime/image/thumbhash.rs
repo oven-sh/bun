@@ -18,7 +18,7 @@ use core::f32::consts::PI;
 pub const MAX_LEN: usize = 25;
 
 pub fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]) -> &'a mut [u8] {
-    // PORT NOTE: Zig returns `out[0..n]`; mirrored here as a mut sub-slice borrow of `out`.
+    // Returns a mut sub-slice borrow of `out` covering the encoded bytes.
     debug_assert!(w > 0 && w <= 100 && h > 0 && h <= 100);
     debug_assert!(rgba.len() == (w as usize) * (h as usize) * 4);
 
@@ -34,7 +34,7 @@ pub fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]) -> &'
         i += 4;
     }
     if avg[3] > 0.0 {
-        // PORT NOTE: reshaped for borrowck — Zig indexed avg[3] inside the loop body.
+        // Reshaped for borrowck — copy `avg[3]` out before mutably iterating `avg[0..3]`.
         let a3 = avg[3];
         for c in &mut avg[0..3] {
             *c /= a3;
@@ -104,7 +104,7 @@ pub fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]) -> &'
     }
 
     let mut odd = false;
-    // PORT NOTE: Zig `inline for` over tuple of &Channel — all same type, plain loop.
+    // All four channels share the same type, so a plain loop suffices.
     for ch in [&lc, &pc, &qc, &ac] {
         for &f in &ch.ac[0..ch.n] {
             let u: u8 = (15.0 * f).round() as u8;
@@ -374,5 +374,3 @@ impl<'a> NibbleReader<'a> {
 fn clamp8(v: f32) -> u8 {
     (v.clamp(0.0, 1.0) * 255.0) as u8
 }
-
-// ported from: src/runtime/image/thumbhash.zig

@@ -12,7 +12,7 @@ pub enum Display {
     Pair(DisplayPair),
 }
 
-// PORT NOTE: Zig `DeriveParse`/`DeriveToCss` for a 2-payload union(enum) tries each
+// PORT NOTE: `DeriveParse`/`DeriveToCss` for a 2-payload tagged union tries each
 // payload's `parse` in declaration order; `toCss` dispatches to the active payload.
 impl Display {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
@@ -136,7 +136,7 @@ impl DisplayPair {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
 
-        // PORT NOTE: Zig used `bun.ComptimeStringMap(..).getASCIIICaseInsensitive`.
+        // PORT NOTE: originally a compile-time case-insensitive string map.
         // 8 keys → if-chain over `eql_case_insensitive_ascii::<true>` (phf values
         // would have to be const-eval, and `VendorPrefix` bitflags are not).
         use bun_core::eql_case_insensitive_ascii as eq;
@@ -167,7 +167,7 @@ impl DisplayPair {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // PORT NOTE: reshaped Zig if-else chain into match for tagged-union payload extraction.
+        // PORT NOTE: reshaped if-else chain into match for tagged-union payload extraction.
         match (self.outside, &self.inside, self.is_list_item) {
             (DisplayOutside::Inline, DisplayInside::FlowRoot, false) => {
                 return dest.write_str("inline-block");
@@ -249,7 +249,7 @@ impl DisplayInside {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
 
-        // PORT NOTE: Zig used `bun.ComptimeStringMap(..).getASCIIICaseInsensitive`.
+        // PORT NOTE: originally a compile-time case-insensitive string map.
         // 10 keys → if-chain over `eql_case_insensitive_ascii::<true>`.
         use bun_core::eql_case_insensitive_ascii as eq;
         Ok(if eq(ident, b"flow", true) {
@@ -299,5 +299,3 @@ impl DisplayInside {
         }
     }
 }
-
-// ported from: src/css/properties/display.zig

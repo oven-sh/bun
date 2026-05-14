@@ -1,12 +1,12 @@
 #pragma once
 #include "root.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 namespace Bake {
 
-class GlobalObject : public Zig::GlobalObject {
+class GlobalObject : public Bun::GlobalObject {
 public:
-    using Base = Zig::GlobalObject;
+    using Base = Bun::GlobalObject;
 
     void* m_perThreadData = nullptr;
     DECLARE_INFO;
@@ -32,7 +32,7 @@ public:
     void finishCreation(JSC::VM& vm);
 
     GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable)
-        : Zig::GlobalObject(vm, structure, methodTable)
+        : Bun::GlobalObject(vm, structure, methodTable)
     {
     }
 };

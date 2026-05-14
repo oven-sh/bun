@@ -40,15 +40,14 @@ pub type FdT = i32;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub type PidFdType = FdT;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
-pub type PidFdType = (); // u0 in Zig
+pub type PidFdType = (); // unused on non-Linux
 
 // ──────────────────────────────────────────────────────────────────────────
 // Rusage — platform-uniform resource-usage struct
 //
-// One Bun-level type per target, mirroring Zig's `bun.spawn.Rusage`
-// (process.zig:72-97). On every Unix this is `libc::rusage` — Rust's libc
-// crate, unlike Zig's `std.posix`, *does* define `rusage` on FreeBSD with
-// the standard `ru_*` field names, so no hand-rolled FreeBSD struct is
+// One Bun-level type per target. On every Unix this is `libc::rusage` —
+// Rust's libc crate defines `rusage` on FreeBSD with the standard `ru_*`
+// field names, so no hand-rolled FreeBSD struct is
 // needed. On Windows it is the value-typed `WinRusage` below (NOT
 // `uv_rusage_t` — that is vendor FFI ABI in `bun_libuv_sys` and stays
 // untouched; our Windows path fills `WinRusage` directly from Win32, not
@@ -66,10 +65,10 @@ pub struct WinRusage {
     pub utime: WinTimeval,
     pub stime: WinTimeval,
     pub maxrss: u64,
-    // ixrss, idrss, isrss, minflt, majflt, nswap: u0 in Zig — zero-sized, omitted
+    // ixrss, idrss, isrss, minflt, majflt, nswap: unused on Windows — omitted
     pub inblock: u64,
     pub oublock: u64,
-    // msgsnd, msgrcv, nsignals, nvcsw, nivcsw: u0 in Zig — zero-sized, omitted
+    // msgsnd, msgrcv, nsignals, nvcsw, nivcsw: unused on Windows — omitted
 }
 
 pub type IoCounters = bun_windows_sys::IO_COUNTERS;
@@ -110,13 +109,13 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     } != 0
     {
         // FILETIME is in 100-nanosecond ticks. 1 s = 10_000_000 ticks; 1 µs =
-        // 10 ticks. The Zig spec (process.zig:53) computes the sub-second part
+        // 10 ticks. An earlier implementation computed the sub-second part
         // as `temp % 1_000_000`, which is unit-mismatched: it takes a 100-ns
         // tick count modulo a microsecond denominator, so a 178 125 µs run
         // (1_781_250 ticks) reports as 781_250 µs. That over-report is what
         // tips the "does not use 100% cpu > install" test (`cpuTime.total <
-        // 750_000`) on Windows aarch64. Diverge from spec and convert
-        // correctly: `(ticks % 10_000_000) / 10`.
+        // 750_000`) on Windows aarch64. Convert correctly:
+        // `(ticks % 10_000_000) / 10`.
         let mut temp: u64 =
             ((kerneltime.dwHighDateTime as u64) << 32) | kerneltime.dwLowDateTime as u64;
         if temp > 0 {
@@ -158,8 +157,8 @@ pub fn rusage_zeroed() -> Rusage {
 
 /// Platform-uniform field accessors over [`Rusage`]. The underlying alias has
 /// divergent field names (`ru_*` on every Unix `libc::rusage`; bare names on
-/// `WinRusage` with several `u0`/absent counters). This trait gives JS-facing
-/// getters one cfg-free body, matching the Zig spec's uniform names.
+/// `WinRusage` with several absent counters). This trait gives JS-facing
+/// getters one cfg-free body with uniform names.
 pub trait RusageFields {
     fn utime_sec(&self) -> i64;
     fn utime_usec(&self) -> i64;
@@ -258,7 +257,7 @@ impl RusageFields for WinRusage {
     fn maxrss_(&self) -> f64 {
         self.maxrss as f64
     }
-    // Zig declares these as `u0` on Windows — always zero.
+    // Not tracked on Windows — always zero.
     #[inline]
     fn ixrss_(&self) -> f64 {
         0.0
@@ -368,9 +367,8 @@ impl Default for PosixSpawnOptions {
 }
 
 impl PosixSpawnOptions {
-    /// No-op — matches Zig `PosixSpawnOptions.deinit` (process.zig:1104).
-    /// Exists for cfg-parity with `WindowsSpawnOptions::deinit`, which closes
-    /// heap-allocated `uv::Pipe` handles on the spawn error path.
+    /// No-op. Exists for cfg-parity with `WindowsSpawnOptions::deinit`, which
+    /// closes heap-allocated `uv::Pipe` handles on the spawn error path.
     #[inline]
     pub fn deinit(&mut self) {}
 }
@@ -501,7 +499,7 @@ impl PosixSpawnResult {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn pidfd_flags_for_linux() -> u32 {
-        // pidfd_nonblock only supported in 5.10+. The Zig path consults
+        // pidfd_nonblock only supported in 5.10+. Ideally this consults
         // `analytics.kernel_version()` (semver compare); until that helper is
         // ported, optimistically request NONBLOCK and rely on the EINVAL retry
         // below to fall back on older kernels.
@@ -587,15 +585,14 @@ impl PosixSpawnResult {
 // spawn_process_posix — the fd/action plumbing + posix_spawn call
 // ──────────────────────────────────────────────────────────────────────────
 
-// Apple `<spawn.h>` extensions not exported by the `libc` crate (Zig: `bun.c.*`).
+// Apple `<spawn.h>` extensions not exported by the `libc` crate.
 #[cfg(target_os = "macos")]
 pub const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEFAULT
 #[cfg(target_os = "macos")]
 pub const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
 
 /// RAII fd owner — closes the wrapped [`Fd`] on drop iff it is valid.
-/// Replaces the Zig `defer if (fd != .invalid) fd.close()` pattern; [`Fd`]
-/// itself is `Copy` (a thin handle) and so cannot impl `Drop`.
+/// [`Fd`] itself is `Copy` (a thin handle) and so cannot impl `Drop`.
 #[cfg(unix)]
 struct AutoCloseFd(Fd);
 
@@ -625,23 +622,21 @@ impl Drop for AutoCloseFd {
     }
 }
 
-/// RAII fd cleanup matching the Zig `defer` (process.zig:1393-1403) and
-/// `errdefer` (process.zig:1407-1411) in `spawnProcessPosix`. The `defer`
-/// runs on *every* exit (set CLOEXEC on `to_set_cloexec`, then close
-/// `to_close_at_end`); the `errdefer` additionally closes `to_close_on_error`
-/// on error returns. `on_error` is disarmed on the success path.
+/// RAII fd cleanup for `spawn_process_posix`. The unconditional cleanup runs
+/// on *every* exit (set CLOEXEC on `to_set_cloexec`, then close
+/// `to_close_at_end`); the error-only cleanup additionally closes
+/// `to_close_on_error` on error returns. `on_error` is disarmed on the success
+/// path.
 ///
 /// This exists so that bare `?` on `actions.*` propagates without leaking
 /// the parent-side socketpair ends pushed earlier in the loop.
 ///
-/// PORT NOTE (intentional divergence): Zig's `errdefer` only fires on
-/// error-union returns (`try` failures), *not* on `return .{.err = ..}` value
-/// returns — so in the spec, socketpair/set_nonblocking/spawn_z value-error
-/// paths leak `to_close_on_error`. This guard initializes `on_error = true`
-/// and is only disarmed after `spawn_z` succeeds, deliberately widening the
-/// cleanup to cover those value-error returns as well. The fds in
-/// `to_close_on_error` are parent-side ends never handed back to the caller on
-/// any error path, so closing them is the correct behavior.
+/// PORT NOTE: This guard initializes `on_error = true` and is only disarmed
+/// after `spawn_z` succeeds, so socketpair/set_nonblocking/spawn_z value-error
+/// returns also run the cleanup (an earlier implementation leaked
+/// `to_close_on_error` on those paths). The fds in `to_close_on_error` are
+/// parent-side ends never handed back to the caller on any error path, so
+/// closing them is the correct behavior.
 #[cfg(unix)]
 struct PosixSpawnFdGuard {
     to_set_cloexec: Vec<Fd>,
@@ -752,8 +747,8 @@ pub fn spawn_process_posix(
     let mut extra_fds: Vec<ExtraPipe> = Vec::new();
     // errdefer extra_fds.deinit() — Vec drops on ?
     // PERF(port): was stack-fallback allocator (2048)
-    // Zig `defer` + `errdefer` cleanup → owned by an RAII guard so every `?`
-    // (and every explicit `return Ok(Err(..))`) runs it. See PosixSpawnFdGuard.
+    // Cleanup owned by an RAII guard so every `?` (and every explicit
+    // `return Ok(Err(..))`) runs it. See PosixSpawnFdGuard.
     let mut cleanup = PosixSpawnFdGuard {
         to_set_cloexec: Vec::new(),
         to_close_at_end: Vec::new(),
@@ -770,8 +765,8 @@ pub fn spawn_process_posix(
     }
 
     let stdio_options: [&PosixStdio; 3] = [&options.stdin, &options.stdout, &options.stderr];
-    // PORT NOTE: reshaped for borrowck — Zig holds [3]*?bun.FD into spawned;
-    // we index spawned.{stdin,stdout,stderr} via a helper closure instead.
+    // PORT NOTE: reshaped for borrowck — instead of holding three pointers into
+    // `spawned`, we index spawned.{stdin,stdout,stderr} via a helper closure.
     let mut dup_stdout_to_stderr: bool = false;
 
     // The label is only referenced from the Linux memfd fast-path below.

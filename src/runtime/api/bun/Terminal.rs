@@ -14,15 +14,15 @@ use core::ffi::{c_int, c_ulong, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::node::StringOrBuffer;
-use crate::webcore::blob::ZigStringBlobExt;
+use crate::webcore::blob::UnsafeStringViewBlobExt;
 use bun_core::SignalCode;
-use bun_core::ZigString;
+use bun_core::UnsafeStringView;
 use bun_io::Loop as AsyncLoop;
 use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
 use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
-    MarkedArrayBuffer, SysErrorJsc, ZigStringSlice,
+    MarkedArrayBuffer, SysErrorJsc, UTF8Slice,
 };
 use bun_sys::{self as sys, Fd, FdExt};
 
@@ -36,7 +36,7 @@ bun_output::declare_scope!(Terminal, hidden);
 // Generated bindings — `jsc.Codegen.JSTerminal`. The `.classes.ts` codegen
 // emits `crate::generated_classes::js_Terminal` with `from_js`/`to_js` and the
 // cached-value accessors; re-export here so callers continue to spell `js::*`
-// (matching Zig's `js.toJS`/`js.gc.set(.data, …)`).
+// (`js.toJS`/`js.gc.set(.data, …)`).
 pub use self::js::{from_js, from_js_direct, to_js};
 pub mod js {
     pub use crate::generated_classes::js_Terminal::{
@@ -44,7 +44,7 @@ pub mod js {
         exit_set_cached, from_js, from_js_direct, get_constructor, to_js,
     };
 
-    /// Zig: `js.gc` — typed accessor for the `values:` slots.
+    /// `js.gc` — typed accessor for the `values:` slots.
     pub mod gc {
         use bun_jsc::{JSGlobalObject, JSValue};
 
@@ -129,7 +129,7 @@ pub struct Terminal {
     rows: Cell<u16>,
 
     /// Terminal name (e.g., "xterm-256color"). Read-only after construction.
-    term_name: ZigStringSlice,
+    term_name: UTF8Slice,
 
     /// Event loop handle for callbacks. Read-only after construction.
     event_loop_handle: EventLoopHandle,
@@ -187,7 +187,7 @@ pub type IOReader = BufferedReader;
 pub struct Options {
     pub cols: u16,
     pub rows: u16,
-    pub term_name: ZigStringSlice,
+    pub term_name: UTF8Slice,
     pub data_callback: Option<JSValue>,
     pub exit_callback: Option<JSValue>,
     pub drain_callback: Option<JSValue>,
@@ -198,7 +198,7 @@ impl Default for Options {
         Self {
             cols: 80,
             rows: 24,
-            term_name: ZigStringSlice::default(),
+            term_name: UTF8Slice::default(),
             data_callback: None,
             exit_callback: None,
             drain_callback: None,
@@ -206,7 +206,7 @@ impl Default for Options {
     }
 }
 
-// Local extension shims for `JSValue.getOptional` (Terminal.zig). Typed
+// Local extension shims for `JSValue.getOptional`. Typed
 // `getOptional` is not yet a single inherent generic on `bun_jsc::JSValue`;
 // these wrap `get` + the per-type coercion. `withAsyncContextIfNeeded` is the
 // inherent `JSValue::with_async_context_if_needed` in `bun_jsc` — call sites
@@ -217,7 +217,7 @@ trait JSValueTerminalExt {
         self,
         global: &JSGlobalObject,
         name: &[u8],
-    ) -> JsResult<Option<ZigStringSlice>>;
+    ) -> JsResult<Option<UTF8Slice>>;
     fn get_optional_value(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<JSValue>>;
 }
 impl JSValueTerminalExt for JSValue {
@@ -231,7 +231,7 @@ impl JSValueTerminalExt for JSValue {
         self,
         global: &JSGlobalObject,
         name: &[u8],
-    ) -> JsResult<Option<ZigStringSlice>> {
+    ) -> JsResult<Option<UTF8Slice>> {
         match self.get(global, name)? {
             Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_slice(global)?)),
             _ => Ok(None),
@@ -302,8 +302,8 @@ impl Options {
 
 impl Drop for Options {
     fn drop(&mut self) {
-        // term_name: ZigString::Slice has its own Drop; reset to default afterward
-        // matches Zig `this.* = .{}` but is unnecessary in Rust.
+        // term_name: `UnsafeStringView::Slice` has its own Drop; resetting to
+        // default afterward is unnecessary in Rust.
     }
 }
 
@@ -431,11 +431,11 @@ impl Terminal {
         let term_name = if !options.term_name.slice().is_empty() {
             core::mem::take(&mut options.term_name)
         } else {
-            ZigStringSlice::from_utf8_never_free(b"xterm-256color")
+            UTF8Slice::from_utf8_never_free(b"xterm-256color")
         };
         // Ownership moves to the struct below; clear so caller's options drop
         // doesn't double-free on the WriterStartFailed/ReaderStartFailed paths.
-        options.term_name = ZigStringSlice::default();
+        options.term_name = UTF8Slice::default();
 
         // `bun.new(Terminal, .{...})` → heap::alloc; the intrusive ref_count
         // field starts at 1 (JS side's ref). Wrapped as IntrusiveRc on success.
@@ -658,8 +658,7 @@ impl Terminal {
     /// `create_from_spawn` whose subprocess never started. Downgrades the
     /// JSRef so the wrapper is GC-eligible, marks `finalized` so
     /// `on_reader_done` skips the JS exit callback, and runs `close_internal`.
-    /// Mirrors the `defer { terminal_info.? }` block in
-    /// `js_bun_spawn_bindings.zig`.
+    /// Used by the spawn-bindings cleanup path.
     pub fn abandon_from_spawn(&self) {
         self.this_value.with_mut(|v| v.downgrade());
         self.update_flags(|f| f.insert(Flags::FINALIZED));
@@ -708,9 +707,8 @@ impl Terminal {
     /// before the thread completes.
     #[cfg(windows)]
     fn close_pseudoconsole_off_thread(&self, hpcon: windows::HPCON) {
-        // PORT NOTE: Zig used `std.Thread.spawn(.{}, fn, .{hpcon})` then
-        // `.detach()`. PORTING.md bans std::process but not std::thread; a raw
-        // detached OS thread matches the Zig (no event-loop integration needed).
+        // PORT NOTE: PORTING.md bans std::process but not std::thread; a raw
+        // detached OS thread is sufficient here (no event-loop integration needed).
         let hpcon_addr = hpcon as usize;
         match std::thread::Builder::new().spawn(move || {
             // SAFETY: hpcon was a valid HPCON when taken; ClosePseudoConsole is
@@ -808,9 +806,9 @@ mod lib_util {
     use super::*;
     use bun_core::ZStr;
 
-    // PORT NOTE: Zig used non-atomic file-level vars (single-threaded init).
-    // PORTING.md §Global mutable state: bool→AtomicBool; handle slot is an
-    // AtomicPtr (null ⇔ None — dlopen never yields a null Some). JS-thread-only.
+    // PORT NOTE: PORTING.md §Global mutable state — bool→AtomicBool; handle
+    // slot is an AtomicPtr (null ⇔ None — dlopen never yields a null Some).
+    // JS-thread-only.
     static HANDLE: core::sync::atomic::AtomicPtr<c_void> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
     static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
@@ -915,16 +913,15 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
             let mut t = termios;
 
             // Input flags: standard terminal input processing
-            // PORT NOTE: Zig used struct-literal flag init on std.posix tc_iflag_t;
-            // Rust libc termios uses raw tcflag_t bitfields, so these are bit-ORs
-            // of the libc constants (identical values).
+            // PORT NOTE: libc termios uses raw tcflag_t bitfields, so these are
+            // bit-ORs of the libc constants.
             t.c_iflag = libc::ICRNL // Map CR to NL on input
                 | libc::IXON // Enable XON/XOFF flow control on output
                 | libc::IXANY // Any character restarts output
                 | libc::IMAXBEL // Ring bell on input queue full
                 | libc::BRKINT; // Signal interrupt on break
-            // IUTF8: present in Linux/macOS/FreeBSD kernels but Zig std's
-            // tc_iflag_t only exposes the field on Linux/macOS, so probe for it.
+            // IUTF8: present in Linux/macOS/FreeBSD kernels; only set it where
+            // the libc constant is exposed.
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             {
                 t.c_iflag |= libc::IUTF8;
@@ -967,8 +964,7 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
             t.c_cc[libc::VTIME] = 0; // Timeout for non-canonical read
 
             // Set baud rate to 38400 (standard for PTYs)
-            // PORT NOTE: Zig assigned `.B38400` to ispeed/ospeed enum fields;
-            // libc termios on Linux encodes speed in c_cflag, so use
+            // PORT NOTE: libc termios on Linux encodes speed in c_cflag, so use
             // cfsetispeed/cfsetospeed (the portable way to set both).
             // SAFETY: `t` is a fully-initialized termios from tcgetattr.
             unsafe {
@@ -1125,8 +1121,8 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     // errdefer block: scopeguard captures &mut to all of the above.
     // PORT NOTE: reshaped for borrowck — using a single closure that reads the
     // Option cells at drop-time would require interior mutability. Instead,
-    // inline the cleanup at each early-return point. This matches the Zig
-    // errdefer semantics exactly (cleanup runs on every `return Err`).
+    // inline the cleanup at each early-return point. This preserves
+    // errdefer-style semantics (cleanup runs on every `return Err`).
     macro_rules! cleanup {
         () => {
             // SAFETY: every Some(h) is a valid open Win32 handle still owned by
@@ -1205,8 +1201,8 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     // Wrap server (overlapped) ends as libuv-owned FDs so they can be passed
     // to BufferedReader/StreamingWriter.start() which calls uv_pipe_open.
     // Do not .take() until after success — on Err the cleanup! must still see
-    // Some(h) so the HANDLE isn't leaked (matches Zig: `out_server = null` only
-    // after the fallible call succeeds).
+    // Some(h) so the HANDLE isn't leaked (`out_server` is only cleared after
+    // the fallible call succeeds).
     let read_fd = match Fd::from_system(out_server.unwrap()).make_libuv_owned() {
         Ok(fd) => {
             out_server = None;
@@ -1277,9 +1273,8 @@ impl Terminal {
             let Some(termios_data) = get_termios(self.master_fd.get()) else {
                 return JSValue::js_number(0.0);
             };
-            // PORT NOTE: Zig used @typeInfo to extract the packed-struct backing
-            // integer of std.posix tc_*flag_t. In Rust/libc these are already raw
-            // integers (tcflag_t), so read the field directly.
+            // PORT NOTE: libc termios fields are already raw integers
+            // (tcflag_t), so read the field directly.
             let raw: u64 = match FIELD {
                 TermiosField::Iflag => termios_data.c_iflag as u64,
                 TermiosField::Oflag => termios_data.c_oflag as u64,
@@ -1309,8 +1304,8 @@ impl Terminal {
             let Some(mut termios_data) = get_termios(self.master_fd.get()) else {
                 return Ok(());
             };
-            // PORT NOTE: Zig computed maxInt of the packed-struct backing integer
-            // via @typeInfo. tcflag_t::MAX is the same value (platform width).
+            // PORT NOTE: tcflag_t::MAX is the maximum representable flag value
+            // (platform width).
             let max_val: f64 = libc::tcflag_t::MAX as f64;
             let clamped = num.max(0.0).min(max_val);
             let bits = clamped as libc::tcflag_t;
@@ -1786,7 +1781,7 @@ impl Terminal {
         let signal_value: JSValue = if let Some(s) = signal {
             // SignalCode derives Debug → "SIGTERM" etc.
             let name = format!("{:?}", s);
-            ZigString::init(name.as_bytes()).to_js(global_this)
+            UnsafeStringView::init(name.as_bytes()).to_js(global_this)
         } else {
             JSValue::NULL
         };
@@ -1828,9 +1823,9 @@ impl Terminal {
         };
 
         let global_this = self.global();
-        // allocator.dupe(u8, chunk) — Zig recovered from OOM here (logged + `return true`
-        // to keep reading). Replicate with try_reserve so a transient OOM on a large
-        // chunk doesn't abort the process.
+        // OOM here is recovered (logged + `return true` to keep reading). Use
+        // try_reserve so a transient OOM on a large chunk doesn't abort the
+        // process.
         // PERF(port): was explicit dupe + MarkedArrayBuffer.fromBytes; preserving.
         let mut v: Vec<u8> = Vec::new();
         if v.try_reserve_exact(chunk.len()).is_err() {
@@ -1912,7 +1907,7 @@ fn deinit_and_destroy(this: *mut Terminal) {
 }
 
 // `bun.io.BufferedReader.init(@This())` — vtable parent. Terminal declares
-// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` (Terminal.zig).
+// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop`.
 bun_io::buffered_reader_parent_link!(Terminal for Terminal);
 impl BufferedReaderParent for Terminal {
     const KIND: bun_io::BufferedReaderParentLinkKind =
@@ -1932,7 +1927,7 @@ impl BufferedReaderParent for Terminal {
         // Delegate to the inherent `Terminal::loop_()` which is cfg-split:
         // on Windows it projects `.uv_loop()` (the `*mut uv_loop_t` field of
         // `WindowsLoop`), NOT a raw cast of the `bun_uws::Loop` wrapper —
-        // matching Terminal.zig `loop()` (`this.event_loop_handle.loop().uv_loop`).
+        // matching `loop()` (`this.event_loop_handle.loop().uv_loop`).
         Self::from_parent_ptr(this).loop_().cast()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
@@ -2006,5 +2001,3 @@ impl bun_io::pipe_writer::WindowsStreamingWriterParent for Terminal {
         Self::from_parent_ptr(this).on_writer_close()
     }
 }
-
-// ported from: src/runtime/api/bun/Terminal.zig

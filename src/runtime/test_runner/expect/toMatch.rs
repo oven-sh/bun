@@ -54,9 +54,8 @@ pub fn to_match(
     }
 
     // handle failure
-    // PORT NOTE: Zig shares one Formatter across both `to_fmt` calls; in Rust each
-    // `to_fmt` borrows `&mut Formatter` for the lifetime of the returned wrapper, so
-    // we need a second Formatter for the second value (matches toContain.rs / toBe.rs).
+    // PORT NOTE: each `to_fmt` borrows `&mut Formatter` for the lifetime of the returned
+    // wrapper, so we need a second Formatter for the second value (matches toContain.rs / toBe.rs).
     let mut formatter2 = super::make_formatter(global);
     let expected_fmt = expected_value.to_fmt(&mut formatter);
     let value_fmt = value.to_fmt(&mut formatter2);
@@ -98,5 +97,3 @@ pub fn to_match(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toMatch.zig

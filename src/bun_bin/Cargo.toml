@@ -5,7 +5,7 @@ edition.workspace = true
 
 # Built as a staticlib so the native build (`bun bd` → ninja) can feed the
 # whole Rust crate graph into its own link step alongside the C/C++ object
-# set, exactly where `bun-zig.o` used to go. The C entry point (`main`) is
+# set. The C entry point (`main`) is
 # `#[no_mangle] extern "C"` in lib.rs; the clang++ driver provides crt1.o
 # (`_start` → `main`).
 [lib]

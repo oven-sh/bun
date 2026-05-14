@@ -81,7 +81,7 @@ impl Stmt {
             me.idx += 1;
             me.currently_executing = None;
         }
-        // Zig: `defer child.deinit();` — child is not used below.
+        // `child` is not used below; deinit it now.
         // Async children are *not* freed here (they outlive their parent's
         // notion of "done"); see `Async`'s empty `deinit`.
         if !matches!(interp.node(child).kind(), StateKind::Async) {
@@ -103,5 +103,3 @@ impl Stmt {
         me.node.exprs.len()
     }
 }
-
-// ported from: src/shell/states/Stmt.zig

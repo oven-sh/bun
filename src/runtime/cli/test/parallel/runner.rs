@@ -47,10 +47,10 @@ macro_rules! format_bytes {
 pub const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 
 /// Owns the coordinator-side per-run worker temp directory path bytes;
-/// recursively removes it on drop. Mirrors the Zig
+/// recursively removes it on drop. Mirrors
 /// `defer if (worker_tmpdir) |d| bun.FD.cwd().deleteTree(d) catch {}`.
-/// Zig stored a `[:0]const u8` whose `.len` excludes the sentinel; here we
-/// store the bare path with no trailing NUL so `path()`/Drop hand the exact
+/// The original stored a NUL-terminated string whose length excluded the sentinel;
+/// here we store the bare path with no trailing NUL so `path()`/Drop hand the exact
 /// same bytes to `delete_tree` that `make_path` created.
 struct WorkerTmpdir(Option<Box<[u8]>>);
 
@@ -100,7 +100,7 @@ pub fn run_as_coordinator(
 
     // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
 
-    // Owned path bytes (Zig: `[:0]const u8` from allocPrintSentinel — the
+    // Owned path bytes (originally a NUL-terminated string from `allocPrintSentinel` — the
     // sentinel was for C interop only, `.len` excluded it). ZStr is a borrow
     // header; we must own the backing storage here. Drop recursively removes
     // the directory once the run finishes.
@@ -173,7 +173,7 @@ pub fn run_as_coordinator(
     }
 
     let mut workers: Vec<Worker> = Vec::with_capacity(k as usize);
-    // TODO(port): Zig allocates uninitialized then assigns in-place; Rust pushes
+    // TODO(port): the original allocated uninitialized then assigned in-place; Rust pushes
     // constructed values. Populate fully BEFORE constructing Coordinator so it
     // can hold `&mut [Worker]` without aliasing the push loop. The `coord`
     // backref is null here and patched once Coordinator's address is fixed.
@@ -299,8 +299,8 @@ pub fn run_as_coordinator(
 fn build_worker_argv(
     ctx: &Command::ContextData,
 ) -> Result<Box<[bun_spawn::CStrPtr]>, bun_core::Error> {
-    // Zig `[:null]?[*:0]const u8` — null-sentinel slice of C-string pointers.
-    // String storage was arena-owned in Zig; route through the process-lifetime
+    // Originally a null-sentinel slice of C-string pointers.
+    // String storage was arena-owned; route through the process-lifetime
     // CLI arena (bulk-freed on exit).
     let mut argv: Vec<bun_spawn::CStrPtr> = Vec::new();
     let opts = &ctx.test_options;
@@ -353,7 +353,7 @@ fn build_worker_argv(
         argv.push(print_z(format_args!("--seed={}", seed))?);
     }
     // --bail is intentionally NOT forwarded: workers Global.exit(1) on bail
-    // (test_command.zig handleTestCompleted), which the coordinator would
+    // (`test_command::handleTestCompleted`), which the coordinator would
     // misread as a crash. Cross-worker bail is handled at file granularity by
     // the coordinator instead.
     if opts.repeat_count > 0 {
@@ -469,9 +469,9 @@ fn build_worker_argv(
     }
 
     argv.push(core::ptr::null());
-    // Zig: `argv.items[0 .. argv.items.len - 1 :null]` — sentinel slice excluding
-    // the trailing null from len but keeping it as sentinel. Rust callers index
-    // by .len() so we keep the None in the boxed slice.
+    // The original sliced off the trailing null from the length while keeping it
+    // as a sentinel. Rust callers index by `.len()` so we keep the
+    // `None` in the boxed slice.
     Ok(argv.into_boxed_slice())
 }
 
@@ -814,5 +814,3 @@ pub fn worker_emit_test_done(file_idx: u32, formatted_line: &[u8]) {
     wf.str(formatted_line);
     cmds.send(wf.finish());
 }
-
-// ported from: src/cli/test/parallel/runner.zig

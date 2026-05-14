@@ -89,7 +89,7 @@ let s = String::clone_utf8(utf8_bytes);    // copies into a WTFStringImpl
 let s = String::borrow_utf8(utf8_bytes);   // no copy; caller keeps slice alive
 let s = String::static_(b"literal");       // 'static slice, never freed
 
-let utf8: ZigStringSlice = s.to_utf8();    // ref-holding view; falls back to allocating a copy
+let utf8: UTF8Slice = s.to_utf8();         // ref-holding view; falls back to allocating a copy
 let owned: Vec<u8>       = s.to_utf8_bytes();
 ```
 

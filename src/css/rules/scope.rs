@@ -44,8 +44,7 @@ impl<R> ScopeRule<R> {
             // <scope-start> is treated as an ancestor of scope end.
             // https://drafts.csswg.org/css-nesting/#nesting-at-scope
             if let Some(scope_start) = &self.scope_start {
-                // PORT NOTE: Zig passed an anon-struct fn pointer; the Rust
-                // `Printer::with_context` carries the captured state as the
+                // PORT NOTE: `Printer::with_context` carries the captured state as the
                 // first closure arg (no `&self` capture across `&mut dest`).
                 dest.with_context(
                     scope_start,
@@ -98,5 +97,3 @@ impl<R> ScopeRule<R> {
         }
     }
 }
-
-// ported from: src/css/rules/scope.zig

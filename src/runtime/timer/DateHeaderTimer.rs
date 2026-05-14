@@ -56,7 +56,7 @@ impl DateHeaderTimer {
         let elapsed = now.duration(&last_update).ms();
 
         // If the last update was more than 1 second ago, the date is stale
-        // (Zig used `std.time.ms_per_s` as comptime_int — coerces to i64; use literal to avoid bare `as` narrowing)
+        // (1000 = ms per second; use a literal to avoid bare `as` narrowing)
         if elapsed >= 1000 {
             // Update the date immediately since it's stale
             bun_output::scoped_log!(
@@ -122,5 +122,3 @@ pub extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: *mut Loop)
         unsafe { (*timer_all()).update_date_header_timer_if_necessary(loop_ref, vm_ptr) };
     }
 }
-
-// ported from: src/runtime/timer/DateHeaderTimer.zig

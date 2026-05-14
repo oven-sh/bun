@@ -106,7 +106,7 @@ impl OwnedResolvedSource {
 
     /// Hand the raw value to C++ (which takes over the `deref()` obligation
     /// per `headers-handwritten.h` `BunString::deref` callers in
-    /// `Zig::ResolvedSource` consumers). After this, Rust must not touch the
+    /// `Bun::ResolvedSource` consumers). After this, Rust must not touch the
     /// strings.
     #[inline]
     pub fn into_ffi(self) -> ResolvedSource {
@@ -143,5 +143,3 @@ impl Drop for OwnedResolvedSource {
         self.0.bytecode_origin_path.deref();
     }
 }
-
-// ported from: src/jsc/ResolvedSource.zig

@@ -1,7 +1,7 @@
 #include "JSNodeHTTPServerSocket.h"
 #include "JSNodeHTTPServerSocketPrototype.h"
-#include "ZigGlobalObject.h"
-#include "ZigGeneratedClasses.h"
+#include "BunGlobalObject.h"
+#include "BunGeneratedClasses.h"
 #include "DOMIsoSubspaces.h"
 #include "ScriptExecutionContext.h"
 #include "helpers.h"
@@ -11,8 +11,8 @@
 #include <wtf/text/WTFString.h>
 #include <bun-uws/src/App.h>
 
-extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
-extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
+extern "C" void Bun__NodeHTTPResponse_setClosed(void* nativeResponse);
+extern "C" void Bun__NodeHTTPResponse_onClose(void* nativeResponse, JSC::EncodedJSValue jsValue);
 extern "C" void us_socket_free_stream_buffer(us_socket_stream_buffer_t* streamBuffer);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
@@ -39,7 +39,7 @@ JSNodeHTTPServerSocket* JSNodeHTTPServerSocket::create(JSC::VM& vm, JSC::Structu
     return object;
 }
 
-JSNodeHTTPServerSocket* JSNodeHTTPServerSocket::create(JSC::VM& vm, Zig::GlobalObject* globalObject, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response)
+JSNodeHTTPServerSocket* JSNodeHTTPServerSocket::create(JSC::VM& vm, Bun::GlobalObject* globalObject, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response)
 {
     auto* structure = globalObject->m_JSNodeHTTPServerSocketStructure.getInitializedOnMainThread(globalObject);
     return create(vm, structure, socket, is_ssl, response);
@@ -134,7 +134,7 @@ void JSNodeHTTPServerSocket::onClose()
     }
 
     // This function can be called during GC!
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
+    Bun::GlobalObject* globalObject = static_cast<Bun::GlobalObject*>(this->globalObject());
     if (!functionToCallOnClose) {
         if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
             Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
@@ -182,7 +182,7 @@ void JSNodeHTTPServerSocket::onClose()
 void JSNodeHTTPServerSocket::onDrain()
 {
     // This function can be called during GC!
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
+    Bun::GlobalObject* globalObject = static_cast<Bun::GlobalObject*>(this->globalObject());
     if (!functionToCallOnDrain) {
         return;
     }
@@ -234,7 +234,7 @@ void JSNodeHTTPServerSocket::onDrain()
 void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
 {
     // This function can be called during GC!
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
+    Bun::GlobalObject* globalObject = static_cast<Bun::GlobalObject*>(this->globalObject());
     if (!functionToCallOnData) {
         return;
     }
@@ -343,7 +343,7 @@ extern "C" JSC::EncodedJSValue Bun__getNodeHTTPServerSocketThisValue(bool is_ssl
     return JSValue::encode(getNodeHTTPServerSocket<false>(socket));
 }
 
-extern "C" JSC::EncodedJSValue Bun__createNodeHTTPServerSocketForClientError(bool isSSL, us_socket_t* us_socket, Zig::GlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue Bun__createNodeHTTPServerSocketForClientError(bool isSSL, us_socket_t* us_socket, Bun::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

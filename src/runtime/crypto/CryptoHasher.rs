@@ -3,7 +3,7 @@ use core::cell::Cell;
 use core::ffi::c_char;
 
 use bun_boringssl_sys as boring_ssl;
-use bun_core::ZigString;
+use bun_core::UnsafeStringView;
 use bun_jsc::{
     ArrayBuffer, CallFrame, ErrorCode, JSGlobalObject, JSObject, JSValue, JsCell, JsClass as _,
     JsError, JsResult,
@@ -13,16 +13,18 @@ use crate::crypto::evp::{AlgorithmExt as _, EVP};
 use crate::crypto::{HMAC, create_crypto_error, evp};
 use crate::generated_classes::PropertyName;
 use crate::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
-// `Hashers` = src/sha_hmac/sha.zig (re-exported via bun_sha_hmac::sha::evp::*).
+// `Hashers` = `bun_sha_hmac::sha` (re-exported via bun_sha_hmac::sha::evp::*).
 use bun_sha_hmac::sha as hashers;
 
-// `std.crypto.hash.{sha3,blake2}` — pure-Zig stdlib algos with no BoringSSL
+// SHA-3 / BLAKE2 — pure-software algos with no BoringSSL
 // streaming context. Per docs/PORTING.md ("prefer a well-tested crates.io dep
 // over hand-porting bit-twiddling"), wire RustCrypto's `sha3`/`blake2` into the
-// `ZigHashAlgo` trait below.
-use zig_crypto_algos::{Blake2s256, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256};
+// `SoftwareHashAlgo` trait below.
+use software_crypto_algos::{
+    Blake2s256, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256,
+};
 
-// Zig: `const Digest = EVP.Digest;` → `[u8; EVP_MAX_MD_SIZE]`
+// `const Digest = EVP.Digest;` → `[u8; EVP_MAX_MD_SIZE]`
 type Digest = evp::Digest;
 
 const EVP_MAX_MD_SIZE_USIZE: usize = boring_ssl::EVP_MAX_MD_SIZE as usize;
@@ -70,7 +72,7 @@ pub enum CryptoHasher {
     // HMAC_CTX contains 3 EVP_CTX, so let's store it as a pointer.
     Hmac(JsCell<Option<Box<HMAC>>>),
     Evp(JsCell<EVP>),
-    Zig(JsCell<CryptoHasherZig>),
+    Software(JsCell<CryptoHasherSoftware>),
 }
 
 impl CryptoHasher {
@@ -80,7 +82,7 @@ impl CryptoHasher {
         Box::new(init)
     }
 
-    // ── Extern: For using only CryptoHasherZig in c++ ──────────────────────
+    // ── Extern: For using only CryptoHasherSoftware in c++ ──────────────────────
     // TODO(port): move to <runtime>_sys (these are exported C ABI fns)
 
     #[unsafe(no_mangle)]
@@ -92,8 +94,10 @@ impl CryptoHasher {
         // SAFETY: caller passes a valid (ptr,len) byte slice
         let name = unsafe { bun_core::ffi::slice(name_bytes.cast::<u8>(), name_len) };
 
-        if let Some(inner) = CryptoHasherZig::init(name) {
-            return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(inner))));
+        if let Some(inner) = CryptoHasherSoftware::init(name) {
+            return Some(CryptoHasher::new(CryptoHasher::Software(JsCell::new(
+                inner,
+            ))));
         }
 
         let Some(algorithm) = evp::lookup(name) else {
@@ -132,8 +136,9 @@ impl CryptoHasher {
         other_handle: &CryptoHasher,
     ) -> Option<Box<CryptoHasher>> {
         match other_handle {
-            CryptoHasher::Zig(other) => {
-                let hasher = CryptoHasher::new(CryptoHasher::Zig(JsCell::new(other.get().copy())));
+            CryptoHasher::Software(other) => {
+                let hasher =
+                    CryptoHasher::new(CryptoHasher::Software(JsCell::new(other.get().copy())));
                 Some(hasher)
             }
             CryptoHasher::Evp(other) => {
@@ -157,8 +162,8 @@ impl CryptoHasher {
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__update")]
     pub fn extern_update(&self, input: &[u8]) -> bool {
         match self {
-            CryptoHasher::Zig(zig) => {
-                zig.with_mut(|z| z.update(input));
+            CryptoHasher::Software(sw) => {
+                sw.with_mut(|z| z.update(input));
                 true
             }
             CryptoHasher::Evp(evp) => {
@@ -173,8 +178,8 @@ impl CryptoHasher {
     pub fn extern_digest(&self, global: &JSGlobalObject, digest_buf: &mut [u8]) -> u32 {
         let buf_len = digest_buf.len();
         match self {
-            CryptoHasher::Zig(zig) => {
-                let res = zig.with_mut(move |z| z.final_with_len(digest_buf, buf_len));
+            CryptoHasher::Software(sw) => {
+                let res = sw.with_mut(move |z| z.final_with_len(digest_buf, buf_len));
                 u32::try_from(res.len()).expect("int cast")
             }
             CryptoHasher::Evp(evp) => {
@@ -189,7 +194,7 @@ impl CryptoHasher {
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__getDigestSize", no_catch)]
     pub fn extern_digest_size(&self) -> u32 {
         match self {
-            CryptoHasher::Zig(inner) => inner.get().digest_length as u32,
+            CryptoHasher::Software(inner) => inner.get().digest_length as u32,
             CryptoHasher::Evp(inner) => inner.get().size() as u32,
             _ => 0,
         }
@@ -230,7 +235,7 @@ impl CryptoHasher {
     /// `pub const hash = jsc.host_fn.wrapStaticMethod(CryptoHasher, "hash_", false);`
     ///
     /// Hand-expanded `wrapStaticMethod` decode for the parameter list
-    /// `(*JSGlobalObject, ZigString, Node.BlobOrStringOrBuffer, ?Node.StringOrBuffer)`.
+    /// `(*JSGlobalObject, UnsafeStringView, Node.BlobOrStringOrBuffer, ?Node.StringOrBuffer)`.
     pub fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<3>();
         let mut i = 0usize;
@@ -244,7 +249,7 @@ impl CryptoHasher {
             }
         };
 
-        // ZigString
+        // UnsafeStringView
         let algorithm = {
             let Some(string_value) = next_eat() else {
                 return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
@@ -252,7 +257,7 @@ impl CryptoHasher {
             if string_value.is_undefined_or_null() {
                 return Err(global.throw_invalid_arguments(format_args!("Expected string")));
             }
-            string_value.get_zig_string(global)?
+            string_value.get_unsafe_string_view(global)?
         };
 
         // Node.BlobOrStringOrBuffer
@@ -304,16 +309,16 @@ impl CryptoHasher {
                 Some(hmac) => hmac.size() as f64,
                 None => return Err(Self::throw_hmac_consumed(global)),
             },
-            CryptoHasher::Zig(inner) => inner.get().digest_length as f64,
+            CryptoHasher::Software(inner) => inner.get().digest_length as f64,
         }))
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_algorithm(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // Zig: `@tagName(inner.algorithm)` → `AlgorithmExt::tag_cstr` (ASCII).
+        // `@tagName(inner.algorithm)` → `AlgorithmExt::tag_cstr` (ASCII).
         let tag: &'static [u8] = match this {
             CryptoHasher::Evp(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
-            CryptoHasher::Zig(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
+            CryptoHasher::Software(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
             CryptoHasher::Hmac(inner) => match inner.get() {
                 Some(hmac) => hmac.algorithm.tag_cstr().to_bytes(),
                 None => return Err(Self::throw_hmac_consumed(global)),
@@ -387,7 +392,7 @@ impl CryptoHasher {
                     size
                 )));
             }
-            // PORT NOTE: reshaped for borrowck — Zig rebinds the slice into the output buffer.
+            // PORT NOTE: reshaped for borrowck — the original rebinds the slice into the output buffer.
             // SAFETY: `output_buf.ptr` is the JSC-owned writable backing store
             // (`bytes_len >= size` checked above; not detached since len > 0);
             // borrowed for this frame only. Build the `&mut` directly from the
@@ -412,13 +417,13 @@ impl CryptoHasher {
 
     pub fn hash_(
         global: &JSGlobalObject,
-        algorithm: ZigString,
+        algorithm: UnsafeStringView,
         input: BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
         let mut evp = match EVP::by_name(&algorithm, global) {
             Some(e) => e,
-            None => match CryptoHasherZig::hash_by_name(global, &algorithm, input, output)? {
+            None => match CryptoHasherSoftware::hash_by_name(global, &algorithm, input, output)? {
                 Some(v) => return Ok(v),
                 None => {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -475,7 +480,7 @@ impl CryptoHasher {
             return Err(global.throw_invalid_arguments(format_args!("algorithm must be a string")));
         }
 
-        let algorithm = algorithm_name.get_zig_string(global)?;
+        let algorithm = algorithm_name.get_unsafe_string_view(global)?;
 
         if algorithm.len == 0 {
             return Err(global.throw_invalid_arguments(format_args!("Invalid algorithm name")));
@@ -537,7 +542,7 @@ impl CryptoHasher {
 
             break 'brk CryptoHasher::Evp(JsCell::new(match EVP::by_name(&algorithm, global) {
                 Some(e) => e,
-                None => match CryptoHasherZig::constructor(&algorithm) {
+                None => match CryptoHasherSoftware::constructor(&algorithm) {
                     Some(h) => return Ok(h),
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -614,7 +619,7 @@ impl CryptoHasher {
                     return Err(global.throw_value(instance));
                 }
             }
-            CryptoHasher::Zig(inner) => {
+            CryptoHasher::Software(inner) => {
                 inner.with_mut(|z| z.update(buffer.slice()));
                 return Ok(this_value);
             }
@@ -634,7 +639,7 @@ impl CryptoHasher {
                     .expect("OOM"),
             )),
             CryptoHasher::Hmac(inner) => 'brk: {
-                // R-2: `HMAC::copy` takes `&mut self` (writes nothing — Zig
+                // R-2: `HMAC::copy` takes `&mut self` (writes nothing —
                 // legacy signature). Project a short `&mut` via `with_mut`;
                 // no JS re-entry inside (HMAC_CTX_copy is a pure FFI call).
                 let copy_result = inner.with_mut(|opt| opt.as_mut().map(|h| h.copy()));
@@ -651,7 +656,9 @@ impl CryptoHasher {
                     }
                 })));
             }
-            CryptoHasher::Zig(inner) => CryptoHasher::Zig(JsCell::new(inner.get().copy())),
+            CryptoHasher::Software(inner) => {
+                CryptoHasher::Software(JsCell::new(inner.get().copy()))
+            }
         };
         Ok(copied.to_js(global))
     }
@@ -709,7 +716,7 @@ impl CryptoHasher {
             output_digest_slice =
                 unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, bytes_len) };
         } else {
-            // Zig: `output_digest_buf = std.mem.zeroes(EVP.Digest);` — already zeroed above.
+            // `output_digest_buf = std.mem.zeroes(EVP.Digest);` — already zeroed above.
             output_digest_slice = &mut output_digest_buf;
         }
 
@@ -765,7 +772,9 @@ impl CryptoHasher {
                 let engine = boring_engine(global);
                 Ok(inner.with_mut(move |e| e.r#final(engine, output_digest_slice)))
             }
-            CryptoHasher::Zig(inner) => Ok(inner.with_mut(move |z| z.final_(output_digest_slice))),
+            CryptoHasher::Software(inner) => {
+                Ok(inner.with_mut(move |z| z.final_(output_digest_slice)))
+            }
         }
     }
 
@@ -776,8 +785,8 @@ impl CryptoHasher {
                 // https://github.com/oven-sh/bun/issues/3250
                 // `inner.deinit()` — handled by Drop on EVP.
             }
-            CryptoHasher::Zig(_inner) => {
-                // `inner.deinit()` — handled by Drop on CryptoHasherZig.
+            CryptoHasher::Software(_inner) => {
+                // `inner.deinit()` — handled by Drop on CryptoHasherSoftware.
             }
             CryptoHasher::Hmac(_inner) => {
                 // `if (inner) |hmac| hmac.deinit();` — handled by Drop on Option<Box<HMAC>>.
@@ -788,19 +797,19 @@ impl CryptoHasher {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// CryptoHasherZig
+// CryptoHasherSoftware
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct CryptoHasherZig {
+pub struct CryptoHasherSoftware {
     pub algorithm: evp::Algorithm,
     pub state: Box<dyn Any>,
     pub digest_length: u8,
 }
 
-/// Trait for the Zig-std hash algorithms used by `CryptoHasherZig`.
-/// Replaces the comptime `(string, type)` table + `@typeInfo` introspection.
-/// Implemented for each algo in `zig_crypto_algos` below.
-pub trait ZigHashAlgo: Default + Clone + 'static {
+/// Trait for the pure-software hash algorithms used by `CryptoHasherSoftware`.
+/// Replaces the original compile-time `(string, type)` table + introspection.
+/// Implemented for each algo in `software_crypto_algos` below.
+pub trait SoftwareHashAlgo: Default + Clone + 'static {
     const NAME: &'static [u8];
     const ALGORITHM: evp::Algorithm;
     /// Replaces `digestLength(Algorithm)` (Shake128→16, Shake256→32, else `T.digest_length`).
@@ -812,12 +821,11 @@ pub trait ZigHashAlgo: Default + Clone + 'static {
     fn final_(&mut self, out: &mut [u8]);
 }
 
-/// Hash-state types for the Zig-stdlib algorithms (`std.crypto.hash.{sha3,blake2}`)
+/// Hash-state types for the SHA-3 / BLAKE2 algorithms
 /// that BoringSSL does not expose as a streaming context. Backed by RustCrypto's
-/// `sha3`/`blake2` crates (same Keccak-p[1600,24] permutation and BLAKE2s as
-/// Zig's `std.crypto`).
-mod zig_crypto_algos {
-    use super::{ZigHashAlgo, evp};
+/// `sha3`/`blake2` crates (Keccak-p[1600,24] permutation and BLAKE2s).
+mod software_crypto_algos {
+    use super::{SoftwareHashAlgo, evp};
     use sha3::digest::{ExtendableOutputReset, FixedOutputReset, Output, Update};
 
     pub type Sha3_224 = sha3::Sha3_224;
@@ -828,11 +836,11 @@ mod zig_crypto_algos {
     pub type Shake256 = sha3::Shake256;
     pub type Blake2s256 = blake2::Blake2s256;
 
-    /// Fixed-digest Keccak/BLAKE2 — Zig `T.final(state, *[digest_length]u8)`
+    /// Fixed-digest Keccak/BLAKE2 — `T.final(state, *[digest_length]u8)`
     /// writes exactly `digest_length` bytes; mirror via `FixedOutputReset`.
     macro_rules! impl_fixed {
         ($ty:ty, $name:literal, $variant:ident, $len:expr) => {
-            impl ZigHashAlgo for $ty {
+            impl SoftwareHashAlgo for $ty {
                 const NAME: &'static [u8] = $name;
                 const ALGORITHM: evp::Algorithm = evp::Algorithm::$variant;
                 const DIGEST_LENGTH: u8 = $len;
@@ -850,11 +858,11 @@ mod zig_crypto_algos {
         };
     }
 
-    /// SHAKE XOF — Zig `digestLength(Shake128) = 16` / `Shake256 = 32` (the
-    /// Zig stdlib's `Shake.final` squeezes exactly `out.len` bytes).
+    /// SHAKE XOF — `digestLength(Shake128) = 16` / `Shake256 = 32` (the
+    /// original `Shake.final` squeezes exactly `out.len` bytes).
     macro_rules! impl_xof {
         ($ty:ty, $name:literal, $variant:ident, $len:expr) => {
-            impl ZigHashAlgo for $ty {
+            impl SoftwareHashAlgo for $ty {
                 const NAME: &'static [u8] = $name;
                 const ALGORITHM: evp::Algorithm = evp::Algorithm::$variant;
                 const DIGEST_LENGTH: u8 = $len;
@@ -862,7 +870,7 @@ mod zig_crypto_algos {
                     Update::update(self, bytes);
                 }
                 fn final_(&mut self, out: &mut [u8]) {
-                    // Zig `Shake.final(out: []u8)` squeezes exactly `out.len`
+                    // `Shake.final(out: []u8)` squeezes exactly `out.len`
                     // bytes — fill the full slice, not just `DIGEST_LENGTH`.
                     ExtendableOutputReset::finalize_xof_reset_into(self, out);
                 }
@@ -879,9 +887,9 @@ mod zig_crypto_algos {
     impl_fixed!(Blake2s256, b"blake2s256", Blake2s256, 32);
 }
 
-/// Expands `$body` once per `(name_literal, Type)` pair from the Zig `algo_map`.
+/// Expands `$body` once per `(name_literal, Type)` pair from the `algo_map`.
 /// Heterogeneous-type `inline for` → `macro_rules!` per PORTING.md.
-macro_rules! for_each_zig_algo {
+macro_rules! for_each_software_algo {
     ($mac:ident $(, $($args:tt)*)?) => {
         $mac!(b"sha3-224",   Sha3_224   $(, $($args)*)?);
         $mac!(b"sha3-256",   Sha3_256   $(, $($args)*)?);
@@ -893,10 +901,10 @@ macro_rules! for_each_zig_algo {
     };
 }
 
-impl CryptoHasherZig {
+impl CryptoHasherSoftware {
     pub fn hash_by_name(
         global: &JSGlobalObject,
-        algorithm: &ZigString,
+        algorithm: &UnsafeStringView,
         input: BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<Option<JSValue>> {
@@ -907,11 +915,11 @@ impl CryptoHasherZig {
                 }
             };
         }
-        for_each_zig_algo!(arm, global, algorithm, input, output);
+        for_each_software_algo!(arm, global, algorithm, input, output);
         Ok(None)
     }
 
-    fn hash_by_name_inner<A: ZigHashAlgo>(
+    fn hash_by_name_inner<A: SoftwareHashAlgo>(
         global: &JSGlobalObject,
         input: BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
@@ -942,7 +950,7 @@ impl CryptoHasherZig {
         Self::hash_by_name_inner_to_bytes::<A>(global, input, None)
     }
 
-    fn hash_by_name_inner_to_string<A: ZigHashAlgo>(
+    fn hash_by_name_inner_to_string<A: SoftwareHashAlgo>(
         global: &JSGlobalObject,
         input: BlobOrStringOrBuffer,
         encoding: Encoding,
@@ -968,7 +976,7 @@ impl CryptoHasherZig {
         encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, &out[..len])
     }
 
-    fn hash_by_name_inner_to_bytes<A: ZigHashAlgo>(
+    fn hash_by_name_inner_to_bytes<A: SoftwareHashAlgo>(
         global: &JSGlobalObject,
         input: BlobOrStringOrBuffer,
         output: Option<ArrayBuffer>,
@@ -1012,61 +1020,61 @@ impl CryptoHasherZig {
         }
     }
 
-    fn constructor(algorithm: &ZigString) -> Option<Box<CryptoHasher>> {
+    fn constructor(algorithm: &UnsafeStringView) -> Option<Box<CryptoHasher>> {
         macro_rules! arm {
             ($name:literal, $ty:ty, $alg:expr) => {
                 if $alg.slice() == $name {
-                    return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(
-                        CryptoHasherZig {
-                            algorithm: <$ty as ZigHashAlgo>::ALGORITHM,
-                            state: Box::new(<$ty as ZigHashAlgo>::init()),
-                            digest_length: <$ty as ZigHashAlgo>::DIGEST_LENGTH,
+                    return Some(CryptoHasher::new(CryptoHasher::Software(JsCell::new(
+                        CryptoHasherSoftware {
+                            algorithm: <$ty as SoftwareHashAlgo>::ALGORITHM,
+                            state: Box::new(<$ty as SoftwareHashAlgo>::init()),
+                            digest_length: <$ty as SoftwareHashAlgo>::DIGEST_LENGTH,
                         },
                     ))));
                 }
             };
         }
-        for_each_zig_algo!(arm, algorithm);
+        for_each_software_algo!(arm, algorithm);
         None
     }
 
-    pub fn init(algorithm: &[u8]) -> Option<CryptoHasherZig> {
+    pub fn init(algorithm: &[u8]) -> Option<CryptoHasherSoftware> {
         macro_rules! arm {
             ($name:literal, $ty:ty, $alg:expr) => {
                 if $alg == $name {
-                    let handle = CryptoHasherZig {
-                        algorithm: <$ty as ZigHashAlgo>::ALGORITHM,
-                        state: Box::new(<$ty as ZigHashAlgo>::init()),
-                        digest_length: <$ty as ZigHashAlgo>::DIGEST_LENGTH,
+                    let handle = CryptoHasherSoftware {
+                        algorithm: <$ty as SoftwareHashAlgo>::ALGORITHM,
+                        state: Box::new(<$ty as SoftwareHashAlgo>::init()),
+                        digest_length: <$ty as SoftwareHashAlgo>::DIGEST_LENGTH,
                     };
                     return Some(handle);
                 }
             };
         }
-        for_each_zig_algo!(arm, algorithm);
+        for_each_software_algo!(arm, algorithm);
         None
     }
 
     fn update(&mut self, bytes: &[u8]) {
         macro_rules! arm {
             ($name:literal, $ty:ty, $self:expr, $bytes:expr) => {
-                if $self.algorithm == <$ty as ZigHashAlgo>::ALGORITHM {
+                if $self.algorithm == <$ty as SoftwareHashAlgo>::ALGORITHM {
                     // SAFETY: tag matches type stored in `state` (set in init/constructor).
                     let state = $self.state.downcast_mut::<$ty>().expect("unreachable");
-                    return <$ty as ZigHashAlgo>::update(state, $bytes);
+                    return <$ty as SoftwareHashAlgo>::update(state, $bytes);
                 }
             };
         }
-        for_each_zig_algo!(arm, self, bytes);
+        for_each_software_algo!(arm, self, bytes);
         unreachable!();
     }
 
-    fn copy(&self) -> CryptoHasherZig {
+    fn copy(&self) -> CryptoHasherSoftware {
         macro_rules! arm {
             ($name:literal, $ty:ty, $self:expr) => {
-                if $self.algorithm == <$ty as ZigHashAlgo>::ALGORITHM {
+                if $self.algorithm == <$ty as SoftwareHashAlgo>::ALGORITHM {
                     let state = $self.state.downcast_ref::<$ty>().expect("unreachable");
-                    return CryptoHasherZig {
+                    return CryptoHasherSoftware {
                         algorithm: $self.algorithm,
                         state: Box::new(state.clone()),
                         digest_length: $self.digest_length,
@@ -1074,7 +1082,7 @@ impl CryptoHasherZig {
                 }
             };
         }
-        for_each_zig_algo!(arm, self);
+        for_each_software_algo!(arm, self);
         unreachable!();
     }
 
@@ -1085,15 +1093,15 @@ impl CryptoHasherZig {
     ) -> &'a mut [u8] {
         macro_rules! arm {
             ($name:literal, $ty:ty, $self:expr, $out:expr, $len:expr) => {
-                if $self.algorithm == <$ty as ZigHashAlgo>::ALGORITHM {
+                if $self.algorithm == <$ty as SoftwareHashAlgo>::ALGORITHM {
                     let state = $self.state.downcast_mut::<$ty>().expect("unreachable");
-                    <$ty as ZigHashAlgo>::final_(state, $out);
-                    *state = <$ty as ZigHashAlgo>::init();
+                    <$ty as SoftwareHashAlgo>::final_(state, $out);
+                    *state = <$ty as SoftwareHashAlgo>::init();
                     return &mut $out[0..$len];
                 }
             };
         }
-        for_each_zig_algo!(arm, self, output_digest_slice, res_len);
+        for_each_software_algo!(arm, self, output_digest_slice, res_len);
         unreachable!();
     }
 
@@ -1107,8 +1115,9 @@ impl CryptoHasherZig {
 // StaticCryptoHasher
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Trait for `Hashers.*` (src/sha_hmac/sha.zig) — replaces the comptime `Hasher`
-/// type param. `HAS_ENGINE` replaces the Zig `@typeInfo(@TypeOf(Hasher.hash)).fn.params.len == 3`
+/// Trait for `Hashers.*` (`bun_sha_hmac::sha`) — replaces the compile-time `Hasher`
+/// type param. `HAS_ENGINE` replaces the original
+/// `@typeInfo(@TypeOf(Hasher.hash)).fn.params.len == 3`
 /// reflection: when true, `hash()` takes a BoringSSL ENGINE*.
 pub trait StaticHasher: 'static {
     const NAME: &'static str;
@@ -1122,7 +1131,7 @@ pub trait StaticHasher: 'static {
     fn final_(&mut self, out: &mut Self::Digest);
     fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE);
     /// `@field(jsc.Codegen, "JS" ++ name).getConstructor` — per-monomorphization
-    /// codegen module (`bun_jsc::generated::JS${NAME}`). Replaces the Zig
+    /// codegen module (`bun_jsc::generated::JS${NAME}`). Replaces the original
     /// `comptime "JS" ++ name` token paste; each `impl_static_hasher!` arm binds
     /// to the typed wrapper exported by `js_class_module!` for its concrete name.
     fn get_constructor(global: &JSGlobalObject) -> JSValue;
@@ -1179,7 +1188,7 @@ impl_static_hasher!(hashers::SHA512, "SHA512", JSSHA512, 64);
 impl_static_hasher!(hashers::SHA512_256, "SHA512_256", JSSHA512_256, 32);
 
 // PORT NOTE: `#[bun_jsc::JsClass]` cannot expand over a generic struct (it emits
-// `*mut StaticCryptoHasher` without `<H>`). In Zig each `StaticCryptoHasher(Hasher, name)`
+// `*mut StaticCryptoHasher` without `<H>`). In the original each `StaticCryptoHasher(Hasher, name)`
 // instantiation gets its own `.classes.ts` codegen; the Rust equivalent must apply
 // `JsClass` to each concrete monomorphization (MD4/MD5/SHA1/…) once the macro grows
 // generic/alias support.
@@ -1323,12 +1332,12 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: H::Digest = H::new_digest();
-        // PORT NOTE: reshaped for borrowck — Zig used `*Hasher.Digest` rebound into output buffer.
+        // PORT NOTE: reshaped for borrowck — the original used `*Hasher.Digest` rebound into the output buffer.
         let output_digest_slice: &mut H::Digest;
         if let Some(output_buf) = &output {
             let bytes_len = output_buf.byte_slice().len();
             if bytes_len < H::DIGEST {
-                // Zig `comptimePrint` → runtime `format_args!`; observable string is identical.
+                // `comptimePrint` → runtime `format_args!`; observable string is identical.
                 return Err(global.throw_invalid_arguments(format_args!(
                     "TypedArray must be at least {} bytes",
                     H::DIGEST
@@ -1503,7 +1512,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             // `&[u8].as_ptr()` (Stacked-Borrows UB).
             output_digest_slice = unsafe { &mut *output_buf.ptr.cast::<H::Digest>() };
         } else {
-            // Zig: `output_digest_buf = std.mem.zeroes(Hasher.Digest);` — Default already zeroes.
+            // `output_digest_buf = std.mem.zeroes(Hasher.Digest);` — Default already zeroes.
             output_digest_slice = &mut output_digest_buf;
         }
 
@@ -1518,7 +1527,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     }
 
     fn digest_to_encoding(&self, global: &JSGlobalObject, encoding: Encoding) -> JsResult<JSValue> {
-        // Zig comptime zero-init loop → new_digest (zeroed [u8; N]).
+        // Compile-time zero-init loop → new_digest (zeroed [u8; N]).
         let mut output_digest_buf: H::Digest = H::new_digest();
 
         let output_digest_slice: &mut H::Digest = &mut output_digest_buf;
@@ -1538,5 +1547,3 @@ pub type SHA256 = StaticCryptoHasher<hashers::SHA256>;
 pub type SHA384 = StaticCryptoHasher<hashers::SHA384>;
 pub type SHA512 = StaticCryptoHasher<hashers::SHA512>;
 pub type SHA512_256 = StaticCryptoHasher<hashers::SHA512_256>;
-
-// ported from: src/runtime/crypto/CryptoHasher.zig

@@ -37,5 +37,3 @@ impl JSArray {
         JSValue::from_cell(self).array_iterator(global)
     }
 }
-
-// ported from: src/jsc/JSArray.zig

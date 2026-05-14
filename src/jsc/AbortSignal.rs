@@ -73,10 +73,10 @@ unsafe extern "C" {
     safe fn WebCore__AbortSignal__new(arg0: &JSGlobalObject) -> *mut AbortSignal;
 }
 
-/// Trait expressing the Zig `comptime cb: *const fn (*Context, JSValue) void`
-/// monomorphization for `listen`. Implement on your context type.
-// TODO(port): Zig used a comptime fn-pointer param; Rust has no const fn-ptr
-// generics, so callers implement this trait instead.
+/// Trait used to monomorphize the per-context abort callback for `listen`.
+/// Implement on your context type.
+// TODO(port): callers implement this trait instead of passing a const fn-ptr,
+// since Rust has no const fn-ptr generics.
 pub trait AbortListener {
     fn on_abort(&mut self, reason: JSValue);
 }
@@ -227,7 +227,8 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for AbortSignal {
 /// `Clone` bumps the C++ refcount via `ref()`; `Drop` decrements via `unref()`.
 /// Replaces the broken `Arc<AbortSignal>` pattern (an `Arc` of an opaque ZST
 /// cannot own a C++-allocated object — its payload address is not the C++
-/// object address). Mirrors Zig `?*AbortSignal` + manual `ref()`/`unref()`.
+/// object address). Equivalent to a nullable raw `*AbortSignal` plus manual
+/// `ref()`/`unref()`.
 pub type AbortSignalRef = bun_ptr::ExternalShared<AbortSignal>;
 
 impl AbortSignal {
@@ -267,7 +268,7 @@ impl AbortReason {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `AbortSignal.Timeout` — port of `src/jsc/AbortSignal.zig:Timeout`.
+// `AbortSignal.Timeout`.
 //
 // LAYERING: `EventLoopTimer` + `TimerFlags` live in `bun_event_loop` (lower
 // tier). The per-VM timer heap (`Timer::All`) lives in `bun_runtime` (higher
@@ -289,7 +290,7 @@ pub struct Timeout {
     /// But this does have a ref count increment.
     // PORT NOTE: AbortSignal is an opaque C++ type with intrusive WebCore
     // refcounting (ref/unref) that crosses FFI — PORTING.md §Pointers: never
-    // Arc here. Kept as raw `*mut` with manual unref (matches Zig).
+    // Arc here. Kept as raw `*mut` with manual unref.
     pub signal: *mut AbortSignal,
 
     /// "epoch" is reused.
@@ -304,7 +305,6 @@ bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
 
 impl Timeout {
     fn init(vm: *mut VirtualMachine, signal_: *mut AbortSignal, milliseconds: u64) -> *mut Timeout {
-        // Zig: `bun.timespec.now(.allow_mocked_time).addMs(@intCast(milliseconds))`.
         let deadline = bun_core::Timespec::now_allow_mocked_time()
             .add_ms(i64::try_from(milliseconds).expect("AbortSignal.timeout(ms) overflows i64"));
 
@@ -437,5 +437,3 @@ pub extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
     // VM singleton is process-lifetime.
     unsafe { Timeout::deinit(this, VirtualMachine::get_mut_ptr()) }
 }
-
-// ported from: src/jsc/AbortSignal.zig

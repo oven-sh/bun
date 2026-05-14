@@ -1,4 +1,4 @@
-//! `bundler/options.zig` `Loader` + `SideEffects`.
+//! `Loader` + `SideEffects`.
 //!
 //! Data-only enum + pure predicates. `to_api()` / `from_api()` / `API_NAMES` /
 //! `LoaderOptional::from_api` live in `bun_options_types::LoaderExt` (would
@@ -15,7 +15,7 @@ use phf;
 /// - src/jsc/bindings/headers-handwritten.h
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr)]
-// Zig field names are lower_snake — `@tagName` is exposed to JS (HTMLImportManifest
+// Tag names are lower_snake — they are exposed to JS (HTMLImportManifest
 // `"loader":`, BuildArtifact.loader) so the strum serialization must match exactly.
 #[strum(serialize_all = "snake_case")]
 pub enum Loader {
@@ -46,7 +46,7 @@ pub enum Loader {
 // `OnBeforeParseArguments` / `OnBeforeParseResult` (`bundler_plugin.h`); lock
 // the discriminant width and the values native plugins observe. NB: the C
 // header's `BUN_LOADER_TOML = 7` etc. predate `Jsonc`'s insertion at 7 and are
-// known-stale — Zig `options.zig` is the source of truth, which Rust matches.
+// known-stale — this enum is the source of truth.
 bun_core::assert_ffi_discr!(
     Loader, u8;
     Jsx = 0, Js = 1, Ts = 2, Tsx = 3, Css = 4, File = 5, Json = 6,
@@ -55,7 +55,7 @@ bun_core::assert_ffi_discr!(
 );
 
 impl Default for Loader {
-    /// Mirrors Zig's `Loader = .file` default field initializer.
+    /// Default loader is `File`.
     fn default() -> Self {
         Loader::File
     }
@@ -75,9 +75,8 @@ impl LoaderOptional {
     }
 
     pub fn unwrap(self) -> Option<Loader> {
-        // Spec options.zig:594-596 uses `@enumFromInt(@intFromEnum(opt))` which is
-        // debug-checked. PORTING.md §Forbidden patterns bars transmute-to-enum;
-        // exhaustive match so out-of-range tags are debug-asserted, never UB.
+        // PORTING.md §Forbidden patterns bars transmute-to-enum; exhaustive
+        // match so out-of-range tags are debug-asserted, never UB.
         match self.0 {
             0 => Some(Loader::Jsx),
             1 => Some(Loader::Js),
@@ -233,7 +232,6 @@ impl Loader {
         } else {
             slice_
         };
-        // Zig: names.getWithEql(slice, strings.eqlCaseInsensitiveASCIIICheckLength)
         // TODO(port): phf is case-sensitive; Phase B may need a lowercase pass or
         // bun_core::eql_case_insensitive_ascii lookup over NAMES.entries().
         Self::NAMES.get(slice).copied().or_else(|| {
@@ -314,7 +312,7 @@ impl Loader {
     }
 }
 
-/// `resolver/resolver.zig` `SideEffects`.
+/// `SideEffects` (used by the resolver).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
 pub enum SideEffects {
@@ -338,5 +336,3 @@ pub enum SideEffects {
     // /// Removing the import would not call the plugin which is observable.
     // NoSideEffectsPureDataFromPlugin,
 }
-
-// ported from: src/options_types/BundleEnums.zig (Loader, SideEffects)

@@ -7,17 +7,17 @@ mod _impl {
 
     use crate::node::Encoding;
     use crate::webcore::encoding::{self as encoder, dispatch_encoding};
-    use bun_core::ZigString;
+    use bun_core::UnsafeStringView;
 
     impl BufferVectorized {
         #[unsafe(export_name = "Bun__Buffer_fill")]
         pub extern "C" fn fill(
-            str: *const ZigString,
+            str: *const UnsafeStringView,
             buf_ptr: *mut u8,
             fill_length: usize,
             encoding: Encoding,
         ) -> bool {
-            // SAFETY: caller (C++) passes a valid ZigString pointer.
+            // SAFETY: caller (C++) passes a valid UnsafeStringView pointer.
             let str = unsafe { &*str };
             if str.len == 0 {
                 return true;
@@ -44,7 +44,7 @@ mod _impl {
                     ),
                 }, |E| encoder::write_u8::<E>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len()))
             };
-            // Zig writeU8/writeU16 return `!usize`; Rust port returns `Result<usize, _>` so `written` is already usize.
+            // write_u8/write_u16 return `Result<usize, _>` so `written` is already usize.
             let Ok(written) = result else {
                 return false;
             };
@@ -102,9 +102,9 @@ mod _impl {
                 _ => {}
             }
 
-            // PORT NOTE: reshaped for borrowck — Zig grew two slices (`contents`, `buf`) into the
-            // same underlying buffer and mutated `contents.len` in place. Here we track offsets
-            // and use copy_within (src/dst share `buf`).
+            // PORT NOTE: reshaped for borrowck — track offsets and use
+            // copy_within (src/dst share `buf`) instead of growing two
+            // overlapping slices in place.
             // PERF(port): was memcpy (non-overlapping) — profile in Phase B if memmove-vs-memcpy matters.
             let mut contents_len = written;
             let mut buf_offset = written;
@@ -124,5 +124,3 @@ mod _impl {
         }
     }
 } // mod _impl
-
-// ported from: src/runtime/node/buffer.zig

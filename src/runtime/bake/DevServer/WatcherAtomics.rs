@@ -20,7 +20,7 @@ pub struct WatcherAtomics {
 
     /// The next event to be run. If an event is already running, new events are stored in this
     /// field instead of scheduled directly, and will be run once the current event finishes.
-    // TODO(port): Zig had `align(std.atomic.cache_line)` on this field; Rust cannot align
+    // TODO(port): this field wants cache-line alignment; Rust cannot align
     // individual fields — wrap in a `#[repr(align(128))]` newtype in Phase B if false sharing
     // shows up in profiles.
     // PERF(port): cache-line padding — profile in Phase B
@@ -40,7 +40,7 @@ pub struct WatcherAtomics {
 }
 
 /// Stored in `next_event` (an `AtomicU8`). Modeled as a transparent newtype rather than a
-/// `#[repr(u8)] enum` because Zig used an open enum (`_`) where any other value is an index
+/// `#[repr(u8)] enum` because, beyond the two named values, any other value is an index
 /// into the `events` array, and Rust enums cannot hold unlisted discriminants.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -57,8 +57,9 @@ impl NextEvent {
 impl WatcherAtomics {
     pub fn init(dev: *mut DevServer) -> Self {
         Self {
-            // PORT NOTE: reshaped for borrowck — Zig wrote `events = undefined` then looped
-            // `event.* = .initEmpty(dev)`; Rust uses array::from_fn to construct in place.
+            // PORT NOTE: reshaped for borrowck — uses array::from_fn to construct each
+            // element in place rather than leaving the array uninitialized and filling it
+            // in a loop.
             events: core::array::from_fn(|_| HotReloadEvent::init_empty(dev)),
             next_event: AtomicU8::new(NextEvent::DONE.0),
             current_event: None,
@@ -108,8 +109,8 @@ impl WatcherAtomics {
 
         // Initialize the timer if it is empty.
         if ev_ref.is_empty() {
-            // PORT NOTE: Zig's `std.time.Timer.start()` records a monotonic start time;
-            // we capture `Instant::now()` here and compute elapsed at the read site.
+            // PORT NOTE: capture a monotonic `Instant::now()` here and compute elapsed at
+            // the read site.
             ev_ref.timer = std::time::Instant::now();
         }
 
@@ -149,14 +150,15 @@ impl WatcherAtomics {
 
         #[cfg(debug_assertions)]
         {
-            // PORT NOTE: Zig checked that `ev.timer` was not the 0xAA undefined-memory pattern by
-            // reinterpreting it as `[size]u8`. That check has no Rust equivalent: (1) Rust does not
-            // fill uninitialized memory with 0xAA, (2) `std::time::Instant` is an opaque std type
-            // that contains padding bytes on Linux/Windows, so materialising `&[u8]` over it would
-            // read uninitialized padding (UB), and (3) the type system already guarantees `timer`
-            // is initialized — `HotReloadEvent::init_empty` constructs it and `watcher_acquire_event`
-            // overwrites it with `Instant::now()` before any release. The Zig check is therefore
-            // dropped entirely rather than ported.
+            // PORT NOTE: an earlier debug check compared `ev.timer` against an
+            // undefined-memory poison pattern by reinterpreting it as raw bytes. That check
+            // has no Rust equivalent: (1) Rust does not fill uninitialized memory with a poison
+            // byte, (2) `std::time::Instant` is an opaque std type that contains padding bytes
+            // on Linux/Windows, so materialising `&[u8]` over it would read uninitialized
+            // padding (UB), and (3) the type system already guarantees `timer` is initialized —
+            // `HotReloadEvent::init_empty` constructs it and `watcher_acquire_event` overwrites
+            // it with `Instant::now()` before any release. The check is therefore dropped
+            // entirely.
             ev_ref.debug_mutex.unlock();
         }
 
@@ -284,5 +286,3 @@ impl WatcherAtomics {
         Some(event)
     }
 }
-
-// ported from: src/bake/DevServer/WatcherAtomics.zig

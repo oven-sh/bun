@@ -14,11 +14,11 @@ pub struct Size2D<T> {
     pub b: T,
 }
 
-// PORT NOTE: Zig's `switch (T) { f32 => ..., LengthPercentage => ..., else => T.parse }`
-// is comptime type dispatch. In Rust this is expressed via trait bounds — `f32` and
-// `LengthPercentage` must impl the same `Parse`/`ToCss`/`Eql` traits as other CSS value
-// types (the `f32` impls delegate to `CSSNumberFns`). The per-type `switch` arms are
-// therefore collapsed into trait method calls below.
+// PORT NOTE: the original implementation used compile-time type dispatch over
+// `f32` / `LengthPercentage` / generic `T`. In Rust this is expressed via trait
+// bounds — `f32` and `LengthPercentage` must impl the same `Parse`/`ToCss`/`Eql`
+// traits as other CSS value types (the `f32` impls delegate to `CSSNumberFns`).
+// The per-type dispatch arms are therefore collapsed into trait method calls below.
 // TODO(port): confirm trait names match Phase-B crate API once `generics::
 // parse_tocss_numeric_gated` un-gates; for now bound on `values::protocol`.
 impl<T> Size2D<T>
@@ -76,8 +76,7 @@ where
     }
 
     pub fn deep_clone(&self, _bump: &Arena) -> Self {
-        // TODO(port): css::implement_deep_clone is @typeInfo-based reflection in Zig;
-        // replace with #[derive(DeepClone)] or arena-aware deep_clone in Phase B.
+        // TODO(port): replace with #[derive(DeepClone)] or arena-aware deep_clone in Phase B.
         // For now `T: Clone` covers it (Box payloads deep-clone via their Clone impls).
         Size2D {
             a: self.a.clone(),
@@ -93,7 +92,7 @@ where
 
     #[inline]
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        // PORT NOTE: preserved verbatim from Zig — compares lhs.a against rhs.b only
+        // PORT NOTE: preserved verbatim — compares lhs.a against rhs.b only
         // (not a/a && b/b). Suspect upstream bug, but ported faithfully.
         lhs.a == rhs.b
     }
@@ -103,5 +102,3 @@ where
 // wire trait impls if they don't already exist.
 #[allow(unused_imports)]
 use {CSSNumberFns as _, LengthPercentage as _};
-
-// ported from: src/css/values/size.zig

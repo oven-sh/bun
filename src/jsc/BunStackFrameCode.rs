@@ -1,13 +1,12 @@
-// PORT NOTE: Zig source is `enum(u8) { ..., _ }` (non-exhaustive — any u8 is a
-// valid bit pattern). A `#[repr(u8)] enum` in Rust would be UB for values >6
-// arriving over FFI, so this is ported as a transparent newtype with associated
-// consts. The `match` arms below mirror the Zig `switch` exactly, including the
-// `else` fallthrough for unknown values.
+// PORT NOTE: this is a non-exhaustive enum on the C++ side — any u8 is a
+// valid bit pattern. A `#[repr(u8)] enum` in Rust would be UB for values >6
+// arriving over FFI, so this is a transparent newtype with associated consts.
+// The `match` arms below include a fallthrough for unknown values.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
-pub struct ZigStackFrameCode(pub u8);
+pub struct BunStackFrameCode(pub u8);
 
-impl ZigStackFrameCode {
+impl BunStackFrameCode {
     pub const NONE: Self = Self(0);
     /// 🏃
     pub const EVAL: Self = Self(1);
@@ -22,8 +21,7 @@ impl ZigStackFrameCode {
     /// 👷
     pub const CONSTRUCTOR: Self = Self(6);
 
-    // PORT NOTE: Zig returns `u21` (Unicode code point width). Rust has no u21;
-    // u32 is the narrowest native type that fits.
+    // Returns a Unicode code point; u32 is the narrowest native type that fits.
     pub fn emoji(self) -> u32 {
         match self {
             Self::EVAL => 0x1F3C3,
@@ -49,5 +47,3 @@ impl ZigStackFrameCode {
         }
     }
 }
-
-// ported from: src/jsc/ZigStackFrameCode.zig

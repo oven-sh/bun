@@ -87,10 +87,9 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
-        // PORT NOTE: Zig aliased one `*Formatter` for all three fmt adapters; Rust `to_fmt` takes
-        // `&mut Formatter` and the returned adapter holds that borrow live, so three concurrent
-        // adapters need three formatters. `make_formatter` is a trivial struct init with no shared
-        // state between values.
+        // PORT NOTE: `to_fmt` takes `&mut Formatter` and the returned adapter holds that borrow
+        // live, so three concurrent adapters need three formatters. `make_formatter` is a trivial
+        // struct init with no shared state between values.
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         let mut formatter3 = super::make_formatter(global);
@@ -99,9 +98,9 @@ impl Expect {
         let substring_fmt = substring.to_fmt(&mut formatter2);
         let times_fmt = count.to_fmt(&mut formatter3);
 
-        // PORT NOTE: Zig builds `"\n\n" ++ expected_line ++ received_line` at comptime via named
-        // consts; Rust `concat!` only accepts literal tokens (not `const` items), so the pieces are
-        // inlined directly below instead of bound to RECEIVED_LINE/EXPECTED_LINE locals.
+        // PORT NOTE: `concat!` only accepts literal tokens (not `const` items), so the
+        // `"\n\n"` + expected line + received line pieces are inlined directly below instead
+        // of bound to RECEIVED_LINE/EXPECTED_LINE locals.
         if not {
             if count_as_num == 0 {
                 let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", true);
@@ -177,5 +176,3 @@ impl Expect {
         }
     }
 }
-
-// ported from: src/test_runner/expect/toIncludeRepeated.zig

@@ -26,7 +26,7 @@ static ENV_CONVERTED: core::sync::atomic::AtomicBool = core::sync::atomic::Atomi
 pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
     #[cfg(feature = "ci_assert")]
     {
-        // Zig `bun.assertf` fires in release CI builds too — must be `assert!`, not `debug_assert!`.
+        // Must fire in release CI builds too — use `assert!`, not `debug_assert!`.
         assert!(
             !ENV_CONVERTED.load(core::sync::atomic::Ordering::Relaxed),
             "convertEnvToWTF8 may only be called once"
@@ -40,7 +40,7 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
 
     let mut num_vars: usize = 0;
     let wtf8_buf: Vec<u8> = 'blk: {
-        // TODO(port): Zig's wrapper returns OOM on null; verify `crate::windows::GetEnvironmentStringsW` signature.
+        // TODO(port): the wrapper should return OOM on null; verify `crate::windows::GetEnvironmentStringsW` signature.
         let wtf16_buf: *mut u16 = crate::windows::GetEnvironmentStringsW()?;
         let _free = scopeguard::guard(wtf16_buf, |p| {
             // SAFETY: `p` was returned by GetEnvironmentStringsW and has not been freed.
@@ -59,16 +59,14 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
         }
         // SAFETY: we just measured `len` u16 elements (including terminators) within the OS-owned block.
         let wtf16_slice = unsafe { bun_core::ffi::slice(wtf16_buf, len) };
-        // Zig: `bun.strings.toUTF8AllocWithType(allocator, []u16, slice) catch oom()`.
-        // Rust `bun_core::strings::to_utf8_alloc` is infallible (panics on OOM)
+        // `bun_core::strings::to_utf8_alloc` is infallible (panics on OOM)
         // and returns `Vec<u8>` directly — no `?` here.
         break 'blk bun_core::strings::to_utf8_alloc(wtf16_slice);
     };
     // Stacked Borrows: leak FIRST as a *shared* `&'static [u8]`, then derive every interior
     // pointer from that one shared borrow. Shared reborrows (`&wtf8_buf[len..]`) push
     // SharedReadOnly tags that coexist — unlike `&mut wtf8_buf[len..]`, a later sibling
-    // reborrow does not invalidate previously-pushed `str_ptr`s. Zig has no equivalent
-    // aliasing model so the spec's `@ptrCast(wtf8_buf[len..].ptr)` is fine there.
+    // reborrow does not invalidate previously-pushed `str_ptr`s.
     let wtf8_buf: &'static [u8] = Box::leak(wtf8_buf.into_boxed_slice());
     let mut len: usize = 0;
 
@@ -76,7 +74,7 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
     loop {
         let remaining = &wtf8_buf[len..];
         let str_len = bun_core::slice_to_nul(remaining).len();
-        // PORT NOTE: Zig used `defer len += str_len + 1;` which also runs on `break`.
+        // PORT NOTE: the length increment must run before the `break` too.
         if str_len == 0 {
             len += str_len + 1; // each string is null-terminated
             break; // array ends with empty null-terminated string
@@ -94,7 +92,7 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
     // SAFETY: single-threaded startup; statics are written exactly once here.
     unsafe {
         WTF8_ENV_BUF.write(Some(wtf8_buf));
-        // TODO(port): need Rust equivalent of Zig `std.os.environ` (process-global envp slice).
+        // TODO(port): need a process-global envp slice helper.
         ORIG_ENVIRON.write(Some(bun_core::os::take_environ()));
         bun_core::os::set_environ(envp_slice.as_mut_ptr(), envp_nonnull_len);
     }
@@ -103,5 +101,3 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
     let _ = scopeguard::ScopeGuard::into_inner(env_guard);
     Ok(())
 }
-
-// ported from: src/sys/windows/env.zig

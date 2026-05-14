@@ -11,10 +11,9 @@ pub use linux_mem_fd_allocator::LinuxMemFdAllocator;
 
 /// Push this crate's `StdAllocator` vtable addresses into the
 /// `bun_safety::alloc::has_ptr` registry so allocator-mismatch checks can
-/// distinguish instances (Zig: chain of inline `isInstance` calls in
-/// `safety/alloc.zig:hasPtr`). Idempotent enough — call once at startup.
+/// distinguish instances. Idempotent enough — call once at startup.
 ///
-/// Coverage vs the Zig spec's `hasPtr` chain:
+/// Coverage vs the `has_ptr` chain:
 ///  - `LinuxMemFdAllocator` / `MimallocArena` ×2 /
 ///    `bundle_v2::ExternalFreeFunctionAllocator` → registered below.
 ///  - `c_allocator` / `z_allocator` / `MimallocArena::is_instance` /

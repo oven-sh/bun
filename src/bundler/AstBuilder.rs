@@ -39,7 +39,7 @@ use bun_paths::fs::{Path as FsPath, PathName};
 pub struct AstBuilder<'a, 'bump> {
     pub bump: &'bump Bump,
     pub source: &'a Source,
-    pub source_index: u32, // Zig: u31
+    pub source_index: u32, // logically a u31
     pub stmts: Vec<Stmt>,
     pub scopes: Vec<*mut Scope>,
     pub symbols: Vec<Symbol>,
@@ -59,16 +59,16 @@ pub struct AstBuilder<'a, 'bump> {
 
 // stub fields for ImportScanner duck typing
 //
-// Zig used `comptime` zero-sized fields (`options`, `import_items_for_namespace`)
-// and a `parser_features` decl so `ImportScanner.scan` could duck-type over both
-// the real parser and `AstBuilder`. In Rust this becomes a trait that both impl.
+// `ImportScanner.scan` historically duck-typed over both the real parser and
+// `AstBuilder` via zero-sized fields (`options`, `import_items_for_namespace`)
+// and a `parser_features` decl. In Rust this becomes a trait that both impl.
 // TODO(b2-ast-E): define `ImportScannerHost` trait in `bun_js_parser` and impl it here.
 pub mod parser_features {
     pub const TYPESCRIPT: bool = false;
 }
 
 impl<'a, 'bump> AstBuilder<'a, 'bump> {
-    // stub for ImportScanner duck typing — Zig: `comptime options: js_parser.Parser.Options = .{ .jsx = .{}, .bundle = true }`
+    // stub for ImportScanner duck typing — fixed `js_parser.Parser.Options { jsx: default, bundle: true }`
     // TODO(b2-ast-E): expose as trait assoc const once `ImportScannerHost` exists
     pub fn options(&self) -> js_parser::parse::parse_entry::Options<'static> {
         js_parser::parse::parse_entry::Options {
@@ -78,7 +78,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         }
     }
 
-    // stub for ImportScanner duck typing — Zig: `comptime import_items_for_namespace: struct { fn get(_, _) ?Map { return null; } }`
+    // stub for ImportScanner duck typing — `import_items_for_namespace.get(_, _)` always returns `None`
     pub fn import_items_for_namespace_get(
         &self,
         _ref: Ref,
@@ -109,8 +109,8 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             export_star_import_records: Vec::new(),
             declared_symbols: Default::default(),
             hot_reloading,
-            module_ref: Ref::NONE,  // overwritten below (Zig: undefined)
-            hmr_api_ref: Ref::NONE, // overwritten below (Zig: undefined)
+            module_ref: Ref::NONE,  // overwritten below
+            hmr_api_ref: Ref::NONE, // overwritten below
         };
         ab.module_ref = ab.new_symbol(SymbolKind::Other, b"module")?;
         ab.hmr_api_ref = ab.new_symbol(SymbolKind::Other, b"hmr")?;
@@ -138,7 +138,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         unsafe { &mut *self.current_scope }
     }
 
-    // PORT NOTE: Zig signature lacks `!` but body uses `try` — porting as fallible.
+    // PORT NOTE: fallible — propagates allocation failure.
     pub fn push_scope(&mut self, kind: ScopeKind) -> Result<*mut Scope, OOM> {
         self.scopes.reserve(1);
         self.current_scope_mut().children.ensure_unused_capacity(1);
@@ -215,13 +215,13 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             MutableString::ensure_valid_identifier(path_name.non_unique_name_string_base())?;
         let name = strings::append(b"import_", &non_unique);
         // PORT NOTE: copy into the arena so the raw `*const [u8]` stored on the
-        // Symbol outlives this stack frame (Zig used the parser arena arena).
+        // Symbol outlives this stack frame (the original used the parser arena).
         let name: &[u8] = self.bump.alloc_slice_copy(&name);
         let namespace_ref = self.new_symbol(SymbolKind::Other, name)?;
 
         let clauses: &mut [ClauseItem] = self.bump.alloc_slice_fill_default(N);
 
-        // Zig: `inline for` — all elements are `[]const u8`, so a plain loop suffices.
+        // All elements are byte slices, so a plain loop suffices.
         for ((import_id, out_ref), clause) in identifiers_to_import
             .iter()
             .zip(out.iter_mut())
@@ -301,7 +301,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let module_scope = self.current_scope;
 
         let mut parts = PartList::init_capacity(2);
-        // PORT NOTE: Zig grew len then wrote `parts.mut(i).* = ...`, which is a
+        // PORT NOTE: a previous version grew len then wrote `parts.mut(i).* = ...`, a
         // bitwise store on the SoA slot. In Rust `*parts.mut_(i) = ...` first
         // *drops* the (uninitialized) prior `Part` — and `Part` carries Drop
         // fields (`Vec`/`HashMap`), so that drop frees garbage and corrupts the
@@ -338,12 +338,12 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let module_scope_ref = unsafe { &*module_scope };
         let generated_len = module_scope_ref.generated.len();
         top_level_symbols_to_parts.ensure_total_capacity(generated_len)?;
-        // PORT NOTE: reshaped — Zig grew `entries` then wrote keys/values columns
-        // in lockstep + `reIndex`. Rust `ArrayHashMap` keeps keys/values in private
-        // `Vec`s and rebuilds hashes on every `put_assume_capacity`, so a plain
+        // PORT NOTE: reshaped — instead of growing `entries` and writing keys/values
+        // columns in lockstep + `reIndex`, Rust `ArrayHashMap` keeps keys/values in
+        // private `Vec`s and rebuilds hashes on every `put_assume_capacity`, so a plain
         // pre-reserved insert loop is equivalent (and `re_index` is a no-op here).
-        // Zig shallow-copied a single `Vec(u32){1}`; `Vec` is move-only
-        // in Rust, so allocate a fresh one per key.
+        // `Vec` is move-only in Rust, so allocate a fresh `Vec(u32){1}` per key
+        // rather than shallow-copying one.
         for &ref_ in module_scope_ref.generated.slice() {
             top_level_symbols_to_parts.put_assume_capacity(ref_, Vec::<u32>::from_slice(&[1]));
         }
@@ -352,9 +352,9 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // For more details on this section, look at js_parser.toAST
         // This is mimicking how it calls ImportScanner
         //
-        // PORT NOTE: Zig duck-typed `ImportScanner.scan(AstBuilder, ...)` and
-        // `ConvertESMExportsForHmr.{convertStmt,finalize}` over `AstBuilder`
-        // via `anytype`. The Rust `ImportScanner` is currently monomorphized
+        // PORT NOTE: `ImportScanner.scan(AstBuilder, ...)` and
+        // `ConvertESMExportsForHmr.{convertStmt,finalize}` used to be duck-typed
+        // over `AstBuilder`. The Rust `ImportScanner` is currently monomorphized
         // over the concrete `P<'_, TS, J, SCAN>` parser only (see
         // ImportScanner.rs:30), so the equivalent transform is open-coded here
         // for the stmt shapes `AstBuilder` callers actually emit (`S.Import`,
@@ -365,9 +365,9 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // TODO(b2-ast-E): replace with a `ParserLike` trait so the real
         // `ImportScanner`/`ConvertESMExportsForHmr` can accept `AstBuilder`.
         //
-        // PORT NOTE: Zig assigned `p.stmts.items` directly — its
-        // `ArrayListUnmanaged` storage is owned by `worker.allocator` and
-        // outlives the `AstBuilder` stack value. Rust's `Vec<Stmt>` would
+        // PORT NOTE: a previous version assigned `p.stmts.items` directly — that
+        // unmanaged-list storage was owned by `worker.allocator` and
+        // outlived the `AstBuilder` stack value. Rust's `Vec<Stmt>` would
         // drop with `self`, leaving `parts[1].stmts` dangling once the
         // builder goes out of scope (UAF in the printer). Copy the `Copy`
         // `Stmt`s/`*mut Scope`s into the bump arena so the returned
@@ -445,7 +445,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         // `canBeMoved()` — generate a temp const binding and
                         // reference it from `export_props`.
                         // SAFETY: `StmtOrExpr` lives in the arena; bitwise read
-                        // matches Zig's value copy (no Drop fields touched).
+                        // is a plain value copy (no Drop fields touched).
                         let value = unsafe { core::ptr::read(&raw const st.value) }.to_expr();
                         let temp_id = self.generate_temp_ref(Some(b"default_export"));
                         parts.mut_(1).declared_symbols.append(DeclaredSymbol {
@@ -532,7 +532,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         } else {
             // Non-HMR path: mirror `ImportScanner.scan(AstBuilder, p, stmts,
             // false, false, {})` for the stmt shapes AstBuilder callers emit
-            // (`S.Import`, `S.Local{is_export}`, `S.ExportDefault`). The Zig
+            // (`S.Import`, `S.Local{is_export}`, `S.ExportDefault`). The
             // duck-typed scanner is what populates `named_exports` /
             // `named_imports` / `import_records_for_current_part`; without it
             // the linker can't bind imports against this generated module
@@ -584,7 +584,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             Vec::<u32>::move_from_list(core::mem::take(&mut self.import_records_for_current_part));
 
         // SAFETY: module_scope is a live arena allocation. `Scope` is no-Drop
-        // arena POD; Zig bitwise-copied it (`module_scope.*`).
+        // arena POD, so a bitwise copy is safe.
         let module_scope_value: Scope = unsafe { core::ptr::read(module_scope) };
 
         Ok(crate::BundledAst {
@@ -628,7 +628,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     pub fn generate_temp_ref(&mut self, name: Option<&[u8]>) -> Ref {
         self.new_symbol(SymbolKind::Other, name.unwrap_or(b"temp"))
             .expect("OOM")
-        // Zig: bun.handleOom — Rust aborts on OOM by default; explicit expect for clarity
+        // bun.handleOom — Rust aborts on OOM by default; explicit expect for clarity
     }
 
     pub fn record_export(&mut self, _loc: Loc, alias: &[u8], ref_: Ref) -> Result<(), OOM> {
@@ -678,7 +678,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Output::panic(args);
     }
 
-    /// Zig: `@"module.exports"` — Rust identifiers can't contain `.`
+    /// Helper for the `module.exports` member expression — Rust identifiers can't contain `.`
     pub fn module_exports(&self, loc: Loc) -> Expr {
         self.new_expr(E::Dot {
             name: b"exports".into(),
@@ -699,5 +699,3 @@ use bun_ast::Index;
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
-
-// ported from: src/bundler/AstBuilder.zig

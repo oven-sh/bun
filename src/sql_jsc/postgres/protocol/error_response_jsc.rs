@@ -13,8 +13,7 @@ pub fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
     let mut b = StringBuilder::default();
 
     for msg in this.messages.iter() {
-        // Zig: `switch (msg.*) { inline else => |m| m.utf8ByteLength() }` — every
-        // FieldMessage variant carries a single bun.String payload.
+        // Every FieldMessage variant carries a single bun.String payload.
         b.cap += field_message_payload(msg).utf8_byte_length() + 1;
     }
     let _ = b.allocate();
@@ -157,5 +156,3 @@ pub fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
     )
     .unwrap_or_else(|e| global_object.take_error(e))
 }
-
-// ported from: src/sql_jsc/postgres/protocol/error_response_jsc.zig

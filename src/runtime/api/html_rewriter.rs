@@ -1,6 +1,6 @@
 //! HTMLRewriter API — wraps lol-html for JS.
 //!
-//! Ported from src/runtime/api/html_rewriter.zig.
+//! HTMLRewriter.
 
 use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
@@ -20,10 +20,10 @@ use bun_jsc::{
 // name resolves as a type at `&mut VirtualMachine` annotations and as the
 // owner of the `on_quiet_unhandled_rejection_handler_capture_value` assoc fn.
 use bun_jsc::virtual_machine::VirtualMachine;
-// `ZigString` re-exports `bun_core::ZigString`; JSC-side methods
-// (`to_js`, `with_encoding`, …) come from the `ZigStringJsc` extension trait.
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString;
+// `UnsafeStringView` re-exports `bun_core::UnsafeStringView`; JSC-side methods
+// (`to_js`, `with_encoding`, …) come from the `UnsafeStringViewJsc` extension trait.
+use bun_jsc::UnsafeStringViewJsc as _;
+use bun_jsc::unsafe_string_view::UnsafeStringView;
 // PORT NOTE: there is no `bun_lolhtml` safe-wrapper crate yet — the safe
 // surface lives directly in `bun_lolhtml_sys::lol_html`. The Phase-A draft
 // referenced both `lolhtml::Foo` (safe wrappers) and `lolhtml_sys::Foo` (raw
@@ -64,25 +64,30 @@ type SelectorMap = Vec<*mut lolhtml::HTMLSelector>;
 
 // ─────────────────── wrapInstanceMethod arg-decode helpers ───────────────
 //
-// PORT NOTE: Zig's `host_fn.wrapInstanceMethod` is a comptime
-// type-directed argument decoder (see host_fn.zig:493-648). The
+// PORT NOTE: the original `host_fn.wrapInstanceMethod` is a comptime
+// type-directed argument decoder. The
 // `#[bun_jsc::host_fn(method)]` proc-macro that will eventually replace it
 // hasn't landed, so the per-type decode arms used by HTMLRewriter
-// (`ZigString`, `?ContentOptions`, `JSValue`) are open-coded here as small
-// helpers. They mirror the Zig branches exactly: same error messages, same
+// (`UnsafeStringView`, `?ContentOptions`, `JSValue`) are open-coded here as small
+// helpers. They mirror the original branches exactly: same error messages, same
 // undefined/null handling, same eat order.
 
-/// `wrapInstanceMethod` arm for `jsc.ZigString` — eat next arg, throw
+/// `wrapInstanceMethod` arm for `jsc.UnsafeStringView` — eat next arg, throw
 /// "Missing argument" if absent, "Expected string" if undefined/null,
-/// otherwise `getZigString`.
-fn eat_zig_string(iter: &mut ArgumentsSlice<'_>, global: &JSGlobalObject) -> JsResult<ZigString> {
+/// otherwise `getUnsafeStringView`.
+fn eat_unsafe_string_view(
+    iter: &mut ArgumentsSlice<'_>,
+    global: &JSGlobalObject,
+) -> JsResult<UnsafeStringView> {
     let Some(value) = iter.next_eat() else {
         return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
     };
     if value.is_undefined_or_null() {
         return Err(global.throw_invalid_arguments(format_args!("Expected string")));
     }
-    Ok(ZigString::from(value.get_zig_string(global)?))
+    Ok(UnsafeStringView::from(
+        value.get_unsafe_string_view(global)?,
+    ))
 }
 
 /// `wrapInstanceMethod` arm for `jsc.JSValue` (required) — eat next arg or
@@ -109,32 +114,32 @@ fn eat_content_options(
     }
 }
 
-/// Common `(content: ZigString, contentOptions: ?ContentOptions)` pair —
+/// Common `(content: UnsafeStringView, contentOptions: ?ContentOptions)` pair —
 /// every `before/after/replace/append/prepend/setInnerContent` wrapper
 /// decodes exactly this shape.
 fn eat_content_args(
     global: &JSGlobalObject,
     call_frame: &CallFrame,
-) -> JsResult<(ZigString, Option<ContentOptions>)> {
+) -> JsResult<(UnsafeStringView, Option<ContentOptions>)> {
     let args = call_frame.arguments_old::<2>();
     let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
-    let content = eat_zig_string(&mut iter, global)?;
+    let content = eat_unsafe_string_view(&mut iter, global)?;
     let opts = eat_content_options(&mut iter, global)?;
     Ok((content, opts))
 }
 
 /// Emit the per-wrapper `content_handler` plus one `(${name}_, $name)` pair
-/// per lol-html content op. Restores the Zig shape (`host_fn.wrapInstanceMethod`
+/// per lol-html content op. Restores the original shape (`host_fn.wrapInstanceMethod`
 /// invoked N×) that the Rust port hand-expanded for lack of comptime reflection,
-/// and additionally collapses the 5× duplicated `content_handler` body that Zig
-/// never deduped.
+/// and additionally collapses the 5× duplicated `content_handler` body that
+/// the original never deduped.
 ///
 /// - `$Raw`      — bare ident under `lolhtml::` (also paths the raw op as
 ///                 `lolhtml::$Raw::$name`, which holds for all 16 ops).
 /// - `$field`    — the `Cell<*mut lolhtml_sys::$Raw>` field on `self`.
 /// - `$null_ret` — sentinel when the raw ptr is null. **Differs per wrapper**:
 ///                 `JSValue::UNDEFINED` for TextChunk/Element,
-///                 `JSValue::NULL` for DocEnd/Comment/EndTag (matches Zig).
+///                 `JSValue::NULL` for DocEnd/Comment/EndTag.
 /// - Each op arm accepts leading attrs (doc comments, `#[allow(dead_code)]`).
 ///
 /// Expands inside an `impl $Wrapper { ... }` block to associated items.
@@ -148,7 +153,7 @@ macro_rules! lol_content_ops {
             callback: fn(&mut lolhtml::$Raw, &[u8], bool) -> Result<(), lolhtml::Error>,
             this_object: JSValue,
             global_object: &JSGlobalObject,
-            content: ZigString,
+            content: UnsafeStringView,
             content_options: Option<ContentOptions>,
         ) -> JSValue {
             let Some(raw) = lolhtml::$Raw::from_ptr(self.$field.get()) else {
@@ -173,7 +178,7 @@ macro_rules! lol_content_ops {
                 &self,
                 call_frame: &CallFrame,
                 global_object: &JSGlobalObject,
-                content: ZigString,
+                content: UnsafeStringView,
                 content_options: Option<ContentOptions>,
             ) -> JSValue {
                 self.content_handler(
@@ -186,7 +191,7 @@ macro_rules! lol_content_ops {
             }
 
             // host_fn.wrapInstanceMethod hand-expansion: decode
-            // `(content: ZigString, contentOptions: ?ContentOptions)` then
+            // `(content: UnsafeStringView, contentOptions: ?ContentOptions)` then
             // forward.
             $(#[$attr])*
             pub fn $name(
@@ -257,7 +262,7 @@ impl HTMLRewriter {
     pub fn on_(
         &self,
         global: &JSGlobalObject,
-        selector_name: ZigString,
+        selector_name: UnsafeStringView,
         call_frame: &CallFrame,
         listener: JSValue,
     ) -> JsResult<JSValue> {
@@ -348,7 +353,7 @@ impl HTMLRewriter {
         // context: Rc drop happens via field drop; builder needs explicit FFI deinit.
         // SAFETY: builder was created by Builder::init() and not yet freed.
         unsafe { lolhtml::HTMLRewriterBuilder::destroy(self.builder) };
-        // TODO(port): Zig calls context.deref() here explicitly; with Rc the
+        // TODO(port): the original calls context.deref() here explicitly; with Rc the
         // drop happens when HTMLRewriter is dropped. If finalize_without_destroy
         // is called without immediate drop, we'd want to swap context to a
         // fresh Rc. Phase B: verify call sites.
@@ -443,7 +448,7 @@ impl HTMLRewriter {
             let _out_guard = scopeguard::guard((out_response_value, out_response), |(v, r)| {
                 // `Response.js.dangerouslySetPtr(v, null)` — null out the JS
                 // wrapper's `m_ctx` so its GC finalize is a no-op, then finalize
-                // the native side ourselves (Zig: html_rewriter.zig:223-226).
+                // the native side ourselves.
                 // SAFETY: `v` is the live JS wrapper (kept on stack via
                 // ensure_still_alive); `r` is its `m_ctx` pointer, detached here
                 // and finalized exactly once.
@@ -471,13 +476,13 @@ impl HTMLRewriter {
     }
 
     // ── host_fn.wrapInstanceMethod hand-expansions ───────────────────────
-    // Zig: `pub const on = host_fn.wrapInstanceMethod(HTMLRewriter, "on_", false)`
+    // `pub const on = host_fn.wrapInstanceMethod(HTMLRewriter, "on_", false)`
     // etc. — see arg-decode helpers at top of file.
 
     pub fn on(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<2>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
-        let selector_name = eat_zig_string(&mut iter, global)?;
+        let selector_name = eat_unsafe_string_view(&mut iter, global)?;
         let listener = eat_js_value(&mut iter, global)?;
         self.on_(global, selector_name, call_frame, listener)
     }
@@ -509,7 +514,7 @@ pub struct HTMLRewriterLoader {
     pub context: Rc<RefCell<LOLHTMLContext>>,
     pub chunk_size: usize,
     pub failed: bool,
-    // TODO(port): lifetime — Zig `Sink` stores `*anyopaque` (no borrow). Rust
+    // TODO(port): lifetime — the original `Sink` stored an opaque ptr (no borrow). Rust
     // `Sink<'a>` borrows its handler; the destination handler outlives this
     // loader (set in `setup()`), so use `'static` as the Phase-A erasure.
     pub output: webcore::Sink<'static>,
@@ -567,10 +572,10 @@ impl HTMLRewriterLoader {
                 self.done();
             }
             Writable::Pending(pending) => {
-                // PORT NOTE: Zig calls `pending.applyBackpressure(allocator,
+                // PORT NOTE: the original calls `pending.applyBackpressure(allocator,
                 // &this.output, pending, bytes)` — that decl does not exist in
-                // the Zig source (dead code; HTMLRewriterLoader.sink() is never
-                // referenced so Zig never compiles this arm). Mirror the call
+                // the source (dead code; HTMLRewriterLoader.sink() is never
+                // referenced so the original never compiles this arm). Mirror the call
                 // shape exactly; do NOT also push into `self.backpressure`
                 // here — that would double-buffer relative to the spec.
                 // SAFETY: `pending` points at a heap WritablePending owned by
@@ -588,7 +593,7 @@ impl HTMLRewriterLoader {
                 );
             }
             Writable::Done => {
-                // PORT NOTE: Zig switch omits `.done` (dead code never
+                // PORT NOTE: the original switch omits `.done` (dead code never
                 // compiled there); route it through `done()` like the other
                 // *AndDone arms rather than silently swallowing it.
                 self.done();
@@ -626,7 +631,7 @@ impl HTMLRewriterLoader {
             Ok(r) => r,
             Err(_) => {
                 let _ = output.end(None); // error already surfaced via signal/fail path
-                // PORT NOTE: Zig returned a borrowed `[]const u8` into
+                // PORT NOTE: the original returned a borrowed slice into
                 // lol-html's threadlocal last-error buffer. Rust can't return a
                 // slice tied to a temporary, so return the owning `HTMLString`
                 // (caller calls `.slice()` then `.deinit()`).
@@ -635,8 +640,8 @@ impl HTMLRewriterLoader {
         };
 
         self.chunk_size = chunk_size;
-        // Share the context with the caller via Rc; the Zig version stored a
-        // POD struct copy of an `ArrayListUnmanaged`, which in Rust would
+        // Share the context with the caller via Rc; the original stored a
+        // POD struct copy of an unmanaged array list, which in Rust would
         // double-own `Vec`/`Box` heap buffers. Clone the Rc instead.
         self.context = context;
         self.output = output;
@@ -648,7 +653,7 @@ impl HTMLRewriterLoader {
         webcore::Sink::init(self)
     }
 
-    // PORT NOTE: The Zig spec (html_rewriter.zig:346-356) does not deinit on
+    // PORT NOTE: The spec does not deinit on
     // the error path at all — matched here exactly: only the Owned* arms free,
     // and only on success (caller wraps owned bytes in `ManuallyDrop` and
     // takes them back out on the success path).
@@ -714,7 +719,7 @@ impl HTMLRewriterLoader {
     }
 
     pub fn end(&mut self, err: Option<bun_sys::Error>) -> bun_sys::Result<()> {
-        // PORT NOTE: Zig HTMLRewriterLoader has no `end` (sink() is dead code
+        // PORT NOTE: the original HTMLRewriterLoader has no `end` (sink() is dead code
         // there). On input-stream end, flush the rewriter (which calls
         // OutputSink::done → self.done()) or fail.
         if let Some(e) = err {
@@ -842,7 +847,7 @@ impl BufferOutputSink {
         unsafe { (*sink).tmp_sync_error = Some(NonNull::new_unchecked(sink_error_ptr)) };
         vm.on_unhandled_rejection =
             VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
-        // Zig `defer sink_error.ensureStillAlive()` — read the *live* slot at
+        // `defer sink_error.ensureStillAlive()` — read the *live* slot at
         // scope exit (Cell shares provenance with the raw-pointer writers).
         scopeguard::defer! {
             sink_error.get().ensure_still_alive();
@@ -914,7 +919,7 @@ impl BufferOutputSink {
 
         // SAFETY: result/original are live *Response (see SAFETY note above).
         // `url()` is +0 borrowed-bits; `set_url` takes +1 — `.clone()` to bump
-        // (html_rewriter.zig:492 `original.getUrl().clone()`).
+        // (`original.getUrl().clone()`).
         unsafe { (*result).set_url((*original).url().clone()) };
 
         // SAFETY: original is a live *Response kept alive by caller.
@@ -1062,7 +1067,7 @@ impl BufferOutputSink {
         // SAFETY: sink is a live heap allocation (refcount > 0, caller
         // invariant). Read fields into locals before the FFI calls so no
         // borrow of `*sink` is live across the re-entrant callback.
-        let _ = unsafe { (*sink).bytes.grow_by(bytes.len()) }; // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = unsafe { (*sink).bytes.grow_by(bytes.len()) }; // OOM/capacity: the original aborts; port keeps fire-and-forget
         let global = unsafe { (*sink).global };
         let response = unsafe { (*sink).response };
         let rewriter = unsafe { (*sink).rewriter };
@@ -1117,7 +1122,7 @@ impl BufferOutputSink {
     }
 
     pub fn write(&mut self, bytes: &[u8]) {
-        let _ = self.bytes.append(bytes); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = self.bytes.append(bytes); // OOM/capacity: the original aborts; port keeps fire-and-forget
     }
 }
 
@@ -1327,8 +1332,8 @@ pub trait WrapperLike {
 
 /// Forwarding `WrapperLike` impl — every wrapper type's trait impl is a pure
 /// pass-through to inherent / `CellRefCounted`-derived / `JsClass`-codegen
-/// methods. Mirrors Zig's `HandlerCallback` comptime duck-typing (which needs
-/// no impl block at all — html_rewriter.zig:890). The optional `, invalidate`
+/// methods. Mirrors the original `HandlerCallback` comptime duck-typing (which needs
+/// no impl block at all). The optional `, invalidate`
 /// tail wires up types (Element) that hand out sub-objects which must be
 /// detached alongside the lol-html value.
 macro_rules! impl_wrapper_like {
@@ -1397,7 +1402,7 @@ where
     // (R-2); aliased `&H` is sound, aliased `&mut H` is not.
     let this = unsafe { &*this };
     let global = this.global();
-    // PORT NOTE: spec (html_rewriter.zig:938,954,969,972) re-derives
+    // PORT NOTE: spec re-derives
     // `this.global.bunVM()` at each use site rather than caching a `&mut`.
     // `cb.call(...)` and `wait_for_promise(...)` re-enter JS / the event loop,
     // which mutate the same VirtualMachine through `global.bun_vm()` (and a
@@ -1408,7 +1413,7 @@ where
     let vm = || -> &mut VirtualMachine { global.bun_vm().as_mut() };
 
     // Use a TopExceptionScope to properly handle exceptions from the JavaScript
-    // callback (html_rewriter.zig:920-922). The Phase-A draft replaced this with
+    // callback. An earlier draft replaced this with
     // a post-hoc `try_take_exception()`, but that is *not* equivalent under
     // `BUN_JSC_validateExceptionChecks=1`: `JSGlobalObject__tryTakeException`
     // constructs a fresh `TopExceptionScope` whose ctor calls
@@ -1464,7 +1469,7 @@ where
 
     if !result.is_undefined_or_null() {
         // PORT NOTE: spec is `result.isError() or result.isAggregateError(global)`
-        // (html_rewriter.zig:964) — NOT `isAnyError`, which has different
+        // — NOT `isAnyError`, which has different
         // coverage (Exception cells / `Symbol.error` vs cross-realm
         // AggregateError).
         if result.is_error() || result.is_aggregate_error(global) {
@@ -1614,7 +1619,7 @@ fn create_lolhtml_error(global: &JSGlobalObject) -> JSValue {
     value.put(
         global,
         b"name",
-        ZigString::init(b"HTMLRewriterError").to_js(global),
+        UnsafeStringView::init(b"HTMLRewriterError").to_js(global),
     );
     value
 }
@@ -1737,7 +1742,7 @@ impl DocType {
         if str.is_empty() {
             return JSValue::NULL;
         }
-        ZigString::init(str).to_js(global_object)
+        UnsafeStringView::init(str).to_js(global_object)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1750,7 +1755,7 @@ impl DocType {
         if str.is_empty() {
             return JSValue::NULL;
         }
-        ZigString::init(str).to_js(global_object)
+        UnsafeStringView::init(str).to_js(global_object)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1763,7 +1768,7 @@ impl DocType {
         if str.is_empty() {
             return JSValue::NULL;
         }
-        ZigString::init(str).to_js(global_object)
+        UnsafeStringView::init(str).to_js(global_object)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2039,8 +2044,8 @@ impl AttributeIterator {
 
     #[bun_jsc::host_fn(method)]
     pub fn next(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        let done_label = bun_core::ZigString::init(b"done");
-        let value_label = bun_core::ZigString::init(b"value");
+        let done_label = bun_core::UnsafeStringView::init(b"done");
+        let value_label = bun_core::UnsafeStringView::init(b"value");
 
         let Some(it) = lolhtml::AttributeIterator::from_ptr(self.iterator.get()) else {
             return JSValue::create_object2(
@@ -2174,7 +2179,7 @@ impl Element {
             return Ok(JSValue::NULL);
         };
         if function.is_undefined_or_null() || !function.is_callable() {
-            return Ok(ZigString::init_utf8(b"Expected a function").to_js(global_object));
+            return Ok(UnsafeStringView::init_utf8(b"Expected a function").to_js(global_object));
         }
 
         let end_tag_handler = bun_core::heap::into_raw(Box::new(EndTagHandler {
@@ -2203,7 +2208,7 @@ impl Element {
     pub fn get_attribute_(
         &self,
         global_object: &JSGlobalObject,
-        name: ZigString,
+        name: UnsafeStringView,
     ) -> JsResult<JSValue> {
         let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return Ok(JSValue::NULL);
@@ -2219,7 +2224,7 @@ impl Element {
     }
 
     /// Returns a boolean indicating whether an attribute exists on the element.
-    pub fn has_attribute_(&self, global: &JSGlobalObject, name: ZigString) -> JSValue {
+    pub fn has_attribute_(&self, global: &JSGlobalObject, name: UnsafeStringView) -> JSValue {
         let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return JSValue::FALSE;
         };
@@ -2235,8 +2240,8 @@ impl Element {
         &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
-        name_: ZigString,
-        value_: ZigString,
+        name_: UnsafeStringView,
+        value_: UnsafeStringView,
     ) -> JSValue {
         let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return JSValue::UNDEFINED;
@@ -2262,7 +2267,7 @@ impl Element {
         &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
-        name: ZigString,
+        name: UnsafeStringView,
     ) -> JSValue {
         let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return JSValue::UNDEFINED;
@@ -2295,7 +2300,7 @@ impl Element {
     ) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
-        let name = eat_zig_string(&mut iter, global)?;
+        let name = eat_unsafe_string_view(&mut iter, global)?;
         self.get_attribute_(global, name)
     }
 
@@ -2306,7 +2311,7 @@ impl Element {
     ) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
-        let name = eat_zig_string(&mut iter, global)?;
+        let name = eat_unsafe_string_view(&mut iter, global)?;
         Ok(self.has_attribute_(global, name))
     }
 
@@ -2317,8 +2322,8 @@ impl Element {
     ) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<2>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
-        let name = eat_zig_string(&mut iter, global)?;
-        let value = eat_zig_string(&mut iter, global)?;
+        let name = eat_unsafe_string_view(&mut iter, global)?;
+        let value = eat_unsafe_string_view(&mut iter, global)?;
         Ok(self.set_attribute_(call_frame, global, name, value))
     }
 
@@ -2329,7 +2334,7 @@ impl Element {
     ) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
-        let name = eat_zig_string(&mut iter, global)?;
+        let name = eat_unsafe_string_view(&mut iter, global)?;
         Ok(self.remove_attribute_(call_frame, global, name))
     }
 
@@ -2455,5 +2460,3 @@ impl Element {
 }
 
 impl_wrapper_like!(Element, lolhtml::Element, invalidate);
-
-// ported from: src/runtime/api/html_rewriter.zig

@@ -72,10 +72,10 @@ const getRuntimeDefaultResultOrderOption = $newRustFunction(
 );
 
 function newResolver(options) {
-  if (!newResolver.zig) {
-    newResolver.zig = $newRustFunction("runtime/dns_jsc/dns.rs", "Resolver.newResolver", 1);
+  if (!newResolver.native) {
+    newResolver.native = $newRustFunction("runtime/dns_jsc/dns.rs", "Resolver.newResolver", 1);
   }
-  return newResolver.zig(options);
+  return newResolver.native(options);
 }
 
 function defaultResultOrder() {

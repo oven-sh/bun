@@ -43,8 +43,8 @@ pub static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>> =
 /// must not hold the borrow across a re-entrant `child_singleton()` call.
 #[inline]
 fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
-    // SAFETY: only called on the single JS thread; mirrors Zig `pub var`
-    // access. `RacyCell::get` returns `*mut Option<_>`; the `Option` lives in
+    // SAFETY: only called on the single JS thread, like static-mut access.
+    // `RacyCell::get` returns `*mut Option<_>`; the `Option` lives in
     // `'static` storage so the returned `&mut` is valid for any caller-chosen
     // `'a`. Aliasing: each of the three callers borrows for a single
     // statement/block with no nested call to this fn.
@@ -95,7 +95,7 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         bun_output::scoped_log!(
             IPC,
             "child: {}",
-            bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message)
+            bun_jsc::console_object::formatter::BunFormatter::new(&mut formatter, message)
         );
     }
 
@@ -202,7 +202,7 @@ pub fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         bun_output::scoped_log!(
             IPC,
             "primary: {}",
-            bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message)
+            bun_jsc::console_object::formatter::BunFormatter::new(&mut formatter, message)
         );
     }
 
@@ -248,10 +248,9 @@ pub fn handle_internal_message_primary(
     if let Some(p) = message.get(global, "ack")? {
         if !p.is_undefined() {
             let ack = p.to_int32();
-            // PORT NOTE: reshaped for borrowck — Zig copied the Strong out of the
-            // entry, then `defer deinit()` + swapRemove. Here we peek the JSValue
-            // first (ending the immutable borrow), then swap_remove (which drops the
-            // Strong == `defer cbstrong.deinit()`).
+            // PORT NOTE: reshaped for borrowck — peek the JSValue first
+            // (ending the immutable borrow), then swap_remove, which drops the
+            // Strong on its own.
             let entry = ipc_data
                 .internal_msg_queue
                 .callbacks
@@ -343,5 +342,3 @@ pub fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> b
     let vm = global.bun_vm();
     vm.channel_ref_should_ignore_one_disconnect_event_listener
 }
-
-// ported from: src/runtime/node/node_cluster_binding.zig

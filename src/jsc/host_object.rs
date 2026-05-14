@@ -5,10 +5,10 @@
 //!     obj.put(global, b"bar", JSFunction::create(global, "bar", __jsc_host_bar, 2, Default::default()));
 //!     obj
 //!
-//! into a single declarative slice. Zig had no shared helper for this (each
-//! `*.zig` hand-unrolled it, or used a per-file `inline for` over a comptime
-//! tuple — `UnsafeObject.zig`, `HashObject.zig`). This is a NEW abstraction,
-//! not a parity loss.
+//! into a single declarative slice. The original implementation had no shared
+//! helper for this (each module hand-unrolled it, or used a per-file
+//! `inline for` over a comptime tuple — `UnsafeObject`, `HashObject`). This is
+//! a NEW abstraction, not a parity loss.
 //!
 //! Also fixes the capacity-hint drift bug class: `UnsafeObject.rs` passed
 //! `len = 3` for 4 entries because the hand-counted N wasn't bumped when

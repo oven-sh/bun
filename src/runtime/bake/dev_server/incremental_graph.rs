@@ -1,12 +1,12 @@
 //! `DevServer.IncrementalGraph(side)` — data-oriented module graph with
-//! perfect incremental tracking. Edge lists, chunk receipt, dependency
-//! tracing, and bundle emission ported from `IncrementalGraph.zig`.
+//! perfect incremental tracking: edge lists, chunk receipt, dependency
+//! tracing, and bundle emission.
 //!
-//! The Zig original is `comptime side: bake.Side`-parameterized so `File`
-//! resolves to either `ServerFile` (boundary flags) or `ClientFile` (code +
-//! source map). Stable Rust has no const-generic-enum struct selection, so the
-//! `File` payload is folded into a single struct carrying both field sets and
-//! per-side behaviour is dispatched on the `SIDE` const parameter.
+//! The graph is parameterized on `bake::Side` so `File` resolves to either
+//! `ServerFile` (boundary flags) or `ClientFile` (code + source map). Stable
+//! Rust has no const-generic-enum struct selection, so the `File` payload is
+//! folded into a single struct carrying both field sets and per-side behaviour
+//! is dispatched on the `SIDE` const parameter.
 
 use bun_collections::VecExt;
 use core::mem::offset_of;
@@ -26,11 +26,10 @@ use crate::bake::{self, Side};
 /// `bun.GenericIndex(u30, File)` — file index into `bundled_files`.
 ///
 /// Const-generic over `bake::Side` so that `IncrementalGraph(.server).FileIndex`
-/// and `IncrementalGraph(.client).FileIndex` are distinct types as in the Zig
-/// spec.
+/// and `IncrementalGraph(.client).FileIndex` are distinct types.
 pub struct SideMarker<const SIDE: bake::Side>;
 pub type FileIndex<const SIDE: bake::Side> = bun_core::GenericIndex<u32, SideMarker<SIDE>>;
-/// Alias used by `DevServer.route_lookup` (Zig: `IncrementalGraph(.server).FileIndex`).
+/// Alias used by `DevServer.route_lookup` (`IncrementalGraph(.server).FileIndex`).
 pub type ServerFileIndex = FileIndex<{ bake::Side::Server }>;
 pub type ClientFileIndex = FileIndex<{ bake::Side::Client }>;
 
@@ -102,9 +101,9 @@ impl Content {
     }
 }
 
-/// Per-file metadata. Zig defines this as `File = ServerFile | ClientFile`
-/// selected by `comptime side`. Rust folds the union here; per-side fields are
-/// simply unused on the other side.
+/// Per-file metadata. Conceptually `File = ServerFile | ClientFile` selected by
+/// the side parameter. Rust folds the union here; per-side fields are simply
+/// unused on the other side.
 // TODO(port): split back into `ServerFile`/`ClientFile` once a trait shim
 // over `Side` selects the per-side layout (saves ~24 bytes/file on server).
 pub struct File {
@@ -161,8 +160,7 @@ impl Default for File {
     }
 }
 
-/// `IncrementalGraph(.server).CurrentChunkSourceMapData`
-/// (IncrementalGraph.zig:305).
+/// `IncrementalGraph(.server).CurrentChunkSourceMapData`.
 pub struct CurrentChunkSourceMapData {
     pub file_index: ServerFileIndex,
     pub source_map: packed_map::Shared,
@@ -255,10 +253,10 @@ struct TempLookup {
     seen: bool,
 }
 
-/// `IncrementalGraph(side)`. The Zig original is comptime-parameterized over
-/// `bake.Side` so `File` resolves to `ServerFile`/`ClientFile`. Mirrored here
-/// via `adt_const_params` on `bake::Side`; `File` itself is still the folded
-/// union (see TODO above) until a trait dispatch picks the per-side layout.
+/// `IncrementalGraph(side)`. Parameterized on `bake::Side` so `File` resolves to
+/// `ServerFile`/`ClientFile` — implemented via `adt_const_params` on
+/// `bake::Side`; `File` itself is still the folded union (see TODO above) until
+/// a trait dispatch picks the per-side layout.
 #[derive(Default)]
 pub struct IncrementalGraph<const SIDE: bake::Side> {
     /// Keys are absolute paths for the "file" namespace (owned). Index = `FileIndex`.
@@ -288,7 +286,7 @@ pub struct IncrementalGraph<const SIDE: bake::Side> {
     pub current_css_files: Vec<u64>,
 }
 
-/// `IncrementalGraph(side).MemoryCost` (IncrementalGraph.zig:414).
+/// `IncrementalGraph(side).MemoryCost`.
 #[derive(Default, Clone, Copy)]
 pub struct GraphMemoryCost {
     pub graph: usize,
@@ -392,7 +390,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         self.current_chunk_source_maps.is_empty()
     }
 
-    /// `IncrementalGraph(side).memoryCostDetailed` (IncrementalGraph.zig:420).
+    /// `IncrementalGraph(side).memoryCostDetailed`.
     /// Does NOT count `size_of::<Self>()`.
     pub fn memory_cost_detailed(&self) -> GraphMemoryCost {
         use core::mem::size_of;
@@ -434,7 +432,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
     }
 
-    /// `IncrementalGraph(side).reset` (IncrementalGraph.zig:1673).
+    /// `IncrementalGraph(side).reset`.
     /// Clears the per-bundle mutation tracking (`current_chunk_*`) without
     /// touching the persisted file/edge storage.
     pub fn reset(&mut self) {
@@ -452,7 +450,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         self.current_chunk_parts.clear();
     }
 
-    /// `IncrementalGraph(side).ensureStaleBitCapacity` — DevServer.zig:1573.
+    /// `IncrementalGraph(side).ensureStaleBitCapacity`.
     /// Grows `stale_files` to cover all currently-known files, filling new
     /// bits with `are_new_files_stale`.
     pub fn ensure_stale_bit_capacity(
@@ -574,7 +572,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     // receiveChunk
     // ────────────────────────────────────────────────────────────────────────
 
-    /// `IncrementalGraph(side).receiveChunk` (IncrementalGraph.zig:475).
+    /// `IncrementalGraph(side).receiveChunk`.
     /// Tracks a bundled code chunk for cross-bundle chunks, ensuring it has an
     /// entry in `bundled_files`. For client, takes ownership of the code slice;
     /// for server, the code is kept in `current_chunk_code` until
@@ -615,7 +613,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
         }
 
-        // Dump to filesystem if enabled (Zig: `bun.FeatureFlags.bake_debugging_features`).
+        // Dump to filesystem if enabled (`bake_debugging_features`).
         #[cfg(feature = "bake_debugging_features")]
         if let ReceiveChunkContent::Js { code, .. } = &content {
             if let Some(dump_dir) = self.dev_dump_dir() {
@@ -845,7 +843,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     // processChunkDependencies
     // ────────────────────────────────────────────────────────────────────────
 
-    /// `IncrementalGraph(side).processChunkDependencies` (IncrementalGraph.zig:726).
+    /// `IncrementalGraph(side).processChunkDependencies`.
     /// Second pass of IncrementalGraph indexing: updates dependency information
     /// for each file and resolves what the HMR roots are.
     pub fn process_chunk_dependencies(
@@ -892,7 +890,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 return Ok(());
             }
             // TODO(port): RSC+SSR dual-index dispatch (`ctx.scbs.getSSRIndex`)
-            // is dead in the Zig spec (commented out at IncrementalGraph.zig:782).
+            // is dead code upstream (commented out).
         }
 
         match mode {
@@ -912,8 +910,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             )?,
         }
 
-        // Clear the old head before freeing so `check_edge_removal` (debug-only
-        // in Zig) wouldn't see a stale reference.
+        // Clear the old head before freeing so `check_edge_removal` (debug-only)
+        // wouldn't see a stale reference.
         self.first_import[file_index.get() as usize] = None;
 
         // '.seen = false' means an import was removed and should be freed.
@@ -1124,7 +1122,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     // traceDependencies / traceImports
     // ────────────────────────────────────────────────────────────────────────
 
-    /// `IncrementalGraph(side).traceDependencies` (IncrementalGraph.zig:1120).
+    /// `IncrementalGraph(side).traceDependencies`.
     pub fn trace_dependencies(
         &mut self,
         file_index: FileIndex<SIDE>,
@@ -1226,7 +1224,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(())
     }
 
-    /// `IncrementalGraph(side).traceImports` (IncrementalGraph.zig:1206).
+    /// `IncrementalGraph(side).traceImports`.
     pub fn trace_imports(
         &mut self,
         file_index: FileIndex<SIDE>,
@@ -1937,7 +1935,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 let mut overlapping_memory_cost: usize = 0;
 
                 for file_index in &self.current_chunk_parts {
-                    // PERF(port): Zig stored borrowed slice headers into
+                    // PERF(port): could store borrowed slice headers into
                     // `bundled_files.keys()`; that is self-referential w.r.t.
                     // `DevServer`, so the port owns a copy. Paths are short and
                     // source-map entries are infrequent — profile in Phase B.

@@ -4,8 +4,6 @@
 //! which allows the bundler to dismiss or update stale failures via index as
 //! opposed to re-sending a new payload.
 //!
-//! Spec: src/runtime/bake/DevServer/SerializedFailure.zig
-//!
 //! DISSOLVED — the Phase-A draft that lived here duplicated `SerializedFailure`,
 //! `Owner`, `Packed`, `PackedKind`, `ErrorKind`, and the `write_*` helpers
 //! against `dev_server/serialized_failure.rs`, with no call sites resolving to
@@ -14,10 +12,9 @@
 //! signature divergence — `init_from_log` took an unused `_dev: &mut DevServer`
 //! first param the canonical already dropped — and was otherwise byte-identical.
 //!
-//! This file is no longer mounted; it remains on disk only as the `.rs` sibling
-//! of `SerializedFailure.zig` per PORTING.md, and re-exports the canonical items
-//! so any stale `super::serialized_failure_body::*` path that reappears resolves
-//! to the single real type.
+//! This file is no longer mounted; it remains on disk only as a stub and
+//! re-exports the canonical items so any stale `super::serialized_failure_body::*`
+//! path that reappears resolves to the single real type.
 
 #![allow(unused_imports)]
 #![warn(unused_must_use)]

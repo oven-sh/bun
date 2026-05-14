@@ -73,11 +73,11 @@ impl FallbackEntryPoint {
         // PORT NOTE: self-referential — when the rendered code fits in
         // `entry.code_buffer` the Source borrows it (disjoint-field write to
         // `entry.source` while `entry.code_buffer` is shared-borrowed). On
-        // overflow the Source owns the bytes via `Cow::Owned` (Zig allocated
+        // overflow the Source owns the bytes via `Cow::Owned` (previously allocated
         // from `transpiler.arena`; here the Source owns it directly so Drop
         // frees it).
         // PORT NOTE: assemble bytes directly (not `write!`+`BStr`) so a
-        // non-UTF-8 byte in `input_path` is emitted verbatim like Zig `{s}`,
+        // non-UTF-8 byte in `input_path` is emitted verbatim,
         // not lossily replaced with U+FFFD by `BStr as Display`.
         macro_rules! render_into_entry {
             ($prefix:expr, $suffix:expr) => {{
@@ -417,7 +417,7 @@ impl MacroEntryPoint {
     }
 
     pub fn generate_id_from_specifier(specifier: &[u8]) -> i32 {
-        // Same-size bitcast u32 → i32 (matches Zig `@bitCast`).
+        // Same-size bitcast u32 → i32.
         (bun_wyhash::hash(specifier) as u32) as i32
     }
 
@@ -544,5 +544,3 @@ pub trait TranspilerLike {
 }
 
 use crate::options::ClientCssInJs;
-
-// ported from: src/bundler/entry_points.zig

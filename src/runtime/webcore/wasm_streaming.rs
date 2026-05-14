@@ -1,7 +1,7 @@
-//! `Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming` — moved UP from
+//! `Bun__GlobalObject__getBodyStreamOrBytesForWasmStreaming` — moved UP from
 //! `bun_jsc::JSGlobalObject` because the body inspects `Response`/`Body`/
 //! `Blob`/`ReadableStream`, which are `bun_runtime` types (forward-dep of
-//! `bun_jsc`). The Zig original lives in `src/jsc/JSGlobalObject.zig:871`.
+//! `bun_jsc`).
 //!
 //! C++ calls this via `jsc.host_fn.wrap3` — i.e. plain C ABI with the three
 //! original arguments, returning a possibly-empty `JSValue` (empty == thrown).
@@ -26,7 +26,7 @@ unsafe extern "C" {
     );
 }
 
-/// Spec `JSGlobalObject.zig:871 getBodyStreamOrBytesForWasmStreaming`.
+/// `getBodyStreamOrBytesForWasmStreaming`.
 pub fn get_body_stream_or_bytes_for_wasm_streaming(
     this: &JSGlobalObject,
     response_value: JSValue,
@@ -64,7 +64,7 @@ pub fn get_body_stream_or_bytes_for_wasm_streaming(
                 )
                 .throw());
         }
-        // `content_type_slice` drops here (Zig: `ZigString` is a borrow, no deinit needed).
+        // `content_type_slice` drops here (`UnsafeStringView` is a borrow, no deinit needed).
     }
 
     if !response.is_ok() {
@@ -88,7 +88,7 @@ pub fn get_body_stream_or_bytes_for_wasm_streaming(
             .throw());
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig holds `body = response.getBodyValue()` as
+    // PORT NOTE: reshaped for borrowck — original holds `body = response.getBodyValue()` as
     // a single live pointer through `getBodyReadableStream`; in Rust that overlaps two
     // `&mut` borrows of `response`, so we re-borrow per use and capture scalars.
     {
@@ -126,7 +126,7 @@ pub fn get_body_stream_or_bytes_for_wasm_streaming(
         // (using any_blob.slice() would return a bogus empty slice)
 
         // Logic from JSC.WebCore.Body.Value.toReadableStream
-        // Zig: `var blob = any_blob.Blob;` — the union payload, by value.
+        // `var blob = any_blob.Blob;` — the union payload, by value.
         let AnyBlob::Blob(blob) = any_blob else {
             unreachable!("Any::store() returned Some, so this is the Blob variant");
         };
@@ -151,10 +151,9 @@ pub fn get_body_stream_or_bytes_for_wasm_streaming(
 }
 
 /// `jsc.host_fn.wrap3(getBodyStreamOrBytesForWasmStreaming)` — plain C ABI
-/// shim: returns `.zero` on thrown exception (matches `wrapN` semantics in
-/// `src/jsc/host_fn.zig`).
+/// shim: returns `.zero` on thrown exception (matches `wrapN` semantics).
 #[unsafe(no_mangle)]
-pub extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
+pub extern "C" fn Bun__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
     this: *mut JSGlobalObject,
     response_value: JSValue,
     streaming_compiler: *mut c_void,

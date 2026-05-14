@@ -417,7 +417,7 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
 
     // HTML bundles for dev server must be allocated to it, as it must outlive
     // the bundle task. See `DevServer.RouteBundle.HTML.bundled_html_text`
-    // TODO(port): Zig used `dev.arena()` vs `worker.arena` to control output ownership.
+    // TODO(port): original used `dev.arena()` vs `worker.arena` to control output ownership.
     // In Rust with global mimalloc this distinction collapses; verify DevServer ownership in Phase B.
 
     // `c.log` is now `*mut Log` (raw backref); copy directly. The HTMLLoader.log
@@ -509,13 +509,13 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
                 }
             }
             // value is ignored. fail loud if hit in debug
-            // TODO(port): Zig returned `undefined` in debug to fail loud; Rust has no direct equivalent.
+            // TODO(port): original returned an uninit value in debug to fail loud; Rust has no direct equivalent.
             break 'brk if cfg!(debug_assertions) { 0 } else { 0 };
         }
     };
 
     CompileResult::Html {
-        // TODO(port): Zig returned `output.items` (slice into the ArrayList). Here we hand over the Vec.
+        // TODO(port): original returned `output.items` (slice into the list). Here we hand over the Vec.
         code: html_loader.output.into_boxed_slice(),
         source_index,
         script_injection_offset,
@@ -523,5 +523,3 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
 }
 
 pub use crate::{DeferredBatchTask, ParseTask, ThreadPool};
-
-// ported from: src/bundler/linker_context/generateCompileResultForHtmlChunk.zig

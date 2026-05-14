@@ -3,17 +3,17 @@ use core::ptr;
 
 use bun_alloc::AllocError;
 
-// NOTE: the tag-bit scheme below only works on little-endian systems (matches Zig comment).
+// NOTE: the tag-bit scheme below only works on little-endian systems.
 const _: () = assert!(cfg!(target_endian = "little"));
 // NOTE: the packed layout assumes 64-bit pointers (`__ptr` occupies the upper 64 bits of the u128).
 const _: () = assert!(mem::size_of::<usize>() == 8);
 
 /// This is a string type that stores up to 15 bytes inline on the stack, and heap allocates if it is longer.
 ///
-/// Zig layout (`packed struct(u128)`, little-endian bit order):
+/// Packed `u128` layout (little-endian bit order):
 ///   bits   0..32  = `__len: u32`
 ///   bits  32..64  = `cap: u32`
-///   bits  64..128 = `__ptr: [*]u8`  (bit 127 is the inlined tag)
+///   bits  64..128 = `__ptr: *u8`  (bit 127 is the inlined tag)
 #[repr(transparent)]
 pub struct SmolStr(u128);
 
@@ -25,7 +25,7 @@ impl Clone for SmolStr {
             return SmolStr(self.0);
         }
         // Heap-backed: dupe the bytes into a fresh Vec allocation.
-        // bun.handleOom: panic on OOM (matches Zig allocator semantics).
+        // bun.handleOom: panic on OOM.
         SmolStr::from_slice(self.slice()).expect("OOM")
     }
 }
@@ -63,8 +63,9 @@ impl SmolStr {
 
     // ---- public API -------------------------------------------------------
 
-    // TODO(port): Zig `jsonStringify` participates in std.json's structural protocol;
-    // map to whatever bun's JSON-serialize trait becomes in Phase B.
+    // TODO(port): `jsonStringify` previously participated in a structural JSON
+    // serialization protocol; map to whatever bun's JSON-serialize trait becomes
+    // in Phase B.
     pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), crate::Error>
     where
         W: JsonWriter,
@@ -255,7 +256,7 @@ pub trait JsonWriter {
 
 // ---------------------------------------------------------------------------
 
-/// Zig layout (`packed struct(u128)`, little-endian bit order):
+/// Packed `u128` layout (little-endian bit order):
 ///   bits   0..120 = `data: u120`   (15 inline bytes)
 ///   bits 120..127 = `__len: u7`
 ///   bit  127      = `_tag: u1`
@@ -396,12 +397,11 @@ mod tests {
 
     #[test]
     fn inlined_does_not_allocate() {
-        // TODO(port): Zig used std.testing.allocator to assert no allocation; no direct
-        // equivalent here. The is_inlined() check is the observable proxy.
+        // TODO(port): originally asserted no heap allocation via a tracking
+        // allocator; no direct equivalent here. The is_inlined() check is the
+        // observable proxy.
         let hello = SmolStr::from_slice(b"hello").unwrap();
         assert_eq!(5, hello.len());
         assert!(hello.is_inlined());
     }
 }
-
-// ported from: src/string/SmolStr.zig

@@ -3,8 +3,9 @@ use crate::shared::Data;
 
 pub struct LocalInfileRequest {
     pub filename: Data,
-    // TODO(port): Zig `u24` — Rust has no native u24; using u32. Verify wire-format
-    // callers populate this from the 3-byte MySQL packet length correctly.
+    // TODO(port): wire size is 24 bits — Rust has no native u24; using u32.
+    // Verify wire-format callers populate this from the 3-byte MySQL packet
+    // length correctly.
     pub packet_size: u32,
 }
 
@@ -12,14 +13,13 @@ impl Default for LocalInfileRequest {
     fn default() -> Self {
         Self {
             filename: Data::Empty,
-            // packet_size has no Zig default; caller must set before decode.
+            // packet_size has no meaningful default; caller must set before decode.
             packet_size: 0,
         }
     }
 }
 
-// Zig `deinit` only called `this.filename.deinit()`; `Data` owns its drop, so no
-// explicit `impl Drop` is needed here.
+// `Data` owns its drop, so no explicit `impl Drop` is needed here.
 
 impl LocalInfileRequest {
     // TODO(port): narrow error set
@@ -36,7 +36,7 @@ impl LocalInfileRequest {
         Ok(())
     }
 
-    // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
+    // See Decode trait in src/sql/mysql/protocol/NewReader.rs
     pub fn decode<Context: ReaderContext>(
         &mut self,
         context: Context,
@@ -44,5 +44,3 @@ impl LocalInfileRequest {
         self.decode_internal(NewReader { wrapped: context })
     }
 }
-
-// ported from: src/sql/mysql/protocol/LocalInfileRequest.zig

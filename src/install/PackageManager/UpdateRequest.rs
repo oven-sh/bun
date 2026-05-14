@@ -12,9 +12,9 @@ use bun_install::{
     Dependency, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageManager, PackageNameHash,
 };
 // `lockfile.packages.items_name()` is provided by an extension trait on
-// `MultiArrayList<Package>` (Zig: `lockfile.packages.items(.name)`).
+// `MultiArrayList<Package>` (column projection over the package list).
 pub struct UpdateRequest {
-    // TODO(port): lifetime — Zig leaks these (no deinit); using &'static for now
+    // TODO(port): lifetime — these are leaked (no deinit); using &'static for now
     pub name: &'static [u8],
     pub name_hash: PackageNameHash,
     pub version: dependency::Version,
@@ -113,8 +113,7 @@ impl UpdateRequest {
         }
     }
 
-    // NOTE: `pub const fromJS = @import("../../install_jsc/update_request_jsc.zig").fromJS;`
-    // deleted — in Rust, `from_js` lives on an extension trait in the `*_jsc` crate.
+    // NOTE: `from_js` lives on an extension trait in the `*_jsc` crate.
 
     pub fn parse<'a>(
         pm: Option<&mut PackageManager>,
@@ -167,8 +166,8 @@ impl UpdateRequest {
             }
 
             // PORT NOTE: reshaped for borrowck — leak `input` now so sub-slices are &'static.
-            // Zig: `bun.default_allocator.dupe(u8, ..)` with no matching free; these live for
-            // the CLI invocation. `version_buf` is later reassigned to point at lockfile
+            // The original duped with no matching free; these live for the CLI
+            // invocation. `version_buf` is later reassigned to point at lockfile
             // buffers (lockfile.rs), so the field is a raw `*const [u8]` (ARENA-class per
             // PORTING.md type map) rather than `Box<[u8]>`.
             let input: &'static [u8] = input.leak();
@@ -220,7 +219,7 @@ impl UpdateRequest {
 
                 return Err(bun_core::err!("UnrecognizedDependencyFormat"));
             };
-            // TODO(port): Dependency.Version tag/value layout — Zig uses separate .tag + .value union
+            // TODO(port): Dependency.Version tag/value layout — the original used separate .tag + .value union
             if alias.is_some() && version.tag == dependency::version::Tag::Git {
                 if let Some(ver) = Dependency::parse_with_optional_tag(
                     placeholder,
@@ -268,7 +267,7 @@ impl UpdateRequest {
             };
             if let Some(name) = alias {
                 request.is_aliased = true;
-                // Zig: `allocator.dupe(u8, name) catch unreachable` — never freed (CLI lifetime).
+                // Owned dupe — never freed (CLI lifetime).
                 request.name = name.to_vec().leak();
                 request.name_hash = StringBuilder::string_hash(name);
             } else if request.version.tag == dependency::version::Tag::Github
@@ -296,5 +295,3 @@ impl UpdateRequest {
 pub use super::Subcommand;
 pub use bun_install::package_manager::Options;
 pub use bun_install::package_manager::command_line_arguments as CommandLineArguments;
-
-// ported from: src/install/PackageManager/UpdateRequest.zig

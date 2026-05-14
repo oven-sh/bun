@@ -44,5 +44,3 @@ impl ACL {
         b"log-delivery-write" => ACL::LogDeliveryWrite,
     };
 }
-
-// ported from: src/s3_signing/acl.zig

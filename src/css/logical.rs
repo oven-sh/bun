@@ -25,5 +25,3 @@ pub enum LogicalGroup {
     MinSize,
     MaxSize,
 }
-
-// ported from: src/css/logical.zig

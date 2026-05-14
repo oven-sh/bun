@@ -147,8 +147,8 @@ impl PageRule {
         let mut i: usize = 0;
         let len = self.declarations.len() + self.rules.len();
 
-        // PORT NOTE: Zig used `inline for` over field-name tuple + @field reflection.
-        // Unrolled to a 2-tuple of (slice, important) since both fields are property lists.
+        // PORT NOTE: unrolled to a 2-tuple of (slice, important) since both fields
+        // are property lists.
         let decls_groups: [(&[crate::css_parser::Property], bool); 2] = [
             (self.declarations.declarations.as_slice(), false),
             (self.declarations.important_declarations.as_slice(), true),
@@ -261,7 +261,7 @@ pub enum PagePseudoClass {
 impl PagePseudoClass {
     #[inline]
     pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // `Copy` enum (generics.zig "simple copy types" → identity).
+        // `Copy` enum ("simple copy types" → identity).
         *self
     }
 }
@@ -313,10 +313,8 @@ pub struct PageRuleParser<'a> {
     pub options: &'a css::ParserOptions<'a>,
 }
 
-// PORT NOTE: Zig modeled DeclarationParser/AtRuleParser/QualifiedRuleParser/
-// RuleBodyItemParser as nested `pub const Foo = struct { ... }` namespaces with
-// methods taking `*This`. In Rust these become trait impls on PageRuleParser;
-// associated `pub const X = T` → `type X = T`.
+// PORT NOTE: DeclarationParser/AtRuleParser/QualifiedRuleParser/
+// RuleBodyItemParser are trait impls on PageRuleParser.
 const _: () = {
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
@@ -416,5 +414,3 @@ const _: () = {
         }
     }
 };
-
-// ported from: src/css/rules/page.zig

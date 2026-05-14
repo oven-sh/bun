@@ -10,7 +10,8 @@
 // Scope name distinct from the macro-generated `struct Store`.
 ::bun_core::declare_scope!(STORE_LOG, hidden);
 
-/// Zig: `pub fn NewStore(comptime types: []const type, comptime count: usize) type`
+/// `new_store!(name, [T1, T2, …], count)` — typed-slab allocator over a list
+/// of payload types.
 ///
 /// Rust cannot take a slice of types as a generic parameter, and the body
 /// derives array sizes and alignment from that list (which would require
@@ -29,13 +30,11 @@ macro_rules! new_store {
             use ::core::mem::{align_of, size_of, MaybeUninit};
             use ::core::ptr::{addr_of_mut, NonNull};
 
-            // Zig: `const largest_size, const largest_align = brk: { ... }`
             const LARGEST_SIZE: usize = {
                 let sizes = [$(size_of::<$T>()),+];
                 let mut largest_size = 0;
                 let mut i = 0;
                 while i < sizes.len() {
-                    // Zig: `@compileError("NewStore does not support 0 size type: " ++ @typeName(T))`
                     assert!(sizes[i] > 0, "NewStore does not support 0 size type");
                     if sizes[i] > largest_size { largest_size = sizes[i]; }
                     i += 1;
@@ -53,20 +52,19 @@ macro_rules! new_store {
                 largest_align
             };
 
-            // Zig: `const backing_allocator = bun.default_allocator;`
-            // (deleted — global mimalloc via #[global_allocator]; Box/alloc use it.)
-
-            // Zig: `const log = Output.scoped(.Store, .hidden);`
-            // (declared once at crate level: `bun_output::declare_scope!(Store, hidden);`)
+            // The backing allocator is global mimalloc via #[global_allocator];
+            // Box/alloc use it. The scoped logger is declared once at crate
+            // level: `bun_output::declare_scope!(Store, hidden);`.
 
             pub struct Store {
                 /// Lazily-allocated head of the block chain — `None` until the
                 /// first [`Store::allocate`]. Owns the entire `Box<Block>`
                 /// `next`-linked list; `Store`'s `Drop` walks it iteratively.
                 ///
-                /// PERF(port): Zig co-allocated `Store` + the first `Block` in a
-                /// single `PreAlloc` so `create()` always paid one `~BLOCK_SIZE`
-                /// malloc. Splitting them lets a store that is `create()`d but
+                /// PERF(port): a previous implementation co-allocated `Store` +
+                /// the first `Block` in a single `PreAlloc` so `create()` always
+                /// paid one `~BLOCK_SIZE` malloc. Splitting them lets a store
+                /// that is `create()`d but
                 /// never written to (e.g. the `Stmt` store during
                 /// `Transpiler::configure_defines`, which only emits `E::String`
                 /// expression nodes for `--define` / `NODE_ENV`) cost nothing
@@ -81,14 +79,12 @@ macro_rules! new_store {
                 debug_lock: ::core::cell::Cell<bool>,
             }
 
-            /// Zig: `pub const Block = struct { ... }`
             // PORT NOTE: `buffer` needs `align(LARGEST_ALIGN)` but `#[repr(align(N))]`
             // requires a literal. Over-approximate with align(16) — every AST payload
             // type is `<= 16` aligned (asserted below). Phase B can switch to a
             // `#[repr(C)] union AlignUnion { $($T),+ }` element type if a >16-aligned
             // payload is ever introduced.
             const _: () = assert!(LARGEST_ALIGN <= 16, "NewStore payload type with align>16; bump Block repr(align)");
-            /// Zig: `pub const size = largest_size * count * 2;`
             pub const BLOCK_SIZE: usize = LARGEST_SIZE * $count * 2;
             #[repr(C, align(16))]
             pub struct Block {
@@ -100,9 +96,8 @@ macro_rules! new_store {
             impl Block {
                 pub const SIZE: usize = BLOCK_SIZE;
 
-                // Zig: `pub const Size = std.math.IntFittingRange(0, size + largest_size);`
-                // PERF(port): was IntFittingRange — picks smallest uN; using u32 (Block::SIZE
-                // for AST node stores fits comfortably). Profile.
+                // PERF(port): could pick the smallest uN that fits; using u32
+                // (Block::SIZE for AST node stores fits comfortably). Profile.
 
                 #[inline]
                 pub fn zero(this: *mut Block) {
@@ -115,7 +110,7 @@ macro_rules! new_store {
                 }
 
                 pub fn try_alloc<T>(block: &mut Block) -> Option<NonNull<T>> {
-                    // Zig: `std.mem.alignForward(usize, block.bytes_used, @alignOf(T))`
+                    // Align `bytes_used` forward to `align_of::<T>()`.
                     let start = ((block.bytes_used as usize) + align_of::<T>() - 1)
                         & !(align_of::<T>() - 1);
                     if start + size_of::<T>() > block.buffer.len() {
@@ -129,7 +124,6 @@ macro_rules! new_store {
                         let _ = &block.buffer[block.bytes_used as usize..][..size_of::<T>()];
                     }
 
-                    // Zig: `defer block.bytes_used = @intCast(start + @sizeOf(T));`
                     block.bytes_used =
                         BlockSize::try_from(start + size_of::<T>()).unwrap();
 
@@ -145,7 +139,7 @@ macro_rules! new_store {
 
                 /// Heap-allocate a Block without placing the (large) buffer on the stack.
                 fn new_boxed() -> Box<Block> {
-                    // Zig: `backing_allocator.create(Block)` then `.zero()`
+                    // Create then `.zero()` — avoid initializing the buffer.
                     let mut b: Box<MaybeUninit<Block>> = Box::new_uninit();
                     Block::zero(b.as_mut_ptr());
                     // SAFETY: `zero` initialized every non-buffer field; `buffer` is
@@ -154,7 +148,6 @@ macro_rules! new_store {
                 }
             }
 
-            // Zig: `pub const Size = std.math.IntFittingRange(0, size + largest_size);`
             type BlockSize = u32;
 
             /// `Store` owns its `Box<Block>` chain (`head` → `next` → …). The
@@ -167,7 +160,7 @@ macro_rules! new_store {
                     while let Some(mut block) = it {
                         #[cfg(debug_assertions)]
                         {
-                            // Zig: `@memset(block.buffer, undefined);`
+                            // Poison the buffer before free.
                             // SAFETY: poisoning a buffer that is being freed.
                             unsafe {
                                 ::core::ptr::write_bytes(
@@ -189,8 +182,7 @@ macro_rules! new_store {
                     // PERF(port): the first `Block`'s ~`BLOCK_SIZE` heap buffer
                     // is *not* allocated here — only the small `Store` header.
                     // `allocate()` lazily mallocs the first `Block` on the first
-                    // `append()` (see the `head` field doc). Box aborts on OOM
-                    // (matches Zig `bun.handleOom`).
+                    // `append()` (see the `head` field doc). Box aborts on OOM.
                     bun_core::heap::into_raw(Box::new(Store {
                         head: None,
                         current: ::core::ptr::null_mut(),
@@ -226,7 +218,7 @@ macro_rules! new_store {
                         // singly-linked list; walk it via `&mut` reborrows.
                         let mut it: Option<&mut Block> = store.head.as_deref_mut();
                         while let Some(block) = it {
-                            // Zig: `block.bytes_used = undefined; @memset(&block.buffer, undefined);`
+                            // Poison the buffer; `bytes_used` is reset below.
                             // SAFETY: poisoning; buffer is MaybeUninit<u8>.
                             unsafe {
                                 ::core::ptr::write_bytes(
@@ -328,8 +320,7 @@ macro_rules! new_store {
                     let _ = store;
                 }
 
-                // Zig: `fn supportsType(T: type) bool`
-                // TODO(port): comptime type-list membership check; replace with sealed
+                // TODO(port): type-list membership check; replace with sealed
                 // trait `Stored` impl'd for each `$($T),+` and bound `allocate<T: Stored>`.
             }
         }
@@ -344,8 +335,7 @@ macro_rules! new_store {
 // optional `ASTMemoryAllocator` override, `disable_reset` flag) plus the
 // twelve identical accessor/lifecycle fns. The two hand-written copies in
 // expr.rs / stmt.rs were byte-for-byte twins modulo the backing type and the
-// "Expr"/"Stmt" panic-string label — and so are the Zig originals
-// (expr.zig:3117-3196 vs stmt.zig:300-382). This macro stamps out one
+// "Expr"/"Stmt" panic-string label. This macro stamps out one
 // `pub mod Store { … }` per call site so the duplication lives here once.
 //
 // Why a macro and not a generic struct: `#[thread_local] static` cannot be
@@ -371,7 +361,7 @@ macro_rules! thread_local_ast_store {
             // read on every node `alloc` (the hottest TLS in the parser), and
             // the `thread_local!` macro's `LocalKey` wrapper showed up in
             // next-lint profiles. All three are `Cell<ptr|bool>` (no destructor,
-            // const init); matches Zig `threadlocal var`.
+            // const init).
             #[thread_local]
             pub static INSTANCE: Cell<*mut Backing> = Cell::new(::core::ptr::null_mut());
             /// Back-reference to the `ASTMemoryAllocator` installed by the
@@ -445,9 +435,8 @@ macro_rules! thread_local_ast_store {
                 );
             }
 
-            /// Zig: `Data.Store.disable_reset = b;` — toggled by long-lived
-            /// callers (transpiler, bundler) that want the Store to persist
-            /// across multiple parse calls.
+            /// Toggled by long-lived callers (transpiler, bundler) that want
+            /// the Store to persist across multiple parse calls.
             #[inline]
             pub fn set_disable_reset(b: bool) {
                 DISABLE_RESET.set(b);
@@ -493,5 +482,3 @@ macro_rules! thread_local_ast_store {
         }
     };
 }
-
-// ported from: src/js_parser/ast/NewStore.zig

@@ -21,5 +21,3 @@ impl UpdateCommand {
         Ok(())
     }
 }
-
-// ported from: src/cli/update_command.zig

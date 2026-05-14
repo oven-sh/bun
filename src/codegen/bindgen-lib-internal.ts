@@ -23,7 +23,7 @@ export let structHashToSelf = new Map<string, Struct>();
 export const str = (v: any) => JSON.stringify(v);
 /** Capitalize */
 export const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
-/** Escape a Zig Identifier */
+/** Escape an identifier */
 export const zid = (s: string) => (s.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/) ? s : "@" + str(s));
 /** Snake Case */
 export const snake = (s: string) =>
@@ -39,7 +39,7 @@ export const camel = (s: string) =>
 /** Pascal Case */
 export const pascal = (s: string) => cap(camel(s));
 
-// Return symbol names of extern values (must be equivalent between C++ and Zig)
+// Return symbol names of extern values (must be equivalent between C++ and Rust)
 
 /** The JS Host function, aka fn (*JSC.JSGlobalObject, *JSC.CallFrame) JSValue.MaybeException */
 export const extJsFunction = (namespaceVar: string, fnLabel: string) =>
@@ -62,7 +62,7 @@ interface TypeDataDefs {
     value: TypeImpl;
     repr: "kv-slices";
   };
-  zigEnum: {
+  nativeEnum: {
     file: string;
     impl: string;
   };
@@ -122,7 +122,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
   }
 
   isVirtualArgument() {
-    return this.kind === "globalObject" || this.kind === "zigVirtualMachine";
+    return this.kind === "globalObject" || this.kind === "nativeVirtualMachine";
   }
 
   hash() {
@@ -139,7 +139,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "record":
         h += this.data.value.hash();
         break;
-      case "zigEnum":
+      case "nativeEnum":
         h += `${this.data.file}:${this.data.impl}`;
         break;
       case "stringEnum":
@@ -169,7 +169,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "oneOf":
       case "dictionary":
       case "stringEnum":
-      case "zigEnum":
+      case "nativeEnum":
         return true;
       default:
         return false;
@@ -204,11 +204,11 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "usize":
         return kind;
       case "globalObject":
-      case "zigVirtualMachine":
+      case "nativeVirtualMachine":
         return "*JSGlobalObject";
       case "stringEnum":
         return cAbiTypeForEnum(this.data.length);
-      case "zigEnum":
+      case "nativeEnum":
         throw new Error("TODO");
       case "undefined":
         return "u0";
@@ -283,7 +283,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
     const name = this.name();
     const cAbiType = this.canDirectlyMapToCAbi();
     const namespace = typeHashToNamespace.get(this.hash());
-    if (cAbiType && typeof cAbiType === "string" && this.kind !== "zigEnum" && this.kind !== "stringEnum") {
+    if (cAbiType && typeof cAbiType === "string" && this.kind !== "nativeEnum" && this.kind !== "stringEnum") {
       return cAbiTypeName(cAbiType);
     }
     return namespace ? `${namespace}::${cap(name)}` : name;
@@ -714,9 +714,9 @@ export const isFunc = Symbol("isFunc");
 export interface Func {
   [isFunc]: true;
   name: string;
-  zigPrefix: string;
+  nativePrefix: string;
   snapshot: string;
-  zigFile: string;
+  nativeFile: string;
   variants: Variant[];
 }
 
@@ -735,7 +735,7 @@ export interface Arg {
   name: string;
   type: TypeImpl;
   loweringStrategy?: ArgStrategy;
-  zigMappedName?: string;
+  nativeMappedName?: string;
 }
 
 /**
@@ -779,7 +779,7 @@ export type ArgStrategyChildItem =
  * In addition to moving a payload over, an additional bit of information
  * crosses the ABI boundary indicating if the function threw an exception.
  *
- * For simplicity, the possibility of any Zig binding returning an error/calling
+ * For simplicity, the possibility of any native binding returning an error/calling
  * `throw` is assumed and there isnt a way to disable the exception check.
  */
 export type ReturnStrategy =
@@ -805,11 +805,11 @@ export function registerFunction(opts: FuncOptions) {
   const snapshot = snapshotCallerLocation();
   const filename = stackTraceFileName(snapshot);
   expect(filename).toEndWith(".bind.ts");
-  const zigFile = path.relative(src, filename.replace(/\.bind\.ts$/, ".rs"));
-  let file = files.get(zigFile);
+  const nativeFile = path.relative(src, filename.replace(/\.bind\.ts$/, ".rs"));
+  let file = files.get(nativeFile);
   if (!file) {
     file = { functions: [], typedefs: [] };
-    files.set(zigFile, file);
+    files.set(nativeFile, file);
   }
   const variants: Variant[] = [];
   if ("variants" in opts) {
@@ -837,9 +837,9 @@ export function registerFunction(opts: FuncOptions) {
   const func: Func = {
     [isFunc]: true,
     name: "",
-    zigPrefix: opts.implNamespace ? `${opts.implNamespace}.` : "",
+    nativePrefix: opts.implNamespace ? `${opts.implNamespace}.` : "",
     snapshot,
-    zigFile,
+    nativeFile,
     variants,
   };
   allFunctions.push(func);
@@ -1052,14 +1052,14 @@ export class Struct {
     this.fields.push({ name, type: cType, size, naturalAlignment });
   }
 
-  emitZig(zig: CodeWriter, semi: "with-semi" | "no-semi") {
-    zig.line("extern struct {");
-    zig.indent();
+  emitNative(nativeSrc: CodeWriter, semi: "with-semi" | "no-semi") {
+    nativeSrc.line("extern struct {");
+    nativeSrc.indent();
     for (const field of this.fields) {
-      zig.line(`${snake(field.name)}: ${field.type},`);
+      nativeSrc.line(`${snake(field.name)}: ${field.type},`);
     }
-    zig.dedent();
-    zig.line("}" + (semi === "with-semi" ? ";" : ""));
+    nativeSrc.dedent();
+    nativeSrc.line("}" + (semi === "with-semi" ? ";" : ""));
   }
 
   emitCpp(cpp: CodeWriter, structName: string) {

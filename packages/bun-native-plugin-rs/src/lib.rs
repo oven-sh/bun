@@ -327,7 +327,7 @@ pub type BunLoader = sys::BunLoader;
 fn get_from_raw_str<'a>(ptr: *const u8, len: usize) -> PluginResult<Cow<'a, str>> {
     let slice: &'a [u8] = unsafe { std::slice::from_raw_parts(ptr, len) };
 
-    // Windows allows invalid UTF-16 strings in the filesystem. These get converted to WTF-8 in Zig.
+    // Windows allows invalid UTF-16 strings in the filesystem. These get converted to WTF-8 by the runtime.
     // Meaning the string may contain invalid UTF-8, we'll have to use the safe checked version.
     #[cfg(target_os = "windows")]
     {
@@ -338,7 +338,7 @@ fn get_from_raw_str<'a>(ptr: *const u8, len: usize) -> PluginResult<Cow<'a, str>
 
     #[cfg(not(target_os = "windows"))]
     {
-        // SAFETY: The source code comes from Zig, which uses UTF-8, so this should be safe.
+        // SAFETY: The source code comes from the runtime, which uses UTF-8, so this should be safe.
 
         std::str::from_utf8(slice)
             .map(Into::into)

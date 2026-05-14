@@ -117,8 +117,8 @@ impl us_socket_t {
         if length < 0 {
             let errno = bun_errno::get_errno(length);
             debug_assert!(errno != bun_errno::E::SUCCESS);
-            // TODO(port): bun.errnoToZigErr — map errno to bun_core::Error
-            return Err(bun_core::errno_to_zig_err(errno as i32));
+            // TODO(port): map errno to bun_core::Error
+            return Err(bun_core::errno_to_bun_raw_err(errno as i32));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])
@@ -135,8 +135,8 @@ impl us_socket_t {
         if length < 0 {
             let errno = bun_errno::get_errno(length);
             debug_assert!(errno != bun_errno::E::SUCCESS);
-            // TODO(port): bun.errnoToZigErr — map errno to bun_core::Error
-            return Err(bun_core::errno_to_zig_err(errno as i32));
+            // TODO(port): map errno to bun_core::Error
+            return Err(bun_core::errno_to_bun_raw_err(errno as i32));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])
@@ -200,7 +200,7 @@ impl us_socket_t {
             &mut *c::us_socket_group(self)
         }
     }
-    // Zig: `pub const rawGroup = group;`
+    // Alias for `group`.
     #[inline]
     pub fn raw_group(&mut self) -> &mut SocketGroup {
         self.group()
@@ -310,10 +310,9 @@ impl us_socket_t {
     }
     #[cfg(windows)]
     pub fn write_fd(&mut self, _data: &[u8], _file_descriptor: Fd) -> i32 {
-        // Zig: `if (Environment.isWindows) @compileError(...)` — that fires only
-        // on call (lazy semantics). Rust evaluates `compile_error!` at item
-        // definition, so this would brick the windows build even with no callers.
-        // Mirror Zig intent with a runtime trap; no current Windows call site.
+        // Not supported on Windows. A `compile_error!` would brick the windows
+        // build even with no callers (it is evaluated at item definition), so
+        // use a runtime trap; no current Windows call site.
         unreachable!("us_socket_t::write_fd is not implemented on Windows")
     }
 
@@ -512,7 +511,7 @@ pub struct StreamBuffer {
 }
 
 impl us_socket_stream_buffer_t {
-    // TODO(port): ownership — Zig does not free the previous list_ptr here; matches that.
+    // TODO(port): ownership — does not free the previous list_ptr here.
     pub fn update(&mut self, stream_buffer: StreamBuffer) {
         // Decompose the Vec<u8> backing `stream_buffer.list` into raw parts so
         // the C side can read ptr/len/cap directly.
@@ -570,5 +569,3 @@ pub extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_stream_buf
     unsafe { us_socket_stream_buffer_t::destroy(buffer) };
 }
 // us_socket_buffered_js_write moved to src/runtime/socket/uws_jsc.rs
-
-// ported from: src/uws_sys/us_socket_t.zig

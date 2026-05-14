@@ -3,8 +3,7 @@
 //! `Watcher::init::<DevServer>` dispatches through the generic
 //! `WatcherContext` vtable, so the trait methods here are the *only* path the
 //! watcher thread reaches — they forward to the inherent
-//! `DevServer::{on_file_update, on_watch_error}` bodies in `../DevServer.rs`
-//! (ported from `DevServer.zig:4093`/`4153`).
+//! `DevServer::{on_file_update, on_watch_error}` bodies in `../DevServer.rs`.
 
 // `feature = "bake_debugging_features"` is not yet a declared cargo feature; the
 // struct field gate must mirror `mod.rs` so the initializer below stays in sync.
@@ -28,7 +27,7 @@ impl bun_watcher::WatcherContext for DevServer {
         DevServer::on_file_update(self, events, changed_files, watchlist);
     }
 
-    /// DevServer.zig only defines `onWatchError` (not `onError`); the trait's
+    /// DevServer only defines `on_watch_error` (not `on_error`); the trait's
     /// default `on_watch_error` would forward here, so route both to the
     /// inherent path-aware impl rather than emitting a generic warn.
     fn on_error(&mut self, err: bun_sys::Error) {
@@ -41,7 +40,7 @@ impl bun_watcher::WatcherContext for DevServer {
 }
 
 impl WatcherAtomics {
-    /// DevServer.zig `WatcherAtomics.init`.
+    /// `WatcherAtomics::init`.
     pub(crate) fn init(owner: *mut DevServer) -> Self {
         let mk_event = || HotReloadEvent::init_empty(owner);
         WatcherAtomics {

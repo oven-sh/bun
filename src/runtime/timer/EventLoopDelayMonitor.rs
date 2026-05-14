@@ -150,5 +150,3 @@ pub extern "C" fn Timer_disableEventLoopDelayMonitoring(vm: *mut VirtualMachine)
 
 use crate::timer::EventLoopTimerTag;
 use bun_core::TimespecMockMode;
-
-// ported from: src/runtime/timer/EventLoopDelayMonitor.zig

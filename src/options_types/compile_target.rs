@@ -138,9 +138,10 @@ impl CompileTarget {
         // TODO(port): narrow error set
         if let Some(url) = env_var::BUN_COMPILE_TARGET_TARBALL_URL.get() {
             if strings::has_prefix(url, b"http://") || strings::has_prefix(url, b"https://") {
-                // TODO(port): lifetime — Zig returns the env var slice directly (`return url;`),
-                // which is not tied to `buf`. Phase B: change return type to allow returning a
-                // non-buf slice (e.g. Cow<'_, [u8]>). For now copy into buf without truncation.
+                // TODO(port): lifetime — the env var slice could be returned directly
+                // without being tied to `buf`. Phase B: change return type to allow
+                // returning a non-buf slice (e.g. Cow<'_, [u8]>). For now copy into buf
+                // without truncation.
                 if url.len() > buf.len() {
                     return Err(bun_core::err!("BufferTooSmall"));
                 }
@@ -422,8 +423,9 @@ impl CompileTarget {
                 } else if strings::contains(input, b"wasm") {
                     bun_core::err_generic!("invalid target, WebAssembly is not supported. Sorry!");
                 } else if strings::contains(input, b"v") {
-                    // PORT NOTE: Zig used a comptime-concat format string with VERSION_STRING.
-                    // `format_args!` requires a literal; pass the version as a runtime arg.
+                    // PORT NOTE: `format_args!` requires a literal format string,
+                    // so the version is passed as a runtime arg rather than spliced
+                    // into the literal at compile time.
                     bun_core::err_generic!(
                         "Please pass a complete version number to --target. For example, --target=bun-v{}",
                         Environment::VERSION_STRING,
@@ -450,8 +452,8 @@ impl CompileTarget {
         // anonymous struct const). Phase B: generate static tables via macro_rules! or
         // const_format::concatcp! over OperatingSystem::name_string().
         // TODO(port): this needs a static [&[u8]; 3] per (os, arch, libc) combo — the os
-        // string is `"\"" ++ os.nameString() ++ "\""` and the version is
-        // `"\"" ++ Global.package_json_version ++ "\""`, both comptime in Zig.
+        // string is the quoted OS name and the version is the quoted
+        // `Global.package_json_version`, both built at compile time.
         macro_rules! table {
             ($platform:literal, $arch:literal) => {{
                 const VALUES: &[&[u8]] = &[
@@ -515,5 +517,3 @@ impl fmt::Display for CompileTarget {
 
 // `fromJS` / `fromSlice` re-exports from bundler_jsc deleted — see PORTING.md §Idiom map.
 // In Rust these are extension-trait methods living in bun_bundler_jsc.
-
-// ported from: src/options_types/CompileTarget.zig

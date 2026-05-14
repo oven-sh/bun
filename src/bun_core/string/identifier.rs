@@ -20,12 +20,11 @@ use crate::string::strings::{CodePoint, CodepointIterator, Cursor};
 
 /// Whole-string ES identifier check over WTF-8 bytes.
 ///
-/// Port of `js_lexer.isIdentifier` (src/js_parser/lexer.zig:3058). Zig has
-/// exactly one impl; the Rust port had triplicated it across `bun_string`,
-/// `bun_ast`, and `bun_js_parser` during the move-down layering pass. This is
-/// the canonical home: it sits next to the per-codepoint predicates and the
-/// two-stage Unicode tables it bottoms out in, and `CodepointIterator` lives
-/// in this crate.
+/// `js_lexer.isIdentifier`. There should be exactly one impl; the port had
+/// triplicated it across `bun_string`, `bun_ast`, and `bun_js_parser` during
+/// the move-down layering pass. This is the canonical home: it sits next to
+/// the per-codepoint predicates and the two-stage Unicode tables it bottoms
+/// out in, and `CodepointIterator` lives in this crate.
 pub fn is_identifier(text: &[u8]) -> bool {
     if text.is_empty() {
         return false;
@@ -43,15 +42,13 @@ pub fn is_identifier(text: &[u8]) -> bool {
     true
 }
 
-/// Whole-string ES identifier check over WTF-16. Port of
-/// `src/js_parser/lexer.zig:isIdentifierUTF16`.
+/// Whole-string ES identifier check over WTF-16. `js_lexer.isIdentifierUTF16`.
 ///
 /// Surrogate decoding is open-coded on purpose: an unpaired high surrogate
 /// (0xD800..=0xDBFF not followed by a low surrogate) advances ONE unit and is
-/// fed raw to `is_identifier_start/part` — exactly matching Zig
-/// `lexer.zig:3091-3096`. `crate::string::strings::utf16_codepoint` would advance
-/// TWO units in that case (see immutable.rs:1644 PORT NOTE), so do NOT swap it
-/// in here.
+/// fed raw to `is_identifier_start/part`.
+/// `crate::string::strings::utf16_codepoint` would advance TWO units in that
+/// case (see immutable.rs:1644 PORT NOTE), so do NOT swap it in here.
 pub fn is_identifier_utf16(text: &[u16]) -> bool {
     let n = text.len();
     if n == 0 {
@@ -76,11 +73,11 @@ pub fn is_identifier_utf16(text: &[u16]) -> bool {
 
 // ──────────────────────────────────────────────────────────────────────────
 // The remainder of this file is auto-generated. Do not edit.
-// TODO(port): re-run the identifier-table generator with .rs output instead
-// of post-processing the .zig; tables below were mechanically transcribed.
+// TODO(port): re-run the identifier-table generator with .rs output; the
+// tables below were mechanically transcribed.
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: Zig `u21` codepoint type → `u32`. Callers must pass cp <= 0x10FFFF
+// PORT NOTE: codepoints are `u32`. Callers must pass cp <= 0x10FFFF
 // (stage1 tables are sized for that range); out-of-range indexes panic.
 
 /// isIDStartES5 checks if a codepoint is valid in the isIDStartES5 category
@@ -2580,5 +2577,3 @@ mod id_continue_es_next {
         281474976710655,
     ];
 }
-
-// ported from: src/js_parser/lexer/identifier.zig

@@ -50,8 +50,7 @@ impl CondExpr {
     }
 
     pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
-        // Spec: CondExpr.zig `next()` — expand each arg via Expansion, then
-        // evaluate the operator.
+        // Expand each arg via Expansion, then evaluate the operator.
         loop {
             let (shell, node) = {
                 let me = interp.as_condexpr(this);
@@ -92,8 +91,8 @@ impl CondExpr {
         }
     }
 
-    /// Spec: CondExpr.zig `commandImplStart`. Evaluates the operator against
-    /// the expanded `args` and returns the resulting exit code.
+    /// Evaluates the operator against the expanded `args` and returns the
+    /// resulting exit code.
     fn command_impl_start(interp: &Interpreter, this: NodeId, op: ast::CondExprOp) -> Yield {
         use ast::CondExprOp as Op;
         let parent = interp.as_condexpr(this).base.parent;
@@ -190,7 +189,6 @@ impl CondExpr {
         }
     }
 
-    /// Spec: CondExpr.zig `onIOWriterChunk` (lines 267-279).
     pub fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
@@ -216,16 +214,15 @@ impl CondExpr {
         )
     }
 
-    /// Spec: CondExpr.zig `onStatTaskComplete`. Main-thread re-entry for the
-    /// off-thread `stat`/`lstat` posted by a unary file-test operator.
+    /// Main-thread re-entry for the off-thread `stat`/`lstat` posted by a
+    /// unary file-test operator.
     pub fn on_stat_task_done(
         interp: &Interpreter,
         this: NodeId,
         stat: &bun_sys::Result<bun_sys::Stat>,
         path: &[u8],
     ) {
-        // Spec: CondExpr.zig `onStatTaskComplete` + `.stat_complete` arm of
-        // `next()` — evaluate `op` against the stat result.
+        // Evaluate `op` against the stat result.
         let _ = path;
         debug_assert!(matches!(
             interp.as_condexpr(this).state,
@@ -258,8 +255,8 @@ impl CondExpr {
         exit_code: ExitCode,
     ) -> Yield {
         // Child is always an Expansion that produced one arg.
-        // Spec: CondExpr.zig `childDone` — on nonzero, write the failing
-        // error and finish; otherwise collect the expanded word and advance.
+        // On nonzero, write the failing error and finish; otherwise collect
+        // the expanded word and advance.
         if exit_code != 0 {
             // TODO(port): writeFailingError("{f}\n", err) — IOWriter path.
             interp.deinit_node(child);
@@ -285,5 +282,3 @@ impl CondExpr {
         me.base.end_scope();
     }
 }
-
-// ported from: src/shell/states/CondExpr.zig

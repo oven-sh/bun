@@ -5,9 +5,9 @@ pub struct ErrorCodeAndMessage {
     pub message: &'static [u8],
 }
 
-// PERF(port): was `comptime err: anyerror` — demoted to runtime; profile in Phase B
-// PORT NOTE: Zig return type was `[:0]const u8` (sentinel-terminated literal); only
-// caller stores into `[]const u8`, so the sentinel is dropped here.
+// PERF(port): originally a compile-time error parameter — demoted to runtime; profile in Phase B
+// PORT NOTE: original return type was a sentinel-terminated literal; the only
+// caller stores it into a plain byte slice, so the sentinel is dropped here.
 pub fn get_sign_error_message(e: Error) -> &'static [u8] {
     match e {
         e if e == err!("MissingCredentials") => b"Missing S3 credentials. 'accessKeyId', 'secretAccessKey', 'bucket', and 'endpoint' are required",
@@ -49,18 +49,16 @@ pub fn get_sign_error_code_and_message(e: Error) -> ErrorCodeAndMessage {
     }
 }
 
-// PORT NOTE: `getJSSignError` / `throwSignError` re-exports from
-// `../runtime/webcore/s3/error_jsc.zig` deleted — in Rust these live as
-// extension-trait methods in the `*_jsc` crate (see PORTING.md §Idiom map).
+// PORT NOTE: the `getJSSignError` / `throwSignError` re-exports were dropped — in
+// Rust these live as extension-trait methods in the `*_jsc` crate (see
+// PORTING.md §Idiom map).
 
-// PORT NOTE: Zig `S3Error { code: []const u8, message: []const u8 }` carries borrowed slices
-// that are valid only for the duration of the callback invocation (callers parse them out of an
-// XML response body). Field ownership is *not* `'static` — modeled with an explicit `<'a>`.
+// PORT NOTE: `S3Error` carries borrowed slices that are valid only for the
+// duration of the callback invocation (callers parse them out of an XML response
+// body). Field ownership is *not* `'static` — modeled with an explicit `<'a>`.
 pub struct S3Error<'a> {
     pub code: &'a [u8],
     pub message: &'a [u8],
-    // PORT NOTE: `toJS` / `toJSWithAsyncStack` aliases to `error_jsc.zig` deleted —
+    // PORT NOTE: `toJS` / `toJSWithAsyncStack` aliases were dropped —
     // implemented as extension-trait methods in the `*_jsc` crate.
 }
-
-// ported from: src/s3_signing/error.zig

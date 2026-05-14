@@ -85,8 +85,8 @@ pub struct ParsedGitUrl<'a> {
     pub commit: Option<&'a [u8]>,
     pub owner: Option<&'a [u8]>,
     pub repo: Option<&'a [u8]>,
-    // TODO(port): in Zig, `url` may be either a borrow into `version` or a freshly
-    // allocPrint'd "https://github.com/{path}". Here we keep an optional owned buffer
+    // TODO(port): `url` may be either a borrow into `version` or a freshly
+    // formatted "https://github.com/{path}". Keep an optional owned buffer
     // so the borrow case stays zero-copy. Callers must check `owned_url` first.
     pub owned_url: Option<Vec<u8>>,
 }
@@ -380,7 +380,7 @@ impl<'a> YarnLock<'a> {
                     if spec_trimmed.is_empty() {
                         continue;
                     }
-                    // TODO(port): Zig dupes here; we borrow from `content` directly since
+                    // TODO(port): borrow from `content` directly instead of duplicating —
                     // spec_trimmed is a subslice of `content` and outlives YarnLock<'a>.
                     current_specs.push(spec_trimmed);
                 }
@@ -394,7 +394,7 @@ impl<'a> YarnLock<'a> {
                 for spec in &current_specs {
                     if let Some(at_index) = strings::index_of(spec, b"@file:") {
                         let file_path = &spec[at_index + 6..];
-                        // TODO(port): Zig dupes here; borrow from content instead.
+                        // TODO(port): borrow from content instead of duplicating.
                         new_entry.file = Some(file_path);
                         break;
                     }
@@ -473,9 +473,9 @@ impl<'a> YarnLock<'a> {
                             );
                         } else if Entry::is_git_dependency(value) {
                             let git_info = Entry::parse_git_url(self, value)?;
-                            // TODO(port): dropped logic — Zig reassigns `url` to the
-                            // allocPrint'd `https://github.com/{path}` buffer for the
-                            // `github:` branch and stores that as `resolved`. Here
+                            // TODO(port): dropped logic — `url` should be reassigned to the
+                            // formatted `https://github.com/{path}` buffer for the
+                            // `github:` branch and stored as `resolved`. Here
                             // `git_info.url` still borrows the stripped input slice and
                             // `owned_url` is discarded, so github: URLs resolve INCORRECTLY.
                             // Phase B must change Entry.resolved to Cow<'a, [u8]> (or store
@@ -539,9 +539,9 @@ impl<'a> YarnLock<'a> {
     }
 
     fn find_entry_by_spec(&self, spec: &[u8]) -> Option<&Entry<'a>> {
-        // PORT NOTE: Zig returns `?*Entry` (mutable ptr) but every caller only
-        // reads `.workspace` / `.specs`, so `&self` suffices and avoids the
-        // borrowck conflict with the outer `entries.iter()` loops.
+        // PORT NOTE: every caller only reads `.workspace` / `.specs`, so `&self`
+        // suffices and avoids the borrowck conflict with the outer
+        // `entries.iter()` loops (a mutable return would alias).
         for entry in self.entries.iter() {
             for entry_spec in entry.specs.iter() {
                 if *entry_spec == spec {
@@ -572,7 +572,7 @@ impl<'a> YarnLock<'a> {
                 combined_specs.extend_from_slice(&new_entry.specs);
 
                 existing_entry.specs = combined_specs;
-                // new_entry.specs dropped here (Zig: allocator.free)
+                // new_entry.specs dropped here
                 return Ok(());
             }
         }
@@ -672,7 +672,7 @@ struct RootDep {
 #[derive(Clone)]
 struct VersionInfo {
     version: Vec<u8>,
-    // TODO(port): Zig stores `string` (borrow from input). Using Vec<u8> here to avoid
+    // TODO(port): could borrow from input. Using Vec<u8> here to avoid
     // a second lifetime on the local map; Phase B can switch to &'a [u8].
     package_id: PackageID,
     yarn_idx: usize,
@@ -698,8 +698,8 @@ pub fn migrate_yarn_lockfile<'a>(
     install::initialize_store();
     bun_core::analytics::Features::yarn_migration_inc(1);
 
-    // PORT NOTE: reshaped for borrowck. Zig keeps a single `var string_buf =
-    // this.stringBuf()` for the whole function, but in Rust that would hold
+    // PORT NOTE: reshaped for borrowck. Holding a single `string_buf =
+    // this.stringBuf()` for the whole function would hold
     // `&mut this.buffers.string_bytes` + `&mut this.string_pool` for the
     // function's lifetime and lock out every other `this.*` access. Instead,
     // construct a fresh `Buf` per append via this macro so the mutable borrow
@@ -726,10 +726,10 @@ pub fn migrate_yarn_lockfile<'a>(
         else {
             return Err(bun_core::err!("InvalidPackageJSON"));
         };
-        // Zig: `defer package_json_fd.close()` — guard so every early-return
-        // below (read_to_end / get_fd_path failure) still closes the fd.
+        // Guard so every early-return below (read_to_end / get_fd_path failure)
+        // still closes the fd.
         let package_json_fd = scopeguard::guard(package_json_fd, |f| {
-            let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
+            let _ = f.close(); // close error is non-actionable: discarded
         });
         let Ok(package_json_contents) = package_json_fd.read_to_end() else {
             return Err(bun_core::err!("InvalidPackageJSON"));
@@ -749,9 +749,9 @@ pub fn migrate_yarn_lockfile<'a>(
         };
         drop(package_json_fd); // close now; fd no longer needed past path resolution
 
-        // PORT NOTE: Zig passes `comptime opts: js_lexer.JSONOptions`; the Rust
-        // port spells the 8 option flags out as const generics (stable Rust has
-        // no struct const-generics). Unspecified Zig fields default to false.
+        // PORT NOTE: the 8 JSON option flags are spelled out as const generics
+        // (stable Rust has no struct const-generics). Unspecified flags default
+        // to false.
         let json_bump = bun_alloc::Arena::new();
         let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts::<
             true,  // IS_JSON
@@ -911,8 +911,8 @@ pub fn migrate_yarn_lockfile<'a>(
         }
     }
 
-    // SAFETY: capacity reserved above to num_deps; Zig writes into items.ptr[0..num_deps]
-    // beyond len. We mirror with raw pointers and set len at the end.
+    // SAFETY: capacity reserved above to num_deps; this writes into the spare
+    // capacity beyond len with raw pointers and sets len at the end.
     let dependencies_base_ptr = this.buffers.dependencies.as_mut_ptr();
     let resolutions_base_ptr = this.buffers.resolutions.as_mut_ptr();
     let mut dependencies_buf: &mut [Dependency] = unsafe {
@@ -1022,7 +1022,7 @@ pub fn migrate_yarn_lockfile<'a>(
     let mut package_id_to_yarn_idx: Vec<usize> = vec![usize::MAX; next_package_id as usize];
 
     let mut created_packages: StringHashMap<bool> = StringHashMap::new();
-    let _ = &created_packages; // unused in Zig too (only init/deinit)
+    let _ = &created_packages; // unused (only init/deinit)
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let mut is_npm_alias = false;
@@ -1236,8 +1236,8 @@ pub fn migrate_yarn_lockfile<'a>(
         })?;
     }
 
-    // PORT NOTE: Zig holds two `items(.field)` slices simultaneously; the
-    // derive's `&mut self` accessors can't alias, so we re-borrow per write
+    // PORT NOTE: two MultiArrayList column slices cannot be held simultaneously;
+    // the derive's `&mut self` accessors can't alias, so we re-borrow per write
     // below via `this.packages.items_*_mut()[idx] = …` instead of caching.
 
     let mut actual_root_dep_count: u32 = 0;
@@ -1513,9 +1513,9 @@ pub fn migrate_yarn_lockfile<'a>(
         versions.sort_by(|a, b| a.package_id.cmp(&b.package_id));
 
         let original_name_hash = string_hash(base_name);
-        // PORT NOTE: reshaped for borrowck — Zig matches on the entry only to
-        // call `existing_ids.deinit()` before `remove`; Rust's `remove` drops
-        // the value (and thus the `Ids` Vec) automatically, so the match is
+        // PORT NOTE: reshaped for borrowck — there is no need to manually free
+        // `existing_ids` before `remove`; Rust's `remove` drops the value (and
+        // thus the `Ids` Vec) automatically, so the match is
         // unnecessary and we avoid the overlapping `get_mut`/`remove` borrow.
         let _ = this.package_index.remove(&original_name_hash);
     }
@@ -2061,9 +2061,9 @@ fn string_hash(s: &[u8]) -> u64 {
     Semver::string::Builder::string_hash(s)
 }
 
-/// Port of Zig's packed-struct `Behavior { .prod = …, .dev = … }` literal.
-/// Rust's bitflags-backed `Behavior` has no named fields, so build via
-/// `with(FLAG, cond)` chaining instead.
+/// Build a `Behavior` from named boolean fields. Rust's bitflags-backed
+/// `Behavior` has no named fields, so build via `with(FLAG, cond)` chaining
+/// instead of a struct literal.
 #[inline]
 fn behavior_for(dep_type: DependencyType, workspace: bool) -> dependency::Behavior {
     dependency::Behavior::default()
@@ -2082,5 +2082,3 @@ fn behavior_for(dep_type: DependencyType, workspace: bool) -> dependency::Behavi
         .with(dependency::Behavior::PEER, dep_type == DependencyType::Peer)
         .with(dependency::Behavior::WORKSPACE, workspace)
 }
-
-// ported from: src/install/yarn.zig

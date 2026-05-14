@@ -120,7 +120,7 @@ pub use bun_spawn::process::StdioKind;
 #[derive(bun_ptr::RefCounted)]
 pub struct Subprocess<'a> {
     pub ref_count: RefCount<Subprocess<'a>>,
-    /// Intrusively-refcounted `Process` (Zig: `*Process`). Allocated via
+    /// Intrusively-refcounted `Process`. Allocated via
     /// `heap::alloc` in `Process::init_posix`/`init_windows`; the +1 ref
     /// from construction is released in [`Subprocess::finalize`] via
     /// `Process::deref()`. Not `Arc` — `Process` carries its own
@@ -137,7 +137,7 @@ pub struct Subprocess<'a> {
     /// Terminal attached to this subprocess (if spawned with terminal option)
     pub terminal: Cell<Option<NonNull<Terminal>>>,
 
-    // Zig: `*jsc.JSGlobalObject` — JSC global outlives every Subprocess.
+    // `*jsc.JSGlobalObject` — JSC global outlives every Subprocess.
     pub global_this: bun_ptr::BackRef<JSGlobalObject>,
     pub observable_getters: Cell<EnumSet<ObservableGetter>>,
     pub closed: Cell<EnumSet<StdioKind>>,
@@ -225,8 +225,8 @@ impl<'a> Subprocess<'a> {
         let _ = result;
     }
 
-    /// Borrow the intrusively-refcounted `Process`. Zig stores `*Process` and
-    /// reads/mutates freely; every access site is single-threaded on the JS
+    /// Borrow the intrusively-refcounted `Process`. Stored as `*Process` and
+    /// read/mutated freely; every access site is single-threaded on the JS
     /// mutator, so projecting `&`/`&mut` through the raw pointer mirrors the
     /// original semantics.
     #[inline]
@@ -242,14 +242,14 @@ impl<'a> Subprocess<'a> {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(super) fn process_mut(&self) -> &mut Process {
-        // SAFETY: see `process()` — Zig `*Process` semantics. R-2: `&self`
+        // SAFETY: see `process()` — raw `*Process` semantics. R-2: `&self`
         // (interior-mutability) so callers don't need `&mut Subprocess`;
         // `Process` lives in a separate allocation (BackRef) so the returned
         // `&mut` never aliases `*self`. Single JS-mutator thread.
         unsafe { &mut *self.process.as_ptr() }
     }
 
-    /// Borrow the stored JSC global. Zig stores `*jsc.JSGlobalObject` raw; the
+    /// Borrow the stored JSC global. Stored raw; the
     /// global is guaranteed to outlive every Subprocess it created.
     #[inline]
     pub fn global_this(&self) -> &JSGlobalObject {
@@ -273,14 +273,14 @@ impl<'a> Subprocess<'a> {
         self.flags.set(v);
     }
 
-    /// Intrusive `ref()` — Zig's `pub const ref = ref_count.ref`.
+    /// Intrusive `ref()` — `pub const ref = ref_count.ref`.
     #[inline]
     pub fn ref_(&self) {
         // SAFETY: `&self` → live `*const Self`; `RefCount::ref_` only touches
         // the intrusive counter via `addr_of_mut!`.
         unsafe { RefCount::<Self>::ref_(self.as_ctx_ptr()) }
     }
-    /// Intrusive `deref()` — Zig's `pub const deref = ref_count.deref`.
+    /// Intrusive `deref()` — `pub const deref = ref_count.deref`.
     /// May free `self`; do not use `self` after calling.
     #[inline]
     pub fn deref(&self) {
@@ -499,7 +499,7 @@ impl Subprocess<'_> {
                 }
                 Writable::Buffer(buffer) => {
                     Writable::buffer_writer_mut(buffer).source.detach();
-                    // PORT NOTE: Zig's `buffer.deref()` is the owner drop from the
+                    // PORT NOTE: `buffer.deref()` is the owner drop from the
                     // assignment below; do not deref explicitly.
                     *stdin = Writable::Ignore;
                 }
@@ -512,7 +512,7 @@ impl Subprocess<'_> {
                     &self.stderr
                 };
                 if matches!(out.get(), Readable::Pipe(_)) {
-                    // Mirror Zig: copy the pipe pointer out, reassign `out.*`, then
+                    // Copy the pipe pointer out, reassign `out.*`, then
                     // mutate/deref the pipe. In Rust, move the Rc<PipeReader> out of
                     // `*out` first so reassigning doesn't drop it while still borrowed.
                     let Readable::Pipe(pipe) = out.replace(Readable::Ignore) else {
@@ -602,7 +602,7 @@ impl Subprocess<'_> {
         }
         this.observable_getters
             .set(this.observable_getters.get() | ObservableGetter::Stdin);
-        // PORT NOTE: reshaped for borrowck — Zig passed `&stdin` and `*Subprocess`
+        // PORT NOTE: reshaped for borrowck — the original passed `&stdin` and `*Subprocess`
         // separately (aliasing). `Writable::to_js` takes only the parent and
         // projects `stdin` internally so no two `&mut` overlap here.
         Ok(Writable::to_js(this, global_this))
@@ -784,7 +784,7 @@ impl Subprocess<'_> {
             self.update_has_pending_activity();
         }
 
-        // Zig `defer if (must_deref) this.deref()` — there are no early returns
+        // `defer if (must_deref) this.deref()` — there are no early returns
         // above, so running it last is the exact LIFO order.
         if must_deref {
             self.deref();
@@ -860,9 +860,8 @@ impl Subprocess<'_> {
             #[cfg(windows)]
             {
                 if let StdioResult::Buffer(buffer) = item {
-                    // `UvHandle::fd()` returns a `HANDLE` (`*mut c_void`); Zig's
-                    // `@intFromPtr(item.buffer.fd().cast())` is just the
-                    // numeric handle value.
+                    // `UvHandle::fd()` returns a `HANDLE` (`*mut c_void`);
+                    // the value used here is just the numeric handle value.
                     let fdno: usize = buffer.fd() as usize;
                     array.push(global, JSValue::js_number(fdno as f64))?;
                 } else {
@@ -1194,7 +1193,7 @@ impl Subprocess<'_> {
             if let StdioResult::Buffer(buffer) = item {
                 // `uv_close` is async — the pipe must outlive this scope until
                 // `on_pipe_close` runs and reclaims the allocation. Hand the
-                // `Box` back to libuv as a raw pointer (Zig keeps `*uv.Pipe`
+                // `Box` back to libuv as a raw pointer (the original keeps `*uv.Pipe`
                 // and `clearAndFree` only frees the slice of pointers).
                 Box::leak(buffer).close(on_pipe_close);
             }
@@ -1243,7 +1242,7 @@ impl Subprocess<'_> {
         this.finalize_streams();
 
         this.process_mut().detach();
-        // Match Zig's `this.process.deref()`: release the intrusive ref now,
+        // `this.process.deref()`: release the intrusive ref now,
         // not when `ref_count` → 0. The raw `*mut Process` is left dangling but
         // no code path reads `this.process` after this (finalize runs once).
         // SAFETY: `process` is the live Box-backed Process; deref() frees it
@@ -1322,8 +1321,9 @@ impl Subprocess<'_> {
             // `bun_sys::SignalCode`.
             let sys_sig = bun_sys::SignalCode(signal as u8);
             if let Some(name) = sys_sig.name() {
-                use bun_jsc::ZigStringJsc as _;
-                return bun_jsc::zig_string::ZigString::init(name.as_bytes()).to_js(global);
+                use bun_jsc::UnsafeStringViewJsc as _;
+                return bun_jsc::unsafe_string_view::UnsafeStringView::init(name.as_bytes())
+                    .to_js(global);
             } else {
                 return JSValue::js_number(signal as u32 as f64);
             }
@@ -1511,8 +1511,6 @@ pub mod testing_apis {
         Ok(JSValue::TRUE)
     }
 }
-// `generated_js2native.rs` snake-cases Zig's `TestingAPIs` as `testing_ap_is`
+// `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
 // (the converter splits the trailing `…APIs` cluster into `AP` + `Is`).
 pub use testing_apis as testing_ap_is;
-
-// ported from: src/runtime/api/bun/subprocess.zig

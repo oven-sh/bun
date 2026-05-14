@@ -17,5 +17,3 @@ unsafe extern "C" {
     // ABI-identical to a non-null pointer and C++ refcount mutation is interior.
     safe fn JSC__SourceProvider__deref(provider: &mut SourceProvider);
 }
-
-// ported from: src/jsc/SourceProvider.zig

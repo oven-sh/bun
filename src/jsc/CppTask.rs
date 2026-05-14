@@ -28,7 +28,7 @@ impl CppTask {
         crate::mark_binding!();
         // SAFETY: self is a valid C++ EventLoopTask; global outlives the call.
         //
-        // `Bun__performTask` is `[[ZIG_EXPORT(check_slow)]]` — the task body
+        // `Bun__performTask` is `[[RUST_EXPORT(check_slow)]]` — the task body
         // (a `ScriptExecutionContext::postTask` lambda) may declare its own
         // throw scope (e.g. `JSUint8Array::create`, `JSC::call`) without an
         // enclosing one, so we must go through the generated `cpp::` wrapper
@@ -97,5 +97,3 @@ pub extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNo
         workpool_task: WorkPoolTask::default(),
     });
 }
-
-// ported from: src/jsc/CppTask.zig

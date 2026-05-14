@@ -29,11 +29,11 @@ pub struct Cmd {
     pub redirection_fd: Option<*mut CowFd>,
     pub exec: Exec,
     pub exit_code: Option<ExitCode>,
-    /// PORT NOTE: in Zig this guarded the `spawn_arena` (an `ArenaAllocator`
-    /// holding argv/env scratch). The Rust port heap-allocates argv as
-    /// `Vec<Vec<u8>>` so there is no arena to free, but the flag is kept to
-    /// preserve `bufferedOutputClose`'s control-flow split (post-spawn vs
-    /// pre-spawn completion).
+    /// PORT NOTE: this originally guarded a `spawn_arena` holding argv/env
+    /// scratch. argv is now heap-allocated as `Vec<Vec<u8>>` so there is no
+    /// arena to free, but the flag is kept to preserve
+    /// `bufferedOutputClose`'s control-flow split (post-spawn vs pre-spawn
+    /// completion).
     pub spawn_arena_freed: bool,
 }
 
@@ -77,13 +77,13 @@ impl Cmd {
     }
 }
 
-/// Spec: Cmd.zig `Exec.subproc` anonymous struct.
+/// `Exec.subproc` payload.
 pub struct SubprocExec {
     pub child: *mut ShellSubprocess,
     pub buffered_closed: BufferedIoClosed,
     /// NodeId-arena backrefs so the legacy `&mut self` subprocess callbacks
     /// (`buffered_output_close` / `on_exit`) can hand a [`Yield`] back to the
-    /// trampoline. The Zig version called `this.next().run()` directly; here
+    /// trampoline. Earlier callbacks called `this.next().run()` directly; here
     /// the `Cmd` lives inside `interp.nodes`, so we stash the indices and
     /// return `Yield::Next(this_id)` for the caller (`PipeReader::run_yield`)
     /// to drive.
@@ -91,8 +91,6 @@ pub struct SubprocExec {
     pub this_id: NodeId,
 }
 
-/// Spec: Cmd.zig `BufferedIoClosed`.
-///
 /// Tracks which subprocess stdio pipes are still open. Each `Option` is `None`
 /// if that fd was *not* piped (e.g. inherited / fd-backed), so it never gates
 /// completion. `Some(state)` means it was piped and must reach `Closed` before
@@ -264,7 +262,7 @@ impl Cmd {
                     continue;
                 }
                 CmdState::ExpandingAssigns => {
-                    // Spec (Cmd.zig childDone Assigns arm): assigns → redirect.
+                    // assigns → redirect.
                     interp.as_cmd_mut(this).state = CmdState::ExpandingRedirect { idx: 0 };
                     continue;
                 }
@@ -290,7 +288,7 @@ impl Cmd {
                         // "already expanded" re-entry (`idx > 0`).
                         _ => {}
                     }
-                    // Spec (Cmd.zig next() expanding_redirect done): → args.
+                    // expanding_redirect done → args.
                     interp.as_cmd_mut(this).state = CmdState::ExpandingArgs { idx: 0 };
                     continue;
                 }
@@ -328,7 +326,6 @@ impl Cmd {
         }
     }
 
-    /// Spec: Cmd.zig `onIOWriterChunk` (lines 355-362).
     pub fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
@@ -354,13 +351,13 @@ impl Cmd {
         exit_code: ExitCode,
     ) -> Yield {
         let child_kind = interp.node(child).kind();
-        // Spec (Cmd.zig childDone lines 364-398): a nonzero exit from an
-        // Assigns or Expansion child aborts the command — write the failing
-        // error to stderr and finish with exit 1. Do NOT advance idx.
+        // A nonzero exit from an Assigns or Expansion child aborts the
+        // command — write the failing error to stderr and finish with
+        // exit 1. Do NOT advance idx.
         if exit_code != 0 && matches!(child_kind, StateKind::Assign | StateKind::Expansion) {
-            // Spec (Cmd.zig childDone 384-396): pull the expansion error out
-            // before deiniting the child, then write it to stderr via
-            // `writeFailingError("{f}\n", err)` and finish with exit 1.
+            // Pull the expansion error out before deiniting the child, then
+            // write it to stderr via `writeFailingError("{f}\n", err)` and
+            // finish with exit 1.
             let err = if matches!(child_kind, StateKind::Expansion) {
                 Expansion::take_err(interp, child)
             } else {
@@ -385,7 +382,7 @@ impl Cmd {
                 CmdState::ExpandingArgs { ref mut idx } => {
                     *idx += 1;
                     let new_idx = *idx;
-                    // Spec (Cmd.zig childDone 400-409): when the sole
+                    // When the sole
                     // `name_and_args` atom is a `.simple == .cmd_subst`, stash
                     // `e.out_exit_code` so an empty-argv command consisting
                     // only of `$(cmd)` propagates `cmd`'s exit code via the
@@ -406,14 +403,12 @@ impl Cmd {
                             interp.as_cmd_mut(this).exit_code = Some(out.out_exit_code);
                         }
                     }
-                    // PORT NOTE: Zig used `out.bounds` to split into multiple
-                    // argv words (glob/IFS); preserved here verbatim.
+                    // `out.bounds` splits into multiple argv words (glob/IFS).
                     let me = interp.as_cmd_mut(this);
                     if out.bounds.is_empty() {
-                        // Spec (Expansion.zig pushCurrentOut 652): an empty
-                        // expansion that did *not* see a `""` literal pushes
-                        // no arg at all — `$unset` vanishes, only `""` yields
-                        // an empty argv word.
+                        // An empty expansion that did *not* see a `""` literal
+                        // pushes no arg at all — `$unset` vanishes, only `""`
+                        // yields an empty argv word.
                         if !out.buf.is_empty() || out.has_quoted_empty {
                             me.args.push(out.buf);
                         }
@@ -428,8 +423,8 @@ impl Cmd {
                 }
                 CmdState::ExpandingRedirect { ref mut idx } => {
                     *idx += 1;
-                    // Spec (Expansion.zig pushCurrentOut): NUL-terminate a
-                    // non-empty result; leave an empty expansion empty so the
+                    // NUL-terminate a non-empty result; leave an empty
+                    // expansion empty so the
                     // ambiguous-redirect check in `Builtin::init_redirections`
                     // still fires.
                     let mut buf = out.buf;
@@ -445,20 +440,18 @@ impl Cmd {
         Yield::Next(this)
     }
 
-    /// Spec: Cmd.zig `transitionToExecStateAndYield()` + `initSubproc()` up
-    /// through the `Builtin.Kind.fromStr` branch. Resolves argv[0] to a
-    /// builtin or falls through to subprocess spawn (still gated).
+    /// Resolves argv[0] to a builtin or falls through to subprocess spawn
+    /// (still gated).
     fn transition_to_exec(interp: &Interpreter, this: NodeId) -> Yield {
         // NUL-terminate every arg so builtins can borrow them as `*const c_char`.
-        // (Zig stored argv as `[*:0]const u8`; the Rust port collected them as
-        // `Vec<u8>` from Expansion.)
+        // (argv is collected as `Vec<u8>` from Expansion, without trailing NUL.)
         for a in &mut interp.as_cmd_mut(this).args {
             if a.last() != Some(&0) {
                 a.push(0);
             }
         }
 
-        // Spec (Cmd.zig initSubproc lines 442-456): empty/null argv[0] → exit
+        // Empty/null argv[0] → exit
         // with the exit code from a sole command-substitution (stashed by
         // `child_done` from `Expansion::out_exit_code`), else 0.
         let first_arg: Vec<u8> = {
@@ -485,7 +478,7 @@ impl Cmd {
             return Builtin::start(interp, this);
         }
 
-        // ── Subprocess path (Spec: Cmd.zig `initSubproc` lines 487-546) ────
+        // ── Subprocess path ────────────────────────────────────────────────
         // PORT NOTE: `SpawnArgs` borrows only the local `arena` (its
         // `interp`/`argv` fields are raw pointers), so `interp: &mut
         // Interpreter` is freely re-borrowable at every step before
@@ -519,7 +512,7 @@ impl Cmd {
             }
         };
         let Some(mut resolved) = resolved else {
-            // Spec (Cmd.zig:493): writeFailingError("bun: command not found:
+            // writeFailingError("bun: command not found:
             // {s}\n") → `.waiting_write_err` → onIOWriterChunk →
             // `parent.childDone(this, 1)`.
             drop(spawn_args);
@@ -650,7 +643,7 @@ impl Cmd {
         // pointer into `*child_out` (== `sub.child`); valid until `Cmd::deinit`
         // reclaims the box. Single-threaded.
         let subproc = unsafe { &mut *child };
-        // Spec order (Cmd.zig 531-533): `subproc.ref()` precedes
+        // Ordering matters: `subproc.ref()` precedes
         // `spawn_arena_freed = true; arena.deinit()`.
         subproc.r#ref();
         interp.as_cmd_mut(this).spawn_arena_freed = true;
@@ -682,7 +675,7 @@ impl Cmd {
         Yield::suspended()
     }
 
-    /// Spec: Cmd.zig `initRedirections` (lines 548-640). Applies the AST
+    /// Applies the AST
     /// redirect (`> file`, `< ${blob}`, `2>&1`, …) onto the subprocess stdio
     /// triple. Returns `Ok(Some(yield))` when the redirect failed and a
     /// failing-error write was queued; `Err` when a JS exception was raised.
@@ -862,7 +855,6 @@ impl Cmd {
         Yield::Next(this)
     }
 
-    /// Spec: interpreter.zig `ShellAsyncSubprocessDone.runFromMainThread` body.
     /// Main-thread re-entry for a subprocess exit posted from off-thread —
     /// equivalent to [`Self::on_exec_done`] but drives the trampoline itself
     /// since the dispatcher discards the [`Yield`].
@@ -878,7 +870,7 @@ impl Cmd {
         if let Some(fd) = me.redirection_fd.take() {
             CowFd::deref(fd);
         }
-        // Spec (Cmd.zig deinit lines 715-730): tear down the running exec.
+        // Tear down the running exec.
         match core::mem::take(&mut me.exec) {
             Exec::None => {}
             Exec::Builtin(b) => drop(b),
@@ -909,14 +901,12 @@ impl Cmd {
     }
 
     // ── Subprocess callbacks (legacy `*Cmd` backref shape) ────────────────
-    // Spec: Cmd.zig `bufferedInputClose` / `bufferedOutputClose` / `onExit`.
     // `ShellSubprocess` / `PipeReader` hold a `*mut Cmd` backref and call
-    // these via `&mut self`. The NodeId-arena port stashes `(interp, this_id)`
-    // on `SubprocExec` so the resulting `Yield` can be driven by the caller's
-    // `PipeReader::run_yield` without aliasing `&Interpreter` against
-    // `&mut self`.
+    // these via `&mut self`. The NodeId-arena design stashes `(interp,
+    // this_id)` on `SubprocExec` so the resulting `Yield` can be driven by
+    // the caller's `PipeReader::run_yield` without aliasing `&Interpreter`
+    // against `&mut self`.
 
-    /// Spec: Cmd.zig `hasFinished`.
     pub fn has_finished(&self) -> bool {
         log!("Cmd has_finished exit_code={:?}", self.exit_code);
         if self.exit_code.is_none() {
@@ -929,14 +919,12 @@ impl Cmd {
         }
     }
 
-    /// Spec: Cmd.zig `bufferedInputClose`.
     pub fn buffered_input_close(&mut self) {
         if let Exec::Subproc(sub) = &mut self.exec {
             sub.buffered_closed.close_stdin();
         }
     }
 
-    /// Spec: Cmd.zig `bufferedOutputClose`.
     pub fn buffered_output_close(
         &mut self,
         kind: OutKind,
@@ -974,7 +962,6 @@ impl Cmd {
         Yield::suspended()
     }
 
-    /// Spec: Cmd.zig `bufferedOutputCloseStdout`.
     fn buffered_output_close_stdout(&mut self, err: Option<bun_sys::SystemError>) {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stdout");
@@ -1012,7 +999,6 @@ impl Cmd {
         child.close_io(StdioKind::Stdout);
     }
 
-    /// Spec: Cmd.zig `bufferedOutputCloseStderr`.
     fn buffered_output_close_stderr(&mut self, err: Option<bun_sys::SystemError>) {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stderr");
@@ -1047,7 +1033,7 @@ impl Cmd {
         child.close_io(StdioKind::Stderr);
     }
 
-    /// Spec: Cmd.zig `onExit` — called by `ShellSubprocess::on_process_exit`.
+    /// Called by `ShellSubprocess::on_process_exit`.
     pub fn on_exit(&mut self, exit_code: ExitCode) {
         self.exit_code = Some(exit_code);
         let has_finished = self.has_finished();
@@ -1073,7 +1059,6 @@ impl Cmd {
     }
 }
 
-/// Spec: Cmd.zig `setStdioFromRedirect`.
 fn set_stdio_from_redirect(stdio: &mut [Stdio; 3], flags: ast::RedirectFlags, fd: bun_sys::Fd) {
     if flags.stdin() {
         stdio[0] = Stdio::Fd(fd);
@@ -1090,5 +1075,3 @@ fn set_stdio_from_redirect(stdio: &mut [Stdio; 3], flags: ast::RedirectFlags, fd
         }
     }
 }
-
-// ported from: src/shell/states/Cmd.zig

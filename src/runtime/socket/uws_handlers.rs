@@ -31,9 +31,9 @@ use bun_sql_jsc::postgres;
 /// pending-exception slot — there's nowhere for the C event loop to propagate
 /// them — so we just don't lose the unwind.
 ///
-/// Zig used `@typeInfo(@TypeOf(result)) == .error_union` to branch at comptime;
-/// in Rust we express the same with a tiny trait specialised on `()` and
-/// `Result<(), E>`.
+/// The original used a comptime type check to branch on whether the result is
+/// an error union; in Rust we express the same with a tiny trait specialised
+/// on `()` and `Result<(), E>`.
 #[inline]
 fn swallow<R: Swallow>(result: R) {
     result.swallow();
@@ -53,9 +53,9 @@ impl<E> Swallow for Result<(), E> {
     }
 }
 
-/// Replaces the Zig `if (@hasDecl(T, "onX")) this.onX(..)` pattern: a trait
+/// Replaces the `if (@hasDecl(T, "onX")) this.onX(..)` pattern: a trait
 /// with default no-op methods that each owner type overrides for the events it
-/// actually handles. The `<const SSL: bool>` parameter mirrors the Zig
+/// actually handles. The `<const SSL: bool>` parameter mirrors the original
 /// `comptime ssl: bool` so a type can opt into different behaviour per
 /// transport (and so `NewSocketHandler<SSL>` is nameable in signatures).
 ///
@@ -389,7 +389,7 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_upgrade_client::NewHttp
 }
 
 impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> {
-    // Zig: no `onOpen` decl — adoption of an already-connected socket.
+    // No `onOpen` decl — adoption of an already-connected socket.
 
     unsafe fn on_data(this: *mut Self, _s: NewSocketHandler<SSL>, data: &[u8]) {
         unsafe { Self::handle_data(this, data) }
@@ -424,15 +424,15 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
 
 // ── SocketEvents / NsSocketEvents impls ─────────────────────────────────────
 //
-// In Zig the consumer types carry `onOpen`/`onData`/… as inherent decls and
+// In the original the consumer types carry `onOpen`/`onData`/… as inherent decls and
 // `@hasDecl` filters at comptime. Rust expresses that as a trait with default
 // no-ops; each consumer type opts in with an `impl` that overrides only the
 // events it actually handles. `api::NewSocket`'s real impl lives in
 // `socket/mod.rs` (bridges to inherent methods).
 
 /// Forwards `NsSocketEvents` to the inherent `on_*` methods on a driver's
-/// `SocketHandler<SSL>` namespace type. Mirrors Zig's single
-/// `NsHandler(Owner, H, ssl)` generic (uws_handlers.zig:154), which used
+/// `SocketHandler<SSL>` namespace type. Mirrors the original single
+/// `NsHandler(Owner, H, ssl)` generic, which used
 /// `@hasDecl` + a comptime `swallow` to absorb both `void` and `!void`
 /// returns; here `swallow()` (specialised on `()` and `Result<(), E>` above)
 /// does the same, so one expansion covers drivers whose inherent fns are
@@ -441,10 +441,10 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
 /// result anyway, so swallowing one frame earlier is behaviour-preserving.
 ///
 /// `on_long_timeout` is intentionally NOT forwarded — no driver defines it,
-/// so the trait default fires (matches Zig's `@hasDecl` short-circuit).
+/// so the trait default fires (matches the original `@hasDecl` short-circuit).
 ///
 /// `on_handshake` reads the inherent `ON_HANDSHAKE: Option<fn(..)>` const —
-/// Zig's `pub const onHandshake = if (ssl) onHandshake_ else null;` pattern,
+/// the original `pub const onHandshake = if (ssl) onHandshake_ else null;` pattern,
 /// where the `null` arm meant "leave the slot unbound" so the dispatcher's
 /// no-op default fires for plain TCP.
 macro_rules! impl_ns_socket_events_forward {
@@ -660,7 +660,7 @@ pub trait NsSocketEvents<Owner, const SSL: bool> {
     ) -> bun_jsc::JsResult<()> {
         Ok(())
     }
-    /// Zig guarded this with `@TypeOf(H.onHandshake) != @TypeOf(null)` — i.e.
+    /// Originally guarded with `@TypeOf(H.onHandshake) != @TypeOf(null)` — i.e.
     /// some adapters explicitly set `onHandshake = null`. Default no-op covers
     /// that case.
     fn on_handshake(
@@ -766,7 +766,7 @@ where
 // type we forgot to name.
 pub struct HTTPClient<const SSL: bool>;
 
-// Zig's `fwd` helper used `@field` + `@call` to dispatch by name; Rust has no
+// The original `fwd` helper used `@field` + `@call` to dispatch by name; Rust has no
 // field-by-string reflection, so each event is written out. The
 // `@TypeOf(@field(H, name)) != @TypeOf(null)` guard becomes simply not setting
 // `HAS_ON_*` for events the upstream `Handler<SSL>` doesn't define.
@@ -886,7 +886,7 @@ pub type Valkey<const SSL: bool> =
 
 // ── Bun.spawn IPC / process.send() ──────────────────────────────────────────
 // Ext is `*IPC.SendQueue` for both child-side `process.send` and parent-side
-// `Bun.spawn({ipc})`. Handlers live in `ipc.zig` as free functions, not
+// `Bun.spawn({ipc})`. Handlers live in the ipc module as free functions, not
 // methods on SendQueue, so we adapt manually instead of via PtrHandler.
 pub struct SpawnIPC;
 
@@ -930,5 +930,3 @@ impl VHandler for SpawnIPC {
         IpcH::on_end(this, IpcS::from(s));
     }
 }
-
-// ported from: src/runtime/socket/uws_handlers.zig

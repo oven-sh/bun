@@ -38,7 +38,7 @@ use bun_core::{ZStr, strings};
 use bun_io::pipe_reader::BufferedReaderParent;
 use bun_jsc::JsClass as _;
 use bun_sys::FdDirExt as _;
-// Owned NUL-terminated string (Zig `[:0]u8` allocation) — `bun_str` exposes the
+// Owned NUL-terminated string allocation — `bun_str` exposes the
 // borrowed `ZStr` only; the heap-backed counterpart is `bun_core::ZBox`.
 use bun_core::ZBox as ZString;
 use bun_sys::{self as sys, Fd, File};
@@ -61,10 +61,10 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 // ============================================================================
 
 /// Shared base for [`CronRegisterJob`] and [`CronRemoveJob`].
-// Zig: `fn CronJobBase(comptime Self: type) type { return struct { ... } }`
+// Originally a comptime type-generator: `fn CronJobBase(Self) -> struct { ... }`.
 //
 // PORT NOTE: every method on the path to `finish()` (which `heap::take`-
-// drops `this`) takes a raw `*mut Self` receiver, mirroring the Zig `*Self`.
+// drops `this`) takes a raw `*mut Self` receiver, mirroring the original `*Self`.
 // A `&mut self` *parameter* would carry a Stacked Borrows FnEntry protector,
 // making the in-flight dealloc UB; a *local* `let s = &mut *this` reborrow
 // has no protector and ends at last use under NLL, so field access via `s`
@@ -348,7 +348,7 @@ impl CronRegisterJob {
                 .promise
                 .resolve(&this_ref.global, JSValue::UNDEFINED);
         }
-        // Match Zig ordering: `defer ev.exit(); …; this.deinit();` — Drop runs
+        // Ordering preserved: `defer ev.exit(); …; this.deinit();` — Drop runs
         // INSIDE the enter/exit scope so Process detach/deref and reader
         // teardown observe the entered event-loop state.
         // SAFETY: `this` was created via heap::alloc in cron_register.
@@ -437,11 +437,11 @@ impl CronRegisterJob {
             }
         };
         if file.write_all(&result).is_err() {
-            let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+            let _ = file.close(); // close error is non-actionable (discarded)
             s.set_err(format_args!("Failed to write temp file"));
             return unsafe { Self::finish(this) };
         }
-        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+        let _ = file.close(); // close error is non-actionable (discarded)
 
         s.state = RegisterState::InstallingCrontab;
         // PORT NOTE: explicit deinit of old reader before reassign — Drop handles it.
@@ -568,11 +568,11 @@ impl CronRegisterJob {
             }
         };
         if file.write_all(&plist).is_err() {
-            let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+            let _ = file.close(); // close error is non-actionable (discarded)
             s.set_err(format_args!("Failed to write plist"));
             return unsafe { Self::finish(this) };
         }
-        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+        let _ = file.close(); // close error is non-actionable (discarded)
 
         unsafe { Self::spawn_bootout(this) };
     }
@@ -841,11 +841,11 @@ impl CronRegisterJob {
             }
         };
         if file.write_all(&xml).is_err() {
-            let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+            let _ = file.close(); // close error is non-actionable (discarded)
             s.set_err(format_args!("Failed to write temp XML file"));
             return unsafe { Self::finish(this) };
         }
-        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+        let _ = file.close(); // close error is non-actionable (discarded)
 
         let mut argv: [*const c_char; 9] = [
             b"schtasks\0".as_ptr().cast(),
@@ -1092,7 +1092,7 @@ impl CronRemoveJob {
                 .promise
                 .resolve(&this_ref.global, JSValue::UNDEFINED);
         }
-        // Match Zig ordering: `defer ev.exit(); …; this.deinit();` — Drop runs
+        // Ordering preserved: `defer ev.exit(); …; this.deinit();` — Drop runs
         // INSIDE the enter/exit scope so Process detach/deref and reader
         // teardown observe the entered event-loop state.
         // SAFETY: `this` was created via heap::alloc in cron_remove.
@@ -1162,11 +1162,11 @@ impl CronRemoveJob {
             }
         };
         if file.write_all(&result).is_err() {
-            let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+            let _ = file.close(); // close error is non-actionable (discarded)
             s.set_err(format_args!("Failed to write temp file"));
             return unsafe { Self::finish(this) };
         }
-        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+        let _ = file.close(); // close error is non-actionable (discarded)
 
         s.state = RemoveState::InstallingCrontab;
         s.stdout_reader = OutputReader::init::<CronRemoveJob>();
@@ -1422,7 +1422,7 @@ impl CronJob {
     }
 
     /// RAII pair for `ref_()` / `deref()`: bumps the intrusive refcount now and
-    /// releases it on drop. Replaces the Zig `this.ref(); defer this.deref();`
+    /// releases it on drop. Replaces the `this.ref(); defer this.deref();`
     /// idiom. The guard holds a raw pointer (not `&mut Self`) so no Rust
     /// reference is live across the potential free in `deref()`.
     ///
@@ -1673,9 +1673,9 @@ impl CronJob {
                         Bun__CronJob__onPromiseResolve,
                         Bun__CronJob__onPromiseReject,
                     );
-                    // Zig's `then()` is `TopExceptionScope`-wrapped and only fails
+                    // The original `then()` is `TopExceptionScope`-wrapped and only fails
                     // on termination. The Rust `then()` returns `()`, so re-check
-                    // the VM status and run the same recovery the Zig `catch`
+                    // the VM status and run the same recovery the original `catch`
                     // ran — otherwise `pending_ref` and the `ref_()` above leak.
                     if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
                         js::pending_promise_set_cached(
@@ -2112,7 +2112,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         }
     };
 
-    // PORT NOTE / OWNERSHIP: Zig stashes the heap libuv pipe in
+    // PORT NOTE / OWNERSHIP: the original stashes the heap libuv pipe in
     // `stderr_reader.source.?.pipe` and reuses the same pointer for
     // `SpawnOptions.stderr = .{ .buffer = pipe }`. In the Rust port BOTH
     // `Source::Pipe` and `WindowsStdioResult::Buffer` own a `Box<uv::Pipe>`,
@@ -2265,7 +2265,7 @@ fn find_crontab() -> Option<*const c_char> {
     }
     #[cfg(not(windows))]
     {
-        // Zig: `const static = struct { var buf: bun.PathBuffer = undefined; };`
+        // Originally a function-local static `bun.PathBuffer`.
         // The returned `*const c_char` borrows this buffer, so it must outlive
         // the call. `Bun.cron` is exposed on every `BunObject`, so this is
         // reachable from the main JS thread *and* any Worker thread
@@ -2320,7 +2320,7 @@ fn alloc_print_z(args: core::fmt::Arguments<'_>) -> Result<ZString, bun_alloc::A
 /// Create a temp file path with a random suffix to avoid TOCTOU/symlink attacks.
 fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError> {
     let mut name_buf = PathBuffer::uninit();
-    // PORT NOTE: Zig used `prefix ++ "tmp"` at comptime; concat at runtime here.
+    // PORT NOTE: the original concatenated `prefix ++ "tmp"` at comptime; concat at runtime here.
     // TODO(port): use const_format::concatcp! once call sites pass a const.
     let mut full_prefix = Vec::with_capacity(prefix.len() + 3);
     full_prefix.extend_from_slice(prefix.as_bytes());
@@ -2460,7 +2460,7 @@ pub fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, CalendarErr
         }
         let mut vals: Vec<i32> = Vec::new();
         for part in field.split(|&b| b == b',') {
-            // Zig: std.fmt.parseInt(i32, part, 10) on raw []const u8.
+            // Parse base-10 from raw bytes.
             // parse_unsigned (not parse_int) keeps '-5' → InvalidCron.
             let val: i32 =
                 bun_core::parse_unsigned(part, 10).map_err(|_| CalendarError::InvalidCron)?;
@@ -3011,5 +3011,3 @@ fn compute_step_interval<T: StepBits>(bits: T, _min: u8, max: u8) -> Option<u32>
 }
 
 use bun_core::fmt::buf_print;
-
-// ported from: src/runtime/api/cron.zig

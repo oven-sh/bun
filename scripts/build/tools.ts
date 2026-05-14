@@ -86,7 +86,7 @@ export interface ToolSpec {
   paths?: string[];
   /** Version constraint, e.g. `">=21.1.0 <22.0.0"`. */
   version?: string;
-  /** How to get the version. `"--version"` (default) or `"version"` (go/zig style). */
+  /** How to get the version. `"--version"` (default) or `"version"` (go style). */
   versionArg?: string;
   /** If true, throws BuildError when not found. */
   required: boolean;
@@ -366,7 +366,7 @@ function findLlvmTool(
  * Call this once at configure time. All tool paths are absolute.
  * Throws BuildError if any required tool is missing.
  *
- * zig/bun/esbuild are resolved separately (they come from cache/, not PATH)
+ * bun/esbuild are resolved separately (they come from cache/, not PATH)
  * so pass them in as placeholders for now; they'll be filled by downloaders.
  */
 export function resolveLlvmToolchain(

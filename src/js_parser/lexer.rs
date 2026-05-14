@@ -1,6 +1,4 @@
 //! JavaScript/JSON lexer.
-//!
-//! Port of `src/js_parser/lexer.zig`.
 
 use core::fmt;
 
@@ -123,15 +121,15 @@ impl Default for JSONOptions {
     }
 }
 
-/// Zig's `NewLexer(comptime json_options)` and `NewLexer_(comptime ...bools)` return a struct
-/// type. In Rust we model this as a generic over the eight comptime bools.
+/// The lexer is parameterized over a JSON-options bundle. In Rust we model
+/// this as a generic over the eight option bools.
 ///
-/// `Lexer` (below) is the default instantiation (`NewLexer(.{})`).
+/// `Lexer` (below) is the default instantiation (all options off).
 ///
 /// nightly-2025-12-10 rejects field projection (`J.is_json`) on a
 /// `const J: JSONOptions` parameter inside a generic-const expression
 /// ("overly complex generic constant"), even with `generic_const_exprs`.
-/// The Zig comptime-struct param is therefore modeled as a *type* parameter
+/// The compile-time-struct param is therefore modeled as a *type* parameter
 /// implementing [`JsonOptionsT`], whose associated consts *are* accepted in
 /// const-argument position under `generic_const_exprs`. Callers define a ZST
 /// per option set and `impl JsonOptionsT for It { const IS_JSON: bool = true; … }`.
@@ -145,7 +143,7 @@ pub trait JsonOptionsT {
     const WAS_ORIGINALLY_MACRO: bool = false;
     const GUESS_INDENTATION: bool = false;
 
-    /// Reify as a value (mirrors the Zig `json_options` local).
+    /// Reify as a value (mirrors the original `json_options` local).
     const OPTIONS: JSONOptions = JSONOptions {
         is_json: Self::IS_JSON,
         allow_comments: Self::ALLOW_COMMENTS,
@@ -188,8 +186,8 @@ pub enum Error {
     UnexpectedSyntax,
     JSONStringsMustUseDoubleQuotes,
     ParserError,
-    // TODO(port): Zig `error.Backtrack` is returned from `expected()` but not declared in
-    // the local error set; modeled here as an extra variant.
+    // TODO(port): a `Backtrack` error is returned from `expected()` but was not declared in
+    // the original error set; modeled here as an extra variant.
     Backtrack,
 }
 bun_core::impl_tag_error!(Error);
@@ -241,15 +239,14 @@ pub struct ScanResult<'a> {
     pub contents: &'a [u8],
 }
 
-// PORT NOTE: Zig's `FakeArrayList16` (fixed-slice writer with the `append` surface of an
-// ArrayList) is dead — every `decodeEscapeSequences` callsite in lexer.zig passes
-// `std.array_list.Managed(u16)`. Dropped instead of porting; `decode_escape_sequences` is
-// monomorphized to `Vec<u16>`.
+// PORT NOTE: the original `FakeArrayList16` (fixed-slice writer with the `append` surface of an
+// ArrayList) was dead — every `decodeEscapeSequences` callsite passed a managed u16 array list.
+// Dropped instead of porting; `decode_escape_sequences` is monomorphized to `Vec<u16>`.
 
 /// POD snapshot of all backtrack-relevant lexer state.
 ///
-/// Zig backtracks via `const old = lexer.*; ...; lexer.* = old;` — a full struct
-/// copy. Rust can't do that here because `LexerType` holds `log: &'a mut Log`
+/// The original backtracked by copying the whole lexer struct by value.
+/// Rust can't do that here because `LexerType` holds `log: &'a mut Log`
 /// (non-`Clone`, non-`Copy`, unique borrow). Instead, callers do:
 ///
 /// ```ignore
@@ -315,16 +312,16 @@ pub struct LexerType<
     const GUESS_INDENTATION: bool,
 > {
     // err: ?LexerType.Error,
-    /// Raw pointer to the caller-owned `Log`. Zig held a `*Log` here while the
-    /// parser held a second aliasing `*Log`; Rust cannot store two `&'a mut Log`
+    /// Raw pointer to the caller-owned `Log`. The original held a raw `Log` pointer here while the
+    /// parser held a second aliasing pointer; Rust cannot store two `&'a mut Log`
     /// to the same allocation (Stacked-Borrows UB), so both the lexer and the
     /// parser keep `NonNull<Log>` and reborrow at use sites via `log()`. The
     /// pointee must outlive `'a` (enforced by all `init*` constructors taking
     /// `&'a mut Log`).
     pub log: core::ptr::NonNull<Log>,
     pub source: &'a Source,
-    /// Cached `source.contents()` slice. Zig stores `source: logger.Source` by
-    /// value with `contents: []const u8` (flat ptr+len), so the per-byte
+    /// Cached `source.contents()` slice. The original stored `source` by
+    /// value with a flat ptr+len `contents` slice, so the per-byte
     /// `it.source.contents.ptr[current]` is one direct load and the
     /// `noalias *LexerType` lets LLVM keep it register-resident across the
     /// whole `next()` switch. With `source: &'a Source` plus
@@ -340,7 +337,7 @@ pub struct LexerType<
     /// call and thread it by value into every hot sub-scanner
     /// (`step_with()`, `next_codepoint_with()`, `parse_string_literal_inner()`,
     /// `parse_numeric_literal_or_dot()`), so the ptr+len stays in a register
-    /// for the whole token loop, matching Zig codegen. `source` is kept for
+    /// for the whole token loop, matching the original codegen. `source` is kept for
     /// error-reporting paths that need `path` / `identifier_name`.
     pub contents: &'a [u8],
     pub current: usize,
@@ -376,18 +373,18 @@ pub struct LexerType<
 
     /// Only used for JSON stringification when bundling
     /// This is a zero-bit type unless we're parsing JSON.
-    // TODO(port): Zig uses `if (is_json) bool else void` for zero-cost when !is_json.
+    // TODO(port): original used a void-when-`!is_json` field for zero-cost when !is_json.
     // PERF(port): always-bool here wastes 1 byte in non-JSON instantiations — profile in Phase B.
     pub is_ascii_only: bool,
     pub track_comments: bool,
     pub all_comments: Vec<Range>,
 
-    // TODO(port): Zig field type is `if (guess_indentation) struct{..} else void`.
+    // TODO(port): original field type was void unless `guess_indentation` was set.
     // PERF(port): always-present here — profile in Phase B.
     pub indent_info: IndentInfo,
 }
 
-// Convenience: associated constants mirroring Zig's `const json = json_options;` etc.
+// Convenience: associated constants mirroring the original `const json = json_options;` etc.
 // PORT NOTE: Rust macros must emit complete items; the macro now wraps the
 // entire `impl { ... }` block instead of just the header.
 macro_rules! lexer_impl_header {
@@ -513,7 +510,7 @@ lexer_impl_header! {
             return Ok(());
         }
 
-        // TODO(port): Zig dupes `notes` with `self.log.msgs.arena`.
+        // TODO(port): original duped `notes` with the log message arena.
         let notes_owned: Box<[bun_ast::Data]> = notes.to_vec().into_boxed_slice();
         self.log()
             .add_range_error_fmt_with_notes(Some(self.source), r, notes_owned, args);
@@ -526,7 +523,7 @@ lexer_impl_header! {
     }
 
     /// Capture a `Copy` snapshot of all backtrack-relevant state. See
-    /// `LexerSnapshot` doc — this replaces Zig's by-value struct copy, which
+    /// `LexerSnapshot` doc — this replaces a by-value struct copy, which
     /// Rust can't do here because the lexer owns heap-backed `Vec`s.
     pub fn snapshot(&self) -> LexerSnapshot<'a> {
         LexerSnapshot {
@@ -565,7 +562,7 @@ lexer_impl_header! {
         }
     }
 
-    /// Rewind to a prior `snapshot()`. Mirrors Zig's `this.* = original.*` then
+    /// Rewind to a prior `snapshot()`. Mirrors the original whole-struct restore then
     /// patches back the growable buffers — here we copy each scalar field and
     /// truncate the Vecs to their snapshotted lengths. `log`/`source`/`arena`
     /// are left untouched.
@@ -635,8 +632,8 @@ lexer_impl_header! {
         text: &[u8],
         buf: &mut Vec<u16>,
     ) -> Result<(), Error> {
-        // PORT NOTE: monomorphized — Zig is generic over `comptime BufType: type` but every
-        // caller passes `std.array_list.Managed(u16)`; `FakeArrayList16` was dead in the source.
+        // PORT NOTE: monomorphized — original was generic over a buffer type but every
+        // caller passed a managed u16 array list; `FakeArrayList16` was dead in the source.
         if IS_JSON {
             self.is_ascii_only = false;
         }
@@ -1176,7 +1173,7 @@ lexer_impl_header! {
     /// decode in the same body LLVM declined to inline `next_codepoint`
     /// (showing as a separate ~2.7% symbol). The fast path is now 4 insns
     /// (bounds cmp, load, cmp 0x80, store) so it folds into every `step()`
-    /// site, matching Zig's per-byte `ptr[current]` increment.
+    /// site, matching the original per-byte `ptr[current]` increment.
     ///
     /// PERF: takes `contents: &[u8]` by value (a `Copy` fat-ptr) instead of
     /// reloading `self.contents` from the struct. With `self.contents`, every
@@ -1184,7 +1181,7 @@ lexer_impl_header! {
     /// (perf-annotate of `next()` showed that single load at ~7.7% of `next()`
     /// samples) — LLVM couldn't prove the field load loop-invariant across the
     /// intervening `&mut self` writes. As a by-value SSA parameter it stays in
-    /// a register for the whole token loop, matching Zig's `noalias *Lexer`
+    /// a register for the whole token loop, matching the original noalias-pointer
     /// codegen. Callers outside the hot loop use the thin `step()` wrapper
     /// below, which loads `self.contents` once.
     #[inline(always)]
@@ -1199,7 +1196,7 @@ lexer_impl_header! {
 
         self.end = self.current;
 
-        // ASCII fast path (Zig elides this via the per-byte ptr[current] +
+        // ASCII fast path (the original elided this via the per-byte ptr[current] +
         // 1-arm switch; here we lift it explicitly so the multibyte branch
         // is out of the per-byte hot loop entirely).
         if first < 0x80 {
@@ -1232,7 +1229,7 @@ lexer_impl_header! {
 
     #[inline]
     pub fn expect(&mut self, token: T) -> Result<(), Error> {
-        // PERF(port): Zig param is `comptime token: T` — profile in Phase B
+        // PERF(port): original took `token` as a compile-time constant — profile in Phase B
         if self.token != token {
             self.expected(token)?;
         }
@@ -1521,7 +1518,7 @@ lexer_impl_header! {
     /// lexer's inner scanners; the parser calls it from hundreds of sites
     /// (directly and via `expect()`). We deliberately *don't* mark it
     /// `#[inline(never)]` — that turned every `lexer.next()` site into a real
-    /// call + caller-saved-register spill, whereas Zig's `pub fn next` is
+    /// call + caller-saved-register spill, whereas the original `next` is
     /// partial-inlinable at leaf call sites (the EOF/`TSemicolon`/`TIdentifier`
     /// fast tails fold into the caller and the bulky switch stays out of line).
     /// To make that tractable for LLVM we instead anchor `#[inline(never)]` /
@@ -1533,7 +1530,7 @@ lexer_impl_header! {
     /// `#[inline(never)]` here). The genuinely hot, tiny scanners
     /// (`latin1_identifier_continue_length`, `parse_numeric_literal_or_dot`,
     /// `parse_string_literal::<QUOTE>`) stay `#[inline]`/`#[inline(always)]` so
-    /// they merge *into* this body the way Zig's comptime monomorphisation does.
+    /// they merge *into* this body the way compile-time monomorphisation does.
     pub fn next(&mut self) -> Result<(), Error> {
         self.has_newline_before = self.end == 0;
         self.has_pure_comment_before = false;
@@ -2796,8 +2793,8 @@ lexer_impl_header! {
     #[inline]
     fn assert_not_json(&self) {
         if IS_JSON {
-            // TODO(port): Zig uses @compileError; Rust const generics can't compile-error
-            // here without nightly. Phase B may gate JSX methods to non-JSON instantiations.
+            // TODO(port): original used a compile-error here; Rust const generics can't
+            // compile-error here without nightly. Phase B may gate JSX methods to non-JSON instantiations.
             unreachable!("JSON should not reach this point");
         }
     }
@@ -2879,7 +2876,7 @@ lexer_impl_header! {
         &self,
         js: JavascriptString<'_>,
     ) -> Result<&'a [u8], bun_core::Error> {
-        // TODO(port): arena routing — Zig: strings.toUTF8AllocWithType(lexer.arena, js)
+        // TODO(port): arena routing — original allocated directly into the lexer arena.
         // PERF(port): goes through global Vec then dupes into the arena.
         let owned = strings::to_utf8_alloc_with_type(js);
         Ok(self.arena.alloc_slice_copy(&owned))
@@ -3506,12 +3503,12 @@ lexer_impl_header! {
 
         bytes.truncate(end);
         self.arena.alloc_slice_copy(&bytes)
-        // PERF(port): Zig used MutableString.toOwnedSliceLength — extra copy here.
+        // PERF(port): original used MutableString.toOwnedSliceLength — extra copy here.
     }
 
     // PERF: single caller (`next()`'s `0x2E | 0x30..=0x39` arm) per
     // monomorphization. `#[inline]` makes the body available cross-CGU so
-    // LLVM's single-caller heuristic merges it into `next()` like Zig does;
+    // LLVM's single-caller heuristic merges it into `next()`;
     // the hot `T::TDot` early-return then sits inside `next()`'s jump table
     // with no call overhead.
     #[inline]
@@ -3669,7 +3666,7 @@ lexer_impl_header! {
                             i += 1;
                         }
                     }
-                    // Note: Zig discards `bytes` here too (bug-compatible).
+                    // Note: original discarded `bytes` here too (bug-compatible).
                 }
 
                 // Store bigints as text to avoid precision loss;
@@ -3796,7 +3793,7 @@ lexer_impl_header! {
             // Filter out underscores;
             if underscore_count > 0 {
                 let mut i: usize = 0;
-                // TODO(port): arena routing — Zig uses lexer.arena.alloc
+                // TODO(port): arena routing — original used the lexer arena allocator
                 let bytes = self
                     .arena
                     .alloc_slice_fill_default::<u8>(text.len() - underscore_count);
@@ -3807,8 +3804,8 @@ lexer_impl_header! {
                     }
                 }
                 text = bytes;
-                // Note: Zig's else-branch ("Out of Memory Wah Wah Wah") is unreachable
-                // with infallible bump alloc.
+                // Note: the original OOM else-branch ("Out of Memory Wah Wah Wah") is
+                // unreachable with infallible bump alloc.
             }
 
             if self.code_point == 0x6E && !has_dot_or_exponent {
@@ -4108,7 +4105,7 @@ impl PragmaArg {
 }
 
 fn skip_to_interesting_character_in_multiline_comment(text_: &[u8]) -> Option<u32> {
-    // PERF(port): Zig uses portable @Vector SIMD here. Rust port uses scalar; Phase B
+    // PERF(port): original used portable vector SIMD here. Rust port uses scalar; Phase B
     // should swap to bun_highway or core::simd. Logic preserved (returns offset of first
     // '*' / '\r' / '\n' / non-ASCII byte, truncated to chunks of `ascii_vector_size`).
     // TODO(port): SIMD reimplementation
@@ -4151,5 +4148,3 @@ impl fmt::Display for InvalidEscapeSequenceFormatter {
         }
     }
 }
-
-// ported from: src/js_parser/lexer.zig

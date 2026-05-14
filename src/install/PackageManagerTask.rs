@@ -19,7 +19,7 @@ use crate::{
 
 use bun_dotenv as dot_env;
 
-/// File-level struct in Zig (`@This()` == `Task`).
+/// File-level struct in the original (`@This()` == `Task`).
 ///
 /// `'a` is forced by LIFETIMES.tsv (BORROW_PARAM on `Request::*.network`).
 /// // TODO(port): lifetime — Task lives in an intrusive cross-thread queue
@@ -47,7 +47,7 @@ pub struct Task<'a> {
     pub next: bun_threading::Link<Task<'a>>,
 }
 
-/// Zig: struct field defaults (`status = .waiting`, `threadpool_task = .{ .callback = &callback }`,
+/// Struct field defaults (`status = .waiting`, `threadpool_task = .{ .callback = &callback }`,
 /// `err = null`, `apply_patch_task = null`, `next = null`) with the remaining fields left
 /// `= undefined`. Callers MUST overwrite `tag`, `request`, `id`, `package_manager` before
 /// the task is observed. Exposed as a module-level fn so call sites that import this
@@ -55,13 +55,13 @@ pub struct Task<'a> {
 #[inline]
 pub fn uninit() -> Task<'static> {
     Task {
-        // Overwritten by every caller; zero/garbage matches Zig `undefined`.
+        // Overwritten by every caller; zero/garbage matches the original's `undefined`.
         // SAFETY: untagged unions of `ManuallyDrop<_>` — any bit pattern is
         // valid storage and is never read before the caller overwrites it.
         tag: Tag::PackageManifest,
         request: unsafe { bun_core::ffi::zeroed_unchecked() },
         data: unsafe { bun_core::ffi::zeroed_unchecked() },
-        // Every Zig caller passes `logger.Log.init(allocator)` for this field.
+        // Every caller passes `logger.Log.init(allocator)` for this field.
         // `Log` contains `Vec<Msg>` (NonNull invariant) so it cannot be
         // `mem::zeroed()`; and struct-update `..Task::uninit()` *drops* the
         // base value's `log` when the caller supplies their own, so this must
@@ -69,7 +69,7 @@ pub fn uninit() -> Task<'static> {
         log: Log::default(),
         id: Id(0),
         package_manager: None,
-        // Real Zig field defaults:
+        // Real field defaults:
         status: Status::Waiting,
         threadpool_task: thread_pool::Task {
             node: Default::default(),
@@ -82,7 +82,7 @@ pub fn uninit() -> Task<'static> {
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`;
-// `link()` always projects to it. Mirrors Zig's `@field(item, "next")`.
+// `link()` always projects to it. Mirrors the original's `@field(item, "next")`.
 unsafe impl<'a> bun_threading::Linked for Task<'a> {
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
@@ -98,7 +98,7 @@ pub struct Id(u64);
 
 impl core::fmt::Display for Id {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Zig: `enum(u64)` — printed as its raw integer in `{}` debug logs.
+        // `enum(u64)` — printed as its raw integer in `{}` debug logs.
         self.0.fmt(f)
     }
 }
@@ -114,7 +114,7 @@ impl Id {
         hasher.update(b"npm-package:");
         hasher.update(package_name);
         hasher.update(b"@");
-        // SAFETY: reading raw bytes of a POD value for hashing (matches Zig `std.mem.asBytes`)
+        // SAFETY: reading raw bytes of a POD value for hashing (matches the original's byte-view hash)
         hasher.update(unsafe {
             bun_core::ffi::slice(
                 (&raw const package_version).cast::<u8>(),
@@ -128,7 +128,7 @@ impl Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(b"bin-link:");
         // `PackageID` is `u32`: `bytemuck::bytes_of` gives the same
-        // native-endian byte view as Zig `std.mem.asBytes`.
+        // native-endian byte view, matching the original's hash input.
         hasher.update(bytemuck::bytes_of(&package_id));
         Id(hasher.final_())
     }
@@ -228,11 +228,11 @@ impl<'a> Task<'a> {
         // through raw-ptr/shared accessors below; the few callees whose
         // signatures still take `&mut PackageManager` (`get_cache_directory`,
         // `get_package_metadata`) are dereferenced inline at the call boundary
-        // only — same race as the Zig spec's freely-aliased `*PackageManager`.
+        // only — same race as the spec's freely-aliased `*PackageManager`.
         let manager_ref = this.package_manager.expect("Task.package_manager unset");
         let manager: *mut PackageManager = manager_ref.as_mut_ptr();
 
-        // Body of the switch; every Zig `return;` becomes `break 'body;` so the
+        // Body of the switch; every original `return;` becomes `break 'body;` so the
         // trailing `defer` block (patch + push + wake) and `Output.flush()` run
         // unconditionally afterwards.
         'body: {
@@ -245,7 +245,7 @@ impl<'a> Task<'a> {
                     // `response_buffer` borrow doesn't overlap the immutable
                     // `response`/`callback` reads below.
                     let network = &mut *manifest.network;
-                    // Zig: `defer body.deinit()` — take ownership so the
+                    // `defer body.deinit()` — take ownership so the
                     // multi-MB manifest buffer drops on every exit of this arm
                     // instead of staying live on the NetworkTask until recycle.
                     let mut body = core::mem::take(&mut network.response_buffer);
@@ -270,7 +270,7 @@ impl<'a> Task<'a> {
                         break 'body;
                     };
 
-                    // PORT NOTE: Zig accessed the bare-union field
+                    // PORT NOTE: the original accessed the bare-union field
                     // `network.callback.package_manifest.*` directly; in Rust
                     // `Callback` is a tagged enum, so destructure the variant.
                     // SAFETY: tag == PackageManifest ⇒ the network task was
@@ -304,13 +304,13 @@ impl<'a> Task<'a> {
                         loaded_manifest,
                         // SAFETY: see `manager` decl — short-lived `&mut` at call
                         // boundary only (callee touches `cache_directory_` /
-                        // `temporary_directory` lazily; same race as Zig spec).
+                        // `temporary_directory` lazily; same race as the spec).
                         unsafe { &mut *manager },
                         is_extended_manifest,
                     ) {
                         Ok(v) => v,
                         Err(err) => {
-                            // bun.handleErrorReturnTrace — debug-only Zig diagnostics; no-op in Rust.
+                            // bun.handleErrorReturnTrace — debug-only diagnostics; no-op in Rust.
                             this.err = Some(err);
                             this.status = Status::Fail;
                             this.data = Data {
@@ -360,14 +360,14 @@ impl<'a> Task<'a> {
 
                     // SAFETY: tag == Extract discriminates the union
                     let extract = unsafe { &mut *this.request.extract };
-                    // Zig: `defer buffer.deinit()` — take ownership so the
+                    // `defer buffer.deinit()` — take ownership so the
                     // tarball body drops on every exit of this arm.
                     let mut buffer = core::mem::take(&mut extract.network.response_buffer);
 
                     let result = match extract.tarball.run(&mut this.log, buffer.slice()) {
                         Ok(v) => v,
                         Err(err) => {
-                            // bun.handleErrorReturnTrace — debug-only Zig diagnostics; no-op in Rust.
+                            // bun.handleErrorReturnTrace — debug-only diagnostics; no-op in Rust.
                             this.err = Some(err);
                             this.status = Status::Fail;
                             this.data = Data {
@@ -512,7 +512,7 @@ impl<'a> Task<'a> {
                     ) {
                         Ok(v) => v,
                         Err(err) => {
-                            // bun.handleErrorReturnTrace — debug-only Zig diagnostics; no-op in Rust.
+                            // bun.handleErrorReturnTrace — debug-only diagnostics; no-op in Rust.
                             this.err = Some(err);
                             this.status = Status::Fail;
                             this.data = Data {
@@ -530,12 +530,12 @@ impl<'a> Task<'a> {
             }
         }
 
-        // Zig `defer` block (lines 77-91) — runs after switch on all paths.
+        // Trailing cleanup block — runs after switch on all paths.
         if this.status == Status::Success {
             if let Some(mut pt) = this.apply_patch_task.take() {
                 // `defer pt.deinit()` → Box<PatchTask> drops at end of this block
                 pt.apply().expect("OOM"); // bun.handleOom → panic on OOM
-                // PORT NOTE: Zig accessed bare-union field `pt.callback.apply`;
+                // PORT NOTE: the original accessed bare-union field `pt.callback.apply`;
                 // `apply_patch_task` is only ever populated with the Apply
                 // variant (see `new_apply_patch_hash`), so destructure it.
                 let crate::patch_install::Callback::Apply(apply) = &mut pt.callback else {
@@ -552,7 +552,7 @@ impl<'a> Task<'a> {
         }
         // SAFETY: `Task<'a>` is layout-identical for all `'a` (the lifetime is
         // a phantom on `&mut NetworkTask` borrows that the queue never reads
-        // through); erasing to `'static` matches Zig's lifetime-less queue.
+        // through); erasing to `'static` matches the original's lifetime-less queue.
         // `UnboundedQueue::push` takes `&self` (lock-free), so reach it via a
         // shared raw deref — no `&mut PackageManager` is formed.
         unsafe {
@@ -561,7 +561,7 @@ impl<'a> Task<'a> {
             PackageManager::wake_raw(manager);
         }
 
-        // Zig `defer Output.flush()` — outermost defer, runs last.
+        // `defer Output.flush()` — outermost cleanup, runs last.
         Output::flush();
     }
 }
@@ -574,13 +574,13 @@ fn read_and_extract(
 ) -> Result<ExtractData, bun_core::Error> {
     // TODO(port): narrow error set
     let bytes = if normalize {
-        // Zig `File.readFromUserInput(std.fs.cwd(), tarball_path, allocator)` resolves
+        // `File.readFromUserInput(cwd, tarball_path, allocator)` resolves
         // a user-provided relative path against `bun.fs.FileSystem.instance.top_level_dir`
         // (the absolute project root cached at startup — NOT the live process cwd).
         // The Rust `bun_sys::File::read_from_user_input` was reshaped to take that base
         // explicitly (T1 `bun_sys` cannot depend on T5 `bun_resolver::fs`), so thread it
         // through here from the install crate's `FileSystem` shim.
-        // Zig `try X.unwrap()` on Maybe(T) → plain `?` on bun_sys::Result<T>.
+        // `try X.unwrap()` on Maybe(T) → plain `?` on bun_sys::Result<T>.
         File::read_from_user_input(
             Fd::cwd(),
             crate::bun_fs::FileSystem::instance().top_level_dir(),
@@ -593,7 +593,7 @@ fn read_and_extract(
     tarball.run(log, &bytes)
 }
 
-// Zig: `enum(u3)` — Rust has no u3, use u8.
+// `enum(u3)` originally — Rust has no u3, use u8.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tag {
@@ -611,15 +611,15 @@ pub enum Status {
     Fail,
 }
 
-// PORT NOTE: matches Zig — `Task` has no `deinit`; the active `Data`/`Request`
+// PORT NOTE: matches the original — `Task` has no `deinit`; the active `Data`/`Request`
 // payload (`PackageManifest` blob, `ExtractData` paths, `ExtractTarball`
 // name/url) is intentionally leaked per `preallocated_resolve_tasks` put/get
-// cycle (Zig `HiveArray.Fallback.put` is `value.* = undefined` / raw
+// cycle (`HiveArray.Fallback.put` is `value.* = undefined` / raw
 // `allocator.destroy`). A Rust `impl Drop for Task` cannot recover this without
 // breaking the `..Task::uninit()` struct-update callers and risking drop of the
 // zeroed-`uninit()` union storage.
 
-/// Bare Zig `union` (untagged). Discriminated externally by `Task.tag`.
+/// Bare (untagged) `union`. Discriminated externally by `Task.tag`.
 /// // TODO(port): Phase B — consider folding `Tag` + `Request` + `Data` into a
 /// single Rust `enum` (one discriminant instead of tag + 2 untagged unions).
 pub union Data {
@@ -629,7 +629,7 @@ pub union Data {
     pub git_checkout: ManuallyDrop<ExtractData>,
 }
 
-/// Bare Zig `union` (untagged). Discriminated externally by `Task.tag`.
+/// Bare (untagged) `union`. Discriminated externally by `Task.tag`.
 pub union Request<'a> {
     /// package name
     // todo: Registry URL
@@ -657,7 +657,7 @@ pub struct ExtractRequest<'a> {
 pub struct GitCloneRequest {
     pub name: StringOrTinyString,
     pub url: StringOrTinyString,
-    // PORT NOTE: Zig stores `DotEnv.Map` by value (handle copy of the global
+    // PORT NOTE: the original stores `DotEnv.Map` by value (handle copy of the global
     // `Repository.shared_env`). Rust's `Map` owns its storage; store a
     // `&'static` into the global instead — see `SharedEnv::get`.
     pub env: &'static dot_env::Map,
@@ -689,5 +689,3 @@ pub struct LocalTarballRequest {
     /// cwd. When false, it is already an absolute path.
     pub normalize: bool,
 }
-
-// ported from: src/install/PackageManagerTask.zig

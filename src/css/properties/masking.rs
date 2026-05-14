@@ -29,7 +29,7 @@ use crate::properties::PropertyId;
 use crate::properties::PropertyIdTag;
 
 /// A value for the [clip-path](https://www.w3.org/TR/css-masking-1/#the-clip-path) property.
-// TODO(port): non-pub in Zig — confirm visibility
+// TODO(port): originally module-private — confirm visibility
 enum ClipPath {
     /// No clip path.
     None,
@@ -101,8 +101,8 @@ pub enum BasicShape {
 }
 
 /// An [`inset()`](https://www.w3.org/TR/css-shapes-1/#funcdef-inset) rectangle shape.
-// Zig declares this `const` (file-private) but it's reachable via `pub enum BasicShape::Inset`,
-// so Rust requires `pub` here — Zig has no private-in-public lint.
+// Reachable via `pub enum BasicShape::Inset`, so Rust's private-in-public lint
+// requires `pub` here even though it's conceptually file-private.
 pub struct InsetRect {
     /// The rectangle.
     pub rect: Rect<LengthPercentage>,
@@ -135,7 +135,7 @@ pub struct Polygon {
     /// The points of each vertex of the polygon.
     // TODO(port): css is an AST crate (§Allocators) — if Polygon is arena-fed this must become
     // `bun_alloc::ArenaVec<'bump, Point>` and Polygon/BasicShape/ClipPath gain `<'bump>`.
-    // No construction site exists in src/css/*.zig today, so provenance is unconfirmed; keeping
+    // No construction site exists in src/css/* today, so provenance is unconfirmed; keeping
     // plain Vec<Point> until Phase B verifies the arena.
     pub points: Vec<Point>,
 }
@@ -187,7 +187,6 @@ impl Default for MaskMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, css::Parse, css::ToCss)]
 pub enum MaskClip {
     /// A geometry box.
-    // Zig: @"geometry-box"
     GeometryBox(GeometryBox),
     /// The painted content is not clipped.
     #[css(name = "no-clip")]
@@ -255,8 +254,8 @@ pub struct Mask {
 }
 
 impl Mask {
-    // TODO(port): PropertyFieldMap was a Zig anon-struct const consumed by comptime
-    // reflection in shorthand handlers. Represent as assoc const slice; Phase B may
+    // TODO(port): PropertyFieldMap was originally a reflection-driven const consumed by
+    // shorthand handlers. Represent as assoc const slice; Phase B may
     // replace with a trait/derive.
     pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
         ("image", PropertyIdTag::MaskImage),
@@ -269,8 +268,8 @@ impl Mask {
         ("mode", PropertyIdTag::MaskMode),
     ];
 
-    // TODO(port): VendorPrefixMap was a Zig anon-struct const of bools consumed by
-    // comptime reflection. Represent as field-name slice; Phase B may replace with trait/derive.
+    // TODO(port): VendorPrefixMap was originally a reflection-driven bool table.
+    // Represent as field-name slice; Phase B may replace with trait/derive.
     pub const VENDOR_PREFIX_MAP: &'static [&'static str] =
         &["image", "position", "size", "repeat", "clip", "origin"];
 
@@ -472,7 +471,7 @@ impl MaskBorder {
         });
 
         if border_image.is_ok() || mode.is_some() {
-            // PERF(port): Zig used `comptime BorderImage.default()` — const-eval default in Phase B
+            // PERF(port): const-eval `BorderImage::default()` in Phase B
             let bi = border_image.unwrap_or_else(|_| BorderImage::default());
             Ok(MaskBorder {
                 source: bi.source,
@@ -570,8 +569,8 @@ pub enum WebKitMaskSourceType {
 
 // blocked_on: PropertyId::WebKitMaskComposite variant name (codegen spelling is `WebKitMaskComposite`)
 pub fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> {
-    // TODO(port): PropertyId variant naming — Zig uses kebab-case @"mask-border-source" etc.
-    // Mapping to PascalCase variants here; Phase B should verify exact PropertyId enum shape.
+    // TODO(port): PropertyId variant naming — mapping kebab-case property names to
+    // PascalCase variants here; Phase B should verify exact PropertyId enum shape.
     match property_id {
         PropertyId::MaskBorderSource => Some(PropertyId::MaskBoxImageSource(VendorPrefix::WEBKIT)),
         PropertyId::MaskBorderSlice => Some(PropertyId::MaskBoxImageSlice(VendorPrefix::WEBKIT)),
@@ -584,5 +583,3 @@ pub fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> 
         _ => None,
     }
 }
-
-// ported from: src/css/properties/masking.zig

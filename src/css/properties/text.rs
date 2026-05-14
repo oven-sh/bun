@@ -28,39 +28,39 @@ bitflags::bitflags! {
 
 /// Defines how text case should be transformed in the
 /// [text-transform](https://www.w3.org/TR/2021/CRD-css-text-3-20210422/#text-transform-property) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct TextTransformCase;
 
 /// A value for the [white-space](https://www.w3.org/TR/2021/CRD-css-text-3-20210422/#white-space-property) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct WhiteSpace;
 
 /// A value for the [word-break](https://www.w3.org/TR/2021/CRD-css-text-3-20210422/#word-break-property) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct WordBreak;
 
 /// A value for the [line-break](https://www.w3.org/TR/2021/CRD-css-text-3-20210422/#line-break-property) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct LineBreak;
 
 /// A value for the [hyphens](https://www.w3.org/TR/2021/CRD-css-text-3-20210422/#hyphenation) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct Hyphens;
 
 /// A value for the [overflow-wrap](https://www.w3.org/TR/2021/CRD-css-text-3-20210422/#overflow-wrap-property) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct OverflowWrap;
 
 /// A value for the [text-align](https://www.w3.org/TR/2021/CRD-css-text-3-20210422/#text-align-property) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct TextAlign;
 
 /// A value for the [text-align-last](https://www.w3.org/TR/2021/CRD-css-text-3-20210422/#text-align-last-property) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct TextAlignLast;
 
 /// A value for the [text-justify](https://www.w3.org/TR/2021/CRD-css-text-3-20210422/#text-justify-property) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct TextJustify;
 
 /// A value for the [word-spacing](https://www.w3.org/TR/2021/CRD-css-text-3-20210422/#word-spacing-property)
@@ -104,7 +104,7 @@ bitflags::bitflags! {
 }
 
 /// A value for the [text-decoration-style](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-decoration-style-property) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct TextDecorationStyle;
 
 /// A value for the [text-decoration-thickness](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-decoration-width-property) property.
@@ -118,21 +118,21 @@ pub enum TextDecorationThickness {
 }
 
 /// A value for the [text-decoration](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-decoration-property) shorthand property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct TextDecoration;
 
 /// A value for the [text-decoration-skip-ink](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-decoration-skip-ink-property) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct TextDecorationSkipInk;
 
 /// A text emphasis shape for the [text-emphasis-style](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-emphasis-style-property) property.
 ///
 /// See [TextEmphasisStyle](TextEmphasisStyle).
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct TextEmphasisStyle;
 
 /// A value for the [text-emphasis](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-emphasis-property) shorthand property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct TextEmphasis;
 
 /// A value for the [text-emphasis-position](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-emphasis-position-property) property.
@@ -146,13 +146,13 @@ pub struct TextEmphasisPosition {
 /// A vertical position keyword for the [text-emphasis-position](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-emphasis-position-property) property.
 ///
 /// See [TextEmphasisPosition](TextEmphasisPosition).
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct TextEmphasisPositionVertical;
 
 /// A horizontal position keyword for the [text-emphasis-position](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-emphasis-position-property) property.
 ///
 /// See [TextEmphasisPosition](TextEmphasisPosition).
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct TextEmphasisPositionHorizontal;
 
 /// A value for the [text-shadow](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-shadow-property) property.
@@ -251,13 +251,11 @@ impl TextShadow {
             && self.spread.is_compatible(browsers)
     }
 
-    // Zig: `pub fn eql` via `css.implementEql(@This(), ...)` — field-wise equality.
-    // Ported as `#[derive(PartialEq)]` above; callers use `==`.
+    // Field-wise equality is provided by `#[derive(PartialEq)]` above; callers use `==`.
 
     pub fn deep_clone(&self, alloc: &bun_alloc::Arena) -> Self {
-        // TODO(port): Zig used reflection-based `css.implementDeepClone`. Fields here
-        // are value types, so a plain Clone is equivalent; arena param retained for
-        // signature compatibility with the CSS deep_clone protocol.
+        // TODO(port): fields here are value types, so a plain Clone is equivalent;
+        // arena param retained for signature compatibility with the CSS deep_clone protocol.
         let _ = alloc;
         self.clone()
     }
@@ -284,7 +282,7 @@ pub enum TextSizeAdjust {
 }
 
 /// A value for the [direction](https://drafts.csswg.org/css-writing-modes-3/#direction) property.
-// Zig wires eql/hash/parse/toCss/deepClone via `css.DefineEnumProperty(@This())`.
+// `DefineEnumProperty` derives eql/hash/parse/toCss/deepClone.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty, crate::generics::CssHash,
 )]
@@ -296,11 +294,9 @@ pub enum Direction {
 }
 
 /// A value for the [unicode-bidi](https://drafts.csswg.org/css-writing-modes-3/#unicode-bidi) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct UnicodeBidi;
 
 /// A value for the [box-decoration-break](https://www.w3.org/TR/css-break-3/#break-decoration) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
+// TODO(port): intentionally unimplemented upstream — placeholder.
 pub struct BoxDecorationBreak;
-
-// ported from: src/css/properties/text.zig

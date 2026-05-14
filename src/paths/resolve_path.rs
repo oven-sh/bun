@@ -8,9 +8,9 @@ use crate::{
 use bun_alloc::{is_slice_in_buffer, is_slice_in_buffer_t};
 use bun_core::{WStr, ZStr, strings};
 
-// PORT NOTE: Zig `threadlocal var` buffers. Stored in `UnsafeCell` (not `RefCell`)
+// PORT NOTE: thread-local scratch buffers. Stored in `UnsafeCell` (not `RefCell`)
 // because callers must receive a raw `&mut` slice that outlives the `.with` closure
-// to match Zig's "valid until next call on this thread" pointer semantics. RefCell's
+// — "valid until next call on this thread" pointer semantics. RefCell's
 // runtime borrow tracking cannot express that contract and would force an
 // unsafe-lifetime-extend through `RefCell::as_ptr` (PORTING.md §Forbidden).
 // SAFETY invariant: each buffer has at most one live mutable borrow per thread;
@@ -26,9 +26,8 @@ thread_local! {
 ///
 /// The `'static` output lifetime is the honest contract: the buffer is
 /// thread-local storage that lives for the thread's lifetime, and the returned
-/// slice is "valid until the next call on this thread" (Zig threadlocal-var
-/// pointer semantics — see module PORT NOTE above). Callers uphold the
-/// single-live-borrow-per-thread invariant.
+/// slice is "valid until the next call on this thread" (see module PORT NOTE
+/// above). Callers uphold the single-live-borrow-per-thread invariant.
 #[inline]
 fn tl_buf_mut<const N: usize>(b: &UnsafeCell<[u8; N]>) -> &'static mut [u8; N] {
     // SAFETY: thread-local UnsafeCell ⇒ this thread is the sole accessor;
@@ -127,8 +126,7 @@ pub fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
         Platform::Windows => |n, i, inp| nql_at_index_case_insensitive_dyn(n, i, inp),
         _ => |n, i, inp| nql_at_index_dyn(n, i, inp),
     };
-    // PERF(port): Zig used `inline 2..8 => |N|` to unroll per-count; Rust uses
-    // a runtime `n` here. Profile in Phase B.
+    // PERF(port): could unroll per-count; runtime `n` here. Profile in Phase B.
 
     let mut min_length: usize = usize::MAX;
     for str in input {
@@ -188,7 +186,7 @@ pub fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     }
 
     if index == 0 {
-        // TODO(port): Zig returned &[_]u8{separator} (static); needs per-platform &'static [u8; 1]
+        // TODO(port): should return a per-platform &'static [u8; 1] separator slice
         return Some(P::P.separator_string().as_bytes());
     }
 
@@ -247,7 +245,7 @@ pub fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a 
         Platform::Windows => nql_at_index_case_insensitive_dyn,
         _ => nql_at_index_dyn,
     };
-    // PERF(port): Zig used `inline 2..8 => |N|` to unroll per-count — profile in Phase B
+    // PERF(port): could unroll per-count — profile in Phase B
 
     let mut min_length: usize = usize::MAX;
     for str in input {
@@ -324,7 +322,7 @@ pub fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a 
     }
 
     if index == 0 {
-        // TODO(port): Zig returned &[_]u8{separator} (static one-byte slice)
+        // TODO(port): should return a per-platform &'static [u8; 1] separator slice
         return P::P.separator_string().as_bytes();
     }
 
@@ -406,8 +404,7 @@ fn lazy_path_buf(c: &core::cell::Cell<*mut PathBuffer>) -> &'static mut PathBuff
 
 /// Raw pointer into the thread-local scratch buffer. Callers reborrow
 /// per-access — PORTING.md §Global mutable state. Valid until the next call on
-/// this thread; do not hold across re-entry (matches Zig threadlocal-var
-/// pointer semantics).
+/// this thread; do not hold across re-entry.
 #[inline]
 pub fn relative_to_common_path_buf() -> *mut PathBuffer {
     RELATIVE_TO_COMMON_PATH_BUF.with(lazy_path_buf)
@@ -532,8 +529,8 @@ pub fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
     // Generate the relative path based on the path difference between `to`
     // and `from`.
 
-    // PORT NOTE: reshaped for borrowck — Zig used a growing slice `out_slice`
-    // pointing into `buf`; we track length and re-slice at end.
+    // PORT NOTE: reshaped for borrowck — track length and re-slice at end
+    // instead of holding a growing sub-slice of `buf`.
     let mut out_len: usize = 0;
 
     if !normalized_from.is_empty() {
@@ -612,7 +609,7 @@ pub fn relative_normalized_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
 
 // PORT NOTE: result borrows either the thread-local common-path buf ('static)
 // or `to` (when !ALWAYS_COPY and result==to). Return lifetime is `'a` (=to's),
-// since 'static: 'a. Zig's "valid until next call" semantics still applies for
+// since 'static: 'a. The "valid until next call" semantics still applies for
 // the buf-backed case.
 pub fn relative_normalized<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     from: &'a [u8],
@@ -724,10 +721,11 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
             break 'brk &relative_from_buf[0..path_len + 1];
         }
     } else {
-        // PORT NOTE: Zig aliased relative_from_buf as both input (normalize result)
-        // and output (join target). Reshape: normalize into relative_to_buf scratch,
-        // then join into relative_from_buf. Safe because normalized_to is computed
-        // afterwards (overwrites relative_to_buf anyway).
+        // PORT NOTE: avoid aliasing relative_from_buf as both input (normalize
+        // result) and output (join target). Reshape: normalize into
+        // relative_to_buf scratch, then join into relative_from_buf. Safe
+        // because normalized_to is computed afterwards (overwrites
+        // relative_to_buf anyway).
         let norm_len = normalize_string_buf::<true, P, true>(from, &mut relative_to_buf[..]).len();
         join_abs_string_buf::<P>(
             Fs::FileSystem::instance().top_level_dir(),
@@ -756,10 +754,11 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
             break 'brk &relative_to_buf[0..path_len + 1];
         }
     } else {
-        // PORT NOTE: Zig aliased relative_to_buf as both input (normalize result)
-        // and output (join target). Reshape: normalize into `buf` scratch (caller
-        // output buffer, untouched until the final relative_normalized_buf call
-        // and disjoint from both threadlocals), then join into relative_to_buf.
+        // PORT NOTE: avoid aliasing relative_to_buf as both input (normalize
+        // result) and output (join target). Reshape: normalize into `buf`
+        // scratch (caller output buffer, untouched until the final
+        // relative_normalized_buf call and disjoint from both threadlocals),
+        // then join into relative_to_buf.
         let norm_len = normalize_string_buf::<true, P, true>(to, buf).len();
         join_abs_string_buf::<P>(
             Fs::FileSystem::instance().top_level_dir(),
@@ -813,8 +812,8 @@ pub fn windows_volume_name_len_t<T: PathChar>(path: &[T]) -> (usize, usize) {
         && !Platform::Windows.is_separator_t::<T>(path[2])
         && path[2] != T::from_u8(b'.')
     {
-        // TODO(port): Zig branched on T==u8 to use SIMD index_of_any vs generic;
-        // collapse to a single generic helper here. PERF(port): profile in Phase B.
+        // TODO(port): could branch on T==u8 to use SIMD index_of_any vs
+        // generic; a single generic helper for now. PERF(port): profile in Phase B.
         if let Some(idx) = strings::index_of_any_t::<T>(&path[3..], T::lit(b"/\\")) {
             // TODO: handle input "//abc//def" should be picked up as a unc path
             if path.len() > idx + 4 && !Platform::Windows.is_separator_t::<T>(path[idx + 4]) {
@@ -973,10 +972,9 @@ pub fn normalize_string_generic_t<
     )
 }
 
-/// Zig: `pub fn NormalizeOptions(comptime T: type) type { return struct { ... } }`
-/// Ported as a plain options struct; the `comptime options:` callsite becomes
-/// individual const-generic bools below (separator and is_separator stay
-/// runtime since Rust const generics cannot carry fn pointers / non-integral T).
+/// Ported as a plain options struct; option flags become individual
+/// const-generic bools below (separator and is_separator stay runtime since
+/// Rust const generics cannot carry fn pointers / non-integral T).
 pub struct NormalizeOptions<T: PathChar> {
     pub allow_above_root: bool,
     pub separator: T,
@@ -1024,7 +1022,7 @@ pub fn normalize_string_generic_tz<
 ) -> &'a mut [T] {
     let is_windows = separator == T::from_u8(SEP_WINDOWS);
     // sep_str: single-char slice [separator]
-    // PERF(port): Zig built `sep_str` at comptime; we build per-call.
+    // PERF(port): could build `sep_str` at compile time; built per-call here.
 
     if is_windows && cfg!(debug_assertions) {
         // this is here to catch a potential mistake by the caller
@@ -1218,11 +1216,10 @@ pub enum Platform {
     Nt,
 }
 
-// PORT NOTE: Zig used `comptime _platform: Platform` const-generics. Nightly
-// `adt_const_params` is now enabled crate-wide (see lib.rs), so `Platform`
-// derives `ConstParamTy` and `<const PLATFORM: Platform>` is the preferred
-// form for new code. The `PlatformT` sealed-trait shim below is kept for
-// existing call sites that haven't been migrated yet — both monomorphize
+// PORT NOTE: Nightly `adt_const_params` is enabled crate-wide (see lib.rs),
+// so `Platform` derives `ConstParamTy` and `<const PLATFORM: Platform>` is the
+// preferred form for new code. The `PlatformT` sealed-trait shim below is kept
+// for existing call sites that haven't been migrated yet — both monomorphize
 // identically (`P::P` is a true `const Platform`).
 mod sealed {
     pub trait Sealed {}
@@ -1270,7 +1267,7 @@ impl Platform {
     }
 
     // PORT NOTE: dropped `const` — PathChar trait methods aren't const-callable
-    // on stable. Zig's `comptime` here was for monomorphization, not const-eval.
+    // on stable. Monomorphization (not const-eval) is what matters here.
     pub fn is_absolute_t<T: PathChar>(self, path: &[T]) -> bool {
         match self {
             Platform::Posix => !path.is_empty() && path[0] == T::from_u8(b'/'),
@@ -1392,7 +1389,7 @@ impl Platform {
 
 pub fn normalize_string<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(str: &[u8]) -> &mut [u8] {
     // PORT NOTE: returns slice into thread-local PARSER_BUFFER; valid until the
-    // next call on this thread (Zig threadlocal-var semantics).
+    // next call on this thread.
     PARSER_BUFFER.with(|b| normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, tl_buf_mut(b)))
 }
 
@@ -1557,20 +1554,20 @@ pub fn join_string_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> 
 }
 
 pub fn join_string_buf_w<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u8]]) -> &'a [u16] {
-    // TODO(port): Zig `parts: anytype` allowed mixed u8/u16 elements; we accept
+    // TODO(port): mixed u8/u16 elements were allowed historically; we accept
     // &[&[u8]] and transcode below to match the common callsite.
     join_string_buf_t::<u16, P>(buf, parts)
 }
 
 /// `joinStringBufW` overload for u16 parts (no transcode). Covers the
-/// `T == u16 && Elem == u16` arm of Zig's `joinStringBufT` `anytype` dispatch.
+/// `T == u16 && Elem == u16` case.
 pub fn join_string_buf_w_same<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u16]]) -> &'a [u16] {
     join_string_buf_t_same::<u16, P>(buf, parts)
 }
 
 /// Same-width `joinStringBufT`: parts already match `T`, so no UTF-8→16 transcode.
 /// PORT NOTE: split out of `join_string_buf_t` because Rust can't monomorphize on
-/// `parts: anytype` element types like Zig — callers pick the overload.
+/// the parts' element types — callers pick the overload.
 pub fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
     buf: &'a mut [T],
     parts: &[&[T]],
@@ -1656,8 +1653,8 @@ pub fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
     buf: &'a mut [T],
     parts: &[&[u8]],
 ) -> &'a [T] {
-    // TODO(port): Zig used `parts: anytype` (tuple of slices, possibly mixed
-    // element types). Rust takes `&[&[u8]]`; transcoding to u16 handled below.
+    // TODO(port): mixed-element parts were allowed historically; Rust takes
+    // `&[&[u8]]`; transcoding to u16 handled below.
     let mut written: usize = 0;
     let mut temp_buf_: [T; 4096] = [T::from_u8(0); 4096];
     let mut temp_buf: &mut [T] = &mut temp_buf_;
@@ -1689,8 +1686,7 @@ pub fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
             written += 1;
         }
 
-        // TODO(port): Zig inspected std.meta.Elem(@TypeOf(part)); we always
-        // receive u8 parts, so transcode iff T == u16.
+        // TODO(port): we always receive u8 parts, so transcode iff T == u16.
         written += T::write_u8_part(&mut temp_buf[written..], part);
     }
 
@@ -1816,9 +1812,9 @@ pub fn join_abs_string_buf_z_trailing_slash<'a, P: PlatformT>(
     ZStr::from_buf(&buf[..], out_len)
 }
 
-// TODO(port): Zig used `comptime ReturnType: type` to vary `[:0]const u8` vs
-// `[]const u8`. We always return `&[u8]`; when `IS_SENTINEL` a NUL is written
-// at `result.len()` and callers re-wrap as `ZStr`.
+// TODO(port): the return type can't vary on the const generic. We always
+// return `&[u8]`; when `IS_SENTINEL` a NUL is written at `result.len()` and
+// callers re-wrap as `ZStr`.
 fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     _cwd: &'a [u8],
     buf: &'a mut [u8],
@@ -1851,10 +1847,10 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         && parts[0].len() == 1
         && parts[0][0] == SEP_POSIX
     {
-        // PORT NOTE: Zig returned the literal `"/"` (`[:0]const u8` — NUL-backed).
-        // Rust `b"/"` is NOT NUL-terminated and not in `buf`, breaking callers
-        // that assume buf-backing (`ZStr::from_raw`, trailing-slash check).
-        // Write into `buf` so the result is always buf-backed and sentinel-safe.
+        // PORT NOTE: a static literal `"/"` would not be NUL-terminated nor in
+        // `buf`, breaking callers that assume buf-backing (`ZStr::from_raw`,
+        // trailing-slash check). Write into `buf` so the result is always
+        // buf-backed and sentinel-safe.
         buf[0] = b'/';
         if IS_SENTINEL {
             buf[1] = 0;
@@ -1924,7 +1920,7 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         leading_buf[0] = b'/';
         1
     };
-    // Copy leading separator into buf (Zig does this after normalize; order-
+    // Copy leading separator into buf (could be done after normalize; order-
     // independent since normalize writes into buf[leading_len..]).
     buf[..leading_len].copy_from_slice(&leading_buf[..leading_len]);
 
@@ -2237,7 +2233,7 @@ pub fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
     &mut buf[buf_off..buf_off + out_len]
 }
 
-/// Port of `resolve_path.zig:basename` — **NOT** `std.fs.path.basename` (see
+/// **NOT** the std-library-style `basename` (see
 /// [`crate::basename`] for that). Differs in two load-bearing ways: treats
 /// `\` as a separator on all platforms (`is_sep_any`), and returns `b"/"`
 /// (not `b""`) when the input is all separators. Shell builtins
@@ -2415,7 +2411,7 @@ impl PosixToWinNormalizer {
     ) -> Result<&'a mut ZStr, bun_core::Error> {
         Self::resolve_cwd_with_external_buf_z(&mut self._raw_bytes, maybe_posix_path)
     }
-    // TODO(b2-windows): on posix `_raw_bytes` is `()`; the Zig version still
+    // TODO(b2-windows): on posix `_raw_bytes` is `()`; the Windows version
     // null-terminates into a buffer. Callers on posix should use
     // `resolve_cwd_with_external_buf_z` with an explicit PathBuffer.
 
@@ -2571,21 +2567,20 @@ impl PosixToWinNormalizer {
     }
 }
 
-// ResolvePath__joinAbsStringBufCurrentPlatformBunString: see src/jsc/resolve_path_jsc.zig
+// ResolvePath__joinAbsStringBufCurrentPlatformBunString: see src/jsc/resolve_path_jsc.rs
 // (reaches into the VM for cwd; paths/ is JSC-free).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // In-place separator rewrites.
 //
 // `slashes_to_{posix,windows}_in_place` are the two PRIMITIVES — unconditional,
-// no host-OS gating, no drive-letter touch. They are the Rust analogue of Zig's
-// `std.mem.replaceScalar(T, buf, '\\', '/')` (and inverse), which is what Zig
-// callers handroll at the sites this dedup targets.
+// no host-OS gating, no drive-letter touch. They are scalar replaces of `\\`
+// for `/` (and inverse).
 //
 // The four pre-existing public fns below are now thin wrappers over the
-// primitives so that Zig grep-parity (`platformToPosixInPlace`,
+// primitives so the historical names (`platformToPosixInPlace`,
 // `dangerouslyConvertPathTo{Posix,Windows}InPlace`, `posixToPlatformInPlace`)
-// is preserved without a fourth/fifth copy of the loop body.
+// are preserved without a fourth/fifth copy of the loop body.
 //
 // Encoding safety: both 0x2F ('/') and 0x5C ('\\') are single-unit ASCII in
 // UTF-8 and UTF-16 and never appear as a sub-unit of a multi-unit sequence, so
@@ -2688,5 +2683,3 @@ pub fn posix_to_platform_in_place<T: PathChar>(path_buffer: &mut [T]) {
 // `PathChar` is now canonical at `crate::path_char`; re-export for callers
 // that still path through `resolve_path::PathChar`.
 pub use crate::PathChar;
-
-// ported from: src/paths/resolve_path.zig

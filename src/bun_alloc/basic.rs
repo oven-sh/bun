@@ -6,9 +6,9 @@ use crate::mimalloc;
 // Phase B may reshape the vtable struct into `trait Allocator` impls instead.
 use crate::{Alignment, AllocatorVTable, StdAllocator};
 
-// Zig: `const log = bun.Output.scoped(.mimalloc, .hidden);` — `Output.scoped`
-// lives in `bun_core`, which depends on this crate, so the hidden-scope debug
-// tracing is dropped here rather than re-declared as a no-op stub.
+// `Output.scoped` lives in `bun_core`, which depends on this crate, so the
+// hidden-scope `mimalloc` debug tracing is dropped here rather than re-declared
+// as a no-op stub.
 
 /// Shared mimalloc free path for every vtable/trait `free` slot in this crate
 /// (C/Z allocators, `HEAP_ALLOCATOR_VTABLE`, `GLOBAL_MIMALLOC_VTABLE`, and
@@ -212,5 +212,3 @@ pub fn free_without_size(ptr: *mut c_void) {
     // SAFETY: ptr is null or was allocated by mimalloc; mi_free accepts null
     unsafe { mimalloc::mi_free(ptr) }
 }
-
-// ported from: src/bun_alloc/basic.zig

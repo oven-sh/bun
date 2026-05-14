@@ -344,7 +344,7 @@ pub fn schedule_barrel_deferred_imports(
     result_source_index: u32,
     result_ast_target: bun_ast::Target,
 ) -> Result<i32, AllocError> {
-    // PORT NOTE: Zig passed `*ParseTask.Result.Success` and read `result.ast`
+    // PORT NOTE: the original passed `*ParseTask.Result.Success` and read `result.ast`
     // after `graph.ast.set(idx, result.ast)` value-copied it. Rust *moves*
     // `result.ast` into `graph.ast`, so this fn reads the just-written
     // `graph.ast[result_source_index]` instead. Phase 1/2 only read
@@ -810,5 +810,3 @@ pub fn schedule_barrel_deferred_imports(
 fn persist_barrel_export(dev: &crate::dispatch::DevServerHandle, barrel_path: &[u8], alias: &[u8]) {
     dev.register_barrel_export(barrel_path, alias)
 }
-
-// ported from: src/bundler/barrel_imports.zig

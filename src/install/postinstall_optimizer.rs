@@ -20,7 +20,7 @@ pub enum PostinstallOptimizer {
     Ignore,
 }
 
-// TODO(port): was comptime in Zig — verify `string_hash` can be `const fn` in Phase B and
+// TODO(port): verify `string_hash` can be `const fn` in Phase B and
 // switch to `const` array if so.
 static DEFAULT_NATIVE_BINLINKS_NAME_HASHES: LazyLock<[PackageNameHash; 2]> = LazyLock::new(|| {
     [
@@ -34,7 +34,7 @@ struct DefaultIgnore {
     minimum_version: semver::Version,
 }
 
-// TODO(port): was comptime in Zig — `Version::parse_utf8` is unlikely to be `const fn`; keep
+// TODO(port): `Version::parse_utf8` is unlikely to be `const fn`; keep
 // LazyLock unless Phase B finds a const path.
 static DEFAULT_IGNORE: LazyLock<[DefaultIgnore; 1]> = LazyLock::new(|| {
     [DefaultIgnore {
@@ -49,9 +49,9 @@ impl PostinstallOptimizer {
         expr: &js_ast::Expr,
         value: PostinstallOptimizer,
     ) -> Result<bool, bun_alloc::AllocError> {
-        // PORT NOTE: Zig `expr.asArray()` returns null for both non-array AND empty
-        // array, so the `items.len == 0` check below is dead in Zig too — preserved
-        // for diff parity.
+        // PORT NOTE: `expr.as_array()` returns None for both non-array AND empty
+        // array, so the `items.len == 0` check below is technically dead —
+        // preserved for clarity.
         let Some(mut array) = expr.as_array() else {
             return Ok(false);
         };
@@ -61,7 +61,7 @@ impl PostinstallOptimizer {
 
         while let Some(entry) = array.next() {
             if entry.is_string() {
-                // PORT NOTE: Zig `asString(allocator)` would convert UTF-16→UTF-8; JSON
+                // PORT NOTE: a generic `as_string` would convert UTF-16→UTF-8; JSON
                 // string literals are always UTF-8/non-rope, so `as_utf8_string_literal`
                 // suffices and avoids threading a bump arena.
                 // TODO(port): if a UTF-16 EString ever reaches here, route a `&Bump`.
@@ -107,8 +107,8 @@ impl PostinstallOptimizer {
         target_os: npm::OperatingSystem,
     ) -> Option<PackageID> {
         // Windows needs file extensions.
-        // Zig: `@enumFromInt(Npm.OperatingSystem.win32)` — wrap the raw bit in the
-        // newtype since `WIN32` is exported as the underlying `u16` repr, not `Self`.
+        // Wrap the raw bit in the newtype since `WIN32` is exported as the
+        // underlying `u16` repr, not `Self`.
         if target_os.is_match(npm::OperatingSystem(npm::OperatingSystem::WIN32)) {
             return None;
         }
@@ -132,10 +132,10 @@ impl PostinstallOptimizer {
     }
 }
 
-// TODO(port): Zig used `std.ArrayHashMapUnmanaged(PackageNameHash, PostinstallOptimizer,
-// install.ArrayIdentityContext.U64, false)` — i.e. an *identity* hash context (key is already
-// a hash). `bun_collections::ArrayHashMap` must be configured for identity hashing on u64 keys
-// in Phase B, or expose a `ArrayHashMap<K, V, IdentityU64>` variant.
+// TODO(port): the key is already a hash, so this should use an *identity* hash
+// context. `bun_collections::ArrayHashMap` must be configured for identity
+// hashing on u64 keys in Phase B, or expose a `ArrayHashMap<K, V, IdentityU64>`
+// variant.
 pub type Map = ArrayHashMap<PackageNameHash, PostinstallOptimizer>;
 
 #[derive(Default)]
@@ -172,8 +172,8 @@ impl List {
             }
         }
 
-        // Zig: feature flag has `default: false` and returns bool directly; the Rust
-        // env_var port returns `Option<bool>`. unwrap_or(false) preserves the default.
+        // Feature flag default is `false`; the env_var helper returns
+        // `Option<bool>`, so `unwrap_or(false)` preserves the default.
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER
             .get()
             .unwrap_or(false)
@@ -193,7 +193,7 @@ impl List {
         target_os: npm::OperatingSystem,
         tree_id: Option<TreeId>,
     ) -> bool {
-        // Zig: feature flag has `default: false`; see note on the binlinker flag above.
+        // Feature flag default is `false`; see note on the binlinker flag above.
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS
             .get()
             .unwrap_or(false)
@@ -280,5 +280,3 @@ impl List {
         None
     }
 }
-
-// ported from: src/install/postinstall_optimizer.zig

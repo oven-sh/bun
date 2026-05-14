@@ -188,7 +188,7 @@ impl ScanOpts {
 }
 
 pub struct WalkTask<'a> {
-    // PORT NOTE: Zig `WalkTask.deinit` did `walker.deinit(true); destroy(walker)`.
+    // PORT NOTE: `WalkTask.deinit` did `walker.deinit(true); destroy(walker)`.
     // `Box<GlobWalker>` drop runs `GlobWalker::Drop` (≡ `deinit(true)`) then frees.
     walker: Box<GlobWalker>,
     err: Option<WalkTaskErr>,
@@ -215,7 +215,7 @@ impl WalkTaskErr {
 pub type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask<'a, WalkTask<'a>>;
 
 impl<'a> WalkTask<'a> {
-    // PORT NOTE: Zig returned `!*AsyncGlobWalkTask` (the only `try` was the heap
+    // PORT NOTE: the original returned a fallible `*AsyncGlobWalkTask` (the only `try` was the heap
     // allocation). With the global mimalloc allocator `Box::new` is infallible
     // (panics on OOM), so the Rust port returns the boxed task directly.
     pub fn create(
@@ -223,7 +223,7 @@ impl<'a> WalkTask<'a> {
         glob_walker: Box<GlobWalker>,
         has_pending_activity: &'a AtomicUsize,
     ) -> Box<AsyncGlobWalkTask<'a>> {
-        // PORT NOTE: Zig returned `!*AsyncGlobWalkTask` (alloc OOM); Rust `Box::new`
+        // PORT NOTE: the original returned a fallible `*AsyncGlobWalkTask` (alloc OOM); Rust `Box::new`
         // is infallible (panics on OOM via mimalloc), so no error variant.
         let walk_task = Box::new(WalkTask {
             walker: glob_walker,
@@ -260,7 +260,7 @@ impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
     }
 
     fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated> {
-        // PORT NOTE: Zig `defer this.deinit()` freed walker + self. Ownership of
+        // PORT NOTE: `defer this.deinit()` freed walker + self. Ownership of
         // `Box<WalkTask>` is held by `ConcurrentPromiseTask.ctx`; the wrapper is
         // freed via `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path
         // after `run_from_js` returns, which drops `ctx` (and thus `walker`).
@@ -288,7 +288,7 @@ fn glob_walk_result_to_js(
         return JSValue::create_empty_array(global_this, 0);
     }
 
-    // PORT NOTE: Zig keyed `MatchedMap` on `bun.String` so it could call
+    // PORT NOTE: the original keyed `MatchedMap` on `bun.String` so it could call
     // `BunString.toJSArray(keys)` directly. The Rust `MatchedMap` is
     // `StringArrayHashMap<()>` (Box<[u8]> keys), so rebuild the JS array here.
     JSValue::create_array_from_iter(global_this, keys.iter(), |key| {
@@ -317,7 +317,7 @@ impl Glob {
         let error_on_broken_symlinks = match_opts.error_on_broken_symlinks;
         let only_files = match_opts.only_files;
 
-        // PORT NOTE: Zig stack-inits `GlobWalker = .{}` then calls `.init()` /
+        // PORT NOTE: the original stack-inits `GlobWalker = .{}` then calls `.init()` /
         // `.initWithCwd()` as out-param mutators. The Rust `GlobWalker` reshaped
         // those into associated constructors returning `Result<Maybe<Self>>`, so
         // there is no `Default` and no separate allocation step.
@@ -424,7 +424,7 @@ impl Glob {
 
         let mut arena = Arena::new();
         // PORT NOTE: GlobWalker::init/init_with_cwd own their allocations (Box) in
-        // the Rust port; the arena here is vestigial and only mirrors Zig structure.
+        // the Rust port; the arena here is vestigial and only mirrors the original structure.
         let glob_walker =
             match self.make_glob_walker(global_this, &mut arguments, "scan", &mut arena) {
                 Err(err) => {
@@ -439,7 +439,7 @@ impl Glob {
             };
 
         incr_pending_activity_flag(&self.has_pending_activity);
-        // PORT NOTE: Zig `catch { decr; deinit; throwOOM }` handled alloc failure.
+        // PORT NOTE: the original `catch { decr; deinit; throwOOM }` handled alloc failure.
         // Rust `Box::new` is infallible (panics via mimalloc on OOM), so the error
         // arm collapses; `glob_walker` is moved in and dropped on unwind.
         let mut task = WalkTask::create(global_this, glob_walker, &self.has_pending_activity);
@@ -478,7 +478,7 @@ impl Glob {
                 }
                 Ok(Some(gw)) => gw,
             };
-        // Zig: `defer { globWalker.deinit(true); alloc.destroy(globWalker); }` — Box<GlobWalker>
+        // `defer { globWalker.deinit(true); alloc.destroy(globWalker); }` — Box<GlobWalker>
         // drops at scope exit (`GlobWalker::Drop` ≡ `deinit(true)`).
 
         match glob_walker.walk()? {
@@ -499,7 +499,7 @@ impl Glob {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PERF(port): was arena bulk-free — Zig used a local ArenaAllocator for the
+        // PERF(port): was arena bulk-free — the original used a local arena for the
         // toSlice() temp allocation. Dropped here; to_slice() owns its buffer.
 
         let arguments_ = callframe.arguments_old::<1>();
@@ -525,5 +525,3 @@ impl Glob {
         ))
     }
 }
-
-// ported from: src/runtime/api/glob.zig

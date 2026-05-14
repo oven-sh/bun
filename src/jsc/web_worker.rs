@@ -7,7 +7,7 @@
 //!
 //!   ┌─ PARENT THREAD ───────────────────────────────────────────────────────┐
 //!   │  JSWorker (GC'd JSCell) ──Ref──► WebCore::Worker (ThreadSafeRefCounted)│
-//!   │                                    └─ impl_ ──owns──► Zig WebWorker    │
+//!   │                                    └─ impl_ ──owns──► Rust WebWorker   │
 //!   └───────────────────────────────────────────────────────┬───────────────┘
 //!                                                            │
 //!   ┌─ WORKER THREAD ───────────────────────────────────────┴───────────────┐
@@ -108,7 +108,7 @@ pub struct WebWorker {
     /// Heap-owned by this struct; freed in `destroy()`.
     unresolved_specifier: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
-    /// Owned NUL-terminated bytes; Zig was `[:0]const u8`.
+    /// Owned NUL-terminated bytes.
     name: bun_core::ZBox,
 
     // ---- Cross-thread signalling --------------------------------------------
@@ -172,9 +172,9 @@ pub struct WebWorker {
     // `JsCell` (not `Cell`) because `Arena` is non-`Copy`; worker-thread-only
     // so the single-owner-thread invariant `JsCell` documents is upheld.
     arena: JsCell<Option<bun_alloc::Arena>>,
-    /// Heap-owned cloned env (Map + Loader) for the worker VM. In Zig both
-    /// were `allocator.create`'d on the worker arena and bulk-freed by
-    /// `arena.deinit()`. Rust's `Arena = bumpalo::Bump` does not run `Drop`
+    /// Heap-owned cloned env (Map + Loader) for the worker VM. These were
+    /// previously arena-allocated and bulk-freed alongside the worker arena,
+    /// but Rust's `Arena = bumpalo::Bump` does not run `Drop`
     /// (so the inner `HashTable` would leak), and `clone_with_allocator()` no
     /// longer routes through the arena allocator anyway — own them as `Box`es
     /// here instead. `start_vm()` `heap::alloc`s and stores the pointers;
@@ -248,7 +248,7 @@ mod live_workers {
     // PORTING.md §Global mutable state: list head, every read/write is under
     // `MUTEX` above. `AtomicCell` so the slot itself is `Sync` with safe
     // load/store (the mutex still provides the actual happens-before for the
-    // intrusive list walk; Zig: plain `var head: ?*WebWorker`).
+    // intrusive list walk).
     pub(super) static HEAD: bun_core::AtomicCell<*mut WebWorker> =
         bun_core::AtomicCell::new(core::ptr::null_mut());
     /// Number of workers registered in `list`. Separate atomic so
@@ -267,8 +267,8 @@ mod live_workers {
             }
         }
         HEAD.store(worker);
-        // fetch_add and wake MUST happen under MUTEX (matching the Zig
-        // `defer mutex.unlock()` ordering) so that `terminate_all_and_wait`
+        // fetch_add and wake MUST happen under MUTEX (before unlock) so that
+        // `terminate_all_and_wait`
         // can never observe the worker in the list while OUTSTANDING is still
         // at its pre-increment value — otherwise it could sweep B, see
         // OUTSTANDING==0 (A's unregister already ran, B's add hasn't), and
@@ -420,15 +420,15 @@ impl WebWorker {
         self.parent_poll_ref.with_mut(f)
     }
 
-    /// Zig: `worker.eval_mode` field — whether this worker was started in
-    /// eval mode (entry source is a string, not a file).
+    /// Whether this worker was started in eval mode (entry source is a
+    /// string, not a file).
     #[inline]
     pub fn eval_mode(&self) -> bool {
         self.eval_mode
     }
 
-    /// Zig: `worker.argv: []const WTFStringImpl` field — borrowed from the C++
-    /// `WorkerOptions` (kept alive by the owning `WebCore::Worker`).
+    /// Worker `argv` slice — borrowed from the C++ `WorkerOptions` (kept alive
+    /// by the owning `WebCore::Worker`).
     #[inline]
     pub fn argv(&self) -> &[WTFStringImpl] {
         // SAFETY: `argv_ptr[..argv_len]` is borrowed from C++ WorkerOptions
@@ -437,9 +437,9 @@ impl WebWorker {
         unsafe { bun_core::ffi::slice(self.argv_ptr, self.argv_len) }
     }
 
-    /// Zig: `worker.execArgv: ?[]const WTFStringImpl` — `None` when
-    /// `inherit_exec_argv` (the worker inherits the parent's execArgv),
-    /// otherwise `Some(slice)` (possibly empty) borrowed from C++ WorkerOptions.
+    /// Worker `execArgv` slice — `None` when `inherit_exec_argv` (the worker
+    /// inherits the parent's execArgv), otherwise `Some(slice)` (possibly
+    /// empty) borrowed from C++ WorkerOptions.
     #[inline]
     pub fn exec_argv(&self) -> Option<&[WTFStringImpl]> {
         if self.inherit_exec_argv {
@@ -490,8 +490,8 @@ impl WebWorker {
         let prev_log = parent_ref.transpiler.log;
         let mut temp_log = bun_ast::Log::default();
         parent_ref.transpiler.set_log(&raw mut temp_log);
-        // RAII: Zig's `defer parent.transpiler.setLog(prev_log)` +
-        // `defer temp_log.deinit()` — restored on every return path.
+        // RAII: restore `parent.transpiler.log` and free `temp_log` on every
+        // return path.
         let mut restore = scopeguard::guard((parent_ref, temp_log), |(p, log)| {
             p.transpiler.set_log(prev_log);
             drop(log);
@@ -580,9 +580,8 @@ impl WebWorker {
         // worker whose thread is already running.
         live_workers::register(worker);
 
-        // PORT NOTE: Zig's `std.Thread.spawn(.{ .stack_size }, threadMain, .{worker})`.
-        // `std::thread` is permitted (only `std::{fs,net,process}` are banned);
-        // bun_threading has no generic spawn helper.
+        // PORT NOTE: `std::thread` is permitted (only `std::{fs,net,process}`
+        // are banned); bun_threading has no generic spawn helper.
         struct SendPtr(*mut WebWorker);
         // SAFETY: `WebWorker` is heap-allocated and the worker thread is the
         // sole writer to its worker-thread-only fields; cross-thread fields are
@@ -729,7 +728,7 @@ impl WebWorker {
 
     /// The owning C++ `WebCore::Worker`. Never null; this struct is freed by
     /// `~Worker`, so the pointer cannot dangle. Passed as `worker_ptr` to
-    /// `Zig__GlobalObject__create` so the ZigGlobalObject is born with its
+    /// `Bun__GlobalObject__create` so the BunGlobalObject is born with its
     /// WorkerGlobalScope wired.
     #[inline]
     pub fn cpp_worker(&self) -> *mut c_void {
@@ -749,7 +748,7 @@ impl WebWorker {
     // main thread may concurrently hold `&WebWorker` (`notify_need_termination`,
     // `terminate_all_and_wait`), so materialising `&mut WebWorker` here would
     // be aliased-&mut UB. Worker-thread-only mutable fields are wrapped in
-    // `Cell` / `UnsafeCell` instead. Zig spec uses `*WebWorker` everywhere,
+    // `Cell` / `UnsafeCell` instead. C++ callers pass `*WebWorker` everywhere,
     // which aliases freely.
     fn thread_main(&self) {
         bun_analytics::features::workers_spawned.fetch_add(1, Ordering::Relaxed);
@@ -798,21 +797,17 @@ impl WebWorker {
         // the safe thread-local accessor returns the same allocation.
         debug_assert!(core::ptr::eq(vm_ptr, VirtualMachine::get_mut_ptr()));
         let global = VirtualMachine::get().global();
-        // PORT NOTE: Zig calls `holdAPILock(this, OpaqueWrap(spin))`; the
-        // callback ends in `bun.exitThread()` (`pthread_exit`), whose forced
-        // unwind cannot walk Zig frames (no unwind tables), so glibc falls
-        // back to a longjmp and the C++ `JSLockHolder` destructor never
-        // runs — `WebWorker__teardownJSCVM` (called from `shutdown()`)
-        // accounts for that abandoned ref by `deref`ing twice.
-        //
-        // In Rust we cannot use `pthread_exit` (its forced unwind aborts at
-        // the first `extern "C"` boundary — see `shutdown` PORT NOTE), so
-        // `spin()` returns. To preserve the Zig invariant that the API lock
-        // is simply abandoned along with the destroyed VM, take the lock via
-        // raw FFI (NOT the `Lock<'_>` RAII guard) and never release it.
-        // `WebWorker__teardownJSCVM` correspondingly `deref`s once, since
-        // unlike Zig's `JSLockHolder` this path takes no extra `RefPtr<VM>`
-        // — see the matching note in `Worker.cpp`.
+        // PORT NOTE: An earlier implementation used a C++ `JSLockHolder` and
+        // exited the thread directly from `spin()`, abandoning the lock holder
+        // (so `WebWorker__teardownJSCVM` `deref`'d twice to balance the extra
+        // `RefPtr<VM>`). In Rust we cannot use `pthread_exit` (its forced
+        // unwind aborts at the first `extern "C"` boundary — see `shutdown`
+        // PORT NOTE), so `spin()` returns. To preserve the invariant that the
+        // API lock is simply abandoned along with the destroyed VM, take the
+        // lock via raw FFI (NOT the `Lock<'_>` RAII guard) and never release
+        // it. `WebWorker__teardownJSCVM` correspondingly `deref`s once, since
+        // this path takes no extra `RefPtr<VM>` — see the matching note in
+        // `Worker.cpp`.
         //
         // We deliberately do NOT use `get_api_lock()` + `mem::forget(guard)`:
         // the guard holds `vm: &VM`, which would dangle after `spin()` →
@@ -839,24 +834,22 @@ impl WebWorker {
         // `parent` is a `BackRef` and outlives this worker while
         // `parent_poll_ref` is held (see file header). The parent VM runs
         // concurrently on its own thread, so we must NOT materialise a
-        // `&mut VirtualMachine` here — Zig's `*T` aliases freely but a
-        // Rust `&mut` would assert uniqueness we don't have. All uses
-        // below are read-only (clone of transform_options, locked read of
-        // proxy_env_storage / env.map, copy of standalone_module_graph),
-        // so a shared reference is sufficient and matches the .zig intent.
+        // `&mut VirtualMachine` here — a Rust `&mut` would assert uniqueness
+        // we don't have. All uses below are read-only (clone of
+        // transform_options, locked read of proxy_env_storage / env.map, copy
+        // of standalone_module_graph), so a shared reference is sufficient.
         let parent = self.parent.get();
         // Deref-clone out of the `Arc` — worker mutates `allow_addons` below
         // and passes the owned struct as `args` to the new VM.
         let mut transform_options = (*parent.transpiler.options.transform_options).clone();
 
         if let Some(exec_argv) = self.exec_argv() {
-            // Spec web_worker.zig:445-476 — parse `execArgv` with the
-            // RunCommand param table. The param table lives in
-            // `bun_runtime::cli` (forward-dep), so dispatch through
-            // `RuntimeHooks::parse_worker_exec_argv_allow_addons`. Currently
-            // only honours `--no-addons`; the hook owns the temporary UTF-8
-            // alloc + clap parse + `args.deinit()` (the full `defer` chain in
-            // the .zig). `None` ↔ Zig's `catch break :parse_new_args` arm.
+            // Parse `execArgv` with the RunCommand param table. The param
+            // table lives in `bun_runtime::cli` (forward-dep), so dispatch
+            // through `RuntimeHooks::parse_worker_exec_argv_allow_addons`.
+            // Currently only honours `--no-addons`; the hook owns the
+            // temporary UTF-8 alloc + clap parse + arg cleanup. `None` means
+            // parsing failed — fall back to the inherited setting.
             // SAFETY: hook contract.
             if let Some(allow_addons) =
                 unsafe { (hooks.parse_worker_exec_argv_allow_addons)(exec_argv) }
@@ -878,10 +871,10 @@ impl WebWorker {
         // state.
         let mut temp_proxy_slots = jsc::rare_data::ProxyEnvSlots::default();
 
-        // PORT NOTE: Zig allocated Map/Loader on the worker arena (bulk-freed
-        // in shutdown). Rust's `Arena = bumpalo::Bump` doesn't run Drop, so
-        // box on the global heap instead and hand ownership to the VM via
-        // `transpiler.env`; reclaimed in `vm.destroy()` in `shutdown()`.
+        // PORT NOTE: Map/Loader were previously allocated on the worker arena
+        // (bulk-freed in shutdown). Rust's `Arena = bumpalo::Bump` doesn't run
+        // Drop, so box on the global heap instead and hand ownership to the
+        // VM via `transpiler.env`; reclaimed in `vm.destroy()` in `shutdown()`.
         // PERF(port): MimallocArena bulk-free — profile in Phase B.
         let mut map = Box::new(bun_dotenv::Map::default());
         {
@@ -894,14 +887,13 @@ impl WebWorker {
         // Ensure map entries point at the exact bytes we hold refs on.
         temp_proxy_slots.sync_into(&mut map);
 
-        // `Loader<'static>` borrows `map` for its lifetime. In Zig both lived
-        // on the worker arena (bulk-freed); here both are `heap::alloc`'d
-        // and stashed on `self` so `shutdown()` step 5 reclaims them on every
-        // path — including the early-terminate checkpoint below, which calls
-        // `shutdown()` before the VM exists.
+        // `Loader<'static>` borrows `map` for its lifetime. Both are
+        // `heap::alloc`'d and stashed on `self` so `shutdown()` step 5
+        // reclaims them on every path — including the early-terminate
+        // checkpoint below, which calls `shutdown()` before the VM exists.
         let map_ptr: *mut bun_dotenv::Map = bun_core::heap::into_raw(map);
         // SAFETY: `map_ptr` heap-allocated above; `'static` is the lifetime
-        // erasure for the worker-VM-lifetime borrow (Zig: arena-backed).
+        // erasure for the worker-VM-lifetime borrow.
         let loader = Box::new(bun_dotenv::Loader::init(unsafe { &mut *map_ptr }));
         let loader_ptr: *mut bun_dotenv::Loader<'static> = bun_core::heap::into_raw(loader);
         self.worker_env_map.set(map_ptr);
@@ -1011,9 +1003,9 @@ impl WebWorker {
     /// Phase 2: load the entry point, dispatch 'online', run the event loop.
     /// Runs inside `holdAPILock`. Always ends by calling `shutdown()`.
     ///
-    /// PORT NOTE: Zig's `spin` is `noreturn` (every path ends in `shutdown`
-    /// → `bun.exitThread`). The Rust port returns `()` so the thread can
-    /// unwind-free fall out of the `extern "C"` trampoline — see `shutdown`.
+    /// PORT NOTE: `spin` was originally `noreturn` (every path ended in
+    /// `shutdown` → exit-the-thread). The Rust port returns `()` so the thread
+    /// can unwind-free fall out of the `extern "C"` trampoline — see `shutdown`.
     fn spin(&self) {
         log!("[{}] spin start", self.execution_context_id);
 
@@ -1045,8 +1037,7 @@ impl WebWorker {
         }
 
         // `preloads` is owned by `self` (heap `WebWorker` outlives the VM).
-        // PORT NOTE: Zig's slice-copy assignment; here `preload: Vec<Box<[u8]>>`
-        // so clone the boxes (cheap, ≤handful).
+        // `preload: Vec<Box<[u8]>>`, so clone the boxes (cheap, ≤handful).
         vm.as_mut().preload = self.preloads.clone();
 
         // Resolve the entry point on the worker thread (the parent only stored
@@ -1187,10 +1178,11 @@ impl WebWorker {
     ///                                  null and skips wakeup() instead of touching
     ///                                  memory freed in step 5.
     ///   2. `vm.onExit()`             — user 'exit' handlers run; needs the JSC VM.
-    ///   3. `teardownJSCVM()`         — collectNow + vm.deref (single — Zig
-    ///                                  derefs ×2 because `JSLockHolder` holds
-    ///                                  a `RefPtr<VM>`; the Rust API-lock path
-    ///                                  takes no extra ref, see `thread_main`
+    ///   3. `teardownJSCVM()`         — collectNow + vm.deref (single — the
+    ///                                  raw API-lock path in `thread_main`
+    ///                                  takes no extra `RefPtr<VM>`, unlike a
+    ///                                  C++ `JSLockHolder` which would require
+    ///                                  a second deref, see `thread_main`
     ///                                  PORT NOTE); can re-enter via
     ///                                  finalizers, so must precede step 5.
     ///   4. `dispatchExit()`          — posts close task → parent releases
@@ -1200,9 +1192,9 @@ impl WebWorker {
     ///
     /// Does NOT free `this` — see ownership rule in the file header.
     ///
-    /// PORT NOTE: Zig's `shutdown` is `noreturn` (ends in `bun.exitThread`).
-    /// The Rust port returns `()` and lets the thread fall out of the spawn
-    /// closure instead — see the note at the bottom of this fn.
+    /// PORT NOTE: `shutdown` was originally `noreturn` (ended by exiting the
+    /// thread directly). The Rust port returns `()` and lets the thread fall
+    /// out of the spawn closure instead — see the note at the bottom of this fn.
     fn shutdown(&self) {
         jsc::mark_binding();
         self.set_status(Status::Terminated);
@@ -1292,13 +1284,11 @@ impl WebWorker {
             bun_sys::windows::libuv::Loop::shutdown();
         }
         if !vm_ptr.is_null() {
-            // SAFETY: vm_ptr valid; sole owner. `destroy()` is the port of
-            // Zig `vm.deinit()`.
+            // SAFETY: vm_ptr valid; sole owner.
             unsafe { (*vm_ptr).destroy() };
         }
         // Reclaim the cloned env (loader borrows `*map` — drop loader first).
-        // In Zig both lived on the worker arena and were bulk-freed below;
-        // here they were `heap::alloc`'d in `start_vm()` (see field doc).
+        // Both were `heap::alloc`'d in `start_vm()` (see field doc).
         if !env_loader.is_null() {
             // SAFETY: `heap::alloc`'d in `start_vm`; sole owner; the VM is
             // gone so its raw `transpiler.env` borrow is dead.
@@ -1311,7 +1301,7 @@ impl WebWorker {
         bun_core::delete_all_pools_for_thread_exit();
         drop(arena.take());
 
-        // PORT NOTE: Zig calls `bun.exitThread()` (`pthread_exit`) here. In
+        // PORT NOTE: An earlier implementation called `pthread_exit` here. In
         // Rust we MUST NOT — glibc's `pthread_exit` throws a `__forced_unwind`
         // C++ exception to run destructors, and unwinding that across an
         // `extern "C"` (`nounwind`) Rust frame on the way out to
@@ -1375,16 +1365,15 @@ impl WebWorker {
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
             Err(JsError::Thrown | JsError::Terminated) => panic!("unhandled exception"),
         };
-        // RAII: Zig's `defer str.deref()` — released on scope exit.
+        // RAII: deref `str` on scope exit.
         scopeguard::defer! { str.deref(); }
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
             // `cpp_worker` is the opaque C++-owned handle; `str` reffed for the call.
             WebWorker__dispatchError(global, self.cpp_worker, str, err)
         });
         if let Err(e) = dispatch {
-            // Spec web_worker.zig:810 — `.asException(..).?`: `take_exception`
-            // on a `JsError` always returns an Exception cell; None is
-            // unreachable. Do not silently drop the error.
+            // `take_exception` on a `JsError` always returns an Exception cell;
+            // None is unreachable. Do not silently drop the error.
             let exc = global
                 .take_exception(e)
                 .as_exception(global.vm().as_mut_ptr())
@@ -1442,21 +1431,20 @@ fn on_unhandled_rejection(
         }
         error_instance = global_object.try_take_exception().unwrap();
     }
-    // PORT NOTE: Zig's `writer.flush()` — `Vec<u8>` writer is unbuffered, so
-    // there is nothing to flush; the `bun.outOfMemory()` arm is unreachable.
+    // The `Vec<u8>` writer is unbuffered, so there is nothing to flush.
     jsc::mark_binding();
-    // PORT NOTE: Zig calls `WebWorker__dispatchError` bare here because the
-    // very next statement is `worker.shutdown()` (noreturn — `bun.exitThread`
-    // longjmps), so the C++ `DECLARE_THROW_SCOPE` inside
-    // `SerializedScriptValue::create` (reached via `dispatchErrorWithValue`)
-    // never has its simulated-throw bookkeeping validated. Rust RETURNS through
-    // the live C++ frames (see PORT NOTE below), so that simulated throw must
-    // be checked before unwinding, or the next `TopExceptionScope` ctor on the
-    // stack — `performMicrotaskCheckpoint` / NodeTimerObject `call()` — trips
-    // `verifyExceptionCheckNeedIsSatisfied`. Wrap in `from_js_host_call_generic`
-    // (declares + checks a TopExceptionScope around the FFI call, same as
-    // `flush_logs` above) and discard any actual exception: we are already the
-    // last-resort error handler and about to arm termination.
+    // PORT NOTE: An implementation that exits the thread directly after
+    // `WebWorker__dispatchError` (noreturn shutdown) never has the C++
+    // `DECLARE_THROW_SCOPE` inside `SerializedScriptValue::create` (reached
+    // via `dispatchErrorWithValue`) validate its simulated-throw bookkeeping.
+    // Rust RETURNS through the live C++ frames (see PORT NOTE below), so that
+    // simulated throw must be checked before unwinding, or the next
+    // `TopExceptionScope` ctor on the stack — `performMicrotaskCheckpoint` /
+    // NodeTimerObject `call()` — trips `verifyExceptionCheckNeedIsSatisfied`.
+    // Wrap in `from_js_host_call_generic` (declares + checks a
+    // TopExceptionScope around the FFI call, same as `flush_logs` above) and
+    // discard any actual exception: we are already the last-resort error
+    // handler and about to arm termination.
     if jsc::host_fn::from_js_host_call_generic(global_object, || {
         // `cpp_worker` is the opaque C++-owned handle round-tripped via `safe fn`.
         WebWorker__dispatchError(
@@ -1471,12 +1459,11 @@ fn on_unhandled_rejection(
         let _ = global_object.try_take_exception();
     }
     let _ = worker.set_requested_terminate();
-    // PORT NOTE: Zig calls `worker.shutdown()` here, which is `noreturn`
-    // (`bun.exitThread` longjmps out, abandoning the C++ frames on the
-    // stack). In Rust `shutdown()` RETURNS — calling it here would destroy
-    // the `JSC::VM`, free the Bun `VirtualMachine` + arena, and post
-    // `dispatchExit` (after which `worker` itself may be freed), then return
-    // through `VirtualMachine::uncaught_exception` (which writes
+    // PORT NOTE: We deliberately do NOT call `worker.shutdown()` here.
+    // `shutdown()` RETURNS — calling it here would destroy the `JSC::VM`,
+    // free the Bun `VirtualMachine` + arena, and post `dispatchExit` (after
+    // which `worker` itself may be freed), then return through
+    // `VirtualMachine::uncaught_exception` (which writes
     // `is_handling_uncaught_exception = false` on the freed VM), through live
     // JSC C++ frames operating on a destroyed `JSC::VM`, and back into
     // `spin()` which dereferences the freed `*vm` and calls `shutdown()` a
@@ -1488,7 +1475,7 @@ fn on_unhandled_rejection(
     // `shutdown()` call at its bottom with no live JSC frames above it. The
     // promise-rejection path in `spin()` (line ~1044) gets there even sooner:
     // `uncaught_exception` returns `handled == false`, so `spin()` calls
-    // `return self.shutdown()` directly — same observable ordering as Zig.
+    // `return self.shutdown()` directly — same observable ordering.
     // `vm.jsc_vm` is the worker's live `JSC::VM*` (we just used it via
     // `global_object`); `notify_need_termination` is documented thread-safe
     // (VMTraps).
@@ -1544,9 +1531,9 @@ unsafe fn resolve_entry_point_specifier<'s>(
                 );
                 let base_len = base.len();
                 let extname_len = bun_paths::extension(base).len();
-                // PORT NOTE: reshaped for borrowck — Zig held `extname` as a
-                // sub-slice of `pathbuf` while writing into `pathbuf`. Compare
-                // by re-slicing after dropping the mutable borrow.
+                // PORT NOTE: reshaped for borrowck — cannot hold `extname` as
+                // a sub-slice of `pathbuf` while writing into `pathbuf`.
+                // Compare by re-slicing after dropping the mutable borrow.
                 let extname = &pathbuf[base_len - extname_len..base_len];
 
                 // ./foo -> ./foo.js
@@ -1632,8 +1619,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
 
     // `Path::text` borrows the resolver's process-lifetime `dirname_store` /
     // `filename_store` (`Path<'static>`), NOT `resolved_entry_point` itself —
-    // copy the slice out and let `resolved_entry_point` drop on the stack,
-    // exactly as the Zig spec does.
+    // copy the slice out and let `resolved_entry_point` drop on the stack.
     match resolved_entry_point.path_const() {
         Some(entry_path) => Some(entry_path.text),
         None => {
@@ -1642,5 +1628,3 @@ unsafe fn resolve_entry_point_specifier<'s>(
         }
     }
 }
-
-// ported from: src/jsc/web_worker.zig

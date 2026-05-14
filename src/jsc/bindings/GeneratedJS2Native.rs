@@ -3,4 +3,4 @@
 // into `${BUN_CODEGEN_DIR}/generated_js2native.rs`, which is `include!()`'d by
 // `src/runtime/generated_js2native.rs`. This file is not compiled.
 
-// ported from: src/jsc/bindings/GeneratedJS2Native.zig
+

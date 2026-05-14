@@ -10,17 +10,14 @@ pub use State as TCCState;
 pub type TCCErrorFunc = Option<unsafe extern "C" fn(opaque: *mut c_void, msg: *const c_char)>;
 
 /// Typed error callback signature for a given context type.
-///
-/// Zig: `fn ErrorFunc(Ctx: type) type { return fn (ctx: ?*Ctx, msg: [*:0]const u8) callconv(.c) void; }`
 pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char);
 
 // `libtcc.a` is only built where `cfg.tinycc` is true (`scripts/build/config.ts`):
 // not Windows/aarch64 (TinyCC has no aarch64-pe-coff backend), not Android, not
 // FreeBSD (the vendored fork doesn't support those targets). On those platforms
-// these `extern "C"` decls would be undefined at link. Zig's `comptime
-// !Environment.enable_tinycc` early-returns in `ffi.zig` keep the *Zig*
-// callers off the analysis graph, so the Zig externs never get emitted; Rust
-// has no lazy analysis — `bun_runtime::ffi::ffi_body::{Source::add,
+// these `extern "C"` decls would be undefined at link. A lazy-analysis compiler
+// could keep callers off the analysis graph so the externs never get emitted, but
+// Rust has no lazy analysis — `bun_runtime::ffi::ffi_body::{Source::add,
 // CompileC::compile}` are reachable from `extern "C"` JS bindings and the
 // monomorphized refs land in `libbun_rust.a` regardless of any
 // `if !ENABLE_TINYCC { return }` runtime guard. Swap the `extern` block for
@@ -57,8 +54,8 @@ tcc_externs! {
     fn tcc_set_lib_path(s: *mut TCCState, path: *const c_char);
     fn tcc_set_error_func(s: *mut TCCState, error_opaque: *mut c_void, error_func: TCCErrorFunc);
     // NOTE: tcc_get_error_func / tcc_get_error_opaque were removed from the libtcc public API
-    // (not present in vendor/tinycc/libtcc.h). tcc.zig:10-11 only escapes a link error via lazy
-    // analysis. Do not declare them here — referencing them would fail to link.
+    // (not present in vendor/tinycc/libtcc.h). Do not declare them here —
+    // referencing them would fail to link.
     fn tcc_set_options(s: *mut TCCState, str_: *const c_char) -> c_int;
     fn tcc_add_include_path(s: *mut TCCState, pathname: *const c_char) -> c_int;
     fn tcc_add_sysinclude_path(s: *mut TCCState, pathname: *const c_char) -> c_int;
@@ -84,7 +81,7 @@ tcc_externs! {
 const TCC_OUTPUT_MEMORY: c_int = 1;
 const TCC_OUTPUT_EXE: c_int = 2;
 // NOTE: vendor/tinycc/libtcc.h defines OBJ=3, DLL=4 (Bun's fork swapped vs upstream).
-// tcc.zig:30-31 has these reversed — that is a latent spec bug; match libtcc.h here.
+// Some callers had these reversed — that was a latent spec bug; match libtcc.h here.
 const TCC_OUTPUT_OBJ: c_int = 3;
 const TCC_OUTPUT_DLL: c_int = 4;
 const TCC_OUTPUT_PREPROCESS: c_int = 5;
@@ -111,8 +108,8 @@ pub enum Error {
     /// Could not get a symbol for some reason
     #[error("RelocationError")]
     RelocationError,
-    // TODO(port): `OutputError` is returned by `output_file` in the Zig source but is NOT a
-    // member of the Zig `Error` set — latent bug only unobserved because Zig analysis is lazy
+    // TODO(port): `OutputError` is returned by `output_file` in the original source but is NOT a
+    // member of the original `Error` set — latent bug only unobserved because lazy analysis prunes unused symbols
     // and `outputFile` has no callers. Kept here so `output_file` type-checks; revisit in Phase B.
     #[error("OutputError")]
     OutputError,
@@ -120,7 +117,7 @@ pub enum Error {
 
 bun_core::named_error_set!(Error);
 
-#[repr(i32)] // Zig: enum(c_int) — c_int == i32 on all Bun targets
+#[repr(i32)] // enum(c_int) — c_int == i32 on all Bun targets
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
     /// Output will be run in memory
@@ -145,7 +142,7 @@ impl Default for OutputFormat {
 /// allowing for interop with other APIs taking `*mut c_void` pointers.
 bun_opaque::opaque_ffi! { pub struct Symbol; }
 
-/// Zig: `Symbol.Callback = fn (?*anyopaque, [*:0]const u8, ?*const Symbol) void`
+/// `Symbol.Callback = fn (?*anyopaque, [*:0]const u8, ?*const Symbol) void`
 pub type SymbolCallback =
     unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char, val: *const Symbol);
 
@@ -154,13 +151,13 @@ bun_opaque::opaque_ffi! {
     pub struct State;
 }
 
-/// Zig: `State.Config(ErrCtx).err` anonymous struct.
+/// `State.Config(ErrCtx).err` anonymous struct.
 pub struct ConfigErr<ErrCtx> {
     pub ctx: Option<*mut ErrCtx>,
     pub handler: unsafe extern "C" fn(*mut ErrCtx, *const c_char),
 }
 
-/// Zig: `fn Config(ErrCtx: type) type { return struct { ... } }`
+/// `fn Config(ErrCtx: type) type { return struct { ... } }`
 pub struct Config<ErrCtx> {
     // TODO(port): lifetime — call sites pass both literals (default_tcc_options) and runtime
     // strings (CompileC.flags / BUN_TCC_OPTIONS); raw ptr in Phase A, revisit borrow in Phase B.
@@ -174,8 +171,8 @@ where
     ConfigErr<ErrCtx>: Default,
 {
     fn default() -> Self {
-        // TODO(port): Zig field defaults are `options = null, output_type = .Memory`; `err.handler`
-        // has no default so a literal `.{}` is invalid in Zig too. This Default impl is best-effort.
+        // TODO(port): the original field defaults are `options = null, output_type = .Memory`; `err.handler`
+        // has no default so a literal `.{}` is invalid originally too. This Default impl is best-effort.
         Self {
             options: None,
             output_type: OutputFormat::Memory,
@@ -261,7 +258,7 @@ impl State {
     ) {
         // SAFETY: ErrorFunc<Context> is ABI-identical to the untyped TCCErrorFunc inner fn
         // (both `extern "C" fn(*mut _, *const c_char)`, differing only in the opaque
-        // pointee type); mirrors Zig `@ptrCast(errorFunc)`.
+        // pointee type);)`.
         let erased: TCCErrorFunc = Some(unsafe {
             bun_ptr::cast_fn_ptr::<
                 ErrorFunc<Context>,
@@ -275,8 +272,7 @@ impl State {
 
     // NOTE: get_error_func / get_error_opaque wrappers removed — the underlying
     // tcc_get_error_func / tcc_get_error_opaque symbols were dropped from the vendored
-    // libtcc.h and would fail to link if referenced. (tcc.zig:125-131 carries the same
-    // dead wrappers, surviving only via lazy analysis.)
+    // libtcc.h and would fail to link if referenced.
 
     /// Set options as from command line (multiple supported)
     pub fn set_options(&mut self, str_: &ZStr) -> Result<(), Error> {
@@ -322,20 +318,19 @@ impl State {
 
     /// Define multiple preprocessor symbols with integer values.
     ///
-    /// Zig: `defineSymbolsComptime(s, symbols: anytype)` — iterated anonymous-struct fields via
+    /// `defineSymbolsComptime(s, symbols: anytype)` — iterated anonymous-struct fields via
     /// `@typeInfo`/`@field` and dispatched on field type at comptime. Per PORTING.md §Comptime
-    /// reflection, homogenized to a slice + plain `for` since every call site passes ints (the
-    /// Zig `.pointer` arm at tcc.zig:192 is dead and itself buggy — it passes `s` twice).
+    /// reflection, homogenized to a slice + plain `for` since every call site passes ints.
     ///
     /// ## Example
     /// ```ignore
     /// state.define_symbols(&[("foo", 1), ("baz", 42)]);
     /// ```
     pub fn define_symbols(&mut self, symbols: &[(&str, i64)]) {
-        // Zig: `var buf: [256]u8 = undefined;`
+        // `var buf: [256]u8 = undefined;`
         let mut buf = [0u8; 256];
         for &(name, value) in symbols {
-            // Zig field names are `[:0]const u8` (comptime NUL-terminated); copy into the stack
+            // the original field names are `[:0]const u8` (comptime NUL-terminated); copy into the stack
             // buffer to recover that invariant for the C ABI.
             // PERF(port): was comptime monomorphization (zero-copy name) — profile in Phase B.
             let name_len = name.len();
@@ -344,7 +339,7 @@ impl State {
             buf[name_len] = 0;
             let sym_ptr = buf.as_ptr().cast::<c_char>();
 
-            // Zig: `std.fmt.bufPrintZ(&buf, "{d}", .{value}) catch unreachable`
+            // `std.fmt.bufPrintZ(&buf, "{d}", .{value}) catch unreachable`
             let mut ibuf = bun_core::fmt::ItoaBuf::new();
             let digits = bun_core::fmt::itoa(&mut ibuf, value);
             let val_off = name_len + 1;
@@ -440,7 +435,7 @@ impl State {
 
     /// Add multiple symbols to the compiled program.
     ///
-    /// Zig: `addSymbolsComptime(s, symbols: anytype)` — iterated anonymous-struct fields via
+    /// `addSymbolsComptime(s, symbols: anytype)` — iterated anonymous-struct fields via
     /// `@typeInfo`/`@field` at comptime. Per PORTING.md §Comptime reflection, homogenized to a
     /// slice of `(name, *const c_void)` + plain `for` since every call site passes opaque
     /// function/data pointers.
@@ -448,12 +443,12 @@ impl State {
     /// ## Example
     /// ```ignore
     /// state.add_symbols(&[
-    ///     ("add", add as *const c_void),
-    ///     ("sub", sub as *const c_void),
+    /// ("add", add as *const c_void),
+    /// ("sub", sub as *const c_void),
     /// ])?;
     /// ```
     pub fn add_symbols(&mut self, symbols: &[(&str, *const c_void)]) -> Result<(), Error> {
-        // Zig field names are `[:0]const u8` (comptime NUL-terminated); copy into a stack buffer
+        // the original field names are `[:0]const u8` (comptime NUL-terminated); copy into a stack buffer
         // to recover that invariant for the C ABI.
         // PERF(port): was comptime monomorphization (zero-copy name) — profile in Phase B.
         let mut buf = [0u8; 256];
@@ -462,7 +457,7 @@ impl State {
             debug_assert!(len < buf.len());
             buf[..len].copy_from_slice(name.as_bytes());
             buf[len] = 0;
-            // Zig: `try s.addSymbol(field.name, value);`
+            // `try s.addSymbol(field.name, value);`
             // SAFETY: self is a valid *mut TCCState; buf[..=len] is NUL-terminated and outlives
             // the FFI call (tcc_add_symbol copies the name); val is an opaque address.
             if unsafe { tcc_add_symbol(self, buf.as_ptr().cast::<c_char>(), val) } != 0 {
@@ -478,7 +473,7 @@ impl State {
         // SAFETY: self is a valid *mut TCCState; filename is NUL-terminated.
         if unsafe { tcc_output_file(self, filename.as_ptr()) } == -1 {
             // PERF(port): @branchHint(.unlikely)
-            // TODO(port): Zig source returns `error.OutputError` here, which is NOT in the Zig
+            // TODO(port): the original source returns `error.OutputError` here, which is NOT in the original
             // `Error` set (latent compile error masked by lazy analysis). See enum note above.
             return Err(Error::OutputError);
         }
@@ -489,7 +484,7 @@ impl State {
     /// Returns the status code returned by the program's `main()` function.
     pub fn run(&mut self, argc: c_int, argv: *const *const c_char) -> c_int {
         // SAFETY: self is a valid *mut TCCState; argv points to argc NUL-terminated C strings.
-        // Zig signature is `[*:0]const [*:0]const u8` but the extern takes `[*c][*c]u8`; cast
+        // the original signature is `[*:0]const [*:0]const u8` but the extern takes `[*c][*c]u8`; cast
         // const away to match the C ABI (tcc does not mutate argv).
         unsafe { tcc_run(self, argc, argv as *mut *mut c_char) }
     }
@@ -516,7 +511,7 @@ impl State {
     /// Return symbol value or NULL if not found
     pub fn list_symbols(&mut self, ctx: *mut c_void, symbol_cb: Option<SymbolCallback>) {
         // SAFETY: SymbolCallback is ABI-identical to the extern's callback type
-        // (`*const Symbol` vs `*const c_void` in the last param); mirrors Zig's implicit ptrcast.
+        // (`*const Symbol` vs `*const c_void` in the last param);.
         let erased = symbol_cb.map(|f| unsafe {
             bun_ptr::cast_fn_ptr::<
                 SymbolCallback,
@@ -527,5 +522,3 @@ impl State {
         unsafe { tcc_list_symbols(self, ctx, erased) }
     }
 }
-
-// ported from: src/tcc_sys/tcc.zig

@@ -129,7 +129,7 @@ pub extern "C" fn us_socket_buffered_js_write(
     // dereferenced to `&mut` at each point of use. The JS calls below
     // (`from_js_with_encoding_value_allow_request_response`, `throw_*`) can re-enter
     // `JSNodeHTTPServerSocket.write` on the same socket, which would alias a long-lived
-    // `&mut *socket` / `&mut *buffer` under Stacked Borrows. The Zig spec uses raw
+    // `&mut *socket` / `&mut *buffer` under Stacked Borrows. The original uses raw
     // pointers (`*uws.us_socket_t` / `*us_socket_stream_buffer_t`) with no uniqueness
     // assertion, so we mirror that here.
 
@@ -138,7 +138,7 @@ pub extern "C" fn us_socket_buffered_js_write(
     let mut stream_buffer = unsafe { &mut *buffer }.to_stream_buffer();
     let mut total_written: usize = 0;
 
-    // PORT NOTE: Zig `defer { buffer.update(stream_buffer); buffer.wrote(total_written); }`
+    // PORT NOTE: `defer { buffer.update(stream_buffer); buffer.wrote(total_written); }`
     // reshaped as a labeled block + post-block cleanup so the side effects run on every
     // exit path without a scopeguard borrow conflict.
     let result: JSValue = 'body: {
@@ -218,5 +218,3 @@ pub extern "C" fn us_socket_buffered_js_write(
     }
     result
 }
-
-// ported from: src/runtime/socket/uws_jsc.zig

@@ -1,5 +1,5 @@
 use bun_sys::{S, Stat, Timespec};
-// Zig: `std.hash.XxHash64` (streaming init/update/digest).
+// Streaming XxHash64 (init/update/digest).
 use bun_hash::XxHash64Streaming as XxHash64;
 use bun_http_types::ETag::wtf;
 
@@ -23,8 +23,8 @@ impl Default for StatHash {
     }
 }
 
-// Zig `std.posix.Stat.mtime()` — Rust `libc::stat` has no method, project the
-// platform-specific fields here (mirrors `bun_sys::PosixStat::stat_mtime`).
+// `libc::stat` has no `mtime()` accessor, so project the platform-specific
+// fields here (mirrors `bun_sys::PosixStat::stat_mtime`).
 #[inline]
 fn stat_mtime(s: &Stat) -> Timespec {
     // The `libc` crate flattens BSD/Darwin `st_mtimespec` into
@@ -89,5 +89,3 @@ impl StatHash {
         Some(&self.last_modified_buffer[0..usize::from(self.last_modified_buffer_len)])
     }
 }
-
-// ported from: src/resolver/fs/stat_hash.zig

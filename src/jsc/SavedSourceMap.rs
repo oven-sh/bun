@@ -93,8 +93,8 @@ pub type Value = TaggedPtrUnion<ValueTypes>;
 /// Local type-list marker so `TypeList`/`UnionMember` impls satisfy orphan
 /// rules — `bun_ptr::impl_tagged_ptr_union!` would impl on a tuple of foreign
 /// types (all five live in `bun_sourcemap`), which the coherence checker
-/// rejects from this crate. Tags are `1024 - i` to match Zig's
-/// `TagTypeEnumWithTypeMap` ordering in `SavedSourceMap.zig`.
+/// rejects from this crate. Tags are `1024 - i`, matching the original
+/// `TagTypeEnumWithTypeMap` ordering.
 pub struct ValueTypes;
 
 impl bun_ptr::tagged_pointer::TypeList for ValueTypes {
@@ -171,7 +171,7 @@ impl SavedSourceMap {
     ) {
         self.lock();
         // PORT NOTE: reshaped for borrowck — explicit unlock paired manually.
-        // Zig `getEntry`/`removeByPtr` collapsed to `get`+`remove(&key)`; the std
+        // `getEntry`/`removeByPtr` collapsed to `get`+`remove(&key)`; the std
         // backing has no key-slot pointer to hand out, and the key is a u64 hash
         // we already have in hand.
         let map = self.map_mut();
@@ -199,15 +199,15 @@ impl SavedSourceMap {
         self.unlock();
     }
 
-    pub fn put_zig_source_provider(&mut self, opaque_source_provider: *mut c_void, path: &[u8]) {
+    pub fn put_bun_source_provider(&mut self, opaque_source_provider: *mut c_void, path: &[u8]) {
         let source_provider: *mut SourceProviderMap = opaque_source_provider.cast();
         let _ = self.put_value(path, Value::init(source_provider));
     }
 
-    pub fn remove_zig_source_provider(&mut self, opaque_source_provider: *mut c_void, path: &[u8]) {
+    pub fn remove_bun_source_provider(&mut self, opaque_source_provider: *mut c_void, path: &[u8]) {
         self.lock();
         // PORT NOTE: reshaped for borrowck — explicit unlock paired manually.
-        // Zig `getEntry`/`removeByPtr` collapsed to `get`+`remove(&key)`; the std
+        // `getEntry`/`removeByPtr` collapsed to `get`+`remove(&key)`; the std
         // backing has no key-slot pointer to hand out, and the key is a u64 hash
         // we already have in hand.
         let map = self.map_mut();
@@ -249,8 +249,7 @@ impl bun_js_printer::OnSourceMapChunk for SavedSourceMap {
     }
 }
 
-/// Port of `SavedSourceMap.SourceMapHandler` (SavedSourceMap.zig) —
-/// `js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk)`. The Zig
+/// `js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk)`. The
 /// comptime type-generator is replaced by `SourceMapHandler::for_::<SavedSourceMap>`,
 /// monomorphized over the `OnSourceMapChunk` impl above.
 pub type SourceMapHandler<'a> = bun_js_printer::SourceMapHandler<'a>;
@@ -260,14 +259,14 @@ impl Drop for SavedSourceMap {
         {
             self.lock();
             let map = self.map_mut();
-            // Zig `valueIterator()` → std `values()`.
+            // `valueIterator()` → std `values()`.
             for val in map.values() {
                 let value = Value::from(Some(*val));
                 if let Some(source_map) = value.get::<ParsedSourceMap>() {
                     // SAFETY: pointer was stored by us and is live until table teardown.
                     unsafe { ParsedSourceMap::deref(source_map) };
                 } else if let Some(_provider) = value.get::<SourceProviderMap>() {
-                    // do nothing, we did not hold a ref to ZigSourceProvider
+                    // do nothing, we did not hold a ref to BunSourceProvider
                 } else if let Some(ism) = value.get::<InternalSourceMap>() {
                     // SAFETY: blob was heap-allocated via `put_mappings`
                     // (`Box<[u8]>::into_raw`); the tagged pointer's address IS
@@ -311,14 +310,14 @@ impl SavedSourceMap {
                 if contains {
                     return Ok(());
                 }
-                // PORT NOTE: reshaped for borrowck — Zig held the lock across the early return; here we
-                // release before returning since no further table access follows.
+                // PORT NOTE: reshaped for borrowck — the original held the lock across the early
+                // return; here we release before returning since no further table access follows.
             }
         }
 
-        // PORT NOTE: Zig `default_allocator.dupe(u8, mappings.list.items)` —
-        // Zig dups because the printer's `MutableString` is backed by a
-        // recycled buffer it does not own. In Rust every caller MOVES an owned
+        // PORT NOTE: the original dup'd `mappings.list` because the printer's
+        // `MutableString` is backed by a recycled buffer it does not own. In Rust
+        // every caller MOVES an owned
         // `Vec<u8>` here (printer chunk by value, cache hit via `mem::take`),
         // so `into_boxed_slice()` transfers the existing allocation without
         // re-alloc+memcpy (1.38 MB for `_tsc.js`'s cached map). `heap::alloc`
@@ -342,7 +341,7 @@ impl SavedSourceMap {
     }
 
     pub fn put_value(&mut self, path: &[u8], value: Value) -> Result<(), bun_core::Error> {
-        use bun_collections::zig_hash_map::MapEntry as Entry;
+        use bun_collections::unmanaged_hash_map::MapEntry as Entry;
 
         // TODO(port): narrow error set
         self.lock();
@@ -352,7 +351,7 @@ impl SavedSourceMap {
         self.last_ism = None;
 
         // `bun_collections::HashMap` derefs to `std::collections::HashMap`, so
-        // the std `entry()` API is used directly (Zig `getOrPut`).
+        // the std `entry()` API is used directly (`getOrPut` equivalent).
         match self.map_mut().entry(hash(path)) {
             Entry::Occupied(mut o) => {
                 let old_value = Value::from(Some(*o.get()));
@@ -360,7 +359,7 @@ impl SavedSourceMap {
                     // SAFETY: pointer was stored by us and is live until replaced.
                     unsafe { ParsedSourceMap::deref(parsed_source_map) };
                 } else if let Some(_provider) = old_value.get::<SourceProviderMap>() {
-                    // do nothing, we did not hold a ref to ZigSourceProvider
+                    // do nothing, we did not hold a ref to BunSourceProvider
                 } else if let Some(ism) = old_value.get::<InternalSourceMap>() {
                     // SAFETY: blob was heap-allocated via `put_mappings`
                     // (`Box<[u8]>::into_raw`); the tagged pointer's address IS
@@ -408,7 +407,7 @@ impl SavedSourceMap {
                 data: tagged.as_unchecked::<InternalSourceMap>() as *const u8,
             };
             // Table holds one strong ref (leaked via `into_raw`); caller gets
-            // the returned `Arc`. Mirrors Zig's intrusive `ref()` pair.
+            // the returned `Arc`. Mirrors the intrusive `ref()` pair.
             let result = Arc::new(ParsedSourceMap::from_internal(ism));
             *mapping = Value::init(Arc::into_raw(Arc::clone(&result))).ptr();
             self.unlock();
@@ -439,7 +438,7 @@ impl SavedSourceMap {
                 // TODO(port): `.none` enum literal for second arg — verify SourceMap load-hint default.
                 if let Some(ref parsed_map) = parse.map {
                     // The mutex is not locked. We have to check the hash table again.
-                    // Leak one strong ref into the table (mirrors Zig `map.ref()`).
+                    // Leak one strong ref into the table (mirrors `map.ref()`).
                     let _ =
                         self.put_value(path, Value::init(Arc::into_raw(Arc::clone(parsed_map))));
 
@@ -554,8 +553,8 @@ impl SavedSourceMap {
 
         let mapping = match parse.mapping {
             Some(m) => m,
-            // Spec SavedSourceMap.zig:343 — pass `line`/`column` straight
-            // through. `SourceMap::Ordinal` is a re-export of `bun_core::Ordinal`;
+            // Pass `line`/`column` straight through.
+            // `SourceMap::Ordinal` is a re-export of `bun_core::Ordinal`;
             // round-tripping via `from_zero_based(x.zero_based())` debug-asserts
             // on the legitimate INVALID (-1) sentinel.
             None => map.find_mapping(line, column)?,
@@ -569,5 +568,3 @@ impl SavedSourceMap {
         })
     }
 }
-
-// ported from: src/jsc/SavedSourceMap.zig

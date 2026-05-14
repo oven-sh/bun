@@ -22,7 +22,7 @@ use crate::bun_fs::RealFS;
 pub struct OutputFile {
     pub loader: Loader,
     pub input_loader: Loader,
-    // TODO(port): `src_path.text` ownership — Zig `deinit` freed it via
+    // TODO(port): `src_path.text` ownership — `deinit` freed it via
     // `default_allocator` even though it's a field of `Fs.Path`. Ensure
     // `bun_fs::Path` owns `text` so dropping `OutputFile` frees it implicitly.
     pub src_path: fs::Path<'static>,
@@ -47,7 +47,7 @@ pub struct OutputFile {
 }
 
 impl OutputFile {
-    // TODO(port): Zig `zero_value` is a const struct literal; Rust can't make this a
+    // TODO(port): `zero_value` was a const struct literal; Rust can't make this a
     // true `const` because `Box`/`fs::Path` aren't const-constructible. Exposed as a
     // plain fn so call sites read `OutputFile::zero_value()`.
     pub fn zero_value() -> OutputFile {
@@ -81,11 +81,11 @@ pub struct BakeExtra {
     pub bake_is_runtime: bool,
 }
 
-// Zig: `pub const Index = bun.GenericIndex(u32, OutputFile);`
+// `pub const Index = bun.GenericIndex(u32, OutputFile);`
 pub type Index = bun_core::GenericIndex<u32, OutputFile>;
 pub type IndexOptional = bun_core::GenericIndexOptional<u32, OutputFile>;
 
-// Zig `deinit` only freed owned fields (value / src_path.text / dest_path /
+// `deinit` only freed owned fields (value / src_path.text / dest_path /
 // referenced_css_chunks); all are now owned types that drop automatically, so no
 // explicit `impl Drop` is needed (and an empty one would block field moves).
 
@@ -96,7 +96,7 @@ pub type IndexOptional = bun_core::GenericIndexOptional<u32, OutputFile>;
 // We may use a different system call
 #[derive(Clone)]
 pub struct FileOperation {
-    // TODO(port): lifetime — Zig never frees `pathname`; may be borrowed from
+    // TODO(port): lifetime — `pathname` is never freed; may be borrowed from
     // `Options.output_path`. Using owned `Box<[u8]>` for now.
     pub pathname: Box<[u8]>,
     pub fd: Fd,
@@ -133,7 +133,7 @@ impl FileOperation {
     pub fn get_pathname(&self) -> &[u8] {
         if self.is_tmpdir {
             // PORT NOTE: `resolve_path.joinAbs` writes into a threadlocal buffer in
-            // Zig; the Rust port returns a borrow into that TLS buffer (`'static`),
+            // upstream; the Rust port returns a borrow into that TLS buffer (`'static`),
             // which coerces to the `&self` lifetime here.
             return resolve_path::join_abs::<platform::Auto>(RealFS::tmpdir_path(), &self.pathname);
         }
@@ -160,7 +160,7 @@ pub enum Value {
     Copy(FileOperation),
     Noop,
     Buffer {
-        // Zig carried `arena: std.mem.Allocator` alongside `bytes`; in Rust the
+        // The original carried an `arena: Allocator` alongside `bytes`; in Rust the
         // global mimalloc arena backs `Box<[u8]>`, so the field is dropped.
         bytes: Box<[u8]>,
     },
@@ -170,7 +170,7 @@ pub enum Value {
     Saved(SavedFile),
 }
 
-// Zig `bun.copy(OutputFile, dst, src)` is a bitwise memcpy used to splice
+// `bun.copy(OutputFile, dst, src)` is a bitwise memcpy used to splice
 // finished output files into the final list. The `Pending` arm is never present
 // at that stage (only `buffer`/`copy`/`saved` are produced by `init`), so its
 // clone is intentionally unreachable rather than forcing `resolver::Result` to
@@ -191,7 +191,7 @@ impl Clone for Value {
 }
 
 impl Value {
-    // Zig `deinit` only freed `.buffer.bytes`; `Box<[u8]>` drops automatically, so no
+    // `deinit` only freed `.buffer.bytes`; `Box<[u8]>` drops automatically, so no
     // explicit `Drop` impl is needed.
 
     pub fn as_slice(&self) -> &[u8] {
@@ -211,7 +211,7 @@ impl Value {
                 // Use ExternalStringImpl to avoid cloning the string, at
                 // the cost of allocating space to remember the arena.
                 //
-                // Zig boxed a `FreeContext { arena }` and passed an `extern "C"`
+                // The original boxed a `FreeContext { arena }` and passed an `extern "C"`
                 // callback that frees the slice via that arena then destroys the
                 // context. With the global arena, the context collapses to the
                 // (ptr, len) pair already passed to the callback.
@@ -229,7 +229,7 @@ impl Value {
                 // (= `Box::leak`) yields a `&'static mut [u8]` borrow of the
                 // now-JSC-owned allocation; `on_free` reclaims it on GC.
                 let bytes: &'static mut [u8] = bun_core::heap::release(bytes);
-                // latin1 flag = true (matches Zig).
+                // latin1 flag = true.
                 BunString::create_external::<*mut c_void>(
                     bytes,
                     true,
@@ -238,7 +238,7 @@ impl Value {
                 )
             }
             Value::Pending(_) => unreachable!(),
-            // Zig: `else => |tag| bun.todoPanic(@src(), "handle .{s}", .{@tagName(tag)})`
+            // `else => |tag| bun.todoPanic(@src(), "handle .{s}", .{@tagName(tag)})`
             // — an intentional shipped runtime panic for `.move`/`.copy`/`.saved`,
             // not a Phase-A placeholder.
             other => bun_core::todo_panic!("handle .{}", <&'static str>::from(other.kind())),
@@ -250,8 +250,8 @@ impl Value {
     /// callback (zero-copy). Caller guarantees `self` outlives every use of the
     /// returned string.
     ///
-    /// This is the faithful port of Zig's `Value.toBunString` as called from
-    /// `bake/production.zig` (`pt.bundled_outputs[i].value.toBunString()`): Zig
+    /// `Value::to_bun_string` as called from
+    /// `bake/production` (`pt.bundled_outputs[i].value.toBunString()`): the original
     /// passes the union by value so the slice is aliased in place, and
     /// `PerThread.bundled_outputs` owns the bytes for the entire prerender
     /// phase. The consuming [`Self::to_bun_string`] cannot be used there
@@ -264,7 +264,7 @@ impl Value {
                     return BunString::EMPTY;
                 }
                 extern "C" fn noop(_: *mut c_void, _: *mut c_void, _: usize) {}
-                // latin1 = true (matches Zig).
+                // latin1 = true.
                 BunString::create_external::<*mut c_void>(
                     bytes,
                     true,
@@ -289,7 +289,7 @@ impl Value {
     }
 }
 
-/// `OutputFile.zig:SavedFile` (TYPE_ONLY move-in from bundler_jsc).
+/// `OutputFile::SavedFile` (TYPE_ONLY move-in from bundler_jsc).
 #[derive(Default, Clone, Copy)]
 pub struct SavedFile {
     pub byte_size: u64,
@@ -297,7 +297,7 @@ pub struct SavedFile {
 
 impl OutputFile {
     pub fn init_pending(loader: Loader, pending: bun_resolver::Result) -> OutputFile {
-        // PORT NOTE: Zig copied the whole `Fs.Path` struct (`pending.pathConst().?.*`).
+        // PORT NOTE: the original copied the whole `Fs.Path` struct (`pending.pathConst().?.*`).
         // The Rust `bun_paths::fs::Path<'static>` and `bun_resolver::fs::Path<'static>` are
         // distinct nominal types with identical layout; re-init from `text` (the
         // resolver path borrows arena/static memory, so the `'static` bound holds).
@@ -311,7 +311,7 @@ impl OutputFile {
         }
     }
 
-    // TODO(port): Zig took `std.fs.File`; std::fs is banned. Accepting a raw `Fd`.
+    // TODO(port): original took a file handle; std::fs is banned. Accepting a raw `Fd`.
     pub fn init_file(file: Fd, pathname: &'static [u8], size: usize) -> OutputFile {
         OutputFile {
             loader: Loader::File,
@@ -322,7 +322,7 @@ impl OutputFile {
         }
     }
 
-    // TODO(port): Zig took `std.fs.Dir`; using `Fd` for the dir handle.
+    // TODO(port): original took a dir handle; using `Fd` for the dir handle.
     pub fn init_file_with_dir(
         file: Fd,
         pathname: &'static [u8],
@@ -331,7 +331,7 @@ impl OutputFile {
     ) -> OutputFile {
         let mut res = Self::init_file(file, pathname, size);
         if let Value::Copy(op) = &mut res.value {
-            // PORT NOTE: Zig wrote `res.value.copy.dir_handle = .fromStdDir(dir)` but
+            // PORT NOTE: the original wrote `res.value.copy.dir_handle = .fromStdDir(dir)` but
             // `FileOperation` has no `dir_handle` field — looks like a latent bug; the
             // intended field is `dir`.
             op.dir = dir;
@@ -346,7 +346,7 @@ pub enum OptionsData {
         data: Box<[u8]>,
     },
     File {
-        // TODO(port): Zig used `std.fs.File` / `std.fs.Dir`; mapped to `Fd`.
+        // TODO(port): original used file/dir handles; mapped to `Fd`.
         file: Fd,
         size: usize,
         dir: Fd,
@@ -382,7 +382,7 @@ impl OutputFile {
             OptionsData::File { size, .. } => *size,
             OptionsData::Saved(_) => 0,
         });
-        // PORT NOTE: Zig `Fs.Path.init(options.input_path)` stored the borrowed
+        // PORT NOTE: `Fs.Path.init(options.input_path)` stored the borrowed
         // slice and `OutputFile.deinit` freed it via `default_allocator` — i.e.
         // `OutputFile` *owns* `src_path.text`. `bun_paths::fs::Path<'static>` currently
         // borrows `&'static [u8]`, so ownership of this `Box<[u8]>` is parked
@@ -391,7 +391,7 @@ impl OutputFile {
         // that is an extra memcpy plus a forged `&mut` on a shared global per
         // output file, and still never frees.
         // TODO(port): give `fs::Path` an owning `text: Cow<'static,[u8]>` so
-        // this becomes a plain move and Drop frees it (matches Zig deinit).
+        // this becomes a plain move and Drop frees it (matches `deinit`).
         let input_path: &'static [u8] = if options.input_path.is_empty() {
             b""
         } else {
@@ -438,11 +438,11 @@ impl OutputFile {
                 let mut rel_path: &[u8] = &self.dest_path;
                 if self.dest_path.len() > root_dir_path.len() {
                     rel_path = resolve_path::relative(root_dir_path, &self.dest_path);
-                    // Zig: `std.fs.path.dirname` returns `null` when there's no
+                    // `path.dirname` returns `null` when there's no
                     // separator; the Rust port returns `b""` instead.
                     let parent = resolve_path::dirname::<platform::Auto>(rel_path);
                     if !parent.is_empty() && parent.len() > root_dir_path.len() {
-                        // Zig `root_dir.makePath(parent)` (std.fs.Dir).
+                        // `root_dir.makePath(parent)`.
                         bun_sys::make_path(bun_sys::Dir::from_fd(root_dir), parent)?;
                     }
                 }
@@ -452,7 +452,7 @@ impl OutputFile {
                     &mut path_buf,
                     bun_sys::WriteFileArgs {
                         data: bun_sys::WriteFileData::Buffer {
-                            // Zig built a JSC ArrayBuffer view over `bytes` via
+                            // The original built a JSC ArrayBuffer view over `bytes` via
                             // `@constCast`; the Rust side just borrows the slice.
                             buffer: bytes,
                         },
@@ -479,7 +479,7 @@ impl OutputFile {
         let Value::Move(mv) = &self.value else {
             unreachable!()
         };
-        // Zig: `std.posix.toPosixPath` + `bun.sliceTo(.., 0)` to NUL-terminate both
+        // `toPosixPath` + `bun.sliceTo(.., 0)` to NUL-terminate both
         // paths into stack buffers. Mirrored with `resolve_path::z` over two
         // `PathBuffer`s.
         let mut src_buf = PathBuffer::uninit();
@@ -492,7 +492,7 @@ impl OutputFile {
 
     // TODO(port): narrow error set
     pub fn copy_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
-        // PORT NOTE: Zig used `dir.stdDir().createFile(rel_path, .{})` and
+        // PORT NOTE: the original used `dir.createFile(rel_path, .{})` and
         // `std.fs.cwd().openFile(...)`. Mapped to `bun_sys::openat` (which takes
         // a NUL-terminated `&ZStr`).
         let mut out_buf = PathBuffer::uninit();
@@ -531,9 +531,6 @@ impl OutputFile {
     }
 }
 
-// Zig: `pub const toJS = @import("../bundler_jsc/output_file_jsc.zig").toJS;`
-// Zig: `pub const toBlob = @import("../bundler_jsc/output_file_jsc.zig").toBlob;`
+// `pub use bun_bundler_jsc::output_file_jsc::{toJS, toBlob};`
 // Deleted per PORTING.md — `to_js` / `to_blob` become extension-trait methods that
 // live in `bun_bundler_jsc`; the base type carries no jsc reference.
-
-// ported from: src/bundler/OutputFile.zig

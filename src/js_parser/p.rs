@@ -1,10 +1,7 @@
 use bun_collections::VecExt;
-// Port of src/js_parser/ast/P.zig
-//
 // This file defines the `P` parser struct (generic over typescript/jsx/scan_only
-// const params) and its core methods. The Zig original uses
-// `fn NewParser_(comptime ...) type { return struct {...} }` which becomes a
-// generic struct + impl in Rust.
+// const params) and its core methods. The original used a comptime
+// type-constructor pattern which becomes a generic struct + impl in Rust.
 
 use core::ptr::NonNull;
 use std::io::Write as _;
@@ -44,7 +41,7 @@ use bun_ast::{
 // Real bodies un-gate per-file later.
 use crate::renamer;
 
-// Type aliases matching the Zig `const List = std.ArrayListUnmanaged;` etc.
+// Type aliases matching the original `const List = ...;` etc.
 // In this AST crate, lists are arena-backed.
 type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 type List<'a, T> = BumpVec<'a, T>;
@@ -52,7 +49,7 @@ type ListManaged<'a, T> = BumpVec<'a, T>;
 type Map<K, V> = HashMap<K, V>;
 
 /// Erases `P<'a, TS, SCAN>`'s const-generics so helpers like `JSXTag::parse`
-/// (which Zig wrote as `comptime P: type`) can take any instantiation. Only the
+/// (which originally took `P` as a compile-time type parameter) can take any instantiation. Only the
 /// surface those helpers actually touch is exposed; round-D widens this as the
 /// parse_* / visit_* sibling files un-gate.
 pub trait ParserLike<'a> {
@@ -101,15 +98,15 @@ pub struct ParserFeatures {
     pub scan_only: bool,
 }
 
-// workaround for https://github.com/ziglang/zig/issues/10903 — not needed in Rust;
+// Originally a workaround for a compiler limitation — not needed in Rust;
 // `NewParser` is just an alias for the generic struct.
 pub type NewParser<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> =
     P<'a, TYPESCRIPT, SCAN_ONLY>;
-// TODO(port): the Zig `NewParser(features)` call sites pass a struct literal; in Rust callers
+// TODO(port): the original `NewParser(features)` call sites passed a struct literal; in Rust callers
 // must spell out the three const params directly.
 
-// ─── Conditional field types (Zig: `if (only_scan_imports_and_do_not_visit) *T else T`) ───
-// Zig switched the field type at comptime. Rust const generics cannot select a type, so we
+// ─── Conditional field types (`if (only_scan_imports_and_do_not_visit) *T else T`) ───
+// The original switched the field type at compile time. Rust const generics cannot select a type, so we
 // store both variants behind an enum and gate access in methods.
 // TODO(port): revisit with associated types / GATs in Phase B.
 pub enum ImportRecordList<'a> {
@@ -146,7 +143,7 @@ impl<'a> ImportRecordList<'a> {
         }
     }
 
-    /// Zig: `ImportRecord.List.moveFromList(&p.import_records)` — transfer the
+    /// Transfer the
     /// backing storage into a `Vec<ImportRecord>` and leave `self` empty
     /// (so the parser can be dropped without aliasing the records the linker /
     /// printer now own).
@@ -154,7 +151,7 @@ impl<'a> ImportRecordList<'a> {
     /// Round-G fix: previously `to_ast` reached through `items_mut()` and
     /// wrapped the *live* BumpVec slice, leaving `self` non-empty; the BumpVec's
     /// Drop then ran element destructors on records the returned `Ast` still
-    /// pointed at. This adapter restores Zig's move-and-zero semantics for both
+    /// pointed at. This adapter restores the original move-and-zero semantics for both
     /// the bump-backed and externally-borrowed variants.
     pub fn move_to_baby_list(&mut self, arena: &'a Bump) -> Vec<ImportRecord> {
         match core::mem::replace(self, Self::Owned(BumpVec::new_in(arena))) {
@@ -186,14 +183,14 @@ impl<'a> core::ops::DerefMut for NamedImportsType<'a> {
     }
 }
 
-// In Zig: `if (only_scan_imports_and_do_not_visit) bool else void`.
+// Originally `if (only_scan_imports_and_do_not_visit) bool else void`.
 pub type NeedsJSXType = bool;
-// In Zig: `if (track_symbol_usage_during_parse_pass) *Map else void`.
+// Originally `if (track_symbol_usage_during_parse_pass) *Map else void`.
 pub type ParsePassSymbolUsageType<'a> = Option<&'a mut crate::ParsePassSymbolUsageMap>;
-// In Zig: `if (allow_macros) u32 else u0`.
+// Originally `if (allow_macros) u32 else u0`.
 pub type MacroCallCountType = u32;
 
-// ─── Re-exports of sibling-module impls (Zig: `pub const X = mod.X;`) ───
+// ─── Re-exports of sibling-module impls ───
 // In Rust these are inherent methods on `P` defined in sibling files via separate
 // `impl<...> P<...>` blocks. Round-D/E: those files un-gate per-module; until
 // then their re-exports are gated so the *struct* + core helpers compile.
@@ -202,7 +199,7 @@ pub use crate::parse::*;
 pub use crate::visit::*;
 // Re-export the real visitor so `P::binary_expression_stack` is typed against
 // the same struct `visitExpr.rs` pushes into it (cross-call buffer reuse,
-// matching Zig's `p.binary_expression_stack`).
+// matching the original `p.binary_expression_stack`).
 pub use crate::visit::visit_binary::BinaryExpressionVisitor;
 
 pub struct RecentlyVisitedTSNamespace {
@@ -211,7 +208,7 @@ pub struct RecentlyVisitedTSNamespace {
     pub map: Option<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
 }
 
-// Unused in Zig (per LIFETIMES.tsv evidence).
+// Unused (per LIFETIMES.tsv evidence).
 pub enum RecentlyVisitedTSNamespaceExpressionData {
     Ref(Ref),
     Ptr(*const E::Dot),
@@ -244,7 +241,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub macro_: MacroState<'a>,
     pub arena: &'a Bump,
     pub options: ParserOptions<'a>,
-    /// Raw pointer alias of `lexer.log`. Zig held two `*Log` (`p.log` and
+    /// Raw pointer alias of `lexer.log`. The original held two raw `Log` pointers (`p.log` and
     /// `lexer.log`); Rust cannot store two `&'a mut Log` to one allocation
     /// (Stacked-Borrows UB), so this is a `NonNull` and reborrowed at use sites
     /// via `P::log()`. The pointee outlives `'a` (enforced by `Parser::init`).
@@ -343,7 +340,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub has_commonjs_export_names: bool,
 
     pub stack_check: bun_core::StackCheck,
-    /// Hard recursion cap for `parse_stmt`. Zig relies on `stack_check` alone,
+    /// Hard recursion cap for `parse_stmt`. The original relies on `stack_check` alone,
     /// but its `parseStmt` uses an `inline` switch that pulls every `t_*`
     /// handler into one multi-KB frame, so 15k nested statements exhaust the
     /// 18 MB Windows stack and trip `is_safe_to_recurse()`. Rust dispatches to
@@ -606,7 +603,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub ts_namespace: RecentlyVisitedTSNamespace,
     pub top_level_enums: List<'a, Ref>,
 
-    // Value is a shared `&'a [ScopeOrder<'a>]` (Zig: `[]ScopeOrder` slice
+    // Value is a shared `&'a [ScopeOrder<'a>]` (originally a `ScopeOrder` slice
     // value). The visit pass never writes through these slices — it only reads
     // `Copy` elements and advances a cursor — so the map and
     // `scope_order_to_visit` may safely alias the same arena allocation.
@@ -623,9 +620,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub decorator_class_name: Option<&'a [u8]>,
 }
 
-// Transposer helpers (Zig: `const ImportTransposer = ExpressionTransposer(P, ..., P.transposeImport);`)
+// Transposer helpers (originally `const ImportTransposer = ExpressionTransposer(P, ..., P.transposeImport);`)
 //
-// PORT NOTE: Zig's `ExpressionTransposer` is a comptime type-generator that
+// PORT NOTE: the original `ExpressionTransposer` is a comptime type-generator that
 // captures `*P` and recursively pushes `import()` / `require()` / `require.resolve()`
 // through `?:` arms. Routing that through `crate::ExpressionTransposer` would
 // require materialising `&mut P` while a `&mut self` borrow of the transposer
@@ -636,7 +633,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 //
 // The structs below are ZST placeholders kept so the `P` struct retains the
 // `import_transposer` / `require_transposer` / `require_resolve_transposer`
-// field shape from Zig. They no longer carry a `*mut P` self-pointer: storing
+// field shape from the original. They no longer carry a `*mut P` self-pointer: storing
 // `addr_of_mut!(*self)` in `prepare_for_visit_pass` produced a raw pointer
 // whose Stacked-Borrows tag was a child of *that* `&mut self` retag — every
 // later `&mut self` retag (entering any visit method) invalidated it, so the
@@ -708,7 +705,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>
     }
 }
 
-// Zig: `const Binding2ExprWrapper = struct { pub const Namespace = Binding.ToExpr(P, P.wrapIdentifierNamespace); ... }`
 // PORT NOTE: `Binding.ToExpr(P, fn)` is a comptime type-generator returning a
 // struct that holds `*P` + arena and dispatches `wrapIdentifier` to the
 // captured fn. The Rust port type-erases `*P` (which is generic over
@@ -746,7 +742,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Reborrow the shared `Log`. The `&self` receiver lets call sites pass
     /// other `self.*` fields as arguments (`self.log().add_error(Some(self.source), …)`)
     /// without a borrow-checker conflict; callers must not hold two results of
-    /// `log()` live at once. Matches Zig's two-aliasing-`*Log` model.
+    /// `log()` live at once. Matches the original two-aliasing-`Log`-pointer model.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn log(&self) -> &mut bun_ast::Log {
@@ -834,7 +830,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     where
         T: js_ast::expr::IntoExprData,
     {
-        // PORT NOTE: Zig's `comptime Type == E.Call` check is done post-init by
+        // PORT NOTE: the original `comptime Type == E.Call` check is done post-init by
         // matching on the constructed `Data` (Rust has no comptime type-eq).
         // Semantically equivalent — the import-record side-effect is order-
         // independent of `Expr.init`'s Store allocation.
@@ -898,7 +894,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// because when not bundling, p.source.index is `0`
     #[inline]
     pub fn is_source_runtime(&self) -> bool {
-        // Zig: Index.isRuntime() — index 0 is the synthetic runtime chunk.
+        // `Index.isRuntime()` — index 0 is the synthetic runtime chunk.
         self.options.bundle && self.source.index.0 == 0
     }
 
@@ -994,7 +990,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // ───────────────────────────────────────────────────────────────────────
-    // Inlined ExpressionTransposer recursion (Zig: parser.zig:163-199).
+    // Inlined ExpressionTransposer recursion.
     // Defined as `&mut self` methods so the only live `&mut` is the caller's
     // `&mut P` — avoids the aliased-`&mut` that arises when a transposer
     // *field* holds `&mut self` while a `&mut P` is materialised inside the
@@ -1154,7 +1150,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let _ = self.check_dynamic_specifier(arg, arg.loc, "require.resolve()");
 
-        // Zig: `arena.alloc(Expr, 1); args[0] = arg; ExprNodeList.fromOwnedSlice(args)`.
         // PORT NOTE: Vec::from_owned_slice wants Box<[T]>; init_one is the
         // single-element equivalent (matches transpose_require below).
         self.new_expr(
@@ -1262,7 +1257,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // Note that this symbol may be completely removed later.
                     let path_name = fs::PathName::init(pathname);
-                    // Zig: `path_name.nonUniqueNameString(arena)` — render the
+                    // Render the
                     // sanitized-identifier formatter into the bump arena.
                     let name: &'a [u8] = {
                         use core::fmt::Write as _;
@@ -1414,7 +1409,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // blocked_on: is_binding_used; SideEffects::to_boolean; Part fields; named_exports key type
     pub fn tree_shake(&mut self, parts: &mut &'a mut [js_ast::Part], merge: bool) {
         let mut parts_ = core::mem::take(parts);
-        // PORT NOTE: Zig used `defer` to merge parts after the loop. We replicate by
+        // PORT NOTE: original used `defer` to merge parts after the loop. We replicate by
         // running the merge logic explicitly after the while-loop below.
 
         let default_export_ref = self
@@ -1428,7 +1423,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let last_end = parts_.len();
 
             for i in 0..parts_.len() {
-                // PORT NOTE: Zig copied `Part` by value (POD struct). Rust `Part` is
+                // PORT NOTE: original copied `Part` by value (POD struct). Rust `Part` is
                 // not `Clone`, so borrow it for the dead-check; the only mutation
                 // is the swap into `parts_[parts_end]` at the bottom.
                 let part = &parts_[i];
@@ -1545,7 +1540,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             parts_ = &mut parts_[..parts_end];
-            // PORT NOTE: reshaped for borrowck — Zig wrote parts_.len = parts_end
+            // PORT NOTE: reshaped for borrowck — original wrote parts_.len = parts_end
             if last_end == parts_.len() {
                 break;
             }
@@ -1666,12 +1661,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // SCAN_ONLY require("...") sniff branch is restored there once
     // IntoExprData::as_e_call() lands.
 
-    /// Zig: `p.b(t, loc)` — bump-allocate a binding payload and wrap it in `Binding`.
-    /// `BindingAlloc` (Binding.rs round-G2) replaces the Zig `@TypeOf(t)` switch.
+    /// Bump-allocate a binding payload and wrap it in `Binding`.
+    /// `BindingAlloc` (Binding.rs round-G2) replaces the original payload-type dispatch.
     ///
-    /// PORT NOTE: Zig's `p.b(t: anytype)` had a `@typeInfo == .pointer` arm that
+    /// PORT NOTE: the original `p.b(t)` had a pointer-payload arm that
     /// dispatched to `Binding.init(t, loc)` (wrap-existing-allocation) instead of
-    /// `Binding.alloc`. That arm is intentionally dropped here: every Zig caller
+    /// `Binding.alloc`. That arm is intentionally dropped here: every original caller
     /// passes `t` by value, so only the alloc path was ever exercised. If a future
     /// caller needs to wrap an already-stored payload, call `Binding::init` directly.
     #[inline]
@@ -1992,7 +1987,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(name) = original_name {
             let result = self.find_symbol(loc, name).expect("unreachable");
             let mut id_clone = ident;
-            // Zig: `id_clone.ref = result.ref` — flags are separate fields and
+            // The original wrote `id_clone.ref = result.ref` — flags are separate fields and
             // survive. Here they ride in `ref_`'s user-bit lane, so re-apply
             // them across the identity write or the visitor's
             // must_keep_due_to_with_stmt / can_be_removed_if_unused /
@@ -2124,7 +2119,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .flags
                 .set(bun_ast::ImportRecordFlags::IS_INTERNAL, is_internal);
         }
-        // Zig: `nonUniqueNameString` = MutableString.ensureValidIdentifier(nonUniqueNameStringBase()).
+        // `nonUniqueNameString` = ensureValidIdentifier(nonUniqueNameStringBase()).
         // Render the sanitized-identifier formatter into the bump arena (same
         // pattern as `transpose_require` above).
         let import_path_identifier: &'a [u8] = {
@@ -2270,7 +2265,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let import_record_index =
             self.add_import_record_by_range(ImportKind::Stmt, bun_ast::Range::NONE, import_path);
 
-        // PORT NOTE: Zig used `if (hot_module_reloading) B.Object.Property else js_ast.ClauseItem`
+        // PORT NOTE: original used `if (hot_module_reloading) B.Object.Property else js_ast.ClauseItem`
         // as the comptime item type. Rust const-generics can't select a type
         // for a local, so we keep two arena vecs and only fill the one the
         // const-generic arm selects (the other stays empty / zero-cost).
@@ -2400,9 +2395,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r#ref: Ref,
         replacement: Expr,
     ) -> bool {
-        // Zig matched on `stmt.data` and took `*Expr` into the arena-owned payload.
+        // The original matched on `stmt.data` and took `*Expr` into the arena-owned payload.
         // `StmtData` stores `StoreRef<S::*>` (Copy NonNull); matching by value yields
-        // an owned `StoreRef` whose `DerefMut` reaches the same arena slot Zig wrote
+        // an owned `StoreRef` whose `DerefMut` reaches the same arena slot the original wrote
         // through, so writing to `*expr` below mutates the AST in place.
         let mut expr: js_ast::StoreRef<Expr> = 'brk: {
             match stmt.data {
@@ -2438,7 +2433,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return false;
         };
         // `StoreRef<Expr>: DerefMut` — arena-owned slot, parser holds exclusive
-        // access during the single-threaded visit pass (same contract as Zig `*Expr`).
+        // access during the single-threaded visit pass (same contract as the original mutable `Expr` pointer).
         let expr = &mut *expr;
 
         // Only continue trying to insert this replacement into sub-expressions
@@ -2495,10 +2490,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         replacement: Expr,
         replacement_can_be_removed: bool,
     ) -> Substitution {
-        // Zig matched on `expr.data` (a tagged union of `*E.*`) and mutated through
+        // The original matched on `expr.data` (a tagged union of `*E.*`) and mutated through
         // the captured pointer. `ExprData` is `Copy`; matching by value yields owned
         // `StoreRef<E::*>` copies whose `DerefMut` writes to the same arena slot,
-        // so `e.target = result` mutates the AST in place exactly as Zig did.
+        // so `e.target = result` mutates the AST in place exactly as the original did.
         'outer: {
             match expr.data {
                 js_ast::ExprData::EIdentifier(ident) => {
@@ -2989,7 +2984,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
-                    // Zig held `[]TemplatePart` and mutated `part.value` in place;
+                    // The original held a `TemplatePart` slice and mutated `part.value` in place;
                     // `E::Template.parts` is `StoreSlice<TemplatePart>` (arena-owned, mutable
                     // provenance preserved end-to-end) so derive the unique view directly.
                     // SAFETY: arena-owned slice; single-threaded visit pass has exclusive
@@ -3035,7 +3030,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn prepare_for_visit_pass(&mut self) -> Result<(), bun_core::Error> {
         {
-            // Zig: `Binding2ExprWrapper.{Namespace,Hoisted}.init(this)`.
+            // `Binding2ExprWrapper.{Namespace,Hoisted}.init(this)`.
             // The wrapper stores only the arena and a non-capturing
             // fn-pointer trampoline; the `*mut P` context is supplied *at call
             // time* (see `Binding::to_expr`) so the raw pointer's provenance is
@@ -3069,7 +3064,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             // `into_bump_slice()` leaks the BumpVec into the arena and returns
-            // a `&'a [T]` for that allocation (Zig: `p.arena.alloc(ScopeOrder, n)`).
+            // a `&'a [T]` for that allocation.
             self.scope_order_to_visit = buf.into_bump_slice();
         }
 
@@ -3217,7 +3212,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // blocked_on: `options::ServerComponents` is a Phase-A stub struct
-        // (parser.rs:195) — Zig has a 5-variant enum (None / ClientSide /
+        // (parser.rs:195) — the original has a 5-variant enum (None / ClientSide /
         // WrapExportsForClientReference / WrapAnonServerFunctions /
         // WrapExportsForServerReference). The two switches below un-gate once
         // that enum is ported into options::JSX or bundler::options.
@@ -3267,7 +3262,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.runtime_imports.__require.is_some() {
             return;
         }
-        // Spec P.zig:2224-2229 calls declareSymbolMaybeGenerated with
+        // Spec calls declareSymbolMaybeGenerated with
         // generatedSymbolName("__require") (the hashed name) directly,
         // regardless of bundle mode. Do NOT route through
         // declare_generated_symbol — that helper skips the hash when
@@ -3316,13 +3311,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let scope_ref = &*scope;
         if !scope_ref.kind_stops_hoisting() {
             let arena = self.arena;
-            // PORT NOTE: Zig captured `var symbols = p.symbols.items;` and asserted it
+            // PORT NOTE: original captured `var symbols = p.symbols.items;` and asserted it
             // wasn't resized; we re-borrow `self.symbols` after each `new_symbol` call.
 
             // Check for collisions that would prevent to hoisting "var" symbols up to the enclosing function scope
             if let Some(scope_parent) = scope_ref.parent {
                 let scope_strict_mode = scope_ref.strict_mode;
-                // PORT NOTE: reshaped for borrowck — Zig iterated `scope.members` while
+                // PORT NOTE: reshaped for borrowck — original iterated `scope.members` while
                 // pushing to `scope.generated` and inserting into ancestor scopes' members.
                 // The loop never inserts into `scope.members` itself (only ancestors), so
                 // snapshotting `(name_ptr, Member)` pairs up front is semantically identical
@@ -3462,7 +3457,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 // Silently merge this symbol into the existing symbol
                                 self.symbols[symbol_idx].link.set(member_in_scope.ref_);
-                                // PORT NOTE: Zig also wrote `entry.key_ptr.* = name`; the Rust
+                                // PORT NOTE: original also wrote `entry.key_ptr.* = name`; the Rust
                                 // `StringHashMap` get_or_put already stores the key on insert and
                                 // cannot hand out `&mut K` (see StringHashMapGetOrPut docs), so
                                 // the key write is a no-op here.
@@ -3553,7 +3548,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[inline]
     fn next_scope_in_order_for_visit_pass(&mut self) -> ScopeOrder<'a> {
-        // Zig: `const order = scope_order_to_visit[0]; scope_order_to_visit = scope_order_to_visit[1..]`
+        // `const order = scope_order_to_visit[0]; scope_order_to_visit = scope_order_to_visit[1..]`
         let (head, rest) = self
             .scope_order_to_visit
             .split_first()
@@ -3570,7 +3565,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let order = self.next_scope_in_order_for_visit_pass();
 
         // Sanity-check that the scopes generated by the first and second passes match
-        // PORT NOTE: Zig `and` binds tighter than `or`, so the original
+        // PORT NOTE: original`and` binds tighter than `or`, so the original
         // `allow_assert and loc_mismatch or kind_mismatch` keeps the kind check
         // unconditional in release builds. Preserve that grouping here.
         let order_scope = order.scope_ref();
@@ -3597,7 +3592,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    // PORT NOTE: Zig took `comptime kind` (adt_const_params on stable). All
+    // PORT NOTE: original took `comptime kind` (adt_const_params on stable). All
     // call sites pass a literal so the branch on `kind` is trivially predicted.
     #[allow(non_snake_case)]
     pub fn push_scope_for_parse_pass(
@@ -3911,7 +3906,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// make it a compile error
     #[inline]
     pub fn mark_type_script_only(&self) {
-        // TODO(port): Zig used @compileError; const-generic specialization can't express
+        // TODO(port): original used a compile-error; const-generic specialization can't express
         // a compile error in Rust. Phase B may move TS-only methods behind a trait.
         if !TYPESCRIPT {
             unreachable!();
@@ -3957,7 +3952,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.panic("Internal error", format_args!(""));
         }
 
-        // PORT NOTE (spec parity): Zig P.zig:2700-2707 does `var children =
+        // PORT NOTE (spec parity): the original does `var children =
         // parent.children;` (a *value copy* of the Vec header) then
         // `_ = children.pop();` — the pop mutates only the local copy, so
         // `parent.children` is left unchanged (contrast `discardScopesUpTo`
@@ -4204,7 +4199,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                // Zig had a duplicate `if (ParsePassSymbolUsageType != void)` block here;
+                // The original had a duplicate `if (ParsePassSymbolUsageType != void)` block here;
                 // both gates resolve to the same condition in Rust so we omit the second.
 
                 // No need to add the `default_name` to `item_refs` because
@@ -4216,7 +4211,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let items_slice: &mut [js_ast::ClauseItem] = stmt.items.slice_mut();
         for i in 0..items_slice.len() {
-            // PORT NOTE: Zig copied `ClauseItem` by value (POD struct). Rust's
+            // PORT NOTE: original copied `ClauseItem` by value (POD struct). Rust's
             // `ClauseItem` does not derive `Copy`; bit-copy via `ptr::read` —
             // all fields are POD (`StoreStr`/`Loc`/`LocRef`).
             // SAFETY: items_slice[i] is a live initialised `ClauseItem`; the
@@ -4382,7 +4377,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         loc: bun_ast::Loc,
     ) -> Result<js_ast::LocRef, bun_core::Error> {
-        // PORT NOTE: Zig `try p.source.path.name.nonUniqueNameString(arena)` allocates the
+        // PORT NOTE: original`try p.source.path.name.nonUniqueNameString(arena)` allocates the
         // sanitized identifier, then `allocPrint` formats `{s}_default`. bun_paths::fs::PathName<'static>
         // exposes the same sanitizer as a Display formatter (`fmt_identifier()`), so format once
         // and copy into the bump arena.
@@ -4479,7 +4474,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut cur = self.current_scope_ref();
         let current_scope_ptr: *mut js_ast::Scope = cur.as_ptr();
         let children = &mut cur.children;
-        // PORT NOTE: Zig copied `var children = scope.children` + `defer scope.children = children`.
+        // PORT NOTE: original copied `var children = scope.children` + `defer scope.children = children`.
         // Vec isn't Copy in Rust; mutate the field in place via the handle instead.
 
         for _child in &self.scopes_in_order[scope_index..] {
@@ -4529,7 +4524,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         data: js_ast::ts::Data::Property,
                     },
                 )?;
-                // ref_to_ts_namespace_member derefs to std HashMap; Zig `put(arena, k, v)` → insert.
+                // ref_to_ts_namespace_member derefs to std HashMap; original `put(arena, k, v)` → insert.
                 self.ref_to_ts_namespace_member
                     .insert(id.r#ref, js_ast::ts::Data::Property);
             }
@@ -4593,7 +4588,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let what = match KIND {
             js_ast::s::Kind::KAwaitUsing | js_ast::s::Kind::KUsing => "declaration",
             js_ast::s::Kind::KConst => "constant",
-            _ => unreachable!(), // @compileError("unreachable") in Zig
+            _ => unreachable!(), // originally a compile-error
         };
 
         for decl in decls {
@@ -4678,7 +4673,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Otherwise, generate a new namespace object.
-        // PORT NOTE: Zig batched map+scope into one alloc and patched
+        // PORT NOTE: original batched map+scope into one alloc and patched
         // `exported_members` post-init. `StoreRef` is non-null so the field
         // can't be null-then-patch; two bump allocs from the same arena is the
         // same locality and avoids the self-referential init.
@@ -4846,7 +4841,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(ref_)
     }
 
-    /// Zig: `comptime name: string` — every call site passes a literal, and
+    /// Originally `name` was a compile-time constant — every call site passes a literal, and
     /// `generatedSymbolName` concatenates a comptime hash. Rust can't macro-call
     /// on a runtime param, so callers must pre-hash via `generated_symbol_name!`
     /// and pass the result, OR (non-bundle) we runtime-hash into the bump arena.
@@ -4859,7 +4854,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.options.bundle {
             return self.declare_symbol_maybe_generated::<true>(kind, bun_ast::Loc::EMPTY, name);
         }
-        // Runtime equivalent of `generated_symbol_name!` (Zig comptime concat).
+        // Runtime equivalent of `generated_symbol_name!` (compile-time string concat).
         // Same bytes as the macro produces; arena-owned for symbol lifetime.
         let hash = bun_wyhash::hash(name);
         let hashed: &'a [u8] = bun_alloc::arena_format!(in self.arena, "{}_{}", bstr::BStr::new(name), bun_core::fmt::truncated_hash32(hash)).into_bump_str().as_bytes();
@@ -4872,7 +4867,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         name: &'a [u8],
     ) -> Result<Ref, bun_core::Error> {
-        // PERF(port): Zig used @call(bun.callmod_inline, ...) — rely on LLVM inlining
+        // PERF(port): original forced inline call — rely on LLVM inlining
         self.declare_symbol_maybe_generated::<false>(kind, loc, name)
     }
 
@@ -4900,7 +4895,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Allocate a new symbol
         let mut ref_ = self.new_symbol(kind, name)?;
 
-        // Single-probe `getOrPut`, matching Zig. The previous two-probe shape
+        // Single-probe `getOrPut`, matching the original. The previous two-probe shape
         // (`members.get` then `members.put_borrowed`) existed only because the
         // merge decision read `self.current_scope()` while the entry borrow was
         // live, which under Stacked Borrows invalidated the entry's `&mut`.
@@ -5052,7 +5047,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if contents_ptr <= name_ptr
             && (name_ptr + name.len()) <= (contents_ptr + self.source.contents.len())
         {
-            // Zig: `@intCast` — unchecked in ReleaseFast. Both values are
+            // Originally an unchecked integer cast in release builds. Both values are
             // bounded by `source.contents.len()` which the lexer already
             // requires to fit in u32 (Loc is i32). debug_assert preserves the
             // safety check without the per-identifier branch in release.
@@ -5064,7 +5059,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::base::RefTag::SourceContentsSlice,
             ))
         } else {
-            // Zig u31 `@intCast` — allocated_names.len() is bounded by the
+            // Originally a u31 cast — allocated_names.len() is bounded by the
             // symbol budget (asserted by Ref::pack's INNER_INDEX_BITS check).
             let inner_index = self.allocated_names.len();
             debug_assert!(inner_index <= u32::MAX as usize);
@@ -5108,8 +5103,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `bun_ast::ImportRecord` and removes this erasure.
         // SAFETY: see above — arena 'a outlives every ImportRecord stored in self.import_records.
         let path: fs::Path<'static> = unsafe { path.into_static() };
-        // No `impl Default for ImportRecord` (range/path/kind have no Zig defaults) —
-        // spell out the optional fields with their Zig field-defaults explicitly.
+        // No `impl Default for ImportRecord` (range/path/kind have no defaults) —
+        // spell out the optional fields with their original field-defaults explicitly.
         self.import_records.push(ImportRecord {
             kind,
             range,
@@ -5212,7 +5207,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         args: core::fmt::Arguments,
         loc: Option<bun_ast::Loc>,
     ) -> ! {
-        // PORT NOTE: Zig used a fixed `std.Io.Writer` over a 32 KiB stack buffer.
+        // PORT NOTE: original used a fixed `std.Io.Writer` over a 32 KiB stack buffer.
         // Rust's `Log::print` takes `IntoLogWrite` (`fmt::Write`), so write into a
         // bump-backed `String` instead — same single contiguous text output.
         let mut panic_stream = bun_alloc::ArenaString::with_capacity_in(32 * 1024, self.arena);
@@ -5273,7 +5268,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 value,
                 part,
                 loc,
-                // Zig: `.{ .is_call_target = false, .assign_target = .none, .is_delete_target = false }`
+                // `is_call_target = false, assign_target = none, is_delete_target = false`
                 // — all defaults on the packed-u8 IdentifierOpts.
                 IdentifierOpts::default(),
             ) {
@@ -5325,7 +5320,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let arena = self.arena;
         let mut opts = PrependTempRefsOpts::default();
         let mut part_stmts = bun_alloc::vec_from_iter_in(stmts.iter().copied(), arena);
-        // PORT NOTE: Zig used ListManaged.fromOwnedSlice; we copy into a bump vec.
+        // PORT NOTE: original used ListManaged.fromOwnedSlice; we copy into a bump vec.
 
         self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, &mut opts)?;
 
@@ -5425,7 +5420,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    // PORT NOTE: Zig p.zig:3719 declares `bindingCanBeRemovedIfUnused` (the
+    // PORT NOTE: the original declares `bindingCanBeRemovedIfUnused` (the
     // DCE-gated wrapper) but never calls it — every caller goes through
     // `stmtsCanBeRemovedIfUnused` which already gates on
     // `dead_code_elimination` and then invokes the `_without_dce_check`
@@ -5651,7 +5646,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         None
     }
 
-    // PERF(port): takes `&Expr` — the Zig original passes `Expr` by value (cheap there:
+    // PERF(port): takes `&Expr` — the original passes `Expr` by value (cheap there:
     // `Expr` is `{ *Data, Loc }` = 16B), but Rust's `Expr` inlines `ExprData` so a by-value
     // pass copies the full union. The only caller (`visit_expr_in_out`) already holds `&mut Expr`.
     pub fn is_valid_assignment_target(&self, expr: &Expr) -> bool {
@@ -6054,7 +6049,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         false
     }
 
-    // (Zig commented-out `exprCanBeHoistedForJSX` omitted — was already dead code.)
+    // (The original commented-out `exprCanBeHoistedForJSX` is omitted — was already dead code.)
 
     fn is_side_effect_free_unbound_identifier_ref(
         &mut self,
@@ -6168,7 +6163,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub fn jsx_import(&mut self, kind: JSXImport, loc: bun_ast::Loc) -> Expr {
-        // TODO(port): Zig used `switch (kind) { inline else => |field| ... @tagName(field) }`.
+        // TODO(port): original used a compile-time-reflective inline switch over `kind`.
         // We replicate via tag_name() helper on the enum.
         let ref_: Ref = match self.jsx_imports.get_with_tag(kind) {
             Some(existing) => existing,
@@ -6303,7 +6298,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             crate::parser::Runtime::ReplaceableExport::Inject { name, value } => {
                 let count = stmts.len();
-                // PORT NOTE: Zig kept `with.name` as an arena slice; the Rust
+                // PORT NOTE: original kept `with.name` as an arena slice; the Rust
                 // `ReplaceableExport::Inject` boxes it, so copy into the bump
                 // arena to satisfy `declare_symbol`'s `&'a [u8]`.
                 let name: &'a [u8] = self.arena.alloc_slice_copy(name);
@@ -6423,7 +6418,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match binding.data {
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(ident) => {
-                // RefRefMap derefs to std::collections::HashMap; Zig `put(arena, k, v)` → insert.
+                // RefRefMap derefs to std::collections::HashMap; original `put(arena, k, v)` → insert.
                 self.is_exported_inside_namespace.insert(ident.r#ref, r#ref);
             }
             js_ast::b::B::BArray(array) => {
@@ -6693,11 +6688,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         define_data: &DefineData,
     ) -> Expr {
         // Callers gate on `!valueless()` before reaching here, so `value` is a
-        // real Expr.Data by contract (Zig: `define_data.value`).
+        // real Expr.Data by contract (`define_data.value`).
         let value = define_data.value;
         match value {
             js_ast::ExprData::EIdentifier(id) => {
-                // Spec P.zig:5510: `define_data.original_name().?` — identifier
+                // Spec: `define_data.original_name().?` — identifier
                 // defines always carry a name; `.?` panics on null. Match the
                 // contract so `handle_identifier`'s trailing `find_symbol`
                 // rebind runs against the *resolved* scope ref, not the
@@ -6798,7 +6793,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-// Free fn: Zig `fs.Path.packageName`. `bun_paths::fs::Path` lacks this method
+// Free fn: equivalent of `fs.Path.packageName`. `bun_paths::fs::Path` lacks this method
 // (it lives on the resolver `Path`, which `bun_js_parser` cannot depend on), so
 // the slice logic is inlined here. Mirrors `src/resolver/fs.rs::Path::packageName`.
 fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
@@ -6807,7 +6802,7 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
         name_to_use = &path.text[node_modules + bun_paths::NODE_MODULES_NEEDLE.len()..];
     }
 
-    // Zig: `bun.options.JSX.Pragma.parsePackageName` — pure slice helper.
+    // `bun.options.JSX.Pragma.parsePackageName` — pure slice helper.
     let pkgname = {
         let str = name_to_use;
         'brk: {
@@ -6854,7 +6849,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // Standard decorator lowering path (for both JS and TS files)
                 if s_class.class.should_lower_standard_decorators {
-                    // PORT NOTE: Zig `lowerStandardDecoratorsStmt` returns `[]Stmt`; the
+                    // PORT NOTE: original`lowerStandardDecoratorsStmt` returns `[]Stmt`; the
                     // round-E Rust stub takes an out-param Vec instead. Wrap to keep
                     // this function's `[]Stmt` contract.
                     let mut out = BumpVec::<Stmt>::new_in(self.arena);
@@ -6963,7 +6958,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             self.emit_decorator_metadata_for_prop(prop, &mut array, loc);
                         }
 
-                        // PORT NOTE: reshaped — Zig insertSlice(0, ...) prepends; we prepend then push args.
+                        // PORT NOTE: reshaped — original used insertSlice(0, ...) prepends; we prepend then push args.
                         let mut full = BumpVec::<Expr>::with_capacity_in(
                             prop.ts_decorators.len_u32() as usize + array.len(),
                             self.arena,
@@ -7073,7 +7068,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         continue;
                     }
 
-                    // PORT NOTE: Zig copies `prop.*` by value into the new list; the old
+                    // PORT NOTE: original copies `prop.*` by value into the new list; the old
                     // backing slice is overwritten right after this loop, so `take` is
                     // semantically equivalent (Property: Default).
                     class_properties.push(core::mem::take(prop));
@@ -7084,7 +7079,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if !instance_members.is_empty() {
                     if constructor_function.is_none() {
-                        // PORT NOTE: Zig `Property.List.fromList(class.properties)` re-wraps the
+                        // PORT NOTE: original`Property.List.fromList(class.properties)` re-wraps the
                         // freshly-installed slice and inserts at index 0. We rebuild instead
                         // (Property is not Clone in Rust).
                         let old_props: bun_ast::StoreSlice<G::Property> = s_class.class.properties;
@@ -7282,8 +7277,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // Helper extracted from lower_class to keep that fn readable.
-    // TODO(port): this condenses the Zig per-kind metadata switch (lines 5024-5105).
-    // Phase B should diff against Zig to verify exact arg ordering for get/set.
+    // TODO(port): this condenses the original per-kind metadata switch.
+    // Phase B should diff against the original to verify exact arg ordering for get/set.
     #[cold]
     #[inline(never)]
     fn emit_decorator_metadata_for_prop(
@@ -7295,7 +7290,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         use js_ast::g::PropertyKind;
 
         // Local helper: bump-alloc an arg pair and call __legacyMetadataTS.
-        // PORT NOTE: pulled out of the per-arm code to cut a ~3x repetition vs Zig.
+        // PORT NOTE: pulled out of the per-arm code to cut a ~3x repetition vs the original.
         macro_rules! push_metadata {
             ($label:expr, $value:expr) => {{
                 let label = self.new_expr(E::EString::from_static($label), bun_ast::Loc::EMPTY);
@@ -7639,7 +7634,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub fn wrap_identifier_hoisting(&mut self, loc: bun_ast::Loc, r#ref: Ref) -> Expr {
-        // There was a Zig stage1 bug here we had to copy `ref` into a local
+        // There was a compiler bug here that required copying `ref` into a local
         // const variable or else the result would be wrong
         // I remember that bug in particular took hours, possibly days to uncover.
 
@@ -7734,8 +7729,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         res
     }
 
-    // Zig: `@compileError("not implemented")` — the body is a compile-time error
-    // there, i.e. provably uncalled (Zig would refuse to build if any caller
+    // The original body is a compile-time error,
+    // i.e. provably uncalled (the build would fail if any caller
     // existed). Port as `unreachable!()` per the @compileError convention used
     // elsewhere in this file (see `wrap_identifier` arm).
     #[allow(unused)]
@@ -7915,7 +7910,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // PORT NOTE: match `data` by value (it is `Copy`) so the `StoreRef<_>`
         // payloads bind owned + `mut`, letting `to_utf8` mutate the EString in
         // place and `arr.items.slice_mut()` write through `DerefMut` — same
-        // arena slots Zig's `*E.String` / `*E.Array` captures wrote to.
+        // arena slots the original `E.String` / `E.Array` pointer captures wrote to.
         match call.args.at(0).data {
             js_ast::ExprData::EString(mut str_) => {
                 let loc = call.args.at(0).loc;
@@ -8079,12 +8074,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) {
         debug_assert!(self.options.features.react_fast_refresh);
         debug_assert!(ReactRefresh::is_hook_name(original_name));
-        // PORT NOTE: Zig stores `?*?HookContext` (raw pointer to stack storage in
+        // PORT NOTE: original stores `?*?HookContext` (raw pointer to stack storage in
         // the visiting fn frame). `ReactRefresh::hook_ctx_mut` centralises the
         // raw-pointer deref and returns a borrow detached from `self` (the
         // storage is on a caller stack frame), so we can call other `&mut self`
         // methods (generate_temp_ref_with_scope, declared_symbols.append) while
-        // holding it — exactly mirroring the Zig pointer flow.
+        // holding it — exactly mirroring the original pointer flow.
         let Some(ctx_storage) = self.react_refresh.hook_ctx_mut() else {
             return; // not in a function, ignore this hook call.
         };
@@ -8147,7 +8142,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .write_to_hasher(&mut ctx.hasher, self.symbols.as_mut_slice());
             }
         } else {
-            // TODO(port): Zig used `inline .e_identifier, .e_import_identifier, .e_commonjs_export_identifier => |id, tag|`
+            // TODO(port): original used a compile-time-inlined `.e_identifier, .e_import_identifier, .e_commonjs_export_identifier` match
             // with @unionInit. We expand the three arms.
             match &hook_call.target.data {
                 js_ast::ExprData::EIdentifier(id) => {
@@ -8267,7 +8262,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .alloc_slice_fill_default::<u8>(bun_base64::encode_len_from_size(
                     core::mem::size_of_val(&final_),
                 ));
-        // Zig: `&std.mem.toBytes(final)`
+        // raw byte view of `final`
         let _written = bun_base64::encode(hash_data, &final_.to_ne_bytes());
         debug_assert!(_written == hash_data.len());
 
@@ -8361,7 +8356,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             debug_assert!(!self.options.tree_shaking);
             debug_assert!(self.options.features.hot_module_reloading);
 
-            // PORT NOTE: Zig held `&mut parts[last]` inside `hmr_transform_ctx`
+            // PORT NOTE: original held `&mut parts[last]` inside `hmr_transform_ctx`
             // while iterating `parts` — Rust borrowck rejects that aliasing.
             // Reshaped via `split_last_mut` so the head slice and tail part are
             // disjoint borrows; `finalize()` takes only the head prefix so the
@@ -8371,7 +8366,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("hot_module_reloading parse always has at least one part");
             let mut hmr_transform_ctx = ConvertESMExportsForHmr {
                 last_part,
-                // Spec P.zig:6390: `p.source.path.isNodeModule()`.
+                // Spec: `p.source.path.isNodeModule()`.
                 // Round-G fix: `bun_paths::fs::Path::is_node_module` is now real
                 // (checks `name.dir` for `<sep>node_modules<sep>` with the
                 // platform separator); the former inline copy mis-handled the
@@ -8401,7 +8396,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     Some(&mut hmr_transform_ctx),
                 )?;
             }
-            // Re-run for the last part (Zig iterated all `parts.items` including last).
+            // Re-run for the last part (original iterated all `parts.items` including last).
             {
                 let last_stmts = hmr_transform_ctx.last_part.stmts;
                 let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
@@ -8425,16 +8420,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Potentially remove some statements, then filter out parts to remove any
                 // with no statements
                 for idx in begin..parts.len() {
-                    // PORT NOTE: Zig `var part = part_;` is a *shallow bitwise copy*
+                    // PORT NOTE: original`var part = part_;` is a *shallow bitwise copy*
                     // that leaves `parts.items[idx]` intact so the outer multi-pass
                     // loop (which restarts at `begin = parts_end`) re-scans real data
                     // on the next iteration. `mem::take` would zero the slot and
-                    // degrade this to a single pass. Match Zig with `ptr::read`; the
+                    // degrade this to a single pass. Match the original with `ptr::read`; the
                     // duplicate is non-owning (paired with `ptr::write`/`forget`
                     // below to avoid double-drop of arena-backed Vec fields).
                     // SAFETY: idx < parts.len(); Part fields are arena/bump-backed
                     // (Borrowed-origin BabyLists, raw stmt slices) — bitwise copy
-                    // matches Zig struct-assignment semantics.
+                    // matches the original struct-assignment semantics.
                     let mut part = unsafe { core::ptr::read(&raw const parts[idx]) };
                     self.import_records_for_current_part.clear();
                     self.declared_symbols.clear_retaining_capacity();
@@ -8471,7 +8466,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // `part` is a bitwise duplicate of `parts[idx]` (via
                             // `ptr::read` above); the old `declared_symbols` is
                             // still owned by that slot. Overwrite without running
-                            // Drop to match Zig's plain field assignment.
+                            // Drop to match the original plain field assignment.
                             core::mem::forget(core::mem::replace(
                                 &mut part.declared_symbols,
                                 self.declared_symbols.clone().expect("unreachable"),
@@ -8484,11 +8479,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         if part.import_record_indices.is_empty() {
                             // Bump-arena slice; Vec::from_bump_slice marks origin
-                            // Borrowed so Drop is a no-op (matches Zig's
+                            // Borrowed so Drop is a no-op (matches the original
                             // `ImportRecord.List.init(dupe(...))` arena ownership).
                             // The *old* value is a bitwise duplicate of
                             // `parts[idx].import_record_indices` and may be Owned —
-                            // overwrite without running Drop to mirror Zig's plain
+                            // overwrite without running Drop to mirror the original plain
                             // field assignment.
                             core::mem::forget(core::mem::replace(
                                 &mut part.import_record_indices,
@@ -8504,9 +8499,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .append_slice(self.import_records_for_current_part.as_slice());
                         }
 
-                        // SAFETY: bitwise overwrite matching Zig
+                        // SAFETY: bitwise overwrite matching the original
                         // `parts.items[parts_end] = part;` — old slot value is not
-                        // dropped (arena-owned; Zig never deinit'd it either).
+                        // dropped (arena-owned; original never deinit'd it either).
                         unsafe { core::ptr::write(parts.as_mut_ptr().add(parts_end), part) };
                         parts_end += 1;
                     } else {
@@ -8524,12 +8519,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             // leave the first part in there for namespace export when bundling
-            // PORT NOTE: Zig `parts.items.len = parts_end` does not drop the tail.
+            // PORT NOTE: original`parts.items.len = parts_end` does not drop the tail.
             // `truncate` would drop slots that may alias kept parts (the loop
             // above did `ptr::read` without clearing the source), so use
-            // `set_len` to match Zig's no-destructor semantics.
+            // `set_len` to match the original no-destructor semantics.
             // SAFETY: `parts_end <= parts.len()`; tail slots are abandoned
-            // (arena-/process-lifetime, same as Zig).
+            // (arena-/process-lifetime, same as the original).
             unsafe { parts.set_len(parts_end) };
 
             // Do a second pass for exported items now that imported items are filled out.
@@ -8664,7 +8659,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             loc: bun_ast::Loc::EMPTY,
                             stmts: bun_ast::StoreSlice::new_mut(stmts_to_copy),
                         },
-                        // PORT NOTE: Zig `Flags.Function.init(.{ .is_export = false })` →
+                        // PORT NOTE: original`Flags.Function.init(.{ .is_export = false })` →
                         // empty FunctionSet (no flags set).
                         flags: Flags::FUNCTION_NONE,
                         ..Default::default()
@@ -8681,7 +8676,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 bun_ast::Loc::EMPTY,
             )]);
 
-            // PORT NOTE: reshaped — Zig wrote `parts.items.len = 1` directly.
+            // PORT NOTE: reshaped — original wrote `parts.items.len = 1` directly.
             // BumpVec has no `set_len`-on-grow path; ensure at least one slot then truncate.
             if parts.is_empty() {
                 parts.push(js_ast::Part::default());
@@ -8692,7 +8687,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // REPL mode transforms
         if self.options.repl_mode {
-            // PORT NOTE: Zig `ReplTransforms(@This()).apply` → inherent `apply_repl_transforms`
+            // PORT NOTE: original`ReplTransforms(@This()).apply` → inherent `apply_repl_transforms`
             // (declared in ast::repl_transforms as an `impl P` mixin).
             self.apply_repl_transforms(parts, arena)?;
         }
@@ -8792,11 +8787,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let ts_enums = self.compute_ts_enums_map(arena)?;
 
-        // Spec P.zig:6658: `.char_freq = p.computeCharacterFrequency()`.
+        // Spec: `.char_freq = p.computeCharacterFrequency()`.
         let char_freq: Option<js_ast::CharFreq> = self.compute_character_frequency();
 
         let module_scope_strict = self.module_scope().strict_mode;
-        // PORT NOTE: Zig shallow-copies `p.module_scope.*` into Ast; Scope is not
+        // PORT NOTE: original shallow-copies `p.module_scope.*` into Ast; Scope is not
         // `Clone` in Rust (Vec/HashMap members), so move it out and leave
         // a default in `*self.module_scope`. `to_ast` is terminal — the parser
         // does not touch `module_scope` afterwards.
@@ -8815,7 +8810,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.symbols[self.require_ref.inner_index() as usize].use_count_estimate > 0
         };
 
-        // Spec P.zig:6645: `.runtime_imports = p.runtime_imports` — move the
+        // Spec: `.runtime_imports = p.runtime_imports` — move the
         // parser's accumulated runtime-helper refs into the Ast so the linker /
         // printer can emit `__require`, `__toESM`, etc. Precompute `require_ref`
         // first since it reads `__require` from the same struct we're taking.
@@ -8824,7 +8819,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // PORT NOTE: BumpVec<'a, T> can't be moved into a global-arena Vec;
         // wrap the bump-backed storage as a Borrowed Vec (Drop is no-op).
-        // Spec P.zig:6695-6696 uses `moveFromList`, which transfers storage and
+        // Spec uses `moveFromList`, which transfers storage and
         // *zeroes the source*. Mirror that move-and-zero with
         // `mem::replace(.., new_in)` + `into_bump_slice_mut()` so the leftover
         // BumpVec is empty when `P`/the caller's `parts` drops — `Part` carries
@@ -8838,9 +8833,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ));
         let parts_list =
             Vec::<js_ast::Part>::from_bump_vec(core::mem::replace(parts, BumpVec::new_in(arena)));
-        // Spec P.zig:6697: `ImportRecord.List.moveFromList(&p.import_records)`.
+        // Spec: `ImportRecord.List.moveFromList(&p.import_records)`.
         // Round-G fix: use the dedicated adapter so the parser-side list is
-        // left empty (Zig move-and-zero) and the BumpVec is leaked into the
+        // left empty (move-and-zero) and the BumpVec is leaked into the
         // arena rather than dropped — downstream (printer, linker) resolves
         // every `S.Import`/`E.RequireString`/`E.Import` by index against this.
         let import_records: Vec<ImportRecord> = self.import_records.move_to_baby_list(arena);
@@ -8850,7 +8845,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // returned up the `_parse → parse → cache → transpiler` chain (see
         // `js_parser::Result` PERF NOTE).
         Ok(Box::new(js_ast::Ast {
-            // Spec P.zig:6644: `.runtime_imports = p.runtime_imports`.
+            // Spec: `.runtime_imports = p.runtime_imports`.
             // Round-G: `Ast.runtime_imports` is now the real
             // `parser::Runtime::Imports`; moved out above (P is terminal after
             // `to_ast`).
@@ -8893,7 +8888,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_commonjs_export_names: self.has_commonjs_export_names,
             has_import_meta: self.has_import_meta,
 
-            // Spec P.zig:6689: `.hashbang = hashbang`.
+            // Spec: `.hashbang = hashbang`.
             hashbang: hashbang.into(),
             // TODO: cross-module constant inlining
             // const_values: self.const_values,
@@ -8904,7 +8899,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parts: parts_list,
             import_records,
 
-            // ── Remaining fields spelled out (their Zig struct-literal
+            // ── Remaining fields spelled out (their original struct-literal
             //    defaults). Previously `..Default::default()` constructed a
             //    full temporary `Ast` — including a `Scope::default()` for
             //    `module_scope` and empty `Vec`/map headers for
@@ -8940,7 +8935,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let Some(js_ast::ts::Data::Namespace(namespace)) =
                 self.ref_to_ts_namespace_member.get(r#ref)
             else {
-                // Zig `.?` — must be present and a namespace for top-level enums.
+                // Must be present and a namespace for top-level enums.
                 unreachable!("top_level_enums entry missing namespace member data");
             };
             let ns: &js_ast::TSNamespaceMemberMap = namespace;
@@ -9037,12 +9032,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 // struct literal (Phase B wires the real `*P` back-pointer). `Parser::_parse`
 // is blocked on this being callable — DO NOT re-gate.
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    /// Construct a `P` in place at `out` (matching Zig's `init(..., this: *P) !void`).
+    /// Construct a `P` in place at `out` (matching the original out-pointer `init`).
     ///
     /// PERF(port): the previous shape returned `Result<Self, _>` by value. `P`
     /// is ~5 KiB; the by-value return forced a stack temp inside `init` (5176-B
     /// frame, ASM-verified) plus a move at the caller's `?` (`_scan_imports`
-    /// 14168-B frame, 5× `memcpy`). Zig's `var p: P = undefined; try P.init(..,
+    /// 14168-B frame, 5× `memcpy`). The original's `var p: P = undefined; try P.init(..,
     /// &p)` writes the struct exactly once at its final address. This restores
     /// that: every pre-computable post-init mutation is hoisted above the
     /// single `out.write(Self { .. })` so there is no stack temporary `Self`
@@ -9062,7 +9057,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         mut opts: ParserOptions<'a>,
     ) -> Result<(), bun_core::Error> {
         // Pre-size the parser's per-file name/ref-keyed symbol maps so the
-        // common case never re-hashes while it grows. Upstream Zig grows these
+        // common case never re-hashes while it grows. The original grows these
         // incrementally too, but profiling the runtime transpiler showed
         // `hashbrown` `make_hash` / `reserve_rehash` churn from the module
         // scope's member map and the visit-pass `symbol_uses` map being created
@@ -9108,7 +9103,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let unwrap_all_requires = 'brk: {
             if opts.bundle && opts.output_format != options::Format::Cjs {
-                // Zig: `source.path.packageName()` — `bun_paths::fs::Path<'static>` is the
+                // `source.path.packageName()` — `bun_paths::fs::Path<'static>` is the
                 // crate-local minimal stub (no `pretty`, no `package_name()`),
                 // so reuse the free `path_package_name` body via a borrowed
                 // `bun_paths::fs::Path` view over the same `text`. `pretty`
@@ -9176,19 +9171,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 has_multiple_args: false,
                 has_catch: false,
             },
-            // Zig: `Binding2ExprWrapper.{Namespace,Hoisted}.init(this)` at the
+            // `Binding2ExprWrapper.{Namespace,Hoisted}.init(this)` at the
             // tail of `init`; deferred to `prepare_for_visit_pass` for the same
             // reason as the transposers (self moves on return).
             to_expr_wrapper_namespace: bun_ast::binding::ToExprWrapper::dangling(),
             to_expr_wrapper_hoisted: bun_ast::binding::ToExprWrapper::dangling(),
-            // Zig's ExpressionTransposer captures `*P`; in Rust the recursion
+            // The original ExpressionTransposer captures a raw `P` pointer; in Rust the recursion
             // lives as inherent `P::maybe_transpose_if_*` methods (no aliased
             // `&mut`). These ZST fields exist only to keep field-shape parity.
             import_transposer: ImportTransposer::dangling(),
             require_transposer: RequireTransposer::dangling(),
             require_resolve_transposer: RequireResolveTransposer::dangling(),
             source,
-            // Zig: `MacroState.init(arena)` leaves `prepend_stmts = undefined`;
+            // `MacroState.init(arena)` originally leaves `prepend_stmts` uninitialized;
             // Rust cannot leave a `&'a mut Vec<Stmt>` uninitialized, so allocate
             // an empty placeholder in the arena (real list is wired by the visit
             // pass before any macro expansion runs).
@@ -9196,7 +9191,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             current_scope: scope,
             module_scope: scope,
             scopes_in_order: scope_order,
-            needs_jsx_import: false, // Zig: `if (scan_only) false else void` — NeedsJSXType collapsed to `bool`
+            needs_jsx_import: false, // originally `if (scan_only) false else void` — NeedsJSXType collapsed to `bool`
             lexer,
 
             commonjs_named_exports_deoptimized,
@@ -9300,7 +9295,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             options: opts,
         });
 
-        // PORT NOTE: Zig wires `ImportTransposer.init(this)` etc. here. In Rust
+        // PORT NOTE: original wires `ImportTransposer.init(this)` etc. here. In Rust
         // the recursion lives as inherent `P::maybe_transpose_if_*` methods
         // called directly (no stored `*mut P`), and `Binding2ExprWrapper`
         // receives its `*mut P` per-call from the live `&mut P` at the call
@@ -9316,7 +9311,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-// ─── LowerUsingDeclarationsContext (Zig: nested `pub const ... = struct { ... }`) ───
+// ─── LowerUsingDeclarationsContext (originally a nested struct namespace) ───
 pub struct LowerUsingDeclarationsContext {
     pub first_using_loc: bun_ast::Loc,
     pub stack_ref: Ref,
@@ -9349,7 +9344,7 @@ impl LowerUsingDeclarationsContext {
         stmts: &mut [Stmt],
     ) {
         for stmt in stmts.iter_mut() {
-            // PORT NOTE: Zig `switch (stmt.data) { .s_local => |local| ... }` —
+            // PORT NOTE: original`switch (stmt.data) { .s_local => |local| ... }` —
             // `local` is a `*S.Local`. Match the `StoreRef` by value (Copy ptr)
             // so DerefMut writes through to the arena slot.
             let stmt_loc = stmt.loc;
@@ -9444,7 +9439,7 @@ impl LowerUsingDeclarationsContext {
                 js_ast::StmtData::SExportClause(data) => {
                     // Merge export clauses together.
                     // PORT NOTE: ClauseItem isn't `Clone` (POD-only fields, no derive);
-                    // shallow-copy via ptr::read to mirror Zig `appendSlice`.
+                    // shallow-copy via ptr::read to mirror the original `appendSlice`.
                     // arena-owned `StoreSlice<ClauseItem>` valid for 'a; the source
                     // slot is never read again (this whole stmt is dropped via the
                     // `continue` below) — safe to `ptr::read` each item.
@@ -9466,7 +9461,7 @@ impl LowerUsingDeclarationsContext {
                     // If any of these are exported, turn it into a "var" and add export clauses
                     if local.is_export {
                         local.is_export = false;
-                        // PORT NOTE: Zig wrote `local.kind = .k_var` inside the
+                        // PORT NOTE: original wrote `local.kind = .k_var` inside the
                         // decls loop; borrowck rejects that aliasing through
                         // StoreRef DerefMut. Hoist the kind write below.
                         let mut any_ident = false;
@@ -9739,8 +9734,8 @@ pub trait GenerateImportSymbols {
     fn alias_name(&self, key: &Self::Key) -> &'static [u8];
 }
 
-// ─── Module-level statics (Zig: `var ... = ...;` at file scope) ───
-// In Zig these were mutable file-level vars used as canonical singletons; in Rust we
+// ─── Module-level statics ───
+// Originally these were mutable file-level vars used as canonical singletons; in Rust we
 // expose constructor fns since `js_ast::ExprData` has interior pointers and isn't `const`.
 #[inline]
 pub fn null_expr_data() -> js_ast::ExprData {
@@ -9752,7 +9747,7 @@ pub fn null_stmt_data() -> js_ast::StmtData {
 }
 #[inline]
 pub fn key_expr_data() -> js_ast::ExprData {
-    // PORT NOTE: Zig's `&Prefill.String.Key` was a `*E.String` to a static.
+    // PORT NOTE: the original `&Prefill.String.Key` was a `*E.String` to a static.
     // `ExprData::EString` now wraps a `StoreRef<EString>`; allocate a fresh
     // store node from the prefill constant on each call (callers are JSX-only
     // and infrequent — see js_ast::expr::IntoExprData for `EString`).
@@ -9767,5 +9762,3 @@ pub fn null_value_expr() -> js_ast::ExprData {
 pub fn false_value_expr() -> js_ast::ExprData {
     js_ast::ExprData::EBoolean(E::Boolean { value: false })
 }
-
-// ported from: src/js_parser/ast/P.zig

@@ -47,9 +47,8 @@ impl Ctx {
     }
 }
 
-// Zig callsites pair `bun.perf.trace(...)` with `defer tracer.end()`. Per
-// PORTING.md `defer <side effect>` → RAII: `Ctx` ends itself on drop so callers
-// write `let _tracer = bun_perf::trace(...)` and forget about it.
+// `Ctx` ends itself on drop (RAII) so callers write
+// `let _tracer = bun_perf::trace(...)` and forget about it.
 impl Drop for Ctx {
     #[inline]
     fn drop(&mut self) {
@@ -112,10 +111,8 @@ pub fn is_enabled() -> bool {
 /// Tip: Make sure you write bun.perf.trace() with a string literal exactly instead of passing a variable.
 ///
 /// It has to be compile-time known this way because they need to become string literals in C.
-// PORT NOTE: Zig took `comptime name: [:0]const u8` and used `@hasField(PerfEvent, name)` +
-// `@compileError` to validate membership at compile time, then `@field(PerfEvent, name)` to get
-// the enum value. In Rust, taking `PerfEvent` directly gives the same compile-time guarantee via
-// the type system — the @hasField/@compileError block is dropped.
+// PORT NOTE: taking `PerfEvent` directly gives a compile-time membership
+// guarantee via the type system, so no separate validation step is needed.
 pub fn trace(event: PerfEvent) -> Ctx {
     if !is_enabled() {
         // PERF(port): @branchHint(.likely) — profile in Phase B
@@ -160,7 +157,7 @@ mod darwin_impl {
         pub fn init(name: i32) -> Self {
             Self {
                 // SAFETY: `is_enabled()` returned true, which implies `Darwin::get()` is Some
-                // (see `is_enabled_once`). Zig used `os_log.?` (unchecked unwrap).
+                // (see `is_enabled_once`).
                 interval: Self::get()
                     .expect("unreachable")
                     .signpost(name)
@@ -173,7 +170,7 @@ mod darwin_impl {
         }
 
         fn get_once() {
-            // TODO(port): verify `OSLog::init()` signature; Zig returns `?*OSLog`
+            // TODO(port): verify `OSLog::init()` signature; should return `Option<*OSLog>`
             if let Some(log) = OSLog::init() {
                 OS_LOG.store(log.as_ptr(), Ordering::Release);
             }
@@ -229,8 +226,7 @@ impl Linux {
             .ns()
             .saturating_sub(self.start_time);
 
-        // Zig's `@tagName(this.event).ptr` yields `[*:0]const u8` (NUL-terminated).
-        // `PerfEvent::as_cstr()` provides the equivalent `&'static CStr` so the C side's
+        // `PerfEvent::as_cstr()` provides a `&'static CStr` so the C side's
         // `snprintf("C|%d|%s|%lld", ...)` reads a properly terminated string.
         // SAFETY: FFI call; pointer is 'static and NUL-terminated.
         let _ = unsafe {
@@ -249,5 +245,3 @@ static INIT_ONCE: Once = Once::new();
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::perf::sys::{Bun__linux_trace_emit, Bun__linux_trace_init};
-
-// ported from: src/perf/perf.zig

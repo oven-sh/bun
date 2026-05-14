@@ -9,10 +9,10 @@ use bun_boringssl as boringssl;
 use bun_boringssl_sys as boring_sys;
 use bun_core::{self as strings_mod, strings};
 use bun_io::KeepAlive;
-use bun_jsc::ZigStringJsc as _;
+use bun_jsc::UnsafeStringViewJsc as _;
 use bun_jsc::strong::Optional as Strong;
+use bun_jsc::unsafe_string_view::UnsafeStringView;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::zig_string::ZigString;
 use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsResult,
 };
@@ -90,7 +90,7 @@ pub struct Listener {
 #[derive(Clone, Copy)]
 pub enum ListenerType {
     Uws(*mut uws_sys::ListenSocket),
-    /// Raw heap pointer (not `Box`) to match .zig:31 `*WindowsNamedPipeListeningContext`.
+    /// Raw heap pointer (not `Box`) — `*WindowsNamedPipeListeningContext`.
     /// The context's address is registered with libuv (`uv_pipe.data`) for the
     /// lifetime of the handle, so we must never assert `noalias` over it via a
     /// Box move or `&mut Listener` that transitively covers the context — that
@@ -173,7 +173,7 @@ impl Listener {
         // returns `active_connections = 0`, but existing accepted sockets each hold a +1 via
         // `markActive`. Without this, closing any of them after reload would underflow the
         // counter (panic in safe builds, wrap in release).
-        // PORT NOTE: Zig `this.handlers.deinit()` — Drop handles unprotect; assignment below drops old.
+        // PORT NOTE: Drop handles unprotect; assignment below drops old.
         this.handlers.with_mut(|h| {
             let active_connections = h.active_connections.get();
             *h = handlers;
@@ -219,7 +219,7 @@ impl Listener {
                 let pipe_len = pipe_name.len();
                 pipe_buf[..pipe_len].copy_from_slice(pipe_name);
 
-                // PORT NOTE: Zig `intoOwnedSlice` — transfer the allocation out
+                // PORT NOTE: transfer the allocation out
                 // of `socket_config` so the `mem::forget` below doesn't leak it.
                 let connection = UnixOrHost::Unix(
                     core::mem::take(&mut socket_config.hostname_or_unix)
@@ -308,8 +308,7 @@ impl Listener {
         // Allocate the Listener up front so the embedded `group` has its final
         // address before we hand it to listen() (it's linked into the loop's
         // intrusive list).
-        // PORT NOTE: by-value move of Handlers. Zig copied the struct then ran
-        // `deinitExcludingHandlers()` on the original. Here we read the handlers
+        // PORT NOTE: by-value move of Handlers. Read the handlers
         // out by raw ptr and prevent double-drop by clearing the source via
         // `deinit_excluding_handlers` + `mem::forget`.
         // SAFETY: socket_config.handlers is valid; we forget socket_config below to avoid double-drop.
@@ -317,7 +316,7 @@ impl Listener {
             unsafe { core::ptr::read(&raw const socket_config.handlers) };
         let protos_taken = socket_config.ssl.as_mut().and_then(|s| s.take_protos());
         let default_data = socket_config.default_data;
-        // PORT NOTE: Zig `intoOwnedSlice` — transfer the allocation out of
+        // PORT NOTE: transfer the allocation out of
         // `socket_config` so the `mem::forget` below doesn't leak it.
         let hostname_owned: Box<[u8]> = core::mem::take(&mut socket_config.hostname_or_unix)
             .into_vec()
@@ -329,7 +328,7 @@ impl Listener {
 
         let this: *mut Listener = bun_core::heap::into_raw(Box::new(Listener {
             handlers: JsCell::new(handlers_moved),
-            // Placeholder until `this_ref.connection = connection` below; Zig used `undefined`.
+            // Placeholder until `this_ref.connection = connection` below.
             // Cannot `mem::zeroed()` a Rust enum (UB).
             connection: UnixOrHost::Fd(Fd::invalid()),
             ssl: ssl_enabled,
@@ -399,7 +398,7 @@ impl Listener {
                 port: port_,
             }
         } else if let Some(fd) = fd_opt {
-            // PORT NOTE: hostname is dropped here (Zig leaked it on this arm — same behavior not preserved)
+            // PORT NOTE: hostname is dropped here (the original leaked it on this arm — same behavior not preserved)
             drop(hostname_owned);
             UnixOrHost::Fd(fd)
         } else {
@@ -413,8 +412,8 @@ impl Listener {
         let mut errno: c_int = 0;
         let listen_socket: *mut uws_sys::ListenSocket = match &mut connection {
             UnixOrHost::Host { host, port } => {
-                // NUL-terminate for the C `const char*` parameter. Zig used
-                // `dupeZ` + raw `.ptr`, which tolerates interior NULs (the C
+                // NUL-terminate for the C `const char*` parameter. The original
+                // used a raw `.ptr` which tolerates interior NULs (the C
                 // side just truncates at the first one). Build the `&CStr` via
                 // `from_ptr` so we match that instead of asserting via
                 // `ZStr::as_cstr()`.
@@ -487,7 +486,7 @@ impl Listener {
                 err.put(
                     global,
                     b"address",
-                    ZigString::init_utf8(hostname_bytes).to_js(global),
+                    UnsafeStringView::init_utf8(hostname_bytes).to_js(global),
                 );
                 if let Some(p) = port {
                     err.put(global, b"port", JSValue::js_number(p as f64));
@@ -496,7 +495,7 @@ impl Listener {
                     err.put(
                         global,
                         b"code",
-                        ZigString::init(<&'static str>::from(str_).as_bytes()).to_js(global),
+                        UnsafeStringView::init(<&'static str>::from(str_).as_bytes()).to_js(global),
                     );
                 }
             }
@@ -548,7 +547,7 @@ impl Listener {
             handlers: Cell::new(NonNull::new(listener.handlers.as_ptr())),
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             protos: JsCell::new(listener.protos.clone()),
-            // PORT NOTE: Zig shared the listener's slice (`owned_protos = false`);
+            // PORT NOTE: the original shared the listener's slice (`owned_protos = false`);
             // here `protos` is `Option<Box<[u8]>>` so we clone instead of borrow.
             flags: Cell::new(SocketFlags::empty()),
             owned_ssl_ctx: Cell::new(None),
@@ -573,7 +572,7 @@ impl Listener {
         this_socket
     }
 
-    /// Called from `dispatch.zig` `BunListener.onOpen` for every accepted socket.
+    /// Called from `uws_dispatch::BunListener::onOpen` for every accepted socket.
     /// Allocates the `NewSocket` wrapper, stashes it in the socket ext, then
     /// re-stamps the kind to `.bun_socket_{tcp,tls}` so subsequent events route
     /// straight to `BunSocket` (the listener arm only fires once per accept).
@@ -591,7 +590,7 @@ impl Listener {
             handlers: Cell::new(NonNull::new(listener.handlers.as_ptr())),
             socket: Cell::new(socket),
             protos: JsCell::new(listener.protos.clone()),
-            // TODO(port): protos borrow semantics — Zig shared the listener's slice; here we clone.
+            // TODO(port): protos borrow semantics — original shared the listener's slice; here we clone.
             flags: Cell::new(SocketFlags::empty()), // owned_protos = false (cloned above)
             owned_ssl_ctx: Cell::new(None),
             this_value: JsCell::new(jsc::JsRef::empty()),
@@ -652,8 +651,8 @@ impl Listener {
                 global.throw_invalid_arguments(format_args!("hostname pattern cannot be empty"))
             );
         }
-        // NUL-terminate for the C `const char*` parameter. Zig used
-        // `dupeZ` + raw `.ptr` (Listener.zig:377), which tolerates interior
+        // NUL-terminate for the C `const char*` parameter. The original
+        // used a raw `.ptr`, which tolerates interior
         // NULs — the C SNI tree just truncates at the first one. Build the
         // `&CStr` via `from_ptr` to match that instead of asserting via
         // `ZStr::as_cstr()`. `server_name_z` must outlive the
@@ -760,7 +759,7 @@ impl Listener {
             Self::unlink_unix_socket_path(this);
         }
 
-        // PORT NOTE: Zig `defer switch (listener) {...}` — moved to end of fn body for same ordering.
+        // PORT NOTE: the listener cleanup `switch` was a `defer`; moved to end of fn body for same ordering.
 
         if this.handlers.get().active_connections.get() == 0 {
             this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
@@ -856,7 +855,7 @@ impl Listener {
         }
 
         // connection / protos: dropped by heap::take below
-        // PORT NOTE: Zig `this.handlers.deinit()` — Drop on Handlers handles unprotect.
+        // PORT NOTE: Drop on Handlers handles unprotect.
         // SAFETY: reclaim the Box allocated in listen()
         drop(unsafe { bun_core::heap::take(this) });
     }
@@ -871,7 +870,7 @@ impl Listener {
         let UnixOrHost::Unix(unix) = &this.connection else {
             return JSValue::UNDEFINED;
         };
-        ZigString::init(unix).with_encoding().to_js(global)
+        UnsafeStringView::init(unix).with_encoding().to_js(global)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -879,7 +878,7 @@ impl Listener {
         let UnixOrHost::Host { host, .. } = &this.connection else {
             return JSValue::UNDEFINED;
         };
-        ZigString::init(host).with_encoding().to_js(global)
+        UnsafeStringView::init(host).with_encoding().to_js(global)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -896,11 +895,11 @@ impl Listener {
             ListenerType::Uws(uws_listener) => {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 let socket = bun_opaque::opaque_deref_mut(uws_listener).socket::<false>();
-                // Zig: `uws_listener.socket(false).fd().toJSWithoutMakingLibUVOwned()`.
+                // `uws_listener.socket(false).fd().toJSWithoutMakingLibUVOwned()`.
                 // On Windows the listening socket fd is a system-kind SOCKET
                 // handle; routing it through `.uv()` panics for anything but
-                // stdio. The sys_jsc helper branches on kind exactly like
-                // fd_jsc.zig (system→u64, uv→i32, posix→i32).
+                // stdio. The sys_jsc helper branches on kind
+                // (system→u64, uv→i32, posix→i32).
                 use bun_sys_jsc::FdJsc as _;
                 socket.fd().to_js_without_making_lib_uv_owned()
             }
@@ -976,7 +975,7 @@ impl Listener {
                     break 'blk UnixOrHost::Fd(fd);
                 }
             }
-            // PORT NOTE: Zig `intoOwnedSlice` — transfer the allocation out of
+            // PORT NOTE: transfer the allocation out of
             // `socket_config` so the later `mem::forget` doesn't leak it.
             let host: Box<[u8]> = core::mem::take(&mut socket_config.hostname_or_unix)
                 .into_vec()
@@ -1144,7 +1143,7 @@ impl Listener {
                     let ctx_for_pipe =
                         core::mem::replace(&mut *ssl_ctx_guard, None).map(|p| p.as_ptr());
                     // PORT NOTE: re-borrow connection from the socket field — `connection`
-                    // was moved into `tls` above (single allocation in Zig, aliased read).
+                    // was moved into `tls` above (single allocation in the original, aliased read).
                     let named_pipe_result = match tls_ref.connection.get().as_ref().unwrap() {
                         UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
                             global,
@@ -1364,9 +1363,9 @@ impl Listener {
             16 => global.common_strings().ipv6(),
             _ => return Ok(JSValue::UNDEFINED),
         };
-        // .zig: `std.net.Address.initIp{4,6}` → `bun.fmt.formatIp` (which strips
-        // `:port` and `[]`). Mirror with `SocketAddrV{4,6}` so `format_ip`'s
-        // strip logic sees the same `addr:port` / `[addr]:port` shape.
+        // `format_ip` strips `:port` and `[]`. Mirror with
+        // `SocketAddrV{4,6}` so `format_ip`'s strip logic sees the same
+        // `addr:port` / `[addr]:port` shape.
         let formatted: &[u8] = match address_bytes.len() {
             4 => bun_core::fmt::format_ip(
                 &std::net::SocketAddrV4::new(
@@ -1388,7 +1387,7 @@ impl Listener {
             .unwrap(),
             _ => return Ok(JSValue::UNDEFINED),
         };
-        let address_js = ZigString::init(formatted).to_js(global);
+        let address_js = UnsafeStringView::init(formatted).to_js(global);
         let port_js = JSValue::js_number(socket_ref.get_local_port() as f64);
 
         out.put(global, b"family", family_js);
@@ -1473,7 +1472,7 @@ fn connect_finish<const IS_SSL: bool>(
     // socket hangs forever with no connect/error/close. Upgrade here so the
     // in-flight connect pins the wrapper. (Same guard as `mark_active`; no-op
     // on the fresh-allocation path where `get_this_value` already
-    // `set_strong`'d.) Intentionally diverges from the Zig spec, which has
+    // `set_strong`'d.) Intentionally diverges from the original implementation, which had
     // the same race.
     if socket_ref.this_value.get().is_not_empty() {
         socket_ref.this_value.with_mut(|r| r.upgrade(global));
@@ -1483,7 +1482,7 @@ fn connect_finish<const IS_SSL: bool>(
         f.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
         socket_ref.flags.set(f);
     }
-    // PORT NOTE: Zig stored `connection` in the socket field and passed the same
+    // PORT NOTE: the original stored `connection` in the socket field and passed the same
     // value to doConnect (single allocation, aliased read). `do_connect` now
     // reads `self.connection` directly so no second borrow is needed here.
     if socket_ref.do_connect().is_err() {
@@ -1633,13 +1632,13 @@ impl WindowsNamedPipeListeningContext {
         };
         if result.is_err() {
             // connection dropped
-            // PORT NOTE: Zig (Listener.zig:994) calls `client.deinit()` synchronously here,
+            // PORT NOTE: the original called `client.deinit()` synchronously here,
             // freeing the ctx before returning from the libuv connection callback. We instead
             // release the only ref, which goes 1→0 → schedule_deinit → next-tick free. The
             // deferred path is kept because `get_accepted_by` may have already `uv_pipe_init`'d
             // the client's inner handle on the loop; freeing the backing storage in-callback
             // before `uv_close` completes is the exact pattern libuv forbids. Drop semantics
-            // match Zig's `deinit` (socket.deref() then named_pipe.deinit()), so this is a
+            // match the original `deinit` (socket.deref() then named_pipe.deinit()), so this is a
             // timing divergence only.
             // SAFETY: `client` was just allocated via `WindowsNamedPipeContext::create`
             // with refcount==1; releasing the only ref schedules deinit.
@@ -1775,5 +1774,3 @@ impl WindowsNamedPipeListeningContext {
         }
     }
 }
-
-// ported from: src/runtime/socket/Listener.zig

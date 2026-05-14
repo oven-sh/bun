@@ -21,5 +21,3 @@ where
     let v: int4 = int4::try_from(value).ok().expect("@intCast");
     v.swap_bytes().to_ne_bytes()
 }
-
-// ported from: src/sql/postgres/types/int_types.zig

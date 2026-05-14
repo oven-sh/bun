@@ -173,7 +173,7 @@ pub fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
 
     // Validate arguments
     // PORT NOTE: `arguments` is a fixed [JSValue; 2] so `.len() < 1` is
-    // comptime-false in Zig too; kept for structural fidelity.
+    // always false; kept for structural fidelity.
     #[allow(clippy::len_zero)]
     if arguments.len() < 1 {
         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -255,5 +255,3 @@ fn assert_streaming_disabled(
     }
     Ok(())
 }
-
-// ported from: src/runtime/webcore/BakeResponse.zig

@@ -20,7 +20,7 @@ pub struct ByteBlobLoader {
     /// https://github.com/oven-sh/bun/issues/14988
     /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
     /// Especially for DOMFormData, where the specific content-type might've been serialized into the data.
-    // TODO(port): Zig stored either an owned dupe or a borrowed slice from `blob` gated by
+    // TODO(port): originally either an owned dupe or a borrowed slice from `blob` gated by
     // `content_type_allocated`. Collapsed to always-owned `Box<[u8]>`; the flag is kept for
     // structural parity (transferred to Blob in to_any_blob).
     pub content_type: Box<[u8]>,
@@ -44,9 +44,9 @@ impl Default for ByteBlobLoader {
 
 pub const TAG: readable_stream::Tag = readable_stream::Tag::Blob;
 
-// Zig `NewSource(@This(), "Blob", onStart, onPull, onCancel, deinit, null, drain,
-// memoryCost, toBufferedValue)` is a comptime type-returning fn that wires callbacks. In Rust
-// this becomes a generic `ReadableStreamSource<Ctx>` where `Ctx` impls `SourceContext`.
+// `NewSource("Blob", onStart, onPull, onCancel, deinit, null, drain, memoryCost,
+// toBufferedValue)` wires the source callbacks: a generic `ReadableStreamSource<Ctx>`
+// where `Ctx` impls `SourceContext`.
 pub type Source = readable_stream::NewSource<ByteBlobLoader>;
 
 impl readable_stream::SourceContext for ByteBlobLoader {
@@ -88,8 +88,8 @@ impl ByteBlobLoader {
     pub fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
         // TODO(port): in-place init — `self` is a pre-allocated slot inside `Source`
         let store = blob.store.get().as_ref().unwrap().clone();
-        // PORT NOTE: Zig did `var blobe = blob.*; blobe.resolveSize();` — `Blob` is not
-        // `Clone` in Rust, so use the non-mutating `resolved_size()` helper instead.
+        // PORT NOTE: `Blob` is not `Clone`, so use the non-mutating
+        // `resolved_size()` helper instead of mutating a temporary copy.
         let (offset, size) = blob.resolved_size();
         let (content_type, content_type_allocated) = 'brk: {
             if blob.content_type_was_set.get() {
@@ -97,7 +97,7 @@ impl ByteBlobLoader {
                 if blob.content_type_allocated.get() {
                     break 'brk (Box::<[u8]>::from(ct), true);
                 }
-                // TODO(port): Zig borrowed `blob.content_type` here without copying; we dupe.
+                // TODO(port): `blob.content_type` could be borrowed here without copying; we dupe.
                 break 'brk (Box::<[u8]>::from(ct), false);
             }
             (Box::default(), false)
@@ -166,8 +166,8 @@ impl ByteBlobLoader {
     }
 
     pub fn to_any_blob(&mut self, global: &JSGlobalObject) -> Option<blob::Any> {
-        // PORT NOTE: reshaped for borrowck — Zig captured `store` then called detachStore();
-        // here we take ownership via detach_store() up front.
+        // PORT NOTE: reshaped for borrowck — take ownership via detach_store()
+        // up front rather than capturing `store` and detaching afterwards.
         let store = self.detach_store()?;
         if self.offset == 0 && self.remain == store.size() && self.content_type.is_empty() {
             // SAFETY: `StoreRef` deref is `&Store`; `to_any_blob` needs `&mut` to move bytes out.
@@ -237,8 +237,8 @@ impl ByteBlobLoader {
         let take = 16384usize.min(temporary.len().min(self.remain as usize));
         let temporary = &temporary[..take];
 
-        // Zig: `Vec<u8>.fromBorrowedSliceDangerous(temporary).clone(allocator)` — collapse to a
-        // single owning copy (avoids the `ManuallyDrop` borrow dance).
+        // Collapse to a single owning copy of `temporary` (avoids a
+        // `ManuallyDrop` borrow dance over a borrowed-slice wrapper).
         let cloned = Vec::<u8>::from_slice(temporary);
         self.offset = self.offset.saturating_add(cloned.len() as blob::SizeType);
         self.remain = self.remain.saturating_sub(cloned.len() as blob::SizeType);
@@ -272,5 +272,3 @@ impl ByteBlobLoader {
         0
     }
 }
-
-// ported from: src/runtime/webcore/ByteBlobLoader.zig

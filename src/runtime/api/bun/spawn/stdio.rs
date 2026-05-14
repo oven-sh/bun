@@ -8,7 +8,7 @@ use bun_sys::windows::libuv as uv;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
-// say `webcore::ReadableStream` / `webcore::body::Value` per the .zig spec.
+// say `webcore::ReadableStream` / `webcore::body::Value`.
 use crate::webcore;
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
@@ -17,7 +17,7 @@ use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 // keep `process` leaf; `subprocess` re-exports it).
 use crate::api::bun_process::{self as process, Dup2 as ProcessDup2, StdioKind};
 
-// `SpawnOptions.Stdio` in Zig is a platform-dependent nested decl. Rust enums
+// `SpawnOptions.Stdio` was originally a platform-dependent nested decl. Rust enums
 // can't nest type decls, so process.rs exposes `PosixStdio` / `WindowsStdio`;
 // alias the active one as `SpawnOptionsStdio` so the body stays platform-neutral.
 #[cfg(not(windows))]
@@ -26,22 +26,22 @@ pub type SpawnOptionsStdio = process::PosixStdio;
 pub type SpawnOptionsStdio = process::WindowsStdio;
 
 // `bun.FD.Stdio` (the StdIn/StdOut/StdErr tag enum) is `bun_core::Stdio`,
-// re-exported through `bun_sys`. Alias so `FdStdio::StdIn` etc. read as the
-// Zig `bun.FD.Stdio.std_in`.
+// re-exported through `bun_sys`. Alias so `FdStdio::StdIn` etc. read as
+// `bun.FD.Stdio.std_in`.
 use sys::Stdio as FdStdio;
 
 // `const log = bun.sys.syslog;`
 bun_output::define_scoped_log!(log, SYS, visible);
 
-/// Anonymous payload of `Stdio::Capture` in Zig: `struct { buf: *bun.Vec<u8> }`.
+/// Anonymous payload of `Stdio::Capture`: `{ buf: *bun.Vec<u8> }`.
 #[derive(Clone, Copy)]
 pub struct Capture {
-    // TODO(port): lifetime — Zig holds a raw `*bun.Vec<u8>` backref owned
+    // TODO(port): lifetime — holds a raw `*bun.Vec<u8>` backref owned
     // elsewhere (shell). LIFETIMES.tsv has no row; treating as BACKREF.
     pub buf: *mut Vec<u8>,
 }
 
-/// Anonymous payload of `Stdio::Dup2` in Zig.
+/// Anonymous payload of `Stdio::Dup2`.
 #[derive(Clone, Copy)]
 pub struct Dup2 {
     pub out: StdioKind,
@@ -63,7 +63,7 @@ pub enum Stdio {
     ReadableStream(webcore::ReadableStream),
 }
 
-// In Zig these are `Stdio.Result` / `Stdio.ResultT` / `Stdio.ToSpawnOptsError`.
+// Originally nested as `Stdio.Result` / `Stdio.ResultT` / `Stdio.ToSpawnOptsError`.
 // Rust enums cannot nest type decls, so they live at module scope and callers
 // reference them as `stdio::Result` etc.
 
@@ -189,11 +189,11 @@ impl Stdio {
             // must drop it before mutating `self`. Shadowing ends the borrow here.
             let _ = remain;
 
-            // PORT NOTE: in Zig only `.array_buffer` / `.blob` are explicitly
+            // PORT NOTE: originally only `.array_buffer` / `.blob` were explicitly
             // deinit'd before reassignment. In Rust, assigning to `*self` drops
             // the previous variant via `Drop`, which has equivalent behaviour
             // for those arms and is a no-op for others (and additionally closes
-            // a prior `.memfd`, which Zig left open — arguably a leak fix).
+            // a prior `.memfd`, which the original left open — arguably a leak fix).
             *self = Stdio::Memfd(fd);
             true
         }
@@ -235,7 +235,7 @@ impl Stdio {
                 let fd = FdStdio::from_int(i).unwrap().fd();
                 if blob.needs_to_read_file() {
                     if let Some(store) = blob.store() {
-                        // Zig accesses `store.data.file` directly (union payload);
+                        // The original accesses `store.data.file` directly (union payload);
                         // in Rust `data` is an enum so match the `File` arm.
                         if let StoreData::File(ref file) = store.data {
                             match file.pathlike {
@@ -413,7 +413,7 @@ impl Stdio {
         }
 
         if value.is_string() {
-            let str = value.get_zig_string(global)?;
+            let str = value.get_unsafe_string_view(global)?;
             if str.eql_comptime(b"inherit") {
                 *out_stdio = Stdio::Inherit;
             } else if str.eql_comptime(b"ignore") {
@@ -429,7 +429,7 @@ impl Stdio {
             }
             return Ok(());
         } else if value.is_number() {
-            // `JSValue.asFileDescriptor()` (jsc/JSValue.zig:2151) is just
+            // `JSValue.asFileDescriptor()` is just
             // `bun.FD.fromUV(this.toInt32())` — inline it here since the
             // upstream `bun_jsc::JSValue` doesn't expose a wrapper.
             let fd = Fd::from_uv(value.to_int32());
@@ -555,7 +555,7 @@ impl Stdio {
 
         if blob.needs_to_read_file() {
             if let Some(store) = blob.store() {
-                // Zig accesses `store.data.file` directly (union payload);
+                // The original accesses `store.data.file` directly (union payload);
                 // in Rust `data` is an enum so match the `File` arm.
                 if let StoreData::File(ref file) = store.data {
                     match file.pathlike {
@@ -649,5 +649,3 @@ fn create_zeroed_pipe() -> *mut uv::Pipe {
     // `heap::take` without aliasing a live `Box` (which would double-free).
     bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()))
 }
-
-// ported from: src/runtime/api/bun/spawn/stdio.zig

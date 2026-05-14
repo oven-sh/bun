@@ -23,7 +23,7 @@ use bun_core::Fd;
 /// valid for the lifetime of the response/connection that produced it.
 ///
 /// Canonical definition moved down from `bun_uws`
-/// (Zig: `uws.SocketAddress = struct { ip: []const u8, port: i32, is_ipv6: bool }`).
+/// (`uws.SocketAddress = { ip: &[u8], port: i32, is_ipv6: bool }`).
 /// Higher tiers (`bun_uws`, `bun_runtime`) re-export this as
 /// `pub use bun_uws_sys::SocketAddress;`.
 pub struct SocketAddress<'a> {
@@ -43,8 +43,8 @@ bun_opaque::opaque_ffi! {
 
 /// Opaque handle for `uws::Response<SSL>`.
 ///
-/// In Zig this is `pub fn NewResponse(ssl_flag: i32) type { return opaque { ... } }`.
-/// Rust models the comptime `ssl_flag` as a `const SSL: bool` parameter on an opaque
+/// Originally a `NewResponse(ssl_flag: i32)` type-constructing function.
+/// Rust models the `ssl_flag` as a `const SSL: bool` parameter on an opaque
 /// extern type (Nomicon pattern).
 #[repr(C)]
 pub struct Response<const SSL: bool> {
@@ -325,7 +325,7 @@ impl<const SSL: bool> Response<SSL> {
 
     /// Register an on-writable callback.
     ///
-    /// Zig takes `comptime handler` and bakes it into the trampoline at
+    /// The handler is baked into the trampoline at
     /// monomorphization time. Rust models this by requiring `H` to be a
     /// zero-sized type (function item or capture-less closure): the trampoline
     /// is monomorphized over `H` and conjures the ZST inside, so the user
@@ -493,8 +493,8 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_end_stream(Self::ssl_flag(), self.as_raw(), close_connection)
     }
 
-    /// Run `handler` while the response is corked. Zig signature took
-    /// `comptime handler: anytype, args_tuple: ArgsTuple(@TypeOf(handler))`;
+    /// Run `handler` while the response is corked. The original signature took
+    /// a handler plus its args tuple separately;
     /// in Rust callers pass a closure capturing what would have been the args tuple.
     // PORT NOTE: reshaped — `(handler, args_tuple)` collapsed to `FnOnce()`.
     pub fn corked<F: FnOnce()>(&mut self, f: F) {
@@ -582,8 +582,7 @@ pub enum AnyResponse {
 }
 
 // Helper: dispatch to the underlying response, calling the same-named method on each
-// variant. The Zig `switch (this) { inline else => |resp| resp.method(args...) }`
-// monomorphizes per variant; we write the three arms out by hand.
+// variant, monomorphized per variant; we write the three arms out by hand.
 //
 // The per-variant `*mut → &mut` deref is internalized via `OpaqueHandle`
 // (S019): each variant payload is a ZST opaque, so the deref is sound by
@@ -608,8 +607,8 @@ macro_rules! any_dispatch {
 }
 
 /// Stamp the per-variant ZST adapter triplet and register it via the matching
-/// `Response<SSL>` / `H3Response` `$method`. Mirrors Zig's hand-rolled
-/// `wrapper` structs in `Response.zig` (`onData`/`onWritable`/`onTimeout`/
+/// `Response<SSL>` / `H3Response` `$method`. Mirrors the hand-rolled
+/// `wrapper` structs (`onData`/`onWritable`/`onTimeout`/
 /// `onAborted`): each arm is a generic fn *item* monomorphized over `<U, H>`,
 /// so it is itself a ZST satisfying both the `Response<SSL>` bound
 /// (`Fn(*mut U, …)`) and the `H3Response` bound (`Fn(&mut U, …)`). The H3 arm
@@ -730,7 +729,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.state())
     }
 
-    // Zig: `pub inline fn init(response: anytype) AnyResponse` switching on @TypeOf.
+    // `init(response) -> AnyResponse` switches on the response type.
     // Rust models this as `From` impls below; keep `init` as a thin alias for diff parity.
     #[inline]
     pub fn init<T>(response: T) -> AnyResponse
@@ -949,8 +948,7 @@ impl From<*mut H3Response> for AnyResponse {
 pub type H3Response = crate::h3::Response;
 
 bitflags::bitflags! {
-    /// Non-exhaustive bitset (`enum(u8) { ..., _ }` in Zig) — values may carry
-    /// unnamed bit combinations.
+    /// Non-exhaustive bitset — values may carry unnamed bit combinations.
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct State: u8 {
@@ -1147,5 +1145,3 @@ pub mod c {
         );
     }
 }
-
-// ported from: src/uws_sys/Response.zig

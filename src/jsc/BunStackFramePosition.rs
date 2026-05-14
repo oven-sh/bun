@@ -5,23 +5,22 @@ pub use bun_core::Ordinal;
 /// Represents a position in source code with line and column information
 #[repr(C)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub struct ZigStackFramePosition {
+pub struct BunStackFramePosition {
     pub line: Ordinal,
     pub column: Ordinal,
     /// -1 if not present
     pub line_start_byte: c_int,
 }
 
-impl ZigStackFramePosition {
-    pub const INVALID: ZigStackFramePosition = ZigStackFramePosition {
+impl BunStackFramePosition {
+    pub const INVALID: BunStackFramePosition = BunStackFramePosition {
         line: Ordinal::INVALID,
         column: Ordinal::INVALID,
         line_start_byte: -1,
     };
 
     pub fn is_invalid(&self) -> bool {
-        // Zig: std.mem.eql(u8, std.mem.asBytes(this), std.mem.asBytes(&invalid))
-        // #[repr(C)] + derived PartialEq on POD fields is equivalent.
+        // Byte-equality on a #[repr(C)] POD struct: derived PartialEq is equivalent.
         *self == Self::INVALID
     }
 
@@ -33,8 +32,8 @@ impl ZigStackFramePosition {
         Ok(Self {
             line: Ordinal::from_zero_based(reader.read_value::<i32>()?),
             column: Ordinal::from_zero_based(reader.read_value::<i32>()?),
-            // TODO(port): Zig's `decode` omits `line_start_byte` in the struct literal
-            // (extern-struct field left at zero/default). Confirm intended value in Phase B.
+            // TODO(port): `decode` historically left `line_start_byte` at its
+            // zero default. Confirm intended value in Phase B.
             line_start_byte: 0,
         })
     }
@@ -44,5 +43,3 @@ impl ZigStackFramePosition {
         writer.write_int(self.column.zero_based());
     }
 }
-
-// ported from: src/jsc/ZigStackFramePosition.zig

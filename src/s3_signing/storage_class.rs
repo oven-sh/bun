@@ -45,5 +45,3 @@ impl StorageClass {
         b"SNOW" => StorageClass::SNOW,
     };
 }
-
-// ported from: src/s3_signing/storage_class.zig

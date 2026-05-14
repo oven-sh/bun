@@ -33,7 +33,7 @@ fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
     }
 }
 
-// Zig: `pub fn ParseTypescript(comptime ...) type { return struct { ... } }`
+// Originally `pub fn ParseTypescript(comptime ...) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
 
@@ -67,7 +67,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 //
                 // This matches the behavior of the TypeScript compiler.
                 // PERF(port): was ensureUnusedCapacity + unusedCapacitySlice — profile in Phase B
-                // PORT NOTE: Zig `parseExprWithFlags` takes an out-param slot; preserved here.
+                // PORT NOTE: `parseExprWithFlags` originally took an out-param slot; preserved here.
                 let mut expr = Expr::EMPTY;
                 p.parse_expr_with_flags(Level::New, EFlags::TsDecorator, &mut expr)?;
                 decorators.push(expr);
@@ -189,7 +189,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
 
         // Generate the namespace object
-        // Arena-owned `StoreRef<TSNamespaceScope>` (Zig held a pointer into the arena).
+        // Arena-owned `StoreRef<TSNamespaceScope>` (original held a raw pointer into the arena).
         let mut ts_namespace: js_ast::StoreRef<js_ast::TSNamespaceScope> =
             p.get_or_create_exported_namespace_members(name_text, opts.is_export, false);
         let mut exported_members: js_ast::StoreRef<TSNamespaceMemberMap> =
@@ -233,7 +233,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_typescript_declare: opts.is_typescript_declare,
                 ..ParseStatementOptions::default()
             };
-            // TODO(port): Zig `ListManaged.fromOwnedSlice` adopts the slice in-place;
+            // TODO(port): original `ListManaged.fromOwnedSlice` adopts the slice in-place;
             // `parse_stmts_up_to` already returns a BumpVec<'a, Stmt> so just take it.
             stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut _opts)?;
             p.lexer.next()?;
@@ -283,7 +283,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .insert(ref_, TSNamespaceMemberData::Property);
                     }
                 }
-                // Zig: `inline .s_namespace, .s_enum => |ns|` — written out per-variant.
+                // The `.s_namespace`/`.s_enum` arms share one body; written out per-variant here.
                 StmtData::SNamespace(ns) => {
                     if ns.is_export {
                         let ref_ = ns.name.ref_.expect("infallible: ref bound");
@@ -395,7 +395,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Add a "_" to make tests easier to read, since non-bundler tests don't
                 // run the renamer. For external-facing things the renamer will avoid
                 // collisions automatically so this isn't important for correctness.
-                // PERF(port): strings::cat heap-allocates; Zig allocated into p.arena.
+                // PERF(port): strings::cat heap-allocates; original allocated into p.arena.
                 // Phase B: route through bump arena.
                 let prefixed = strings::cat(b"_", name_text).expect("unreachable");
                 let prefixed: &'a [u8] = p.arena.alloc_slice_copy(&prefixed);
@@ -544,7 +544,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         // Generate the namespace object
-        // TODO(port): Zig `var arg_ref: Ref = undefined;` — initialized to NONE here; only read on
+        // TODO(port): original `var arg_ref: Ref = undefined;` — initialized to NONE here; only read on
         // paths where it has been assigned below.
         let mut arg_ref: Ref = Ref::NONE;
         let mut ts_namespace: js_ast::StoreRef<js_ast::TSNamespaceScope> =
@@ -558,7 +558,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             name.ref_ = Some(p.declare_symbol(SymbolKind::TsEnum, name_loc, name_text)?);
             let _ = p.push_scope_for_parse_pass(ScopeKind::Entry, loc)?;
             p.current_scope_mut().ts_namespace = Some(ts_namespace);
-            // Zig: putNoClobber — debug-assert no prior entry.
+            // putNoClobber semantics — debug-assert no prior entry.
             let prev = p.ref_to_ts_namespace_member.insert(
                 name.ref_.expect("infallible: ref bound"),
                 TSNamespaceMemberData::Namespace(exported_members),
@@ -571,7 +571,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Parse the body
         let mut values: BumpVec<'_, EnumValue> = BumpVec::new_in(p.arena);
         while p.lexer.token != T::TCloseBrace {
-            // TODO(port): Zig `name = undefined` — placeholder empty slice; always overwritten or
+            // TODO(port): original `name = undefined` — placeholder empty slice; always overwritten or
             // we return SyntaxError before use.
             let mut value = EnumValue {
                 loc: p.lexer.loc(),
@@ -664,7 +664,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Add a "_" to make tests easier to read, since non-bundler tests don't
                 // run the renamer. For external-facing things the renamer will avoid
                 // collisions automatically so this isn't important for correctness.
-                // PERF(port): strings::cat heap-allocates; Zig allocated into p.arena.
+                // PERF(port): strings::cat heap-allocates; original allocated into p.arena.
                 // Phase B: route through bump arena.
                 let prefixed = strings::cat(b"_", name_text).expect("unreachable");
                 let prefixed: &'a [u8] = p.arena.alloc_slice_copy(&prefixed);
@@ -715,7 +715,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             break 'scope_order_clone items.into_bump_slice();
         };
-        // Zig: putNoClobber — debug-assert no prior entry.
+        // putNoClobber semantics — debug-assert no prior entry.
         // Stored as `&'a [ScopeOrder]`; the visit pass only reads these, so
         // `scope_order_to_visit` may alias the same arena slice freely.
         let prev = p.scopes_in_order_for_enum.insert(loc, scope_order_clone);
@@ -732,5 +732,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 }
-
-// ported from: src/js_parser/ast/parseTypescript.zig

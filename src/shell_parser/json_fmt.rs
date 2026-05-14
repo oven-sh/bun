@@ -1,7 +1,6 @@
-//! JSON serialization for the shell AST, matching Zig `std.json.fmt(v, .{})`.
+//! JSON serialization for the shell AST.
 //!
-//! Port of the implicit serialization the Zig side gets for free via
-//! `std.json.Stringify.write` reflection (vendor/zig/lib/std/json/Stringify.zig).
+//! Hand-rolled JSON encoders for the shell parser's testing surface.
 //! Only the testing APIs (`shellInternals.lex` / `.parse`) consume this, so the
 //! shape is dictated by `test/js/bun/shell/{lex,parse}.test.ts`:
 //!   - struct           → `{"field":value,...}` in field-declaration order
@@ -48,7 +47,7 @@ fn write_array<W: Write, T>(
 }
 
 // ───────────────────────────── RedirectFlags ──────────────────────────
-// Zig: `packed struct(u8)` → struct serialization in field-declaration order.
+// Bitflags struct serialized in field-declaration order.
 
 pub fn write_redirect_flags(w: &mut impl Write, r: RedirectFlags) -> fmt::Result {
     w.write_str("{\"stdin\":")?;
@@ -305,7 +304,7 @@ fn write_compound_atom(w: &mut impl Write, c: &CompoundAtom<'_>) -> fmt::Result 
 
 // ───────────────────────────── Display adapters ──────────────────────────
 
-/// `Display` adapter mirroring Zig's `std.json.fmt(script_ast, .{})`.
+/// `Display` adapter that JSON-formats a `Script` AST.
 pub fn script_json_fmt<'a, 'b>(script: &'b Script<'a>) -> impl fmt::Display + 'b {
     ScriptJsonFmt(script)
 }

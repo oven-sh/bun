@@ -5,7 +5,7 @@ use bun_core::String;
 use super::field_type::FieldType;
 use super::new_reader::NewReader;
 
-/// Zig: `union(FieldType)` — every variant carries a `bun.String`.
+/// Tagged union keyed by `FieldType` — every variant carries a `bun.String`.
 pub enum FieldMessage {
     Severity(String),
     LocalizedSeverity(String),
@@ -29,7 +29,7 @@ pub enum FieldMessage {
 
 impl fmt::Display for FieldMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Zig: `switch (this) { inline else => |str| writer.print("{f}", .{str}) }`
+        // Every variant carries a `bun.String`; print it.
         match self {
             FieldMessage::Severity(s)
             | FieldMessage::LocalizedSeverity(s)
@@ -53,9 +53,9 @@ impl fmt::Display for FieldMessage {
     }
 }
 
-// Zig `deinit` called `.deref()` on the payload `bun.String`. In Rust,
-// `bun_core::String`'s own `Drop` performs the deref, so no explicit `Drop`
-// impl is needed here — dropping the enum drops the payload.
+// Cleanup just derefs the payload `bun.String`. `bun_core::String`'s own
+// `Drop` performs the deref, so no explicit `Drop` impl is needed here —
+// dropping the enum drops the payload.
 
 impl FieldMessage {
     pub fn decode_list<Context: super::new_reader::ReaderContext>(
@@ -68,9 +68,9 @@ impl FieldMessage {
             if field_int == 0 {
                 break;
             }
-            // TODO(port): Zig `FieldType` is a non-exhaustive `enum(u8)` (the
-            // `init` switch has an `else` arm). `from_raw` must accept any u8
-            // without UB — do NOT `transmute` here.
+            // TODO(port): `FieldType` is conceptually a non-exhaustive byte
+            // enum (the `init` match has a fallthrough arm). `from_raw` must
+            // accept any u8 without UB — do NOT `transmute` here.
             let field: FieldType = FieldType::from(field_int);
 
             let message = reader.read_z()?;
@@ -114,5 +114,3 @@ impl FieldMessage {
         })
     }
 }
-
-// ported from: src/sql/postgres/protocol/FieldMessage.zig

@@ -712,7 +712,7 @@ pub mod visible {
         let ge_20 = chunk.simd_ge(lo);
         let not_c1 = chunk.simd_lt(c1_lo) | chunk.simd_gt(c1_hi);
         let not_ad = chunk.simd_ne(ad);
-        // Zig: @select(bool, ge_20, not_c1, splat(false)) & not_ad  ==  ge_20 & not_c1 & not_ad
+        // printable iff: byte >= 0x20, not a C1 control, not soft hyphen.
         let printable = ge_20 & not_c1 & not_ad;
         printable.to_bitmask() as u16
     }
@@ -769,10 +769,10 @@ pub mod visible {
     // None if not found. Used to find the CSI final byte (0x40-0x7E).
     //
     // PORT NOTE: was a SIMD lane-scan via `core::simd::Simd<T, STRIDE>`
-    // (nightly-only). Demoted to a scalar loop for B-2 — `STRIDE` is kept as a
-    // dead const-generic so call sites (`scan_lane_in_range::<u8, 16>(...)`)
-    // diff cleanly against the Zig.
-    // PERF(port): re-SIMD via bun_highway in Phase B.
+    // (nightly-only). Demoted to a scalar loop — `STRIDE` is kept as a dead
+    // const-generic so call sites (`scan_lane_in_range::<u8, 16>(...)`) keep
+    // the lane-width parameter visible.
+    // PERF(port): re-SIMD via bun_highway.
     pub(super) fn scan_lane_in_range<T, const STRIDE: usize>(
         lo: T,
         hi: T,
@@ -781,7 +781,7 @@ pub mod visible {
     where
         T: Copy + PartialOrd,
     {
-        debug_assert!(lo <= hi); // was `comptime bun.assert(Lo <= Hi)` — Lo/Hi demoted to runtime
+        debug_assert!(lo <= hi); // Lo/Hi were const params upstream; demoted to runtime args here
         for (i, &c) in slice.iter().enumerate() {
             if c >= lo && c <= hi {
                 return Some(i);
@@ -814,8 +814,8 @@ pub mod visible {
         None
     }
 
-    // TODO(port): Zig signature is `input_: anytype` dispatching on element type
-    // (u8 vs u16) for indexFn, but the body calls visible_latin1_width which is
+    // TODO(port): the original signature was generic over element type (u8 vs
+    // u16) for indexFn, but the body calls visible_latin1_width which is
     // u8-only — the u16 path is dead. Ported as &[u8].
     pub(super) fn visible_latin1_width_exclude_ansi_colors(input_: &[u8]) -> usize {
         let mut length: usize = 0;
@@ -849,8 +849,8 @@ pub mod visible {
                 // terminators instead of byte-by-byte. Terminators per ECMA-48
                 // and xterm: BEL (0x07), C1 ST (0x9C), or 7-bit ST (ESC \).
                 input = &input[2..];
-                // PORT NOTE: Zig `while ... else` reshaped — else arm runs only
-                // when scan returns None (no break taken).
+                // PORT NOTE: the trailing arm runs only when scan returns
+                // None (no break taken).
                 loop {
                     let Some(t) = scan_lane_any_of::<u8, 16>(&[0x07, 0x9c, 0x1b], input) else {
                         input = &input[input.len()..];
@@ -914,11 +914,11 @@ pub mod visible {
     }
 
     /// Packed state for grapheme tracking - all small fields in one u32
-    // PERF(port): was `packed struct(u32)` (u10/u2/u8 + 7 bools). Ported as a
-    // plain Copy struct; if the single-register copy in `width()` matters,
-    // re-pack as #[repr(transparent)] u32 with shift accessors in Phase B.
+    // PERF(port): was a 32-bit bit-packed struct (u10/u2/u8 + 7 bools).
+    // Ported as a plain Copy struct; if the single-register copy in `width()`
+    // matters, re-pack as #[repr(transparent)] u32 with shift accessors.
     // NOTE: `non_emoji_width` widened u10→u16 but `add()` clamps to 1023 to
-    // preserve the Zig `+|=` saturation point.
+    // preserve the original 10-bit saturation point.
     #[derive(Copy, Clone, Default)]
     struct PackedState {
         non_emoji_width: u16, // Accumulated width (saturates at 1023) — was u10
@@ -997,7 +997,7 @@ pub mod visible {
                     .saturating_add(
                         visible_codepoint_width_type::<u32>(cp, ambiguous_as_wide) as u16
                     )
-                    .min(1023); // preserve Zig u10 `+|=` saturation ceiling
+                    .min(1023); // preserve original 10-bit saturation ceiling
             }
         }
 
@@ -1093,7 +1093,7 @@ pub mod visible {
         fn printable_mask(chunk: u16x8, l: u16x8, h: u16x8) -> u8 {
             let ge_low = chunk.simd_ge(l);
             let lt_high = chunk.simd_lt(h);
-            // Zig: @select(bool, ge_low, lt_high, splat(false)) == ge_low & lt_high
+            // printable iff: 0x20 <= unit < 0x7F.
             let printable = ge_low & lt_high;
             printable.to_bitmask() as u8
         }
@@ -1265,8 +1265,8 @@ pub mod visible {
                     // Per-byte path for everything else.
                     let cp: u32 = input[j] as u32;
                     j += 1;
-                    // PORT NOTE: Zig `defer prev = cp;` — body never reads `prev`,
-                    // so hoisted to run before branches; equivalent.
+                    // PORT NOTE: was a deferred assignment; body never reads
+                    // `prev`, so hoisted to run before branches; equivalent.
                     prev = Some(cp);
 
                     if saw_1b {
@@ -1318,16 +1318,16 @@ pub mod visible {
                 break;
             }
             let replacement = utf16_codepoint_with_fffd(input);
-            // PORT NOTE: Zig `defer input = input[replacement.len..];` — body
-            // never reads `input` after this, so hoisted; equivalent.
+            // PORT NOTE: was a deferred assignment; body never reads `input`
+            // after this, so hoisted; equivalent.
             input = &input[replacement.len as usize..];
             // Skip invalid sequences and lone surrogates (treat as zero-width)
             if replacement.fail || replacement.is_lead {
                 continue;
             }
             let cp: u32 = u32::try_from(replacement.code_point).expect("int cast");
-            // PORT NOTE: Zig `defer prev = cp;` — body never reads `prev` after
-            // this point, so hoisted; equivalent.
+            // PORT NOTE: was a deferred assignment; body never reads `prev`
+            // after this point, so hoisted; equivalent.
             prev = Some(cp);
 
             // Handle non-ASCII characters inside escape sequences
@@ -1371,7 +1371,7 @@ pub mod visible {
         }
         // Add width of final grapheme
         len += grapheme_state.width();
-        let _ = prev; // tracked for parity with Zig; currently only read in OSC fast paths above
+        let _ = prev; // tracked for symmetry; currently only read in OSC fast paths above
         len
     }
 
@@ -1446,7 +1446,7 @@ pub mod visible {
                 }
             } else if input[1] == b']' {
                 input = &input[2..];
-                // PORT NOTE: Zig `while ... else` reshaped.
+                // PORT NOTE: trailing arm runs only when scan returns None.
                 loop {
                     let Some(t) = scan_lane_any_of::<u8, 16>(&[0x07, 0x9c, 0x1b], input) else {
                         input = &input[input.len()..];
@@ -1608,5 +1608,3 @@ pub(super) extern "C" fn Bun__isEmojiPresentation(cp: u32) -> bool {
     // UCHAR_EMOJI = 57
     icu_hasBinaryProperty(cp, 57)
 }
-
-// ported from: src/string/immutable/visible.zig

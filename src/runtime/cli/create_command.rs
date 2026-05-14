@@ -102,7 +102,7 @@ impl UnsupportedPackages {
 }
 
 // PORTING.md §Global mutable state: single-threaded CLI usage; currently
-// write-once / never read (Zig parity placeholder). RacyCell.
+// write-once / never read (legacy parity placeholder). RacyCell.
 #[allow(dead_code)]
 static BUN_PATH: bun_core::RacyCell<Option<&'static bun_core::ZStr>> =
     bun_core::RacyCell::new(None);
@@ -120,8 +120,8 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
 
     let npm_args = 2 * usize::from(npm_client.is_some());
     let total = count + npm_args;
-    // Zig fills `alloc(string, total)` by index; in Rust, `set_len` + index-write into
-    // uninitialized `&[u8]` slots is UB (invalid references exist before assignment).
+    // `set_len` + index-write into uninitialized `&[u8]` slots is UB (invalid
+    // references exist before assignment), so build with `push` instead.
     // Build with `push` instead — same allocation, no unsafe.
     let mut argv: Vec<&[u8]> = Vec::with_capacity(total);
 
@@ -161,9 +161,8 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
         stderr: spawn_sync::SyncStdio::Inherit,
         stdout: spawn_sync::SyncStdio::Inherit,
         stdin: spawn_sync::SyncStdio::Inherit,
-        // Zig: `.windows = if (Environment.isWindows) .{ .loop = EventLoopHandle.init(
-        //   MiniEventLoop.initGlobal(null, null)) }`. `WindowsOptions::default()` zeroes
-        // `loop_` (UB — null `uv_loop` deref in `spawn_process_windows`), so populate it.
+        // `WindowsOptions::default()` zeroes `loop_` (UB — null `uv_loop` deref
+        // in `spawn_process_windows`), so populate it explicitly.
         #[cfg(windows)]
         windows: spawn_sync::WindowsOptions {
             loop_: bun_event_loop::EventLoopHandle::init_mini(
@@ -199,8 +198,8 @@ impl ProgressBuf {
             let cap = cursor.len();
             write!(&mut cursor, "{}", args).map_err(|_| bun_core::err!("NoSpaceLeft"))?;
             let written = cap - cursor.len();
-            // SAFETY: thread-local static buffer; lifetime extended for CLI usage. Matches Zig
-            // returning a slice into a module-level static.
+            // SAFETY: thread-local static buffer; lifetime extended for CLI usage.
+            // Equivalent to returning a slice into a module-level static.
             let out: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&buf[..written]) };
             Ok(out)
         })
@@ -249,8 +248,8 @@ impl CreateOptions {
     }
 
     pub fn parse(_ctx: &Command::Context<'_>) -> Result<CreateOptions, bun_core::Error> {
-        // Zig: `Output.is_verbose = Output.isVerbose();` — Rust has no setter; the
-        // `is_verbose()` accessor reads the env directly each call, so this is a no-op.
+        // No verbosity setter is needed — the `is_verbose()` accessor reads the
+        // env directly each call, so caching is a no-op.
         let _ = Output::is_verbose();
 
         let mut diag = clap::Diagnostic::default();
@@ -273,7 +272,7 @@ impl CreateOptions {
         let mut opts = CreateOptions {
             // PORT NOTE: clap positionals borrow from process argv; dupe each
             // entry into the process-lifetime CLI arena to obtain
-            // `&'static [u8]` (mirrors Zig where argv is process-static).
+            // `&'static [u8]` (argv is process-static).
             positionals: args
                 .positionals()
                 .iter()
@@ -353,7 +352,7 @@ impl CreateCommand {
         // PORT NOTE: reshaped for borrowck — `Progress::start` returns
         // `&mut Node` borrowing `progress` exclusively for the node's lifetime.
         // Convert to `*mut` immediately so `progress` and `node` can be used
-        // independently below (matches Zig's pointer semantics; same pattern as
+        // independently below (raw-pointer aliasing; same pattern as
         // `CreateListExamplesCommand::exec` at the bottom of this file).
         let node: *mut ProgressNode = match example_tag {
             ExampleTag::JslikeFile => progress.start(
@@ -376,7 +375,7 @@ impl CreateCommand {
             progress.refresh_rate_ns = (bun_core::time::NS_PER_MS * 8) as u64;
         }
 
-        // PORT NOTE: Zig `defer progress.refresh()`. Capture `*mut Progress` so
+        // PORT NOTE: deferred `progress.refresh()`. Capture `*mut Progress` so
         // the guard does not hold an exclusive borrow for the whole fn body;
         // `progress` is declared earlier so it is still alive when this drops.
         let progress_ptr: *mut Progress = &raw mut progress;
@@ -524,14 +523,14 @@ impl CreateCommand {
 
                 let mut archive_context = archiver::Context {
                     pluckers,
-                    all_files: Default::default(), // undefined in Zig
+                    all_files: Default::default(), // unused; placeholder default
                     overwrite_list: bun_collections::StringArrayHashMap::<()>::default(),
                 };
 
                 if !create_options.overwrite {
                     // TODO(port): blocked_on bun_libarchive::ArchiveAppender impl for
-                    // fs::DirnameStore — Zig passed `FileSystem.DirnameStore` (has
-                    // appendMutable). For now route through the no-op `()` appender.
+                    // fs::DirnameStore would provide `append_mutable` here; for
+                    // now route through the no-op `()` appender.
                     Archiver::get_overwriting_file_list::<(), 1>(
                         &tarball_buf_list,
                         destination,
@@ -737,7 +736,7 @@ impl CreateCommand {
 
                         package_json_contents =
                             MutableString::init(usize::try_from(size).expect("int cast"))?;
-                        // Zig: list.expandToCapacity() — set len to capacity so the buffer is readable.
+                        // Expand list to capacity so the buffer is readable.
                         let cap = package_json_contents.list.capacity();
                         package_json_contents.list.resize(cap, 0);
 
@@ -839,8 +838,8 @@ impl CreateCommand {
                     break 'process_package_json;
                 }
 
-                // Zig builds a `properties_list` here via `fromOwnedSlice(.slice())`,
-                // which *aliases* the BabyList storage so subsequent
+                // The original code built a `properties_list` here via an aliasing
+                // owned-slice view of the BabyList storage so that subsequent
                 // `package_json_expr.asProperty(...)` reads still see the data. The
                 // commented-out injection logic below would append to it before the
                 // `moveFromList` round-trip. With those appends disabled the
@@ -860,8 +859,7 @@ impl CreateCommand {
                         let basename = bun_paths::basename(destination);
                         // SAFETY: `destination` is interned in the process-global DirnameStore
                         // (`append_slice` returns `&'static [u8]`); re-erase the borrow lifetime
-                        // to `'static` to match `EString.data: &'static [u8]`. Mirrors Zig's
-                        // `@ptrFromInt(@intFromPtr(...))` cast.
+                        // to `'static` to match `EString.data: &'static [u8]`.
                         s.data = bun_ast::StoreStr::new(unsafe {
                             core::slice::from_raw_parts(basename.as_ptr(), basename.len())
                         });
@@ -1064,8 +1062,8 @@ impl CreateCommand {
                 use bun_ast::E;
 
                 // TODO(port): InjectionPrefill — large block of mutable static AST nodes used to
-                // inject "bun"/"macros"/dependency properties into package.json. The Zig code builds
-                // a tree of `E.String`/`E.Object`/`G.Property` values stored in `pub var` statics
+                // inject "bun"/"macros"/dependency properties into package.json. The original code
+                // built a tree of `E.String`/`E.Object`/`G.Property` values stored in mutable statics
                 // and wires their `.properties` lists together at runtime. In Rust, mutable statics
                 // of non-Sync AST types require careful redesign (likely thread_local! + Lazy or
                 // building the tree on the stack/arena per call). Since every consumer of
@@ -1266,8 +1264,8 @@ impl CreateCommand {
                 // don't do it!
                 // if (has_react_scripts) {
                 //     bail: {
-                //         // ... (large CRA index.html injection block; see Zig source lines 1183-1265)
-                //         // TODO(port): commented-out CRA HTML rewrite logic — preserved verbatim in Zig source
+                //         // ... (large CRA index.html injection block, ~80 lines)
+                //         // TODO(port): commented-out CRA HTML rewrite logic — preserved verbatim in git history
                 //     }
                 // }
 
@@ -1277,7 +1275,7 @@ impl CreateCommand {
                     .expect("infallible: variant checked")
                     .is_single_line = false;
 
-                // (Zig: `properties = .moveFromList(&properties_list)` — see note
+                // (Was `properties = .moveFromList(&properties_list)` — see note
                 // above; the aliasing round-trip is a no-op while the injection
                 // appends remain commented out, so `properties` is already current.)
                 {
@@ -1562,8 +1560,7 @@ impl CreateCommand {
                 stderr: spawn_sync::SyncStdio::Inherit,
                 stdout: spawn_sync::SyncStdio::Inherit,
                 stdin: spawn_sync::SyncStdio::Inherit,
-                // Zig: `.windows = if (Environment.isWindows) .{ .loop = EventLoopHandle.init(
-                //   MiniEventLoop.initGlobal(null, null)) }`. Default would zero `loop_` → UB.
+                // Default would zero `loop_` → UB; populate it explicitly.
                 #[cfg(windows)]
                 windows: spawn_sync::WindowsOptions {
                     loop_: bun_event_loop::EventLoopHandle::init_mini(
@@ -1662,8 +1659,8 @@ impl CreateCommand {
             ));
         }
 
-        // PORT NOTE: Zig `filesystem.relativeTo(destination)` —
-        // `bun_resolver::fs::FileSystem` (the inline shim) has no `relative_to`; call
+        // PORT NOTE: `bun_resolver::fs::FileSystem` (the inline shim) has no
+        // `relative_to`; call
         // the resolver path helper directly with the singleton's `top_level_dir`.
         let rel_destination =
             bun_paths::resolve_path::relative(filesystem.top_level_dir, destination);
@@ -1689,7 +1686,7 @@ impl CreateCommand {
             let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
             if let Some(bin) = which(bun_path_buf, path_env, destination, b"bun") {
                 let argv: [&[u8]; 1] = [bin.as_bytes()];
-                // Zig used `std.process.Child`; PORTING.md bans std::process — route through
+                // PORTING.md bans std::process — route through
                 // bun.spawnSync (`crate::api::bun_process::sync::spawn`).
                 // SAFETY: literal is NUL-terminated; len excludes the sentinel.
                 crate::cli::open::open_url(unsafe {
@@ -1705,8 +1702,8 @@ impl CreateCommand {
                     stdin: spawn_sync::SyncStdio::Inherit,
                     stdout: spawn_sync::SyncStdio::Inherit,
                     stderr: spawn_sync::SyncStdio::Inherit,
-                    // Zig used `std.process.Child` (no uv loop). PORTING.md routes this through
-                    // `bun.spawnSync`, which on Windows requires a live `loop_` — supply it.
+                    // PORTING.md routes this through `bun.spawnSync`, which on
+                    // Windows requires a live `loop_` — supply it.
                     #[cfg(windows)]
                     windows: spawn_sync::WindowsOptions {
                         loop_: bun_event_loop::EventLoopHandle::init_mini(
@@ -1905,7 +1902,7 @@ pub struct ExtractedInfo {
     pub template: &'static [u8], // TODO(port): lifetime — borrows from positionals/static buffer
 }
 
-// PORT NOTE: hoisted from Zig fn-local `const FileCopier = struct { pub fn copy(...) }` inside
+// PORT NOTE: hoisted from a fn-local nested `FileCopier` helper inside
 // CreateCommand.exec, because Rust does not allow capturing-closure-style nested fns and the
 // fn body is large.
 fn file_copier_copy(
@@ -2081,7 +2078,7 @@ fn file_copier_copy(
     Ok(())
 }
 
-// PORT NOTE: hoisted from Zig fn-local `const Analyzer = struct {...}` inside runOnEntryPoint.
+// PORT NOTE: hoisted from a fn-local nested `Analyzer` helper inside runOnEntryPoint.
 struct Analyzer<'a> {
     ctx: &'a Command::Context<'a>,
     example_tag: ExampleTag,
@@ -2124,8 +2121,8 @@ fn run_on_entry_point(
     crate::cli::build_command::BuildCommand::exec(crate::cli::Command::get(), Some(&mut fetcher))
 }
 
-// `Commands` was a Zig anonymous tuple of three single-element string arrays, used only to
-// drive `inline for` over its three fields in GitHandler.run. In Rust we just iterate the
+// `Commands` was an anonymous tuple of three single-element string arrays, used only to
+// drive an unrolled loop over its three fields in GitHandler.run. In Rust we just iterate the
 // three git command arrays directly (see GitHandler::run).
 
 pub struct DownloadedExample {
@@ -2179,8 +2176,8 @@ static URL_: bun_core::RacyCell<Option<URL<'static>>> = bun_core::RacyCell::new(
 static APP_NAME_BUF: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::new([0u8; 512]);
 static GITHUB_REPOSITORY_URL_BUF: bun_core::RacyCell<[u8; 1024]> =
     bun_core::RacyCell::new([0u8; 1024]);
-// PORT NOTE: Zig used a fn-local `var url_buf: [1024]u8` in `Example.fetch`;
-// hoisted to a static so the borrowed slice satisfies `URL<'static>` for
+// PORT NOTE: fn-local `[1024]u8` URL buffer hoisted to a static so the
+// borrowed slice satisfies `URL<'static>` for
 // `AsyncHTTP::init_sync` (single-threaded CLI; same pattern as
 // `GITHUB_REPOSITORY_URL_BUF`).
 static NPM_REGISTRY_URL_BUF: bun_core::RacyCell<[u8; 1024]> = bun_core::RacyCell::new([0u8; 1024]);
@@ -2297,7 +2294,6 @@ impl Example {
                                     )
                                 };
 
-                                // Zig: `folder.accessZ(path, .{ .mode = .read_only })` (std.fs.Dir.accessZ).
                                 // bun_sys exposes `faccessat` for F_OK only; use it as the existence
                                 // gate here. TODO(port): plumb R_OK once bun_sys grows an accessor.
                                 if !bun_sys::faccessat(folder.fd(), path).unwrap_or(false) {
@@ -2455,7 +2451,7 @@ impl Example {
             Global::crash();
         }
 
-        // TODO(port): Zig returned `mutable.*` (deref-copy of struct). MutableString may need Clone.
+        // TODO(port): originally returned a deref-copy of the struct; MutableString may need Clone.
         Ok(mutable.clone()?)
     }
 
@@ -2559,8 +2555,8 @@ impl Example {
 
             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
             Global::exit(1);
-        } // `bun_ast::Expr` cover the same surface (Zig: `asProperty`/
-        // `asString` for parse_utf8-produced UTF-8 literals).
+        } // `bun_ast::Expr` cover the same surface (`as_property`/
+        // `as_string` for parse_utf8-produced UTF-8 literals).
         let tarball_url: &[u8] = 'brk: {
             if let Some(q) = expr.as_property(b"dist") {
                 if let Some(p) = q.expr.as_property(b"tarball") {
@@ -2692,7 +2688,7 @@ impl Example {
 
         bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(b"examples.json", mutable.list.as_slice());
-        // PORT NOTE: Zig passed `ctx.allocator`; ContextData dropped the allocator
+        // PORT NOTE: ContextData dropped the allocator
         // field (global mimalloc) — use the process-lifetime CLI arena (examples
         // slices borrow from it and the CLI exits shortly after).
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
@@ -2803,8 +2799,8 @@ impl CreateListExamplesCommand {
         let mut progress = Progress::default();
         progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
         // PORT NOTE: `Progress::start` returns `&mut Node` borrowing `progress`; detach
-        // via raw pointer so `progress.refresh()` can re-borrow below (mirrors Zig where
-        // both held independent `*Node`/`*Progress` pointers).
+        // via raw pointer so `progress.refresh()` can re-borrow below (both are
+        // held as independent `*Node`/`*Progress` pointers).
         let node: *mut ProgressNode = progress.start(b"Fetching manifest", 0);
         progress.refresh();
 
@@ -2848,7 +2844,7 @@ struct GitHandler;
 
 // TODO(port): mutable static atomic + thread handle — single use per process
 static SUCCESS: AtomicU32 = AtomicU32::new(0);
-// Zig used `std.Thread`; bun_threading has no top-level Thread wrapper yet,
+// bun_threading has no top-level Thread wrapper yet,
 // so use std::thread::JoinHandle directly (CLI-only, no JSC interaction).
 // PORTING.md §Global mutable state: written in `spawn`, taken in `wait`, both
 // on the main CLI thread → RacyCell.
@@ -2859,7 +2855,7 @@ impl GitHandler {
     pub fn spawn(destination: &[u8], path: &[u8], verbose: bool) {
         SUCCESS.store(0, Ordering::Relaxed);
 
-        // TODO(port): std.Thread.spawn — destination/path borrowed across thread; Zig relied on
+        // TODO(port): destination/path borrowed across thread; the original relied on
         // them being long-lived (filesystem dirname_store / env). Phase B: ensure 'static or own.
         // SAFETY: `destination` lives in `filesystem.dirname_store` and `path` in env loader;
         // both are 'static for the CLI process. Extend lifetimes to satisfy `spawn`.
@@ -2929,10 +2925,10 @@ impl GitHandler {
 
         // SAFETY: single-threaded CLI access to module-level static path buffer (note: this fn
         // may run on the git thread; BUN_PATH_BUF is also touched on main thread for `--open`.
-        // The two uses are sequenced — git runs before `--open` block. Matches Zig.)
+        // The two uses are sequenced — git runs before `--open` block.)
         let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
-        // Zig used `std.process.Child` (no libuv). The Rust port routes through
-        // `bun.spawnSync`, which on Windows drives `uv_spawn` and needs a uv loop. This fn
+        // Routes through `bun.spawnSync`, which on Windows drives `uv_spawn` and
+        // needs a uv loop. This fn
         // runs on the dedicated git thread (see `GitHandler::spawn`), so use the
         // *thread-local* `MiniEventLoop` singleton — `init_global` is `thread_local!`-backed,
         // so the main thread's loop is not touched (driving it cross-thread would be libuv UB).
@@ -2959,10 +2955,10 @@ impl GitHandler {
             }
 
             // same names, just comptime known values
-            // PORT NOTE: Zig used `inline for` over std.meta.fieldNames(@TypeOf(Commands)) to
+            // PORT NOTE: was an unrolled loop over `Commands` tuple field names to
             // index into git_commands by tuple field index. We just iterate the array directly.
             for command in git_commands {
-                // Zig used `std.process.Child`; PORTING.md bans std::process — use bun.spawnSync.
+                // PORTING.md bans std::process — use bun.spawnSync.
                 let _ = spawn_sync::spawn(&spawn_sync::Options {
                     argv: command.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
                     cwd: Box::from(destination),
@@ -2989,5 +2985,3 @@ impl GitHandler {
         Ok(false)
     }
 }
-
-// ported from: src/cli/create_command.zig

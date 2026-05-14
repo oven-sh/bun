@@ -36,5 +36,3 @@ pub fn prepare_request<Context: WriterContext>(
     packet.end()?;
     Ok(())
 }
-
-// ported from: src/sql/mysql/MySQLRequest.zig

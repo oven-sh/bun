@@ -2,7 +2,7 @@
 //! `ModuleInfoDeserialized` into a `JSC::JSModuleRecord`. Aliased back so the
 //! `extern "C"` symbol names are still discoverable from C++.
 //!
-//! Note: the `zig__renderDiff` export from `analyze_jsc.zig` lives in
+//! Note: the `bun__renderDiff` export lives in
 //! `bun_runtime::test_runner::diff_format` instead — `DiffFormatter` is a
 //! higher-tier type this crate cannot depend on, and the C++ caller only needs
 //! the symbol at link time, not a particular crate.
@@ -15,7 +15,7 @@ use analyze::{ModuleInfoDeserialized, RecordKind, RequestedModuleValue, StringID
 use bun_bundler::analyze_transpiled_module as analyze;
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
+pub extern "C" fn bun__ModuleInfoDeserialized__toJSModuleRecord(
     global_object: &JSGlobalObject,
     vm: &VM,
     module_key: &IdentifierArray,
@@ -42,8 +42,8 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     let record_kinds: &[RecordKind] = res.record_kinds();
 
     let identifiers = IdentifierArray::create(strings_lens.len());
-    // SAFETY: `identifiers` is non-null (returned by `create`); destroyed exactly once at scope exit,
-    // mirroring Zig's `defer identifiers.destroy()` (runs on both success and early-return paths).
+    // SAFETY: `identifiers` is non-null (returned by `create`); destroyed exactly once at scope exit
+    // (runs on both success and early-return paths).
     let _identifiers_guard = scopeguard::guard(identifiers, |p| unsafe {
         IdentifierArray::destroy(p);
     });
@@ -113,7 +113,7 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
             RequestedModuleValue::Json => {
                 module_record.add_requested_module_json(identifiers, reqk)
             }
-            // Zig open-enum tail: `else => |uv| @enumFromInt(@intFromEnum(uv))` —
+            // Open-enum tail: pass the raw discriminant through —
             // FetchParameters and StringID are both `#[repr(transparent)] u32`, so this
             // is a bitcast of the raw discriminant back into the interned-string index.
             uv => {
@@ -379,7 +379,7 @@ impl JSModuleRecord {
 }
 
 // Thin method shims over the raw `*mut JSModuleRecord` returned by `create`.
-// These take `*mut Self` because the Zig side calls them as `module_record.addX(...)`
+// These take `*mut Self` because the FFI side calls them as `module_record.addX(...)`
 // on a raw pointer; we keep raw-ptr receivers to avoid materializing `&mut` aliases.
 trait JSModuleRecordExt {
     fn add_indirect_export(
@@ -560,5 +560,3 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         }
     }
 }
-
-// ported from: src/bundler_jsc/analyze_jsc.zig

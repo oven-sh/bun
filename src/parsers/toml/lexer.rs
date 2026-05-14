@@ -6,12 +6,12 @@ use bun_ast as js_ast;
 use bun_ast::LexerLog;
 use bun_core::fmt::hex_digit_value_u32;
 use bun_core::strings;
-// In Zig it's `bun.CodePoint` (i32); lives at `bun_core::strings::CodePoint`.
+// `bun.CodePoint` (i32); lives at `bun_core::strings::CodePoint`.
 use bun_core::strings::CodePoint;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
-#[allow(non_camel_case_types)] // PORTING.md: "Match the Zig's structure" — Zig: `t_end_of_file`.
+#[allow(non_camel_case_types)] // matches the upstream snake_case token names (`t_end_of_file`).
 pub enum T {
     t_end_of_file,
 
@@ -51,9 +51,8 @@ pub enum T {
 pub struct Lexer<'a> {
     // PORT NOTE: borrowed (`&'a Source`) rather than owned so
     // `identifier`/`string_literal_slice` can borrow `&'a [u8]` from
-    // `source.contents` without a self-referential struct. The Zig original
-    // copied `Source` by value because Zig has no borrow checker; the Rust
-    // `bun_ast::Source.contents` is now `Cow<'static,[u8]>` so an owned copy
+    // `source.contents` without a self-referential struct.
+    // `bun_ast::Source.contents` is `Cow<'static,[u8]>` so an owned copy
     // would tie those slices to `&self` instead of `'a`.
     pub source: &'a bun_ast::Source,
     pub log: &'a mut bun_ast::Log,
@@ -302,7 +301,7 @@ impl<'a> Lexer<'a> {
                             i += 1;
                         }
                     }
-                    // PORT NOTE: Zig discards `bytes` here (dead store); ported faithfully.
+                    // PORT NOTE: `bytes` is discarded here (a dead store upstream too); ported faithfully.
                 }
 
                 // Store bigints as text to avoid precision loss;
@@ -440,7 +439,7 @@ impl<'a> Lexer<'a> {
             // Filter out underscores;
             if underscore_count > 0 {
                 let mut i: usize = 0;
-                // PORT NOTE: Zig handled OOM via if/else on allocator.alloc; arena alloc here is infallible.
+                // PORT NOTE: arena alloc here is infallible; the original branched on alloc failure.
                 let bytes = self
                     .bump
                     .alloc_slice_fill_default::<u8>(text.len() - underscore_count);
@@ -878,8 +877,8 @@ impl<'a> Lexer<'a> {
         text: &[u8],
         buf: &mut bun_alloc::ArenaVec<'a, u8>,
     ) -> Result<(), Error> {
-        // PORT NOTE: Zig copied `*buf_` into a local and `defer`-wrote it back.
-        // In Rust we operate on `buf` directly via &mut.
+        // PORT NOTE: operates on `buf` directly via `&mut` rather than copying
+        // into a local and writing it back at scope exit.
 
         let iterator = strings::CodepointIterator::init(text);
         let mut iter = strings::Cursor::default();
@@ -1288,7 +1287,7 @@ pub fn is_identifier_part(code_point: CodePoint) -> bool {
         | '-'
         | ':'
     ) && (0..=127).contains(&code_point)
-    // PORT NOTE: Zig matched CodePoint directly against char ranges; Rust requires
+    // PORT NOTE: matching CodePoint directly against char ranges requires
     // bounding to ASCII before the byte cast above is sound.
 }
 
@@ -1297,8 +1296,8 @@ pub fn is_latin1_identifier<B: Copy + Into<u32>>(name: &[B]) -> bool {
         return false;
     }
 
-    // Match on the full-width value — Zig switches on u8/u16 directly against char
-    // ranges; truncating to u8 here would incorrectly accept e.g. U+0161 as 'a'.
+    // Match on the full-width value — truncating to u8 here would incorrectly
+    // accept e.g. U+0161 as 'a'.
     match name[0].into() {
         0x61..=0x7A | 0x41..=0x5A | 0x24 | 0x31..=0x39 | 0x5F | 0x2D => {}
         _ => return false,
@@ -1320,5 +1319,3 @@ pub fn is_latin1_identifier<B: Copy + Into<u32>>(name: &[B]) -> bool {
 fn float64(num: CodePoint) -> f64 {
     num as f64
 }
-
-// ported from: src/interchange/toml/lexer.zig

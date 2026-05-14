@@ -1,7 +1,7 @@
 // This file is unused by Bun itself, but rather is a tool for
 // contributors to hack on `bun-framework-react` without needing
 // to compile bun itself. If changes to this are made, please
-// update 'pub fn react' in 'bake.zig'
+// update `Framework::react` in `src/runtime/bake/bake_body.rs`.
 import type { Bake } from "bun";
 
 export function react(): Bake.Framework {

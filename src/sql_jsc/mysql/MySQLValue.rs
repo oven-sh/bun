@@ -1,12 +1,12 @@
-//! `Value` union + JSC bridges for MySQL type encoding. Split from
-//! `sql/mysql/MySQLTypes.zig` so the protocol layer keeps the pure
+//! `Value` union + JSC bridges for MySQL type encoding. Split out of the
+//! shared MySQL types module so the protocol layer keeps the pure
 //! `CharacterSet`/`FieldType` enums without `JSValue` references.
 
 use crate::jsc::{
     IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsError, JsResult,
     MarkedArgumentBuffer, StringJsc as _, bun_string_jsc, js_error_to_mysql,
 };
-use bun_core::zig_string::Slice as ZigStringSlice;
+use bun_core::unsafe_string_view::Slice as UTF8Slice;
 use bun_core::{OwnedString, String as BunString};
 
 use bun_sql::mysql::mysql_types::FieldType;
@@ -131,7 +131,7 @@ pub enum Value {
     Float(f32),
     Double(f64),
 
-    String(ZigStringSlice),
+    String(UTF8Slice),
     StringData(Data),
     Bytes(Bytes),
     BytesData(Data),
@@ -152,7 +152,7 @@ pub enum Value {
 /// alive — `params` is on the malloc heap and isn't scanned. `Drop`
 /// unpins.
 pub struct Bytes {
-    pub slice: ZigStringSlice,
+    pub slice: UTF8Slice,
     /// JS ArrayBuffer/view to `unpinArrayBuffer` in `Drop`. `JSValue::ZERO`
     /// when the slice is owned (FastTypedArray dupe), borrowed from a
     /// Blob store (nothing to unpin), or empty. GC rooting of this value
@@ -164,7 +164,7 @@ pub struct Bytes {
 impl Default for Bytes {
     fn default() -> Self {
         Self {
-            slice: ZigStringSlice::empty(),
+            slice: UTF8Slice::empty(),
             pinned: JSValue::ZERO,
         }
     }
@@ -181,8 +181,8 @@ impl Drop for Bytes {
     }
 }
 
-// Value's Zig `deinit` only forwarded to payload deinit; Rust auto-drops enum
-// payloads (ZigStringSlice, Bytes, Data all impl Drop), so no explicit Drop.
+// No explicit Drop for Value: Rust auto-drops enum payloads
+// (UTF8Slice, Bytes, Data all impl Drop), so cleanup is automatic.
 
 impl Value {
     pub fn to_data(&self, field_type: FieldType) -> Result<Data, any_mysql_error::Error> {
@@ -234,10 +234,10 @@ impl Value {
             }
             // Value::Decimal(dec) => return dec.to_binary(field_type),
             Value::StringData(data) | Value::BytesData(data) => {
-                // TODO(port): Zig returned `data` by value (copy of Data union);
-                // `bun_sql::shared::Data` is not `Clone` in the Rust port, so
-                // return a `Temporary` aliasing the same bytes. `to_data` callers
-                // must keep `self` alive until the returned `Data` is consumed.
+                // TODO(port): `bun_sql::shared::Data` is not `Clone`, so return
+                // a `Temporary` aliasing the same bytes rather than a copy.
+                // `to_data` callers must keep `self` alive until the returned
+                // `Data` is consumed.
                 let s = data.slice();
                 return Ok(if s.is_empty() {
                     Data::Empty
@@ -407,7 +407,7 @@ impl Value {
                         1 => Ok(Value::Bytes(Bytes {
                             // SAFETY: ptr/len returned from helper are valid for the
                             // duration of this call; init_dupe copies immediately.
-                            slice: ZigStringSlice::init_dupe(unsafe {
+                            slice: UTF8Slice::init_dupe(unsafe {
                                 core::slice::from_raw_parts(ptr, len)
                             })
                             .map_err(|_| any_mysql_error::Error::OutOfMemory)?,
@@ -423,7 +423,7 @@ impl Value {
                             Ok(Value::Bytes(Bytes {
                                 // SAFETY: backing ArrayBuffer is pinned (non-detachable) and
                                 // rooted via `roots`; slice stays valid until Bytes::drop unpins.
-                                slice: ZigStringSlice::from_utf8_never_free(unsafe {
+                                slice: UTF8Slice::from_utf8_never_free(unsafe {
                                     core::slice::from_raw_parts(ptr, len)
                                 }),
                                 pinned: value,
@@ -445,7 +445,7 @@ impl Value {
                     // the store survives until execute.write() has read it.
                     roots.append(value);
                     return Ok(Value::Bytes(Bytes {
-                        slice: ZigStringSlice::from_utf8_never_free(blob.shared_view()),
+                        slice: UTF8Slice::from_utf8_never_free(blob.shared_view()),
                         pinned: JSValue::ZERO,
                     }));
                 }
@@ -559,7 +559,7 @@ impl DateTime {
                 }
             }
             _ => panic!("Invalid datetime length: {}", val.len()),
-            // TODO(port): Zig used bun.Output.panic; confirm bun_core panic helper
+            // TODO(port): consider routing through a bun_core panic helper for consistent formatting.
         }
     }
 
@@ -636,7 +636,7 @@ impl DateTime {
     }
 
     pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
-        // TODO(port): Zig calls toJSTimestamp() with no args here but the fn takes globalObject and is fallible; preserved bug
+        // TODO(port): the original implementation called toJSTimestamp() with no args even though the fn takes globalObject and is fallible; preserved bug.
         JSValue::from_date_number(
             global_object,
             self.to_js_timestamp(global_object).unwrap_or(f64::NAN),
@@ -822,9 +822,8 @@ impl Decimal {
     }
 
     pub fn to_binary(&self, _field_type: FieldType) -> Result<Data, bun_core::Error> {
-        // Zig: `bun.todoPanic(@src(), "Decimal.toBinary not implemented", .{});`
         // Intentional shipped runtime "feature not yet implemented" — distinct
-        // from a Phase-A porting placeholder. The `Decimal` arm of `Value` is
+        // from a porting placeholder. The `Decimal` arm of `Value` is
         // commented out, so this is unreachable today.
         bun_core::todo_panic!("Decimal.toBinary not implemented")
     }
@@ -895,5 +894,3 @@ unsafe extern "C" {
         out_len: &mut usize,
     ) -> i32;
 }
-
-// ported from: src/sql_jsc/mysql/MySQLValue.zig

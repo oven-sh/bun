@@ -1,4 +1,4 @@
-//! Port of src/cli/create/SourceFileProjectGenerator.zig
+//! Source-file-driven project generator for `bun create`.
 
 use crate::api::bun::process as bun_process;
 use crate::api::bun::process::SignalCodeExt as _;
@@ -164,9 +164,8 @@ fn string_with_replacements(
     relative_name: &[u8],
     react_component_export: &[u8],
 ) -> Result<Vec<u8>, bun_alloc::AllocError> {
-    // PORT NOTE: Zig threaded an allocator and reassigned `input` to leaked
-    // intermediate slices. In Rust we own `Vec<u8>` and rebind it; intermediates
-    // are dropped automatically.
+    // PORT NOTE: own `Vec<u8>` and rebind it as we replace placeholders;
+    // intermediates are dropped automatically rather than leaked.
     let mut input: Vec<u8> = original_input.to_vec();
 
     if strings::contains(&input, b"REPLACE_ME_WITH_YOUR_REACT_COMPONENT_EXPORT") {
@@ -276,18 +275,17 @@ pub fn generate_files(
     }
 
     // Generate files based on template type
-    // PORT NOTE: Zig used `switch (tag) { inline else => |active| @field(Self, @tagName(active)) }`
-    // to comptime-dispatch to the per-template `files` const and stack-size the
-    // `filenames`/`created_files` arrays. Rust cannot reflect on decl names, so
-    // we route through `Tag::files()` and use heap Vecs sized at runtime.
+    // PORT NOTE: was a comptime dispatch to the per-template `files` const and
+    // stack-sized `filenames`/`created_files` arrays. Rust cannot reflect on decl
+    // names, so we route through `Tag::files()` and use heap Vecs sized at runtime.
     // PERF(port): was comptime monomorphization + stack arrays — profile in Phase B
     {
         let files: &'static [TemplateFile] = template.tag().files();
 
         let mut max_filename_len: usize = 0;
-        // PORT NOTE: reshaped for borrowck — Zig kept parallel `[N][]const u8 filenames`
-        // + `[N]bool created_files` arrays of arena-backed slices. Here a single
-        // Vec<Option<Vec<u8>>> owns the names; Some(_) doubles as the created flag.
+        // PORT NOTE: reshaped for borrowck — a single Vec<Option<Vec<u8>>> owns
+        // the names; Some(_) doubles as the "created" flag (replaces parallel
+        // `filenames` + `created_files` arrays).
         let mut filenames: Vec<Option<Vec<u8>>> = vec![None; files.len()];
 
         // Create all template files
@@ -688,7 +686,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
             }
 
             if filename[0] >= b'a' && filename[0] <= b'z' {
-                // PORT NOTE: Zig leaked `duped` on the success returns below
+                // PORT NOTE: `duped` is leaked on the success returns below
                 // (only freed on the fall-through). Route through the process-
                 // lifetime CLI arena to match the returned-slice lifetime; the
                 // fall-through `free` is a no-op (arena-backed).
@@ -760,14 +758,14 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                     }
                 }
 
-                // Zig: default_allocator.free(duped) — intentionally leaked above; see PORT NOTE.
+                // `duped` is intentionally leaked above; see PORT NOTE.
             }
 
             let Ok(name_to_try) = MutableString::ensure_valid_identifier(filename) else {
                 return None;
             };
             if exports.contains(&name_to_try) {
-                // Zig returns an allocator-owned slice; route through the
+                // Caller expects an allocator-owned slice; route through the
                 // process-lifetime CLI arena.
                 return Some(crate::cli::cli_dupe(&name_to_try));
             }
@@ -992,7 +990,7 @@ impl Tag {
         }
     }
 
-    /// Replaces Zig's `@field(SourceFileProjectGenerator, @tagName(active)).files`.
+    /// Per-template file list lookup (replaces a comptime decl-name dispatch).
     pub fn files(self) -> &'static [TemplateFile] {
         match self {
             Tag::ReactTailwindSpa => react_tailwind_spa::FILES,
@@ -1055,5 +1053,3 @@ impl Logger {
         ));
     }
 }
-
-// ported from: src/cli/create/SourceFileProjectGenerator.zig

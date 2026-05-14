@@ -41,7 +41,7 @@ pub fn view(
             'from_package_json: {
                 // `root_dir` is set once by `PackageManager::init()` and points
                 // into the resolver's directory cache for the process lifetime;
-                // mirrors Zig's non-optional `*DirEntry` field.
+                // mirrors a non-optional `*DirEntry` field.
                 if !manager.root_dir.has_comptime_query(b"package.json") {
                     break 'from_package_json;
                 }
@@ -54,7 +54,7 @@ pub fn view(
                     Err(_) => break 'from_package_json,
                 };
                 // PORT NOTE: copy into the function-scope bump so the slice
-                // outlives this block (Zig never frees this allocation either).
+                // outlives this block (this allocation is never freed).
                 let str: &[u8] = bump.alloc_slice_copy(&str);
                 let source = &bun_ast::Source::init_path_string(b"package.json", str);
                 let mut pkg_log = bun_ast::Log::init();
@@ -190,7 +190,7 @@ pub fn view(
 
     let mut versions_len: usize = 1;
 
-    // PORT NOTE: reshaped for borrowck — Zig used a labeled block returning a tuple to reassign (version, manifest)
+    // PORT NOTE: reshaped for borrowck — was a labeled block returning a tuple to reassign (version, manifest)
     'brk: {
         'from_versions: {
             if let Some(versions_obj) = json.get_object(b"versions") {
@@ -207,7 +207,7 @@ pub fn view(
                     if let Some(result) = parsed_manifest.find_by_dist_tag(version) {
                         break 'brk2 result.version;
                     } else {
-                        // Parse as semver query and find best version - exactly like outdated_command.zig line 325
+                        // Parse as semver query and find best version - same approach as outdated_command.rs
                         let sliced_literal = Semver::SlicedString::init(version, version);
                         let query = Semver::query::parse(version, sliced_literal)?;
                         // `defer query.deinit()` — handled by Drop
@@ -581,5 +581,3 @@ pub fn view(
 
     Ok(())
 }
-
-// ported from: src/cli/pm_view_command.zig

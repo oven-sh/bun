@@ -50,12 +50,12 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
-// ---- Zig FFI -----------------------------------------------------------------------------------
-// The Zig WebWorker struct is owned by this Worker (freed in ~Worker) and drives the worker
-// thread. See src/jsc/web_worker.zig for the matching side of each entry point.
+// ---- Native FFI --------------------------------------------------------------------------------
+// The native WebWorker struct is owned by this Worker (freed in ~Worker) and drives the worker
+// thread. See src/jsc/web_worker.rs for the matching side of each entry point.
 extern "C" {
 
-// Allocate the Zig WebWorker, take a keep-alive on the parent event loop, and spawn the worker
+// Allocate the native WebWorker, take a keep-alive on the parent event loop, and spawn the worker
 // thread. Returns null (and sets errorMessage) on any failure; nothing needs cleanup in that case.
 void* WebWorker__create(
     Worker* worker,
@@ -87,7 +87,7 @@ void WebWorker__setRef(void* worker, bool ref);
 // thread.
 void WebWorker__releaseParentPollRef(void* worker);
 
-// Free the Zig WebWorker struct. Called from ~Worker.
+// Free the native WebWorker struct. Called from ~Worker.
 void WebWorker__destroy(void* worker);
 
 } // extern "C"
@@ -273,7 +273,7 @@ void Worker::enqueueToParent(MessageWithMessagePorts&& message)
 // sender. A sustained producer (e.g. a tight postMessage loop) would otherwise
 // make every per-message pop a contended acquire.
 template<typename Dispatch>
-static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* globalObject, ScriptExecutionContext& context, Dispatch&& dispatch)
+static inline bool drainInbox(Worker::MessageInbox& inbox, Bun::GlobalObject* globalObject, ScriptExecutionContext& context, Dispatch&& dispatch)
 {
     size_t limit;
     Deque<MessageWithMessagePorts> batch;
@@ -326,7 +326,7 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
 
 void Worker::drainToWorker(ScriptExecutionContext& context)
 {
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject());
+    auto* globalObject = uncheckedDowncast<Bun::GlobalObject>(context.jsGlobalObject());
     if (!globalObject) {
         Locker locker { m_toWorker.lock };
         m_toWorker.drainScheduled.store(false, std::memory_order_relaxed);
@@ -412,7 +412,7 @@ bool Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>
 
 // ---- Worker-thread entry points ---------------------------------------------
 
-void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
+void Worker::dispatchOnline(Bun::GlobalObject* workerGlobalObject)
 {
     // Pending→Running under the same lock postTaskToWorkerGlobalScope uses, so
     // a message post racing this transition either queues (drained below by
@@ -460,7 +460,7 @@ static inline void workerScheduleInitialDrain(Worker& worker, Worker::MessageInb
     worker.drainToWorker(ctx);
 }
 
-void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
+void Worker::fireEarlyMessages(Bun::GlobalObject* workerGlobalObject)
 {
     auto tasks = [&]() {
         Locker lock(m_pendingTasksMutex);
@@ -494,7 +494,7 @@ void Worker::dispatchErrorWithMessage(WTF::String message)
     });
 }
 
-bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value)
+bool Worker::dispatchErrorWithValue(Bun::GlobalObject* workerGlobalObject, JSValue value)
 {
     auto serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
     if (!serialized)
@@ -548,9 +548,9 @@ bool Worker::dispatchExit(int32_t exitCode)
     });
 }
 
-// ---- extern "C" shims (called from Zig) -------------------------------------
+// ---- extern "C" shims (called from the native WebWorker) ---------------------
 
-extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
+extern "C" void WebWorker__teardownJSCVM(Bun::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     vm.setHasTerminationRequest();
@@ -567,14 +567,12 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 
-    // Drop the single ref taken by `Zig__GlobalObject__create`
+    // Drop the single ref taken by `Bun__GlobalObject__create`
     // (`vmPtr->refSuppressingSaferCPPChecking()`), bringing the VM refcount
     // to zero — `~VM` runs here while the API lock is still held by this
-    // thread, exactly as in the Zig build (where `pthread_exit` skipped the
-    // outer `JSLockHolder` destructor and a second `deref` here released its
-    // abandoned ref). The Rust port acquires the API lock manually with no
-    // extra VM ref (see `WebWorker::thread_main`), so a second `deref` would
-    // run `~VM` twice / dereference the freed VM.
+    // thread. `WebWorker::thread_main` acquires the API lock manually with no
+    // extra VM ref, so a second `deref` would run `~VM` twice / dereference
+    // the freed VM.
     vm.derefSuppressingSaferCPPChecking(); // NOLINT
 }
 
@@ -583,17 +581,17 @@ extern "C" void WebWorker__dispatchExit(Worker* worker, int32_t exitCode)
     worker->dispatchExit(exitCode);
 }
 
-extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
+extern "C" void WebWorker__dispatchOnline(Worker* worker, Bun::GlobalObject* globalObject)
 {
     worker->dispatchOnline(globalObject);
 }
 
-extern "C" void WebWorker__fireEarlyMessages(Worker* worker, Zig::GlobalObject* globalObject)
+extern "C" void WebWorker__fireEarlyMessages(Worker* worker, Bun::GlobalObject* globalObject)
 {
     worker->fireEarlyMessages(globalObject);
 }
 
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, JSC::EncodedJSValue errorValue)
+extern "C" void WebWorker__dispatchError(Bun::GlobalObject* globalObject, Worker* worker, BunString message, JSC::EncodedJSValue errorValue)
 {
     JSValue error = JSC::JSValue::decode(errorValue);
     ErrorEvent::Init init;
@@ -643,7 +641,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
 }
 
-JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
+JSValue createNodeWorkerThreadsBinding(Bun::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
 
@@ -706,7 +704,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     JSC::VM& vm = leixcalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Zig::GlobalObject* globalObject = dynamicDowncast<Zig::GlobalObject>(leixcalGlobalObject);
+    Bun::GlobalObject* globalObject = dynamicDowncast<Bun::GlobalObject>(leixcalGlobalObject);
     if (!globalObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 

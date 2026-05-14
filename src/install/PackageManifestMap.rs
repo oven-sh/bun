@@ -1,5 +1,5 @@
 use bun_collections::HashMap;
-use bun_collections::zig_hash_map::MapEntry as Entry;
+use bun_collections::unmanaged_hash_map::MapEntry as Entry;
 use bun_semver::string::Builder as StringBuilder;
 use bun_sys::Fd;
 
@@ -20,11 +20,11 @@ pub enum Value {
 }
 
 impl Value {
-    /// Zig: `entry.value_ptr.manifest` field projection on the `.manifest` arm.
+    /// `entry.value_ptr.manifest` field projection on the `.manifest` arm.
     bun_core::enum_unwrap!(pub Value, Manifest => fn manifest / manifest_mut -> npm::PackageManifest);
 }
 
-// Zig: `std.HashMap(PackageNameHash, Value, IdentityContext(PackageNameHash), 80)`.
+// Hash map keyed by `PackageNameHash` with an identity hasher (80% load factor).
 type ManifestHashMap =
     HashMap<PackageNameHash, Value, bun_collections::IdentityContext<PackageNameHash>>;
 
@@ -37,7 +37,7 @@ pub enum CacheBehavior {
 /// By-value snapshot of the `PackageManager` fields the disk-fallback path of
 /// [`PackageManifestMap::by_name_hash_allow_expired`] reads.
 ///
-/// Zig threads `pm: *PackageManager` and reads these directly. In Rust every
+/// The original threads `pm: *PackageManager` and reads these directly. In Rust every
 /// caller is `pm.manifests.by_name…(pm, …)`, so accepting `&mut PackageManager`
 /// (or `&mut *raw`) would alias the `&mut self` receiver — Stacked-Borrows UB
 /// regardless of which fields the body touches. Capturing the four scalars by
@@ -91,7 +91,7 @@ impl PackageManifestMap {
         name_hash: PackageNameHash,
         manifest: &npm::PackageManifest,
     ) -> Result<(), bun_alloc::AllocError> {
-        // Zig: `.{ .manifest = manifest.* }` — struct copy; `PackageManifest: Clone`.
+        // `.{ .manifest = manifest.* }` — struct copy; `PackageManifest: Clone`.
         self.hash_map
             .insert(name_hash, Value::Manifest(manifest.clone()));
         Ok(())
@@ -115,7 +115,7 @@ impl PackageManifestMap {
         )
     }
 
-    /// Memory-only lookup — equivalent to Zig
+    /// Memory-only lookup — equivalent to
     /// `byNameHash(this, pm, scope, hash, .load_from_memory, _)` with
     /// `is_expired = null`, but without the `ctx`/`scope` parameters: the
     /// `.load_from_memory` arm never reads them. Exposed separately so callers
@@ -150,9 +150,9 @@ impl PackageManifestMap {
         )
     }
 
-    /// Zig: `byNameHashAllowExpired(this, pm: *PackageManager, ...)`.
+    /// `byNameHashAllowExpired(this, pm: *PackageManager, ...)`.
     ///
-    /// PORT NOTE: reshaped for borrowck — Zig passes `pm` and reads
+    /// PORT NOTE: reshaped for borrowck — the original passes `pm` and reads
     /// `pm.options.enable.*`, `pm.getCacheDirectory()`, and
     /// `pm.timestamp_for_manifest_cache_control` on the disk-fallback arm.
     /// Those scalars are hoisted into [`DiskCacheCtx`] so callers never hold
@@ -184,12 +184,12 @@ impl PackageManifestMap {
             };
         }
 
-        // PORT NOTE: reshaped for borrowck — Zig's `getOrPut` returns `{ found_existing, value_ptr }`;
+        // PORT NOTE: reshaped for borrowck — the original's `getOrPut` returns `{ found_existing, value_ptr }`;
         // Rust splits into Occupied/Vacant arms.
         match self.hash_map.entry(name_hash) {
             Entry::Occupied(occ) => {
                 let value_ptr = occ.into_mut();
-                // PORT NOTE: reshaped for borrowck — Zig mutated `value_ptr.*` in
+                // PORT NOTE: reshaped for borrowck — the original mutated `value_ptr.*` in
                 // place from `.manifest` to `.expired`. Compute the demote decision
                 // first without holding a borrow that escapes the fn.
                 let demote = matches!(
@@ -269,5 +269,3 @@ impl PackageManifestMap {
         }
     }
 }
-
-// ported from: src/install/PackageManifestMap.zig

@@ -12,7 +12,7 @@ impl<'a> Default for Execute<'a> {
     fn default() -> Self {
         Self {
             max_rows: 0,
-            // TODO(port): PortalOrPreparedStatement has no Zig default; callers must set `p`.
+            // TODO(port): PortalOrPreparedStatement has no natural default; callers must set `p`.
             p: PortalOrPreparedStatement::Portal(b""),
         }
     }
@@ -36,7 +36,7 @@ impl<'a> Execute<'a> {
         Ok(())
     }
 
-    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
+    // Thin wrapper mirroring `WriteWrap` — see src/sql/postgres/protocol/WriteWrap.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
@@ -44,5 +44,3 @@ impl<'a> Execute<'a> {
         self.write_internal(writer)
     }
 }
-
-// ported from: src/sql/postgres/protocol/Execute.zig

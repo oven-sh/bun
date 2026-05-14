@@ -136,9 +136,9 @@ describe("banned words", () => {
 });
 
 describe("required words", () => {
-  // The Zig expect matchers each open-coded the `incrementExpectCallCounter()`
+  // The expect matchers used to each open-code the `incrementExpectCallCounter()`
   // call, so the per-file string check above used to catch a forgotten one.
-  // The Rust port consolidated that boilerplate into a small set of shared
+  // The Rust implementation consolidated that boilerplate into a small set of shared
   // helpers (`matcher_prelude`, `run_unary_predicate`, `mock_prologue`,
   // `numeric_ordering_matcher`, `contain_matcher`, …), each of which bumps
   // the counter exactly once. Per-file scanning would only see the handful

@@ -1,8 +1,7 @@
 //! Proc-macro backend for `bun_clap::parse_param!` / `bun_clap::parse_params!`.
 //!
-//! This is a 1:1 port of the comptime `parseParam` from `src/clap/clap.zig`, lifted into
-//! a proc-macro so the resulting `Param<Help>` values are fully const and usable in
-//! `static` tables (the Zig original ran at comptime via `@setEvalBranchQuota`).
+//! This is `parseParam` lifted into a proc-macro so the resulting `Param<Help>`
+//! values are fully const and usable in `static` tables.
 //!
 //! Do **not** call these proc-macros directly — they take a leading crate-path argument
 //! (`$crate`) injected by the `macro_rules!` wrappers in `bun_clap`. Use
@@ -76,7 +75,7 @@ impl ParseParamError {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Parser — direct port of clap.zig `parseParam` / `parseParamRest` / `parseLongNames`
+// Parser — `parseParam` / `parseParamRest` / `parseLongNames`
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// `std.mem.tokenizeAny` with a `.rest()` that skips leading delimiters.
@@ -271,8 +270,8 @@ fn byte_str_b(s: &[u8]) -> LitByteStr {
 /// in rodata. The ANSI form is *not* baked in — it is rare (only `bun --help` on
 /// a colour TTY) and would otherwise roughly triple the help-string rodata, so
 /// `bun_clap::pretty_help_desc` derives it from `Help::msg` on demand instead.
-/// (Zig did the equivalent rewrite at `comptime` via `Output.prettyFmt` inside
-/// `clap.simpleHelpBunTopLevel`.)
+/// (The original did the equivalent rewrite at compile time via `Output.prettyFmt`
+/// inside `clap.simpleHelpBunTopLevel`.)
 fn pretty_rewrite(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
     use bun_output_tags::{RESET, color_for_bytes};
     let mut out: Vec<u8> = Vec::with_capacity(fmt.len() * 2);
@@ -321,9 +320,9 @@ fn pretty_rewrite(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
                     is_reset = true;
                     ""
                 } else {
-                    // Unknown tag: Zig's comptime `prettyFmt` would `@compileError`
-                    // here, but `pretty_fmt_runtime` (the path this replaces) drops
-                    // it silently and so does Zig's actual `clap.simpleHelp`. Match
+                    // Unknown tag: a compile-time `prettyFmt` would error here, but
+                    // `pretty_fmt_runtime` (the path this replaces) drops it silently
+                    // and so does the actual `clap.simpleHelp`. Match
                     // the lenient runtime behaviour — a compile error would be
                     // stricter than what shipped, and param specs don't carry
                     // unknown tags anyway.

@@ -14,7 +14,7 @@ use core::ptr::NonNull;
 
 use crate::dns_jsc::Order as DnsOrder;
 use bun_alloc::Arena;
-use bun_core::ZigString;
+use bun_core::UnsafeStringView;
 use bun_core::{Global, Output};
 use bun_js_parser as js_ast;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -275,7 +275,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         // Set up require(), module, __filename, __dirname relative to cwd
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir_without_trailing_slash();
         // SAFETY: cwd is a valid byte slice; FFI fn reads exactly `len` bytes.
-        // C++ is `[[ZIG_EXPORT(check_slow)]]` → use the generated `bun_jsc::cpp` wrapper,
+        // C++ is `[[RUST_EXPORT(check_slow)]]` → use the generated `bun_jsc::cpp` wrapper,
         // which opens a `TopExceptionScope` before the call (post-hoc `has_exception()`
         // would assert under `BUN_JSC_validateExceptionChecks=1`).
         unsafe {
@@ -286,10 +286,11 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         // SAFETY: transpiler.env is a valid *mut Loader set during VM init.
         if let Some(tz) = unsafe { (*vm.transpiler.env).get(b"TZ") } {
             if !tz.is_empty() {
-                // SAFETY: vm.global is valid; ZigString borrows `tz` for the FFI call duration.
+                // SAFETY: vm.global is valid; UnsafeStringView borrows `tz` for the FFI call duration.
                 // PORT NOTE: `JSGlobalObject::set_time_zone` isn't exposed on the Rust
                 // wrapper yet — call the underlying C++ export directly.
-                let _ = unsafe { JSGlobalObject__setTimeZone(vm.global, &ZigString::init(tz)) };
+                let _ =
+                    unsafe { JSGlobalObject__setTimeZone(vm.global, &UnsafeStringView::init(tz)) };
             }
         }
 
@@ -302,15 +303,13 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
 // TODO(port): move to bun_jsc_sys (or wherever bun.cpp externs land)
 unsafe extern "C" {
     fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
-    // Local shim for `JSGlobalObject::setTimeZone` (ZigGlobalObject.cpp) until
+    // Local shim for `JSGlobalObject::setTimeZone` (BunGlobalObject.cpp) until
     // bun_jsc grows a wrapper.
     fn JSGlobalObject__setTimeZone(
         global: *const JSGlobalObject,
-        time_zone: *const ZigString,
+        time_zone: *const UnsafeStringView,
     ) -> bool;
 }
 
 use bun_bundler::options::EnvBehavior;
 use bun_options_types::offline_mode::OfflineMode;
-
-// ported from: src/cli/repl_command.zig

@@ -23,5 +23,3 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn Bun__X509__toJS(cert: &mut X509, global_object: &JSGlobalObject) -> JSValue;
 }
-
-// ported from: src/runtime/api/bun/x509.zig

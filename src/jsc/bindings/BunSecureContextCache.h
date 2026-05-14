@@ -1,12 +1,12 @@
 #pragma once
 
-// Thin wrapper around `WeakGCMap<uint64_t, JSObject>` so ZigGlobalObject.h
+// Thin wrapper around `WeakGCMap<uint64_t, JSObject>` so BunGlobalObject.h
 // can hold a `std::unique_ptr<SecureContextCache>` without pulling in
 // WeakGCMap.h (this header is included from one .cpp file only).
 //
 // Backs the JS-side dedup of `tls.createSecureContext()`: same config digest
 // → same `JSSecureContext` cell while it's alive. The native `SSL_CTX*` cache
-// (Zig `SSLContextCache`) is independent — BoringSSL's refcount is the single
+// (`SSLContextCache`) is independent — BoringSSL's refcount is the single
 // source of truth, so the two never need to coordinate.
 
 #include "root.h"

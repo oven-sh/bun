@@ -1,5 +1,5 @@
 //! `from_js` for `bun.schema.api.SourceMapMode` — kept out of
-//! `options_types/schema.zig` so that file has no `JSGlobalObject`/`JSValue`
+//! `options_types/schema.rs` so that file has no `JSGlobalObject`/`JSValue`
 //! references.
 
 use crate::{JSGlobalObject, JSValue, JsResult};
@@ -27,5 +27,3 @@ pub fn source_map_mode_from_js(
     }
     Ok(None)
 }
-
-// ported from: src/bundler_jsc/source_map_mode_jsc.zig

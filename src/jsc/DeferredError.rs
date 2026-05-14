@@ -1,6 +1,6 @@
 use crate::node::ErrorCode;
-use crate::{JSGlobalObject, JSValue, StringJsc, ZigStringJsc};
-use bun_core::{String as BunString, ZigString};
+use crate::{JSGlobalObject, JSValue, StringJsc, UnsafeStringViewJsc};
+use bun_core::{String as BunString, UnsafeStringView};
 
 // Error's cannot be created off of the main thread. So we use this to store the
 // information until its ready to be materialized later.
@@ -35,11 +35,9 @@ impl DeferredError {
         };
         err.put(
             global,
-            ZigString::static_(b"code"),
-            ZigString::init(<&'static str>::from(self.code).as_bytes()).to_js(global),
+            UnsafeStringView::static_(b"code"),
+            UnsafeStringView::init(<&'static str>::from(self.code).as_bytes()).to_js(global),
         );
         err
     }
 }
-
-// ported from: src/jsc/DeferredError.zig

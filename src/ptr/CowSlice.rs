@@ -28,10 +28,9 @@ pub type CowSlice<T> = CowSliceZ<T, false>;
 ///
 /// `Z = true` means the backing storage has a sentinel element at `[len]`
 /// (the sentinel value is assumed to be the zero value of `T`).
-// TODO(port): Zig's `comptime sentinel: ?T` allowed an arbitrary sentinel value;
-// Rust const generics cannot express `Option<T>` for generic `T`, so this port
-// uses a `bool` and assumes sentinel == 0 when `Z`. Revisit if a non-zero
-// sentinel is ever needed.
+// TODO(port): Rust const generics cannot express `Option<T>` for generic `T`,
+// so this uses a `bool` and assumes sentinel == 0 when `Z`. Revisit if a
+// non-zero sentinel is ever needed.
 pub struct CowSliceZ<T: 'static, const Z: bool> {
     /// Pointer to the underlying data. Do not access this directly.
     ///
@@ -107,18 +106,17 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         self.debug.map(|d| unsafe { d.as_ref() })
     }
 
-    // TODO(port): Zig exposed `pub const Slice` / `SliceMut` associated type
-    // aliases that switched on `sentinel` (`[:z]const T` vs `[]const T`). Rust
-    // has no inherent associated type aliases; callers use `&[T]` / `&mut [T]`
-    // directly. For `Z = true` the NUL is at `slice()[len]` in backing storage.
+    // TODO(port): Rust has no inherent associated type aliases; callers use
+    // `&[T]` / `&mut [T]` directly. For `Z = true` the NUL is at `slice()[len]`
+    // in backing storage.
 
     /// Create a new Cow that owns its allocation.
     ///
     /// `data` is transferred into the returned string, and must be freed with
     /// `Drop` when the string and its borrows are done being used.
     pub fn init_owned(data: Box<[T]>) -> Self {
-        // PORT NOTE: Zig asserted ownership at runtime via a debug allocator
-        // wrapper. In Rust the `Box<[T]>` type already proves unique ownership.
+        // PORT NOTE: the `Box<[T]>` type already proves unique ownership; no
+        // runtime debug-allocator check is needed.
         let len = data.len();
         let ptr = bun_core::heap::into_raw(data).cast::<T>();
         Self {
@@ -226,7 +224,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
                 drop(unsafe { bun_core::heap::take(d.as_ptr()) });
             }
         }
-        // Zig: `defer str.* = Self.empty` — a *bitwise* overwrite. In Rust,
         // `*self = Self::EMPTY` would run `Drop` on the old value first and
         // free the very `ptr[..len]` allocation we are about to hand back.
         // `mem::forget(mem::replace(..))` resets `self` without dropping.
@@ -265,8 +262,8 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     /// assertions get performed.
     pub fn borrow_subslice(&self, start: usize, end: Option<usize>) -> Self {
         let end_ = end.unwrap_or(self.flags.len());
-        // TODO(port): Zig's sentinel-aware `str.ptr[start..end_ :s]` asserted
-        // the sentinel is present at `end_`. No equivalent check here.
+        // TODO(port): a sentinel-aware slice would assert the sentinel is
+        // present at `end_`. No equivalent check here.
         let mut result = self.borrow();
         // SAFETY: const semantics are enforced by is_owned flag; `start <= end_ <= len`.
         result.ptr = unsafe { self.ptr.add(start) };
@@ -339,8 +336,8 @@ impl<T: 'static, const Z: bool> Drop for CowSliceZ<T, Z> {
     fn drop(&mut self) {
         #[cfg(debug_assertions)]
         if let Some(dbg) = self.debug_data() {
-            // PORT NOTE: Zig asserted `debug.allocator.vtable == allocator.vtable`
-            // here. With a single global allocator that check is moot.
+            // PORT NOTE: with a single global allocator the historical
+            // allocator-vtable equality check is moot.
             if self.is_owned() {
                 let borrows = dbg.mutex.lock();
                 // active borrows become invalid data
@@ -371,8 +368,8 @@ impl<T: 'static, const Z: bool> Drop for CowSliceZ<T, Z> {
 
 impl<const Z: bool> core::fmt::Display for CowSliceZ<u8, Z> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // PORT NOTE: Zig `writer.writeAll(str.slice())` wrote raw bytes.
-        // `BStr` gives lossy Display over `[u8]` without UTF-8 validation.
+        // PORT NOTE: write raw bytes; `BStr` gives lossy Display over `[u8]`
+        // without UTF-8 validation.
         core::fmt::Display::fmt(bstr::BStr::new(self.slice()), f)
     }
 }
@@ -380,9 +377,9 @@ impl<const Z: bool> core::fmt::Display for CowSliceZ<u8, Z> {
 #[cfg(debug_assertions)]
 struct DebugData {
     /// Guards `borrows` (number of active borrows).
-    // PORT NOTE: Zig used `bun.Mutex` with `borrows` as a separate field;
-    // folded into the mutex payload here. `bun_core::Mutex` (poison-free
-    // `std::sync` wrapper) is used because `bun_ptr` sits below `bun_threading`.
+    // PORT NOTE: `borrows` is folded into the mutex payload. `bun_core::Mutex`
+    // (poison-free `std::sync` wrapper) is used because `bun_ptr` sits below
+    // `bun_threading`.
     mutex: bun_core::Mutex<usize>,
 }
 
@@ -433,5 +430,3 @@ mod tests {
         assert_eq!(borrow.slice(), b"hello");
     }
 }
-
-// ported from: src/ptr/CowSlice.zig

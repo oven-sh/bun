@@ -9,7 +9,7 @@ use bun_core::Error;
 // SinglyLinkedList
 // ──────────────────────────────────────────────────────────────────────────
 //
-// PORT NOTE: Zig's `SinglyLinkedList(comptime T: type, comptime Parent: type)`
+// PORT NOTE: the original `SinglyLinkedList(comptime T: type, comptime Parent: type)`
 // threads `Parent` only so that `Node.release()` can call `Parent.release(node)`.
 // In Rust the only `Parent` is `ObjectPool`, so `Node::release` is provided as
 // an inherent method on `ObjectPool` instead and the `Parent` type param is
@@ -19,14 +19,14 @@ use bun_core::Error;
 /// Node inside the linked list wrapping the actual data.
 #[repr(C)]
 pub struct Node<T> {
-    // INTRUSIVE: pool.zig:7 — next link in singly-linked free list
+    // INTRUSIVE: next link in singly-linked free list
     pub next: *mut Node<T>,
-    // PORT NOTE: Zig stored `std.mem.Allocator param` here so `destroyNode`
+    // PORT NOTE: the original stored an allocator param here so `destroyNode`
     // could free via the originating allocator. In Rust the global mimalloc
     // allocator owns every `Box<Node<T>>`, so the field is dropped and
     // `destroy_node` uses `heap::take`.
     //
-    // PORT NOTE: `MaybeUninit<T>` not `T` — Zig's `else undefined` (pool.zig:203)
+    // PORT NOTE: `MaybeUninit<T>` not `T` — leaving bytes uninitialized
     // is well-defined-until-read, but Rust's `assume_init()` on uninit bytes is
     // immediate UB for any `T` with validity invariants. Callers that use
     // `INIT == None` write `data` before reading, so we keep the bytes
@@ -126,7 +126,7 @@ impl<T> Node<T> {
 }
 
 pub struct SinglyLinkedList<T> {
-    // INTRUSIVE: pool.zig:59 — list head; popFirst hands node to caller
+    // INTRUSIVE: list head; popFirst hands node to caller
     pub first: *mut Node<T>,
 }
 
@@ -160,7 +160,7 @@ impl<T> SinglyLinkedList<T> {
             // SAFETY: self.first is non-null (else the `==` above would have
             // matched the null `node`, which callers never pass)
             let mut current_elm = self.first;
-            // SAFETY: walk live list nodes; Zig's `.?` would panic on null —
+            // SAFETY: walk live list nodes; the original would panic on null —
             // mirror that with an unchecked deref (debug_assert in Phase B).
             unsafe {
                 while (*current_elm).next != node {
@@ -203,25 +203,25 @@ impl<T> SinglyLinkedList<T> {
 
 const LOG_ALLOCATIONS: bool = false;
 
-/// Behavior hooks the Zig version expressed via `comptime Init: ?fn(...)` and
+/// Behavior hooks the original version expressed via `comptime Init: ?fn(...)` and
 /// `std.meta.hasFn(Type, "reset")`. Per PORTING.md §Comptime reflection,
 /// optional-decl checks become a trait with default methods.
 pub trait ObjectPoolType: Sized {
     /// Mirrors `comptime Init: ?fn(allocator) anyerror!Type`. `None` ⇒ the
-    /// Zig path that left `data` as `undefined`.
+    /// path that left `data` uninitialized.
     const INIT: Option<fn() -> Result<Self, Error>> = None;
 
     /// Mirrors `if (std.meta.hasFn(Type, "reset")) node.data.reset()`.
-    /// Default is a no-op; types that had `.reset()` in Zig override this.
+    /// Default is a no-op; types that had `.reset()` override this.
     #[inline]
     fn reset(&mut self) {}
 }
 
-/// Per-pool mutable state. Zig's `DataStruct`.
+/// Per-pool mutable state. `DataStruct`.
 pub struct DataStruct<T> {
     pub list: SinglyLinkedList<T>,
     pub loaded: bool,
-    // PORT NOTE: Zig used `MaxCountInt = std.math.IntFittingRange(0, max_count)`.
+    // PORT NOTE: the original used `MaxCountInt = IntFittingRange(0, max_count)`.
     // Rust const generics cannot pick an integer type from a const value; use
     // `usize` and accept the few extra bytes.
     // PERF(port): was IntFittingRange — profile in Phase B
@@ -231,7 +231,7 @@ pub struct DataStruct<T> {
 impl<T> Default for DataStruct<T> {
     fn default() -> Self {
         Self {
-            // PORT NOTE: Zig had `list: LinkedList = undefined` — we zero it.
+            // PORT NOTE: the original had `list: LinkedList = undefined` — we zero it.
             list: SinglyLinkedList::default(),
             loaded: false,
             count: 0,
@@ -293,7 +293,7 @@ impl<T: ObjectPoolType, const TS: bool, const MAX: usize, S> ObjectPoolTrait
 }
 
 /// RAII handle for a pooled `T`. Derefs to the inner value; on `Drop`, the
-/// node is returned to its pool. Replaces the Zig `get()` + `defer release()`
+/// node is returned to its pool. Replaces the `get()` + `defer release()`
 /// pair.
 pub struct PoolGuard<'a, T: ObjectPoolType + 'static> {
     node: *mut Node<T>,
@@ -371,7 +371,7 @@ where
 
     pub fn push(pooled: T) {
         if cfg!(debug_assertions) {
-            // PORT NOTE: Zig gated on `env.allow_assert`; that is
+            // PORT NOTE: the original gated on `env.allow_assert`; that is
             // `Environment.isDebug` ⇒ `cfg!(debug_assertions)`.
             debug_assert!(!Self::full());
         }
@@ -408,7 +408,7 @@ where
         unsafe { (*Self::get_node()).data.as_mut_ptr() }
     }
 
-    /// Zig `get()` — pop a node from the free list or allocate a fresh one.
+    /// `get()` — pop a node from the free list or allocate a fresh one.
     pub fn get_node() -> *mut Node<T> {
         let reused = Self::data(|cell| {
             let mut d = cell.borrow_mut();
@@ -430,12 +430,12 @@ where
         }
 
         if LOG_ALLOCATIONS {
-            // PORT NOTE: Zig wrote to stderr via std.fs; banned here. Phase B
+            // PORT NOTE: the original wrote to stderr directly; banned here. Phase B
             // can route through `bun_core::Output` if this is ever flipped on.
             // TODO(port): log "Allocate {type_name} - {size} bytes"
         }
 
-        // Matches Zig's `data = if (Init) |i| i(..) else undefined` (pool.zig:203).
+        // Matches `data = if (Init) |i| i(..) else undefined`.
         // For `INIT == None` the bytes stay uninitialized; the caller MUST write
         // `data` before any read (and before `release()`, since `destroy_node`
         // assumes it is initialized when dropping).
@@ -512,8 +512,8 @@ where
     }
 
     fn destroy_node(node: *mut Node<T>) {
-        // TODO(port): Zig special-cased `Type != bun.Vec<u8>` here to skip
-        // `bun.memory.deinit(&node.data)` for `Vec<u8>` (a known leak the Zig
+        // TODO(port): the original special-cased `Type != bun.Vec<u8>` here to skip
+        // `bun.memory.deinit(&node.data)` for `Vec<u8>` (a known leak the original
         // comment calls out). In Rust, dropping `T` is the moral equivalent of
         // `bun.memory.deinit`. If `Vec<u8>` (the `Vec<u8>` port) must keep
         // leaking for compat, gate its `Drop` there — not here.
@@ -546,7 +546,7 @@ where
 /// `pub type $Name = ObjectPool<$T, .., $Storage>` alias. `threadsafe` ⇒
 /// `thread_local!` (one free list per thread); `global` ⇒ a single
 /// process-wide `RefCell` (caller is responsible for not touching it from
-/// multiple threads — matches the Zig `threadsafe = false` mode).
+/// multiple threads — matches the `threadsafe = false` mode).
 #[macro_export]
 macro_rules! object_pool {
     ($vis:vis $name:ident : $ty:ty, threadsafe, $max:expr) => {
@@ -599,7 +599,7 @@ macro_rules! __object_pool_storage {
             fn with<R>(
                 f: impl FnOnce(&::core::cell::RefCell<$crate::pool::DataStruct<$ty>>) -> R,
             ) -> R {
-                // PORT NOTE: Zig's `threadsafe = false` used a plain global
+                // PORT NOTE: the original `threadsafe = false` used a plain global
                 // `var data`; Rust forbids non-`Sync` statics, so this still
                 // expands to a thread-local. Single-threaded callers see the
                 // same one cell; cross-thread callers get per-thread pools
@@ -633,8 +633,8 @@ macro_rules! __paste_storage {
 // is in `bun_core` (post `bun_string` merge).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Zig: `Npm.Registry.BodyPool = ObjectPool(MutableString, MutableString.init2048, true, 8)`
-/// (src/install/npm.zig). Init = `init2048`; reuse = `.reset()`.
+/// `Npm.Registry.BodyPool = ObjectPool(MutableString, MutableString.init2048, true, 8)`.
+/// Init = `init2048`; reuse = `.reset()`.
 impl ObjectPoolType for bun_core::MutableString {
     const INIT: Option<fn() -> Result<Self, Error>> =
         Some(|| bun_core::MutableString::init2048().map_err(Into::into));
@@ -643,5 +643,3 @@ impl ObjectPoolType for bun_core::MutableString {
         bun_core::MutableString::reset(self);
     }
 }
-
-// ported from: src/collections/pool.zig

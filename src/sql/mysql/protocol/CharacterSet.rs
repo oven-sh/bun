@@ -1,10 +1,10 @@
 use strum::{FromRepr, IntoStaticStr};
 
-// TODO(port): Zig source is a non-exhaustive `enum(u8)` (trailing `_`), meaning it may
-// legally hold any u8 value not listed below. A Rust `#[repr(u8)] enum` makes that UB.
-// If callers ever construct this from an arbitrary wire byte, Phase B must either add an
-// `Unknown(u8)` path at the construction site or switch to `#[repr(transparent)] struct(u8)`
-// with associated consts.
+// TODO(port): the wire byte is open — any u8 not listed below is still a
+// legal protocol value. A Rust `#[repr(u8)] enum` makes that UB.
+// If callers ever construct this from an arbitrary wire byte, either add an
+// `Unknown(u8)` path at the construction site or switch to
+// `#[repr(transparent)] struct(u8)` with associated consts.
 #[allow(non_camel_case_types)]
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, IntoStaticStr, FromRepr)]
@@ -237,13 +237,12 @@ pub enum CharacterSet {
 impl CharacterSet {
     pub const DEFAULT: CharacterSet = CharacterSet::utf8mb4_general_ci;
 
-    /// Safely construct from a raw protocol byte. Zig's `CharacterSet` is a
-    /// NON-exhaustive `enum(u8)` so `@enumFromInt` is defined for any byte;
-    /// this Rust enum is exhaustive, so unknown discriminants fall back to
-    /// `DEFAULT` via the strum-generated `from_repr` exhaustive match (no
+    /// Safely construct from a raw protocol byte. The wire format allows any
+    /// byte; this Rust enum is exhaustive, so unknown discriminants fall back
+    /// to `DEFAULT` via the strum-generated `from_repr` exhaustive match (no
     /// hand-maintained range list, no `transmute`).
     /// TODO(b2): switch to `#[repr(transparent)] struct(u8)` newtype to keep
-    /// the unknown value (matching Zig semantics) instead of falling back.
+    /// the unknown value instead of falling back.
     pub const fn from_raw(b: u8) -> Self {
         match Self::from_repr(b) {
             Some(cs) => cs,
@@ -266,5 +265,3 @@ impl Default for CharacterSet {
         Self::DEFAULT
     }
 }
-
-// ported from: src/sql/mysql/protocol/CharacterSet.zig

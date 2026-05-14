@@ -5,9 +5,9 @@ use crate::string::strings::{
 };
 use crate::string::w;
 
-// TODO(port): Environment.enableSIMD — Zig gates SIMD paths behind a comptime
-// build flag. Mirror with a cargo feature or a `const ENABLE_SIMD: bool` in
-// `crate::string::strings`. For now reference it as a const so Phase B can wire it.
+// TODO(port): SIMD paths should eventually be gated behind a cargo feature
+// or a `const ENABLE_SIMD: bool` in `crate::string::strings`. For now
+// reference it as a const so it can be wired up later.
 use crate::string::strings::ENABLE_SIMD;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ pub const fn xml_escape_entity(c: u8) -> Option<&'static [u8]> {
 
 /// Per-byte output length for the 5-char Bun.escapeHTML set; non-escaped bytes
 /// map to 1. Derived from [`html_escape_entity`] so the table stays in sync.
-// Zig used `u4`; Rust has no `u4`, so widen to `u8`. Values are all ≤ 6.
+// Values are all ≤ 6, so `u8` is plenty.
 pub const SCALAR_LENGTHS: [u8; 256] = {
     let mut values = [1u8; 256];
     let mut i = 0u16;
@@ -89,8 +89,7 @@ fn scalar_append(buf: *mut u8, ch: u8) -> usize {
 
 #[inline(always)]
 fn scalar_push<const LEN: usize>(chars: &[u8; LEN]) -> Escaped<u8> {
-    // PERF(port): Zig used `inline while` to fully unroll this sum at comptime
-    // for each LEN in 3..=32 — profile in Phase B.
+    // PERF(port): consider fully unrolling this sum for each LEN in 3..=32.
     let mut total: usize = 0;
     let mut i = 0;
     while i < LEN {
@@ -104,7 +103,7 @@ fn scalar_push<const LEN: usize>(chars: &[u8; LEN]) -> Escaped<u8> {
 
     let mut output = vec![0u8; total].into_boxed_slice();
     let mut head = output.as_mut_ptr();
-    // PERF(port): Zig used `inline for (comptime bun.range(0, len))` — profile in Phase B.
+    // PERF(port): consider fully unrolling this loop.
     for i in 0..LEN {
         // SAFETY: `total` was computed from SCALAR_LENGTHS so `head` never
         // overruns `output`.
@@ -311,9 +310,9 @@ pub fn escape_html_for_latin1_input(latin1: &[u8]) -> Result<Escaped<u8>, AllocE
             let mut remaining = latin1;
 
             const VEC_CHARS: &[u8; 5] = b"\"&'<>";
-            // TODO(port): `core::simd` (portable_simd) is nightly-only. Phase B:
-            // either gate behind `#![feature(portable_simd)]` or route through
-            // `bun_highway`. The Zig builds `[5]@Vector(N, u8)` via `@splat`.
+            // TODO(port): `core::simd` (portable_simd) is nightly-only.
+            // Either gate behind `#![feature(portable_simd)]` or route through
+            // `bun_highway`. Builds 5 lane-wide vectors, one per needle byte.
             let vecs: [AsciiVector; 5] = [
                 AsciiVector::splat(VEC_CHARS[0]),
                 AsciiVector::splat(VEC_CHARS[1]),
@@ -331,7 +330,7 @@ pub fn escape_html_for_latin1_input(latin1: &[u8]) -> Result<Escaped<u8>, AllocE
                 'scan_and_allocate_lazily: while remaining.len() >= ASCII_VECTOR_SIZE {
                     debug_assert!(!any_needs_escape);
                     let vec = AsciiVector::from_slice(&remaining[..ASCII_VECTOR_SIZE]);
-                    // Zig: @reduce(.Max, (vec==v0)|(vec==v1)|...) == 1
+                    // Reduce-OR over per-needle equality lanes: any byte matched?
                     if (vec.simd_eq(vecs[0])
                         | vec.simd_eq(vecs[1])
                         | vec.simd_eq(vecs[2])
@@ -346,14 +345,12 @@ pub fn escape_html_for_latin1_input(latin1: &[u8]) -> Result<Escaped<u8>, AllocE
                         // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
                         buf.extend_from_slice(&latin1[..copy_len]);
                         any_needs_escape = true;
-                        // PERF(port): Zig used `inline for (0..ascii_vector_size)` to
-                        // unroll this — profile in Phase B.
+                        // PERF(port): consider unrolling this loop over the vector lanes.
                         for i in 0..ASCII_VECTOR_SIZE {
                             match remaining[i] {
                                 b'"' => {
                                     buf.reserve((ASCII_VECTOR_SIZE - i) + b"&quot;".len());
-                                    // PERF(port): Zig wrote into spare capacity then
-                                    // bumped `items.len` directly — profile in Phase B.
+                                    // PERF(port): consider writing into spare capacity directly.
                                     buf.extend_from_slice(b"&quot;");
                                 }
                                 b'&' => {
@@ -400,7 +397,7 @@ pub fn escape_html_for_latin1_input(latin1: &[u8]) -> Result<Escaped<u8>, AllocE
                     .any()
                     {
                         buf.reserve(ASCII_VECTOR_SIZE + 6);
-                        // PERF(port): Zig used `inline for` here — profile in Phase B.
+                        // PERF(port): consider unrolling this loop.
                         for i in 0..ASCII_VECTOR_SIZE {
                             match remaining[i] {
                                 b'"' => {
@@ -435,16 +432,14 @@ pub fn escape_html_for_latin1_input(latin1: &[u8]) -> Result<Escaped<u8>, AllocE
                     }
 
                     buf.reserve(ASCII_VECTOR_SIZE);
-                    // PERF(port): Zig wrote into spare capacity then bumped
-                    // `items.len` directly — profile in Phase B.
+                    // PERF(port): consider writing into spare capacity directly.
                     buf.extend_from_slice(&remaining[..ASCII_VECTOR_SIZE]);
                     remaining = &remaining[ASCII_VECTOR_SIZE..];
                 }
             }
 
-            // PORT NOTE: reshaped for borrowck — Zig walked raw `ptr`/`end`
-            // pointers; here we index into `remaining` so the prefix-copy
-            // offset is computable without `@intFromPtr`.
+            // PORT NOTE: index into `remaining` instead of walking raw
+            // pointers so the prefix-copy offset is computable directly.
             let mut idx: usize = 0;
             let end = remaining.len();
 
@@ -459,8 +454,7 @@ pub fn escape_html_for_latin1_input(latin1: &[u8]) -> Result<Escaped<u8>, AllocE
                             );
                             let copy_len = (latin1.len() - remaining.len()) + idx;
                             debug_assert!(copy_len <= buf.capacity());
-                            // PERF(port): Zig set `items.len = copy_len` then `@memcpy`
-                            // into it. `extend_from_slice` is equivalent here.
+                            // `extend_from_slice` covers grow + memcpy in one step.
                             buf.extend_from_slice(&latin1[..copy_len]);
                             any_needs_escape = true;
                             break 'scan_and_allocate_lazily;
@@ -601,8 +595,7 @@ pub fn escape_html_for_utf16_input(utf16: &[u16]) -> Result<Escaped<u16>, AllocE
                             continue 'scan_and_allocate_lazily;
                         }
 
-                        // Zig computed byte offset via @intFromPtr; here the
-                        // u16-count offset is `(utf16.len()-remaining.len()) + i`.
+                        // u16-count prefix offset is `(utf16.len()-remaining.len()) + i`.
                         let prefix_u16 = (utf16.len() - remaining.len()) + i as usize;
                         debug_assert!(prefix_u16 <= utf16.len());
                         buf = Vec::with_capacity(utf16.len() + 6);
@@ -705,8 +698,7 @@ pub fn escape_html_for_utf16_input(utf16: &[u16]) -> Result<Escaped<u16>, AllocE
                         }
 
                         buf.reserve(ASCII_U16_VECTOR_SIZE);
-                        // PERF(port): Zig wrote into spare capacity then bumped
-                        // `items.len` directly — profile in Phase B.
+                        // PERF(port): consider writing into spare capacity directly.
                         buf.extend_from_slice(&remaining[..ASCII_U16_VECTOR_SIZE]);
                         remaining = &remaining[ASCII_U16_VECTOR_SIZE..];
                     }
@@ -789,5 +781,3 @@ pub fn escape_html_for_utf16_input(utf16: &[u16]) -> Result<Escaped<u16>, AllocE
         }
     }
 }
-
-// ported from: src/string/immutable/escapeHTML.zig

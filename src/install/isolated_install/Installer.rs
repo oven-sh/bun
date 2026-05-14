@@ -25,7 +25,7 @@ use crate::{
     Resolution, TaskCallbackContext, TruncatedPackageNameHash, bin, invalid_dependency_id,
 };
 // Bring `items_<field>()` column accessors into scope for
-// `MultiArrayList<Package>` / `Slice<Package>` (Zig: `.items(.field)`).
+// `MultiArrayList<Package>` / `Slice<Package>`.
 use super::file_cloner::FileCloner;
 use super::file_copier::FileCopier;
 use super::hardlinker::Hardlinker;
@@ -37,7 +37,7 @@ use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::directories;
 use crate::package_manager_real::package_manager_options::Do;
 
-/// Zig: `Resolution.Tag` — Rust can't nest a type inside a struct, so the
+/// Rust can't nest a type inside a struct, so the
 /// enum lives at module level in `crate::resolution`.
 type ResolutionTag = resolution::Tag;
 
@@ -45,7 +45,7 @@ type Bitset = DynamicBitSet;
 type Progress = crate::bun_progress::Progress;
 type ProgressNode = crate::bun_progress::Node;
 
-// ── Store id aliases (Zig: `Store.Entry.Id` / `Store.Node.Id`) ────────────
+// ── Store id aliases (`Store::Entry::Id` / `Store::Node::Id`) ────────────
 type StoreEntryId = store::entry::Id;
 type StoreNodeId = store::node::Id;
 
@@ -59,9 +59,8 @@ type OsAutoAbsPath = AbsPath<paths::OSPathChar, { PathSeparators::AUTO }>;
 type OsAutoPath = paths::Path<paths::OSPathChar, { PathKind::ANY }, { PathSeparators::AUTO }>;
 /// `bun.AbsPath(.{})` — all-default options.
 type DefaultAbsPath = AbsPath<u8>;
-/// `node_modules/.bun` — Zig used `Store.modules_dir_name` in compile-time
-/// concat; the Rust `MODULES_DIR_NAME` const is `&[u8]` and not usable in
-/// `const_format::concatcp!`, so spell the literal.
+/// `node_modules/.bun` — the Rust `MODULES_DIR_NAME` const is `&[u8]` and not
+/// usable in `const_format::concatcp!`, so spell the literal.
 const NODE_MODULES_BUN: &str = "node_modules/.bun";
 
 bun_output::declare_scope!(IsolatedInstaller, hidden);
@@ -71,7 +70,7 @@ macro_rules! debug {
 
 pub struct Installer<'a> {
     pub trusted_dependencies_mutex: Mutex,
-    /// Zig: `*Lockfile` — BACKREF. Raw pointer (not `&'a mut`) for the same
+    /// BACKREF. Raw pointer (not `&'a mut`) for the same
     /// reason as `manager`: `Task::run` executes concurrently on the thread
     /// pool and each task derefs this field; a `&'a mut` would assert
     /// exclusivity every concurrent task violates. Mutated only for
@@ -82,7 +81,7 @@ pub struct Installer<'a> {
     pub summary: InstallSummary, // = .{ .successfully_installed = .empty }
     pub installed: Bitset,
     pub install_node: Option<&'a mut ProgressNode>,
-    /// Mirrors Zig's `?*Progress.Node`. Stored as `NonNull` (not `&mut`)
+    /// Optional progress-node pointer. Stored as `NonNull` (not `&mut`)
     /// because `PackageManager.scripts_node` already holds a raw pointer to the
     /// same stack local; materializing a second long-lived `&mut` here would
     /// invalidate that pointer's provenance under Stacked Borrows. Currently
@@ -90,7 +89,7 @@ pub struct Installer<'a> {
     pub scripts_node: Option<core::ptr::NonNull<ProgressNode>>,
     pub is_new_bun_modules: bool,
 
-    /// Zig: `*PackageManager` — BACKREF. Raw pointer (not `&'a mut`) because
+    /// BACKREF. Raw pointer (not `&'a mut`) because
     /// `Task::run`/`Task::callback` execute concurrently on the thread pool
     /// and each derefs this field; a `&'a mut` here would assert exclusivity
     /// every concurrent task violates. Never null. Access via `manager()` /
@@ -103,8 +102,8 @@ pub struct Installer<'a> {
     pub task_queue: UnboundedQueue<Task>, // intrusive via .next
     pub tasks: Box<[Task]>,
 
-    /// Zig: `std.atomic.Value(PackageInstall.Method)`. Stable Rust has no
-    /// generic atomic-enum, so store the `#[repr(u8)]` discriminant and
+    /// Stable Rust has no generic atomic-enum, so store the `#[repr(u8)]`
+    /// discriminant and
     /// round-trip via `Method::from_u8` at the load sites below.
     pub supported_backend: AtomicU8,
 
@@ -195,8 +194,8 @@ impl<'a> Installer<'a> {
             let pkg_resolutions = pkgs.items_resolution();
 
             for install_ctx in removed.as_slice() {
-                // Zig: `install_ctx.isolated_package_install_context` (union field
-                // access). Rust models `TaskCallbackContext` as an enum, so destructure.
+                // Rust models `TaskCallbackContext` as an enum, so destructure
+                // the variant.
                 let &TaskCallbackContext::IsolatedPackageInstallContext(entry_id) = install_ctx
                 else {
                     continue;
@@ -246,8 +245,8 @@ impl<'a> Installer<'a> {
 
             let entry_steps = self.store.entries.items_step();
             for install_ctx in callbacks.as_slice() {
-                // Zig: `install_ctx.isolated_package_install_context` (union field
-                // access). Rust models `TaskCallbackContext` as an enum, so destructure.
+                // Rust models `TaskCallbackContext` as an enum, so destructure
+                // the variant.
                 let &TaskCallbackContext::IsolatedPackageInstallContext(entry_id) = install_ctx
                 else {
                     continue;
@@ -296,7 +295,7 @@ impl<'a> Installer<'a> {
             patch.name_and_version_hash,
         );
         // SAFETY: `new_apply_patch_hash` returns a freshly Box-allocated PatchTask;
-        // sole ownership lives in this scope. Mirrors Zig `defer patch_task.deinit()`.
+        // sole ownership lives in this scope. Acts as a deferred `deinit()`.
         struct PatchTaskGuard(*mut install::PatchTask);
         impl Drop for PatchTaskGuard {
             fn drop(&mut self) {
@@ -418,7 +417,7 @@ impl<'a> Installer<'a> {
             | ResolutionTag::Folder => {
                 let mut store_path = AutoRelPath::init();
 
-                // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                // OOM/capacity: original aborted; port keeps fire-and-forget
                 let _ = store_path.append_fmt(format_args!(
                     "node_modules/{}",
                     store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
@@ -713,7 +712,7 @@ pub enum Step {
 }
 
 impl From<Step> for &'static str {
-    /// Zig `@tagName(step)`.
+    /// Returns the variant name for diagnostics.
     fn from(s: Step) -> &'static str {
         match s {
             Step::LinkPackage => "link_package",
@@ -807,7 +806,7 @@ impl Task {
         // SAFETY: installer outlives all tasks (BACKREF). `run()` executes on the
         // thread pool concurrently across many `Task`s that all share the same
         // `*mut Installer`, and `next_step()` re-derefs `self.installer` mid-loop —
-        // materializing `&mut Installer` here would alias both (Zig's `*Installer`
+        // materializing `&mut Installer` here would alias both (the `*Installer`
         // is freely shared). Instead:
         //   * `installer` is a shared `&Installer`; every Installer method called
         //     below takes `&self`.
@@ -816,7 +815,7 @@ impl Task {
         //     they do not overlap `installer`. They stay RAW for the whole body —
         //     binding a function-scoped `&mut PackageManager` / `&mut Lockfile`
         //     here would mean every concurrent task thread holds an aliased
-        //     `&mut` to the same object (UB regardless of mutex discipline; Zig's
+        //     `&mut` to the same object (UB regardless of mutex discipline; the
         //     `*PackageManager` / `*Lockfile` carry no exclusivity contract).
         //     Per-site reborrows below are `&*manager_ptr` for read-only access,
         //     and mutation is narrowed via `addr_of_mut!` to the single field
@@ -872,7 +871,7 @@ impl Task {
         let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
         let pkg_res = pkg_resolutions[pkg_id as usize];
 
-        // TODO(port): Zig labeled-switch `next_step:` modeled as loop+match
+        // TODO(port): labeled-switch `next_step:` modeled as loop+match
         let mut step =
             Step::from_u32(entry_steps[self.entry_id.get() as usize].load(Ordering::Acquire));
         'step: loop {
@@ -900,7 +899,7 @@ impl Task {
                             };
                             let _folder_dir_guard = sys::CloseOnDrop::new(folder_dir);
 
-                            // TODO(port): Zig labeled-switch `backend:` modeled as loop+match
+                            // TODO(port): labeled-switch `backend:` modeled as loop+match
                             let mut backend = InstallMethod::Hardlink;
                             'backend: loop {
                                 match backend {
@@ -1217,8 +1216,8 @@ impl Task {
                     let mut backend =
                         InstallMethod::from_u8(installer.supported_backend.load(Ordering::Relaxed));
                     'backend: loop {
-                        // PORT NOTE: reshaped for borrowck — Zig builds `dest_subpath` once
-                        // before the labeled-switch and passes it by-value (struct copy)
+                        // PORT NOTE: reshaped for borrowck — the original built `dest_subpath`
+                        // once before the labeled-switch and passed it by-value (struct copy)
                         // into each backend's helper. Rust moves it, so rebuild per
                         // iteration; this only re-runs once on an EXDEV/OPNOTSUPP retry.
                         let mut dest_subpath = OsAutoPath::init();
@@ -1318,7 +1317,7 @@ impl Task {
 
                                 let mut src = OsAutoAbsPath::from_long_path(cache_dir_path.slice())
                                     .assume_ok();
-                                let _ = src.append_join(pkg_cache_dir_subpath.slice()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                                let _ = src.append_join(pkg_cache_dir_subpath.slice()); // OOM/capacity: original aborted; port keeps fire-and-forget
 
                                 let mut hardlinker = Hardlinker::init(
                                     cached_package_dir.unwrap(),
@@ -1390,7 +1389,7 @@ impl Task {
 
                                 let mut src_path =
                                     OsAutoAbsPath::from(cache_dir_path.slice()).assume_ok();
-                                let _ = src_path.append(pkg_cache_dir_subpath.slice()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                                let _ = src_path.append(pkg_cache_dir_subpath.slice()); // OOM/capacity: original aborted; port keeps fire-and-forget
 
                                 let mut file_copier = FileCopier::init(
                                     cached_package_dir.unwrap(),
@@ -1445,7 +1444,7 @@ impl Task {
                             Which::Staging,
                         );
 
-                        let _ = dest.append(dep_name); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                        let _ = dest.append(dep_name); // OOM/capacity: original aborted; port keeps fire-and-forget
 
                         if let Some(entry_node_modules_name) = installer
                             .entry_store_node_modules_package_name(
@@ -1455,8 +1454,8 @@ impl Task {
                             if strings::eql_long(dep_name, entry_node_modules_name, true) {
                                 // nest the dependency in another node_modules if the name is the same as the entry name
                                 // in the store node_modules to avoid collision
-                                let _ = dest.append(b"node_modules"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
-                                let _ = dest.append(dep_name); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                                let _ = dest.append(b"node_modules"); // OOM/capacity: original aborted; port keeps fire-and-forget
+                                let _ = dest.append(dep_name); // OOM/capacity: original aborted; port keeps fire-and-forget
                             }
                         }
 
@@ -1490,8 +1489,8 @@ impl Task {
                             installer.append_store_path(&mut dep_store_path, dep.entry_id);
                         }
 
-                        // PORT NOTE: reshaped for borrowck — Zig's
-                        // `const dest_save = dest.save(); defer dest_save.restore();`
+                        // PORT NOTE: reshaped for borrowck — a deferred
+                        // `dest.save()/restore()` pair
                         // can't coexist with `dest.undo()/dest.relative()` because
                         // the `ResetScope` guard holds `&mut dest`. Capture the
                         // length and restore manually.
@@ -1822,7 +1821,7 @@ impl Task {
 
                     // PORT NOTE: `target_node_modules_path` intentionally aliases
                     // `node_modules_path` in the common (no-replacement) case —
-                    // mirrors the Zig `*AbsPath` aliasing. The Linker field is a
+                    // mirrors the original `*AbsPath` aliasing. The Linker field is a
                     // raw `*const AbsPath` for exactly this reason.
                     let target_nm_ptr: *const DefaultAbsPath =
                         match target_node_modules_path.as_ref() {
@@ -1957,7 +1956,7 @@ impl Task {
         // both are reached through a shared `&Installer`. `manager.wake()` is the
         // cross-thread wakeup: route through `PackageManager::wake_raw` which never
         // forms `&mut PackageManager`, so two threads finishing simultaneously do
-        // not hold aliased exclusive borrows (Zig's `*PackageManager` carries no
+        // not hold aliased exclusive borrows (the `*PackageManager` carries no
         // exclusivity contract; "deref it fresh per call" alone would not prevent
         // the `&mut` lifetimes from overlapping).
         let installer_ptr = this.installer;
@@ -2143,7 +2142,7 @@ impl<'a> Installer<'a> {
 
         let mut hidden_hoisted_node_modules = AutoPath::init();
 
-        // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        // OOM/capacity: original aborted; port keeps fire-and-forget
         let _ = hidden_hoisted_node_modules.append(
             // "node_modules" + sep + ".bun" + sep + "node_modules"
             const_format::concatcp!(
@@ -2155,16 +2154,16 @@ impl<'a> Installer<'a> {
             )
             .as_bytes(),
         );
-        let _ = hidden_hoisted_node_modules.append(pkg_name.slice(string_buf)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = hidden_hoisted_node_modules.append(pkg_name.slice(string_buf)); // OOM/capacity: original aborted; port keeps fire-and-forget
 
         let mut target = AutoRelPath::init();
 
-        let _ = target.append(b".."); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = target.append(b".."); // OOM/capacity: original aborted; port keeps fire-and-forget
         if strings::index_of_char(pkg_name.slice(string_buf), b'/').is_some() {
-            let _ = target.append(b".."); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = target.append(b".."); // OOM/capacity: original aborted; port keeps fire-and-forget
         }
 
-        // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        // OOM/capacity: original aborted; port keeps fire-and-forget
         let _ = target.append_fmt(format_args!(
             "{}/node_modules/{}",
             store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
@@ -2322,8 +2321,8 @@ impl<'a> Installer<'a> {
                 );
             }
 
-            // PORT NOTE: see the matching note in `Step::LinkBinaries` — Zig
-            // aliases `target_node_modules_path` with `node_modules_path` and
+            // PORT NOTE: see the matching note in `Step::LinkBinaries` —
+            // `target_node_modules_path` aliases `node_modules_path` and
             // the Linker field is a raw `*const AbsPath` to permit that.
             let target_nm_ptr: *const DefaultAbsPath = match target_node_modules_path.as_ref() {
                 Some(p) => p,
@@ -2448,8 +2447,8 @@ impl<'a> Installer<'a> {
                 // discard ours.
                 if self.manager().options.enable.force_install() {
                     let mut old = AutoAbsPath::init();
-                    let _ = old.append(self.global_store_path.as_ref().unwrap().as_bytes()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
-                    // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    let _ = old.append(self.global_store_path.as_ref().unwrap().as_bytes()); // OOM/capacity: original aborted; port keeps fire-and-forget
+                    // OOM/capacity: original aborted; port keeps fire-and-forget
                     let _ = old.append_fmt(format_args!(
                         "{}.old-{:x}",
                         store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
@@ -2521,7 +2520,7 @@ impl<'a> Installer<'a> {
             #[cfg(windows)]
             {
                 // `target_abs` is already absolute, so the junction fallback
-                // can reuse it directly (Zig: passes the same `target` pointer).
+                // can reuse it directly (the same `target` is passed through).
                 return sys::symlink_or_junction(d, t, None);
             }
             #[cfg(not(windows))]
@@ -2707,9 +2706,9 @@ impl<'a> Installer<'a> {
                 buf.append(pkg_res.workspace().slice(string_buf));
             }
             ResolutionTag::Symlink => {
-                // PORT NOTE: reshaped — Zig `globalLinkDirPath()` lazily ensures
+                // PORT NOTE: reshaped — `globalLinkDirPath()` lazily ensures
                 // the dir and mutates `*PackageManager`. `append_store_path` is
-                // `&self` (matching Zig `*const Installer`) and may run on worker
+                // `&self` (a `*const Installer`) and may run on worker
                 // threads, so the lazy init is hoisted to the main-thread caller
                 // (`isolated_install::install_packages`, before any `start_task`).
                 // Reading the cached field here is then equivalent.
@@ -2791,5 +2790,3 @@ fn is_rename_collision(err: &sys::Error) -> bool {
         _ => false,
     }
 }
-
-// ported from: src/install/isolated_install/Installer.zig

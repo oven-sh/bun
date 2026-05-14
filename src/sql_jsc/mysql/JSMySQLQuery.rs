@@ -467,9 +467,9 @@ impl JSMySQLQuery {
         {
             debug!("run failed to execute query");
             if !global_object.has_exception() {
-                // PORT NOTE: Zig `return globalObject.throwValue(...)` returns
-                // `error.JSError` into the `AnyMySQLError.Error!void` set; in
-                // Rust we throw for side-effect and map to the enum variant.
+                // PORT NOTE: the original `globalObject.throwValue(...)` returned
+                // a JS-error into the `AnyMySQLError` set; in Rust we throw for
+                // side-effect and map to the enum variant.
                 let _ = global_object.throw_value(mysql_error_to_js(
                     global_object,
                     "failed to execute query",
@@ -631,5 +631,3 @@ impl JSMySQLQuery {
 // #[unsafe(no_mangle)] under the name "MySQLQuery__createInstance"; verify codegen wiring.
 
 pub use js::{from_js, from_js_direct, to_js};
-
-// ported from: src/sql_jsc/mysql/JSMySQLQuery.zig

@@ -38,7 +38,7 @@ impl<'a> CssModule<'a> {
                 let source: &[u8] = 'source: {
                     // Make paths relative to project root so hashes are stable
                     if let Some(root) = project_root {
-                        // Zig: `bun.path.Platform.auto.isAbsolute(root)`
+                        // Platform-aware absolute-path check.
                         if bun_paths::is_absolute(root) {
                             alloced = true;
                             break 'source bump.alloc_slice_copy(
@@ -48,7 +48,7 @@ impl<'a> CssModule<'a> {
                     }
                     break 'source path.as_ref();
                 };
-                // PORT NOTE: Zig `defer if (alloced) arena.free(source);` — arena-allocated, bulk-freed on bump.reset()
+                // PORT NOTE: `source` is arena-allocated when `alloced`; bulk-freed on bump.reset().
                 let _ = alloced;
                 // PERF(port): was appendAssumeCapacity — profile in Phase B
                 hashes.push(hash(
@@ -79,10 +79,9 @@ impl<'a> CssModule<'a> {
     // PORT NOTE: `deinit` was a no-op (`// TODO: deinit`); Drop is implicit. No `impl Drop` needed.
 
     pub fn get_reference(&mut self, bump: &'a Bump, name: &'a [u8], source_index: u32) {
-        // PORT NOTE: Zig `getOrPut` returns an uninitialized value slot;
-        // bun_collections::ArrayHashMap::get_or_put requires `V: Default`
+        // PORT NOTE: bun_collections::ArrayHashMap::get_or_put requires `V: Default`
         // (CssModuleExport can't be Default — BumpVec field). Reshaped to the
-        // entry()-API instead.
+        // entry()-API instead of a get-or-put-uninitialized pattern.
         use bun_collections::array_hash_map::MapEntry;
         match self.exports_by_source_index[source_index as usize].entry(name) {
             MapEntry::Occupied(mut o) => {
@@ -104,7 +103,7 @@ impl<'a> CssModule<'a> {
         }
     }
 
-    // PORT NOTE: Zig `referenceDashed` took `*Printer` so it could read
+    // PORT NOTE: `referenceDashed` originally took `*Printer` so it could read
     // `dest.arena` and call `dest.importRecord(idx)`. In Rust the only
     // caller (`DashedIdentReference::to_css`) already holds a `&mut` borrow of
     // `dest.css_module` (which *is* `self`), so threading `&mut Printer` in
@@ -136,9 +135,9 @@ impl<'a> CssModule<'a> {
             }
             None => {
                 // Local export. Mark as used.
-                // PORT NOTE: Zig `getOrPut` returns an uninitialized value
-                // slot; `CssModuleExport` cannot be `Default` (BumpVec field),
-                // so reshape to the `entry()` API like `get_reference` above.
+                // PORT NOTE: `CssModuleExport` cannot be `Default` (BumpVec field),
+                // so reshape to the `entry()` API like `get_reference` above
+                // instead of a get-or-put-uninitialized pattern.
                 use bun_collections::array_hash_map::MapEntry;
                 match self.exports_by_source_index[source_index as usize].entry(name) {
                     MapEntry::Occupied(mut o) => {
@@ -481,10 +480,8 @@ impl<'a> CssModuleReference<'a> {
 /// (a leaf crate) so `bun_bundler::LinkerContext::mangle_local_css` can call
 /// the *same* hasher without depending on `bun_css`. Re-export here so
 /// in-crate callers (`dependencies.rs`, `rules/import.rs`) keep the
-/// `css_modules::hash` path from the Zig spec.
+/// `css_modules::hash` path.
 #[inline]
 pub fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &'a [u8] {
     bun_base64::wyhash_url_safe(bump, args, at_start)
 }
-
-// ported from: src/css/css_modules.zig

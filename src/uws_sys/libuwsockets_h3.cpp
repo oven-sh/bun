@@ -1,5 +1,5 @@
-// HTTP/3 C ABI for Zig. Mirrors the uws_* surface in libuwsockets.cpp 1:1
-// (same parameter shapes, same callback signatures) so the Zig side can
+// HTTP/3 C ABI for the Rust side. Mirrors the uws_* surface in libuwsockets.cpp 1:1
+// (same parameter shapes, same callback signatures) so the Rust side can
 // pattern-match NewApp/NewResponse without protocol-specific branches.
 // Kept in its own TU so HTTP/1.1 and HTTP/3 stay file-level separable.
 
@@ -218,7 +218,7 @@ bool uws_h3_res_is_corked(uws_h3_res_t*) { return false; }
 uint64_t uws_h3_res_get_remote_address_info(uws_h3_res_t* res, const char** dest, int* port, bool* is_ipv6)
 {
     /* Mirror uws_res_get_remote_address_info: stringify with inet_ntop so the
-     * Zig side gets a text slice, not raw in_addr bytes. */
+     * Rust side gets a text slice, not raw in_addr bytes. */
     static thread_local char b[64];
     int len = 0, ipv6 = 0;
     us_quic_socket_t* qs = us_quic_stream_socket((us_quic_stream_t*)res);
@@ -252,7 +252,7 @@ bool uws_h3_req_is_ancient(uws_h3_req_t*) { return false; }
 bool uws_h3_req_get_yield(uws_h3_req_t* req) { return ((Http3Request*)req)->getYield(); }
 void uws_h3_req_set_yield(uws_h3_req_t* req, bool y) { ((Http3Request*)req)->setYield(y); }
 
-/* Zig declares these as [*]const u8 (non-null many-pointer); a default-
+/* Rust declares these as non-null `*const u8`; a default-
  * constructed string_view has data() == nullptr, so normalise empties. */
 static inline size_t ffi_sv(std::string_view v, const char** dest)
 {

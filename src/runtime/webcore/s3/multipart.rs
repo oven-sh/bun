@@ -149,7 +149,7 @@ pub struct MultiPartUpload {
     pub content_type: Option<Box<[u8]>>,
     pub content_disposition: Option<Box<[u8]>>,
     pub content_encoding: Option<Box<[u8]>>,
-    // PORT NOTE: in Zig this is a self-referential slice into `uploadid_buffer`.
+    // PORT NOTE: originally this was a self-referential slice into `uploadid_buffer`.
     // Duped into an owned Box here to avoid self-referential struct.
     // PERF(port): was zero-copy slice into uploadid_buffer — profile in Phase B
     pub upload_id: Box<[u8]>,
@@ -198,7 +198,7 @@ impl MultiPartUpload {
     }
 }
 
-/// Intrusive-refcount handle alias (Zig: `bun.ptr.RefCount(MultiPartUpload, ...)`).
+/// Intrusive-refcount handle alias (`bun.ptr.RefCount(MultiPartUpload, ...)`).
 pub type MultiPartUploadRef = bun_ptr::IntrusiveRc<MultiPartUpload>;
 
 #[repr(u8)]
@@ -261,7 +261,7 @@ impl UploadPart {
         // SAFETY: callback context — `this` is the `*mut UploadPart` passed in `perform()`
         let this = unsafe { bun_ptr::callback_ctx::<Self>(this) };
         // Copy the BackRef out so the `&mut MultiPartUpload` borrow is detached
-        // from `this` (Zig held both `*UploadPart` and `*MultiPartUpload` freely).
+        // from `this` (the original held both `*UploadPart` and `*MultiPartUpload` freely).
         let mut ctx_ref = this.ctx;
         // SAFETY: ctx is a live BACKREF while a part is in flight (part holds a ref on ctx)
         let ctx = unsafe { ctx_ref.get_mut() };
@@ -396,7 +396,6 @@ impl UploadPart {
 
 impl Drop for MultiPartUpload {
     fn drop(&mut self) {
-        // Zig `deinit`
         scoped_log!(S3MultiPartUpload, "deinit");
         // queue: Box<[UploadPart]> — dropped automatically (parts' raw `data` already freed during lifecycle)
         // PORT NOTE: KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
@@ -684,7 +683,7 @@ impl MultiPartUpload {
             S3DownloadResult::Success(response) => {
                 // response.body is bun.MutableString — `list` is a Vec<u8>
                 let slice = response.body.list.as_slice();
-                // PERF(port): Zig stored body and sliced upload_id into it; here we dupe upload_id
+                // PERF(port): the original stored body and sliced upload_id into it; here we dupe upload_id
                 if let Some(start) = strings::index_of(slice, b"<UploadId>") {
                     if let Some(end) = strings::index_of(slice, b"</UploadId>") {
                         this.upload_id = Box::<[u8]>::from(&slice[start + 10..end]);
@@ -946,7 +945,7 @@ impl MultiPartUpload {
                     // queue is not full, we can clear the buffer part now owns the data
                     // if its full we will retry later
                     // SAFETY: ownership of buffered's allocation transferred to the part above.
-                    // The Zig spec does `this.buffered = .{}` which overwrites WITHOUT running a
+                    // The spec does `this.buffered = .{}` which overwrites WITHOUT running a
                     // destructor, releasing the allocation to the UploadPart created via
                     // enqueue_part(..., needs_clone=false). In Rust, assigning a fresh
                     // StreamBuffer would Drop the old one and free the Vec<u8> backing storage,
@@ -1063,7 +1062,7 @@ impl MultiPartUpload {
         self.available.mask == IntegerBitSet::<{ Self::MAX_QUEUE_SIZE }>::init_full().mask
     }
 
-    // PORT NOTE: Zig used `comptime encoding: enum {bytes, latin1, utf16}`. Rust's
+    // PORT NOTE: original used a compile-time `encoding: enum {bytes, latin1, utf16}` param. Rust's
     // adt_const_params (enum-valued const generics) is unstable, so take it as a
     // plain runtime arg — the three thin wrappers below pass a constant, so the
     // optimizer still specializes each branch.
@@ -1171,5 +1170,3 @@ pub enum WriteEncoding {
     Latin1,
     Utf16,
 }
-
-// ported from: src/runtime/webcore/s3/multipart.zig

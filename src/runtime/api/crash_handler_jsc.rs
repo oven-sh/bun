@@ -70,7 +70,7 @@ pub mod js_bindings {
 
     #[bun_jsc::host_fn]
     pub fn js_segfault(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        // Zig: @setRuntimeSafety(false) — Rust has no per-fn equivalent; the raw-ptr write below
+        // The original disabled per-fn runtime safety here; the raw-ptr write below
         // is already unchecked inside `unsafe`.
         crash_handler::suppress_core_dumps_if_necessary();
         // Under ASAN the SIGSEGV handler is intentionally not installed
@@ -130,7 +130,7 @@ pub mod js_bindings {
     ) -> JsResult<JSValue> {
         let bits = analytics::packed_features();
         let mut buf = BoundedArray::<u8, 16>::default();
-        // Zig `@bitCast(bits)` → bitflags `.bits()` (PackedFeatures is repr(transparent) u64).
+        // Bitcast → bitflags `.bits()` (PackedFeatures is repr(transparent) u64).
         crash_handler::write_u64_as_two_vlqs(buf.writer(), bits.bits() as usize)
             // there is definitely enough space in the bounded array
             .expect("unreachable");
@@ -173,5 +173,3 @@ pub mod js_bindings {
         Ok(obj)
     }
 }
-
-// ported from: src/runtime/api/crash_handler_jsc.zig

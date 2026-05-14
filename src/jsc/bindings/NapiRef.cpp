@@ -2,7 +2,7 @@
 #include "napi.h"
 #include <wtf/TZoneMallocInlines.h>
 
-namespace Zig {
+namespace Bun {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(NapiRef);
 

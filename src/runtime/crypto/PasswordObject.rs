@@ -2,7 +2,7 @@ use core::fmt;
 use core::fmt::Write as _;
 use std::io::Write as _;
 
-use bun_core::ZigString;
+use bun_core::UnsafeStringView;
 use bun_io::KeepAlive;
 use bun_jsc::{
     self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, WorkPoolTask,
@@ -10,25 +10,25 @@ use bun_jsc::{
 // `bun_jsc::{AnyTask, ConcurrentTask, EventLoop}` are *modules* (re-exported from
 // `bun_event_loop`); pull the concrete types out by name.
 use bun_jsc::event_loop::EventLoop;
-// JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
-// lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
+// JSC-side UnsafeStringView carries `to_js` (the `bun_core::UnsafeStringView` repr-twin
+// lives in `bun_jsc::unsafe_string_view`); used for ASCII→JS conversions only.
 use bun_jsc::AnyTask::{AnyTask, JsResult as AnyTaskJsResult};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString as JscZigString;
+use bun_jsc::UnsafeStringViewJsc as _;
+use bun_jsc::unsafe_string_view::UnsafeStringView as JscUnsafeStringView;
 use bun_jsc::{JSPromise, JSPromiseStrong};
 use bun_threading::work_pool::WorkPool;
 
 use crate::node::StringOrBuffer;
 
-// std.crypto.pwhash — Zig stdlib argon2/bcrypt. API-surface shim lives at
-// `crypto::pwhash` (this dir); vendor impl (Rust `argon2`/`bcrypt` crates or
-// Zig-stdlib staticlib) is wired there, not here.
+// `pwhash` — argon2/bcrypt. API-surface shim lives at
+// `crypto::pwhash` (this dir); vendor impl (Rust `argon2`/`bcrypt` crates)
+// is wired there, not here.
 use super::pwhash;
 use bun_sha_hmac::SHA512;
 
 // ───────────────────────────────────────────────────────────────────────────
-// gated upstream in bun_jsc; provide a file-local shim matching the Zig
+// gated upstream in bun_jsc; provide a file-local shim matching the
 // `globalObject.throwNotEnoughArguments(name, expected, got)` shape.
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -66,18 +66,18 @@ pub enum Algorithm {
     Bcrypt,
 }
 
-/// Zig: `Algorithm.Value = union(Algorithm)`
+/// `Algorithm.Value = union(Algorithm)`
 #[derive(Copy, Clone)]
 pub enum AlgorithmValue {
     Argon2i(Argon2Params),
     Argon2d(Argon2Params),
     Argon2id(Argon2Params),
     /// bcrypt only accepts "cost"
-    Bcrypt(u8), // Zig: u6
+    Bcrypt(u8), // originally a u6
 }
 
 impl AlgorithmValue {
-    pub const BCRYPT_DEFAULT: u8 = 10; // Zig name has typo `bcrpyt_default`; preserved as const
+    pub const BCRYPT_DEFAULT: u8 = 10; // original name had typo `bcrpyt_default`; corrected
 
     pub const DEFAULT: AlgorithmValue = AlgorithmValue::Argon2id(Argon2Params::DEFAULT);
 
@@ -92,11 +92,11 @@ impl AlgorithmValue {
                     ));
                 }
 
-                let algorithm_string = algorithm_value.get_zig_string(global_object)?;
+                let algorithm_string = algorithm_value.get_unsafe_string_view(global_object)?;
 
-                // Zig: ComptimeStringMap.getWithEql(ZigString, ZigString.eqlComptime) —
-                // ZigString may be UTF-16; compare each label via `eql_comptime`.
-                let Some(algo) = algorithm_from_zig_string(&algorithm_string) else {
+                // `ComptimeStringMap.getWithEql(UnsafeStringView, UnsafeStringView.eqlComptime)` —
+                // UnsafeStringView may be UTF-16; compare each label via `eql_comptime`.
+                let Some(algo) = algorithm_from_unsafe_string_view(&algorithm_string) else {
                     return Err(global_object.throw_invalid_argument_type(
                         "hash",
                         "algorithm",
@@ -125,7 +125,7 @@ impl AlgorithmValue {
                             algorithm = AlgorithmValue::Bcrypt(
                                 u8::try_from(rounds).expect("int cast") & 0x3F,
                             );
-                            // Zig: @as(u6, @intCast(rounds))
+                            // `@as(u6, @intCast(rounds))`
                         }
 
                         return Ok(algorithm);
@@ -170,7 +170,7 @@ impl AlgorithmValue {
                             argon.memory_cost = u32::try_from(memory_cost).expect("int cast");
                         }
 
-                        // Zig: @unionInit(Algorithm.Value, @tagName(tag), argon)
+                        // `@unionInit(Algorithm.Value, @tagName(tag), argon)`
                         return Ok(match algo {
                             Algorithm::Argon2id => AlgorithmValue::Argon2id(argon),
                             Algorithm::Argon2d => AlgorithmValue::Argon2d(argon),
@@ -191,9 +191,9 @@ impl AlgorithmValue {
                 ));
             }
         } else if value.is_string() {
-            let algorithm_string = value.get_zig_string(global_object)?;
+            let algorithm_string = value.get_unsafe_string_view(global_object)?;
 
-            let Some(algo) = algorithm_from_zig_string(&algorithm_string) else {
+            let Some(algo) = algorithm_from_unsafe_string_view(&algorithm_string) else {
                 return Err(global_object.throw_invalid_argument_type(
                     "hash",
                     "algorithm",
@@ -225,10 +225,10 @@ impl AlgorithmValue {
     }
 }
 
-/// Zig: `Algorithm.label.getWithEql(input, ZigString.eqlComptime)`.
-/// `bun_core::ZigString` may be UTF-16 so a direct `phf` byte lookup is
+/// `Algorithm.label.getWithEql(input, UnsafeStringView.eqlComptime)`.
+/// `bun_core::UnsafeStringView` may be UTF-16 so a direct `phf` byte lookup is
 /// unsound; compare each (4-entry) label via the encoding-aware `eql_comptime`.
-fn algorithm_from_zig_string(s: &ZigString) -> Option<Algorithm> {
+fn algorithm_from_unsafe_string_view(s: &UnsafeStringView) -> Option<Algorithm> {
     if s.eql_comptime(b"argon2i") {
         Some(Algorithm::Argon2i)
     } else if s.eql_comptime(b"argon2d") {
@@ -250,7 +250,7 @@ pub struct Argon2Params {
 }
 
 impl Argon2Params {
-    // TODO(port): pwhash.argon2.Params.interactive_2id.{m,t} — hard-code Zig stdlib's
+    // TODO(port): pwhash.argon2.Params.interactive_2id.{m,t} — hard-code the original
     // values here once the pwhash shim is settled.
     pub const DEFAULT: Argon2Params = Argon2Params {
         memory_cost: pwhash::argon2::Params::INTERACTIVE_2ID_M,
@@ -313,7 +313,7 @@ impl Algorithm {
     }
 }
 
-/// Zig: `pub const HashError = pwhash.Error || error{UnsupportedAlgorithm};`
+/// `pub const HashError = pwhash.Error || error{UnsupportedAlgorithm};`
 /// Phase A: collapse into bun_core::Error (NonZeroU16 tag). The pwhash shim
 /// must `impl From<pwhash::Error> for bun_core::Error`.
 pub type HashError = bun_core::Error;
@@ -348,7 +348,7 @@ impl PasswordObject {
                 let mut outbuf = [0u8; 4096];
                 // bcrypt silently truncates passwords longer than 72 bytes
                 // we use SHA512 to hash the password if it's longer than 72 bytes
-                // PORT NOTE: reshaped for borrowck — Zig aliased `outbuf` for both the
+                // PORT NOTE: reshaped for borrowck — the original aliased `outbuf` for both the
                 // SHA digest and the remaining output slice; here the digest gets its own
                 // 64-byte buffer (SHA512::final wants `&mut [u8; DIGEST]`).
                 let mut digest = [0u8; SHA512::DIGEST];
@@ -358,7 +358,7 @@ impl PasswordObject {
                     let mut sha_512 = SHA512::init();
                     sha_512.update(password);
                     sha_512.r#final(&mut digest);
-                    // sha_512 dropped here (Zig: defer sha_512.deinit())
+                    // sha_512 dropped here (`defer sha_512.deinit()`)
                     password_to_use = &digest;
                     outbuf_slice = &mut outbuf[SHA512::DIGEST..];
                 } else {
@@ -526,7 +526,7 @@ pub extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject) -> JS
 
 // ─── PasswordOp: generic hash/verify off-thread job ───────────────────────
 //
-// HashJob/HashResult and VerifyJob/VerifyResult in the Zig source are
+// HashJob/HashResult and VerifyJob/VerifyResult in the original source are
 // byte-for-byte twins differing only in (a) extra input fields, (b) success
 // payload type + JS conversion, (c) the verb in the error message. Collapse
 // both into one `PasswordJob<Op>` / `PasswordResult<Op>` parameterised on a
@@ -554,8 +554,8 @@ impl PasswordOp for HashOp {
         PasswordObject::hash(password, self.algorithm)
     }
     fn to_js(value: Box<[u8]>, g: &JSGlobalObject) -> JSValue {
-        JscZigString::init(&value).to_js(g)
-        // `value` drops here — Zig: defer bun.default_allocator.free(value)
+        JscUnsafeStringView::init(&value).to_js(g)
+        // `value` drops here — `defer bun.default_allocator.free(value)`
     }
 }
 
@@ -582,7 +582,7 @@ impl PasswordOp for VerifyOp {
 }
 
 /// Build the JS `Error` instance for a failed hash/verify, with `code` set
-/// to `PASSWORD_<SCREAMING_SNAKE_ERROR_NAME>` (Zig: `toErrorInstance`).
+/// to `PASSWORD_<SCREAMING_SNAKE_ERROR_NAME>` (`toErrorInstance`).
 fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> JSValue {
     let mut error_code: Vec<u8> = Vec::new();
     write!(
@@ -597,7 +597,7 @@ fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> J
         "Password {verb} failed with error \"{}\"",
         err.name()
     ));
-    instance.put(g, b"code", JscZigString::init(&error_code).to_js(g));
+    instance.put(g, b"code", JscUnsafeStringView::init(&error_code).to_js(g));
     instance
 }
 
@@ -838,7 +838,7 @@ pub fn js_password_object_hash_sync(
 
     // PORT NOTE: sync path borrows the slice; pass as Box for unified signature.
     // TODO(port): hash<true> only needs &[u8]; consider splitting sync/async to
-    // avoid the copy. Zig passed the borrowed slice directly.
+    // avoid the copy. The original passed the borrowed slice directly.
     JSPasswordObject::hash::<true>(
         global_object,
         Box::<[u8]>::from(string_or_buffer.slice()),
@@ -868,9 +868,9 @@ pub fn js_password_object_verify(
             return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
         }
 
-        let algorithm_string = arguments[2].get_zig_string(global_object)?;
+        let algorithm_string = arguments[2].get_unsafe_string_view(global_object)?;
 
-        algorithm = match algorithm_from_zig_string(&algorithm_string) {
+        algorithm = match algorithm_from_unsafe_string_view(&algorithm_string) {
             Some(a) => Some(a),
             None => {
                 if !global_object.has_exception() {
@@ -949,9 +949,9 @@ pub fn js_password_object_verify_sync(
             return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
         }
 
-        let algorithm_string = arguments[2].get_zig_string(global_object)?;
+        let algorithm_string = arguments[2].get_unsafe_string_view(global_object)?;
 
-        algorithm = match algorithm_from_zig_string(&algorithm_string) {
+        algorithm = match algorithm_from_unsafe_string_view(&algorithm_string) {
             Some(a) => Some(a),
             None => {
                 if !global_object.has_exception() {
@@ -994,7 +994,7 @@ pub fn js_password_object_verify_sync(
     }
 
     // TODO(port): sync path only needs &[u8]; copying into Box here to share
-    // signature with async. Zig passed borrowed slices.
+    // signature with async. The original passed borrowed slices.
     JSPasswordObject::verify::<true>(
         global_object,
         Box::<[u8]>::from(password.slice()),
@@ -1004,5 +1004,3 @@ pub fn js_password_object_verify_sync(
 }
 
 const UNKNOWN_PASSWORD_ALGORITHM_MESSAGE: &str = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";
-
-// ported from: src/runtime/crypto/PasswordObject.zig

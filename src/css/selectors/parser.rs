@@ -1,5 +1,4 @@
-//! CSS selector parser — ported from `src/css/selectors/parser.zig`.
-//! Originally derived from servo/lightningcss selector parsing.
+//! CSS selector parser — originally derived from servo/lightningcss selector parsing.
 
 use core::fmt;
 
@@ -24,7 +23,7 @@ pub use bun_css::Printer as PrinterRe; // re-export parity (Printer/PrintErr wer
 /// `css::Result<T>` — the CSS parser result type (`Ok(T)` / `Err(css::ParseError)`).
 type CResult<T> = css::Result<T>;
 
-// TODO(port): arena lifetimes. The Zig code threads `parser.arena` / `input.arena()`
+// TODO(port): arena lifetimes. The original threaded `parser.arena` / `input.arena()`
 // (a bump arena) through every allocation. Phase A uses `Vec`/`Box` and a `Str` alias for
 // source-borrowed byte slices; Phase B should re-thread `'bump` and switch to
 // `bun_alloc::ArenaVec<'bump, T>` / `&'bump [u8]` per PORTING.md §Allocators (AST crates).
@@ -38,8 +37,8 @@ type CResult<T> = css::Result<T>;
 type Str = &'static [u8]; // arena-backed `[]const u8` source slice
 
 // ─── Protocol traits ─────────────────────────────────────────────────────────
-// Zig's `implementEql` / `implementHash` / `implementDeepClone` are comptime
-// field/variant reflection over `@typeInfo(T)` — in Rust this is the body of
+// `implementEql` / `implementHash` / `implementDeepClone` were field/variant
+// reflection helpers — in Rust this is the body of
 // `#[derive(CssEql, CssHash, DeepClone)]` (`bun_css_derive`). Non-generic
 // grammar types below carry the derive directly; the `<Impl: SelectorImpl>`-
 // generic types hand-write bodies (the derive's `where Impl: CssEql` bound is
@@ -48,12 +47,12 @@ type Str = &'static [u8]; // arena-backed `[]const u8` source slice
 // `deep_clone` on the grammar types intentionally drops the `&Arena` parameter:
 // the selector AST is global-alloc (`Vec`/`Box`/`SmallList`) in Phase A, and
 // the only arena-borrowed payloads are `Str` / `Ident.v` (`*const [u8]`)
-// which are identity-copied (matches generics.zig "const strings" fast-path).
+// which are identity-copied (matches the generics "const strings" fast-path).
 use css::generics::{CssEql, CssHash};
 
 /// Drain a `SmallList<T, N>` into a `Box<[T]>`. `SmallList` has no `into_vec`;
 /// this bitwise-moves each element out and `set_len(0)`s the source so its
-/// `Drop` doesn't double-free. Mirrors Zig `toOwnedSlice`.
+/// `Drop` doesn't double-free. Mirrors `toOwnedSlice` semantics.
 fn small_list_into_box<T, const N: usize>(mut sl: SmallList<T, N>) -> Box<[T]> {
     let len = sl.len() as usize;
     let mut v: Vec<T> = Vec::with_capacity(len);
@@ -70,8 +69,8 @@ fn small_list_into_box<T, const N: usize>(mut sl: SmallList<T, N>) -> Box<[T]> {
 }
 
 /// Allocate an ASCII-lowercased copy of `name` in the parse-session bump arena.
-/// Zig used `parser.arena().alloc(u8, n)` (the bump arena owns the buffer
-/// for the parse session and frees it on arena reset). Returns a raw arena
+/// The bump arena owns the buffer for the parse session and frees it on arena
+/// reset. Returns a raw arena
 /// pointer (`*const [u8]`) — `Ident.v`'s field type — so we don't fabricate a
 /// `'static` lifetime (PORTING.md §Forbidden: never `Box::leak` to satisfy
 /// `&'static`). Phase B re-threads `&'bump Bump` and widens `Ident.v` to
@@ -126,11 +125,11 @@ pub const SELECTOR_WHITESPACE: &[u8] = &[b' ', b'\t', b'\n', b'\r', 0x0C];
 /// Compile-time check that `T` satisfies the `SelectorImpl` trait shape.
 /// In Rust this is expressed as a trait bound; this fn is kept for diff parity.
 pub fn valid_selector_impl<T: SelectorImpl>() {
-    // Zig used `_ = T.SelectorImpl.X;` to force decl resolution; in Rust the trait
+    // The original forced decl resolution via type reflection; in Rust the trait
     // bound `T: SelectorImpl` is the check.
 }
 
-/// The `SelectorImpl` shape (Zig validated via `ValidSelectorImpl`). Phase B: this trait
+/// The `SelectorImpl` shape (originally validated via `ValidSelectorImpl`). Phase B: this trait
 /// lives in `bun_css::selector::impl_` and is implemented by `impl_::Selectors`.
 // PORT NOTE: `PartialEq + Clone` bounds dropped — the concrete assoc types
 // (`values::ident::{Ident,IdentOrRef}`, `*const [u8]`) implement structural
@@ -155,7 +154,7 @@ pub trait SelectorImpl: Sized {
 
 /// Constrained `SelectorImpl` with the concrete assoc-type bundle Bun uses.
 ///
-/// PORT NOTE: in Zig the `parse_*` functions were `comptime Impl: type` generics
+/// PORT NOTE: the `parse_*` functions were originally generic over `Impl`
 /// but every body assumed the concrete `selector.impl.Selectors` shapes (it was
 /// the only instantiation). Rust can't see through the open `Impl::LocalName`
 /// to `Ident`, so the parse functions bound on this sub-trait instead — the
@@ -741,9 +740,8 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
     }
 
     if let Ok(_) = parse_type_selector::<Impl>(parser, input, *state, builder) {
-        // Note: Zig `.asValue()` here means "if Ok"; the bool result is unused.
-        // TODO(port): the Zig only sets `empty = false` on Ok(true|false) — but
-        // `asValue()` returns Some on .result regardless of bool value, so this matches.
+        // Note: the bool result is unused — `empty` is cleared on any Ok return,
+        // regardless of the bool value.
         empty = false;
     }
 
@@ -891,13 +889,13 @@ fn parse_relative_selector<Impl: BunSelectorImpl>(
 /// Compile-time validation of the `SelectorParser` shape. In Rust the methods are
 /// inherent on `SelectorParser`; this is a no-op kept for diff parity.
 pub fn valid_selector_parser<T>() {
-    // Zig: `_ = T.SelectorParser.parseSlotted;` etc. — structural duck-typing check.
+    // The original used a structural duck-typing check.
     // In Rust these are inherent methods on `SelectorParser`; nothing to validate at runtime.
 }
 
 /// The [:dir()](https://drafts.csswg.org/selectors-4/#the-dir-pseudo) pseudo class.
-// Re-export of the canonical `{ltr, rtl}` enum from `properties::text` — both Zig
-// specs (selectors/parser.zig:700, properties/text.zig:251) define the same
+// Re-export of the canonical `{ltr, rtl}` enum from `properties::text` — both
+// the selectors and `properties::text` modules define the same
 // `DefineEnumProperty` shape, so the Rust port shares one definition. The
 // `#[derive(DefineEnumProperty)]` on the canonical provides `parse`/`to_css`/
 // `as_str`; `CssEql`/`CssHash`/`DeepClone` come from `generics::inherent_bridge`.
@@ -1086,8 +1084,8 @@ impl PseudoClass {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // PERF(alloc): I don't like making these little allocations
-        // PORT NOTE: Zig builds a fresh `Printer` over an allocating writer,
-        // calls `serialize::serializePseudoClass`, then writes the buffer to
+        // PORT NOTE: the original built a fresh `Printer` over an allocating writer,
+        // called `serialize::serializePseudoClass`, then wrote the buffer to
         // `dest`. The buffered indirection only matters for length-dependent
         // minification decisions made by callers (none here), so write
         // directly to `dest` until `Printer::new_buffered` lands.
@@ -1213,12 +1211,12 @@ impl WebKitScrollbarPseudoElement {
 pub struct SelectorParser<'a> {
     pub is_nesting_allowed: bool,
     pub options: &'a ParserOptions<'a>,
-    // `arena: Allocator` dropped — arena threaded via `input.arena()` in Zig.
+    // `arena: Allocator` dropped — arena was threaded via `input.arena()`.
     // PERF(port): was arena bulk-free — Phase B re-threads `&'bump Bump`.
 }
 
-// Zig: `pub const Impl = impl_.Selectors;` lived inside the struct for
-// `ValidSelectorParser`'s comptime decl-probe. Rust inherent associated types
+// `pub const Impl = impl_.Selectors;` originally lived inside the struct for
+// `ValidSelectorParser`'s decl-probe. Rust inherent associated types
 // are unstable (rust#8995); the equivalent contract is the `BunSelectorImpl`
 // blanket impl above, so expose the alias at module scope instead.
 pub type SelectorParserImpl = impl_::Selectors;
@@ -1266,8 +1264,8 @@ impl<'a> SelectorParser<'a> {
         name: Str,
         input: &mut CssParser,
     ) -> CResult<PseudoElement> {
-        // Spec parity: parser.zig:1054 uses `ComptimeEnumMap.get(name)` which is
-        // CASE-SENSITIVE (`ComptimeStringMap.get`, not `getAnyCase`/`getASCIIICaseInsensitive`).
+        // Spec parity: the lookup table here is intentionally
+        // CASE-SENSITIVE (not a case-insensitive variant).
         // `::CUE(..)` / `::View-Transition-Group(..)` therefore fall through to
         // `CustomFunction` in the spec — match that here by looking up `name`
         // verbatim with no case folding.
@@ -1336,7 +1334,7 @@ impl<'a> SelectorParser<'a> {
             });
         }
         {
-            // Spec (parser.zig:1088-1094) calls `TokenList.parseRaw(input, ...)`
+            // Spec calls `TokenList.parseRaw(input, ...)`
             // which consumes the function-argument tokens. Until
             // `TokenList::parse_raw` un-gates, drain the nested block so the
             // caller's `parse_nested_block` → `expect_exhausted` passes and the
@@ -1371,8 +1369,8 @@ impl<'a> SelectorParser<'a> {
     ) -> CResult<PseudoClass> {
         // @compileError(css.todo_stuff.match_ignore_ascii_case);
         let pseudo_class: PseudoClass = 'pseudo_class: {
-            // TODO(port): phf custom hasher — Zig used `ComptimeStringMap.getAnyCase`
-            // (ASCII case-insensitive). Phase B: generate a case-folded phf or use a
+            // TODO(port): phf custom hasher — original lookup was
+            // ASCII case-insensitive. Phase B: generate a case-folded phf or use a
             // `match` over the lowercased name.
             if let Some(pseudo) = lookup_non_ts_pseudo_class(name) {
                 break 'pseudo_class pseudo;
@@ -1486,7 +1484,7 @@ impl<'a> SelectorParser<'a> {
         loc: css::SourceLocation,
         name: Str,
     ) -> CResult<PseudoElement> {
-        // TODO(port): phf custom hasher — Zig used `ComptimeStringMap.getCaseInsensitiveWithEql`.
+        // TODO(port): phf custom hasher — original lookup was case-insensitive.
         let pseudo_element = lookup_pseudo_element(name).unwrap_or_else(|| {
             if !strings::starts_with_char(name, b'-') {
                 self.options.warn(loc.new_custom_error(
@@ -1501,7 +1499,6 @@ impl<'a> SelectorParser<'a> {
 }
 
 /// Case-insensitive lookup table for `parse_non_ts_pseudo_class`.
-/// Mirrors the `ComptimeStringMap` at parser.zig:1120.
 fn lookup_non_ts_pseudo_class(name: &[u8]) -> Option<PseudoClass> {
     use PseudoClass as P;
     use WebKitScrollbarPseudoClass as WS;
@@ -1591,7 +1588,6 @@ fn lookup_non_ts_pseudo_class(name: &[u8]) -> Option<PseudoClass> {
 }
 
 /// Case-insensitive lookup table for `parse_pseudo_element`.
-/// Mirrors the `ComptimeStringMap` at parser.zig:1333.
 fn lookup_pseudo_element(name: &[u8]) -> Option<PseudoElement> {
     use PseudoElement as PE;
     use WebKitScrollbarPseudoElement as WS;
@@ -1781,7 +1777,7 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
         let mut values: SmallList<GenericSelector<Impl>, 1> = SmallList::default();
 
         loop {
-            // PORT NOTE: reshaped for borrowck — Zig used a `Closure` struct capturing
+            // PORT NOTE: reshaped for borrowck — the original used a `Closure` struct capturing
             // `&mut state` and `&mut parser`; Rust captures a local `saw_nesting` flag
             // and applies it to `state` after the closure returns (no raw `*mut`).
             let mut saw_nesting = false;
@@ -1956,8 +1952,8 @@ impl<'a, Impl: SelectorImpl> fmt::Display for SelectorDebugFmt<'a, Impl> {
         if !cfg!(debug_assertions) {
             return Ok(());
         }
-        // TODO(port): the Zig builds a fresh `Printer` and calls
-        // `tocss_servo::to_css_selector` into a buffer, then writes the buffer.
+        // TODO(port): the original built a fresh `Printer` and called
+        // `tocss_servo::to_css_selector` into a buffer, then wrote the buffer.
         // blocked_on: `Printer::new_buffered` + `SymbolMap::default` (debug-
         // only path; serialization body lives in `selector::tocss_servo`).
         write!(f, "Selector(<{} components>)", self.0.components.len())
@@ -2251,7 +2247,7 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
     }
 
     pub fn deep_clone(&self) -> Self {
-        // PORT NOTE: hand-written variant-walk (Zig `implementDeepClone`).
+        // PORT NOTE: hand-written variant-walk (`implementDeepClone`).
         // Every borrowed payload (`Str`, `Ident.v`, `IdentOrRef`) is an
         // arena-static identity copy; owning containers (`Vec`/`Box`) recurse.
         use GenericComponent as C;
@@ -2440,11 +2436,11 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
 
     pub fn hash(&self, hasher: &mut Wyhash) {
         use GenericComponent as C;
-        // Zig `implementHash`: `bun.writeAnyToHasher(@intFromEnum(this))` then payload.
+        // `implementHash`: hash the discriminant, then the payload.
         // SAFETY: `GenericComponent` is `#[repr(Rust)]`; reading the discriminant
         // via `core::mem::discriminant` is stable but not byte-hashable. Use a
         // per-arm tag instead (CSS hashing is in-process dedup only — self-
-        // consistency, not Zig-byte-identity, is the contract).
+        // consistency, not byte-layout identity, is the contract).
         macro_rules! tag {
             ($n:expr) => {
                 hasher.update(&($n as u32).to_ne_bytes())
@@ -2585,8 +2581,8 @@ impl<Impl: BunSelectorImpl> CssHash for GenericComponent<Impl> {
 
 impl<Impl: BunSelectorImpl> fmt::Display for GenericComponent<Impl> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO(port): Zig matches on a few variants and falls through to `@tagName`.
-        // Rust enums need `strum::IntoStaticStr` for the tag name; Phase B.
+        // TODO(port): the original matched on a few variants and fell through to the
+        // tag name. Rust enums need `strum::IntoStaticStr` for that; Phase B.
         match self {
             Self::LocalName(ln) => write!(f, "local_name={}", bstr::BStr::new(ln.name.v())),
             Self::Combinator(c) => write!(f, "combinator='{}'", c),
@@ -3003,7 +2999,7 @@ impl SelectorParseErrorKind {
 
     pub fn into_selector_error(self) -> css::SelectorError {
         // PORT NOTE: `error.rs::SelectorError` variants are snake_case
-        // (`#[allow(non_camel_case_types)]` Zig-tagName parity).
+        // (`#[allow(non_camel_case_types)]` for tag-name parity).
         use SelectorParseErrorKind as K;
         use css::SelectorError as S;
         match self {
@@ -3950,7 +3946,7 @@ where
 
     let selector_slice = inner.into_boxed_selectors();
 
-    // PORT NOTE: Zig threaded extra `args_` through an ArgsTuple to `func`; in Rust
+    // PORT NOTE: extra args were originally threaded through a tuple to `func`; in Rust
     // the closure captures extras directly (e.g. `prefix` for `:any()`).
     let result = func(selector_slice);
 
@@ -4218,8 +4214,8 @@ impl AttributeFlags {
 /// explicit `s`/`i` flag is given on the attribute selector.
 /// <https://html.spec.whatwg.org/multipage/#selectors>
 ///
-/// PERF(port): Zig used `ComptimeEnumMap.has` (zero-cost membership at
-/// comptime). The Phase-A port lowered that to a `phf::Set`, which on every
+/// PERF(port): the original used a zero-cost compile-time membership check.
+/// The Phase-A port lowered that to a `phf::Set`, which on every
 /// `[attr=val]` selector pays a 32-bit FNV-ish hash over the name plus a
 /// bounds check, indirect load, and full key compare — measurable in CSS
 /// bundling profiles where the dominant inputs (`class`, `href`, `data-*`,
@@ -4394,5 +4390,3 @@ pub fn parse_attribute_flags(input: &mut CssParser) -> CResult<AttributeFlags> {
 }
 
 crate::css_eql_partialeq!(NthSelectorData, SpecificityAndFlags, Combinator);
-
-// ported from: src/css/selectors/parser.zig

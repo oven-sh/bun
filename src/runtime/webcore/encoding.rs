@@ -23,7 +23,7 @@ fn create_external_globally_allocated_utf16(bytes: Vec<u16>) -> BunString {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// PORT NOTE: Zig used `comptime encoding: Encoding`. Stable Rust does not allow
+// PORT NOTE: the original used a compile-time `encoding: Encoding` parameter. Stable Rust does not allow
 // enum-typed const generics without `#![feature(adt_const_params)]`, so per
 // PORTING.md we reshape to `const ENCODING: u8` and reconstitute the enum
 // inside each body via `encoding_from_u8(ENCODING)` (the optimizer folds the
@@ -67,8 +67,8 @@ mod enc {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// `dispatch_encoding!` — Rust spelling of Zig's `switch (enc) { inline else
-// => |e| f(..., e) }`. Expands a runtime [`Encoding`] into nine monomorphized
+// `dispatch_encoding!` — Rust spelling of an inline-else switch over the
+// encoding tag. Expands a runtime [`Encoding`] into nine monomorphized
 // arms, binding the discriminant as a `const $E: u8` usable in const-generic
 // position (`f::<$E>(..)`). Stable-Rust workaround for `adt_const_params`.
 //
@@ -173,7 +173,7 @@ pub extern "C" fn Bun__encoding__constructFromLatin1(
     // Ownership of the allocation transfers to JSC: `create_buffer` registers the
     // pointer with `MarkedArrayBuffer_deallocator`, which frees it on GC. Wrapping
     // in `ManuallyDrop` prevents Rust from also freeing it at scope exit (which
-    // would be a use-after-free + double-free). Mirrors encoding.zig:42-54.
+    // would be a use-after-free + double-free).
     let mut slice = core::mem::ManuallyDrop::new(dispatch_encoding!(encoding_from_u8(encoding), {
         Encoding::Ucs2 => construct_from_u8::<{ enc::UTF16LE }>(input, len),
         Encoding::Latin1 | Encoding::Buffer => unreachable!(),
@@ -191,7 +191,7 @@ pub extern "C" fn Bun__encoding__constructFromUTF16(
     // Ownership of the allocation transfers to JSC: `create_buffer` registers the
     // pointer with `MarkedArrayBuffer_deallocator`, which frees it on GC. Wrapping
     // in `ManuallyDrop` prevents Rust from also freeing it at scope exit (which
-    // would be a use-after-free + double-free). Mirrors encoding.zig:56-69.
+    // would be a use-after-free + double-free).
     let mut slice = core::mem::ManuallyDrop::new(dispatch_encoding!(encoding_from_u8(encoding), {
         Encoding::Ucs2 => construct_from_u16::<{ enc::UTF16LE }>(input, len),
         Encoding::Buffer => unreachable!(),
@@ -295,11 +295,11 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
                 return BunString::empty();
             }
 
-            // TODO(port): Zig reinterpreted the owned u8 allocation as []u16 (with @alignCast)
+            // TODO(port): the original reinterpreted the owned u8 allocation as []u16
             // and handed it to createExternalGloballyAllocated(.utf16, ...). Reinterpreting a
             // Vec<u8> as Vec<u16> is not generally sound in Rust (alignment + allocator layout).
             // Phase B: route through bun_core::String API that accepts raw (ptr,len,cap) bytes.
-            // SAFETY: input.as_ptr() is at least 1-aligned; Zig asserted u16 alignment via @alignCast.
+            // SAFETY: input.as_ptr() is at least 1-aligned; the original asserted u16 alignment via cast.
             let as_u16 = unsafe {
                 let mut input = core::mem::ManuallyDrop::new(input);
                 Vec::from_raw_parts(
@@ -459,7 +459,7 @@ pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
     }
 }
 
-// TODO(port): narrow error set — Zig signature is `!usize` but body never fails.
+// TODO(port): narrow error set — original signature is `!usize` but body never fails.
 pub fn write_u8<const ENCODING: u8>(
     input: *const u8,
     len: usize,
@@ -522,7 +522,7 @@ pub fn write_u8<const ENCODING: u8>(
                 let written = strings::copy_latin1_into_utf16(output, buf).written as usize;
                 Ok(written * 2)
             } else {
-                // PORT NOTE: Zig used `[]align(1) u16` and a generic Buffer type. Rust
+                // PORT NOTE: the original used a 1-aligned u16 slice and a generic Buffer type. Rust
                 // `&mut [u16]` requires natural alignment, so inline the (trivial) widen
                 // loop with `write_unaligned` for the misaligned-dest case — matches
                 // `copyLatin1IntoUTF16` body 1:1 (each Latin-1 byte → one u16).
@@ -599,8 +599,8 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     }
 
     // NOTE: Do NOT eagerly materialize `&[u16]` / `&mut [u8]` slices over `input`/`to` here.
-    // The Ucs2/Utf16le arm is spec'd to accept overlapping input/output (Zig uses
-    // `bun.memmove` at encoding.zig:391/400). Building a `&mut [u8]` whose memory is also
+    // The Ucs2/Utf16le arm is spec'd to accept overlapping input/output (the
+    // original used `bun.memmove`). Building a `&mut [u8]` whose memory is also
     // covered by a live `&[u16]` would violate `slice::from_raw_parts_mut`'s exclusive-access
     // contract (aliased-&mut UB). Each arm below constructs only the slice views it needs,
     // and the Ucs2/Utf16le arm stays raw-pointer-only.
@@ -645,7 +645,7 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
                 let input_u8 = input.cast::<u8>();
                 // SAFETY: ranges may overlap; use ptr::copy (memmove).
                 unsafe { core::ptr::copy(input_u8, to, fixed_len) };
-                // PORT NOTE: Zig wrote `to[0..written]` from `input_u8[0..fixed_len]` (mismatched
+                // PORT NOTE: the original wrote `to[0..written]` from `input_u8[0..fixed_len]` (mismatched
                 // lengths into bun.memmove). Preserving fixed_len bytes copied as that is what is
                 // returned; revisit in Phase B if behavior diverges.
                 Ok(fixed_len)
@@ -677,7 +677,7 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     }
 }
 
-// PORT NOTE: Zig `constructFrom(comptime T: type, input: []const T, ...)` dispatched on
+// PORT NOTE: the original `constructFrom(T, input: []const T, ...)` dispatched on
 // T == u8 vs u16 to constructFromU8/constructFromU16. A u8-only wrapper here would silently
 // drop the u16 path, so the generic entry point is omitted — callers use `construct_from_u8`
 // / `construct_from_u16` directly.
@@ -696,7 +696,7 @@ pub fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize) -> Ve
 
     match encoding_from_u8(ENCODING) {
         Encoding::Buffer => {
-            // TODO(port): Zig returned &[] on OOM; Rust aborts.
+            // TODO(port): the original returned &[] on OOM; Rust aborts.
             let mut to = vec![0u8; len];
             to.copy_from_slice(input_slice);
             to
@@ -719,7 +719,7 @@ pub fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize) -> Ve
             // Each Latin-1 byte widens to one native-endian u16 code unit
             // (`copy_latin1_into_utf16` is exactly that loop). Write the bytes
             // directly into a `Vec<u8>` so we never depend on the allocator-
-            // layout-dependent `Vec<u16> → Vec<u8>` header reinterpret the Zig
+            // layout-dependent `Vec<u16> → Vec<u8>` header reinterpret the
             // original relied on (`sliceAsBytes` over a heap allocation).
             let mut to = vec![0u8; len * 2];
             for (out, &b) in to.chunks_exact_mut(2).zip(input_slice) {
@@ -783,7 +783,7 @@ pub fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> 
         // string is already encoded, just need to copy the data
         Encoding::Ucs2 | Encoding::Utf16le => {
             // `input_slice: &[u16]` is the source bytes verbatim — copy them out.
-            // The Zig original allocated u16-aligned then reinterpreted the Vec
+            // The original allocated u16-aligned then reinterpreted the Vec
             // header to u8, which is allocator-layout-dependent in Rust; a fresh
             // u8 Vec sidesteps that and matches the returned `Vec<u8>` layout.
             bytemuck::cast_slice::<u16, u8>(input_slice).to_vec()
@@ -814,7 +814,7 @@ pub fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> 
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun.String.encodeInto` / `bun.String.encode` / `ZigString.encodeWithAllocator`
+// `bun.String.encodeInto` / `bun.String.encode` / `UnsafeStringView.encodeWithAllocator`
 //
 // Hosted here (not on `bun_core::String`) because the encoder bodies above
 // (`encodeIntoFrom{8,16}` / `constructFrom{U8,U16}`) belong to `bun_runtime`;
@@ -836,8 +836,8 @@ fn construct_from_u16_dyn(input: &[u16], encoding: Encoding) -> Vec<u8> {
     dispatch_encoding!(encoding, |E| construct_from_u16::<E>(p, n))
 }
 
-/// Runtime-dispatch wrapper over [`encode_into_from16`] (Zig passed
-/// `comptime allow_partial_write = true` from `String.encodeInto`).
+/// Runtime-dispatch wrapper over [`encode_into_from16`] (originally passed
+/// `allow_partial_write = true` at compile time from `String.encodeInto`).
 fn encode_into_from16_dyn(
     input: &[u16],
     to: &mut [u8],
@@ -855,7 +855,7 @@ fn encode_into_from8_dyn(
     dispatch_encoding!(encoding, |E| encode_into_from8::<E>(input, to))
 }
 
-/// `bun.String.{encodeInto,encode}` (string.zig:630-644). Extension trait —
+/// `bun.String.{encodeInto,encode}`. Extension trait —
 /// see module note above for why this lives in `bun_runtime`.
 pub trait BunStringEncode {
     fn encode_into(&self, out: &mut [u8], enc: Encoding) -> Result<usize, bun_core::Error>;
@@ -869,23 +869,22 @@ impl BunStringEncode for bun_core::String {
             return encode_into_from16_dyn(self.utf16(), out, enc);
         }
         if self.is_utf8() {
-            // Zig: `@panic("TODO")` — UTF-8 source path was never implemented
-            // (string.zig:636). Match Zig behaviour.
-            unreachable!("String.encodeInto from UTF-8 source — unimplemented in Zig");
+            // UTF-8 source path was never implemented upstream; preserve that.
+            unreachable!("String.encodeInto from UTF-8 source — unimplemented");
         }
         encode_into_from8_dyn(self.latin1(), out, enc)
     }
 
-    /// `bun.String.encode` (string.zig:642) —
-    /// `self.toZigString().encodeWithAllocator(allocator, enc)`.
+    /// `bun.String.encode` —
+    /// `self.toUnsafeStringView().encodeWithAllocator(allocator, enc)`.
     fn encode(&self, enc: Encoding) -> Vec<u8> {
-        self.to_zig_string().encode_with_allocator(enc)
+        self.to_unsafe_string_view().encode_with_allocator(enc)
     }
 }
 
-/// `ZigString.encodeWithAllocator` (ZigString.zig). Extension trait — encoder
+/// `UnsafeStringView.encodeWithAllocator`. Extension trait — encoder
 /// bodies live in this crate.
-pub trait ZigStringEncode {
+pub trait UnsafeStringViewEncode {
     fn encode_with_allocator(&self, enc: Encoding) -> Vec<u8>;
     #[inline]
     fn encode(&self, enc: Encoding) -> Vec<u8> {
@@ -893,7 +892,7 @@ pub trait ZigStringEncode {
     }
 }
 
-impl ZigStringEncode for bun_core::ZigString {
+impl UnsafeStringViewEncode for bun_core::UnsafeStringView {
     fn encode_with_allocator(&self, enc: Encoding) -> Vec<u8> {
         if self.is_16bit() {
             construct_from_u16_dyn(self.utf16_slice(), enc)
@@ -902,5 +901,3 @@ impl ZigStringEncode for bun_core::ZigString {
         }
     }
 }
-
-// ported from: src/runtime/webcore/encoding.zig

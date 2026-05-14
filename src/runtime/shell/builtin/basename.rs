@@ -71,5 +71,3 @@ impl Basename {
         }
     }
 }
-
-// ported from: src/shell/builtin/basename.zig

@@ -2,8 +2,8 @@
 
 use core::ffi::{c_int, c_void};
 
-// TODO(port): confirm cfg name — Zig's `bun.Environment.enable_asan` is a build-time bool;
-// mapped here to `bun_asan`. Nightly Rust has `cfg(sanitize = "address")` (unstable,
+// TODO(port): confirm cfg name — `enable_asan` was a build-time bool; mapped
+// here to `bun_asan`. Nightly Rust has `cfg(sanitize = "address")` (unstable,
 // tracking #39699) which would be the direct equivalent; Phase B may switch to that or a
 // custom `--cfg enable_asan` set by the build script.
 
@@ -26,7 +26,7 @@ mod c {
     #[inline]
     pub fn poison(ptr: *const c_void, size: usize) {
         // SAFETY: ASAN runtime is linked when this cfg is active; ptr/size describe a region
-        // owned by the caller (same precondition as the Zig wrapper).
+        // owned by the caller.
         unsafe { __asan_poison_memory_region(ptr, size) }
     }
     #[inline]
@@ -65,9 +65,8 @@ mod c {
 mod c {
     use core::ffi::{c_int, c_void};
 
-    // PORT NOTE: Zig's stub `poison`/`unpoison` took only one arg (never called due to
-    // comptime dead-code elimination). Rust type-checks both cfg branches at the call site,
-    // so signatures here match the real impl.
+    // PORT NOTE: signatures here match the real impl so both cfg branches
+    // type-check at the call site.
     #[inline]
     pub fn poison(_: *const c_void, _: usize) {}
     #[inline]
@@ -194,5 +193,3 @@ pub fn assert_unpoisoned(ptr: *const c_void) {
         panic!("Address is poisoned");
     }
 }
-
-// ported from: src/safety/asan.zig

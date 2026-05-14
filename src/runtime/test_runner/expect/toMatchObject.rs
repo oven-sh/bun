@@ -66,5 +66,3 @@ pub fn to_match_object(
     let signature: &str = get_signature("toMatchObject", "<green>expected<r>", false);
     this.throw(global, signature, format_args!("\n\n{}\n", diff_formatter))
 }
-
-// ported from: src/test_runner/expect/toMatchObject.zig

@@ -17,7 +17,7 @@ use bun_install::{
     DependencyID, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, PackageID, PackageManifestError,
     Repository,
 };
-// `Task::Id` etc. are namespaced types in Zig (`PackageManagerTask.Id`); import
+// `Task::Id` etc. are namespaced types in the original (`PackageManagerTask.Id`); import
 // the *module* under the `Task` name so `Task::Id` resolves as a path.
 use super::{
     Command, PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList,
@@ -32,7 +32,7 @@ use crate::package_manifest_map::Value as ManifestEntry;
 use bun_core::fmt::PathSep;
 use bun_install::lockfile::{Lockfile, Package};
 use bun_install::package_manager_task as Task;
-// `Options::LogLevel` etc. are namespaced types in Zig (`PackageManager.Options.LogLevel`);
+// `Options::LogLevel` etc. are namespaced types in the original (`PackageManager.Options.LogLevel`);
 // import the *module* under the `Options` name so `Options::LogLevel` resolves as a path
 // (matches the `Task` module-alias pattern above and `CommandLineArguments.rs`).
 use super::package_manager_options as Options;
@@ -43,7 +43,7 @@ use crate::isolated_install::store as Store;
 // Callbacks trait
 // ──────────────────────────────────────────────────────────────────────────
 //
-// The Zig `runTasks` takes `comptime Ctx: type` + `comptime callbacks: anytype`
+// The original `runTasks` takes `comptime Ctx: type` + `comptime callbacks: anytype`
 // and branches on `@TypeOf(callbacks.onExtract) != void`, `Ctx == *PackageInstaller`,
 // etc. Rust models this as a single trait with associated consts gating the
 // optional hooks (default-unreachable bodies), plus associated-const tags for
@@ -78,7 +78,7 @@ pub trait RunTasksCallbacks {
         unreachable!()
     }
 
-    // PORT NOTE: Zig calls `onPackageDownloadError` with two distinct shapes
+    // PORT NOTE: the original calls `onPackageDownloadError` with two distinct shapes
     // depending on the comptime `Ctx`: `task.task_id: Task.Id` for
     // `*Store.Installer`, `package_id: PackageID` otherwise. Model the
     // comptime branch as static dispatch via two trait methods so impls
@@ -104,7 +104,7 @@ pub trait RunTasksCallbacks {
         unreachable!()
     }
 
-    // TODO(port): two distinct call shapes in Zig:
+    // TODO(port): two distinct call shapes in original:
     //   PackageInstaller: (ctx, task_id, dependency_id, *ExtractData, log_level)
     //   Store.Installer:  (ctx, task_id)
     // Model as two methods; only one is reachable per impl.
@@ -126,7 +126,7 @@ pub trait RunTasksCallbacks {
     }
 
     /// Reinterpret `&mut Self::Ctx` as `&mut PackageInstaller` — only valid
-    /// when `IS_PACKAGE_INSTALLER` is true (Zig: `Ctx == *PackageInstaller`
+    /// when `IS_PACKAGE_INSTALLER` is true (originally: `Ctx == *PackageInstaller`
     /// comptime check). Default body is unreachable; the `PackageInstaller`
     /// impl overrides it with an identity cast.
     fn as_package_installer<'a>(_ctx: &'a mut Self::Ctx) -> &'a mut PackageInstaller<'a> {
@@ -134,7 +134,7 @@ pub trait RunTasksCallbacks {
     }
 
     /// Reinterpret `&mut Self::Ctx` as `&mut Store::Installer` — only valid
-    /// when `IS_STORE_INSTALLER` is true (Zig: `Ctx == *Store.Installer`
+    /// when `IS_STORE_INSTALLER` is true (originally: `Ctx == *Store.Installer`
     /// comptime check). Default body is unreachable; the `Store::Installer`
     /// impl overrides it with an identity cast.
     fn as_store_installer<'a>(_ctx: &'a mut Self::Ctx) -> &'a mut Store::Installer<'a> {
@@ -156,11 +156,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
     let mut timestamp_this_tick: Option<u32> = None;
 
-    // Zig: `defer { manager.drainDependencyList(); ... progress update ... }`
+    // original: `defer { manager.drainDependencyList(); ... progress update ... }`
     // PORT NOTE: scopeguard captures `manager` via raw pointer because the loop
     // body holds `&mut` to it for the function's duration; `has_updated_this_run`
     // is a `Cell<bool>` so the guard captures it by shared ref. The guard runs
-    // on every exit (incl. `?` early-returns), matching Zig `defer` semantics.
+    // on every exit (incl. `?` early-returns), matching the original `defer` semantics.
     //
     // Stacked Borrows: the raw pointers must remain the provenance root for all
     // body accesses, otherwise the first direct use of the `&mut` fn params
@@ -212,7 +212,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         // SAFETY: `next()` returned non-null; node is exclusively owned by this
         // batch. `ptask_ptr` was produced by `heap::alloc` in `PatchTask::new_*`
         // — reclaim ownership exactly once here so the `Box` drops at end of
-        // iteration on every path (Zig: `defer ptask.deinit();`).
+        // iteration on every path (originally: `defer ptask.deinit();`).
         let mut ptask = unsafe { bun_core::heap::take(ptask_ptr) };
         if cfg!(debug_assertions) {
             debug_assert!(manager.pending_task_count() > 0);
@@ -226,12 +226,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // autofix
                     } else if C::IS_PACKAGE_INSTALLER {
                         if let Some(ctx) = apply.install_context.as_mut() {
-                            // Zig: `Ctx == *PackageInstaller` so `extract_ctx`
+                            // original: `Ctx == *PackageInstaller` so `extract_ctx`
                             // *is* the installer.
                             let installer: &mut PackageInstaller =
                                 C::as_package_installer(extract_ctx);
                             let path = core::mem::take(&mut ctx.path);
-                            // Zig: `ctx.path = std.array_list.Managed(u8).init(bun.default_allocator);`
+                            // original: `ctx.path = std.array_list.Managed(u8).init(bun.default_allocator);`
                             // → `Vec::new()` via `mem::take` above.
                             installer.node_modules.path = path;
                             installer.current_tree_id = ctx.tree_id;
@@ -257,7 +257,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     }
 
     if C::IS_STORE_INSTALLER {
-        // PORT NOTE: reshaped for borrowck — Zig writes `const installer:
+        // PORT NOTE: reshaped for borrowck — the original writes `const installer:
         // *Store.Installer = extract_ctx;` and freely aliases
         // `installer.manager` with the outer `manager`. Here we obtain the
         // installer via the trait downcast and access PackageManager only
@@ -299,7 +299,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // SAFETY: `list` is the per-entry scripts slot owned by
                     // `store.entries.items_scripts()[entry_id]`; this Task is
                     // its sole consumer (see Installer.rs Yield::RunScripts).
-                    // Zig: `list.*` — by-value copy of the List.
+                    // original: `list.*` — by-value copy of the List.
                     let list_val = unsafe { (*list).clone() };
                     // PORT NOTE: reshaped for borrowck — `Command::Context<'a>`
                     // is `&'a mut ContextData`; reborrow instead of moving the
@@ -557,11 +557,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                         manifest.pkg.public_max_age = timestamp_this_tick.unwrap();
 
-                        // PORT NOTE: reshaped for borrowck — Zig writes through
+                        // PORT NOTE: reshaped for borrowck — the original writes through
                         // the `getOrPut` slot then re-reads it for `saveAsync`.
                         // `bun_collections::HashMap` lacks `get_or_put` for
                         // non-`Default` values, so insert by-value (overwriting
-                        // any prior entry, matching Zig semantics) and reborrow.
+                        // any prior entry, matching the original semantics) and reborrow.
                         let name_hash = manifest.pkg.name.hash;
                         manager
                             .manifests
@@ -928,7 +928,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         if cfg!(debug_assertions) {
             debug_assert!(manager.pending_task_count() > 0);
         }
-        // Zig: `defer manager.preallocated_resolve_tasks.put(task);`
+        // original: `defer manager.preallocated_resolve_tasks.put(task);`
         // PORT NOTE: raw-ptr capture — borrowck would reject overlapping `&mut`
         // with the loop body. Guard runs on every `continue`/`?`/fallthrough.
         // Phase B: have the iterator yield a pool guard that puts back on Drop.
@@ -949,19 +949,19 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         if !task.log.msgs.is_empty() {
             // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
             // not `&mut Writer` (the underlying `Writer` is the FFI shape).
-            // Zig: `try task.log.print(Output.errorWriter())` — propagate the
+            // original: `try task.log.print(Output.errorWriter())` — propagate the
             // write error (WriteFailed) out of `runTasks`.
             task.log.print(std::ptr::from_mut(Output::error_writer()))?;
             if task.log.errors > 0 {
                 manager.any_failed_to_install = true;
             }
-            // Zig: `task.log.deinit();` — Drop handles via reset.
+            // original: `task.log.deinit();` — Drop handles via reset.
             task.log.reset();
         }
 
         match task.tag {
             Task::Tag::PackageManifest => {
-                // Zig: `defer manager.preallocated_network_tasks.put(task.request.package_manifest.network);`
+                // original: `defer manager.preallocated_network_tasks.put(task.request.package_manifest.network);`
                 // PORT NOTE: capture the `*mut NetworkTask` up front — the
                 // `&'a mut NetworkTask` field can't be moved out through
                 // `ManuallyDrop`'s immutable `Deref` inside the defer body.
@@ -1042,7 +1042,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
             }
             Task::Tag::Extract | Task::Tag::LocalTarball => {
-                // Zig: `defer { switch (task.tag) { .extract => preallocated_network_tasks.put(...), else => {} } }`
+                // original: `defer { switch (task.tag) { .extract => preallocated_network_tasks.put(...), else => {} } }`
                 // PORT NOTE: capture the `*mut NetworkTask` up front (only for the
                 // Extract arm) so the defer body need not move the `&mut` out
                 // through `ManuallyDrop`'s immutable `Deref`.
@@ -1163,7 +1163,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     } else if C::IS_STORE_INSTALLER {
                         C::on_extract_store_installer(extract_ctx, task.id);
                     } else {
-                        // Zig: @compileError("unexpected context type")
+                        // original: @compileError("unexpected context type")
                         unreachable!("unexpected context type");
                     }
                 } else if let Some(pkg) = manager.process_extracted_tarball_package(
@@ -1188,7 +1188,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             core::mem::take(entry)
                         };
 
-                        // Zig: `defer { dependency_list.deinit(); if (any_root) callbacks.onResolve(extract_ctx); }`
+                        // original: `defer { dependency_list.deinit(); if (any_root) callbacks.onResolve(extract_ctx); }`
                         // `dependency_list` is a Drop type (frees on every path); only the
                         // `on_resolve` side-effect needs the guard so it fires on `?` too.
                         scopeguard::defer! {
@@ -1245,7 +1245,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // Peer dependencies do not initiate any downloads of their own, thus need to be resolved here instead
                     let dependency_list = core::mem::take(dependency_list_entry);
 
-                    // Zig passes `void, {}, {}` for Ctx/ctx/callbacks here.
+                    // the original passes `void, {}, {}` for Ctx/ctx/callbacks here.
                     manager.process_dependency_list(
                         dependency_list,
                         (),
@@ -1288,7 +1288,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // forever on the entry's pending-task slot.
                         let mut drained_any = false;
                         if let Some(waiters) = manager.task_queue.remove(&task.id) {
-                            // Zig: defer waiters.deinit() — Drop at end of `if` scope.
+                            // original: defer waiters.deinit() — Drop at end of `if` scope.
                             let pkg_resolutions = manager.lockfile.packages.items_resolution();
                             for waiter in waiters.iter() {
                                 let dep_id = match waiter {
@@ -1359,7 +1359,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // this dependency might be something other than a git dependency! only need the name and
                     // behavior, use the resolution from the task.
                     let dep_id = clone.dep_id;
-                    // PORT NOTE: reshaped for borrowck — Zig copies `dep` by
+                    // PORT NOTE: reshaped for borrowck — the original copies `dep` by
                     // value. Copy the small `String` handles + behavior bit so
                     // the `&manager.lockfile` borrow doesn't extend across the
                     // `&mut manager` calls (`has_created_network_task`,
@@ -1375,7 +1375,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let git = *clone.res.git();
                     // SAFETY: `string_bytes` lives as long as `manager.lockfile`
                     // and is not reallocated while resolve tasks are draining
-                    // (Zig: same buffer is read after `enqueueGitCheckout`).
+                    // (originally: same buffer is read after `enqueueGitCheckout`).
                     let string_buf = unsafe {
                         bun_ptr::detach_lifetime(manager.lockfile.buffers.string_bytes.as_slice())
                     };
@@ -1495,7 +1495,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     } else if C::IS_STORE_INSTALLER {
                         C::on_extract_store_installer(extract_ctx, task.id);
                     } else {
-                        // Zig: @compileError("unexpected context type")
+                        // original: @compileError("unexpected context type")
                         unreachable!("unexpected context type");
                     }
                 } else if let Some(pkg) = manager.process_extracted_tarball_package(
@@ -1517,7 +1517,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             core::mem::take(entry)
                         };
 
-                        // Zig: `defer { dependency_list.deinit(); if (any_root) callbacks.onResolve(extract_ctx); }`
+                        // original: `defer { dependency_list.deinit(); if (any_root) callbacks.onResolve(extract_ctx); }`
                         scopeguard::defer! {
                             // SAFETY: `extract_ctx_ptr` is the function-scope provenance
                             // root for `extract_ctx`.
@@ -1538,7 +1538,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                             .value
                                             .git
                                     };
-                                    // SAFETY: `pkg.resolution.value` is a Zig `extern union`;
+                                    // SAFETY: `pkg.resolution.value` is a the original `extern union`;
                                     // `Tag::Git` was checked when the resolution was set.
                                     repo.resolved = pkg.resolution.git().resolved;
                                     repo.package_name = pkg.name;
@@ -1555,7 +1555,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             }
                         }
 
-                        // Zig: `if (@TypeOf(callbacks.onExtract) != void) @compileError("ctx should be void");`
+                        // original: `if (@TypeOf(callbacks.onExtract) != void) @compileError("ctx should be void");`
                         // — compile-time invariant: this branch only reachable when !HAS_ON_EXTRACT.
                         debug_assert!(!C::HAS_ON_EXTRACT, "ctx should be void");
                     }
@@ -1689,7 +1689,7 @@ pub fn schedule_tasks(manager: &mut PackageManager) -> usize {
         .network_resolve_batch
         .push(core::mem::take(&mut manager.network_tarball_batch));
     http::HTTPThread::schedule(core::mem::take(&mut manager.network_resolve_batch));
-    // Zig resets these to `.{}` after passing by-value; `mem::take` above already did that.
+    // the original resets these to `.{}` after passing by-value; `mem::take` above already did that.
     count
 }
 
@@ -1698,7 +1698,7 @@ pub fn drain_dependency_list(this: &mut PackageManager) {
     flush_dependency_queue(this);
 
     // SAFETY: `VERBOSE_INSTALL` is only mutated during single-threaded options
-    // parsing; reads here are race-free in practice (Zig: plain `pub var`).
+    // parsing; reads here are race-free in practice (originally: plain `pub var`).
     if PackageManager::verbose_install() {
         Output::flush();
     }
@@ -1779,7 +1779,7 @@ pub fn generate_network_task_for_tarball<'a>(
         return Ok(None);
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig writes the whole struct via `.* = .{}`.
+    // PORT NOTE: reshaped for borrowck — the original writes the whole struct via `.* = .{}`.
     // All `&mut this` uses (patch-task alloc, cache/temp dir, pool slot) happen
     // first; the immutable `pkg_name`/`scope` borrows are taken afterwards and
     // live only through `for_tarball`, leaving `this` free for the streaming
@@ -1814,7 +1814,7 @@ pub fn generate_network_task_for_tarball<'a>(
     // Take the pool slot as a raw pointer so borrowck releases `this` for the
     // streaming-setup tail. Reborrowed `&mut` per-statement below.
     let net_ptr: *mut NetworkTask = get_network_task(this);
-    // Zig: `network_task.* = .{ .task_id, .callback = undefined, .allocator,
+    // original: `network_task.* = .{ .task_id, .callback = undefined, .allocator,
     // .package_manager, .apply_patch_task }` — full struct overwrite that resets
     // every other field (`retried`, `response`, `streaming_committed`,
     // `tarball_stream`, `streaming_extract_task`, `next`, `url_buf`,
@@ -1896,7 +1896,7 @@ pub fn generate_network_task_for_tarball<'a>(
 
 // ──────────────────────────────────────────────────────────────────────────
 // `impl PackageManager` — method-syntax shims over the free functions above so
-// callers (incl. this file) can write `manager.foo()` matching the Zig spec.
+// callers (incl. this file) can write `manager.foo()` matching the original spec.
 // ──────────────────────────────────────────────────────────────────────────
 impl PackageManager {
     #[inline]
@@ -1938,7 +1938,7 @@ impl PackageManager {
 }
 
 /// Adapter wrapping the existing `PackageManager::process_dependency_list` so
-/// it can be driven by a `RunTasksCallbacks` impl (Zig: passes `extract_ctx`
+/// it can be driven by a `RunTasksCallbacks` impl (originally: passes `extract_ctx`
 /// + `callbacks` and dispatches `onResolve` if any root dep changed).
 fn process_dependency_list_for_ctx<C: RunTasksCallbacks>(
     manager: &mut PackageManager,
@@ -1962,5 +1962,3 @@ fn process_dependency_list_for_ctx<C: RunTasksCallbacks>(
         install_peer,
     )
 }
-
-// ported from: src/install/PackageManager/runTasks.zig

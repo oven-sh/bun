@@ -2,7 +2,7 @@
 #include "JSBuffer.h"
 #include <JavaScriptCore/Lookup.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "JSDOMOperation.h"
 #include "headers.h"
 #include "BunClientData.h"
@@ -163,7 +163,7 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
 JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, size_t total)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* subclassStructure = static_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure();
+    auto* subclassStructure = static_cast<Bun::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure();
 
     if (total <= 0 || length() == 0) {
         // Buffer.alloc(0)
@@ -444,7 +444,7 @@ JSC::EncodedJSValue JSBufferListConstructor::construct(JSC::JSGlobalObject* lexi
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     JSBufferList* bufferList = JSBufferList::create(
-        vm, lexicalGlobalObject, static_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferListStructure());
+        vm, lexicalGlobalObject, static_cast<Bun::GlobalObject*>(lexicalGlobalObject)->JSBufferListStructure());
     return JSC::JSValue::encode(bufferList);
 }
 
@@ -454,9 +454,9 @@ void JSBufferListConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* 
 
 const ClassInfo JSBufferListConstructor::s_info = { "BufferList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferListConstructor) };
 
-JSValue getBufferList(Zig::GlobalObject* globalObject)
+JSValue getBufferList(Bun::GlobalObject* globalObject)
 {
-    return static_cast<Zig::GlobalObject*>(globalObject)->JSBufferList();
+    return static_cast<Bun::GlobalObject*>(globalObject)->JSBufferList();
 }
 
-} // namespace Zig
+} // namespace WebCore

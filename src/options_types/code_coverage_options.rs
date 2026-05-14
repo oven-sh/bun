@@ -1,8 +1,8 @@
-//! `bun test --coverage` option struct, extracted from `cli/test_command.zig`
-//! so `options_types/Context.zig` (and `cli/cli.zig` `TestOptions`) can hold
-//! it without depending on `cli/`.
+//! `bun test --coverage` option struct, extracted from the test command so
+//! `options_types::context` (and the CLI `TestOptions`) can hold it without
+//! depending on `cli/`.
 
-// move-in: TYPE_ONLY from bun_sourcemap_jsc::CodeCoverage (`sourcemap_jsc/CodeCoverage.zig` `Fraction`).
+// move-in: TYPE_ONLY from bun_sourcemap_jsc::CodeCoverage::Fraction.
 // Lifted here so the option struct (and CLI tier) needn't depend on tier-6 sourcemap_jsc.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Fraction {
@@ -28,22 +28,21 @@ impl Default for Fraction {
 pub struct CodeCoverageOptions {
     pub skip_test_files: bool,
     pub reporters: Reporters,
-    /// Zig: `[]const u8 = "coverage"` — process-lifetime in Zig (default_allocator-backed
-    /// when populated from argv/bunfig); owned `Box` here so bunfig parsing can write a
-    /// heap value without leaking.
+    /// Defaults to `"coverage"`. Owned `Box` so bunfig parsing can write a heap
+    /// value without leaking.
     pub reports_directory: Box<[u8]>,
     pub fractions: Fraction,
     pub ignore_sourcemap: bool,
     pub enabled: bool,
     pub fail_on_low_coverage: bool,
-    /// Zig: `[]const []const u8 = &.{}` — populated from CLI/bunfig.
+    /// Populated from CLI/bunfig.
     pub ignore_patterns: Vec<Box<[u8]>>,
 }
 
 impl Default for CodeCoverageOptions {
     fn default() -> Self {
         Self {
-            // TODO(port): Zig `!bun.Environment.allow_assert` (allow_assert = isDebug || is_canary || isTest);
+            // TODO(port): originally `!Environment.allow_assert` (allow_assert = isDebug || is_canary || isTest);
             // mapped to `!cfg!(debug_assertions)` — Phase B may want a `bun_core::Environment::ALLOW_ASSERT` const.
             skip_test_files: !cfg!(debug_assertions),
             reporters: Reporters {
@@ -70,5 +69,3 @@ pub struct Reporters {
     pub text: bool,
     pub lcov: bool,
 }
-
-// ported from: src/options_types/CodeCoverageOptions.zig

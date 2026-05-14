@@ -27,7 +27,7 @@ use bun_sourcemap as SourceMap;
 
 use crate::IndexInt;
 
-/// Move the printed code out of a `PrintResult`. Mirrors Zig
+/// Move the printed code out of a `PrintResult`. Mirrors the original
 /// `j.push(result.code, worker.allocator)` where the joiner takes ownership of
 /// the slice — the Rust `PrintResultSuccess.code` is a `Box<[u8]>` that would
 /// otherwise drop at end of `post_process_js_chunk` and leave the deferred
@@ -63,7 +63,7 @@ pub fn post_process_js_chunk(
     // embedded `Vec<Property>`/`Vec<Expr>` buffers leak from the global heap.
     let _ast_alloc_heap = js_ast::StoreAstAllocHeap::new();
 
-    // TODO(port): `defer chunk.renamer.deinit(bun.default_allocator)` — Zig explicitly
+    // TODO(port): `defer chunk.renamer.deinit(bun.default_allocator)` — original explicitly
     // tears down the renamer at end of scope. In Rust this should be handled by Drop on
     // the renamer field, or an explicit `chunk.renamer.take()` at fn exit. Verify in Phase B.
 
@@ -103,7 +103,7 @@ pub fn post_process_js_chunk(
     let loader =
         c.parse_graph().input_files.items_loader()[chunk.entry_point.source_index() as usize];
     let is_typescript = loader.is_type_script();
-    // Zig: ModuleInfo.create(bun.default_allocator, ...) returns heap-allocated *ModuleInfo,
+    // ModuleInfo.create(bun.default_allocator, ...) returns heap-allocated *ModuleInfo,
     // later stored on chunk.content.javascript.module_info — OWNED → Box<ModuleInfo>.
     let mut module_info: Option<Box<ModuleInfo>> = if generate_module_info {
         Some(ModuleInfo::create(is_typescript))
@@ -115,7 +115,7 @@ pub fn post_process_js_chunk(
     let worker_arena: &Arena = worker.arena();
 
     {
-        // PORT NOTE: Zig builds one `print_options` and passes it by-value twice.
+        // PORT NOTE: original builds one `print_options` and passes it by-value twice.
         // Rust `Options` is not `Copy` (holds `&mut ModuleInfo`), and a closure
         // taking `&mut ModuleInfo` can't express "output lifetime = input
         // lifetime" — so build a base with `module_info: None` and override it
@@ -150,7 +150,7 @@ pub fn post_process_js_chunk(
                     ctx.chunks[import_record.chunk_index as usize].unique_key,
                 ),
                 range: bun_ast::Range::NONE,
-                // Remaining fields take their Zig defaults (no Default impl):
+                // Remaining fields take their original defaults (no Default impl):
                 tag: ImportRecordTag::None,
                 loader: None,
                 source_index: Index::INVALID,
@@ -324,7 +324,7 @@ pub fn post_process_js_chunk(
                                 continue;
                             }
                             // Skip barrel-optimized-away imports — marked is_unused by
-                            // barrel_imports.zig. Never resolved (source_index invalid),
+                            // the barrel-imports pass. Never resolved (source_index invalid),
                             // and removed by convertStmtsForChunk. Not in emitted code.
                             if record.flags.contains(ImportRecordFlags::IS_UNUSED) {
                                 continue;
@@ -523,7 +523,7 @@ pub fn post_process_js_chunk(
     let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
     if is_bun {
         if c.options.generate_bytecode_cache && output_format == options::OutputFormat::Cjs {
-            // Zig `++` literal concat → single byte literal (concat! yields &str, not &[u8])
+            // Original used compile-time literal concat → single byte literal (concat! yields &str, not &[u8])
             const INPUT: &[u8] =
                 b"// @bun @bytecode @bun-cjs\n(function(exports, require, module, __filename, __dirname) {";
             j.push_static(INPUT);
@@ -602,7 +602,7 @@ pub fn post_process_js_chunk(
     }
 
     {
-        // PORT NOTE: Zig `j.push(code, worker.allocator)` transferred ownership;
+        // PORT NOTE: original `j.push(code, worker.allocator)` transferred ownership;
         // `cross_chunk_prefix` is a local that drops at fn exit, but the joiner
         // may be stashed on `chunk.intermediate_output` and consumed later
         // (`IntermediateOutput::Joiner` path). Move the Box into the joiner.
@@ -619,7 +619,7 @@ pub fn post_process_js_chunk(
 
     let mut compile_results_for_source_map: MultiArrayList<CompileResultForSourceMap> =
         MultiArrayList::default();
-    let _ = compile_results_for_source_map.set_capacity(compile_results.len()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+    let _ = compile_results_for_source_map.set_capacity(compile_results.len()); // OOM/capacity: original aborts; port keeps fire-and-forget
     // bun.handleOom dropped — Rust aborts on OOM
 
     let show_comments = c.options.mode == LinkerOptionsMode::Bundle && !c.options.minify_whitespace;
@@ -739,7 +739,7 @@ pub fn post_process_js_chunk(
 
     {
         // PORT NOTE: `entry_point_tail` is a local `CompileResult` whose `code`
-        // is a `Box<[u8]>`; Zig `j.push(tail_code, worker.allocator)` handed
+        // is a `Box<[u8]>`; original `j.push(tail_code, worker.allocator)` handed
         // ownership to the joiner. Move it so the deferred-joiner path doesn't
         // read freed memory after this fn returns.
         let tail_code = entry_point_tail.into_code();
@@ -786,7 +786,7 @@ pub fn post_process_js_chunk(
                     [chunk.entry_point.source_index() as usize]
                     .path;
                 let mut buf = MutableString::init_empty();
-                // PERF(port): worker.arena is an arena in Zig
+                // PERF(port): worker.arena is an arena in the original
                 let _ = js_printer::quote_for_json(input.pretty, &mut buf, true); // fmt::Result into Vec<u8> is infallible
                 // bun.handleOom dropped — Rust aborts on OOM
                 let str = buf.slice(); // worker.arena is an arena
@@ -1008,7 +1008,7 @@ pub fn generate_entry_point_tail_js<'a>(
                         let mut had_default_export = false;
 
                         for (i, alias) in sorted_and_filtered_export_aliases.iter().enumerate() {
-                            // PORT NOTE: Zig `resolved_exports.get(alias).?` returns a by-value
+                            // PORT NOTE: original `resolved_exports.get(alias).?` returns a by-value
                             // copy of `ExportData`; only `.data` (an `ImportTracker`, `Copy`) is
                             // read/mutated below, so copy that field instead of the whole struct.
                             let mut resolved_export_data =
@@ -1142,7 +1142,7 @@ pub fn generate_entry_point_tail_js<'a>(
                         }
 
                         // PORT NOTE: arena-owned `*mut [ClauseItem]` — move the
-                        // collected Vec into the linker arena (Zig used
+                        // collected Vec into the linker arena (original used
                         // `c.arena().alloc`). The arena slice is also iterated
                         // below for the synthetic-default-export path.
                         let items: &mut [bun_ast::ClauseItem] =
@@ -1385,5 +1385,3 @@ pub fn generate_entry_point_tail_js<'a>(
         decls: Box::default(),
     }
 }
-
-// ported from: src/bundler/linker_context/postProcessJSChunk.zig

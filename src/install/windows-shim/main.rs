@@ -12,8 +12,8 @@
 //!     no `#[no_mangle]` exports). Depending on the real crates would make
 //!     their `#[no_mangle]` C-ABI surface (`Bun__*`, `__bun_dispatch__*`) a
 //!     link root referencing libuv/simdutf/highway/ICU; the shim can't
-//!     satisfy those and shouldn't carry them. Zig's original
-//!     (`bun_shim_impl.zig`) was self-contained for the same reason.
+//!     satisfy those and shouldn't carry them. The shim has always been
+//!     self-contained for the same reason.
 //!
 //! `BinLinkingShim.rs` is path-included for `Flags`/`VersionFlag` only; its
 //! encoder side (Shebang, `encode_into`, `include_bytes!` of this crate's own
@@ -23,9 +23,8 @@
 // modules assume these are set at the crate root.
 //
 // Freestanding: `no_std` + `no_main` so the link contains only the launcher
-// + Win32 externs — no Rust runtime, no CRT, no `std::sys` init. Matches
-// Zig's build (build.zig built `bun_shim_impl.zig` as a freestanding
-// ReleaseFast exe with `link_libc = false`, `single_threaded = true`).
+// + Win32 externs — no Rust runtime, no CRT, no `std::sys` init. The shim has
+// always been a freestanding, single-threaded, libc-free build.
 // `scripts/build/rust.ts` supplies `/ENTRY:shim_main` and rebuilds `core`
 // with `panic_immediate_abort` so the panic/fmt machinery is dead code.
 #![no_std]
@@ -65,9 +64,8 @@ pub static _fltused: i32 = 0;
 /// `compiler_builtins` *has* this routine but hard-gates it on
 /// `cfg(target_env = "gnu")` (`src/x86_64.rs` / `src/aarch64.rs`) because on
 /// `*-msvc` it expects the CRT to provide it; there is no feature flag to
-/// opt in. Zig is in the same position and ships the probe in its own
-/// compiler-rt for `windows && !link_libc` (see
-/// `vendor/zig/lib/compiler_rt/stack_probe.zig`). We do likewise: the bodies
+/// opt in. Other freestanding-on-Windows toolchains are in the same position
+/// and ship the probe in their own compiler-rt. We do likewise: the bodies
 /// below are taken verbatim from `compiler_builtins` (which in turn mirrors
 /// LLVM `compiler-rt/lib/builtins/{x86_64,aarch64}/chkstk.S`), so they are
 /// the upstream-tested instruction sequences rather than a local rewrite.
@@ -139,7 +137,7 @@ pub extern "C" fn shim_main() -> ! {
 /// panics are debug assertions; in release the build script enables `core`'s
 /// `panic_immediate_abort` so they compile to a bare trap and never reach
 /// this. If one does (debug `--profile shim` build), exit 255 — same code
-/// `fail_and_exit_with_reason` uses, and matching Zig's `panic = abort`.
+/// `fail_and_exit_with_reason` uses (panic = abort semantics).
 #[cfg(windows)]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
@@ -200,8 +198,8 @@ pub mod bun_core {
     pub use crate::w_lit as w;
     /// Mirrors `bun_core::RacyCell` (src/bun_core/util.rs) — `static`-safe
     /// interior-mutability cell with no synchronization. The shim is
-    /// single-threaded (Zig built it `single_threaded = true`), so the
-    /// unconditional `Sync` is trivially upheld.
+    /// single-threaded by construction, so the unconditional `Sync` is
+    /// trivially upheld.
     ///
     /// Internally backed by `Cell<T>` (not `UnsafeCell<T>`): `Cell` is
     /// `#[repr(transparent)]` over `UnsafeCell` with identical `Send`/`!Sync`

@@ -9,8 +9,8 @@ pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
 
     // PERF(port): was arena bulk-free — profile in Phase B
     // PERF(port): was stack-fallback — profile in Phase B
-    // PORT NOTE: `to_slice_clone` returns `ZigStringSlice`; convert to owned
-    // `Vec<u8>` via `.into_vec()` since the Zig arena is gone.
+    // PORT NOTE: `to_slice_clone` returns `UTF8Slice`; convert to
+    // owned `Vec<u8>` via `.into_vec()` since the original arena is gone.
     let mut all_positionals: Vec<Vec<u8>> = Vec::new();
 
     let mut log = Log::init();
@@ -92,5 +92,3 @@ pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
     );
     Ok(object)
 }
-
-// ported from: src/install_jsc/update_request_jsc.zig

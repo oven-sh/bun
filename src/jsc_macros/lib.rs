@@ -1,6 +1,6 @@
 //! Proc-macros for `bun_jsc`.
 //!
-//! These replace the Zig `comptime`/`@typeInfo` reflection in `host_fn.zig`
+//! These replace the original `comptime`/`@typeInfo`-style reflection in the host-fn layer
 //! and the `.classes.ts` codegen (`src/codegen/generate-classes.ts`). Rust
 //! cannot accept a macro in `extern "<abi>"` position, so the JSC calling
 //! convention (`"sysv64"` on Windows-x64, `"C"` elsewhere) is encoded by
@@ -143,7 +143,7 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
     };
 
     // Shim symbol name. Only emitted when an explicit `export = "..."` is
-    // supplied. In Zig, `@export(&toJSHostFn(f), .{ .name = ... })` always
+    // supplied. The original `@export(&toJSHostFn(f), .{ .name = ... })` always
     // received a caller-supplied unique name; defaulting to the bare Rust
     // ident here produces cross-module link collisions for common names
     // (`parse`, `getter`, `crc32`, …) once codegen runs. With no explicit
@@ -175,7 +175,7 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
         // the `(method)` arg when the signature has `&self`).
         HostFnKind::Free | HostFnKind::Method => {
             // `passThis: true` in `.classes.ts` adds a trailing
-            // `this_value: JSValue` parameter (Zig: `this_value: jsc.JSValue`).
+            // `this_value: JSValue` parameter (`this_value: jsc.JSValue`).
             // The real exported wrapper lives in `generated_classes.rs`; this
             // placeholder shim only needs to type-check, so detect the 4-arg
             // shape (self/this + global + frame + this_value) and forward
@@ -259,7 +259,7 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
 //   `${TypeName}Prototype__${prop}GetCachedValue(JSValue) -> JSValue`
 //   `${TypeName}Prototype__${prop}SetCachedValue(JSValue, *JSGlobalObject, JSValue)`
 // shims that `src/codegen/generate-classes.ts` produces for every
-// `cache: true` property. The getter maps `.zero` → `None` (matches the Zig
+// `cache: true` property. The getter maps `.zero` → `None` (matches the
 // `${name}GetCached` wrapper). Both extern blocks are duplicated under the
 // JSC calling-convention `#[cfg]` split (see `jsc_extern_fn` above).
 // ──────────────────────────────────────────────────────────────────────────
@@ -402,7 +402,7 @@ pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
             quote! { Gc::#p => #f(this_value, global, value), }
         });
         out.extend(quote! {
-            /// GC-cached value slots on the JS wrapper (Zig: `js.gc.<field>.get/set/clear`).
+            /// GC-cached value slots on the JS wrapper (`js.gc.<field>.get/set/clear`).
             #[allow(non_camel_case_types, dead_code)]
             #[derive(Clone, Copy)]
             #[repr(u8)]
@@ -539,8 +539,8 @@ impl Parse for JsClassArgs {
 #[proc_macro_attribute]
 pub fn JsClass(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as JsClassArgs);
-    // Accept both `struct` and `enum` payloads — Zig `.classes.ts` `m_ctx`
-    // payloads are frequently `union(enum)`, which port to Rust `enum`s.
+    // Accept both `struct` and `enum` payloads — `.classes.ts` `m_ctx`
+    // payloads are frequently tagged unions, which port to Rust `enum`s.
     let item2 = item.clone();
     if let Ok(strukt) = syn::parse::<ItemStruct>(item) {
         return expand_js_class(args, strukt)
@@ -593,7 +593,7 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
         .unwrap_or_else(|| rust_ty.to_string());
 
     // C++→Rust export hooks (`${T}Class__construct` / `${T}Class__finalize` /
-    // `${T}__estimatedSize` / `${T}__ZigStructSize`) are now emitted by
+    // `${T}__estimatedSize` / `${T}__RustStructSize`) are now emitted by
     // `generateRust()` in `src/codegen/generate-classes.ts` — see
     // `build/*/codegen/generated_classes.rs`. Emitting them here as well
     // produces duplicate-symbol link errors, so this macro is now *import-side
@@ -679,7 +679,7 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
 
             impl #rust_ty {
                 /// Wrap an already-heap-allocated `*mut Self` in a JS object
-                /// without re-boxing. Mirrors Zig's generated
+                /// without re-boxing. Mirrors the generated
                 /// `${T}.toJS(this: *T, globalThis)` which forwards the
                 /// existing pointer to `${T}__create`. Use this when `Self`
                 /// was allocated via `heap::alloc` / intrusive-RC `init()`
@@ -765,7 +765,7 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
 // now a no-op.
 //
 // The user body contains **no `unsafe`** — all pointer reconstruction lives in
-// the generated thunk under a single `// SAFETY:` umbrella mirroring the Zig
+// the generated thunk under a single `// SAFETY:` umbrella mirroring the
 // `OpaqueWrap` invariant: the registered ctx pointer is the same `*mut Self`
 // the caller passed to the C side, and any `(ptr, len)` pair describes a slice
 // valid for the duration of the callback.
@@ -873,8 +873,8 @@ fn expand_uws_callback(args: UwsCallbackArgs, func: ItemFn) -> syn::Result<Token
                 thunk_params.push(quote! { #p: #ptr_ty });
                 thunk_params.push(quote! { #l: usize });
                 // Tolerate (null, 0) — uWS passes this for empty buffers, and
-                // `from_raw_parts(null, 0)` is UB. Zig's `[]const u8` also
-                // permits `(undefined, 0)`. Use an explicit, obviously-sound
+                // `from_raw_parts(null, 0)` is UB. The original `[]const u8` also
+                // permitted `(undefined, 0)`. Use an explicit, obviously-sound
                 // construction per mutability instead of `(&mut [][..]) as _`,
                 // which borrows a temporary and relies on a non-existent
                 // `&mut [T] -> &[T]` `as`-cast.

@@ -33,7 +33,7 @@ impl FileJsc for File {
             // the (otherwise UB) free of a static slice is unreachable.
             let contents = self.contents.as_bytes();
             // SAFETY: `contents` is `'static` and never freed (see above);
-            // `@constCast` mirrors Zig — Blob consumers only read via
+            // `@constCast` mirrors the original — Blob consumers only read via
             // `shared_view()`.
             let bytes = unsafe {
                 Bytes::from_raw_parts(
@@ -55,7 +55,7 @@ impl FileJsc for File {
             store.ref_();
 
             // Hold the raw pointer so we can keep mutating the store after
-            // `init_with_store` consumes the `StoreRef` (Zig freely aliases the
+            // `init_with_store` consumes the `StoreRef` (the original freely aliases the
             // `*Store` across both). The store outlives this fn (leaked above).
             let store_ptr = store.as_ptr();
 
@@ -90,7 +90,7 @@ impl FileJsc for File {
                 b.name.set(bstring::String::clone_utf8(self.name));
             }
 
-            // Zig: `Blob{...}.new()` — heap-promote and stash the raw pointer.
+            // `Blob{...}.new()` — heap-promote and stash the raw pointer.
             // The standalone graph (and thus this Blob) lives for the process.
             // `cached_blob` is typed against the lower crate's opaque `Blob`
             // newtype (it cannot name `webcore::Blob` without a dep cycle), so
@@ -108,5 +108,3 @@ impl FileJsc for File {
         unsafe { self.cached_blob.unwrap().cast::<Blob>().as_mut() }
     }
 }
-
-// ported from: src/runtime/api/standalone_graph_jsc.zig

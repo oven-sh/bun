@@ -66,10 +66,10 @@ impl TransformList {
 
         // TODO: Re-enable with a better solution
         //       See: https://github.com/parcel-bundler/lightningcss/issues/288
-        // PORT NOTE: Zig's minify branch built a sub-`Printer` writing into a temp
-        // buffer then `dest.writeStr(base)` — observably identical to writing
-        // directly into `dest` while `dest.minify` is set (the original
-        // lightningcss size-comparison was already disabled upstream). Collapsed.
+        // PORT NOTE: the original minify branch built a sub-`Printer` writing into a
+        // temp buffer then copied it — observably identical to writing directly into
+        // `dest` while `dest.minify` is set (the original lightningcss size-comparison
+        // was already disabled upstream). Collapsed.
         self.to_css_base(dest)
     }
 
@@ -151,8 +151,7 @@ impl Transform {
     pub fn parse(input: &mut Parser) -> Result<Transform> {
         let function = input.expect_function_cloned()?;
 
-        // PORT NOTE: Zig used a Closure struct + nested anon-struct fn passed to
-        // parseNestedBlock; Rust closures capture `function` directly.
+        // PORT NOTE: the closure captures `function` directly.
         input.parse_nested_block(|i| -> Result<Transform> {
             let location = i.current_source_location();
             crate::match_ignore_ascii_case! { function, {
@@ -244,8 +243,7 @@ impl Transform {
                         let y = NumberOrPercentage::parse(i)?;
                         Ok(Transform::Scale { x, y })
                     } else {
-                        // PORT NOTE: Zig `x.deepClone(arena)` — `NumberOrPercentage`
-                        // is POD; `clone()` is exact.
+                        // PORT NOTE: `NumberOrPercentage` is POD; `clone()` is exact.
                         let y = x.clone();
                         Ok(Transform::Scale { x, y })
                     }
@@ -1008,8 +1006,8 @@ impl TransformHandler {
         context: &mut PropertyHandlerContext,
     ) -> bool {
         let bump = dest.bump();
-        // PORT NOTE: Zig used a local fn with `comptime field: []const u8` + `@field(self, field)`.
-        // Rust cannot index struct fields by string at runtime; use a macro to paste the ident.
+        // PORT NOTE: Rust cannot index struct fields by string at runtime; use a
+        // macro to paste the ident.
         macro_rules! individual_property {
             ($field:ident, $val:expr) => {{
                 if let Some(transform) = &mut self.transform {
@@ -1028,7 +1026,7 @@ impl TransformHandler {
 
                 // If two vendor prefixes for the same property have different
                 // values, we need to flush what we have immediately to preserve order.
-                // PORT NOTE: reshaped for borrowck — Zig held &self.transform across
+                // PORT NOTE: reshaped for borrowck — can't hold &self.transform across
                 // self.flush(); compute the predicate first, then act.
                 let needs_flush = if let Some(current) = &self.transform {
                     current.0 != *transform_val && !current.1.contains(vp)
@@ -1070,8 +1068,8 @@ impl TransformHandler {
                             prefixes::Feature::Transform,
                         ))
                     } else {
-                        // PORT NOTE: Zig pushed `property.deepClone(arena)`; the
-                        // matched payload is `Unparsed`, so reconstruct directly.
+                        // PORT NOTE: the matched payload is `Unparsed`, so
+                        // reconstruct directly from a deep clone.
                         Property::Unparsed(unparsed.deep_clone(bump))
                     };
                     dest.push(prop);
@@ -1119,5 +1117,3 @@ impl TransformHandler {
         }
     }
 }
-
-// ported from: src/css/properties/transform.zig

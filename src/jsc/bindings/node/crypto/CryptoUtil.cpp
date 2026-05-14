@@ -19,18 +19,18 @@ namespace Bun {
 using namespace JSC;
 using namespace ncrypto;
 
-namespace ExternZigHash {
+namespace ExternCryptoHash {
 struct Hasher;
 
-extern "C" Hasher* Bun__CryptoHasherExtern__getByName(Zig::GlobalObject* globalObject, const char* name, size_t nameLen);
-Hasher* getByName(Zig::GlobalObject* globalObject, const StringView& name)
+extern "C" Hasher* Bun__CryptoHasherExtern__getByName(Bun::GlobalObject* globalObject, const char* name, size_t nameLen);
+Hasher* getByName(Bun::GlobalObject* globalObject, const StringView& name)
 {
     auto utf8 = name.utf8();
     return Bun__CryptoHasherExtern__getByName(globalObject, utf8.data(), utf8.length());
 }
 
-extern "C" Hasher* Bun__CryptoHasherExtern__getFromOther(Zig::GlobalObject* global, Hasher* hasher);
-Hasher* getFromOther(Zig::GlobalObject* globalObject, Hasher* hasher)
+extern "C" Hasher* Bun__CryptoHasherExtern__getFromOther(Bun::GlobalObject* global, Hasher* hasher);
+Hasher* getFromOther(Bun::GlobalObject* globalObject, Hasher* hasher)
 {
     return Bun__CryptoHasherExtern__getFromOther(globalObject, hasher);
 }
@@ -47,8 +47,8 @@ bool update(Hasher* hasher, std::span<const uint8_t> data)
     return Bun__CryptoHasherExtern__update(hasher, data.data(), data.size());
 }
 
-extern "C" uint32_t Bun__CryptoHasherExtern__digest(Hasher* hasher, Zig::GlobalObject* globalObject, uint8_t* out, size_t outLen);
-uint32_t digest(Hasher* hasher, Zig::GlobalObject* globalObject, std::span<uint8_t> out)
+extern "C" uint32_t Bun__CryptoHasherExtern__digest(Hasher* hasher, Bun::GlobalObject* globalObject, uint8_t* out, size_t outLen);
+uint32_t digest(Hasher* hasher, Bun::GlobalObject* globalObject, std::span<uint8_t> out)
 {
     return Bun__CryptoHasherExtern__digest(hasher, globalObject, out.data(), out.size());
 }
@@ -59,7 +59,7 @@ uint32_t getDigestSize(Hasher* hasher)
     return Bun__CryptoHasherExtern__getDigestSize(hasher);
 }
 
-}; // namespace ExternZigHash
+}; // namespace ExternCryptoHash
 
 namespace StringBytes {
 

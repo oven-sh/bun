@@ -31,7 +31,7 @@ use core::ptr::NonNull;
 
 use bun_collections::ArrayHashMap;
 
-// PORT NOTE: Zig `*const fn(*anyopaque) bool`. Declared `extern "C"` so the
+// PORT NOTE: originally a raw `fn(*anyopaque) -> bool` pointer. Declared `extern "C"` so the
 // same fn-pointer type can flow across the FFI boundary (e.g.
 // `Bun__VM__postDeferredTask`) without an ABI-crossing fn-ptr cast. All in-tree
 // producers go through monomorphic `extern "C"` trampolines (see
@@ -45,7 +45,7 @@ pub struct DeferredTaskQueue {
 
 impl DeferredTaskQueue {
     pub fn post_task(&mut self, ctx: Option<NonNull<c_void>>, task: DeferredRepeatingTask) -> bool {
-        // Zig: `getOrPutValue(ctx, task).found_existing`.
+        // Equivalent of `getOrPutValue(ctx, task).found_existing`.
         // PORT NOTE: `ArrayHashMap` is currently aliased to std `HashMap`; the
         // entry API gives the same semantics (insert-if-absent + report-existing).
         match self.map.entry(ctx) {
@@ -58,14 +58,14 @@ impl DeferredTaskQueue {
     }
 
     pub fn unregister_task(&mut self, ctx: Option<NonNull<c_void>>) -> bool {
-        // Zig: `swapRemove(ctx) -> bool`. Order is irrelevant for this map's
+        // Equivalent of `swapRemove(ctx) -> bool`. Order is irrelevant for this map's
         // contract (see file doc — "order may not particularly matter"), so
         // plain `remove().is_some()` is equivalent.
         self.map.remove(&ctx).is_some()
     }
 
     pub fn run(&mut self) {
-        // PORT NOTE: Zig used `swapRemoveAt(i)` (O(1) by index). The current
+        // PORT NOTE: original used `swapRemoveAt(i)` (O(1) by index). The current
         // `ArrayHashMap` exposes `keys()/values()` slices and `swap_remove(&K)`
         // (O(n) hash lookup) but not `swap_remove_at`. Keys here are `Copy`
         // pointers, so copy the key out and remove by key — semantically
@@ -85,7 +85,7 @@ impl DeferredTaskQueue {
             // PORT NOTE: reshaped for borrowck — copy fn ptr out before calling
             let task = self.map.values()[i];
             // SAFETY: `nn` is the live `*mut T` registered by the caller; the
-            // callback contract (Zig `Type.onAutoFlush`) is that `task` may be
+            // callback contract (`Type.onAutoFlush`) is that `task` may be
             // invoked with exactly that pointer until it returns `false` or is
             // explicitly unregistered.
             if !unsafe { task(nn.as_ptr()) } {
@@ -98,6 +98,4 @@ impl DeferredTaskQueue {
     }
 }
 
-// Zig `deinit` only freed the map's backing storage; `ArrayHashMap: Drop` handles that.
-
-// ported from: src/event_loop/DeferredTaskQueue.zig
+// `deinit` only freed the map's backing storage; `ArrayHashMap: Drop` handles that.

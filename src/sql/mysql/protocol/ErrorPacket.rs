@@ -21,18 +21,18 @@ impl Default for ErrorPacket {
     }
 }
 
-// Zig `deinit` only freed `error_message`; `Data: Drop` handles that automatically.
+// `Data: Drop` handles freeing `error_message` automatically.
 
 pub struct MySQLErrorOptions {
-    // TODO(port): verify lifetime — Zig `[]const u8` field with no deinit; assuming static literal
+    // TODO(port): verify lifetime — borrowed byte slice with no cleanup; assuming static literal
     pub code: &'static [u8],
     pub errno: Option<u16>,
     pub sql_state: Option<[u8; 5]>,
 }
 
-// No `impl Default` — Zig `code: []const u8` has no default, so `.{}` is invalid there too.
+// No `impl Default` — `code` has no default; callers must construct it explicitly.
 
-// `createMySQLError` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.
+// `createMySQLError` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc.
 
 impl ErrorPacket {
     pub fn decode_internal<Context: ReaderContext>(
@@ -71,7 +71,7 @@ impl ErrorPacket {
     }
 }
 
-// Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
+// See Decode trait in src/sql/mysql/protocol/NewReader.rs
 pub fn decode<Context: ReaderContext>(
     this: &mut ErrorPacket,
     reader: NewReader<Context>,
@@ -79,6 +79,4 @@ pub fn decode<Context: ReaderContext>(
     this.decode_internal(reader)
 }
 
-// `toJS` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.
-
-// ported from: src/sql/mysql/protocol/ErrorPacket.zig
+// `toJS` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc.

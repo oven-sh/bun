@@ -14,7 +14,7 @@
 using namespace JSC;
 using namespace WebCore;
 
-namespace Zig {
+namespace Bun {
 
 class JSCStackFrame;
 
@@ -102,5 +102,5 @@ private:
     DECLARE_VISIT_CHILDREN;
 };
 
-JSValue createNativeFrameForTesting(Zig::GlobalObject* globalObject);
+JSValue createNativeFrameForTesting(Bun::GlobalObject* globalObject);
 }

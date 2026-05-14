@@ -23,8 +23,8 @@ pub use parser::SelectorList;
 /// Our implementation of the `SelectorImpl` interface — the trait-based
 /// `impl_::Selectors` marker lives in the hub (`super::impl_`) so the
 /// parser↔selector cycle has a single anchor. This module is the literal
-/// Zig-shaped namespace (`selector.impl.Selectors.SelectorImpl.*` type
-/// aliases) kept for diff parity with `selector.zig`.
+/// `selector.impl.Selectors.SelectorImpl.*` type-alias namespace, kept for
+/// diff parity.
 pub use super::impl_;
 // TODO(port): `impl` is a Rust keyword; using raw identifier `r#impl` for module name parity.
 pub mod r#impl {
@@ -42,7 +42,7 @@ pub mod r#impl {
             pub type LocalIdentifier = css::css_values::ident::IdentOrRef;
             pub type LocalName = css::css_values::ident::Ident;
             pub type NamespacePrefix = css::css_values::ident::Ident;
-            pub type NamespaceUrl = *const [u8]; // TODO(port): lifetime — Zig `[]const u8` type alias
+            pub type NamespaceUrl = *const [u8]; // TODO(port): lifetime — borrowed-slice type alias
             pub type BorrowedNamespaceUrl = *const [u8]; // TODO(port): lifetime
             pub type BorrowedLocalName = css::css_values::ident::Ident;
 
@@ -254,7 +254,7 @@ fn downlevel_dir<'bump>(bump: &'bump Bump, dir: parser::Direction, targets: Targ
 }
 
 fn lang_list_to_selectors<'bump>(_bump: &'bump Bump, langs: &[&'static [u8]]) -> Box<[Selector]> {
-    // PORT NOTE: Zig returned `[]Selector` (mutable arena slice). Phase A:
+    // PORT NOTE: the original returned a mutable arena slice. Phase A:
     // `Component::Is`/`Negation` carry `Box<[Selector]>`; Phase B re-threads
     // `&'bump [Selector]` once the arena lifetime is plumbed.
     let mut selectors: Vec<Selector> = Vec::with_capacity(langs.len());
@@ -543,7 +543,7 @@ pub fn is_compatible(selectors: &[parser::Selector], targets: Targets) -> bool {
 /// A selector is considered unused if it contains a class or id component that exists in the set of unused symbols.
 pub fn is_unused(
     selectors: &[parser::Selector],
-    unused_symbols: &ArrayHashMap<Box<[u8]>, ()>, // Zig `std.StringArrayHashMapUnmanaged(void)`
+    unused_symbols: &ArrayHashMap<Box<[u8]>, ()>, // string-keyed array hash set
     symbols: &SymbolList,
     parent_is_unused: bool,
 ) -> bool {
@@ -583,7 +583,7 @@ fn is_selector_unused(
                         continue; // blocked_on: as_original_string ref arm
                     }
                 };
-                // PORT NOTE: Zig `unused_symbols.contains(actual_ident)` —
+                // PORT NOTE: `unused_symbols.contains(actual_ident)` —
                 // adapted lookup to compare the borrowed `&[u8]` against
                 // owned `Box<[u8]>` keys without allocating.
                 struct SliceAdapter;
@@ -889,7 +889,7 @@ pub mod serialize {
                     let mut id: Vec<u8> = Vec::new();
                     let _ = css::serializer::serialize_identifier(value_bytes, &mut id);
 
-                    // PORT NOTE: Zig routed through `css.to_css.string(CSSString, ...)`, which
+                    // PORT NOTE: this routed through `css.to_css.string(CSSString, ...)`, which
                     // dispatches to `CSSStringFns.toCss` → `serialize_string`. Inline that here
                     // since `CssString` (`*const [u8]`) does not implement `generic::ToCss`.
                     let mut s: Vec<u8> = Vec::new();
@@ -1075,7 +1075,7 @@ pub mod serialize {
             d.write_str(val)
         }
 
-        // TODO(port): Zig `Helpers.pseudo` used comptime `@field` to look up
+        // TODO(port): `Helpers.pseudo` used reflective field lookup on
         // `dest.pseudo_classes.<snake_case_key>`. Expanded per call site via macro.
         macro_rules! pseudo {
             ($d:expr, $field:ident, $s:literal) => {{
@@ -1737,7 +1737,7 @@ pub mod tocss_servo {
         match pseudo_element {
             PseudoElement::Before => dest.write_str(b"::before")?,
             PseudoElement::After => dest.write_str(b"::after")?,
-            // TODO(port): Zig switch was non-exhaustive over a multi-variant enum (compiler bug or intentional?).
+            // TODO(port): the original switch was non-exhaustive over a multi-variant enum (compiler bug or intentional?).
             _ => {}
         }
         Ok(())
@@ -1896,5 +1896,3 @@ impl<'a> CompoundSelectorIter<'a> {
         None
     }
 }
-
-// ported from: src/css/selectors/selector.zig

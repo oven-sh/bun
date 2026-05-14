@@ -4,7 +4,7 @@ use bun_valkey::valkey_protocol as protocol;
 
 use super::protocol_jsc::{ToJSOptions, resp_value_to_js_with_options};
 
-type Slice = bun_core::ZigStringSlice;
+type Slice = bun_core::UTF8Slice;
 
 // PORT NOTE: callers in `js_valkey_functions.rs` construct
 // `Vec<crate::node::types::BlobOrStringOrBuffer>` directly, so `Args::Args` must accept
@@ -13,7 +13,7 @@ type Slice = bun_core::ZigStringSlice;
 // `byte_length()`).
 type BlobOrStringOrBuffer = crate::node::types::BlobOrStringOrBuffer;
 
-// PORT NOTE: `Command` is a transient view struct (Zig `deinit` is a no-op); fields
+// PORT NOTE: `Command` is a transient view struct (`deinit` is a no-op); fields
 // borrow caller-owned data for the duration of serialization.
 // TODO(port): borrow-view struct — `<'a>` on a struct is disallowed in Phase A (no
 // LIFETIMES.tsv entry for ValkeyCommand.Command/Args); revisit in Phase B and either
@@ -95,7 +95,7 @@ impl<'a> Command<'a> {
     }
 
     pub fn byte_length(&self) -> usize {
-        // Zig: std.fmt.count — DiscardingWriter is bun_io's byte-counting null sink.
+        // DiscardingWriter is bun_io's byte-counting null sink.
         let mut counter = bun_io::DiscardingWriter::default();
         self.write(&mut counter).expect("unreachable");
         counter.count
@@ -111,7 +111,7 @@ impl<'a> Command<'a> {
 
 impl<'a> core::fmt::Display for Command<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // TODO(port): RESP bytes may not be valid UTF-8; Zig used the byte-writer protocol.
+        // TODO(port): RESP bytes may not be valid UTF-8.
         // Phase B should route Display through a byte-writing adapter or drop Display entirely.
         let mut buf: Vec<u8> = Vec::new();
         self.write(&mut buf).map_err(|_| core::fmt::Error)?;
@@ -126,8 +126,8 @@ pub struct Entry {
     pub promise: Promise,
 }
 
-// Zig: `pub const Queue = bun.LinearFifo(Entry, .Dynamic);` — inherent associated
-// types are unstable on stable Rust, so expose as a sibling module alias instead.
+// Inherent associated types are unstable on stable Rust, so the
+// `Entry::Queue` alias is exposed as a sibling module alias instead.
 pub mod entry {
     pub type Queue = super::LinearFifo<super::Entry, super::DynamicBuffer<super::Entry>>;
 }
@@ -146,7 +146,7 @@ impl Entry {
     }
 }
 
-// Zig `Entry.deinit` only freed `serialized_data`; `Box<[u8]>` drops automatically.
+// No `impl Drop`: only `serialized_data` needed cleanup; `Box<[u8]>` drops automatically.
 
 bitflags::bitflags! {
     #[repr(transparent)]
@@ -162,7 +162,7 @@ bitflags::bitflags! {
 
 impl Default for Meta {
     fn default() -> Self {
-        // Zig field defaults: supports_auto_pipelining = true, rest false.
+        // Defaults: supports_auto_pipelining = true, rest false.
         Meta::SUPPORTS_AUTO_PIPELINING
     }
 }
@@ -244,7 +244,7 @@ impl Promise {
     }
 }
 
-// Zig `Promise.deinit` only called `self.promise.deinit()`; JSPromiseStrong's Drop handles it.
+// No `impl Drop`: JSPromiseStrong's Drop handles cleanup.
 
 // Command+Promise pair for tracking which command corresponds to which promise
 pub struct PromisePair {
@@ -252,7 +252,7 @@ pub struct PromisePair {
     pub promise: Promise,
 }
 
-// Zig: `pub const Queue = bun.LinearFifo(PromisePair, .Dynamic);` — see `entry` note above.
+// `PromisePair::Queue` alias — see `entry` note above.
 pub mod promise_pair {
     pub type Queue =
         super::LinearFifo<super::PromisePair, super::DynamicBuffer<super::PromisePair>>;
@@ -269,5 +269,3 @@ impl PromisePair {
         Ok(())
     }
 }
-
-// ported from: src/runtime/valkey_jsc/ValkeyCommand.zig

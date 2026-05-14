@@ -6,7 +6,7 @@
     clippy::all
 )]
 #![warn(unused_must_use)]
-// `Transpiler` (Zig: `src/transpiler.zig`) is implemented in
+// `Transpiler` is implemented in
 // `bun_bundler::transpiler` because it shares the bundler's
 // resolver/options/cache plumbing. This crate re-exports it under the
 // `bun_transpiler` name so install/CLI tiers don't have to depend on

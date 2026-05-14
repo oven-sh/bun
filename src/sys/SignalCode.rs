@@ -2,10 +2,9 @@ use core::fmt;
 
 use bun_core::output;
 
-// PORT NOTE: Zig `enum(u8) { ..., _ }` is non-exhaustive — any u8 is a valid
-// inhabitant. A Rust `#[repr(u8)] enum` with only the named variants would be
-// UB for the `from()` path (which accepts arbitrary bytes), so this is ported
-// as a transparent newtype with associated consts.
+// PORT NOTE: any u8 is a valid signal code. A Rust `#[repr(u8)] enum` with only
+// the named variants would be UB for the `from()` path (which accepts arbitrary
+// bytes), so this is a transparent newtype with associated consts.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct SignalCode(pub u8);
@@ -81,11 +80,11 @@ impl SignalCode {
     }
 
     pub fn from<T: bytemuck::NoUninit>(value: T) -> SignalCode {
-        // Zig `std.mem.asBytes(&value)[0]` — view `value` as bytes and read the
-        // first one. `NoUninit` guarantees `T` is `Copy` with no padding/uninit
-        // bytes, so `bytemuck::bytes_of` is the safe equivalent of the raw
-        // `*(&raw const value).cast::<u8>()` reinterpret. A ZST `T` panics on
-        // the `[0]` index (was UB before); all callers pass integer types.
+        // View `value` as bytes and read the first one. `NoUninit` guarantees
+        // `T` is `Copy` with no padding/uninit bytes, so `bytemuck::bytes_of`
+        // is the safe equivalent of the raw `*(&raw const value).cast::<u8>()`
+        // reinterpret. A ZST `T` panics on the `[0]` index; all callers pass
+        // integer types.
         SignalCode(bytemuck::bytes_of(&value)[0])
     }
 
@@ -128,8 +127,4 @@ impl fmt::Display for Fmt {
     }
 }
 
-// NOTE: `pub const fromJS = @import("../sys_jsc/signal_code_jsc.zig").fromJS;`
-// deleted per porting guide — `from_js` lives as an extension-trait method in
-// the `bun_sys_jsc` crate.
-
-// ported from: src/sys/SignalCode.zig
+// NOTE: `from_js` lives as an extension-trait method in the `bun_sys_jsc` crate.

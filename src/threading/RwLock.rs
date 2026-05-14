@@ -1,22 +1,21 @@
 //! A lock that supports one writer or many readers.
 //!
-//! Port of `std.Thread.RwLock.DefaultRwLock` (Zig 0.14.1) on top of Bun's
-//! `Mutex` + `Semaphore`, wrapped in a data-owning `RwLock<T>` with RAII
-//! guards so it drops in for `parking_lot::RwLock<T>`:
+//! Built on Bun's `Mutex` + `Semaphore`, wrapped in a data-owning `RwLock<T>`
+//! with RAII guards so it drops in for `parking_lot::RwLock<T>`:
 //!
 //! - `const fn new(T)` — usable in `static`.
 //! - `.read()` / `.write()` return guards with `Deref` / `DerefMut`.
 //! - `.try_read()` / `.try_write()` return `Option<guard>`.
-//! - No poisoning (Zig has none; matches `parking_lot`).
+//! - No poisoning (matches `parking_lot`).
 //!
 //! Writer-preferring: a pending writer blocks new readers from acquiring on
 //! the CAS fast path (they fall through to the mutex, which the writer holds).
 //! Fairness beyond that is whatever the underlying `Mutex`/Futex provides.
 //!
-//! The `PthreadRwLock` and `SingleThreadedRwLock` variants from Zig std are
-//! intentionally omitted — Bun never builds single-threaded, and the
-//! `DefaultRwLock` algorithm is portable across all Bun targets while keeping
-//! `const fn new` (which `pthread_rwlock_t` cannot guarantee).
+//! Pthread- and single-threaded backends are intentionally omitted — Bun never
+//! builds single-threaded, and this algorithm is portable across all Bun
+//! targets while keeping `const fn new` (which `pthread_rwlock_t` cannot
+//! guarantee).
 
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
@@ -25,7 +24,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{Mutex, Semaphore};
 
-// ── raw state machine (Zig: `DefaultRwLock`) ──────────────────────────────
+// ── raw state machine ─────────────────────────────────────────────────────
 
 struct RawRwLock {
     state: AtomicUsize,
@@ -33,7 +32,7 @@ struct RawRwLock {
     semaphore: Semaphore,
 }
 
-// Bit layout of `state` (matches Zig exactly):
+// Bit layout of `state`:
 //
 //   bit 0                : IS_WRITING — a writer holds the lock
 //   bits 1..=COUNT_BITS  : pending-writer count (WRITER_MASK)
@@ -77,8 +76,8 @@ impl RawRwLock {
         let _ = self.state.fetch_add(WRITER, Ordering::SeqCst);
         self.mutex.lock();
 
-        // Zig: `IS_WRITING -% WRITER` — wrapping sub so the single fetch_add
-        // both sets IS_WRITING and clears the pending-writer reservation.
+        // Wrapping sub so the single fetch_add both sets IS_WRITING and clears
+        // the pending-writer reservation.
         let state = self
             .state
             .fetch_add(IS_WRITING.wrapping_sub(WRITER), Ordering::SeqCst);
@@ -95,7 +94,6 @@ impl RawRwLock {
     fn try_lock_shared(&self) -> bool {
         let state = self.state.load(Ordering::SeqCst);
         if state & (IS_WRITING | WRITER_MASK) == 0 {
-            // Zig: `@cmpxchgStrong(...) orelse return true`
             if self
                 .state
                 .compare_exchange(state, state + READER, Ordering::SeqCst, Ordering::SeqCst)
@@ -117,7 +115,6 @@ impl RawRwLock {
     fn lock_shared(&self) {
         let mut state = self.state.load(Ordering::SeqCst);
         while state & (IS_WRITING | WRITER_MASK) == 0 {
-            // Zig: `@cmpxchgWeak(...) orelse return`
             match self.state.compare_exchange_weak(
                 state,
                 state + READER,
@@ -336,13 +333,10 @@ mod tests {
 
     #[test]
     fn raw_internal_state() {
-        // Zig: "DefaultRwLock - internal state" — regression for ziglang #13163,
-        // where the WRITER flag was subtracted instead of cleared by lock().
+        // Regression test: the WRITER flag must be cleared, not subtracted, by lock().
         let raw = RawRwLock::new();
         raw.lock();
         raw.unlock();
         assert_eq!(raw.state.load(Ordering::SeqCst), 0);
     }
 }
-
-// ported from: vendor/zig/lib/std/Thread/RwLock.zig (DefaultRwLock)

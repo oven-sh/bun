@@ -7,8 +7,8 @@ pub struct CharAndCount {
     pub index: usize,
 }
 
-// PORT NOTE: Zig `CharAndCount.Array` was an associated type alias; inherent
-// associated types are unstable in Rust, so it's a free alias here.
+// PORT NOTE: inherent associated types are unstable in Rust, so
+// `CharAndCount.Array` is a free alias here.
 pub type CharAndCountArray = [CharAndCount; CHAR_FREQ_COUNT];
 
 impl CharAndCount {
@@ -25,14 +25,14 @@ impl CharAndCount {
     }
 }
 
-// PERF(port): Zig used `@Vector(CHAR_FREQ_COUNT, i32)` for SIMD adds — profile
+// PERF(port): could vectorize the SIMD adds — profile
 type Buffer = [i32; CHAR_FREQ_COUNT];
 
 #[derive(Copy, Clone)]
 pub struct CharFreq {
-    // PORT NOTE: Zig field was `align(1)` (unaligned i32 array). Rust gives natural
-    // alignment; if the packed layout was load-bearing for an FFI/serialized struct,
-    // revisit.
+    // PORT NOTE: this field was originally an unaligned (`align(1)`) i32 array.
+    // Rust gives natural alignment; if the packed layout was load-bearing for
+    // an FFI/serialized struct, revisit.
     pub freqs: Buffer,
 }
 
@@ -61,8 +61,7 @@ impl CharFreq {
     }
 
     pub fn include(&mut self, other: &CharFreq) {
-        // https://zig.godbolt.org/z/Mq8eK6K9s
-        // PERF(port): Zig used @Vector SIMD add — profile
+        // PERF(port): could vectorize the SIMD adds — profile
         for (l, r) in self.freqs.iter_mut().zip(other.freqs.iter()) {
             *l += *r;
         }
@@ -97,7 +96,7 @@ impl CharFreq {
             // comparator well-formed regardless.
             arr.sort_unstable_by(|a, b| {
                 // descending by count, then ascending by (index, char) —
-                // matches CharFreq.zig:12 `CharAndCount.lessThan`.
+                // matches `CharAndCount::less_than`.
                 b.count
                     .cmp(&a.count)
                     .then_with(|| a.index.cmp(&b.index))
@@ -133,10 +132,9 @@ impl CharFreq {
 }
 
 fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
-    // https://zig.godbolt.org/z/P5dPojWGK
-    // PORT NOTE: Zig copied `out.*` into a stack local and wrote back via `defer` to
-    // avoid unaligned (`align(1)`) loads in the hot loop. We operate on `out` directly;
-    // the field is naturally aligned in Rust.
+    // PORT NOTE: a previous implementation copied `out` into a stack local and
+    // wrote back at scope exit to avoid unaligned (`align(1)`) loads in the hot
+    // loop. We operate on `out` directly; the field is naturally aligned.
     let mut deltas: [i32; 256] = [0; 256];
 
     debug_assert!(text.len() >= SCAN_BIG_CHUNK_SIZE);
@@ -145,7 +143,7 @@ fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
     let (chunks, remain) = text.split_at(unrolled);
 
     for chunk in chunks.chunks_exact(SCAN_BIG_CHUNK_SIZE) {
-        // PERF(port): Zig used `inline for` to unroll 32 iterations — profile
+        // PERF(port): could force-unroll the 32 iterations — profile
         for i in 0..SCAN_BIG_CHUNK_SIZE {
             deltas[chunk[i] as usize] += delta;
         }
@@ -155,20 +153,20 @@ fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
         deltas[c as usize] += delta;
     }
 
-    // PORT NOTE — INTENTIONAL SPEC DIVERGENCE: CharFreq.zig:64 writes
-    // `freqs[0..26].* = deltas[...]`, which *overwrites* the accumulator
-    // (`var freqs = out.*` is dead). That is an upstream bug: every ≥32-byte
-    // scan discards all prior counts, so the result is last-big-scan-wins
-    // rather than the histogram the NameMinifier expects. Zig's output is
-    // stable only because its StringHashMap iteration order is deterministic,
-    // so the *same* symbol name overwrites last on every run. The Rust
+    // PORT NOTE — INTENTIONAL SPEC DIVERGENCE: an earlier implementation wrote
+    // `freqs[0..26] = deltas[...]`, which *overwrote* the accumulator (the
+    // local copy of `out` was dead). That was a bug: every ≥32-byte scan
+    // discarded all prior counts, so the result was last-big-scan-wins rather
+    // than the histogram the NameMinifier expects. The output was stable only
+    // because the original StringHashMap iteration order was deterministic, so
+    // the *same* symbol name overwrote last on every run. The Rust
     // `scope.members` map is RandomState-seeded, so a faithful overwrite port
     // is nondeterministic (the observed `OV`/`OU` flap on three.js), and even
-    // a deterministic-iteration port wouldn't reproduce Zig's specific hash
+    // a deterministic-iteration port wouldn't reproduce that specific hash
     // order. We accumulate (`+=`) instead — the algorithm's intent — which
-    // makes the freq table both correct and run-to-run stable. Minified
-    // output therefore differs from Zig by design here (three.js: 2 bytes
-    // smaller); byte-identical-vs-Zig is not a goal for this function.
+    // makes the freq table both correct and run-to-run stable. Minified output
+    // therefore differs by design here (three.js: 2 bytes smaller);
+    // byte-identical output is not a goal for this function.
     for i in 0..26 {
         out[i] += deltas[b'a' as usize + i];
     }
@@ -199,5 +197,3 @@ fn scan_small(out: &mut Buffer, text: &[u8], delta: i32) {
 
     *out = freqs;
 }
-
-// ported from: src/js_parser/ast/CharFreq.zig

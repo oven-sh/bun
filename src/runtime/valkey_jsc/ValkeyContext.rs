@@ -6,7 +6,4 @@
 #[derive(Default)]
 pub struct ValkeyContext;
 
-// Zig had `pub fn deinit(_: *@This()) void {}` — empty body, no side effects.
-// Per PORTING.md: empty deinit → no `impl Drop` needed (Rust drops fields automatically).
-
-// ported from: src/runtime/valkey_jsc/ValkeyContext.zig
+// No `impl Drop`: `deinit` is a no-op (Rust drops fields automatically).

@@ -117,5 +117,3 @@ pub unsafe fn inflate_back_init(
         )
     }
 }
-
-// ported from: src/zlib_sys/posix.zig

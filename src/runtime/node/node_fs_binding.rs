@@ -16,17 +16,15 @@ use crate::node::fs::{
 pub type NodeFSFunction =
     fn(this: &Binding, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>;
 
-// Zig: `const NodeFSFunctionEnum = std.meta.DeclEnum(node.fs.NodeFS);`
-// PORT NOTE: Rust has no `DeclEnum`/`@field`/`@typeInfo` reflection. The
-// (`args::*`, `ret::*`, `NodeFS::<method>`, `async_::*`) quadruples that the
-// Zig comptime block reflected per `function_name` are spelled out once in
+// PORT NOTE: Rust has no decl-list reflection. The
+// (`args::*`, `ret::*`, `NodeFS::<method>`, `async_::*`) quadruples that
+// were reflected per `function_name` are spelled out once in
 // `node_fs.rs` (the `NodeFS::dispatch` table + `async_::*` aliases) and reused
 // here via the `node_fs_bindings!` macro at the bottom of this file.
 
 /// Returns bindings to call jsc.Node.fs.NodeFS.<function>.
 /// Async calls use a thread pool.
-// Zig: `fn Bindings(comptime function_name) type { return struct { runSync, runAsync } }`
-// PORT NOTE: collapsed to two free generic fns; the `comptime function_name`
+// PORT NOTE: collapsed to two free generic fns; the function name
 // becomes a `const F: NodeFSFunctionEnum`, and the reflected `Arguments` /
 // return type become `A: FsArgument` / `R: FsReturn`.
 
@@ -84,9 +82,8 @@ fn run_async<A: FsArgument>(
     let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
     slice.will_be_async = true;
 
-    // Zig uses a `deinit: bool` flag + conditional `defer` to keep `slice`
-    // alive past return when ownership transfers to the Task. The Rust port
-    // mirrors this with `ManuallyDrop`: dropped only on the early-return
+    // `ManuallyDrop` keeps `slice` alive past return when ownership transfers
+    // to the Task: dropped only on the early-return
     // error/abort branches; on the success path the Task owns `args` (whose
     // protected JSValues are released by `Drop for ThreadSafe<A>` when the
     // Task completes), and `slice` is intentionally not dropped — its
@@ -188,8 +185,8 @@ impl Binding {
 
     // ── Hand-written bindings for ops outside `NodeFSFunctionEnum` ────────
 
-    /// `callAsync(.cp)` — `.cp`'s `Task.create` (Zig) takes the parser arena as
-    /// a 5th arg. The Rust `AsyncCpTask::create` copies its paths via
+    /// `callAsync(.cp)` — `.cp`'s `Task.create` historically took the parser arena
+    /// as a 5th arg. The Rust `AsyncCpTask::create` copies its paths via
     /// `to_thread_safe()` instead, so the arena is dropped with `slice`.
     pub fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
@@ -343,9 +340,9 @@ impl Binding {
     }
 }
 
-/// Generates the `pub const <name> = call{Async,Sync}(.<fn>)` block from the
-/// Zig. Each row supplies the `(args, ret, NodeFSFunctionEnum)` triple that the
-/// Zig comptime reflection derived from `@typeInfo(NodeFS.<fn>)`.
+/// Generates the `pub const <name> = call{Async,Sync}(.<fn>)` block.
+/// Each row supplies the `(args, ret, NodeFSFunctionEnum)` triple that
+/// reflection on `NodeFS.<fn>` would derive.
 macro_rules! node_fs_bindings {
     ( $( $sync:ident / $async_:ident => $F:ident, $Args:ty, $Ret:ty ; )* ) => {
         impl Binding {
@@ -458,5 +455,3 @@ pub fn create_memfd_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> J
         }
     }
 }
-
-// ported from: src/runtime/node/node_fs_binding.zig

@@ -16,11 +16,11 @@
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-// ── src/sql/jsc/{mysql,postgres}.zig ─────────────────────────────────────────
+// ── src/sql_jsc/{mysql,postgres}.rs ──────────────────────────────────────────
 pub use bun_sql_jsc::mysql::create_binding as sql_jsc_mysql_create_binding;
 pub use bun_sql_jsc::postgres::create_binding as sql_jsc_postgres_create_binding;
 
-// ── src/install/**.zig ──────────────────────────────────────────────────────
+// ── src/install_jsc/** ──────────────────────────────────────────────────────
 pub use bun_install_jsc::dependency_jsc::dependency_from_js as install_dependency_from_js;
 pub use bun_install_jsc::dependency_jsc::tag_infer_from_js as install_dependency_version_tag_infer_from_js;
 pub use bun_install_jsc::hosted_git_info_jsc::js_from_url as install_hosted_git_info_testing_ap_is_js_from_url;
@@ -36,20 +36,20 @@ pub use bun_install_jsc::npm_jsc::package_manifest_bindings_generate as install_
 pub use bun_install_jsc::ini_jsc::ini_testing_load_npmrc_from_js as install_jsc_ini_jsc_ini_testing_ap_is_load_npmrc_from_js;
 pub use bun_install_jsc::ini_jsc::ini_testing_parse as install_jsc_ini_jsc_ini_testing_ap_is_parse;
 
-// ── src/jsc/*.zig ───────────────────────────────────────────────────────────
+// ── src/jsc/* ───────────────────────────────────────────────────────────────
 pub use bun_jsc::bindgen_test::get_bindgen_test_functions as jsc_bindgen_test_get_bindgen_test_functions;
 pub use bun_jsc::counters::create_counters_object as jsc_counters_create_counters_object;
 pub use bun_jsc::event_loop::get_active_tasks as jsc_event_loop_get_active_tasks;
 #[allow(non_snake_case)]
 pub use bun_jsc::virtual_machine_exports::Bun__setSyntheticAllocationLimitForTesting as jsc_virtual_machine_exports_bun__set_synthetic_allocation_limit_for_testing;
-// `src/jsc/ipc.zig emitHandleIPCMessage` is implemented in this crate
-// (`ipc_host.rs`) because it dereferences `Subprocess`, a runtime type.
+// `emit_handle_ipc_message` is implemented in this crate (`ipc_host.rs`)
+// because it dereferences `Subprocess`, a runtime type.
 pub use crate::ipc_host::emit_handle_ipc_message as jsc_ipc_emit_handle_ipc_message;
 
 // ── src/string/* / src/bun_core/string/* ────────────────────────────────────
 // `$rust("escapeRegExp.rs", …)` resolves to `src/bun_core/string/escapeRegExp.rs`
-// (the only `escapeRegExp.rs` on disk; the Zig file lived at `src/string/`),
-// so the codegen mangles the dispatch name with the `bun_core_string_` prefix.
+// (the only `escapeRegExp.rs` on disk), so the codegen mangles the dispatch
+// name with the `bun_core_string_` prefix.
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp as bun_core_string_escape_reg_exp_js_escape_reg_exp;
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp_for_package_name_matching as bun_core_string_escape_reg_exp_js_escape_reg_exp_for_package_name_matching;
 pub use bun_jsc::bun_string_jsc::js_get_string_width as jsc_bun_string_jsc_string_js_get_string_width;
@@ -60,7 +60,7 @@ pub use bun_patch_jsc::testing::patch_apply as patch_jsc_testing_testing_ap_is_a
 pub use bun_patch_jsc::testing::patch_make_diff as patch_jsc_testing_testing_ap_is_make_diff;
 pub use bun_patch_jsc::testing::patch_parse as patch_jsc_testing_testing_ap_is_parse;
 
-// ── src/sourcemap/InternalSourceMap.zig TestingAPIs ─────────────────────────
+// ── src/sourcemap_jsc/internal_jsc.rs TestingAPIs ───────────────────────────
 pub use bun_sourcemap_jsc::internal_jsc::testing_find as sourcemap_internal_source_map_testing_ap_is_find;
 pub use bun_sourcemap_jsc::internal_jsc::testing_from_vlq as sourcemap_internal_source_map_testing_ap_is_from_vlq;
 pub use bun_sourcemap_jsc::internal_jsc::testing_to_vlq as sourcemap_internal_source_map_testing_ap_is_to_vlq;
@@ -70,22 +70,21 @@ pub use bun_sys_jsc::error_jsc::TestingAPIs::sigaction_layout as sys_jsc_error_j
 pub use bun_sys_jsc::error_jsc::TestingAPIs::sys_error_name_from_libuv as sys_error_testing_ap_is_sys_error_name_from_libuv;
 pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_jsc_error_jsc_testing_ap_is_translate_uv_error_to_e;
 
-// ── src/http/{H2Client,H3Client}.zig TestingAPIs ────────────────────────────
+// ── src/http_jsc/headers_jsc.rs TestingAPIs ─────────────────────────────────
 pub use bun_http_jsc::headers_jsc::h2_live_counts as http_h2_client_testing_ap_is_live_counts;
 pub use bun_http_jsc::headers_jsc::h3_quic_live_counts as http_h3_client_testing_ap_is_quic_live_counts;
 
-// ── src/bun.zig getUseSystemCA ──────────────────────────────────────────────
-/// Port of `src/bun.zig:getUseSystemCA`. Lives here (not in `src/bun.rs`)
-/// because the flag it reads — `cli::Arguments::Bun__Node__UseSystemCA` — is
-/// owned by `bun_runtime`; placing the body in a lower crate would invert the
-/// dependency edge.
+// ── getUseSystemCA ──────────────────────────────────────────────────────────
+/// Lives here (not in a lower crate) because the flag it reads —
+/// `cli::Arguments::Bun__Node__UseSystemCA` — is owned by `bun_runtime`;
+/// placing the body in a lower crate would invert the dependency edge.
 pub fn bun_get_use_system_ca(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let v =
         crate::cli::Arguments::Bun__Node__UseSystemCA.load(core::sync::atomic::Ordering::Relaxed);
     Ok(JSValue::js_boolean(v))
 }
 
-// ── src/css/jsc/css_internals.zig ───────────────────────────────────────────
+// ── src/css_jsc/css_internals.rs ────────────────────────────────────────────
 mod css {
     pub use bun_css_jsc::css_internals::{
         _test, attr_test, minify_error_test_with_options, minify_test, minify_test_with_options,

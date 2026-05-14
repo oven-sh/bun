@@ -3,7 +3,7 @@
 //! `src/codegen/generate-classes.ts::generateRust()` writes
 //! `${BUN_CODEGEN_DIR}/generated_classes.rs`; this module `include!`s it so
 //! the `#[unsafe(no_mangle)] extern "C"` symbols land in `bun_runtime` and
-//! satisfy the externs declared by `ZigGeneratedClasses.cpp`.
+//! satisfy the externs declared by `BunGeneratedClasses.cpp`.
 //!
 //! See `docs/.rust-rewrite-verified-claims.md` §GC-08 / §GC-09 /
 //! §codegen-contract for the symbol/ABI contract.
@@ -17,7 +17,7 @@
     dead_code,
     // The `${T}__fromJS`/`${T}__create` externs traffic in `*mut <RustStruct>`
     // where the C++ side stores the value as `void* m_ctx` and never derefs it
-    // (see ZigGeneratedClasses.h `offsetOfWrapped`). The Rust payload's field
+    // (see BunGeneratedClasses.h `offsetOfWrapped`). The Rust payload's field
     // layout is therefore irrelevant to the ABI, but rustc's improper_ctypes
     // lint recurses into every field. Suppress here rather than forcing every
     // `m_ctx` payload (and its transitive fields — `JsRef`, `Strong`, …) to be
@@ -31,7 +31,7 @@
 
 // Bring BodyMixin into scope so codegen UFCS calls like
 // `Request::get_text(&mut *this, …)` / `Response::get_blob(…)` resolve to the
-// trait default methods (Zig: `BodyMixin(@This())` comptime mixin).
+// trait default methods (equivalent of a `BodyMixin` mixin).
 // NOTE: must be a named import — `as _` only covers `.method()` dot-call
 // resolution, not the `Type::method(…)` qualified-path form the codegen emits.
 use crate::webcore::body::BodyMixin;

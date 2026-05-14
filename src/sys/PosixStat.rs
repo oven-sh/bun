@@ -33,8 +33,7 @@ unsafe impl bun_core::ffi::Zeroable for PosixStat {}
 /// C's implicit integer → `uint64_t` conversion, i.e. what libuv does
 /// when copying platform `struct stat` fields into `uv_stat_t`.
 //
-// TODO(port): Zig used `@typeInfo(@TypeOf(value)).int.signedness` reflection.
-// Rust has no equivalent; expressed here as a trait impl'd per primitive int.
+// Expressed as a trait impl'd per primitive int so signedness is handled per type.
 trait ToU64: Copy {
     fn to_u64(self) -> u64;
 }
@@ -43,8 +42,7 @@ macro_rules! impl_to_u64_signed {
         impl ToU64 for $t {
             #[inline]
             fn to_u64(self) -> u64 {
-                // SAFETY-equivalent of Zig `@bitCast(@as(i64, value))`:
-                // sign-extend to i64, then reinterpret bits as u64.
+                // Sign-extend to i64, then reinterpret bits as u64.
                 self as i64 as u64
             }
         }
@@ -66,15 +64,14 @@ fn to_u64<T: ToU64>(value: T) -> u64 {
     value.to_u64()
 }
 
-/// Platform-specific accessors over `libc::stat` mirroring Zig's
-/// `Stat.atime()` / `.mtime()` / `.ctime()` / `.birthtime()` helpers.
+/// Platform-specific `atime()` / `mtime()` / `ctime()` / `birthtime()` accessors
+/// over `libc::stat`.
 /// Exported so callers (e.g. `bunx_command.rs`) can read times off the bare
 /// `bun_sys::Stat` (= `libc::stat`) without re-deriving the per-platform field
 /// names.
 // NOTE: the `libc` crate flattens Darwin/BSD `st_*timespec` into `st_*time` +
 // `st_*time_nsec` (matching Linux), so the field access is uniform across all
-// `unix` targets. The Zig std uses the nested `timespec` form; this is a
-// deliberate divergence at the libc-crate layer, not a port bug.
+// `unix` targets.
 #[inline]
 pub fn stat_atime(s: &Stat) -> Timespec {
     #[cfg(unix)]
@@ -128,9 +125,9 @@ pub fn stat_ctime(s: &Stat) -> Timespec {
 }
 #[inline]
 pub fn stat_birthtime(s: &Stat) -> Timespec {
-    // Zig spec: `if (Environment.isLinux) bun.timespec.epoch else stat_.birthtime()`.
-    // Windows `Stat` is `uv_stat_t` and libuv fills `birthtim` from NTFS
-    // CreationTime, so it must NOT fall into the epoch arm.
+    // Linux returns the epoch sentinel (no birthtime); other platforms return
+    // the real birth time. Windows `Stat` is `uv_stat_t` and libuv fills
+    // `birthtim` from NTFS CreationTime, so it must NOT fall into the epoch arm.
     #[cfg(windows)]
     {
         Timespec {
@@ -233,5 +230,3 @@ impl PosixStat {
         self.birthtim
     }
 }
-
-// ported from: src/sys/PosixStat.zig

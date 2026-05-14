@@ -1,6 +1,6 @@
 //! `Command.ContextData` and its option-carrying nested structs, lifted out of
-//! `cli/cli.zig` so subsystems (install, bundler, bake, shell) can reference
-//! the parsed-options shape without importing the CLI itself.
+//! `cli/` so subsystems (install, bundler, bake, shell) can reference the
+//! parsed-options shape without importing the CLI itself.
 //!
 //! `create()` (which calls `Arguments.parse`) and the `global_cli_ctx`/
 //! `context_data` storage stay in `cli.rs`; they are forward-aliased onto
@@ -24,8 +24,8 @@ use crate::offline_mode::OfflineMode;
 pub struct ContextData {
     pub start_time: i128,
     pub args: api::TransformOptions,
-    /// Zig: `log: *Log`. Raw pointer (not `&mut`) so `Default` works and so the
-    /// process-global `CONTEXT_DATA` static can be zero-initialized before
+    /// Raw pointer (not `&mut`) so `Default` works and so the process-global
+    /// `CONTEXT_DATA` static can be zero-initialized before
     /// `create_context_data()` writes the real `&mut Log` into it.
     // SAFETY: written exactly once in single-threaded CLI startup; thereafter
     // always non-null for the process lifetime. Callers deref via `ctx.log()`.
@@ -59,9 +59,9 @@ impl Default for ContextData {
     // `CompileTarget` / `CpuProf` …) sampling 31× across ≈10 distinct 4 KB
     // r-xp pages — each nested `Default` impl landed in its own CGU, so the
     // single call from `write_context_no_parse` faulted in ~40 KB of scattered
-    // `.text`. The Zig spec is `std.mem.zeroes(Context)` (one comptime blob).
+    // `.text`.
     //
-    // A literal `unsafe { core::mem::zeroed() }` would match Zig but is
+    // A literal `unsafe { core::mem::zeroed() }` would be the smallest emit but is
     // **unsound** in Rust: `Vec<T>` / `Box<[u8]>` carry a `NonNull` pointer
     // (validity invariant — null is immediate UB regardless of len). Instead,
     // every `Default` impl in this module is `#[inline(always)]` so the entire
@@ -97,15 +97,13 @@ impl ContextData {
     /// Deref the process-lifetime `*mut Log` set in `create_context_data()`.
     ///
     /// Takes `&mut self` (not `&self`) so the borrow checker ties the returned
-    /// `&mut Log` to an exclusive borrow of the `ContextData` — Zig's `*Log`
-    /// freely aliases, but in Rust a `&self -> &mut Log` accessor would let two
-    /// live `&mut Log` overlap (UB). Note this is *necessary but not
-    /// sufficient*: the same `*Log` is borrowed (not owned) from the CLI
-    /// caller and is also fanned out to and stored by the transpiler/bundler
-    /// (`bundler/options.zig`), the install pipeline (`install/migration.zig`,
-    /// `install/PackageManagerOptions.zig`), JSON parsing
-    /// (`interchange/json.zig`), etc. Exclusive `self` does NOT exclude those
-    /// aliases — see `# Safety` for the full precondition.
+    /// `&mut Log` to an exclusive borrow of the `ContextData` — a `&self ->
+    /// &mut Log` accessor would let two live `&mut Log` overlap (UB). Note this
+    /// is *necessary but not sufficient*: the same `*Log` is borrowed (not
+    /// owned) from the CLI caller and is also fanned out to and stored by the
+    /// transpiler/bundler options, the install pipeline, JSON parsing, etc.
+    /// Exclusive `self` does NOT exclude those aliases — see `# Safety` for the
+    /// full precondition.
     ///
     /// # Safety
     /// - `self.log` must have been populated by `create_context_data()` (i.e.
@@ -184,10 +182,10 @@ impl ContextData {
 
     /// `Arguments.parse` lives in `cli/`; forward-aliased so
     /// `Command::ContextData::create(...)` keeps working.
-    // TODO(port): Zig was `pub const create = bun.cli.Command.createContextData;`
-    // — Rust cannot re-export an associated fn; TODO(port): add a thin
-    // delegating `pub fn create(...)` here once `bun_cli` exists, or invert the
-    // alias direction (cli re-exports this type).
+    // TODO(port): Rust cannot re-export an associated fn the way the original
+    // aliased `createContextData`; add a thin delegating `pub fn create(...)`
+    // here once `bun_cli` exists, or invert the alias direction (cli re-exports
+    // this type).
     #[allow(unused)]
     pub const CREATE_SEE_CLI: () = ();
 }
@@ -294,8 +292,8 @@ impl Default for BundlerOptions {
 }
 
 pub type Context<'a> = &'a mut ContextData;
-// TODO(port): Zig `*ContextData` is passed everywhere as a long-lived handle;
-// the borrow lifetime above may need to become `*mut ContextData` at call sites
+// TODO(port): `*ContextData` is passed everywhere as a long-lived handle; the
+// borrow lifetime above may need to become `*mut ContextData` at call sites
 // that re-enter the global ctx (Phase B).
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -392,7 +390,7 @@ pub enum MacroOptions {
     Map(MacroMap),
 }
 
-/// Re-declared from `resolver/package_json.zig` (plain hashmap aliases) so this
+/// Re-declared from `resolver::package_json` (plain hashmap aliases) so this
 /// file does not depend on `resolver/`.
 pub type MacroImportReplacementMap = ArrayHashMap<Box<[u8]>, Box<[u8]>>;
 pub type MacroMap = ArrayHashMap<Box<[u8]>, MacroImportReplacementMap>;
@@ -626,5 +624,3 @@ impl Default for RuntimeOptions {
         }
     }
 }
-
-// ported from: src/options_types/Context.zig

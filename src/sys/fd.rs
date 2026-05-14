@@ -6,14 +6,14 @@ use bun_core::Output;
 // bun_core. This file adds the syscall-touching surface as an extension trait.
 pub use bun_core::{Fd, FdKind, FdNative, FdOptional as Optional, Stdio, fd};
 /// Platform-native fd integer (`c_int` on POSIX, `HANDLE` on Windows). Alias
-/// for callers porting Zig's `std.posix.fd_t` / `bun.FD.native()`.
+/// for callers using `bun.FD.native()`.
 pub type RawFd = FdNative;
 #[cfg(windows)]
 pub use bun_core::DecodeWindows;
 
 use crate as sys;
 
-// `log` in the Zig is `bun.sys.syslog`
+// `bun.sys.syslog`-equivalent scoped logger.
 bun_core::define_scoped_log!(log, SYS, visible);
 
 /// `std.posix.fd_t` — `c_int` on POSIX, `HANDLE` on Windows. Same as `FdNative`.
@@ -37,9 +37,8 @@ bun_core::named_error_set!(MakeLibUvOwnedError);
 // ──────────────────────────────────────────────────────────────────────────
 // FdExt — syscall-touching methods on `bun_core::Fd`.
 //
-// In Zig these were inherent methods on `bun.FD` (Zig allows `pub const close
-// = bun.sys.close` aliasing). Rust can't impl inherent methods on a foreign
-// type, so they live behind an extension trait. Import via
+// Rust can't impl inherent methods on a foreign type, so these live behind an
+// extension trait. Import via
 // `use bun_sys::FdExt;` at call sites; or call `bun_sys::close(fd)` directly.
 // ──────────────────────────────────────────────────────────────────────────
 pub trait FdExt: Copy + Sized {
@@ -101,7 +100,7 @@ impl FdExt for Fd {
         let mut fd_fmt_buf = [0u8; 1050];
         #[cfg(debug_assertions)]
         let fd_fmt: &[u8] = {
-            // Zig: `std.fmt.bufPrint(&buf, "{f}", .{fd})` — stack slice, no heap.
+            // Format into a stack slice — no heap.
             use std::io::Write as _;
             let mut cursor = std::io::Cursor::new(&mut fd_fmt_buf[..]);
             let _ = write!(cursor, "{}", self);
@@ -114,7 +113,7 @@ impl FdExt for Fd {
             {
                 debug_assert!(self.native() >= 0);
                 // Raw `SYS_close` via rustix — no glibc wrapper (which is a
-                // pthread cancellation point). fd.zig:266: never retry on EINTR.
+                // pthread cancellation point). Never retry on EINTR.
                 match sys::linux_syscall::close(self.native()) {
                     Err(e) if e == libc::EBADF => Some(sys::Error {
                         errno: sys::E::EBADF as _,
@@ -162,8 +161,8 @@ impl FdExt for Fd {
                         let rc = unsafe {
                             uv::uv_fs_close(uv::Loop::get(), &mut req, file_number, None)
                         };
-                        // Zig: `defer req.deinit();` — fs_t has no Drop impl, so cleanup
-                        // must be explicit (uv_fs_req_cleanup).
+                        // fs_t has no Drop impl, so cleanup must be explicit
+                        // (uv_fs_req_cleanup).
                         req.deinit();
                         if let Some(errno) = rc.errno() {
                             Some(sys::Error {
@@ -290,7 +289,7 @@ impl FdExt for Fd {
     #[inline]
     fn as_socket_fd(self) -> sys::SocketT {
         #[cfg(windows)]
-        // SAFETY: HANDLE → SOCKET pointer reinterpretation; matches Zig @ptrCast.
+        // SAFETY: HANDLE → SOCKET pointer reinterpretation.
         {
             self.native() as sys::SocketT
         }
@@ -323,8 +322,7 @@ impl FdOptionalExt for Optional {
 // `Fd::from_native(handle)` / `fd.native()` directly.
 
 // The following functions are from bun.sys but with the 'f' prefix dropped
-// where it is relevant. In Zig they are aliased onto `FD` as inherent methods.
-// In Rust, callers use the free fns in `bun_sys` directly:
+// where it is relevant. Callers use the free fns in `bun_sys` directly:
 //   chmod→fchmod, chmodat→fchmodat, chown→fchown, directoryExistsAt, dup,
 //   dupWithFlags, existsAt, existsAtType, fcntl, getFcntlFlags, getFileSize,
 //   linkat, linkatTmpfile, lseek, mkdirat, mkdiratA, mkdiratW, mkdiratZ,
@@ -334,10 +332,10 @@ impl FdOptionalExt for Optional {
 //   unlinkat, updateNonblocking, write, writeNonblocking, writev,
 //   getFdPath, getFdPathW, getFdPathZ.
 // TODO: move these methods defined in bun.sys.File to bun.sys, then delete
-// bun.sys.File. (Zig comment carried over.)
+// bun.sys.File.
 
 // ──────────────────────────────────────────────────────────────────────────
-// HashMapContext — identity hash for Fd keys (matches Zig).
+// HashMapContext — identity hash for Fd keys.
 // ──────────────────────────────────────────────────────────────────────────
 pub struct HashMapContext;
 impl HashMapContext {
@@ -376,7 +374,7 @@ impl Prehashed {
         if fd == self.input {
             return self.value;
         }
-        // Zig: `return fd;` — implicit coercion of FD (packed struct) to u64.
+        // Coerce the FD (packed struct) to u64.
         HashMapContext::hash(fd)
     }
     #[inline]
@@ -515,5 +513,3 @@ pub fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError>
 // only; PORTING.md "move storage down"). `bun_sys` keeps the richer
 // `get_fd_path[_w]` returning `Maybe<&mut [u8/u16]>` for callers that want
 // `bun_sys::Error` with a syscall tag.
-
-// ported from: src/sys/fd.zig

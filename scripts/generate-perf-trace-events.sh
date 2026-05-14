@@ -3,7 +3,7 @@
 # We do this because the event names have to be compile-time constants.
 
 
-export TRACE_EVENTS=$(rg 'bun\.perf\.trace\("([^"]*)"\)' -t zig --json \
+export TRACE_EVENTS=$(rg 'perf::trace\("([^"]*)"\)' -t rust --json \
     | jq -r 'select(.type == "match")' \
     | jq -r '.data.submatches[].match.text' \
     | cut -d'"' -f2 \
@@ -21,11 +21,5 @@ echo "  // end" >> src/jsc/bindings/generated_perf_trace_events.h
 
 echo "Generated src/jsc/bindings/generated_perf_trace_events.h"
 
-echo "// Generated with scripts/generate-perf-trace-events.sh" > src/perf/generated_perf_trace_events.zig
-echo "pub const PerfEvent = enum(i32) {" >> src/perf/generated_perf_trace_events.zig
-for event in $TRACE_EVENTS; do
-    echo "    @\"$event\"," >> src/perf/generated_perf_trace_events.zig
-done
-echo "};" >> src/perf/generated_perf_trace_events.zig
-
-echo "Generated src/perf/generated_perf_trace_events.zig"
+# TODO: also emit src/perf/generated_perf_trace_events.rs (PerfEvent enum + From impl).
+# That file is currently hand-maintained; teach this script to generate it.

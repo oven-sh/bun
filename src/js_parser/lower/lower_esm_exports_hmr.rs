@@ -9,9 +9,9 @@ use crate::p::P;
 use crate::parser::{ReactRefresh, Ref, TempRef};
 use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
 
-// PORT NOTE: `P::generate_temp_ref` is ``-gated in P.rs (round-6
-// re-gate); replicate it here so this file can un-gate independently. Body is
-// a 1:1 port of P.zig `generateTempRefWithScope` with `scope = current_scope`.
+// PORT NOTE: `P::generate_temp_ref` is ``-gated in p.rs (round-6
+// re-gate); replicate it here so this file can un-gate independently. Body
+// matches `generateTempRefWithScope` with `scope = current_scope`.
 // `P::will_use_renamer` is private — its body is inlined.
 fn generate_temp_ref<'p, const TS: bool, const SCAN: bool>(
     p: &mut P<'p, TS, SCAN>,
@@ -49,11 +49,11 @@ pub struct ConvertESMExportsForHmr<'a> {
     pub export_props: Vec<G::Property>,
     pub stmts: Vec<Stmt>,
 }
-// PORT NOTE: Zig used `std.ArrayListUnmanaged` with `p.arena` for the four
+// PORT NOTE: original used arena-backed unmanaged array lists for the four
 // collections; in Rust the parser arena is a `bumpalo::Bump`, but the consumers
 // (`Vec::move_from_list` for `export_props`, arena copy for `stmts`) want
 // global-heap `Vec<T>` anyway. Kept as `Vec` so callers can construct via
-// `Default::default()` without needing `&'a Bump`. See P.zig:6389.
+// `Default::default()` without needing `&'a Bump`.
 
 #[derive(Default)]
 pub struct ImportRef {
@@ -68,8 +68,8 @@ pub struct DeduplicatedImportResult {
 
 impl<'a> ConvertESMExportsForHmr<'a> {
     // PORT NOTE: round-E un-gate — `<P>` unbounded generic → concrete `P<'p, TS, SCAN>`.
-    // TODO(b2-ast-E): Zig `p: anytype` also accepts AstBuilder; add `ParserLike` trait bound
-    //   when bundle_v2 lands.
+    // TODO(b2-ast-E): the original `p` param also accepted an AstBuilder; add a
+    //   `ParserLike` trait bound when bundle_v2 lands.
     pub fn convert_stmt<'p, const TS: bool, const SCAN: bool>(
         &mut self,
         p: &mut P<'p, TS, SCAN>,
@@ -494,7 +494,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 if stmt.items.is_empty() {
                     stmt.items = items;
                 } else {
-                    // PORT NOTE: Zig `std.mem.concat` — allocate concatenated slice in arena.
+                    // Allocate the concatenated slice in the arena.
                     // ClauseItem fields are all bitwise-copyable; copy raw to avoid Clone bound.
                     let prev_len = stmt.items.len();
                     let concat = p.arena.alloc_slice_fill_with(prev_len + items_len, |_| {
@@ -530,10 +530,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     let symbol = &mut p.symbols[namespace_ref.inner_index() as usize];
                     symbol.use_count_estimate = 0;
                     symbol.link.set(stmt.namespace_ref);
-                    // PORT NOTE: Zig `@hasField(@typeInfo(@TypeOf(p)).pointer.child, "symbol_uses")`
-                    // gated this on whether the concrete `p` type carries `symbol_uses`. The
-                    // concrete `P` always does; once a `ParserLike` trait is introduced for
-                    // AstBuilder, that variant should override this to a no-op.
+                    // PORT NOTE: original gated this on whether the concrete `p` type carries
+                    // `symbol_uses`. The concrete `P` always does; once a `ParserLike` trait is
+                    // introduced for AstBuilder, that variant should override this to a no-op.
                     p.symbol_uses.swap_remove(&namespace_ref);
                 }
             }
@@ -698,7 +697,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
     pub fn finalize<'p, const TS: bool, const SCAN: bool>(
         &mut self,
         p: &mut P<'p, TS, SCAN>,
-        // PORT NOTE: Zig took `all_parts: []Part` and freely re-derived
+        // PORT NOTE: original took an `all_parts` slice and freely re-derived
         // `&mut all_parts[len-1]` while `ctx.last_part` aliased the same slot.
         // Rust forbids that aliasing (Stacked Borrows: `&mut [Part]` asserts
         // exclusive access to every element). Caller passes the `[0..len-1]`
@@ -793,7 +792,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             self.last_part
                 .import_record_indices
                 .append_slice(part.import_record_indices.slice());
-            // PORT NOTE: reshaped for borrowck — Zig zipped keys()/values(); index loop avoids
+            // PORT NOTE: reshaped for borrowck — original zipped keys()/values(); index loop avoids
             // holding two shared borrows of `part.symbol_uses` while &mut-borrowing `last_part`.
             for i in 0..part.symbol_uses.count() {
                 let k = part.symbol_uses.keys()[i];
@@ -807,7 +806,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             }
             part.stmts = bun_ast::StoreSlice::EMPTY;
             // PORT NOTE: `declared_symbols` already cleared via `mem::take` above
-            // (Zig set `entries.len = 0` after `appendList`).
+            // (original reset `entries.len = 0` after `appendList`).
             part.tag = bun_ast::PartTag::DeadDueToInlining;
             part.dependencies.clear_retaining_capacity();
             part.dependencies.push(bun_ast::Dependency {
@@ -823,7 +822,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             .declared_symbols
             .append_list(core::mem::take(&mut p.declared_symbols))?;
 
-        // PORT NOTE: Zig assigned the ArrayList's `items` slice directly. `Stmt` is `Copy`;
+        // PORT NOTE: original assigned the list's slice directly. `Stmt` is `Copy`;
         // copy into the parser arena so the `StoreSlice<Stmt>` outlives this struct.
         let stmts = core::mem::take(&mut self.stmts);
         self.last_part.stmts = bun_ast::StoreSlice::new_mut(p.arena.alloc_slice_copy(&stmts));
@@ -831,5 +830,3 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         Ok(())
     }
 }
-
-// ported from: src/js_parser/ast/ConvertESMExportsForHmr.zig

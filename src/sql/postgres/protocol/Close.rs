@@ -26,8 +26,7 @@ impl<'a> Close<'a> {
             + 1
             + u32::try_from(p.slice().len()).expect("int cast")
             + 1;
-        // PORT NOTE: Zig source builds `[_]u8{'C'} ++ @byteSwap(count) ++ [_]u8{p.tag()}`;
-        // intent is 'C' · big-endian u32 count · tag byte. Reshaped to a fixed 6-byte buffer.
+        // 'C' · big-endian u32 count · tag byte, packed into a fixed 6-byte buffer.
         let mut header = [0u8; 6];
         header[0] = b'C';
         header[1..5].copy_from_slice(&count.to_be_bytes());
@@ -38,7 +37,7 @@ impl<'a> Close<'a> {
         Ok(())
     }
 
-    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
+    // See src/sql/postgres/protocol/WriteWrap.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
@@ -46,5 +45,3 @@ impl<'a> Close<'a> {
         self.write_internal(writer)
     }
 }
-
-// ported from: src/sql/postgres/protocol/Close.zig

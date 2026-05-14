@@ -9,12 +9,12 @@ use core::sync::atomic::Ordering;
 use bun_core::Error;
 use bun_picohttp as picohttp;
 
-// `H2Client.zig` is the parent module of `h2_client/`; `live_streams` lives there.
+// `live_streams` lives in `h2_client/`'s parent module.
 use super::client_session::ClientSession;
 use crate::HTTPClient;
 
-// `pub const new = bun.TrivialNew(@This());` — see `Stream::new` below, which fills the
-// Zig field defaults and returns a Box. The Box is owned by `ClientSession.streams`;
+// See `Stream::new` below, which fills the
+// struct field defaults and returns a Box. The Box is owned by `ClientSession.streams`;
 // Drop runs when removed from the map.
 
 pub struct Stream {
@@ -111,17 +111,17 @@ pub enum State {
 
 impl Drop for Stream {
     fn drop(&mut self) {
-        // Zig .monotonic == LLVM monotonic == Rust Relaxed.
+        // monotonic atomic ordering == Rust Relaxed.
         let _ = super::LIVE_STREAMS.fetch_sub(1, Ordering::Relaxed);
         // header_block / body_buffer / decoded_bytes / decoded_headers: Vec<_> drops automatically.
-        // bun.destroy(this): freeing the Box is the caller's drop; nothing to do here.
+        // Freeing the Box is the caller's drop; nothing to do here.
     }
 }
 
 impl Stream {
-    /// Mirrors `bun.TrivialNew(@This())` + Zig struct field defaults: callers in Zig
-    /// write `Stream.new(.{ .id, .session, .client, .send_window })` and the rest
-    /// default to `.{}` / `0` / `false` / `""`.
+    /// Trivial heap allocator with struct field defaults: callers
+    /// pass `id`/`session`/`client`/`send_window` and the rest
+    /// default to empty / `0` / `false`.
     pub fn new(
         id: u32,
         session: *mut ClientSession,
@@ -150,8 +150,8 @@ impl Stream {
         })
     }
 
-    // PORT NOTE: Stream.zig:rst() re-entered the session via the `session`
-    // backref. In Rust that autorefs a second `&mut ClientSession` while
+    // PORT NOTE: a previous formulation of `rst()` re-entered the session via
+    // the `session` backref. That autorefs a second `&mut ClientSession` while
     // `parse_frames`' `&mut ClientSession` is still live (Stacked-Borrows UB),
     // so RST is routed through `ClientSession::rst_stream` instead — the
     // session `&mut` is already in scope at every call site.
@@ -185,5 +185,3 @@ impl Stream {
         self.state == State::HalfClosedRemote || self.state == State::Closed
     }
 }
-
-// ported from: src/http/h2_client/Stream.zig

@@ -31,7 +31,7 @@ declare_scope!(WebViewHost, hidden);
 
 pub struct HostProcess {
     // Intrusive refcount (`.deref()` called in on_process_exit); kept raw to
-    // match Zig `*bun.spawn.Process`.
+    // model `*bun.spawn.Process`.
     process: NonNull<Process>,
 }
 
@@ -150,7 +150,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
 
         // Child sees fd 3 (first extra_fd → 3+0). The env var is the only
         // signal; no argv changes so `ps` shows a normal `bun` invocation.
-        // Same pattern as NODE_CHANNEL_FD in js_bun_spawn_bindings.zig.
+        // Same pattern as NODE_CHANNEL_FD in js_bun_spawn_bindings.rs.
         // SAFETY: vm is the per-thread VirtualMachine (valid for the call);
         // `transpiler.env` is set during VM init and lives for VM lifetime.
         let base = unsafe { (*(*vm).transpiler.env).map.create_null_delimited_env_map() }?;
@@ -213,8 +213,8 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
             }
             Err(e) => {
                 scoped_log!(WebViewHost, "watch failed: {}", e);
-                // SAFETY: drop the strong ref we hold (Zig: `process.deref()`),
-                // then reclaim the Box (Zig: `bun.destroy(self)`).
+                // SAFETY: drop the strong ref we hold (`process.deref()`),
+                // then reclaim the Box (`bun.destroy(self)`).
                 unsafe {
                     Process::deref(process.as_ptr());
                     drop(bun_core::heap::take(self_ptr));
@@ -237,5 +237,3 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
 unsafe extern "C" {
     fn Bun__WebViewHost__childDied(signo: i32);
 }
-
-// ported from: src/runtime/webview/HostProcess.zig

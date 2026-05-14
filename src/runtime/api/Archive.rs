@@ -8,9 +8,9 @@ use std::sync::Arc;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
-use bun_core::zig_string::Slice as ZigStringSlice;
+use bun_core::unsafe_string_view::Slice as UTF8Slice;
 use bun_core::{self, Output, ZBox};
-use bun_core::{ZigString, strings};
+use bun_core::{UnsafeStringView, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_glob as glob;
 use bun_io::KeepAlive;
@@ -64,7 +64,7 @@ pub struct Archive {
 }
 
 impl Archive {
-    /// Borrow the backing `StoreRef` (Zig: `archive.store`).
+    /// Borrow the backing `StoreRef`.
     #[inline]
     pub fn store_ref(&self) -> &StoreRef {
         &self.store
@@ -79,8 +79,7 @@ bun_jsc::impl_js_class_via_generated!(Archive => crate::generated_classes::js_Ar
 impl Archive {
     /// `Archive.write(path, data, options?)` static class fn — codegen
     /// (`ArchiveClass__write`) resolves it as an associated item on the struct,
-    /// so forward to the module-level [`write`] body below (Zig had it as
-    /// `pub fn write` in the file struct, which is both).
+    /// so forward to the module-level [`write`] body below.
     #[inline]
     pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         self::write(global, callframe)
@@ -283,7 +282,7 @@ fn create_archive(data: Vec<u8>, compress: Compression) -> Box<Archive> {
 }
 
 /// `JSValue::as_::<Blob>()` shim — kept as a free fn so the call sites read
-/// the same as the Zig (`jsc.WebCore.Blob.fromJS(value)`). Returns a shared
+/// like `jsc.WebCore.Blob.fromJS(value)`. Returns a shared
 /// borrow (BACKREF: m_ctx payload kept live by the JSC cell rooted by `value`
 /// on the caller's stack) so callers don't open-code `unsafe { &*ptr }`.
 #[inline]
@@ -396,17 +395,17 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
     }
 }
 
-/// Returns data as a ZigString.Slice (handles ownership automatically via deinit)
-fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigStringSlice> {
+/// Returns data as a UnsafeStringView.Slice (handles ownership automatically via deinit)
+fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<UTF8Slice> {
     // For Blob, use sharedView (no copy needed). The backing store outlives
     // the returned slice for the duration of the caller's tarball build.
     if let Some(blob) = blob_from_js(value) {
-        return Ok(ZigStringSlice::from_utf8_never_free(blob.shared_view()));
+        return Ok(UTF8Slice::from_utf8_never_free(blob.shared_view()));
     }
 
     // For ArrayBuffer/TypedArray, use view (no copy needed)
     if let Some(array_buffer) = value.as_array_buffer(global) {
-        return Ok(ZigStringSlice::from_utf8_never_free(array_buffer.slice()));
+        return Ok(UTF8Slice::from_utf8_never_free(array_buffer.slice()));
     }
 
     // For strings, convert (allocates)
@@ -657,7 +656,7 @@ impl PromiseResult {
     }
 }
 
-/// Trait extracted from the Zig structural-duck-typing on `Context`.
+/// Trait abstracting the duck-typed `Context` interface.
 /// Context must provide:
 ///   - `run` — runs on thread pool, stores result in `self`
 ///   - `run_from_js` — returns value to resolve/reject
@@ -666,9 +665,8 @@ pub trait TaskContext: Send {
     /// Dispatch tag for this context's `AsyncTask<Self>` variant.
     const TAG: TaskTag;
     /// Runs on thread pool. Stores its result on `self`.
-    // TODO(port): Zig's `AsyncTask.run` used `@typeInfo(@TypeOf(result)) == .error_union`
-    // to generically catch and store `.err`. Rust has no reflection; each impl handles
-    // its own error path inside `run` and writes `self.result`.
+    // TODO(port): each impl handles its own error path inside `run` and
+    // writes `self.result` (no generic error-union reflection here).
     fn run(&mut self);
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult>;
 }
@@ -944,8 +942,8 @@ impl TaskContext for BlobContext {
             }
             BlobResult::Uncompressed => Ok(match self.output_type {
                 BlobOutputType::Blob => {
-                    // Zig: `this.store.ref()` — clone bumps the refcount; ownership of
-                    // the new ref transfers into the Blob via init_with_store.
+                    // Clone bumps the refcount; ownership of the new ref
+                    // transfers into the Blob via init_with_store.
                     let store = self.store.clone();
                     let blob_ptr = Blob::new(Blob::init_with_store(store, global));
                     // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
@@ -953,7 +951,7 @@ impl TaskContext for BlobContext {
                 }
                 BlobOutputType::Bytes => {
                     let dup = self.store.shared_view().to_vec();
-                    // TODO(port): Zig matched OOM here and rejected; Rust Vec aborts on OOM.
+                    // TODO(port): the original rejected on OOM here; Vec aborts on OOM.
                     PromiseResult::Resolve(JSValue::create_buffer_from_box(
                         global,
                         dup.into_boxed_slice(),
@@ -1186,9 +1184,9 @@ impl FilesContext {
                     let to_read = (size - total_read).min(buf.len());
                     let read = archive.read_data(&mut buf[..to_read]);
                     if read < 0 {
-                        // Read error - returned as a normal Result (not a Zig error), so the
-                        // errdefer above won't fire. Free the current buffer and all previously
-                        // collected entries manually to avoid leaking them.
+                        // Read error - returned as a normal Result, so the
+                        // errdefer-style cleanup above won't fire. Free the current buffer and all
+                        // previously collected entries manually to avoid leaking them.
                         // PORT NOTE: in Rust both `data` and `entries` drop automatically here.
                         return Ok(
                             if let Some(err) = Self::clone_error_string(archive.as_ptr()) {
@@ -1350,9 +1348,9 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
 
     let max_size = compressor.max_bytes_needed(data, libdeflate::Encoding::Gzip);
 
-    // PERF(port): the Zig spec used a 256 KiB on-stack scratch for small inputs;
-    // in Rust the scratch is heap-allocated either way, so the threshold is dead
-    // weight — just size the Vec to `max_size` once.
+    // PERF(port): an earlier version used a 256 KiB on-stack scratch for small
+    // inputs; here the scratch is heap-allocated either way, so the threshold is
+    // dead weight — just size the Vec to `max_size` once.
     let mut output = Vec::with_capacity(max_size);
     let result = compressor.compress_to_vec(data, &mut output, libdeflate::Encoding::Gzip);
     if result.status != libdeflate::Status::Success {
@@ -1610,5 +1608,3 @@ fn extract_to_disk_filtered(
 
     Ok(count)
 }
-
-// ported from: src/runtime/api/Archive.zig

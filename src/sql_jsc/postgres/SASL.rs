@@ -55,7 +55,7 @@ fn hmac(password: &[u8], data: &[u8]) -> Option<[u8; 32]> {
 }
 
 impl SASL {
-    // PORT NOTE: reshaped for borrowck — Zig passed `*PostgresSQLConnection` but
+    // PORT NOTE: reshaped for borrowck — the original took `*PostgresSQLConnection` but
     // only read `connection.password`. Taking `&mut PostgresSQLConnection` here
     // would alias the `&mut self.authentication_state` borrow live at the call
     // site in `PostgresSQLConnection::on`. Caller dereferences the
@@ -66,7 +66,6 @@ impl SASL {
         iteration_count: u32,
         password: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // Zig: `jsc.API.Bun.Crypto.EVP.pbkdf2` (src/runtime/api/crypto.zig).
         // PORT NOTE: `bun_runtime::crypto::EVP::pbkdf2` is a thin wrapper over
         // BoringSSL's `PKCS5_PBKDF2_HMAC` with `EVP_sha256`. Inlined here to
         // avoid the `bun_runtime` dep (which would create a cycle through
@@ -136,7 +135,7 @@ impl SASL {
         use bun_sha_hmac::SHA256;
         let mut sha_digest = [0u8; SHA256::DIGEST];
         // TODO(b2-blocked): bun_jsc::VirtualMachine::get / RareData::boring_engine
-        // Zig passes `jsc.VirtualMachine.get().rareData().boringEngine()` here;
+        // Should pass `jsc.VirtualMachine.get().rareData().boringEngine()` here;
         // `None` falls through to BoringSSL's default engine, which is
         // functionally equivalent for SHA256. Swap once bun_jsc compiles.
         SHA256::hash(client_key, &mut sha_digest, core::ptr::null_mut());
@@ -154,7 +153,5 @@ impl SASL {
     }
 }
 
-// TODO(port): Zig `deinit` is reset-for-reuse (zeroes scalar state, no owned resources);
+// TODO(port): cleanup is reset-for-reuse (zeroes scalar state, no owned resources);
 // add `pub fn reset(&mut self)` if callers need it. Not mapped to Drop — no side effects.
-
-// ported from: src/sql_jsc/postgres/SASL.zig

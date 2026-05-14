@@ -118,7 +118,7 @@ impl Script {
             // The shell env is owned by the parent when the parent is the
             // Interpreter or a Subshell; otherwise this Script represents a
             // command substitution which duped from the parent and must
-            // deinitialize it (Zig: `this.base.shell.deinit()`).
+            // deinitialize it.
             if !me.base.shell.is_null() {
                 ShellExecEnv::deinit_impl(me.base.shell);
                 me.base.shell = core::ptr::null_mut();
@@ -154,5 +154,3 @@ impl Script {
         &me.node.stmts[idx]
     }
 }
-
-// ported from: src/shell/states/Script.zig

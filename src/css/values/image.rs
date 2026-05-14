@@ -20,14 +20,14 @@ pub enum Image {
     /// A `url()`.
     Url(Url),
     /// A gradient.
-    // PERF(port): arena-allocated in Zig (bun.create); LIFETIMES.tsv → Box<Gradient>
+    // PERF(port): originally arena-allocated; LIFETIMES.tsv → Box<Gradient>
     Gradient(Box<Gradient>),
     /// An `image-set()`.
     ImageSet(ImageSet),
 }
 
 impl Image {
-    // NOTE: `pub fn deinit` was a no-op in Zig (all CSS parser memory is arena-owned).
+    // NOTE: `pub fn deinit` was a no-op (all CSS parser memory is arena-owned).
     // No `Drop` impl needed — Box/Vec fields drop automatically.
 
     pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
@@ -168,7 +168,7 @@ impl Image {
         let prefix_image: &Image = if let Some(r) = &rgb { r } else { &*self };
 
         // Legacy -webkit-gradient()
-        // PORT NOTE: Zig's `and`/`if-else` precedence here is preserved verbatim:
+        // PORT NOTE: original `and`/`if-else` precedence here is preserved verbatim:
         // `if (targets.browsers) |b| isWebkitGradient(b) else (false and prefix_image.* == .gradient)`
         if prefixes.contains(VendorPrefix::WEBKIT)
             && if let Some(browsers) = targets.browsers {
@@ -236,7 +236,7 @@ impl Image {
     }
 
     // TODO(port): `css.DeriveParse(@This()).parse` — hand-expanded: try each
-    // variant in Zig field order (none/url/gradient/image-set).
+    // variant in source order (none/url/gradient/image-set).
     // blocked_on: `Url::parse` (gated on `Parser::add_import_record`). The
     // gradient/image-set arms are real; the url arm un-gates with url.rs.
 
@@ -419,7 +419,6 @@ impl ImageSetOption {
                 loc: css::dependencies::Location::from_source_location(loc),
             })
         } else {
-            // For some reason, `Image.parse` made zls crash; the Zig used `@call(.auto, ...)`.
             Image::parse(input)?
         };
 
@@ -542,5 +541,3 @@ fn parse_file_type(input: &mut css::Parser) -> Result<*const [u8]> {
         i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s))
     })
 }
-
-// ported from: src/css/values/image.zig

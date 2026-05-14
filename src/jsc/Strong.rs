@@ -58,16 +58,15 @@ impl Drop for Strong {
     fn drop(&mut self) {
         // SAFETY: `self.handle` came from `Impl::init` and is consumed exactly once here.
         unsafe { Impl::destroy(self.handle) };
-        // Zig: `if (Environment.isDebug) strong.* = undefined;` — Rust drop
-        // already invalidates the binding; no poison needed.
+        // Rust drop already invalidates the binding; no poison needed.
     }
 }
 
 /// Holds a strong reference to a JS value, protecting it from garbage
 /// collection. When not holding a value, the strong may still be allocated.
 // PORT NOTE: field renamed from `impl` (Rust keyword) to `handle`.
-// `#[repr(transparent)]` matches the Zig layout (`?*Impl` — single nullable
-// pointer) so it stays FFI-safe when embedded in `extern "C"` structs.
+// `#[repr(transparent)]` keeps the layout a single nullable pointer
+// so it stays FFI-safe when embedded in `extern "C"` structs.
 #[repr(transparent)]
 pub struct Optional {
     handle: Option<NonNull<Impl>>,
@@ -115,8 +114,8 @@ impl Optional {
         let Some(function) = self.try_swap() else {
             return JSValue::ZERO;
         };
-        // PORT NOTE: Zig source (Strong.zig:71) calls `function.call(global, args)`
-        // which predates the `thisValue` param on JSValue.call; pass `.undefined`.
+        // PORT NOTE: original `function.call(global, args)` predates the
+        // `thisValue` param on JSValue.call; pass `.undefined`.
         function
             .call(global, JSValue::UNDEFINED, args)
             .unwrap_or(JSValue::ZERO)
@@ -165,9 +164,9 @@ impl Optional {
         Some(result)
     }
 
-    /// Explicit teardown for call sites ported from Zig that wrote
-    /// `strong.deinit()` (Strong.zig:96). Idempotent; equivalent to dropping
-    /// in place and leaving `self` empty so `Drop` is a no-op.
+    /// Explicit teardown for call sites that wrote `strong.deinit()`.
+    /// Idempotent; equivalent to dropping in place and leaving `self`
+    /// empty so `Drop` is a no-op.
     pub fn deinit(&mut self) {
         let Some(r) = self.handle.take() else { return };
         // SAFETY: `r` came from `Impl::init` and is consumed exactly once here.
@@ -264,5 +263,3 @@ unsafe extern "C" {
 }
 
 pub use crate::deprecated_strong as deprecated;
-
-// ported from: src/jsc/Strong.zig

@@ -10,7 +10,7 @@ use crate::types;
 use crate::types::{BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType};
 
 // TODO(port): lifetime — `src_text` and `saved_img_title` borrow the caller's
-// source buffer for the renderer's lifetime (never freed in Zig `deinit`).
+// source buffer for the renderer's lifetime (never freed by the renderer).
 // Phase A guide discourages struct lifetimes, but raw `*const [u8]` is worse
 // here; revisit in Phase B if `'src` causes friction.
 pub struct HtmlRenderer<'src> {
@@ -684,7 +684,7 @@ impl<'src> HtmlRenderer<'src> {
 // Static helpers
 // ========================================
 
-// PORT NOTE: Zig's manual `*anyopaque + VTable` is collapsed into the
+// PORT NOTE: the original manual `*anyopaque + VTable` is collapsed into the
 // `RendererImpl` trait (see types.rs); the static VTABLE is no longer needed.
 impl RendererImpl for HtmlRenderer<'_> {
     fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
@@ -762,5 +762,3 @@ fn match_tag_name_ci(content: &[u8], pos: usize, tag: &[u8]) -> bool {
 fn find_entity_in_text(content: &[u8], start: usize) -> Option<usize> {
     helpers::find_entity(content, start)
 }
-
-// ported from: src/md/html_renderer.zig

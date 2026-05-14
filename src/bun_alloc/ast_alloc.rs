@@ -2,7 +2,7 @@
 //!
 //! Strategy B for the require-cache ESM leak (docs/BABYLIST_REPLACEMENT.md):
 //! `G::DeclList` / `G::PropertyList` / `ExprNodeList` / `ClassStaticBlock::stmts`
-//! were ported from Zig `BabyList<T>` to global-heap `Vec<T>`. The AST *nodes*
+//! were ported from `BabyList<T>` to global-heap `Vec<T>`. The AST *nodes*
 //! that embed those `Vec` headers live in `ASTMemoryAllocator`'s `MimallocArena`
 //! and are bulk-freed (no `Drop`) on `enter()` → `arena.reset()`, so the global
 //! buffers leak — one full AST's worth of `Vec` backing storage per imported
@@ -41,8 +41,8 @@ use crate::mimalloc;
 /// `Stmt/Expr.Data.Store.MEMORY_ALLOCATOR` and
 /// `bun_ast::data_store_override` thread-locals).
 ///
-/// `#[thread_local]` (not `thread_local!`) so this is a bare `__thread` slot
-/// like Zig's `threadlocal var`: every `AstAlloc` allocation reads this, and
+/// `#[thread_local]` (not `thread_local!`) so this is a bare `__thread` slot:
+/// every `AstAlloc` allocation reads this, and
 /// the macro form's `LocalKey::__getit` wrapper showed up under
 /// `pthread_getspecific` in next-lint profiles. `Cell<*mut _>` has no
 /// destructor and a const initializer, so no dtor registration is needed.
@@ -56,9 +56,9 @@ static AST_HEAP: Cell<*mut mimalloc::Heap> = Cell::new(core::ptr::null_mut());
 // list and every growth reallocation is a `mi_heap_malloc` / `mi_heap_realloc`
 // on the AST heap — and the *first* allocation for a not-yet-seen size class
 // drops into mimalloc's `_mi_malloc_generic` slow path (visible in next-lint
-// profiles). Zig's parser keeps these short lists in pooled / stack-seeded
-// buffers so the small case never touches the allocator; this matches that by
-// carving allocations `<= BUMP_MAX` from a large chunk owned by the active AST
+// profiles). The parser keeps these short lists in pooled / stack-seeded
+// buffers so the small case never touches the allocator: it carves allocations
+// `<= BUMP_MAX` from a large chunk owned by the active AST
 // `mi_heap_t`. The chunk is allocated *once* (per refill), so N tiny lists cost
 // one `mi_heap_malloc` instead of N.
 //
@@ -165,7 +165,7 @@ fn bump_refill(heap: *mut mimalloc::Heap, size: usize) -> Option<*mut u8> {
 // `mi_heap_t*` across heap swaps — a recycled slot (#53599) then aliased a
 // destroyed heap. The bump arena above avoids both: nothing per-OS-thread is
 // cached, and the cursor (not the heap pointer) is what survives, dropped on
-// every swap. Zig does not use `mi_theap_*` either. If `_mi_heap_theap` thrash
+// every swap. If `_mi_heap_theap` thrash
 // resurfaces in profiles, the intended fix is `mi_heap_set_default(heap)` for
 // the parse scope (mimalloc's supported "make this heap the cached one" API),
 // not manual theap caching.
@@ -276,8 +276,8 @@ fn heap_alloc(layout: Layout) -> *mut u8 {
 //   the "pointers may be freed by any clone" requirement is satisfied.
 // - `Send + Sync` (auto-derived for a fieldless ZST) is sound: each call reads
 //   the *calling* thread's `AST_HEAP`, and allocation is gated to that thread
-//   by `ASTMemoryAllocator`'s single-threaded contract (mirrored from Zig's
-//   `ThreadLock`; see `MimallocArena::assert_owning_thread`). The no-op
+//   by `ASTMemoryAllocator`'s single-threaded contract (a `ThreadLock`; see
+//   `MimallocArena::assert_owning_thread`). The no-op
 //   `deallocate` removes the only cross-thread hazard a `Vec<_,A>: Send` would
 //   otherwise introduce.
 unsafe impl Allocator for AstAlloc {
@@ -329,7 +329,7 @@ unsafe impl Allocator for AstAlloc {
         // bookkeeping) *without* moving the block — so it stays in whatever heap
         // owns it and never thrashes the `heap → theap` TLS lookup. When it
         // succeeds there is no allocation, no `memcpy`, and no abandoned block,
-        // matching `MimallocArena`'s `resize_in_place` (Zig's arena `remap` is
+        // matching `MimallocArena`'s `resize_in_place` (the arena `remap` is
         // `mi_expand`-then-`mi_realloc`).
         //
         // Gated on:
@@ -401,7 +401,7 @@ impl AstAlloc {
         Vec::with_capacity_in(cap, AstAlloc)
     }
 
-    /// `<[T]>::to_vec` parity (Zig: `BabyList.fromSlice`).
+    /// `<[T]>::to_vec` parity (`BabyList.fromSlice`).
     #[inline]
     pub fn vec_from_slice<T: Clone>(items: &[T]) -> AstVec<T> {
         let mut v = Vec::with_capacity_in(items.len(), AstAlloc);

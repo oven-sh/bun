@@ -150,7 +150,7 @@ impl Touch {
         Self::next(interp, cmd)
     }
 
-    /// Spec: touch.zig `onShellTouchTaskDone`.
+    /// Worker→main completion callback for a finished `ShellTouchTask`.
     pub fn on_shell_touch_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellTouchTask) {
         // SAFETY: task was heap-allocated in create(); reclaim.
         let mut task = unsafe { bun_core::heap::take(task) };
@@ -238,8 +238,7 @@ impl OutputTaskVTable for Touch {
     }
 }
 
-/// Spec: touch.zig `ShellTouchTask`. utimes() the path (creating it on
-/// ENOENT) on a worker thread.
+/// utimes() the path (creating it on ENOENT) on a worker thread.
 pub struct ShellTouchTask {
     pub cmd: NodeId,
     pub opts: Opts,
@@ -270,8 +269,8 @@ impl ShellTouchTask {
         bun_core::heap::into_raw(task)
     }
 
-    /// Spec: touch.zig `runFromThreadPool`. utimes() the path; on ENOENT
-    /// fall back to `open(O_CREAT|O_WRONLY, 0o664)`.
+    /// utimes() the path; on ENOENT fall back to
+    /// `open(O_CREAT|O_WRONLY, 0o664)`.
     pub fn run_from_thread_pool(this: &mut ShellTouchTask) {
         use bun_paths::resolve_path::{self, Platform, platform};
         use bun_sys::FdExt as _;
@@ -288,9 +287,9 @@ impl ShellTouchTask {
             )
         };
 
-        // Zig went via `NodeFS{}.utimes(args, .sync)`; that wrapper just
-        // forwards to `Syscall.utimens` (uv_fs_utime on Windows), so call
-        // the bun_sys layer directly to avoid the heavyweight NodeFS state.
+        // `NodeFS{}.utimes(args, .sync)` would just forward to
+        // `Syscall.utimens` (uv_fs_utime on Windows), so call the bun_sys
+        // layer directly to avoid the heavyweight NodeFS state.
         let milliseconds = bun_core::time::milli_timestamp();
         let atime = bun_sys::TimeLike {
             sec: milliseconds.div_euclid(1_000),
@@ -316,7 +315,7 @@ impl ShellTouchTask {
             }
         }
         // Worker→main bounce-back is posted by `shell_task_trampoline` after
-        // this returns (Zig: `event_loop.enqueueTaskConcurrent(...)`).
+        // this returns (`event_loop.enqueueTaskConcurrent(...)`).
     }
 
     pub fn run_from_main_thread(this: *mut ShellTouchTask, interp: &Interpreter) {
@@ -385,5 +384,3 @@ impl FlagParser for Opts {
         }
     }
 }
-
-// ported from: src/shell/builtin/touch.zig

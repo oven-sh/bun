@@ -35,5 +35,3 @@ impl<R> NestingRule<R> {
         }
     }
 }
-
-// ported from: src/css/rules/nesting.zig

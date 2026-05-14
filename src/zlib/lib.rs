@@ -142,7 +142,6 @@ unsafe extern "C" {
     pub fn crc32(crc: uLong, buf: *const Bytef, len: uInt) -> uLong;
 }
 
-// Zig: `pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type`
 // `W: bun_io::Write` bound is applied on `read_all` (the only method that touches `context`).
 pub struct ZlibReader<'a, W, const BUFFER_SIZE: usize> {
     pub context: W,
@@ -233,7 +232,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
         None
     }
 
-    // TODO(port): narrow error set — Zig inferred error union includes Writer's error set.
+    // TODO(port): narrow error set — should include Writer's error set.
     pub fn read_all(&mut self, is_done: bool) -> Result<(), bun_core::Error>
     where
         W: bun_io::Write,
@@ -268,9 +267,8 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
             //   flush parameter).
 
             if self.zlib.avail_out == 0 {
-                // PORT NOTE: Zig did `var written = try ctx.write(&buf); while (written < avail_out) ...`
-                // but avail_out == 0 here so the loop never ran; bun_io::Write::write_all is the
-                // canonical full-buffer write and subsumes the partial-write retry loop.
+                // PORT NOTE: bun_io::Write::write_all is the canonical
+                // full-buffer write and subsumes the partial-write retry loop.
                 self.context.write_all(&self.buf)?;
                 self.zlib.avail_out = BUFFER_SIZE as uInt;
                 self.zlib.next_out = self.buf.as_mut_ptr();
@@ -285,7 +283,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
                 ReturnCode::StreamEnd => {
                     self.state = ZlibReaderState::End;
                     let remainder = &self.buf[0..BUFFER_SIZE - self.zlib.avail_out as usize];
-                    // PORT NOTE: Zig's partial-write retry loop collapses to write_all under bun_io::Write.
+                    // PORT NOTE: the partial-write retry loop collapses to write_all under bun_io::Write.
                     self.context.write_all(remainder)?;
                     self.end();
                     return Ok(());
@@ -325,7 +323,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
 
 impl<'a, W, const BUFFER_SIZE: usize> Drop for ZlibReader<'a, W, BUFFER_SIZE> {
     fn drop(&mut self) {
-        // Zig deinit: end() then allocator.destroy(this) — destroy is implicit Box drop.
+        // end() then destroy — destroy is implicit Box drop.
         self.end();
     }
 }
@@ -344,9 +342,9 @@ bun_core::impl_tag_error!(ZlibError);
 bun_core::named_error_set!(ZlibError);
 
 // zlib `alloc_func`/`free_func` thunks → mimalloc. Shared by `ZlibReader` and
-// `ZlibCompressorArrayList`. Mirrors zlib.zig:138 / :779 — intentionally
-// `mi_malloc`, NOT `mi_calloc` (see `ZlibAllocator::alloc` for the zeroing
-// heap-breakdown variant used by `ZlibReaderArrayList`).
+// `ZlibCompressorArrayList`. Intentionally `mi_malloc`, NOT `mi_calloc`
+// (see `ZlibAllocator::alloc` for the zeroing heap-breakdown variant used by
+// `ZlibReaderArrayList`).
 pub(crate) use bun_alloc::c_thunks::{
     mi_free_opaque as zlib_mi_free, mi_malloc_items as zlib_mi_malloc,
 };
@@ -359,10 +357,10 @@ mod ZlibAllocator {
 
 pub struct ZlibReaderArrayList<'a> {
     pub input: &'a [u8],
-    // PORT NOTE: reshaped for borrowck — Zig kept a shallow copy of the
-    // ArrayListUnmanaged header in `list` and synced it back to `*list_ptr`.
-    // In Rust we operate directly through `list_ptr` (a `&'a mut Vec<u8>`).
-    // The `list` and `list_allocator` fields are dropped.
+    // PORT NOTE: reshaped for borrowck — operate directly through `list_ptr`
+    // (a `&'a mut Vec<u8>`) instead of keeping a shallow copy of the list
+    // header and syncing it back. The `list` and `list_allocator` fields are
+    // dropped.
     pub list_ptr: &'a mut Vec<u8>,
     pub zlib: zStream_struct,
     // PORT NOTE: allocator field dropped (global mimalloc)
@@ -371,7 +369,7 @@ pub struct ZlibReaderArrayList<'a> {
 
 impl<'a> Drop for ZlibReaderArrayList<'a> {
     fn drop(&mut self) {
-        // Zig deinit: end() then allocator.destroy(this) — destroy is implicit Box drop.
+        // end() then destroy — destroy is implicit Box drop.
         self.end();
     }
 }
@@ -475,10 +473,10 @@ impl<'a> ZlibReaderArrayList<'a> {
     }
 
     pub fn read_all(&mut self, is_done: bool) -> Result<(), ZlibError> {
-        // Zig `defer { ...; this.list_ptr.* = this.list; }` — sync output length back.
         // PORT NOTE: reshaped for borrowck — we mutate list_ptr directly, so the
-        // sync-back is just truncate/set_len. Unconditional `defer` is implemented as
-        // an IIFE for the body + a manual epilogue that runs before returning `result`.
+        // output-length sync-back is just truncate/set_len. The unconditional
+        // epilogue is implemented as an IIFE for the body + a manual epilogue
+        // that runs before returning `result`.
         let result = (|| -> Result<(), ZlibError> {
             while self.state == ZlibReaderArrayListState::Uninitialized
                 || self.state == ZlibReaderArrayListState::Inflating
@@ -869,10 +867,10 @@ impl NodeMode {
 /// Not for streaming!
 pub struct ZlibCompressorArrayList<'a> {
     pub input: &'a [u8],
-    // PORT NOTE: reshaped for borrowck — Zig kept a shallow copy of the
-    // ArrayListUnmanaged header in `list` and synced it back to `*list_ptr`.
-    // In Rust we operate directly through `list_ptr` (a `&'a mut Vec<u8>`).
-    // The `list` and `list_allocator` fields are dropped.
+    // PORT NOTE: reshaped for borrowck — operate directly through `list_ptr`
+    // (a `&'a mut Vec<u8>`) instead of keeping a shallow copy of the list
+    // header and syncing it back. The `list` and `list_allocator` fields are
+    // dropped.
     pub list_ptr: &'a mut Vec<u8>,
     pub zlib: zStream_struct,
     // PORT NOTE: allocator field dropped (global mimalloc)
@@ -959,7 +957,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 // ensureTotalCapacityPrecise → reserve_exact
                 let need = (bound as usize).saturating_sub(zlib_reader.list_ptr.len());
                 zlib_reader.list_ptr.reserve_exact(need);
-                // PORT NOTE: Zig caught alloc OOM here; Rust Vec aborts on OOM.
+                // PORT NOTE: Rust Vec aborts on OOM here.
                 zlib_reader.zlib.avail_out = zlib_reader.list_ptr.capacity() as uInt;
                 zlib_reader.zlib.next_out = zlib_reader.list_ptr.as_mut_ptr();
 
@@ -1066,8 +1064,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
             Ok(())
         })();
 
-        // defer epilogue (runs unconditionally):
-        // Zig: this.list.shrinkRetainingCapacity(this.zlib.total_out); this.list_ptr.* = this.list;
+        // Epilogue (runs unconditionally): sync output length back.
         self.list_ptr.truncate(self.zlib.total_out as usize);
 
         result
@@ -1076,13 +1073,12 @@ impl<'a> ZlibCompressorArrayList<'a> {
 
 impl<'a> Drop for ZlibCompressorArrayList<'a> {
     fn drop(&mut self) {
-        // Zig deinit: end() then allocator.destroy(this) — destroy is implicit Box drop.
+        // end() then destroy — destroy is implicit Box drop.
         self.end();
     }
 }
 
-// Zig: `@import("zlib-internal")` → `src/zlib_sys/{posix,win32}.zig` (see build.zig).
-// B-2: re-export from bun_zlib_sys, platform-selected to match build.zig.
+// Re-export from bun_zlib_sys, platform-selected.
 mod internal {
     #[cfg(not(windows))]
     pub(super) use bun_zlib_sys::posix::{DataType, zStream_struct};
@@ -1093,5 +1089,3 @@ mod internal {
     #[cfg(windows)]
     pub use bun_zlib_sys::win32::{FlushValue, ReturnCode, z_stream, z_streamp};
 }
-
-// ported from: src/zlib/zlib.zig

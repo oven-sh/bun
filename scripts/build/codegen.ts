@@ -43,9 +43,8 @@ import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
 
-// Historical note: the Zig-era build generated `GeneratedBindings.zig` and
-// `GeneratedJS2Native.zig` into `src/jsc/bindings/` (gitignored) because the
-// Zig compiler refused to `@import` files outside its source tree. Those
+// Historical note: an earlier toolchain generated bindgen outputs into
+// `src/jsc/bindings/` (gitignored). Those
 // outputs were dropped when the Rust port landed — the Rust dispatch surface
 // is `${codegenDir}/generated_js2native.rs` and the bindgen tables live in
 // `${codegenDir}/GeneratedBindings.cpp`.
@@ -199,10 +198,10 @@ export interface CodegenOutputs {
   /** All codegen outputs — use for phony target `codegen`. */
   all: string[];
 
-  /** Outputs that zig `@embedFile`s or imports. */
+  /** Outputs that the runtime embeds or imports. */
   rustInputs: string[];
 
-  /** Outputs that zig needs to exist but doesn't embed (debug bake runtime). */
+  /** Outputs that must exist but aren't embedded (debug bake runtime). */
   rustOrderOnly: string[];
 
   /** Generated .cpp files. Compiled alongside handwritten C++ in bun.ts. */
@@ -223,7 +222,7 @@ export interface CodegenOutputs {
    * outputs. Using `all` would pull bake-codegen in cpp-only CI mode, which
    * fails on old CI bun versions (bake-codegen shells out to `bun build`
    * whose CSS url() handling changed between versions). cmake only wired
-   * bake outputs into BUN_ZIG_GENERATED_SOURCES, never C++ deps — same here.
+   * bake outputs into the generated-sources list, never C++ deps — same here.
    *
    * The "undeclared .h files" issue (some scripts emit .h alongside their
    * declared outputs): those steps also emit a .cpp or .h that IS declared
@@ -234,7 +233,7 @@ export interface CodegenOutputs {
   /** The bindgenv2 .cpp outputs (compiled separately from handwritten C++). */
   bindgenV2Cpp: string[];
 
-  /** The bindgenv2 .zig outputs (legacy artifacts, retained for reference). */
+  /** The bindgenv2 legacy outputs (retained for reference). */
   bindgenV2Zig: string[];
 
   /**
@@ -585,13 +584,13 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "generate-classes.ts");
 
   const outputs = [
-    resolve(cfg.codegenDir, "ZigGeneratedClasses.h"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses.cpp"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses+lazyStructureHeader.h"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses+DOMClientIsoSubspaces.h"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses+DOMIsoSubspaces.h"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses+lazyStructureImpl.h"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses.lut.txt"),
+    resolve(cfg.codegenDir, "BunGeneratedClasses.h"),
+    resolve(cfg.codegenDir, "BunGeneratedClasses.cpp"),
+    resolve(cfg.codegenDir, "BunGeneratedClasses+lazyStructureHeader.h"),
+    resolve(cfg.codegenDir, "BunGeneratedClasses+DOMClientIsoSubspaces.h"),
+    resolve(cfg.codegenDir, "BunGeneratedClasses+DOMIsoSubspaces.h"),
+    resolve(cfg.codegenDir, "BunGeneratedClasses+lazyStructureImpl.h"),
+    resolve(cfg.codegenDir, "BunGeneratedClasses.lut.txt"),
     // Rust sibling: include!()'d by src/runtime/generated_classes.rs. Must be
     // a declared output so the cargo edge (which lists this in rustInputs)
     // re-invokes when generate-classes.ts changes — cargo doesn't track
@@ -602,12 +601,12 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
   n.build({
     outputs,
     rule: "codegen",
-    inputs: [script, ...sources.zigGeneratedClasses],
+    inputs: [script, ...sources.generatedClasses],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: "ZigGeneratedClasses.{cpp,h}",
-      args: shJoin(cfg, ["run", script, ...sources.zigGeneratedClasses, cfg.codegenDir]),
+      desc: "BunGeneratedClasses.{cpp,h}",
+      args: shJoin(cfg, ["run", script, ...sources.generatedClasses, cfg.codegenDir]),
     },
   });
 
@@ -650,7 +649,7 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   o.all.push(output);
   // bun_runtime/build.rs panics if this file is absent, so the rust_build edge
-  // must wait on it — `rustInputs` is the implicit-dep list both zig and the
+  // must wait on it — `rustInputs` is the implicit-dep list the
   // cargo edge consume.
   o.rustInputs.push(output);
 }
@@ -678,7 +677,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
     outputs: [outputRs],
     rule: "codegen",
     inputs: [script],
-    // cppbind scans ALL .cpp files for [[ZIG_EXPORT]] annotations. Every
+    // cppbind scans ALL .cpp files for [[RUST_EXPORT]] annotations. Every
     // .cpp is an implicit input so changing an annotation retriggers.
     // ~540 files — ninja handles this fine via .ninja_deps stat caching.
     // cxxSourcesFile also listed — if the list itself changes (file
@@ -934,11 +933,11 @@ function emitObjectLuts({ n, cfg, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "create-hash-table.ts");
   const perlScript = resolve(cfg.cwd, "src", "codegen", "create_hash_table");
 
-  // (source, output) pairs. ZigGeneratedClasses.lut.txt is special: it's
+  // (source, output) pairs. BunGeneratedClasses.lut.txt is special: it's
   // GENERATED by emitGeneratedClasses, so it's in codegenDir not src/.
   const pairs: [src: string, out: string][] = [
     [resolve(cfg.cwd, "src/jsc/bindings/BunObject.cpp"), resolve(cfg.codegenDir, "BunObject.lut.h")],
-    [resolve(cfg.cwd, "src/jsc/bindings/ZigGlobalObject.lut.txt"), resolve(cfg.codegenDir, "ZigGlobalObject.lut.h")],
+    [resolve(cfg.cwd, "src/jsc/bindings/BunGlobalObject.lut.txt"), resolve(cfg.codegenDir, "BunGlobalObject.lut.h")],
     [resolve(cfg.cwd, "src/jsc/bindings/JSBuffer.cpp"), resolve(cfg.codegenDir, "JSBuffer.lut.h")],
     [resolve(cfg.cwd, "src/jsc/bindings/BunProcess.cpp"), resolve(cfg.codegenDir, "BunProcess.lut.h")],
     [
@@ -959,7 +958,7 @@ function emitObjectLuts({ n, cfg, o, dirStamp }: Ctx): void {
       resolve(cfg.codegenDir, "ProcessBindingHTTPParser.lut.h"),
     ],
     [resolve(cfg.cwd, "src/jsc/modules/NodeModuleModule.cpp"), resolve(cfg.codegenDir, "NodeModuleModule.lut.h")],
-    [resolve(cfg.codegenDir, "ZigGeneratedClasses.lut.txt"), resolve(cfg.codegenDir, "ZigGeneratedClasses.lut.h")],
+    [resolve(cfg.codegenDir, "BunGeneratedClasses.lut.txt"), resolve(cfg.codegenDir, "BunGeneratedClasses.lut.h")],
     [resolve(cfg.cwd, "src/jsc/bindings/webcore/JSEvent.cpp"), resolve(cfg.codegenDir, "JSEvent.lut.h")],
   ];
 

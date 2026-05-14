@@ -1,6 +1,6 @@
-//! Port of `src/runtime/cli/Arguments.zig` — bunfig-loading subset.
+//! Bunfig-loading subset of `Arguments`.
 //!
-//! and their private helpers were lifted out of `bun_runtime::cli::Arguments`
+//! These functions and their private helpers were lifted out of `bun_runtime::cli::Arguments`
 //! so that mid-tier crates (`bun_install`) can call them directly. The
 //! `bun_runtime` crate re-exports these for its own callers.
 

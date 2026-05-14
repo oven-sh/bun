@@ -1,6 +1,6 @@
-use bun_jsc::ZigStringJsc as _;
+use bun_jsc::UnsafeStringViewJsc as _;
+use bun_jsc::unsafe_string_view::UnsafeStringView;
 use bun_jsc::virtual_machine::GCLevel;
-use bun_jsc::zig_string::ZigString;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSType, JSValue, JsResult};
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
@@ -50,10 +50,10 @@ pub fn array_buffer_to_string(global: &JSGlobalObject, frame: &CallFrame) -> JsR
             // Uint16Array/Int16Array storage is u16-aligned with even byte length;
             // bytemuck checks both at runtime.
             let utf16: &[u16] = bytemuck::cast_slice(array_buffer.byte_slice());
-            let zig_str = ZigString::init_utf16(utf16);
-            Ok(zig_str.to_js(global))
+            let unsafe_str_view = UnsafeStringView::init_utf16(utf16);
+            Ok(unsafe_str_view.to_js(global))
         }
-        _ => Ok(ZigString::init(array_buffer.slice()).to_js(global)),
+        _ => Ok(UnsafeStringView::init(array_buffer.slice()).to_js(global)),
     }
 }
 
@@ -91,5 +91,3 @@ fn dump_mimalloc(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValu
     }
     Ok(JSValue::UNDEFINED)
 }
-
-// ported from: src/runtime/api/UnsafeObject.zig

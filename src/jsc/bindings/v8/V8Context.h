@@ -1,13 +1,13 @@
 #pragma once
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "V8Data.h"
 
 namespace v8 {
 
 class Isolate;
 
-// Context is always a reinterpret pointer to Zig::GlobalObject, so that functions accepting a
+// Context is always a reinterpret pointer to Bun::GlobalObject, so that functions accepting a
 // Context can quickly access JSC data
 class Context : public Data {
 public:
@@ -18,14 +18,14 @@ public:
         return localToCell()->vm();
     }
 
-    const Zig::GlobalObject* globalObject() const
+    const Bun::GlobalObject* globalObject() const
     {
-        return dynamicDowncast<const Zig::GlobalObject>(localToCell());
+        return dynamicDowncast<const Bun::GlobalObject>(localToCell());
     }
 
-    Zig::GlobalObject* globalObject()
+    Bun::GlobalObject* globalObject()
     {
-        return dynamicDowncast<Zig::GlobalObject>(localToCell());
+        return dynamicDowncast<Bun::GlobalObject>(localToCell());
     }
 
     HandleScope* currentHandleScope() const

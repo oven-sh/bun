@@ -26,5 +26,3 @@ unsafe extern "C" {
         reason: CommonAbortReason,
     ) -> JSValue;
 }
-
-// ported from: src/jsc/CommonAbortReason.zig

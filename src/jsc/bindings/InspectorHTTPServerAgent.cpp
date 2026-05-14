@@ -7,13 +7,13 @@
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 #include <wtf/TZoneMallocInlines.h>
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 namespace Inspector {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorHTTPServerAgent);
 
-// Zig bindings implementation
+// Rust bindings implementation
 extern "C" {
 void Bun__HTTPServerAgent__setEnabled(Inspector::InspectorHTTPServerAgent* agent);
 
@@ -177,29 +177,29 @@ void InspectorHTTPServerAgent::requestHandlerException(Ref<Protocol::HTTPServer:
 
 }
 
-// Zig API implementation
+// Rust API implementation
 extern "C" {
 
-// Functions for Zig to call to notify about HTTP server events
+// Functions for Rust to call to notify about HTTP server events
 
 typedef int ServerId;
 typedef int HotReloadId;
 typedef int RouteId;
 typedef int RequestId;
 
-[[ZIG_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerStarted(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId, const BunString* address, double startTime, void* serverInstance)
+[[RUST_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerStarted(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId, const BunString* address, double startTime, void* serverInstance)
 {
 
     agent->serverStarted(serverId, address->toWTFString(), startTime, serverInstance);
 }
 
-[[ZIG_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerStopped(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, double timestamp)
+[[RUST_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerStopped(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, double timestamp)
 {
 
     agent->serverStopped(serverId, timestamp);
 }
 
-// This matches the Route extern struct in Zig
+// This matches the Route extern struct on the Rust side
 struct Route {
     enum class Type : uint8_t {
         Default = 1,
@@ -219,7 +219,7 @@ struct Route {
     BunString script_url;
 };
 
-[[ZIG_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerRoutesUpdated(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId,
+[[RUST_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerRoutesUpdated(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId,
     Route* routes_ptr, size_t routes_len)
 {
 

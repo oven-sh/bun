@@ -11,45 +11,42 @@ type vm_size_t = usize;
 // TODO(port): `enable_asan` mapped to a cargo feature; verify Phase B wires this the same way.
 pub const ENABLED: bool = cfg!(debug_assertions) && cfg!(target_os = "macos") && !cfg!(bun_asan);
 
-/// Zig: `fn heapLabel(comptime T: type) [:0]const u8`
+/// Per-type heap label, used to name the macOS malloc zone for a type.
 ///
-/// Uses `@hasDecl(T, "heap_label")` to optionally pick a custom label, else
-/// `bun.meta.typeBaseName(@typeName(T))`. In Rust this is a trait with a
-/// blanket default; types override by implementing `HEAP_LABEL` explicitly.
+/// Types override by implementing `HEAP_LABEL` explicitly.
 pub trait HeapLabel {
     const HEAP_LABEL: &'static str;
 }
 
-// TODO(port): blanket impl wants `bun.meta.typeBaseName(@typeName(T))` at compile
-// time. `core::any::type_name::<T>()` is not `const fn` and includes the full
+// TODO(port): a blanket impl would want a compile-time base type name, but
+// `core::any::type_name::<T>()` is not `const fn` and includes the full
 // module path. Phase B: either a proc-macro derive, or require every `T` used
 // with heap_breakdown to impl `HeapLabel` explicitly.
 fn heap_label<T: HeapLabel>() -> &'static str {
     T::HEAP_LABEL
 }
 
-/// Zig: `pub fn allocator(comptime T: type) std.mem.Allocator`
+/// Allocator handle for a `HeapLabel` type.
 pub fn allocator<T: HeapLabel>() -> &'static dyn crate::Allocator {
     named_allocator(heap_label::<T>())
 }
 
-/// Zig: `pub fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator`
+/// Allocator handle for a named heap zone.
 ///
-/// In Zig the `"Bun__" ++ name` concatenation and the per-name `static` happen
-/// at comptime via monomorphization. Rust cannot monomorphize on a `&'static str`
-/// const generic on stable, so the per-name `OnceLock` must be minted at the
-/// call site — see the `get_zone!` macro below. This function is a thin wrapper
-/// that defers to that macro at call sites; here we expose the runtime half.
+/// Rust cannot monomorphize on a `&'static str` const generic on stable, so
+/// the per-name `OnceLock` must be minted at the call site — see the
+/// `get_zone!` macro below. This function is a thin wrapper that defers to
+/// that macro at call sites; here we expose the runtime half.
 pub fn named_allocator(name: &'static str) -> &'static dyn crate::Allocator {
     // TODO(port): callers should prefer `named_allocator!("Name")` / `get_zone!` directly
     // so the OnceLock is per-name. This runtime path falls back to a process-global
-    // map and is not zero-cost like the Zig comptime version.
-    // PERF(port): was comptime monomorphization — profile in Phase B
+    // map and is not zero-cost.
+    // PERF(port): was previously compile-time monomorphization — profile in Phase B
     //
-    // Zig: `getZone("Bun__" ++ name)` — the "Bun__" prefix is applied HERE, not in
-    // `getZone`/`get_zone_runtime`. PORTING.md §Forbidden: no `Box::leak` for
-    // 'static — `get_zone_runtime` owns the prefixed string in its OnceLock map,
-    // so pass a borrowed `&str` and let the map intern it.
+    // The "Bun__" prefix is applied HERE, not in `get_zone`/`get_zone_runtime`.
+    // PORTING.md §Forbidden: no `Box::leak` for 'static — `get_zone_runtime`
+    // owns the prefixed string in its OnceLock map, so pass a borrowed `&str`
+    // and let the map intern it.
     let mut prefixed = String::with_capacity(5 + name.len());
     prefixed.push_str("Bun__");
     prefixed.push_str(name);
@@ -61,23 +58,19 @@ pub fn named_allocator(name: &'static str) -> &'static dyn crate::Allocator {
 // with the `pub fn named_allocator` above in the value namespace on macOS where
 // this module is actually compiled, so it is omitted here.
 
-/// Zig: `pub fn getZoneT(comptime T: type) *Zone`
+/// Per-type zone lookup (uses the type's `HEAP_LABEL`).
 pub fn get_zone_t<T: HeapLabel>() -> &'static Zone {
     get_zone(heap_label::<T>().as_bytes())
 }
 
-/// Zig: `pub fn getZone(comptime name: [:0]const u8) *Zone`
-///
-/// Each comptime instantiation in Zig gets its own `static var zone` + `std.once`.
-/// The faithful Rust translation is the crate-root `get_zone!` macro in lib.rs
-/// that expands a fresh `OnceLock` per call site (per literal name). Not
-/// duplicated here to avoid path-export collisions on macOS.
+// The crate-root `get_zone!` macro in lib.rs expands a fresh `OnceLock` per
+// call site (per literal name). Not duplicated here to avoid path-export
+// collisions on macOS.
 
-/// Runtime `getZone(name)` — looks up (or creates) the per-name zone.
+/// Runtime `get_zone(name)` — looks up (or creates) the per-name zone.
 ///
-/// Zig used a comptime-monomorphized `static` per literal; the crate-root
-/// `get_zone!` macro is the zero-cost form. This runtime path keys a
-/// process-global map for callers that pass a non-literal name (or for
+/// The crate-root `get_zone!` macro is the zero-cost form. This runtime path
+/// keys a process-global map for callers that pass a non-literal name (or for
 /// `allocator<T>()`/`get_zone_t<T>()`, which cannot expand a per-T static on
 /// stable Rust without a proc-macro).
 // TODO(port): Phase B may replace with a `#[heap_label]` derive that expands
@@ -101,7 +94,7 @@ pub fn get_zone(name: &[u8]) -> &'static Zone {
     if let Some((_, z)) = map.get(name) {
         return *z;
     }
-    // `name` verbatim (no prefix — matches Zig `getZone`), NUL-terminated.
+    // `name` verbatim (no prefix), NUL-terminated.
     let mut owned = Vec::with_capacity(name.len() + 1);
     owned.extend_from_slice(name);
     owned.push(0);
@@ -117,26 +110,24 @@ pub fn get_zone(name: &[u8]) -> &'static Zone {
 }
 
 bun_opaque::opaque_ffi! {
-    /// Zig: `pub const Zone = opaque { ... };`
-    ///
     /// Opaque FFI handle for a macOS `malloc_zone_t`.
     ///
     /// The `UnsafeCell` field makes `Zone: !Freeze`, so a `&Zone` does not assert
     /// immutability of the pointee. This is required because every malloc-zone FFI
     /// call (`malloc_zone_memalign`, `malloc_zone_free`, …) mutates the zone's
-    /// internal state, and Zig models the handle as a freely-aliasing `*Zone`.
+    /// internal state, so the handle must be freely-aliasing.
     /// Without `UnsafeCell`, casting `&Zone as *const _ as *mut _` and writing
     /// through it (via FFI) is UB under Stacked Borrows.
     pub struct Zone;
 }
 
 // SAFETY: `malloc_zone_t` is internally synchronized by libmalloc; sharing
-// `&Zone` across threads is the documented usage (matches Zig `*Zone` via `std.once`).
+// `&Zone` across threads is the documented usage.
 unsafe impl Sync for Zone {}
 unsafe impl Send for Zone {}
 
 impl Zone {
-    /// Zig: `pub fn init(comptime name: [:0]const u8) *Zone`
+    /// Create a new malloc zone with the given name.
     ///
     /// # Safety
     /// `name` must point to a NUL-terminated C string that remains valid for
@@ -202,16 +193,14 @@ impl Zone {
         Zone::aligned_alloc(unsafe { &*(zone.cast::<Zone>()) }, len, alignment)
     }
 
-    // Zig exposed a `pub const vtable: std.mem.Allocator.VTable` with
-    // { alloc, resize, remap = noRemap, free }. In Rust the equivalent is an
-    // `impl crate::Allocator for Zone` (see below); the raw vtable struct is a
-    // Zig-ism and is not materialized here, so the `resize`/`free` vtable thunks
-    // (and the `malloc_size` helper they used) are not ported.
-    // TODO(port): if Phase B's `bun_alloc::Allocator` is a literal vtable struct
-    // (to match `std.mem.Allocator` ABI), reintroduce a `pub static VTABLE`
-    // along with the `resize`/`raw_free` thunks.
+    // The allocator interface is modeled as `impl crate::Allocator for Zone`
+    // (see below); a raw vtable struct is not materialized here, so the
+    // `resize`/`free` vtable thunks (and the `malloc_size` helper they used)
+    // are not ported.
+    // TODO(port): if Phase B's `bun_alloc::Allocator` is a literal vtable struct,
+    // reintroduce a `pub static VTABLE` along with the `resize`/`raw_free` thunks.
 
-    /// Zig: `pub fn allocator(zone: *Zone) std.mem.Allocator`
+    /// Allocator handle for this zone.
     pub fn allocator(&'static self) -> &'static dyn crate::Allocator {
         self
     }
@@ -227,12 +216,12 @@ impl Zone {
     #[inline]
     pub fn try_create<T>(&self, data: T) -> Result<*mut T, crate::AllocError> {
         let alignment = core::mem::align_of::<T>();
-        // TODO(port): Zig passed `@returnAddress()` as the ret_addr hint; Rust has no
+        // TODO(port): the original passed a return-address hint; Rust has no
         // stable equivalent. Passing 0 — the macOS zone API ignores it anyway.
         let raw = Zone::raw_alloc(
             // SAFETY: vtable context pointer — `as_mut_ptr()` yields the
             // interior-mutable `*mut Zone`, erased to `*mut c_void` to match
-            // the Zig `*anyopaque` allocator-vtable signature.
+            // the type-erased allocator-vtable signature.
             self.as_mut_ptr().cast::<c_void>(),
             core::mem::size_of::<T>(),
             alignment,
@@ -254,16 +243,14 @@ impl Zone {
         unsafe { malloc_zone_free(self.as_mut_ptr(), ptr.cast()) };
     }
 
-    /// Zig: `pub fn isInstance(allocator_: std.mem.Allocator) bool`
-    ///
-    /// Zig: `return allocator_.vtable == &vtable;` — implemented as a `TypeId`
+    /// Whether `allocator_` is a `Zone` allocator — implemented as a `TypeId`
     /// identity check via the `Allocator::type_id()` hook.
     pub fn is_instance(allocator_: &dyn crate::Allocator) -> bool {
         allocator_.is::<Self>()
     }
 }
 
-// `crate::Allocator` is a marker trait carrying `type_id()`; the Zig vtable
+// `crate::Allocator` is a marker trait carrying `type_id()`; the allocation
 // methods (`alloc`/`resize`/`free`) are inherent on `Zone` above (`raw_alloc`,
 // `resize`, `raw_free`). This impl makes `Zone` usable as `&dyn Allocator`
 // for `is_instance` identity checks.
@@ -331,5 +318,3 @@ mod stubs {
 use stubs::malloc_zone_memalign;
 #[cfg(not(target_os = "macos"))]
 pub use stubs::{malloc_zone_calloc, malloc_zone_free, malloc_zone_malloc};
-
-// ported from: src/bun_alloc/heap_breakdown.zig

@@ -72,7 +72,7 @@ pub fn find_imported_parts_in_js_order(
     let with_code_splitting = this.graph.code_splitting;
     let with_scb = this.graph.is_scb_bitset.bit_length > 0;
 
-    // PORT NOTE: the Zig visitor holds a *LinkerContext alongside SoA column slices
+    // PORT NOTE: the original visitor holds a *LinkerContext alongside SoA column slices
     // borrowed from it, and mutates one column (`entry_point_chunk_index`). Rust
     // borrowck forbids the latter through a shared `&LinkerContext`, so cache that
     // single mutable column as a raw `*mut [u32]` (provenance via the
@@ -114,8 +114,8 @@ pub fn find_imported_parts_in_js_order(
         parts_in_chunk_order.extend_from_slice(&visitor.parts_prefix);
         parts_in_chunk_order.extend_from_slice(&visitor.part_ranges);
 
-        // Zig `defer { part_ranges_shared.* = visitor.part_ranges; ... visitor.visited.deinit(); }`
-        // No fallible ops remain past this point in Rust, so plain move-back is equivalent.
+        // The original deferred this move-back to scope-exit. No fallible ops
+        // remain past this point in Rust, so a plain move-back is equivalent.
         *part_ranges_shared = visitor.part_ranges;
         *parts_prefix_shared = visitor.parts_prefix;
         // visitor.visited dropped implicitly
@@ -291,5 +291,3 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
         }
     }
 }
-
-// ported from: src/bundler/linker_context/findAllImportedPartsInJSOrder.zig

@@ -1,13 +1,13 @@
 //! `node.PathLike` / `node.PathOrFileDescriptor` — single nominal definitions.
 //!
-//! LAYERING: ported from `src/runtime/node/types.zig:532-910`. Defined at the
-//! `bun_jsc` tier because every variant payload (`PathString`, `Buffer` =
-//! `MarkedArrayBuffer`, `SliceWithUnderlyingString`, `ZigStringSlice`, `Fd`)
-//! is already reachable from this crate. `bun_runtime::node::types`
-//! `pub use`s these and layers the JS-argument-parsing helpers (`from_js`,
-//! `from_js_with_allocator`) on top via inherent impls in that crate.
+//! LAYERING: defined at the `bun_jsc` tier because every variant payload
+//! (`PathString`, `Buffer` = `MarkedArrayBuffer`, `SliceWithUnderlyingString`,
+//! `UTF8Slice`, `Fd`) is already reachable from this crate.
+//! `bun_runtime::node::types` `pub use`s these and layers the
+//! JS-argument-parsing helpers (`from_js`, `from_js_with_allocator`) on top
+//! via inherent impls in that crate.
 
-use bun_core::{PathString, SliceWithUnderlyingString, ZigStringSlice};
+use bun_core::{PathString, SliceWithUnderlyingString, UTF8Slice};
 use bun_sys::Fd;
 
 use crate::array_buffer::MarkedArrayBuffer;
@@ -15,12 +15,12 @@ use crate::array_buffer::MarkedArrayBuffer;
 // ──────────────────────────────────────────────────────────────────────────
 // RAII for `protect()`/`unprotect()` pairs taken by `to_thread_safe()`.
 //
-// Zig's async-fs path calls `args.toThreadSafe()` (which `JSValue.protect()`s
+// The async-fs path calls `args.to_thread_safe()` (which `JSValue::protect()`s
 // any borrowed JS-backed buffers so the work-pool thread may read them) and
-// later `args.deinitAndUnprotect()` to release. In Rust the "deinit" half is
-// already `Drop`; only the JS-side `unprotect()` needs an explicit hook, and
-// pairing it with the protect via a guard type removes the leak hazard on
-// every early return between `toThreadSafe` and the manual cleanup.
+// must later release that protect. The "deinit" half is already `Drop`; only
+// the JS-side `unprotect()` needs an explicit hook, and pairing it with the
+// protect via a guard type removes the leak hazard on every early return
+// between `to_thread_safe` and the manual cleanup.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Undo the `JSValue::protect()` calls taken by [`to_thread_safe`](
@@ -36,8 +36,8 @@ pub trait Unprotect {
 
 /// RAII guard returned by `into_thread_safe()`: a `T` whose JS-backed buffers
 /// have been `protect()`ed. `Drop` calls [`Unprotect::unprotect`] then drops
-/// the inner `T` normally — the Rust spelling of Zig's
-/// `defer args.deinitAndUnprotect()`.
+/// the inner `T` normally — releasing both the GC protect and the owned
+/// Rust payload at scope exit.
 ///
 /// `repr(transparent)` so identity-casts in the const-generic dispatch macros
 /// (see `node_fs.rs`'s `args_as!`) remain bit-exact.
@@ -85,13 +85,13 @@ impl<T: Unprotect + Default> Default for ThreadSafe<T> {
 
 // `ThreadSafe<T>` crosses to the work-pool thread; auto-`Send` iff `T: Send`.
 
-/// `node.PathLike` (types.zig:532) — `union(enum)`.
+/// `node.PathLike` — tagged union over the accepted path argument shapes.
 pub enum PathLike {
     String(PathString),
     Buffer(MarkedArrayBuffer),
     SliceWithUnderlyingString(SliceWithUnderlyingString),
     ThreadsafeString(SliceWithUnderlyingString),
-    EncodedSlice(ZigStringSlice),
+    EncodedSlice(UTF8Slice),
 }
 
 impl Default for PathLike {
@@ -102,9 +102,8 @@ impl Default for PathLike {
 }
 
 impl Clone for PathLike {
-    /// Zig `PathLike` is bitwise-copy; the Rust port bumps any owning ref so
-    /// the clone is independently droppable *and* `clone().slice()` returns
-    /// the same bytes as the original.
+    /// Bumps any owning ref so the clone is independently droppable *and*
+    /// `clone().slice()` returns the same bytes as the original.
     fn clone(&self) -> Self {
         match self {
             Self::String(s) => Self::String(*s),
@@ -146,15 +145,14 @@ impl Drop for PathLike {
             Self::SliceWithUnderlyingString(s) | Self::ThreadsafeString(s) => {
                 core::mem::take(s).deinit();
             }
-            // `ZigStringSlice` releases its WTF ref / owned buffer in its own
-            // `Drop`.
+            // `UTF8Slice` releases its WTF ref / owned buffer in its own `Drop`.
             Self::EncodedSlice(_) => {}
         }
     }
 }
 
 impl PathLike {
-    /// Zig parity: `pathlike == .string`.
+    /// True iff this is the `String` variant.
     #[inline]
     pub fn is_string(&self) -> bool {
         matches!(self, Self::String(_))
@@ -179,11 +177,10 @@ impl PathLike {
         }
     }
 
-    /// `PathLike.toThreadSafe()` (types.zig:557) — promote any borrowed-JS
-    /// payload to a thread-safe representation. For `Buffer` the variant is
-    /// kept and the backing JS value is `protect()`ed (paired with
-    /// [`Unprotect::unprotect`]); the discriminant is preserved so callers
-    /// matching on `Buffer` after this call see the same shape as Zig.
+    /// Promote any borrowed-JS payload to a thread-safe representation. For
+    /// `Buffer` the variant is kept and the backing JS value is `protect()`ed
+    /// (paired with [`Unprotect::unprotect`]); the discriminant is preserved so
+    /// callers matching on `Buffer` after this call see the same variant.
     ///
     /// Prefer [`Self::into_thread_safe`] which returns a [`ThreadSafe`] guard;
     /// this in-place form exists for nested calls from container types'
@@ -203,8 +200,7 @@ impl PathLike {
     }
 
     /// Consuming `to_thread_safe()`: protect any JS-backed buffer and return a
-    /// guard that unprotects on drop. The Rust replacement for Zig's
-    /// `args.toThreadSafe()` / `defer args.deinitAndUnprotect()` pair.
+    /// guard that unprotects (and then drops the value) on scope exit.
     #[inline]
     pub fn into_thread_safe(mut self) -> ThreadSafe<Self> {
         self.to_thread_safe();
@@ -213,8 +209,7 @@ impl PathLike {
 }
 
 impl Unprotect for PathLike {
-    /// `PathLike.deinitAndUnprotect()` (types.zig:571), JS-side half — undo
-    /// the `protect()` taken by [`Self::to_thread_safe`] /
+    /// Undo the `protect()` taken by [`Self::to_thread_safe`] /
     /// `ArgumentsSlice::protect_eat`. Owned payloads are released by `Drop`.
     #[inline]
     fn unprotect(&mut self) {
@@ -224,7 +219,7 @@ impl Unprotect for PathLike {
     }
 }
 
-/// `node.PathOrFileDescriptor` (types.zig:903) — `union(enum) { fd, path }`.
+/// `node.PathOrFileDescriptor` — either an open file descriptor or a path.
 pub enum PathOrFileDescriptor {
     Fd(Fd),
     Path(PathLike),
@@ -246,7 +241,7 @@ impl Clone for PathOrFileDescriptor {
     }
 }
 
-/// `PathOrFileDescriptor.SerializeTag` (types.zig:912) — `enum(u8)`.
+/// `PathOrFileDescriptor::SerializeTag` — discriminant for the serialized form.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum PathOrFileDescriptorSerializeTag {
@@ -298,7 +293,8 @@ impl PathOrFileDescriptor {
 }
 
 impl Unprotect for PathOrFileDescriptor {
-    /// `PathOrFileDescriptor.deinitAndUnprotect()` (types.zig:934), JS-side half.
+    /// JS-side half of release: undo the `protect()` taken by
+    /// [`Self::to_thread_safe`]. Owned payloads are released by `Drop`.
     #[inline]
     fn unprotect(&mut self) {
         if let Self::Path(p) = self {
@@ -319,20 +315,20 @@ impl core::fmt::Display for PathOrFileDescriptor {
 }
 
 impl PathOrFileDescriptor {
-    /// Zig: `pathlike == .path`.
+    /// True iff this is the `Path` variant.
     #[inline]
     pub fn is_path(&self) -> bool {
         matches!(self, Self::Path(_))
     }
 
-    /// Zig: `pathlike == .fd`.
+    /// True iff this is the `Fd` variant.
     #[inline]
     pub fn is_fd(&self) -> bool {
         matches!(self, Self::Fd(_))
     }
 
-    /// Unwrap the `Path` arm. Panics on `Fd` (mirrors Zig's `pathlike.path`
-    /// direct field access, used only after the caller has matched on the tag).
+    /// Unwrap the `Path` arm. Panics on `Fd` — used only after the caller has
+    /// already matched on the tag.
     #[inline]
     pub fn path(&self) -> &PathLike {
         match self {

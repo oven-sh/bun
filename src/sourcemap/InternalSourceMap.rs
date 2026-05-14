@@ -73,7 +73,7 @@
 //!     gen_col_len / orig_line_len / orig_col_len: 3 × u16 LE
 //!     gen_line_mask / orig_line_eq_mask / orig_col_eq_mask: 3 × 8 bytes
 //!       (bit i=1 ⇒ d_gen_line>=1 / d_orig_line==d_gen_line / d_orig_col==d_gen_col)
-//!     gen_col_lane:          count-1 zig-zag varints (d_gen_col)
+//!     gen_col_lane:          count-1 ZigZag varints (d_gen_col)
 //!     orig_line_exceptions:  one varint per 0-bit in orig_line_eq_mask
 //!     orig_col_exceptions:   one varint per 0-bit in orig_col_eq_mask
 //!     if has_gen_line_exceptions:
@@ -221,8 +221,7 @@ impl InternalSourceMap {
     /// Sanity-check a blob's outer header against its actual length. See the
     /// module-level [`is_valid_blob`] for details.
     ///
-    /// Associated-fn alias so callers can write `InternalSourceMap::is_valid_blob(..)`
-    /// (Zig: `pub fn isValidBlob` is a decl on the file-struct `@This()`).
+    /// Associated-fn alias so callers can write `InternalSourceMap::is_valid_blob(..)`.
     #[inline]
     pub fn is_valid_blob(blob: &[u8]) -> bool {
         is_valid_blob(blob)
@@ -231,8 +230,7 @@ impl InternalSourceMap {
     /// Decode a standard VLQ "mappings" string and re-encode it as an
     /// `InternalSourceMap` blob. See the module-level [`from_vlq`] for details.
     ///
-    /// Associated-fn alias so callers can write `InternalSourceMap::from_vlq(..)`
-    /// (Zig: `pub fn fromVLQ` is a decl on the file-struct `@This()`).
+    /// Associated-fn alias so callers can write `InternalSourceMap::from_vlq(..)`.
     #[inline]
     pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, FromVlqError> {
         from_vlq(vlq, input_line_count_hint)
@@ -312,12 +310,12 @@ fn zigzag_decode(value: u32) -> i32 {
     (value >> 1) as i32 ^ (-((value & 1) as i32))
 }
 
-/// Max bytes for a zig-zag-encoded i32 in 7-bit varint form: ceil(32 / 7) = 5.
+/// Max bytes for a ZigZag-encoded i32 in 7-bit varint form: ceil(32 / 7) = 5.
 const MAX_VARINT_LEN: usize = 5;
 
 // PERF: force-inline so the per-delta loops in `flush_window` see the 1-byte
 // fast path branchlessly and LLVM can hoist the `buf_ptr.add(w)` arithmetic.
-// Zig leaves this to LLVM (single-CGU); Rust needs the hint across CGUs.
+// A single-CGU build leaves this to LLVM; Rust needs the hint across CGUs.
 #[inline(always)]
 fn write_varint(buf: *mut u8, signed: i32) -> usize {
     let mut v = zigzag_encode(signed);
@@ -931,9 +929,9 @@ fn emit_vlq(
 // (`generated_line`, `pending_generated_line_delta`, `count`, `pending_n` —
 // 13 bytes) lands at offset 0 in the head cache line, with `sync_entries`'
 // NonNull ptr (the `Option<Builder>` niche) immediately after in the *same*
-// line. The inlined `VLQSourceMap::append`/`append_line_separator` (Chunk.zig
-// 103/107 are `pub inline fn`) thus touch one line on the fast path instead of
-// straddling the five 256-byte `pending_*` lanes. (benches: lint/create-vue)
+// line. The inlined `VLQSourceMap::append`/`append_line_separator` thus touch
+// one line on the fast path instead of straddling the five 256-byte
+// `pending_*` lanes. (benches: lint/create-vue)
 //
 // The pending window is stored column-wise — five parallel `[i32; SYNC_INTERVAL]`
 // lanes rather than one `[State; SYNC_INTERVAL]` array of 20-byte rows. So
@@ -1002,7 +1000,7 @@ impl Builder {
         // SAFETY: invariant `pending_n < SYNC_INTERVAL` between flushes — the
         // tail of this fn flushes (resetting to 0) the moment it would reach
         // SYNC_INTERVAL, so on entry `pending_n <= SYNC_INTERVAL-1`. Elides the
-        // per-mapping bounds check (Zig stores into `self.pending[n]` unchecked).
+        // per-mapping bounds check.
         unsafe {
             *self.pending_generated_line.get_unchecked_mut(i) = generated_line;
             *self.pending_generated_column.get_unchecked_mut(i) = current.generated_column;
@@ -1113,7 +1111,7 @@ impl Builder {
                 unsafe { *buf_ptr.add(win_hdr::GEN_LINE_MASK_OFF + (k >> 3)) |= bit };
             }
 
-            // gen_col lane: one zig-zag varint per delta.
+            // gen_col lane: one ZigZag varint per delta.
             // SAFETY: `w_gen_col` stays within [gen_col_base, gen_col_base + nd*MAX_VARINT_LEN).
             w_gen_col += write_varint(unsafe { buf_ptr.add(w_gen_col) }, d_gen_col);
 
@@ -1230,7 +1228,7 @@ impl Builder {
     /// count, input line count) so this path flows through the existing
     /// `Chunk.buffer` plumbing unchanged.
     pub fn finalize(&mut self) -> &mut MutableString {
-        // PORT NOTE: reshaped for borrowck — Zig early-returns `&self.finalized.?`
+        // PORT NOTE: reshaped for borrowck — original early-returned `&self.finalized.?`
         // before populating; we check first then fall through to the trailing borrow.
         if self.finalized.is_none() {
             self.flush_window();
@@ -1240,7 +1238,7 @@ impl Builder {
             let total: usize = stream_offset as usize + self.win_stream.len() + STREAM_TAIL_PAD;
 
             let mut out = MutableString::init_empty();
-            // Zig: `out.list.resize(allocator, total)` leaves new bytes undefined.
+            // Resizing leaves new bytes undefined.
             // Every byte in [0..total) is written below: [0..24] zero-filled,
             // [24..32] header u32s, [32..32+sync_bytes] sync table memcpy,
             // [stream_offset..stream_offset+win_stream.len()] stream memcpy,
@@ -1277,7 +1275,7 @@ impl Builder {
         self.finalized.as_mut().unwrap()
     }
 
-    /// Move the finalized buffer out (Zig: `b.finalize().*` then `b.finalized = null`).
+    /// Move the finalized buffer out and clear the builder.
     pub fn finalize_take(&mut self) -> MutableString {
         let _ = self.finalize();
         self.finalized.take().unwrap()
@@ -1398,7 +1396,4 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
     Ok(owned)
 }
 
-// `pub const TestingAPIs = @import("../sourcemap_jsc/internal_jsc.zig").TestingAPIs;`
-// deleted — *_jsc alias; extension-trait lives in bun_sourcemap_jsc.
-
-// ported from: src/sourcemap/InternalSourceMap.zig
+// `TestingAPIs` re-export deleted — *_jsc alias; extension-trait lives in bun_sourcemap_jsc.

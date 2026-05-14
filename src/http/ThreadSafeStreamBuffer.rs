@@ -22,9 +22,9 @@ pub struct Callback {
 impl Callback {
     pub fn init<T>(callback: fn(*mut T), context: *mut T) -> Self {
         Self {
-            // SAFETY: fn(*mut T) and fn(*mut c_void) have identical ABI; the
-            // Zig side uses @ptrCast on a comptime fn param. `context` is only
-            // ever passed back to this callback, which knows its real type.
+            // SAFETY: fn(*mut T) and fn(*mut c_void) have identical ABI.
+            // `context` is only ever passed back to this callback, which knows
+            // its real type.
             callback: unsafe { bun_ptr::cast_fn_ptr::<fn(*mut T), fn(*mut c_void)>(callback) },
             context: context.cast::<c_void>(),
         }
@@ -82,10 +82,10 @@ impl ThreadSafeStreamBuffer {
 
     pub fn acquire(&mut self) -> &mut StreamBuffer {
         self.mutex.lock();
-        // PORT NOTE: reshaped for borrowck — Zig returns &this.buffer while the
-        // mutex stays locked until `release()`. Prefer `lock()` (RAII guard) for
-        // simple critical sections; this split form remains for callers that
-        // interleave release with disjoint `self` access.
+        // PORT NOTE: returns &mut self.buffer while the mutex stays locked
+        // until `release()`. Prefer `lock()` (RAII guard) for simple critical
+        // sections; this split form remains for callers that interleave
+        // release with disjoint `self` access.
         &mut self.buffer
     }
 
@@ -124,8 +124,7 @@ impl ThreadSafeStreamBuffer {
 }
 
 /// RAII guard returned by [`ThreadSafeStreamBuffer::lock`]. Derefs to the
-/// protected `StreamBuffer` and releases the mutex on `Drop` (Zig:
-/// `const buf = sb.acquire(); defer sb.release();`).
+/// protected `StreamBuffer` and releases the mutex on `Drop`.
 pub struct StreamBufferGuard<'a>(&'a mut ThreadSafeStreamBuffer);
 
 impl core::ops::Deref for StreamBufferGuard<'_> {
@@ -149,5 +148,3 @@ impl Drop for StreamBufferGuard<'_> {
         self.0.mutex.unlock();
     }
 }
-
-// ported from: src/http/ThreadSafeStreamBuffer.zig

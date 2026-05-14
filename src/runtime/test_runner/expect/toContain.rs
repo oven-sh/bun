@@ -29,8 +29,8 @@ impl Expect {
         expected.ensure_still_alive();
         let mut pass = false;
 
-        // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs match the Zig
-        // `*JSGlobalObject` / `*bool` fields and avoid a Phase-A struct lifetime param.
+        // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw `*JSGlobalObject` /
+        // `*bool` fields avoid a Phase-A struct lifetime param.
         struct ExpectedEntry {
             global: *const JSGlobalObject,
             expected: JSValue,
@@ -72,8 +72,8 @@ impl Expect {
                 item: JSValue,
             ) {
                 // SAFETY: entry_ is &mut ExpectedEntry on the caller's stack, threaded through
-                // for_each as opaque userdata; non-null asserted by Zig `entry_.?`. global/pass
-                // point at live stack locals for the duration of the for_each call.
+                // for_each as opaque userdata; the caller always passes a non-null pointer.
+                // global/pass point at live stack locals for the duration of the for_each call.
                 debug_assert!(!entry_.is_null());
                 let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry>(entry_) };
                 let Ok(same) = item.is_same_value(entry.expected, unsafe { &*entry.global }) else {
@@ -104,9 +104,9 @@ impl Expect {
         }
 
         // handle failure
-        // PORT NOTE: Zig shares one Formatter across both `to_fmt` calls; in Rust each
-        // `to_fmt` borrows `&mut Formatter` for the lifetime of the returned wrapper, so
-        // create a second Formatter (cheap struct init, no shared state) to satisfy borrowck.
+        // PORT NOTE: each `to_fmt` borrows `&mut Formatter` for the lifetime of the returned
+        // wrapper, so create a second Formatter (cheap struct init, no shared state) to
+        // satisfy borrowck.
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         if not {
@@ -143,5 +143,3 @@ impl Expect {
         )
     }
 }
-
-// ported from: src/test_runner/expect/toContain.zig

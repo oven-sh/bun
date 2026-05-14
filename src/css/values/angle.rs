@@ -230,7 +230,7 @@ impl Angle {
 
     pub fn op<C>(&self, other: &Angle, ctx: C, op_fn: fn(C, f32, f32) -> f32) -> Angle {
         // PERF: not sure if this is faster
-        // PORT NOTE: reshaped for borrowck — Zig used packed-tag bit-twiddling switch; Rust match on (tag, tag) is equivalent.
+        // PORT NOTE: reshaped for borrowck — originally a packed-tag bit-twiddling switch; Rust match on (tag, tag) is equivalent.
         match (self, other) {
             (Angle::Deg(a), Angle::Deg(b)) => Angle::Deg(op_fn(ctx, *a, *b)),
             (Angle::Rad(a), Angle::Rad(b)) => Angle::Rad(op_fn(ctx, *a, *b)),
@@ -243,7 +243,7 @@ impl Angle {
 
     pub fn op_to<T, C>(&self, other: &Angle, ctx: C, op_fn: fn(C, f32, f32) -> T) -> T {
         // PERF: not sure if this is faster
-        // TODO(port): upstream bug — Zig `opTo` computes `other_tag` from `this.*`, so mixed-variant
+        // TODO(port): upstream bug — the original `opTo` computes `other_tag` from `this.*`, so mixed-variant
         // inputs read `other`'s raw f32 payload via the wrong arm. This port INTENTIONALLY DIVERGES:
         // we require both operands to share a variant, otherwise fall through to to_degrees().
         // Revisit in Phase B and fix upstream.
@@ -272,7 +272,7 @@ impl Angle {
 impl crate::generics::CssEql for Angle {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        // Spec angle.zig:200-202 — `lhs.toDegrees() == rhs.toDegrees()`.
+        // Spec: `lhs.toDegrees() == rhs.toDegrees()`.
         // NOT structural variant comparison: Deg(180) eql Rad(PI) eql Turn(0.5).
         self.to_degrees() == other.to_degrees()
     }
@@ -281,5 +281,3 @@ impl crate::generics::CssEql for Angle {
 /// A CSS [`<angle-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-angle-percentage) value.
 /// May be specified as either an angle or a percentage that resolves to an angle.
 pub type AnglePercentage = DimensionPercentage<Angle>;
-
-// ported from: src/css/values/angle.zig

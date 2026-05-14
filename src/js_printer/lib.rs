@@ -1,5 +1,4 @@
 //! JavaScript printer — translates the AST back to source text.
-//! Port of src/js_printer/js_printer.zig.
 //!
 //! B-2 UN-GATED. The `Printer<'a, W, ...>` struct and its full method surface
 //! (`print_expr`, `print_stmt`, `print_binding`, `print_property`, …) now
@@ -49,7 +48,7 @@ use bun_ast as js_ast;
 use js_ast::Ref;
 /// `lexer::*` — the printer only consumes the pure identifier/keyword
 /// classifiers, all of which live in `bun_ast::lexer_tables`. Aliased so the
-/// `lexer::is_identifier(...)` spelling matches the Zig path.
+/// `lexer::is_identifier(...)` spelling matches the original path.
 mod lexer {
     pub use bun_ast::lexer_tables::*;
 }
@@ -59,7 +58,7 @@ use bun_sourcemap as SourceMap;
 
 pub use bun_options_types::schema::api::CssInJsBehavior;
 
-/// `fs.Path` from `src/resolver/fs.zig`. The resolver crate is a sibling
+/// `fs.Path` from `src/resolver/fs.rs`. The resolver crate is a sibling
 /// tier-4 crate; the canonical struct was MOVED DOWN to `bun_paths::fs::Path`
 /// so both the resolver and the printer can name it without a dep cycle.
 pub use bun_paths::fs::Path as FsPath;
@@ -75,8 +74,8 @@ pub mod renamer;
 use renamer as rename;
 
 /// Map of mangled property `Ref` → final mangled name bytes.
-/// Zig: `std.AutoArrayHashMapUnmanaged(Ref, []const u8)` (values borrow bundler arena).
-// PERF(port): Zig values were arena-borrowed `[]const u8`; Box<[u8]> here owns —
+/// Originally `std.AutoArrayHashMapUnmanaged(Ref, []const u8)` (values borrow bundler arena).
+// PERF(port): original values were arena-borrowed `[]const u8`; Box<[u8]> here owns —
 // revisit if profiling shows allocation pressure during link.
 pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 
@@ -138,7 +137,7 @@ pub mod analyze_transpiled_module {
         }
     }
 
-    /// Zig: `packed struct(u8)`. Kept as plain bools for ergonomic field access
+    /// Originally `packed struct(u8)`. Kept as plain bools for ergonomic field access
     /// (`mi.flags.contains_import_meta = true`); bitcast at the (de)serialize boundary.
     #[derive(Clone, Copy, Default)]
     pub struct Flags {
@@ -179,7 +178,7 @@ pub mod analyze_transpiled_module {
         pub const STAR_NAMESPACE: Self = Self(u32::MAX - 1);
     }
 
-    /// Zig: `enum(u32)` with open range — non-reserved values bitcast to `StringID`.
+    /// Originally `enum(u32)` with open range — non-reserved values bitcast to `StringID`.
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct FetchParameters(pub u32);
@@ -206,7 +205,7 @@ pub mod analyze_transpiled_module {
     }
 
     /// Borrowing view over a finalized/serialized `ModuleInfo`.
-    /// Zig kept this self-referentially inside `ModuleInfo`; Rust builds it on demand
+    /// Original kept this self-referentially inside `ModuleInfo`; Rust builds it on demand
     /// (`ModuleInfo::as_deserialized`) or borrows from an owned byte buffer
     /// (`ModuleInfoDeserializedOwned::as_ref`).
     pub struct ModuleInfoDeserialized<'a> {
@@ -259,9 +258,9 @@ pub mod analyze_transpiled_module {
     ///
     /// `as_ref()` below reinterprets interior ranges as `&[u32]` / `&[StringID]` /
     /// `&[FetchParameters]` via `bytemuck::cast_slice`. A plain `Box<[u8]>` only
-    /// guarantees `align(1)`, so forming an aligned `&[u32]` from it is UB. The Zig
+    /// guarantees `align(1)`, so forming an aligned `&[u32]` from it is UB. The original
     /// sibling sidesteps this by typing the fields `[]align(1) const u32`
-    /// (analyze_transpiled_module.zig); Rust has no under-aligned slice type, so we
+    /// (analyze_transpiled_module); Rust has no under-aligned slice type, so we
     /// instead over-align the allocation by storing `Box<[u32]>` and viewing it as
     /// bytes — no raw alloc/dealloc, and `Send`/`Sync` are auto-derived.
     struct AlignedBytes {
@@ -289,7 +288,7 @@ pub mod analyze_transpiled_module {
     }
 
     /// Owns a duplicated byte buffer and exposes a `ModuleInfoDeserialized` view into it.
-    /// Replaces Zig's `.owner = .allocated_slice` arm.
+    /// Replaces the original `.owner = .allocated_slice` arm.
     pub struct ModuleInfoDeserializedOwned {
         #[allow(dead_code)]
         backing: AlignedBytes,
@@ -408,7 +407,7 @@ pub mod analyze_transpiled_module {
     pub struct BadModuleInfo;
 
     /// Insertion-ordered (key, value) store with O(1) duplicate-key rejection.
-    /// Stand-in for Zig's `AutoArrayHashMapUnmanaged` until `bun_collections::ArrayHashMap`
+    /// Stand-in for the original `AutoArrayHashMapUnmanaged` until `bun_collections::ArrayHashMap`
     /// grows slice-yielding `keys()`/`values()`.
     // PERF(port): two allocations + a side HashMap; revisit with a real IndexMap.
     struct OrderedMap<K: Eq + core::hash::Hash + Copy, V> {
@@ -432,7 +431,7 @@ pub mod analyze_transpiled_module {
         fn values(&self) -> &[V] {
             &self.values
         }
-        /// Returns `true` if `key` was already present (Zig `getOrPut().found_existing`).
+        /// Returns `true` if `key` was already present (`getOrPut().found_existing`).
         fn insert_if_absent(&mut self, key: K, value: V) -> bool {
             if self.index.contains_key(&key) {
                 return true;
@@ -453,7 +452,7 @@ pub mod analyze_transpiled_module {
             Some(v)
         }
         /// Replace `old` with `new` **in place**, preserving insertion order.
-        /// Mirrors Zig `keys()[idx] = new; reIndex()`.
+        /// Mirrors the original `keys()[idx] = new; reIndex()`.
         fn rename_key(&mut self, old: &K, new: K) -> bool {
             let Some(i) = self.index.remove(old) else {
                 return false;
@@ -466,7 +465,7 @@ pub mod analyze_transpiled_module {
 
     pub struct ModuleInfo {
         /// all strings in wtf-8. index in hashmap = StringID
-        // Zig used an adapted ArrayHashMap keyed by offset; Rust keys by content
+        // Original used an adapted ArrayHashMap keyed by offset; Rust keys by content
         // directly (wyhash via bun_collections::HashMap) and keeps the parallel
         // buf/lens vectors for the on-wire format.
         strings_map: HashMap<Vec<u8>, u32>,
@@ -611,7 +610,7 @@ pub mod analyze_transpiled_module {
             let idx = u32::try_from(self.strings_lens.len()).unwrap();
             self.strings_buf.extend_from_slice(value);
             self.strings_lens.push(u32::try_from(value.len()).unwrap());
-            // PERF(port): Zig avoided this owned-key dupe via adapted hashmap over
+            // PERF(port): original avoided this owned-key dupe via adapted hashmap over
             // strings_buf offsets; revisit with a raw-entry API.
             self.strings_map.insert(value.to_vec(), idx);
             StringID(idx)
@@ -636,7 +635,7 @@ pub mod analyze_transpiled_module {
                     *item = new_id;
                 }
             }
-            // Zig: `requested_modules.keys()[idx] = new_id; reIndex()` — must preserve
+            // Originally `requested_modules.keys()[idx] = new_id; reIndex()` — must preserve
             // insertion order (serialized verbatim into ModuleInfo for JSC).
             self.requested_modules.rename_key(&old_id, new_id);
         }
@@ -739,7 +738,7 @@ pub fn write_module_id(writer: &mut impl core::fmt::Write, module_id: u32) {
     write!(writer, "{:x}", module_id).expect("unreachable");
 }
 
-// PERF(port): was comptime monomorphization (`comptime CodePointType: type`) — Zig
+// PERF(port): was comptime monomorphization (`comptime CodePointType: type`) — original
 // instantiated per code-unit type; Rust callers widen to i32 at the boundary.
 // PERF(port): `ascii_only` is a *runtime* arg (was `const ASCII_ONLY`) so the large
 // callers (`write_pre_quoted_string_inner`, `estimate_length_for_utf8`) collapse to a
@@ -813,7 +812,7 @@ pub struct Whitespacer {
     pub minify: &'static [u8],
 }
 
-// NOTE: Zig `Whitespacer.append` was comptime string concatenation
+// NOTE: original `Whitespacer.append` was comptime string concatenation
 // (`.{ .normal = this.normal ++ str, .minify = this.minify ++ str }`).
 // Rust `const fn` can't concatenate `&'static [u8]` at compile time without
 // `const_format::concatcp!` at the call site, and a runtime no-op stub would
@@ -849,7 +848,7 @@ pub const fn _ws_minify<const N: usize>(s: &[u8]) -> [u8; N] {
 }
 
 /// Compile-time helper: produce a `Whitespacer` whose `.minify` strips spaces.
-/// Zig computed `.minify` at comptime by stripping ' ' (js_printer.zig:92-108).
+/// Original computed `.minify` at comptime by stripping ' '.
 #[macro_export]
 macro_rules! ws {
     ($s:expr) => {{
@@ -893,15 +892,15 @@ pub fn estimate_length_for_utf8(input: &[u8], ascii_only: bool, quote_char: u8) 
         }
         remaining = &remaining[char_len as usize..];
     }
-    // Zig's `else` on `while` runs when the condition fails (i.e. `None`).
+    // The original `else` on `while` runs when the condition fails (i.e. `None`).
     if remaining.as_ptr() == input.as_ptr() {
-        // PORT NOTE: reshaped — Zig returns `remaining.len + 2` when *no* escape was ever found.
+        // PORT NOTE: reshaped — original returns `remaining.len + 2` when *no* escape was ever found.
         // The branch above already handled the loop body; falling out of the loop with no
         // iterations means "no escapes anywhere".
     }
     // TODO(port): the original `while ... else { return remaining.len + 2 }` returns early when
     // index_of_needs_escape returns null at the *first* check. The current shape returns `len`
-    // (which equals 2) plus nothing for `remaining`. Match Zig precisely.
+    // (which equals 2) plus nothing for `remaining`. Match the original precisely.
     len + remaining.len()
 }
 
@@ -945,7 +944,7 @@ pub fn write_pre_quoted_string_inner<W, const ENCODING: Encoding>(
 where
     W: Write + ?Sized,
 {
-    // TODO(port): for ENCODING == Utf16, Zig reinterprets `text_in` as []const u16 via bytesAsSlice.
+    // TODO(port): for ENCODING == Utf16, original reinterprets `text_in` as []const u16 via bytesAsSlice.
     // In Rust we keep `text_in: &[u8]` and index by code-unit width below.
     debug_assert!(
         !(json && quote_char != b'"'),
@@ -1139,7 +1138,7 @@ pub fn quote_for_json(
     bytes: &mut MutableString,
     ascii_only: bool,
 ) -> Result<(), bun_core::Error> {
-    // Zig: `comptime ascii_only: bool`. We now thread `ascii_only` at runtime so
+    // Originally `comptime ascii_only: bool`. We now thread `ascii_only` at runtime so
     // the heavy escaper isn't monomorphized per ascii_only/quote-char combo.
     bytes.grow_if_needed(estimate_length_for_utf8(text, ascii_only, b'"'))?;
     bytes.append_char(b'"')?;
@@ -1171,7 +1170,7 @@ pub struct SourceMapHandler<'a> {
     _marker: core::marker::PhantomData<&'a mut ()>,
 }
 
-/// PORTING.md §Dispatch — manual vtable. Zig's `For(comptime Type, handler)` monomorphized
+/// PORTING.md §Dispatch — manual vtable. The original `For(comptime Type, handler)` monomorphized
 /// a typed callback into an erased thunk at comptime. Rust cannot bake a *runtime* fn pointer
 /// into a captureless `fn(*mut (), ..)` thunk, so the handler is moved to a trait method and
 /// the thunk is monomorphized over `T: OnSourceMapChunk` instead.
@@ -1243,7 +1242,7 @@ pub struct Options<'a> {
     pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
     pub input_files_for_dev_server: Option<&'a [bun_ast::Source]>,
 
-    /// Borrowed from `BundledAst.commonjs_named_exports`. Zig passed the
+    /// Borrowed from `BundledAst.commonjs_named_exports`. Original passed the
     /// unmanaged `StringArrayHashMap` header by value (shallow copy of
     /// shared storage); the printer only reads from it.
     pub commonjs_named_exports: Option<&'a CommonJSNamedExports>,
@@ -1271,7 +1270,7 @@ pub struct Options<'a> {
     // /// Used for cross-module inlining of import items when bundling
     // const_values: Ast.ConstValuesMap = .{},
     /// Borrowed from `LinkerGraph.ts_enums` (one shared map for the whole
-    /// bundle). Zig passed the unmanaged map header by value; the printer
+    /// bundle). Original passed the unmanaged map header by value; the printer
     /// only reads from it.
     pub ts_enums: Option<&'a TsEnumsMap>,
 
@@ -1281,7 +1280,7 @@ pub struct Options<'a> {
     /// source can print into multiple part-ranges/chunks, so the table must
     /// not be consumed. `get_source_map_builder` shallow-copies it into the
     /// builder (`ManuallyDrop`, never freed on the bundler path — matches
-    /// Zig `printWithWriter`).
+    /// `printWithWriter`).
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
@@ -1350,7 +1349,7 @@ impl<'a> Default for Options<'a> {
 
 use bun_ast::{Indentation, IndentationCharacter};
 
-/// Downstream-compat: `print_json` callers pass this. The Zig spec passes the
+/// Downstream-compat: `print_json` callers pass this. The spec passes the
 /// full `Options` struct; only the fields any caller actually sets are surfaced
 /// here and forwarded into `Options { .. }` inside `print_json`.
 #[derive(Default)]
@@ -1398,7 +1397,7 @@ impl Default for RequireOrImportMetaCallback {
     }
 }
 
-/// PORTING.md §Dispatch — manual vtable. Zig's `init(comptime Context, ctx, callback)`
+/// PORTING.md §Dispatch — manual vtable. The original `init(comptime Context, ctx, callback)`
 /// `@ptrCast`-erased the typed callback at comptime. Rust monomorphizes the erased thunk
 /// over `T: RequireOrImportMetaSource` instead, so `callback` stays a captureless `fn`.
 pub trait RequireOrImportMetaSource {
@@ -1421,7 +1420,7 @@ impl RequireOrImportMetaCallback {
             was_unwrapped_require: bool,
         ) -> RequireOrImportMeta {
             // SAFETY: `p` was constructed from `&mut T` in `init` below; caller guarantees
-            // `ctx` outlives this `RequireOrImportMetaCallback` (same contract as the Zig
+            // `ctx` outlives this `RequireOrImportMetaCallback` (same contract as the original
             // `*anyopaque` erasure), so the cast-back deref is valid and exclusive.
             unsafe { (*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require) }
         }
@@ -1475,7 +1474,7 @@ impl ExprFlag {
     pub fn forbid_call() -> ExprFlagSet {
         ExprFlag::ForbidCall.into()
     }
-    // PORT NOTE: Zig had `ForbidAnd` referencing `.forbid_and` which doesn't exist in the enum — dead code.
+    // PORT NOTE: original had `ForbidAnd` referencing `.forbid_and` which doesn't exist in the enum — dead code.
     #[inline]
     pub fn has_non_optional_chain_parent() -> ExprFlagSet {
         ExprFlag::HasNonOptionalChainParent.into()
@@ -1586,7 +1585,7 @@ pub const fn may_have_module_info(is_bun_platform: bool, rewrite_esm_to_cjs: boo
     is_bun_platform && !rewrite_esm_to_cjs
 }
 
-// PORT NOTE: Zig defined `TopLevelAndIsExport`/`TopLevel` as conditional zero-size structs when
+// PORT NOTE: original defined `TopLevelAndIsExport`/`TopLevel` as conditional zero-size structs when
 // !may_have_module_info. In Rust we use one shape; dead-code elimination removes the unused
 // fields when MAY_HAVE_MODULE_INFO is false.
 #[derive(Clone, Copy, Default)]
@@ -1648,12 +1647,12 @@ pub mod __gated_printer {
 
     /// Re-borrow an arena-owned `StoreSlice<T>` for the print pass. Kept as a
     /// free fn (vs. calling `.slice()` inline) so the ~50 call sites stay
-    /// `.zig`-diffable; the printer only ever reads these.
+    /// spec-diffable; the printer only ever reads these.
     #[inline(always)]
     pub(crate) fn slice_of<'a, T>(p: js_ast::StoreSlice<T>) -> &'a [T] {
         p.slice()
     }
-    /// `EnumSet<T>` field-style mutation as used by the Zig (`flags.x = true`).
+    /// `EnumSet<T>` field-style mutation as used originally (`flags.x = true`).
     #[inline(always)]
     pub(crate) fn set_flag<T: enumset::EnumSetType>(
         set: &mut enumset::EnumSet<T>,
@@ -1706,12 +1705,12 @@ pub mod __gated_printer {
         pub binary_expression_stack: Vec<BinaryExpressionVisitor<'a>>,
 
         pub was_lazy_export: bool,
-        // PORT NOTE: Zig used `if (!may_have_module_info) void else ?*ModuleInfo` — in Rust we always
+        // PORT NOTE: original used `if (!may_have_module_info) void else ?*ModuleInfo` — in Rust we always
         // carry the Option and gate at call sites with MAY_HAVE_MODULE_INFO.
         pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
 
         /// Arena for transient allocations during printing (rope flattening,
-        /// UTF-16→UTF-8 transcoding). Zig: `p.options.allocator`.
+        /// UTF-16→UTF-8 transcoding). Originally `p.options.allocator`.
         pub bump: &'a bun_alloc::Arena,
     }
 
@@ -1721,7 +1720,7 @@ pub mod __gated_printer {
     /// code in the JavaScript parser for details.
     pub struct BinaryExpressionVisitor<'ast> {
         // Inputs
-        // PORT NOTE: Zig stored `*const E.Binary`; Phase A keeps the StoreRef so the
+        // PORT NOTE: original stored `*const E.Binary`; Phase A keeps the StoreRef so the
         // visitor stack can outlive the by-value `Expr` argument to `print_expr`.
         pub e: js_ast::StoreRef<E::Binary>,
         _phantom: core::marker::PhantomData<&'ast ()>,
@@ -1742,7 +1741,7 @@ pub mod __gated_printer {
         #[cold]
         #[inline(never)]
         fn default() -> Self {
-            // TODO(port): `entry` defaulted to `undefined` in Zig; we need a sentinel &'static OpInfo.
+            // TODO(port): `entry` defaulted to `undefined` originally; we need a sentinel &'static OpInfo.
             unreachable!("construct via fields")
         }
     }
@@ -1766,7 +1765,7 @@ pub mod __gated_printer {
         pub const MAY_HAVE_MODULE_INFO: bool = IS_BUN_PLATFORM && !REWRITE_ESM_TO_CJS;
 
         /// When Printer is used as a io.Writer, this represents it's error type, aka nothing.
-        // (Zig: `pub const Error = error{};`) — inherent associated types are
+        // (originally `pub const Error = error{};`) — inherent associated types are
         // unstable; callers can name `core::convert::Infallible` directly.
 
         /// Reborrow the optional `ModuleInfo` for the duration of `&mut self`.
@@ -1945,7 +1944,7 @@ pub mod __gated_printer {
         }
 
         fn fmt(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error> {
-            // PERF(port): Zig used std.fmt.count + bufPrint into reserved space (no heap).
+            // PERF(port): original used std.fmt.count + bufPrint into reserved space (no heap).
             // TODO(port): implement `count` over fmt::Arguments to match.
             let mut buf: Vec<u8> = Vec::new();
             Write::write_fmt(&mut buf, format_args!("{}", args)).expect("unreachable");
@@ -1956,7 +1955,7 @@ pub mod __gated_printer {
             self.writer.print_slice(str);
         }
 
-        /// Fixed-size raw write into pre-reserved space (mirrors Zig's
+        /// Fixed-size raw write into pre-reserved space (mirrors the original
         /// `p.writer.reserve(N) ...; p.writer.advance(N)` open-code on the
         /// number/identifier hot path). Skips the short-write/error bookkeeping
         /// in `print_slice`.
@@ -2457,7 +2456,7 @@ pub mod __gated_printer {
                             data: BindingData::BObject(js_ast::StoreRef::from_bump(&mut b_object)),
                         };
                         self.print_binding(binding, tlm);
-                        // Zig defer (js_printer.zig:1252): if recursion replaced
+                        // Original defer: if recursion replaced
                         // `self.temporary_bindings`, drop our local; else clear+restore.
                         if self.temporary_bindings.capacity() > 0 {
                             drop(temp_bindings);
@@ -2687,7 +2686,7 @@ pub mod __gated_printer {
                 return;
             }
 
-            // TODO(port): Zig "{d}" on f64 — need shortest-round-trip formatter (ryu) to match output exactly.
+            // TODO(port): original "{d}" on f64 — need shortest-round-trip formatter (ryu) to match output exactly.
             let _ = self.fmt(format_args!("{}", float));
         }
 
@@ -2796,7 +2795,7 @@ pub mod __gated_printer {
             if wrap {
                 self.print(b"(");
             }
-            // PORT NOTE: Zig used `defer if (wrap) p.print(")")`. We close at every `return` below.
+            // PORT NOTE: original used `defer if (wrap) p.print(")")`. We close at every `return` below.
 
             debug_assert!(self.import_records.len() > import_record_index as usize);
             let record = self.import_record(import_record_index as usize);
@@ -4039,7 +4038,7 @@ pub mod __gated_printer {
                 }
                 ExprData::ETemplate(e) => {
                     if e.tag.is_none() && (self.options.minify_syntax || self.was_lazy_export) {
-                        // Zig: `var part = part.*` — `TemplatePart` is structurally
+                        // Originally `var part = part.*` — `TemplatePart` is structurally
                         // `Copy` but `EString` doesn't derive it; field-wise copy.
                         #[inline]
                         fn part_clone(p: &E::TemplatePart) -> E::TemplatePart {
@@ -4082,7 +4081,7 @@ pub mod __gated_printer {
                         }
 
                         if !replaced.is_empty() {
-                            // Zig: `var copy = e.*; copy.parts = &replaced;` — build a
+                            // Originally `var copy = e.*; copy.parts = &replaced;` — build a
                             // local `Template` (not a StoreRef alias) so `fold`'s
                             // `mem::take(self.head)` doesn't clobber the AST node.
                             // `replaced` outlives `copy`/`fold()`; wrap as a StoreSlice
@@ -4108,7 +4107,7 @@ pub mod __gated_printer {
                                 }
                                 ExprData::ETemplate(t) => {
                                     // SAFETY: e is &mut behind the AST arena pointer
-                                    // TODO(port): Zig mutated `e.* = e2.data.e_template.*` — needs &mut access through arena.
+                                    // TODO(port): original mutated `e.* = e2.data.e_template.*` — needs &mut access through arena.
                                     let _ = t;
                                 }
                                 _ => {}
@@ -4165,7 +4164,7 @@ pub mod __gated_printer {
                             E::TemplateContents::Cooked(cooked) => {
                                 if cooked.is_present() {
                                     // PORT NOTE: `parts` is `*mut [TemplatePart]` but accessed `&[T]`
-                                    // here. Zig mutates in place; Rust resolves a local copy of the
+                                    // here. Original mutates in place; Rust resolves a local copy of the
                                     // EString header (the rope chain is StoreRef-linked and Copy) and
                                     // prints from that — the arena node stays roped.
                                     let mut local = E::EString { ..*cooked };
@@ -4603,7 +4602,7 @@ pub mod __gated_printer {
         }
 
         pub fn print_property(&mut self, item_in: &G::Property) {
-            // PORT NOTE: Zig took G.Property by value (Copy in Zig). Rust's
+            // PORT NOTE: original took G.Property by value (Copy there). Rust's
             // G::Property isn't `Copy`, so take a borrow and shallow-copy the
             // mutable bits we may rewrite (key + flags).
             let mut item = G::Property {
@@ -5130,7 +5129,7 @@ pub mod __gated_printer {
 
         pub fn print_stmt(&mut self, stmt: Stmt, tlmtlo: TopLevel) -> Result<(), bun_core::Error> {
             let prev_stmt_tag = self.prev_stmt_tag;
-            // Zig: `defer { p.prev_stmt_tag = std.meta.activeTag(stmt.data); }`
+            // Originally `defer { p.prev_stmt_tag = std.meta.activeTag(stmt.data); }`
             // PORT NOTE: reshaped for borrowck — scopeguard would hold `&mut self.prev_stmt_tag`
             // across the whole match body and conflict with every `&mut self` call below. Instead
             // we assign `self.prev_stmt_tag = new_tag` at every return point (early + tail).
@@ -5390,8 +5389,8 @@ pub mod __gated_printer {
                     self.add_source_mapping(stmt.loc);
 
                     if s.alias.is_some() {
-                        // Zig: ws("export *").append(" as ") — append() concatenates verbatim to
-                        // BOTH fields (js_printer.zig:86-88), so minify keeps the " as " literal.
+                        // `ws("export *").append(" as ")` — append() concatenates verbatim to
+                        // BOTH fields, so minify keeps the " as " literal.
                         self.print_whitespacer(Whitespacer {
                             normal: b"export * as ",
                             minify: b"export* as ",
@@ -5509,10 +5508,10 @@ pub mod __gated_printer {
                         return Ok(());
                     }
 
-                    // PORT NOTE: Zig wraps `s.items` in an ArrayListUnmanaged and uses swapRemove
+                    // PORT NOTE: original wraps `s.items` in an ArrayListUnmanaged and uses swapRemove
                     // in-place. `ClauseItem` isn't `Clone`, so build a Vec of arena borrows
                     // instead and swap-remove the borrows.
-                    // TODO(port): lifetime — Zig mutates `s.items` in place; Phase B may write back.
+                    // TODO(port): lifetime — original mutates `s.items` in place; Phase B may write back.
                     let mut array: Vec<&js_ast::ClauseItem> = slice_of(s.items).iter().collect();
                     {
                         let mut i: usize = 0;
@@ -6754,7 +6753,7 @@ pub mod __gated_printer {
             // `parser.rs::Runtime::Imports` stub is a fieldless unit struct.
 
             if REWRITE_ESM_TO_CJS && is_export && !decls.is_empty() {
-                // PORT NOTE: Zig stored `?GeneratedSymbol`; the Rust `runtime::Imports`
+                // PORT NOTE: original stored `?GeneratedSymbol`; the Rust `runtime::Imports`
                 // flattens this to `Option<Ref>`, so no `.ref_` projection.
                 let export_ref = self.options.runtime_imports.__export.unwrap();
                 for decl in decls {
@@ -6867,7 +6866,7 @@ pub mod __gated_printer {
                 i += 1;
 
                 if strings::u16_is_lead(name[i - 1]) && i < n {
-                    // INTENTIONALLY no `u16_is_trail` check — matches Zig js_printer.zig:5311.
+                    // INTENTIONALLY no `u16_is_trail` check — matches the spec.
                     c = strings::u16_get_supplementary(name[i - 1], name[i]);
                     i += 1;
                 }
@@ -7015,7 +7014,7 @@ pub mod __gated_printer {
                 was_lazy_export: false,
                 module_info: None,
             };
-            // Spec js_printer.zig:5454-5460 caches `line_offset_tables.items(.byte_offset_to_start_of_line)`
+            // Spec caches `line_offset_tables.items(.byte_offset_to_start_of_line)`
             // into `line_offset_table_byte_offset_list`. The Rust `Builder` field is `&'static [u32]`
             // pending Phase-B lifetime threading, so instead of caching a self-borrow here,
             // `Builder::add_source_mapping` derives the slice on demand from `line_offset_tables`
@@ -7198,7 +7197,7 @@ pub mod __gated_printer {
 } // mod __gated_printer
 
 // ───────────────────────────────────────────────────────────────────────────
-// PrintArg helper trait (Zig's `anytype` for `print()`)
+// PrintArg helper trait (original `anytype` for `print()`)
 // ───────────────────────────────────────────────────────────────────────────
 
 pub trait PrintArg {
@@ -7209,7 +7208,7 @@ impl PrintArg for u8 {
         w.print_byte(self);
     }
 }
-// PORT NOTE: Zig `print(str: anytype)` matched `comptime_int, u16, u8` and narrowed via
+// PORT NOTE: original `print(str: anytype)` matched `comptime_int, u16, u8` and narrowed via
 // `@as(u8, @intCast(str))` before `writeByte`. Mirror that for `u16` so wide-int char callers
 // (e.g. UTF-16 iteration) compile and emit one byte identically.
 impl PrintArg for u16 {
@@ -7257,7 +7256,7 @@ pub struct WriteResult {
 }
 
 /// Backend operations a `Writer` context provides. Mirrors the comptime fn-pointer
-/// params of Zig's `NewWriter(...)`.
+/// params of the original `NewWriter(...)`.
 pub trait WriterContext {
     fn write_byte(&mut self, char: u8) -> Result<usize, bun_core::Error>;
     fn write_all(&mut self, buf: &[u8]) -> Result<usize, bun_core::Error>;
@@ -7275,7 +7274,7 @@ pub trait WriterContext {
     fn done(&mut self) -> Result<(), bun_core::Error> {
         Ok(())
     }
-    // TODO(port): copyFileRange optional method (`@hasDecl` check in Zig)
+    // TODO(port): copyFileRange optional method (originally an `@hasDecl` check)
 }
 
 /// Abstracted writer interface used by `Printer` (the methods Printer calls on `p.writer`).
@@ -7289,7 +7288,7 @@ pub trait WriterTrait {
     fn advance(&mut self, count: u64);
     /// Reserve `bytes.len()`, memcpy `bytes` into the reserved region, then advance.
     /// Centralizes the open-coded `reserve + copy_nonoverlapping + advance` triplet
-    /// (Zig js_printer.zig:874, 1505-1573, 5332, 5340 all open-code this).
+    /// (original printer open-codes this in several places).
     #[inline]
     fn write_reserved(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
         let ptr = self.reserve(bytes.len() as u64)?;
@@ -7400,7 +7399,7 @@ impl<C: WriterContext> Writer<C> {
         self.ctx.advance_by(count);
         // PERF(port): @intCast — output never approaches 2 GiB; checked add of
         // a u64→i32 here was a measurable branch in the per-token print path.
-        // Keep Zig's debug-mode @intCast contract without paying for it in release.
+        // Keep the original debug-mode @intCast contract without paying for it in release.
         debug_assert!(count <= i32::MAX as u64);
         self.written = self.written.wrapping_add(count as i32);
     }
@@ -7561,7 +7560,7 @@ pub struct DirectWriter {
 
 impl DirectWriter {
     pub fn write(&mut self, buf: &[u8]) -> Result<usize, bun_core::Error> {
-        // TODO(port): Zig used std.posix.write directly. Route via bun_sys::write.
+        // TODO(port): original used std.posix.write directly. Route via bun_sys::write.
         bun_sys::write(self.handle, buf)
             .map_err(|e| bun_core::Error::from_errno(i32::from(e.errno)))
     }
@@ -7573,12 +7572,12 @@ impl DirectWriter {
 
 pub struct BufferWriter {
     pub buffer: MutableString,
-    /// Watermark into `buffer.list` set by `done()`. Zig stored `written: []u8` aliasing
+    /// Watermark into `buffer.list` set by `done()`. Original stored `written: []u8` aliasing
     /// `buffer`; Rust can't keep a self-borrowing slice in a field, so store the length and
     /// reslice on read (`written()` / `written_without_trailing_zero()`). Avoids the O(n)
     /// `to_vec().into_boxed_slice()` copy the previous port did on every `done()`.
     pub written_len: usize,
-    pub sentinel: &'static bun_core::ZStr, // TODO(port): lifetime — Zig stored a sentinel slice into `buffer`
+    pub sentinel: &'static bun_core::ZStr, // TODO(port): lifetime — original stored a sentinel slice into `buffer`
     pub append_null_byte: bool,
     pub append_newline: bool,
 }
@@ -7596,7 +7595,7 @@ impl BufferWriter {
         self.buffer.list.as_slice()
     }
 
-    /// Slice set by `done()` — zero-cost reslice of `buffer` (matches Zig's `ctx.written`).
+    /// Slice set by `done()` — zero-cost reslice of `buffer` (matches the original `ctx.written`).
     pub fn written(&self) -> &[u8] {
         &self.buffer.list[..self.written_len]
     }
@@ -7819,7 +7818,7 @@ impl GenerateSourceMap {
 use self::__gated_printer::{Printer, slice_of};
 use js_ast::Ast;
 
-// PORT NOTE: Zig had `comptime generate_source_map`; Rust's `generic_const_exprs`
+// PORT NOTE: original had `comptime generate_source_map`; Rust's `generic_const_exprs`
 // can't compute a non-`bool` const-generic from a `bool` const-generic without
 // viral `where` clauses, and the body only does runtime branches anyway. The
 // `IS_BUN_PLATFORM` axis stays const so `prepend_count` is still a compile-time
@@ -7831,7 +7830,7 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
     tree: &Ast,
 ) -> SourceMap::chunk::Builder {
     if generate_source_map == GenerateSourceMap::Disable {
-        // TODO(port): Zig returned `undefined` here.
+        // TODO(port): original returned `undefined` here.
         return SourceMap::chunk::Builder::default();
     }
 
@@ -7844,15 +7843,15 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
         cover_lines_without_mappings: true,
         approximate_input_line_count: tree.approximate_newline_count,
         prepend_count: IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
-        // PORT NOTE: Zig copied `opts.line_offset_tables orelse generate(...)`
+        // PORT NOTE: original copied `opts.line_offset_tables orelse generate(...)`
         // by value (shallow copy of the unmanaged `MultiArrayList` header).
         // `Options.line_offset_tables` is now a borrow into shared linker
-        // state; mirror Zig's bitwise copy via `ptr::read` into a
+        // state; mirror the original bitwise copy via `ptr::read` into a
         // `ManuallyDrop` so dropping the `Builder` never frees borrowed
         // storage. When no table is supplied (the runtime/transpiler path) we
         // leave this `EMPTY` and let the builder build it lazily on the first
         // mapping (see `set_deferred_line_offset_table` below) — matching the
-        // Zig transpiler, which only builds the table on demand.
+        // original transpiler, which only builds the table on demand.
         line_offset_tables: core::mem::ManuallyDrop::new(match precomputed {
             // SAFETY: `borrowed` points to a valid `List` owned by the caller
             // (e.g. `LinkerGraph.files[i].line_offset_table`). The bitwise
@@ -7891,7 +7890,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     let _restore =
         bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
 
-    // PORT NOTE: Zig declared `renamer`/`no_op_renamer` undefined and assigned per
+    // PORT NOTE: original declared `renamer`/`no_op_renamer` undefined and assigned per
     // branch. `Renamer<'r,'src>` is invariant in `'src` (it holds `&'r mut
     // NoOpRenamer<'src>`), so the two arms must agree on `'src`; constructing the
     // `MinifyRenamer` variant inline (rather than via `to_renamer() ->
@@ -7901,11 +7900,11 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // `&'r mut MinifyRenamer` borrow stored in `renamer` outlives the branch.
     let mut minify_renamer;
     let renamer: rename::Renamer<'_, '_>;
-    // PORT NOTE: Zig copied `tree.module_scope` to a stack local and re-pointed
+    // PORT NOTE: original copied `tree.module_scope` to a stack local and re-pointed
     // children's `parent` at the local. `Scope` isn't `Copy` here and the only
     // consumer (`compute_reserved_names_for_scope`) walks `members`/`generated`/
     // `children` — never `parent` — so we re-point at the in-place
-    // `tree.module_scope` instead (lives for `'a`, strictly safer than the Zig
+    // `tree.module_scope` instead (lives for `'a`, strictly safer than the original
     // stack-local backref).
     let module_scope = &tree.module_scope;
     let stable_source_indices = [source.index.0];
@@ -7935,7 +7934,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let parts = &tree.parts;
 
         // PORT NOTE: `symbols` was moved into `minify_renamer`; reach it through
-        // the renamer for the post-init `must_not_be_renamed` pass (Zig held a
+        // the renamer for the post-init `must_not_be_renamed` pass (original held a
         // by-value copy).
         let dont_break_the_code = [tree.module_ref, tree.exports_ref, tree.require_ref];
         for ref_ in dont_break_the_code {
@@ -7997,7 +7996,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
     // defer: if minify_identifiers { renamer.deinit() } — Drop handles.
 
-    // Spec js_printer.zig:6024 — `is_bun_platform = ascii_only` for printAst.
+    // Spec — `is_bun_platform = ascii_only` for printAst.
     type PrinterType<'a, W, const A: bool, const G: bool> =
         Printer<'a, W, A, false, /*IS_BUN_PLATFORM=*/ A, false, G>;
     let mut writer = _writer;
@@ -8034,7 +8033,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 // dropped exactly once here.
                 let tables = unsafe { &mut *p };
                 // `MultiArrayList::Drop` only frees the column buffer — it does
-                // NOT drop column elements (Zig allocated these into the arena
+                // NOT drop column elements (original allocated these into the arena
                 // so it didn't matter there). The per-row `columns_for_non_ascii`
                 // Vec<i32>s live on the global heap in the Rust port; drain them
                 // before dropping the SoA storage to avoid leaking them.
@@ -8047,7 +8046,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     );
     printer.was_lazy_export = tree.has_lazy_export;
     // PORT NOTE: borrowck reshape — `opts` was moved into `Printer::init`; mirror
-    // Zig's post-init `printer.module_info = opts.module_info` by taking it back
+    // The original post-init `printer.module_info = opts.module_info` by taking it back
     // out of `printer.options` (see `print_with_writer_and_platform`).
     if PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
         printer.module_info = printer.options.module_info.take();
@@ -8100,7 +8099,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
     let mut source_maps_chunk: Option<SourceMap::Chunk> = if GENERATE_SOURCE_MAP {
         if printer.options.source_map_handler.is_some() {
-            // PORT NOTE: Zig used `printer.writer.ctx.getWritten()`; WriterTrait
+            // PORT NOTE: original used `printer.writer.ctx.getWritten()`; WriterTrait
             // exposes the same buffer via `slice()` (cf. print_with_writer_and_platform).
             Some(
                 printer
@@ -8156,7 +8155,7 @@ pub fn print_json<W: WriterTrait>(
     // NewPrinter(ascii_only=false, Writer, rewrite_esm_to_cjs=false, is_bun_platform=false, is_json=true, generate_source_map=false)
     type PrinterType<'a, W> = Printer<'a, W, false, false, false, true, false>;
     let writer = _writer;
-    // PORT NOTE: Zig built a throwaway `Ast.initTest(&parts)` (wrapping `expr` in
+    // PORT NOTE: original built a throwaway `Ast.initTest(&parts)` (wrapping `expr` in
     // an `S.SExpr`/Part) solely so the printer could read its default-empty
     // `import_records` and `symbols` for the no-op renamer; the body then calls
     // `printExpr(expr, ...)` directly without ever walking those parts. Rust
@@ -8299,7 +8298,7 @@ pub fn print_with_writer_and_platform<
     // PORT NOTE: `Printer::init` already moved `opts.module_info` (it's a field of
     // `Options`); the Phase-A draft re-assigned it post-construction, which is a
     // use-after-move in Rust. The field already lives on `printer.options.module_info`
-    // and `printer.module_info` was set to `None` by `init`, so mirror Zig by
+    // and `printer.module_info` was set to `None` by `init`, so mirror the original by
     // taking it back out of `printer.options`.
     if PrinterType::<W, IS_BUN_PLATFORM, GENERATE_SOURCE_MAPS>::MAY_HAVE_MODULE_INFO {
         printer.module_info = printer.options.module_info.take();
@@ -8308,7 +8307,7 @@ pub fn print_with_writer_and_platform<
     printer.binary_expression_stack = Vec::new();
     // defer: temporary_bindings.deinit / writer.* = printer.writer.* — handled by move-out below.
 
-    // `Index::is_runtime` ⇔ `index.value == 0` (src/js_parser/ast/base.zig).
+    // `Index::is_runtime` ⇔ `index.value == 0` (see `bun_ast`).
     if module_type == bundle_opts::Format::InternalBakeDev && source.index.0 != 0 {
         printer.print_dev_server_module(source, ast, &parts[0]);
     } else {
@@ -8339,7 +8338,7 @@ pub fn print_with_writer_and_platform<
     }
 
     // TODO(port): need ctx accessor on WriterTrait for getWritten()
-    let written = printer.writer.slice(); // PORT NOTE: Zig used printer.writer.ctx.getWritten()
+    let written = printer.writer.slice(); // PORT NOTE: original used printer.writer.ctx.getWritten()
     let source_map: Option<SourceMap::Chunk> = if GENERATE_SOURCE_MAPS {
         'brk: {
             if written.is_empty() || printer.source_map_builder.source_map.should_ignore() {
@@ -8467,5 +8466,3 @@ pub fn serialize_module_info(
     }
     Some(buf.into_boxed_slice())
 }
-
-// ported from: src/js_printer/js_printer.zig

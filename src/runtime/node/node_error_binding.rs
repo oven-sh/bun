@@ -1,14 +1,12 @@
-use bun_core::ZigString;
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, ZigStringJsc as _};
+use bun_core::UnsafeStringView;
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, UnsafeStringViewJsc as _};
 
 use super::nodejs_error_code::Code as ErrorCode;
 
-// PORT NOTE: reshaped — Zig's `createSimpleError` is a comptime fn that mints a
-// monomorphized `cbb: fn(*JSGlobalObject) JSError!JSValue` and returns it as a
-// `jsc.JS2NativeFunctionType` const. Rust cannot mint an `fn` item from a const
-// generic fn pointer, so each call site becomes a `pub fn` directly (same shape
-// the `generated_js2native.rs` thunk layer expects). Names stay SCREAMING to
-// match the .zig spec exactly.
+// PORT NOTE: reshaped — Rust cannot mint an `fn` item from a const generic fn
+// pointer, so each `createSimpleError` call site becomes a `pub fn` directly
+// (same shape the `generated_js2native.rs` thunk layer expects). Names stay
+// SCREAMING to match the JS-facing error code names.
 //
 // `createFn` was `createErrorInstanceWithCode` / `createTypeErrorInstanceWithCode`
 // — both removed from `JSGlobalObject` upstream; their historical bodies were
@@ -24,7 +22,7 @@ macro_rules! create_simple_error {
                 err.put(
                     global,
                     "code",
-                    ZigString::init(<&'static str>::from($code).as_bytes()).to_js(global),
+                    UnsafeStringView::init(<&'static str>::from($code).as_bytes()).to_js(global),
                 );
                 Ok(err)
             }
@@ -51,5 +49,3 @@ create_simple_error!(
     ErrorCode::ERR_CHILD_CLOSED_BEFORE_REPLY,
     "Child closed before reply received"
 );
-
-// ported from: src/runtime/node/node_error_binding.zig

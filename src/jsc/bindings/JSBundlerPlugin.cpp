@@ -9,7 +9,7 @@
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>
 #include "helpers.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <JavaScriptCore/JavaScript.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <wtf/text/WTFString.h>
@@ -47,7 +47,7 @@ extern "C" void OnBeforeParseResult__reset(OnBeforeParseResult* result);
 #define WRAP_BUNDLER_PLUGIN(argName) jsDoubleNumber(std::bit_cast<double>(reinterpret_cast<uintptr_t>(argName)))
 #define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<void*>(std::bit_cast<uintptr_t>(callFrame->argument(0).asDouble()))
 
-/// These are callbacks defined in Zig and to be run after their associated JS version is run
+/// These are native callbacks to be run after their associated JS version is run
 extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onResolveAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
@@ -540,7 +540,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
         auto exception = scope.exception();
         (void)scope.tryClearException();
         if (!plugin->plugin.tombstoned) {
-            // which = 1 (Load). Zig's JSBundlerPlugin__addError casts ctx based on this value.
+            // which = 1 (Load). The native JSBundlerPlugin__addError casts ctx based on this value.
             plugin->plugin.addError(
                 context,
                 plugin,
@@ -584,7 +584,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, co
         auto exception = JSValue(scope.exception());
         (void)scope.tryClearException();
         if (!plugin->plugin.tombstoned) {
-            // which = 0 (Resolve). Zig's JSBundlerPlugin__addError casts ctx based on this value.
+            // which = 0 (Resolve). The native JSBundlerPlugin__addError casts ctx based on this value.
             plugin->plugin.addError(
                 context,
                 plugin,
@@ -595,7 +595,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, co
     }
 }
 
-extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* globalObject, BunPluginTarget target)
+extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Bun::GlobalObject* globalObject, BunPluginTarget target)
 {
     return JSBundlerPlugin::create(
         globalObject->vm(),

@@ -35,7 +35,7 @@ impl Default for Options {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Pure-byte helpers (lifted from `Parser` so they compile without the
-// Expr-carrying struct). The Zig has these as methods on `Parser` but they
+// Expr-carrying struct). The original has these as methods on `Parser` but they
 // touch no parser state — exposing them as free fns lets the logic stay
 // un-gated and unit-testable while the AST-dependent body is blocked.
 // ──────────────────────────────────────────────────────────────────────────
@@ -277,7 +277,7 @@ mod draft {
         pub env: &'a mut DotEnvLoader<'a>,
     }
 
-    // PORT NOTE: Zig `prepareStr` switches its *return type* on a comptime enum
+    // PORT NOTE: the original `prepareStr` switches its *return type* on a comptime enum
     // param (`.section -> *Rope`, `.key -> []const u8`, `.value -> Expr`). Rust
     // const generics cannot select a return type, so we keep a single
     // `prepare_str::<USAGE>()` body for diffability and wrap the result in
@@ -328,7 +328,7 @@ mod draft {
         // deinit -> Drop: `logger` and `arena` are owned and drop automatically.
 
         pub fn parse(&mut self, bump: &'a Arena) -> OOM<()> {
-            // TODO(port): borrowck — in Zig, `arena_allocator` is `self.arena.arena()`;
+            // TODO(port): borrowck — in the original, `arena_allocator` is `self.arena.arena()`;
             // here it is passed separately to avoid overlapping &mut self borrows.
             let src = self.src;
             let mut iter = src.split(|&b| b == b'\n');
@@ -367,9 +367,9 @@ mod draft {
                     'treat_as_key: {
                         skip_until_next_section = false;
                         let Some(close_bracket_idx) = line.iter().position(|&b| b == b']') else {
-                            // Zig: `orelse continue` — skip the whole line
+                            // original: `orelse continue` — skip the whole line
                             break 'treat_as_key;
-                            // PORT NOTE: reshaped — Zig `continue` from inside labeled block;
+                            // PORT NOTE: reshaped — the original `continue` from inside labeled block;
                             // we set treat_as_key=false and fall through to `continue` below.
                         };
                         // Make sure the rest is just whitespace
@@ -641,10 +641,10 @@ mod draft {
                     }
 
                     if usage == Usage::Value {
-                        // Spec ini.zig:247: `if (comptime usage == .value) return json_val;`
+                        // Spec: `if (comptime usage == .value) return json_val;`
                         // — the parsed Expr is returned as-is, preserving
                         // `E.Array`/`E.Object` tags so downstream `.e_array`/
-                        // `.e_object` checks (e.g. ini.zig:178/192, loadNpmrc
+                        // `.e_object` checks (e.g. `loadNpmrc`
                         // `ca`/`omit`/`include`) fire. `json_val` was lifted to T4
                         // at the parse site above.
                         return Ok(PrepareResult::Value(Expr {
@@ -881,7 +881,7 @@ mod draft {
             }
             if usage == Usage::Key {
                 // TODO(port): lifetime — `val` borrows `val_` (caller line slice);
-                // Zig returns it directly. Dupe into the bump for now.
+                // the original returns it directly. Dupe into the bump for now.
                 return Ok(PrepareResult::Key(bump.alloc_slice_copy(val)));
             }
             Ok(PrepareResult::Section(Self::str_to_rope(ropealloc, val)?))
@@ -897,7 +897,7 @@ mod draft {
         fn expand_env_vars(&mut self, bump: &'a Arena, val: &[u8]) -> OOM<&'a [u8]> {
             // Quick check if there are any env vars to expand
             if bun_core::index_of(val, b"${").is_none() {
-                // TODO(port): lifetime — Zig returns `val` directly (arena-borrowed).
+                // TODO(port): lifetime — the original returns `val` directly (arena-borrowed).
                 return Ok(bump.alloc_slice_copy(val));
             }
 
@@ -1076,7 +1076,7 @@ mod draft {
             });
             // SAFETY: `head` is the same allocation as `rope`'s initial value;
             // we walk `rope` forward via `append` while keeping `head` to return.
-            // PORT NOTE: reshaped for borrowck — Zig holds two *Rope simultaneously.
+            // PORT NOTE: reshaped for borrowck — the original holds two *Rope simultaneously.
             let head: *mut Rope = std::ptr::from_mut::<Rope>(rope_head);
             let mut rope: *mut Rope = head;
 
@@ -1179,7 +1179,7 @@ mod draft {
             if let Some(keyexpr) = prop.key {
                 if let Some(key) = keyexpr.as_utf8_string_literal() {
                     if bun_core::has_prefix(key, b"//") {
-                        // PORT NOTE: Zig builds this list at comptime by reversing
+                        // PORT NOTE: the original builds this list at comptime by reversing
                         // `std.meta.fieldNames(Item.Opt)` so that `_authToken` is
                         // matched before `_auth`. We hard-code the reversed order.
                         const OPTNAMES: &[(&[u8], ConfigOpt)] = &[
@@ -1204,7 +1204,7 @@ mod draft {
                                 if let Some(value_expr) = prop.value {
                                     if let Some(value) = value_expr.as_utf8_string_literal() {
                                         return Some(IniOption::Some(ConfigItem {
-                                            // PERF(port): Zig borrowed arena slices here; we box.
+                                            // PERF(port): the original borrowed arena slices here; we box.
                                             registry_url: Box::<[u8]>::from(url_part),
                                             value: Box::<[u8]>::from(value),
                                             optname: opt,
@@ -1267,7 +1267,7 @@ mod draft {
                                 return Ok(Some(IniOption::None));
                             };
                             return Ok(Some(IniOption::Some(ScopeItem {
-                                // PERF(port): Zig borrowed arena slice here; we box.
+                                // PERF(port): the original borrowed arena slice here; we box.
                                 scope: Box::<[u8]>::from(&key[1..key.len() - b":registry".len()]),
                                 registry,
                             })));
@@ -1577,7 +1577,7 @@ mod draft {
                 count
             };
 
-            // PORT NOTE: Zig's `defer install.scoped = registry_map;` is a shallow
+            // PORT NOTE: the original's `defer install.scoped = registry_map;` is a shallow
             // write-back at scope end while later code keeps mutating `registry_map`.
             // Reshaped for borrowck: the single write-back happens at the bottom of
             // `load_npmrc` after the registry-configuration block.
@@ -1614,7 +1614,7 @@ mod draft {
                 break 'out;
             }
 
-            // PORT NOTE: `URL<'a>` borrows its input. The Zig `default_registry_url`
+            // PORT NOTE: `URL<'a>` borrows its input. The original `default_registry_url`
             // points into `install.default_registry.url` while the loop below
             // mutates that same field; copy the two fields we compare against so
             // the borrow ends before the `install.default_registry` mutation.
@@ -1755,7 +1755,7 @@ mod draft {
                     }
                 }
 
-                // PORT NOTE: Zig iterated `registry_map.scopes` and looked up `url_map[k]`
+                // PORT NOTE: the original iterated `registry_map.scopes` and looked up `url_map[k]`
                 // by key. In Rust `keys()`/`values_mut()` on the same map alias; since
                 // `url_map` was filled in lockstep with `registry_map.scopes` (same
                 // ArrayHashMap insertion order), zip its values directly instead.
@@ -1814,7 +1814,7 @@ mod draft {
             drop(url_map);
         }
 
-        // TODO(port): Zig's `defer install.scoped = registry_map;` (in the scope-processing
+        // TODO(port): the original's `defer install.scoped = registry_map;` (in the scope-processing
         // block) writes back the *final* registry_map after the registry-configuration block
         // mutates it. Mirror that here.
         install.scoped = Some(registry_map);
@@ -1827,7 +1827,7 @@ mod draft {
         PnpmMatcher, create_matcher,
     };
 
-    /// Port of `PnpmMatcher.fromExpr` (src/install/PnpmMatcher.zig) operating on
+    /// Port of `PnpmMatcher.fromExpr` operating on
     /// `bun_ast::Expr` instead of the lower-tier `bun_ast::Expr`.
     ///
     /// `bun_install_types` (T2) cannot depend on `bun_js_parser` (T4),
@@ -2007,5 +2007,3 @@ mod draft {
         Ok(())
     }
 } // mod draft
-
-// ported from: src/ini/ini.zig

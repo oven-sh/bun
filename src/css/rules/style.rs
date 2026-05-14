@@ -40,9 +40,8 @@ impl<R> StyleRule<R> {
         let mut hasher = bun_wyhash::Wyhash::init(0);
         self.selectors.hash(&mut hasher);
         // PORT NOTE: `DeclarationBlock::hash_property_ids` is still
-        // ``-gated in declaration.rs; inline its body here. The
-        // Zig `PropertyId.hash` is `hasher.update(asBytes(&@intFromEnum(self)))`
-        // — i.e. just the u16 tag bytes.
+        // ``-gated in declaration.rs; inline its body here.
+        // `PropertyId` hashing feeds just the u16 tag bytes.
         for decl in self.declarations.declarations.iter() {
             let tag = decl.property_id().tag() as u16;
             hasher.update(&tag.to_ne_bytes());
@@ -133,8 +132,8 @@ impl<R> StyleRule<R> {
             dest.indent();
 
             let mut i: usize = 0;
-            // Zig: inline for (.{"declarations", "important_declarations"}) — @field reflection.
-            // Unrolled into a pair of (slice, important) tuples; same iteration order.
+            // Iterate `declarations` then `important_declarations` as a pair of
+            // (slice, important) tuples; same iteration order.
             let decls_groups: [(&[Property], bool); 2] = [
                 (self.declarations.declarations.as_slice(), false),
                 (self.declarations.important_declarations.as_slice(), true),
@@ -152,9 +151,8 @@ impl<R> StyleRule<R> {
                         }
 
                         if dest.css_module.is_some() {
-                            // PORT NOTE: reshaped for borrowck — Zig
-                            // `if (dest.css_module) |*css_module|
-                            //     css_module.handleComposes(dest, ...)` overlaps
+                            // PORT NOTE: reshaped for borrowck — calling
+                            // `css_module.handle_composes(dest, ...)` would overlap
                             // `&mut dest.css_module` with `&mut *dest`. Move the
                             // module out for the duration of the call, then put
                             // it back before any `dest.new_error` early return.
@@ -191,7 +189,7 @@ impl<R> StyleRule<R> {
             }
         }
 
-        // Zig: local `Helpers` struct with two fns. Rust: nested fn items (no capture needed).
+        // Nested fn items (no capture needed).
         fn helpers_newline<R>(
             self_: &StyleRule<R>,
             d: &mut Printer,
@@ -224,8 +222,7 @@ impl<R> StyleRule<R> {
         } else {
             helpers_end(dest, has_declarations)?;
             helpers_newline(self, dest, supports_nesting, len)?;
-            // Zig: dest.withContext(&this.selectors, this, struct { fn toCss(...) }.toCss)
-            // Rust `with_context` keeps the (closure-data, fn) split so the
+            // `with_context` keeps the (closure-data, fn) split so the
             // `Printer` reborrow lives only inside `func`.
             dest.with_context(&self.selectors, &self.rules, |rules, d| rules.to_css(d))?;
         }
@@ -328,13 +325,13 @@ impl<R> StyleRule<R> {
                     .declarations
                     .len()
                     .min(other.declarations.declarations.len());
-                // for (a, b) |*a, *b| → zip; Zig asserts equal length but here len is @min so truncation is intended.
+                // Zip the two slices; len is the min so truncation is intended.
                 for (a, b) in self.declarations.declarations[..len]
                     .iter()
                     .zip(&other.declarations.declarations[..len])
                 {
-                    // PORT NOTE: Zig `PropertyId.eql` == tag+prefix compare;
-                    // that's exactly the `PartialEq` impl on `PropertyId`.
+                    // `PropertyId` equality is a tag+prefix compare — exactly
+                    // the `PartialEq` impl on `PropertyId`.
                     if a.property_id() != b.property_id() {
                         break 'brk false;
                     }
@@ -376,5 +373,3 @@ impl<R> StyleRule<R> {
         }
     }
 }
-
-// ported from: src/css/rules/style.zig

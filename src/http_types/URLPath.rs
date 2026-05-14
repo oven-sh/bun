@@ -3,7 +3,7 @@ use bun_url::PercentEncoding;
 
 // TODO(port): lifetime — every `&'static [u8]` field below actually borrows from
 // either the `parse()` input slice or, when the input was percent-encoded, from
-// `_decoded_storage`. Zig has no lifetimes so this is implicit there. Phase B
+// `_decoded_storage`. Phase B
 // should add a lifetime param to `URLPath` so the input-borrow case is checked.
 #[derive(Default)]
 pub struct URLPath {
@@ -19,7 +19,7 @@ pub struct URLPath {
     /// Owned backing storage for the slice fields when `parse()` had to
     /// percent-decode. Heap-stable: the slice fields above point into this
     /// allocation, which is never resized and lives exactly as long as `self`.
-    /// Replaces the Zig threadlocal scratch buffers — owning the decode buffer
+    /// Replaces threadlocal scratch buffers — owning the decode buffer
     /// per-URLPath removes the use-after-free that a shared growable buffer
     /// would introduce on the next `parse()` call.
     ///
@@ -60,8 +60,8 @@ impl URLPath {
     }
 }
 
-// PORT NOTE: Zig uses two threadlocal fixed `[1024]u8`/`[16384]u8` buffers and
-// decodes in-place via `fixedBufferStream`, then returns slices into that
+// PORT NOTE: a previous implementation used two threadlocal fixed 1 KiB / 16 KiB
+// buffers, decoded in-place, then returned slices into that
 // threadlocal storage. A growable shared buffer cannot uphold that contract in
 // Rust (the next `parse()` may reallocate it and dangle every prior URLPath),
 // so instead each URLPath that needs decoding owns its decode buffer in
@@ -76,7 +76,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
     let mut needs_redirect = false;
 
     if strings::index_of_char(decoded_pathname, b'%').is_some() {
-        // Zig caps the in-place buffer at 16384; preserve that bound on input.
+        // The in-place buffer is capped at 16384; preserve that bound on input.
         let capped = &possibly_encoded_pathname_[..possibly_encoded_pathname_.len().min(16384)];
 
         let mut buf: Vec<u8> = Vec::with_capacity(capped.len());
@@ -211,5 +211,3 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
         _decoded_storage: decoded_storage,
     })
 }
-
-// ported from: src/http_types/URLPath.zig

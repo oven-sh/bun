@@ -26,7 +26,7 @@
   "globalObject.hasException": 0,
   "globalThis.hasException": 0,
   "std.StringArrayHashMap(": 0,
-  "std.StringArrayHashMapUnmanaged(": 1,
+  "std.StringArrayHashMapUnmanaged(": 0,
   "std.StringHashMap(": 0,
   "std.StringHashMapUnmanaged(": 0,
   "std.Thread.Mutex": 0,

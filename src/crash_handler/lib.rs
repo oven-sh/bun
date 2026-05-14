@@ -15,8 +15,8 @@
 //!
 //! The remapper is open source: https://github.com/oven-sh/bun.report
 //!
-//! A lot of this handler is based on the Zig Standard Library implementation
-//! for std.debug.panicImpl and their code for gathering backtraces.
+//! A lot of this handler is based on the upstream stdlib implementation
+//! of `panicImpl` and its code for gathering backtraces.
 
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 UN-GATE
@@ -43,7 +43,7 @@ pub mod handle_oom;
 
 /// Link-time target for `bun_alloc::out_of_memory()` — declared
 /// `extern "Rust"` in `bun_alloc` (which is below this crate in the dep graph)
-/// and defined here. Mirrors `src/bun.zig:outOfMemory()` →
+/// and defined here. Mirrors `bun.outOfMemory()` →
 /// `crash_handler.crashHandler(.out_of_memory, null, @returnAddress())`.
 /// `pub(crate)` so external callers route through the T0 `bun_alloc` entry
 /// rather than bypassing it.
@@ -76,7 +76,7 @@ pub use draft::*;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local shim for `bun_debug` (no such crate exists yet). These are
-// std.debug.* placeholders the Zig side leaned on; the Rust port will replace
+// std.debug.* placeholders the original leaned on; the Rust port will replace
 // them with a real debug-info backend in a later pass.
 // TODO(b2-blocked): bun_debug::SelfInfo / SourceLocation / TtyConfig / capture_stack_trace
 // ──────────────────────────────────────────────────────────────────────────
@@ -91,14 +91,14 @@ pub mod debug {
         bun_core::return_address()
     }
 
-    /// Zig: `std.debug.captureStackTrace`. Thin re-export of the canonical safe
+    /// `std.debug.captureStackTrace`. Thin re-export of the canonical safe
     /// wrapper in bun_core so this crate's internal callers don't churn.
     #[inline]
     pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
         bun_core::capture_stack_trace(begin, addrs)
     }
 
-    /// Zig: `std.debug.panicImpl` fallback when ENABLE == false.
+    /// `std.debug.panicImpl` fallback when ENABLE == false.
     pub fn panic_impl(_ert: Option<&StackTrace<'_>>, _begin: Option<usize>, msg: &[u8]) -> ! {
         panic!("{}", bstr::BStr::new(msg))
     }
@@ -106,9 +106,9 @@ pub mod debug {
     pub const HAVE_ERROR_RETURN_TRACING: bool = false;
     pub const STRIP_DEBUG_INFO: bool = !cfg!(debug_assertions);
 
-    // ── SelfInfo (vendor/zig/lib/std/debug/SelfInfo.zig) ─────────────────
+    // ── SelfInfo ─────────────────────────────────────────────────────────
     // D104: canonical home for the dladdr-backed `std.debug.SelfInfo` shim.
-    // Previously lived in `bun_jsc::btjs::zig_std_debug`; relocated here so the
+    // Previously lived in `bun_jsc::btjs::std_debug`; relocated here so the
     // crash handler (lower-tier crate) gets real symbol names in debug builds
     // and `btjs` re-exports from this module.
     use bun_core::{Error, err};
@@ -122,7 +122,7 @@ pub mod debug {
         address_map: HashMap<usize, Box<Module>>,
     }
 
-    /// Port of `SelfInfo.Module`. On Linux Zig uses `Dwarf.ElfModule`; on Darwin a
+    /// `SelfInfo.Module`. On Linux the original uses `Dwarf.ElfModule`; on Darwin a
     /// MachO symbol table reader. Both ultimately resolve `address → {name, CU,
     /// source_location}`. The DWARF/MachO parsers are not ported; `dladdr(3)`
     /// provides the symbol-name half (which is what `btjs` actually consumes for
@@ -215,7 +215,7 @@ pub mod debug {
 
         #[cfg(target_vendor = "apple")]
         fn lookup_module_dyld(&mut self, address: usize) -> Result<&mut Module, Error> {
-            // PORT NOTE: Zig walks `_dyld_get_image_header` + LoadCommandIterator. `dladdr`
+            // PORT NOTE: the original walks `_dyld_get_image_header` + LoadCommandIterator. `dladdr`
             // gives the same `{base_address, fname}` pair on Darwin without the MachO walk.
             // SAFETY: dladdr only reads; out-param is a valid Dl_info.
             let mut info: libc::Dl_info = bun_core::ffi::zeroed();
@@ -245,11 +245,11 @@ pub mod debug {
         /// Port of `Module.getSymbolAtAddress`.
         #[cfg(windows)]
         pub fn get_symbol_at_address(&mut self, address: usize) -> Result<SymbolInfo, Error> {
-            // TODO(port-windows): SPEC DIVERGENCE — Zig's `std.debug.SelfInfo`
+            // TODO(port-windows): SPEC DIVERGENCE — `std.debug.SelfInfo`
             // resolves symbols on Windows via the loaded PE's PDB
             // (`dbghelp.dll` `SymFromAddr`). That path is not yet ported, so
             // every Windows backtrace currently prints bare addresses even
-            // when a PDB is shipped. This is NOT equivalent to the Zig spec
+            // when a PDB is shipped. This is NOT equivalent to the upstream spec
             // for symbol-bearing builds; return the default-initialized
             // `Symbol` (`name = "???"`) so the caller still prints the
             // address line, but the dbghelp lookup must be implemented
@@ -269,7 +269,7 @@ pub mod debug {
             let mut info: libc::Dl_info = bun_core::ffi::zeroed();
             let rc = unsafe { libc::dladdr(address as *const c_void, &raw mut info) };
             if rc == 0 || info.dli_sname.is_null() {
-                // Zig returns a default-initialized `Symbol` (`.{}` — name "???") here
+                // Returns a default-initialized `Symbol` (name "???") here
                 // rather than erroring, so the caller still prints the address line.
                 return Ok(SymbolInfo {
                     name: b"???".to_vec().into_boxed_slice(),
@@ -326,10 +326,10 @@ pub mod debug {
     // reborrow the returned `*mut` per-access.
     static SELF_DEBUG_INFO: bun_core::RacyCell<Option<SelfInfo>> = bun_core::RacyCell::new(None);
 
-    /// Port of `std.debug.getSelfDebugInfo`. NOT thread-safe (the Zig original
+    /// `std.debug.getSelfDebugInfo`. NOT thread-safe (the original
     /// has the same `TODO multithreaded awareness` caveat).
     pub fn get_self_debug_info() -> Result<*mut SelfInfo, Error> {
-        // SAFETY: Zig's `var self_debug_info: ?SelfInfo = null` is also a plain
+        // SAFETY: the original `var self_debug_info: ?SelfInfo = null` is also a plain
         // mutable global; this is debug-only and invoked from a stopped process.
         unsafe {
             let slot = &mut *SELF_DEBUG_INFO.get();
@@ -340,7 +340,7 @@ pub mod debug {
             Ok(slot.as_mut().unwrap() as *mut _)
         }
     }
-    /// Zig: `std.io.tty.detectConfig(std.io.getStdErr())`.
+    /// `std.io.tty.detectConfig(std.io.getStdErr())`.
     pub fn detect_tty_config_stderr() -> TtyConfig {
         if bun_core::Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed) {
             TtyConfig::EscapeCodes
@@ -348,7 +348,7 @@ pub mod debug {
             TtyConfig::NoColor
         }
     }
-    /// Port of `std.io.tty.Config` (vendor/zig/lib/std/Io/tty.zig). The
+    /// `std.io.tty.Config`. The
     /// `windows_api` variant is omitted: every consumer here writes into an
     /// in-memory buffer or raw fd 2, never the live `CONSOLE_SCREEN_BUFFER`, so
     /// `SetConsoleTextAttribute` would colour the wrong stream.
@@ -414,7 +414,7 @@ impl Write for StderrWriter {
     fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
         #[cfg(windows)]
         {
-            // Zig spec: `std.fs.File.stderr().writerStreaming(&.{})` — on
+            // Spec: `std.fs.File.stderr().writerStreaming(&.{})` — on
             // Windows that is `GetStdHandle(STD_ERROR_HANDLE)` + kernel32
             // `WriteFile`, NOT the CRT. Routing through MSVCRT `_write(2,…)`
             // would (1) text-mode-translate `\n`→`\r\n` and (2) take the CRT
@@ -487,15 +487,15 @@ mod draft {
         e
     }
 
-    /// Zig: `Output.enable_ansi_colors_stderr` — runtime flag, exposed in Rust as an
-    /// `AtomicBool` static. Re-exported here so call sites read like the Zig.
+    /// `Output.enable_ansi_colors_stderr` — runtime flag, exposed in Rust as an
+    /// `AtomicBool` static. Re-exported here so call sites read like the original.
     use bun_core::output::enable_ansi_colors_stderr;
 
-    /// Zig: `std.posix.abort()`. On POSIX this is `libc::abort()` (async-signal-safe).
-    /// On Windows, Zig's `std.posix.abort()` is *not* MSVCRT `abort()` — it is
+    /// `std.posix.abort()`. On POSIX this is `libc::abort()` (async-signal-safe).
+    /// On Windows the upstream `std.posix.abort()` is *not* MSVCRT `abort()` — it is
     /// `if (Debug) @breakpoint(); kernel32.ExitProcess(3);`. UCRT `abort()` would
     /// raise SIGABRT, may print `R6010 - abort() has been called` to stderr, and
-    /// can pop a Watson/WER dialog — none of which the Zig spec does.
+    /// can pop a Watson/WER dialog — none of which the spec does.
     #[inline(always)]
     fn abort() -> ! {
         #[cfg(windows)]
@@ -514,8 +514,8 @@ mod draft {
     use super::cpu_features::CPUFeatures;
     use super::debug::{Color, SelfInfo, SourceLocation, TtyConfig};
 
-    /// Zig: `bun.fmt.fmtArgv` — print an argv vector as a shell-ish line.
-    /// crash_handler.zig:1024 calls this when the addr2line spawn fails.
+    /// `bun.fmt.fmtArgv` — print an argv vector as a shell-ish line.
+    /// Called when the addr2line spawn fails.
     fn fmt_argv<W: super::Write>(w: &mut W, argv: &[Vec<u8>]) -> Result<(), bun_core::Error> {
         for (i, a) in argv.iter().enumerate() {
             if i > 0 {
@@ -610,7 +610,7 @@ mod draft {
     // PORTING.md §Concurrency: `bun_threading::Guarded<Vec<..>>` instead of bare Mutex + global Vec.
     // Stores a boxed type-erased closure (not a bare fn pointer) so that
     // `append_pre_crash_handler` can monomorphize a wrapper that actually invokes the
-    // caller's typed handler — mirroring Zig's `comptime handler` trampoline.
+    // caller's typed handler — mirroring the original `comptime handler` trampoline.
     struct CrashHandlerEntry(*mut c_void, Box<dyn Fn(*mut c_void) + Send>);
     // SAFETY: only accessed under the mutex; the opaque ptr is never dereferenced
     // except by the registered callback on the crash thread.
@@ -628,7 +628,7 @@ mod draft {
     pub enum CrashReason {
         /// From @panic()
         Panic(&'static [u8]),
-        // TODO(port): lifetime — Zig holds a borrowed []const u8; using &'static here for Phase A.
+        // TODO(port): lifetime — the original holds a borrowed []const u8; using &'static here for Phase A.
         /// "reached unreachable code"
         Unreachable,
 
@@ -645,7 +645,7 @@ mod draft {
         StackOverflow,
 
         /// Either `main` returned an error, or somewhere else in the code a trace string is printed.
-        ZigError(bun_core::Error),
+        RootError(bun_core::Error),
 
         OutOfMemory,
     }
@@ -667,7 +667,7 @@ mod draft {
                 }
                 CrashReason::DatatypeMisalignment => writer.write_str("Unaligned memory access"),
                 CrashReason::StackOverflow => writer.write_str("Stack overflow"),
-                CrashReason::ZigError(err) => {
+                CrashReason::RootError(err) => {
                     write!(writer, "error.{}", bstr::BStr::new(err.name()))
                 }
                 CrashReason::OutOfMemory => writer.write_str("Bun ran out of memory"),
@@ -770,7 +770,7 @@ mod draft {
     }
 
     /// RAII guard returned by [`scoped_action`] / [`set_current_action_resolver`].
-    /// Restores the previous `CURRENT_ACTION` on drop (Zig: `defer current_action = old`).
+    /// Restores the previous `CURRENT_ACTION` on drop (`defer current_action = old`).
     pub struct ActionGuard(Option<Action>);
     impl Drop for ActionGuard {
         #[inline]
@@ -781,8 +781,8 @@ mod draft {
 
     /// Scoped `CURRENT_ACTION = action`. Snapshots the previous value, installs
     /// `action`, and returns an [`ActionGuard`] that restores the previous value
-    /// on drop. Zig: `const old = current_action; defer current_action = old;
-    /// current_action = ...;`.
+    /// on drop. (`const old = current_action; defer current_action = old;
+    /// current_action = ...;`.)
     #[inline]
     #[must_use]
     pub fn scoped_action(action: Action) -> ActionGuard {
@@ -791,7 +791,7 @@ mod draft {
         ActionGuard(prev)
     }
 
-    /// Scoped `CURRENT_ACTION = .resolver{...}`. Zig (resolver.zig:672-679) sets
+    /// Scoped `CURRENT_ACTION = .resolver{...}`. The original sets
     /// this only under `Environment.show_crash_trace` because module resolution is
     /// extremely hot and has a low crash rate; the cfg-gate here mirrors that.
     ///
@@ -1084,8 +1084,8 @@ mod draft {
                                             abort();
                                         }
                                         // NOTE: `GetThreadDescription` heap-allocates `name` and the
-                                        // caller is meant to `LocalFree` it. The Zig spec leaks it
-                                        // identically (crash_handler.zig:316-322) — this runs on a
+                                        // caller is meant to `LocalFree` it. The original spec leaks it
+                                        // identically — this runs on a
                                         // `noreturn` crash path immediately before `ExitProcess(3)`,
                                         // so the leak is intentional.
                                     } else {
@@ -1136,7 +1136,7 @@ mod draft {
                     let trace_buf: StackTrace;
 
                     // If a trace was not provided, compute one now
-                    // PORT NOTE: reshaped for borrowck — Zig held a StackTrace
+                    // PORT NOTE: reshaped for borrowck — the original held a StackTrace
                     // borrowing addr_buf while overwriting addr_buf; here we capture
                     // the index into a scalar, drop the borrow, mutate, then rebuild.
                     let trace: &StackTrace = 'blk: {
@@ -1319,7 +1319,7 @@ mod draft {
                 // so that a crash will actually crash. We need this because we want the process to
                 // exit with a signal, and allow tools to be able to gather core dumps.
                 //
-                // This is done so late (in comparison to the Zig Standard Library's panic handler)
+                // This is done so late (in comparison to the upstream stdlib panic handler)
                 // because if multiple threads segfault (more often the case on Windows), we don't
                 // want another thread to interrupt the crashing of the first one.
                 reset_segfault_handler();
@@ -1375,12 +1375,12 @@ mod draft {
         crash();
     }
 
-    /// This is called when `main` returns a Zig error.
+    /// This is called when `main` returns a top-level error.
     /// We don't want to treat it as a crash under certain error codes.
     pub fn handle_root_error(err: bun_core::Error, error_return_trace: Option<&StackTrace>) -> ! {
         use bun_core::{err_generic, note, pretty_error, pretty_errorln};
 
-        /// Zig: `std.posix.getrlimit(.NOFILE)`. bun_sys::posix has no rlimit yet —
+        /// `std.posix.getrlimit(.NOFILE)`. bun_sys::posix has no rlimit yet —
         /// thin libc wrapper (POD out-param, never fails on supported targets).
         #[cfg(unix)]
         fn getrlimit_nofile() -> Option<libc::rlimit> {
@@ -1500,7 +1500,7 @@ mod draft {
             }
         } else if err == bun_core::err!("NotOpenForReading") || err == bun_core::err!("Unexpected")
         {
-            // The usage of `unreachable` in Zig's std.posix may cause the file descriptor problem to show up as other errors
+            // The usage of `unreachable` in the upstream std.posix may cause the file descriptor problem to show up as other errors
             #[cfg(unix)]
             {
                 // SAFETY: zeroed rlimit is valid POD (integers).
@@ -1557,7 +1557,7 @@ mod draft {
             err_generic!("Bun could not find a package.json file to install from");
             Output::note("Run \"bun init\" to initialize a project");
         } else {
-            // PORT NOTE: Zig picked the format string at comptime; the macros need
+            // PORT NOTE: the original picked the format string at compile time; the macros need
             // `:literal`, so branch on the const and call separately.
             if Environment::SHOW_CRASH_TRACE {
                 err_generic!(
@@ -1591,7 +1591,7 @@ mod draft {
             if msg == b"reached unreachable code" {
                 CrashReason::Unreachable
             } else {
-                // TODO(port): lifetime — Zig borrows msg; erased to &'static for the noreturn path.
+                // TODO(port): lifetime — the original borrows msg; erased to &'static for the noreturn path.
                 // SAFETY: process is about to abort; the borrow is never invalidated.
                 CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) })
             },
@@ -1656,7 +1656,7 @@ mod draft {
     #[cfg(unix)]
     extern "C" fn handle_segfault_posix(sig: c_int, info: *mut libc::siginfo_t, _: *mut c_void) {
         // SAFETY: kernel provides a valid siginfo_t; `si_addr` reads the per-platform
-        // sigfault address field (Zig: `info.fields.sigfault.addr` / `info.addr`).
+        // sigfault address field (`info.fields.sigfault.addr` / `info.addr`).
         let addr: usize = unsafe { (*info).si_addr() as usize };
 
         crash_handler(
@@ -1730,7 +1730,7 @@ mod draft {
         if Environment::ENABLE_ASAN {
             return;
         }
-        // Zig: std.posix.Sigaction{ .handler = .{ .sigaction = handleSegfaultPosix }, ... }.
+        // `std.posix.Sigaction{ .handler = .{ .sigaction = handleSegfaultPosix }, ... }`.
         // SAFETY: zeroed sigaction is valid POD; we overwrite the fields we need.
         let mut act: libc::sigaction = bun_core::ffi::zeroed();
         act.sa_sigaction = handle_segfault_posix as *const () as usize;
@@ -1785,7 +1785,7 @@ mod draft {
         // (`__bun_crash_handler_out_of_memory` / `__bun_crash_handler_dump_stack_trace`)
         // — no runtime registration needed.
         //
-        // Route Rust `panic!()` through the trace-string + report path. Zig wires
+        // Route Rust `panic!()` through the trace-string + report path. The original wires
         // `pub const panic = bun.crash_handler.panic` at the root so every
         // `@panic()` reports; the Rust port's bare `panic!` was printing the std
         // default hook + unwinding with no trace string and no upload.
@@ -1793,7 +1793,7 @@ mod draft {
     }
 
     /// `std::panic` hook: emit the same trace-string + auto-report as the fatal
-    /// `crash_handler()` path, then **abort** (matches Zig's `noreturn` panic).
+    /// `crash_handler()` path, then **abort** (matches the original `noreturn` panic).
     /// With `panic = "abort"` no unwind starts after this hook returns, so there
     /// are no `catch_unwind` boundaries to reach.
     #[cold]
@@ -1815,7 +1815,7 @@ mod draft {
         PANIC_STAGE.with(|s| s.set(1));
 
         // Build "msg (file:line:col)" into a stack buffer so `CrashReason::Panic`
-        // can borrow it — matches Zig `@panic(msg)` payload shape.
+        // can borrow it — matches the `@panic(msg)` payload shape.
         let mut msg_buf = BoundedArray::<u8, 1024>::default();
         {
             let payload = info.payload();
@@ -1937,13 +1937,13 @@ mod draft {
 
         // A Rust `panic!` is a bug. The process must not continue — with
         // `panic = "abort"` no unwind starts, so `catch_unwind` boundaries are
-        // unreachable for Rust panics. This matches Zig's
+        // unreachable for Rust panics. This matches
         // `pub const panic = bun.crash_handler.panic` (which is `noreturn`).
         crash();
     }
 
     /// Adapter for non-fatal `bun_core::dump_current_stack_trace` callers
-    /// (fd.rs EBADF debug-warn, ref_count leak reports). Zig routes these through
+    /// (fd.rs EBADF debug-warn, ref_count leak reports). The original routes these through
     /// `dumpStackTrace` which on Linux debug spawns `llvm-symbolizer` — but the
     /// Rust debug binary's .debug_info is large enough that the symbolizer parse
     /// alone costs ~5s, which is unacceptable on a hot non-fatal path
@@ -1975,7 +1975,7 @@ mod draft {
                 "View Debug Trace: {}\n",
                 TraceString {
                     action: TraceStringAction::ViewTrace,
-                    reason: CrashReason::ZigError(bun_core::err!("DumpStackTrace")),
+                    reason: CrashReason::RootError(bun_core::err!("DumpStackTrace")),
                     trace: &stack,
                 }
             );
@@ -2041,7 +2041,7 @@ mod draft {
             bun_sys::windows::EXCEPTION_ILLEGAL_INSTRUCTION => {
                 // `ExceptionAddress` is the faulting RIP for `STATUS_ILLEGAL_
                 // INSTRUCTION` (winnt.h); avoids depending on the arch-specific
-                // `CONTEXT` layout (Zig reached `ContextRecord.Rip` directly).
+                // `CONTEXT` layout (the original reached `ContextRecord.Rip` directly).
                 CrashReason::IllegalInstruction(
                     unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize
                 )
@@ -2169,7 +2169,7 @@ mod draft {
                 }
                 #[cfg(windows)]
                 {
-                    // TODO(port): std.zig.system.windows.detectRuntimeVersion()
+                    // TODO(port): detectRuntimeVersion()
                     write!(
                         writer,
                         "Windows v{}\n",
@@ -2326,12 +2326,12 @@ mod draft {
     }
 
     impl Platform {
-        // TODO(port): Zig builds this via @tagName(os) ++ "_" ++ @tagName(arch) ++ baseline.
+        // TODO(port): the original builds this via @tagName(os) ++ "_" ++ @tagName(arch) ++ baseline.
         // Rust cannot concat ident names at const time without a proc-macro; spell out the cfg matrix.
         const CURRENT: Platform = {
-            // Android folds into the Linux variants — Zig's `@tagName(Environment.os)`
-            // (crash_handler.zig:1153) yields `"linux"` for Android because Zig keeps
-            // it under `os.tag == .linux`. bun.report decodes the same single-char
+            // Android folds into the Linux variants — `@tagName(Environment.os)`
+            // yields `"linux"` for Android because it is filed
+            // under `os.tag == .linux`. bun.report decodes the same single-char
             // codes; introducing new ones would break older decoders.
             #[cfg(all(
                 any(target_os = "linux", target_os = "android"),
@@ -2406,7 +2406,7 @@ mod draft {
     /// '2' - same as '1' but this build is known to be a canary build
     const VERSION_CHAR: &str = if Environment::IS_CANARY { "2" } else { "1" };
 
-    // Zig: `if (git_sha.len > 0) git_sha[0..7] else "unknown"` — the v1/v2 trace-string
+    // `if (git_sha.len > 0) git_sha[0..7] else "unknown"` — the v1/v2 trace-string
     // format encodes exactly 7 hex chars. `Environment::GIT_SHA_SHORT` is 9 chars and would
     // shift every following VLQ byte, making bun.report unable to decode the URL.
     const GIT_SHA: &str = {
@@ -2427,7 +2427,7 @@ mod draft {
         address: i32,
         // None -> from bun.exe
         object: Option<Box<[u8]>>,
-        // TODO(port): Zig stores a borrowed slice into caller's `name_bytes`; using Box<[u8]> here
+        // TODO(port): the original stores a borrowed slice into caller's `name_bytes`; using Box<[u8]> here
         // since the only caller writes into a stack buffer and the value is consumed immediately.
     }
 
@@ -2447,7 +2447,7 @@ mod draft {
 
                 return Some(StackLine {
                     // To remap this, `pdb-addr2line --exe bun.pdb 0x123456`
-                    // Zig: `@intCast(addr - base_address)` — unchecked in ReleaseFast.
+                    // `@intCast(addr - base_address)` — unchecked in ReleaseFast.
                     // Use a wrapping cast so an oversize/underflowed module offset
                     // produces a junk frame instead of panicking *inside* the crash
                     // handler (which would escalate to a double-panic and lose the
@@ -2736,7 +2736,7 @@ mod draft {
             CrashReason::DatatypeMisalignment => writer.write_byte(b'6')?,
             CrashReason::StackOverflow => writer.write_byte(b'7')?,
 
-            CrashReason::ZigError(err) => {
+            CrashReason::RootError(err) => {
                 writer.write_byte(b'8')?;
                 writer.write_all(err.name().as_bytes())?;
             }
@@ -2901,8 +2901,8 @@ mod draft {
             // we don't care what happens with the process
             // NOTE: on success `CreateProcessW` returns two open kernel handles in
             // `process.hProcess` / `process.hThread` that the caller is meant to
-            // `CloseHandle`. The Zig spec leaks them identically (crash_handler.zig:
-            // 1545-1546 `_ = spawn_result;`); `report()` runs immediately before
+            // `CloseHandle`. The original spec leaks them identically
+            // (`_ = spawn_result;`); `report()` runs immediately before
             // `crash()` → `ExitProcess(3)`, so the kernel reclaims them anyway.
             let _ = spawn_result;
             let _ = url;
@@ -2975,7 +2975,7 @@ mod draft {
         #[cfg(not(windows))]
         {
             // Install default handler so that the tkill below will terminate.
-            // Zig: std.posix.Sigaction{ .handler = SIG.DFL, .mask = sigemptyset(), .flags = 0 }.
+            // `std.posix.Sigaction{ .handler = SIG.DFL, .mask = sigemptyset(), .flags = 0 }`.
             // bun_sys::posix has no Sigaction yet — use libc directly (async-signal-safe).
             // SAFETY: all-zero is a valid sigaction (handler = SIG_DFL = 0, flags = 0).
             let mut sigact: libc::sigaction = bun_core::ffi::zeroed();
@@ -2998,9 +2998,9 @@ mod draft {
                     libc::sigaction(sig, &raw const sigact, core::ptr::null_mut());
                 }
             }
-            // Zig: `@trap()` — emits ud2 (x86_64 → SIGILL) / brk (aarch64 → SIGTRAP).
+            // `@trap()` — emits ud2 (x86_64 → SIGILL) / brk (aarch64 → SIGTRAP).
             // `core::intrinsics::abort()` lowers to the same trap instruction, preserving
-            // the Zig exit signal. Do NOT use `libc::abort()` here — that raises SIGABRT
+            // the spec exit signal. Do NOT use `libc::abort()` here — that raises SIGABRT
             // (exit 134), which is the *Windows* path's behaviour.
             core::intrinsics::abort();
         }
@@ -3009,7 +3009,7 @@ mod draft {
             // Node.js exits with code 134 (128 + SIGABRT) instead. We use abort() as it
             // includes a breakpoint which makes crashes easier to debug.
             //
-            // Zig spec (crash_handler.zig:1592): the `.windows` arm is literally
+            // Spec: the `.windows` arm is literally
             // `std.posix.abort();` — i.e. our same-module `abort()` helper, which on
             // Windows is `@breakpoint()` (Debug only) then `kernel32.ExitProcess(3)`.
             // Do NOT call MSVCRT `libc::abort()` here — that raises SIGABRT, may print
@@ -3022,12 +3022,9 @@ mod draft {
 
     #[cold]
     #[inline(never)]
-    fn cold_handle_error_return_trace<const IS_ROOT: bool>(
-        err_int_workaround_for_zig_ccall_bug: u16,
-        trace: &StackTrace,
-    ) {
+    fn cold_handle_error_return_trace<const IS_ROOT: bool>(err_int: u16, trace: &StackTrace) {
         // TODO(port): std.meta.Int(.unsigned, @bitSizeOf(anyerror)) — bun_core::Error is errno-based
-        let err = bun_core::Error::from_errno(err_int_workaround_for_zig_ccall_bug as i32);
+        let err = bun_core::Error::from_errno(err_int as i32);
 
         // The format of the panic trace is slightly different in debug
         // builds Mainly, we demangle the backtrace immediately instead
@@ -3062,7 +3059,7 @@ mod draft {
         } else {
             let ts = TraceString {
                 trace,
-                reason: CrashReason::ZigError(err),
+                reason: CrashReason::RootError(err),
                 action: TraceStringAction::ViewTrace,
             };
             if IS_ROOT {
@@ -3128,7 +3125,7 @@ mod draft {
                 "View Debug Trace: {}\n",
                 TraceString {
                     action: TraceStringAction::ViewTrace,
-                    reason: CrashReason::ZigError(bun_core::err!("DumpStackTrace")),
+                    reason: CrashReason::RootError(bun_core::err!("DumpStackTrace")),
                     trace,
                 }
             );
@@ -3142,7 +3139,7 @@ mod draft {
                 // SAFETY: lazy debug-only singleton; sole `&mut` for the dump below.
                 Ok(d) => unsafe { &mut *d },
                 Err(err) => {
-                    // Zig: `stderr.print(..) catch return;` — if stderr write fails
+                    // `stderr.print(..) catch return;` — if stderr write fails
                     // (e.g. broken pipe), bail out entirely; don't fall through.
                     if write!(stderr, "Unable to dump stack trace: Unable to open debug info: {}\nFallback trace:\n", bstr::BStr::new(err.name())).is_err() { return; }
                     break 'attempt_dump;
@@ -3231,7 +3228,7 @@ mod draft {
                 // try next program if this one wasn't found
                 Err(e) if e == bun_core::err!("FileNotFound") => continue,
                 // Windows: `bun_core::spawn_sync_inherit` is currently a `#[cfg(not(unix))]`
-                // stub returning `Unexpected`. Zig's `std.process.Child` *does* work on
+                // stub returning `Unexpected`. The upstream `std.process.Child` *does* work on
                 // Windows, so until the stub is filled in, treat the sentinel like
                 // FileNotFound and fall through to the WTF fallback below instead of
                 // returning with no trace at all.
@@ -3243,7 +3240,7 @@ mod draft {
             return;
         }
         let _ = limits;
-        // INTENTIONAL DIVERGENCE from Zig spec (crash_handler.zig:1749-1760 falls
+        // INTENTIONAL DIVERGENCE from the upstream spec (which falls
         // off the end of the `for (programs)` loop with no further fallback). On
         // Windows, `spawn_sync_inherit` is stubbed and `pdb-addr2line` is rarely
         // installed, so without this the user would get *only* "Fallback trace:"
@@ -3267,7 +3264,7 @@ mod draft {
         argv.push({
             #[cfg(windows)]
             {
-                // `to_utf8_alloc` is infallible (Vec<u8>); the Zig version returned
+                // `to_utf8_alloc` is infallible (Vec<u8>); the original version returned
                 // `![]u8` only for OOM, which Rust handles via abort.
                 let image_path = strings::to_utf8_alloc(bun_sys::windows::exe_path_w());
                 let mut s = image_path[0..image_path.len() - 3].to_vec();
@@ -3327,7 +3324,7 @@ mod draft {
     pub fn suppress_core_dumps_if_necessary() {
         #[cfg(unix)]
         {
-            // Zig: std.posix.getrlimit / setrlimit. bun_sys::posix has no rlimit
+            // `std.posix.getrlimit` / `setrlimit`. bun_sys::posix has no rlimit
             // surface yet — go straight to libc (already a dep, async-signal-safe).
             // SAFETY: all-zero rlimit is valid POD; getrlimit/setrlimit only read/write the struct.
             let mut existing_limit: libc::rlimit = bun_core::ffi::zeroed();
@@ -3361,7 +3358,7 @@ mod draft {
     // `StoredTrace::capture()` instead — this crate no longer owns the type.
     pub use bun_core::StoredTrace;
 
-    // TODO(port): move to *_jsc — `pub const js_bindings = @import("../runtime/api/crash_handler_jsc.zig").js_bindings;`
+    // TODO(port): move to *_jsc — the original re-exported `js_bindings` from a `crash_handler_jsc` shim.
     // Per PORTING.md this *_jsc alias is deleted; the bindings live as an extension trait in bun_runtime.
 
     type OnBeforeCrash = fn(opaque_ptr: *mut c_void);
@@ -3374,7 +3371,7 @@ mod draft {
         ptr: *mut T,
         handler: fn(&mut T) -> Result<(), bun_core::Error>,
     ) -> Result<(), bun_alloc::AllocError> {
-        // Zig monomorphizes a `wrap.onCrash` that casts the opaque ptr back to *T and calls
+        // The original monomorphizes a `wrap.onCrash` that casts the opaque ptr back to *T and calls
         // `handler`. Rust can't capture `handler` in a bare `fn` item, so box a closure that
         // performs the same cast+call. Errors are intentionally swallowed (best-effort dump).
         let on_crash = Box::new(move |opaque_ptr: *mut c_void| {
@@ -3407,14 +3404,14 @@ mod draft {
         pub source_location: Option<SourceLocation>,
         pub symbol_name: Box<[u8]>,
         pub compile_unit_name: Box<[u8]>,
-        // TODO(port): Zig stores borrowed slices owned by debug_info; using Box<[u8]> for Phase A.
+        // TODO(port): the original stores borrowed slices owned by debug_info; using Box<[u8]> for Phase A.
     }
 
-    // PORT NOTE: Zig's `SourceAtAddress.deinit` only freed `source_location.file_name`;
+    // PORT NOTE: the original `SourceAtAddress.deinit` only freed `source_location.file_name`;
     // `Option<SourceLocation>` owns it as `Box<[u8]>` so Drop handles it — no explicit deinit.
 
     // D130: deduped — canonical def lives in bun_core (T0). Re-export under the
-    // Zig-spec name so internal use-sites and any downstream
+    // upstream-spec name so internal use-sites and any downstream
     // `bun_crash_handler::WriteStackTraceLimits` importers keep compiling.
     pub use bun_core::DumpStackTraceOptions as WriteStackTraceLimits;
 
@@ -3437,7 +3434,7 @@ mod draft {
             .index
             .min(stack_trace.instruction_addresses.len());
 
-        // PORT NOTE: Zig's `while (...) : ({ frames_left -= 1; frame_index = ... })` continue-expression
+        // PORT NOTE: the original `while (...) : ({ frames_left -= 1; frame_index = ... })` continue-expression
         // is inlined at every `continue` site and at end-of-loop below.
         while frames_left != 0 {
             if frame_index >= limits.frame_count {
@@ -3572,7 +3569,7 @@ mod draft {
         compile_unit_name: &[u8],
         tty_config: TtyConfig,
     ) -> Result<(), bun_core::Error> {
-        // Zig: `Environment.base_path ++ std.fs.path.sep_str` (comptime concat).
+        // `Environment.base_path ++ std.fs.path.sep_str` (compile-time concat).
         // `Environment::BASE_PATH` is `&[u8]`, which `const_format::concatcp!` cannot
         // ingest. The constant is tiny and this path is debug-only — build it once
         // at runtime in a stack BoundedArray (no heap, async-signal-safe).
@@ -3741,7 +3738,7 @@ mod draft {
                 }
                 break 'read_line;
             }
-            // unreachable in Zig (`return;` after the if/else above)
+            // unreachable in the original (`return;` after the if/else above)
         }
         let line_without_newline = strings::trim_right(&line_buf[..fbs_len], b"\n");
         if source_location.column as usize > line_without_newline.len() {
@@ -3808,7 +3805,7 @@ mod draft {
         if env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB::get() == Some(true) {
             suppress_reporting();
         }
-        // SAFETY: name is non-null (Zig dereferences it unconditionally with `.?`)
+        // SAFETY: name is non-null (the original dereferences it unconditionally with `.?`)
         let name_bytes = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
         // PORTING.md §Forbidden: no Box::leak. We're on the noreturn path, so a stack
         // buffer suffices — `panic_impl` erases to &'static for the abort path.
@@ -3857,7 +3854,5 @@ mod draft {
     pub fn fix_dead_code_elimination() {
         bun_core::keep_symbols!(CrashHandler__unsupportedUVFunction);
     }
-    // In Zig: comptime { _ = &Bun__crashHandler; ... } — Rust links #[no_mangle] symbols unconditionally.
+    // The original used `comptime { _ = &Bun__crashHandler; ... }` — Rust links #[no_mangle] symbols unconditionally.
 } // end mod draft
-
-// ported from: src/crash_handler/crash_handler.zig

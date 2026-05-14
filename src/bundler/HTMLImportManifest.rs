@@ -73,7 +73,7 @@ impl<'a> fmt::Display for HTMLImportManifest<'a> {
         ) {
             Ok(()) => Ok(()),
             // We use std.fmt.count for this
-            // Zig: error.NoSpaceLeft => unreachable, error.OutOfMemory => return error.OutOfMemory
+            // error.NoSpaceLeft => unreachable, error.OutOfMemory => return error.OutOfMemory
             Err(_) => Err(fmt::Error),
         }
     }
@@ -99,7 +99,7 @@ fn write_entry_item<W: Write + ?Sized>(
     bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(path, writer)?;
 
     writer.write_all(b",\"loader\":\"")?;
-    // Zig: @tagName(loader) — strum is configured snake_case to match.
+    // Loader tag name — strum is configured snake_case to match.
     writer.write_all(<&'static str>::from(loader).as_bytes())?;
     writer.write_all(b"\",\"isEntry\":")?;
     writer.write_all(if kind == OutputKind::EntryPoint {
@@ -148,7 +148,7 @@ pub fn write_escaped_json<W: Write + ?Sized>(
 }
 
 /// Newtype wrapper produced by [`HTMLImportManifest::format_escaped_json`].
-/// Mirrors Zig's `std.fmt.Alt(HTMLImportManifest, escapedJSONFormatter)`.
+/// Adapter that routes `Display` through `escaped_json_formatter`.
 pub struct EscapedJson<'a>(pub HTMLImportManifest<'a>);
 
 impl<'a> fmt::Display for EscapedJson<'a> {
@@ -163,7 +163,7 @@ impl<'a> fmt::Display for EscapedJson<'a> {
         ) {
             Ok(()) => Ok(()),
             // We use std.fmt.count for this
-            // Zig: error.WriteFailed => unreachable, error.OutOfMemory => return error.WriteFailed
+            // error.WriteFailed => unreachable, error.OutOfMemory => return error.WriteFailed
             Err(_) => Err(fmt::Error),
         }
     }
@@ -348,5 +348,3 @@ pub fn write<W: Write + ?Sized>(
     writer.write_all(b"]}")?;
     Ok(())
 }
-
-// ported from: src/bundler/HTMLImportManifest.zig

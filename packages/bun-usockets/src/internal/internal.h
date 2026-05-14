@@ -99,9 +99,9 @@ enum {
 #define POLL_TYPE_POLLING_MASK 0b11000
 #define POLL_TYPE_MASK (POLL_TYPE_KIND_MASK | POLL_TYPE_POLLING_MASK)
 
-/* Bun APIs implemented in Zig */
-void Bun__lock(zig_mutex_t *lock);
-void Bun__unlock(zig_mutex_t *lock);
+/* Bun APIs implemented on the Rust side */
+void Bun__lock(bun_mutex_t *lock);
+void Bun__unlock(bun_mutex_t *lock);
 
 struct addrinfo_request;
 struct addrinfo_result_entry {
@@ -113,9 +113,9 @@ struct addrinfo_result {
     int error;
 };
 
-/* Dispatch — defined out-of-library (Zig: src/deps/uws/dispatch.zig). loop.c
+/* Dispatch — defined out-of-library on the Bun side. loop.c
  * never reads s->group->vtable directly; it calls these and the closed-world
- * switch on s->kind decides whether to direct-call into Zig/C++ or fall back
+ * switch on s->kind decides whether to direct-call into Rust/C++ or fall back
  * to the vtable. Signatures track the vtable entries (us_dispatch_handshake
  * drops the trailing custom_data — dispatch always passes NULL). */
 extern struct us_socket_t *us_dispatch_open(us_socket_r s, int is_client, char *ip, int ip_length);

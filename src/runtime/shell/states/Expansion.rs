@@ -20,29 +20,29 @@ pub struct Expansion {
     pub io: IO,
     pub state: ExpansionState,
     /// Index of the next sub-atom to expand. For `Atom::Simple` this is 0/1;
-    /// for `Atom::Compound` it walks `c.atoms`. Spec: Expansion.zig `word_idx`.
+    /// for `Atom::Compound` it walks `c.atoms`.
     pub word_idx: u32,
-    /// Output sink the parent provided. The Zig version stored a
+    /// Output sink the parent provided. An earlier design stored a
     /// `*anyopaque + vtable` so any parent could receive expanded strings;
     /// in the NodeId port the parent is reachable via `base.parent`, so the
     /// sink is just a buffer the parent reads back on `child_done`.
     pub out: ExpansionOut,
     /// Working buffer for the *current* word being assembled. When a word
     /// boundary is hit (IFS split / glob result), it is flushed into `out`
-    /// via `push_current_out`. Spec: Expansion.zig `current_out`.
+    /// via `push_current_out`.
     pub current_out: Vec<u8>,
     pub child_script: Option<NodeId>,
     /// Whether the in-flight command substitution was `"$(...)"` (no IFS
     /// splitting on its result). Only meaningful while `state == CmdSubst`.
     pub cmd_subst_quoted: bool,
-    /// Spec: Expansion.zig `has_quoted_empty`. Set when a `""`/`''` literal
+    /// Set when a `""`/`''` literal
     /// was seen so an *empty* expansion is still pushed as an argv word.
     /// Without this, `$unset` and `""` are indistinguishable in
     /// [`ExpansionOut`] (both → `buf=[], bounds=[]`) and Cmd would push an
     /// empty arg for unset vars — diverging from POSIX field-splitting.
     pub has_quoted_empty: bool,
-    /// Exit code of a sole-command-substitution arg. Spec: Expansion.zig
-    /// `out_exit_code` — propagated to `Cmd` so `$(false)` as argv0 fails.
+    /// Exit code of a sole-command-substitution arg — propagated to `Cmd`
+    /// so `$(false)` as argv0 fails.
     pub out_exit_code: ExitCode,
 }
 
@@ -55,8 +55,8 @@ pub enum ExpansionState {
     Glob,
     BraceExpand,
     Done,
-    /// Spec: Expansion.zig `.err`. The parent inspects this on
-    /// `child_done(_, 1)` to print the message.
+    /// Error state. The parent inspects this on `child_done(_, 1)` to print
+    /// the message.
     Err(ShellErr),
 }
 
@@ -70,7 +70,7 @@ pub struct ExpansionOut {
     /// command's exit code when that substitution was argv0 and argv is
     /// otherwise empty.
     pub out_exit_code: ExitCode,
-    /// Spec: Expansion.zig `has_quoted_empty`. When `buf`/`bounds` are both
+    /// When `buf`/`bounds` are both
     /// empty, this distinguishes `""` (push one empty arg) from `$unset`
     /// (push no arg). See [`Expansion::has_quoted_empty`].
     pub has_quoted_empty: bool,
@@ -115,7 +115,7 @@ impl Expansion {
         Yield::Next(this)
     }
 
-    /// Spec: Expansion.zig `next()` + `expandVarAndCmdSubst()`. Walks the
+    /// Walks the
     /// atom, appending no-IO expansions to `current_out` and yielding to a
     /// child `Script` whenever a `$(...)` is encountered. Re-entered after
     /// `child_done` advances `word_idx`.
@@ -154,7 +154,7 @@ impl Expansion {
             let atom = node.get();
             let atoms_len = atom.atoms_len();
             // Leading `~` in a compound is skipped during the walk and
-            // post-processed below (Spec: Expansion.zig next() lines 186-203).
+            // post-processed below.
             let leading_tilde = matches!(atom, ast::Atom::Compound(c)
                 if c.atoms.first().is_some_and(|a| matches!(a, ast::SimpleAtom::Tilde)));
             if me.word_idx == 0 && leading_tilde {
@@ -222,8 +222,8 @@ impl Expansion {
                         me.current_out.splice(0..0, home.slice().iter().copied());
                     }
                     Some(_) => me.current_out.insert(0, b'~'),
-                    // Spec (Expansion.zig 199-202): `~""` expands to $HOME,
-                    // but `~$unset` expands to nothing (word is dropped).
+                    // `~""` expands to $HOME, but `~$unset` expands to
+                    // nothing (word is dropped).
                     None if me.has_quoted_empty => {
                         me.current_out.extend_from_slice(home.slice());
                     }
@@ -231,8 +231,7 @@ impl Expansion {
                 }
                 home.deref();
             }
-            // Spec (Expansion.zig next() lines 209-221): brace expansion
-            // first, then glob, else flush as a single word.
+            // Brace expansion first, then glob, else flush as a single word.
             if atom.has_brace_expansion() {
                 me.state = ExpansionState::BraceExpand;
                 continue;
@@ -252,7 +251,7 @@ impl Expansion {
         interp.child_done(parent, this, exit)
     }
 
-    /// Spec: Expansion.zig `.braces` arm. Re-tokenize `current_out` (the
+    /// Brace-expansion arm. Re-tokenize `current_out` (the
     /// fully-expanded word with `{`/`,`/`}` markers preserved by
     /// `expand_simple_no_io`) and push each variant as a separate argv word.
     fn do_brace_expand(me: &mut Expansion) {
@@ -280,9 +279,8 @@ impl Expansion {
         }
         drop(arena);
 
-        // Spec lines 268-279: push each variant as its own word. The Zig
-        // version NUL-terminated then `out.pushResult`; the NodeId port
-        // records word boundaries via `bounds` instead.
+        // Push each variant as its own word; the NodeId port records word
+        // boundaries via `bounds` rather than NUL-terminating each result.
         me.current_out.clear();
         for s in expanded {
             if !me.out.buf.is_empty() {
@@ -294,18 +292,18 @@ impl Expansion {
         let node = me.node;
         let atom = node.get();
         me.state = if atom.has_glob_expansion() {
-            // Spec: brace+glob composes — re-enter via the glob arm. The
-            // NodeId port currently routes glob through `current_out`, so
-            // brace-produced multi-word + glob is left as a TODO (matches the
-            // Zig "weird behaviour" note above the spec).
+            // Brace+glob composes — re-enter via the glob arm. The NodeId
+            // port currently routes glob through `current_out`, so
+            // brace-produced multi-word + glob is left as a TODO (a known
+            // quirk of the original implementation).
             ExpansionState::Done
         } else {
             ExpansionState::Done
         };
     }
 
-    /// Spec: Expansion.zig `transitionToGlobState`. Kick off an off-thread
-    /// glob walk for the assembled pattern in `current_out`.
+    /// Kick off an off-thread glob walk for the assembled pattern in
+    /// `current_out`.
     fn transition_to_glob_state(interp: &Interpreter, this: NodeId) -> Yield {
         use crate::shell::dispatch_tasks::ShellGlobTask;
         let pattern: Vec<u8>;
@@ -334,9 +332,8 @@ impl Expansion {
         Yield::suspended()
     }
 
-    /// Spec: Expansion.zig `expandSimpleNoIO`. Appends the no-IO expansion of
-    /// one [`ast::SimpleAtom`] to `out`. Returns `true` for `CmdSubst` so the
-    /// caller spawns a `Script` for it.
+    /// Appends the no-IO expansion of one [`ast::SimpleAtom`] to `out`.
+    /// Returns `true` for `CmdSubst` so the caller spawns a `Script` for it.
     fn expand_simple_no_io(
         shell: &ShellExecEnv,
         atom: &ast::SimpleAtom,
@@ -345,14 +342,13 @@ impl Expansion {
         expand_tilde: bool,
         event_loop: EventLoopHandle,
         command_ctx: *mut bun_options_types::context::ContextData,
-        vm_args_utf8: &mut Vec<bun_core::ZigStringSlice>,
+        vm_args_utf8: &mut Vec<bun_core::UTF8Slice>,
     ) -> bool {
         use crate::shell::env_str::EnvStr;
         match atom {
             ast::SimpleAtom::Text(txt) => out.extend_from_slice(txt),
             ast::SimpleAtom::QuotedEmpty => {
-                // Spec: Expansion.zig `expandSimpleNoIO` sets
-                // `has_quoted_empty = true` so an empty word is still pushed
+                // Set `has_quoted_empty = true` so an empty word is still pushed
                 // as an arg. The flag is *required* — without it Cmd cannot
                 // tell `""` (one empty arg) from `$unset` (no arg), since
                 // both leave `out.buf` empty.
@@ -391,7 +387,7 @@ impl Expansion {
         false
     }
 
-    /// Spec: Expansion.zig `pushCurrentOut`. Flush `current_out` into `out`
+    /// Flush `current_out` into `out`
     /// as the next argv word. The word boundary is recorded as the *previous*
     /// end-offset so the consumer's `[prev..bound]` slicing reconstructs each
     /// word and the trailing `[prev..]` slice yields the final one.
@@ -402,7 +398,6 @@ impl Expansion {
         me.out.buf.append(&mut me.current_out);
     }
 
-    /// Spec: Expansion.zig `postSubshellExpansion` + `convertNewlinesToSpaces`.
     /// Newlines→spaces, trim, then split on whitespace runs into separate
     /// argv words.
     fn post_subshell_expansion(me: &mut Expansion, mut stdout: Vec<u8>) {
@@ -501,9 +496,9 @@ impl Expansion {
         Yield::Next(this)
     }
 
-    /// Spec: Expansion.zig `onGlobWalkDone`. Main-thread re-entry for the
-    /// off-thread glob walker — splice each match as a separate word into
-    /// `out` then resume the atom-walk trampoline.
+    /// Main-thread re-entry for the off-thread glob walker — splice each
+    /// match as a separate word into `out` then resume the atom-walk
+    /// trampoline.
     pub fn on_glob_walk_done(
         interp: &Interpreter,
         this: NodeId,
@@ -597,5 +592,3 @@ impl Expansion {
         out
     }
 }
-
-// ported from: src/shell/states/Expansion.zig

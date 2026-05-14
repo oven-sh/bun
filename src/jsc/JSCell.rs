@@ -37,8 +37,8 @@ impl JSCell {
 
     pub fn get_type(&self) -> u8 {
         // TODO(port): jsc.markMemberBinding(JSCell, @src()) — comptime binding marker, likely drop
-        // TODO(port): Zig wraps the extern result in @enumFromInt but the fn return type is `u8`;
-        // likely intended to return `JSType` — verify in Phase B.
+        // TODO(port): the extern returns `u8` but this likely should expose
+        // `JSType` directly — verify in Phase B.
         JSC__JSCell__getType(self)
     }
 
@@ -83,8 +83,6 @@ unsafe extern "C" {
     safe fn JSC__JSCell__getType(this: &JSCell) -> u8;
 }
 
-// ported from: src/jsc/JSCell.zig
-
 // ════════════════════════════════════════════════════════════════════════════
 // JsCell<T> — single-JS-thread interior mutability
 // ════════════════════════════════════════════════════════════════════════════
@@ -99,9 +97,8 @@ unsafe extern "C" {
 /// Bun runs **one** `VirtualMachine` per JS thread. JavaScript is
 /// single-threaded and reentrant: a host function may call back into JS, which
 /// may call back into Rust, but always on the *same* OS thread. There is no
-/// true concurrent aliasing — only stacked, same-thread reentrancy. The Zig
-/// source models this with raw `*VirtualMachine` everywhere; `JsCell` is the
-/// Rust spelling of that contract.
+/// true concurrent aliasing — only stacked, same-thread reentrancy. `JsCell`
+/// is the Rust spelling of that contract.
 ///
 /// `get_mut()` is therefore *not* sound under arbitrary `Sync` semantics — the
 /// `unsafe impl Sync` below is a lie to the type system that we discharge by

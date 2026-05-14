@@ -29,7 +29,7 @@ use bun_uws;
 // ──────────────────────────────────────────────────────────────────────────
 // SendQueue ownership (§Layering / Dispatch).
 //
-// In Zig, `SendQueue.owner` is a tagged union over `*Subprocess` (parent side)
+// Originally `SendQueue.owner` is a tagged union over `*Subprocess` (parent side)
 // and `*VirtualMachine` (child side). `Subprocess` lives in `bun_runtime`
 // (tier-6), so the concrete type cannot be named here. Instead of a hand-
 // rolled fn-pointer table, the owner is stored as a raw `*mut dyn` trait
@@ -80,8 +80,6 @@ impl InternalMsgHolder {
     }
 
     pub fn enqueue(&mut self, message: JSValue, global: &JSGlobalObject) {
-        // TODO: .addOne is workaround for .append causing crash/ dependency loop in zig compiler
-        // (Rust: just push; the workaround is Zig-specific.)
         self.messages
             .push(crate::StrongOptional::create(message, global));
     }
@@ -103,7 +101,7 @@ impl InternalMsgHolder {
         if let Some(p) = message.get(global, "ack")? {
             if !p.is_undefined() {
                 let ack = p.to_int32();
-                // PORT NOTE: reshaped for borrowck — Zig copied the Strong out of the
+                // PORT NOTE: reshaped for borrowck — the original copied the Strong out of the
                 // entry, then conditionally deinit+swapRemove. Here we peek the JSValue
                 // first (ending the immutable borrow), then swap_remove (which drops the
                 // Strong == `defer cbstrong.deinit()`).
@@ -300,7 +298,7 @@ mod advanced {
         Version = 1,
         SerializedMessage = 2,
         SerializedInternalMessage = 3,
-        // Zig: `_` (non-exhaustive)
+        // (non-exhaustive)
     }
     // SAFETY: `#[repr(u8)]` fieldless enum → size 1, align 1, no padding,
     // `Copy + 'static`; the single byte is always an initialized discriminant.
@@ -430,7 +428,7 @@ mod advanced {
 
         let payload_length: usize = size_of::<IPCMessageType>() + size_of::<u32>() + size as usize;
 
-        // Spec ipc.zig:160 uses `try` — propagate OOM so serializeAndSend
+        // Propagate OOM so serializeAndSend
         // returns `.failure` instead of silently discarding the Result.
         writer
             .ensure_unused_capacity(payload_length)
@@ -534,7 +532,7 @@ mod json {
             BunString::borrow_utf8(json_data)
         };
 
-        // Zig: `defer { str.deref(); if (is_ascii && !was_ascii_string_freed) @panic(...) }`.
+        // Was `defer { str.deref(); if (is_ascii && !was_ascii_string_freed) @panic(...) }`.
         // `bun_core::String` is `Copy` (no `Drop`), so the +1 ref taken by
         // `create_external` / `borrow_utf8` must be released explicitly. The
         // ASCII-path free callback (`json_ipc_data_string_free_cb`) only fires
@@ -585,7 +583,7 @@ mod json {
                 JsError::Terminated => IPCSerializationError::JSTerminated,
                 JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
             })?;
-        // Zig: `defer out.deref()`. `bun_core::String` is `Copy` (no `Drop`),
+        // Was `defer out.deref()`. `bun_core::String` is `Copy` (no `Drop`),
         // so the +1 ref written by `json_stringify_fast` is wrapped in
         // `OwnedString` immediately so every exit path (Dead, OOM in
         // `ensure_unused_capacity`, success) releases it.
@@ -604,7 +602,7 @@ mod json {
             result_len += 1;
         }
 
-        // Spec ipc.zig:280 uses `try` — propagate OOM so serializeAndSend
+        // Propagate OOM so serializeAndSend
         // returns `.failure` instead of silently discarding the Result.
         writer
             .ensure_unused_capacity(result_len)
@@ -798,7 +796,7 @@ impl WindowsWrite {
 #[derive(Default)]
 pub struct WindowsState {
     pub is_server: bool,
-    /// Non-owning raw pointer (matches Zig `?*WindowsWrite`). The allocation
+    /// Non-owning raw pointer (the original `?*WindowsWrite`). The allocation
     /// is `heap::alloc`'d in `_write` and freed exactly once by
     /// `_windows_on_write_complete` via `WindowsWrite::destroy`. Nulling this
     /// field never frees.
@@ -852,7 +850,7 @@ pub struct SendQueue {
     /// SendQueue is stored inline in its owner, so this is a self-referential
     /// raw pointer; never reborrow as `&mut dyn` while a `&mut SendQueue` is
     /// live (every access goes through `unsafe { &mut *self.owner }` at the
-    /// call site, mirroring the Zig union dispatch).
+    /// call site, mirroring the original union dispatch).
     pub owner: *mut dyn SendQueueOwner,
 
     pub close_next_tick: Option<Task>,
@@ -869,7 +867,7 @@ pub struct SendQueue {
 
 /// Dispatch surface for the SendQueue's embedding object — either a
 /// `Subprocess` (parent side, `bun_runtime`) or a `VirtualMachine::IPCInstance`
-/// (child side, this crate). Replaces the Zig `union(enum) { subprocess,
+/// (child side, this crate). Replaces the original `union(enum) { subprocess,
 /// virtual_machine }` switch with a trait object so the concrete `Subprocess`
 /// type need not be named here.
 pub trait SendQueueOwner {
@@ -1016,7 +1014,7 @@ impl SendQueue {
                 Ok(())
             });
             self.after_close_task = Some(task);
-            // Spec ipc.zig:589 calls `bunVM().enqueueTask(...)` on a raw
+            // The original calls `bunVM().enqueueTask(...)` on a raw
             // `*VirtualMachine`. Do NOT materialize `&mut VirtualMachine` from
             // `bun_vm()`'s shared `&VirtualMachine` (Stacked-Borrows UB —
             // `&mut T` while other `&T` exist). Route through the safe
@@ -1229,7 +1227,7 @@ impl SendQueue {
     pub fn update_ref(&mut self, global: &JSGlobalObject) {
         let _ = global;
         // PORT NOTE: KeepAlive::{ref_,unref} take an `EventLoopCtx` (aio cycle-
-        // break vtable), not `&VirtualMachine`. The Zig anytype dispatch is
+        // break vtable), not `&VirtualMachine`. The original anytype dispatch is
         // routed through `bun_io::get_vm_ctx` which `bun_runtime` registers.
         let ctx = bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js);
         if self.should_ref() {
@@ -1280,7 +1278,6 @@ impl SendQueue {
             log!("IPC call continueSend() from empty item");
             return self.continue_send(global, reason);
         }
-        // log("sending ipc message: '{'}' (has_handle={})", .{ std.zig.fmtString(to_send), first.handle != null });
         debug_assert!(!self.write_in_progress);
         self.write_in_progress = true;
         let fd = self.queue[0].handle.as_ref().map(|h| h.fd);
@@ -1387,7 +1384,6 @@ impl SendQueue {
             Err(_) => return SerializeAndSendResult::Failure,
         };
         debug_assert!(msg.data.list.len() == start_offset + payload_length);
-        // log("enqueueing ipc message: '{'}'", .{std.zig.fmtString(msg.data.list.items[start_offset..])});
 
         log!("IPC call continueSend() from serializeAndSend");
         self.continue_send(global, ContinueSendReason::NewMessageAppended);
@@ -1487,8 +1483,8 @@ impl SendQueue {
                     // `WindowsWrite::destroy`; holding a live `&mut WindowsWrite`
                     // across that free would dangle the reference (UB) and the
                     // `Box::from_raw` would carry the `&mut`-reborrow tag instead
-                    // of the original allocation root. Matches Zig's raw-pointer
-                    // pass-through (libuv.zig `uvWriteCb`).
+                    // of the original allocation root. Matches the original
+                    // raw-pointer pass-through (`uvWriteCb`).
                     |req: *mut WindowsWrite, rc| SendQueue::_windows_on_write_complete(req, rc),
                 )
             };
@@ -1571,11 +1567,11 @@ impl SendQueue {
         if this.windows.try_close_after_write {
             this.close_socket(CloseReason::Normal, CloseFrom::User);
         }
-        // Zig: `defer vm.eventLoop().exit()` — handled by `_scope` drop.
+        // Was `defer vm.eventLoop().exit()` — handled by `_scope` drop.
     }
     fn get_global_this(&self) -> crate::GlobalRef {
         // PORT NOTE: lifetime detached from `&self` so callers can hold the
-        // global across `&mut self` borrows (Zig passes `*JSGlobalObject` by
+        // global across `&mut self` borrows (the original passes `*JSGlobalObject` by
         // raw pointer everywhere). The owner (Subprocess / IPCInstance)
         // outlives this SendQueue and the JSGlobalObject is heap-allocated by
         // JSC for the VM's lifetime. `opaque_ref` is the safe ZST-handle deref
@@ -1694,9 +1690,9 @@ impl SendQueue {
 }
 
 /// Adapter from `UvStream::read_start_ctx` to the `IPCHandlers::WindowsNamedPipe`
-/// callbacks. Zig passed the three fns as `comptime` pointers; Rust bakes them
-/// into the trait impl so the `extern "C"` trampoline is monomorphised over
-/// `SendQueue` with zero per-handle storage.
+/// callbacks. The original passed the three fns as `comptime` pointers; Rust
+/// bakes them into the trait impl so the `extern "C"` trampoline is
+/// monomorphised over `SendQueue` with zero per-handle storage.
 #[cfg(windows)]
 impl uv::StreamReader for SendQueue {
     #[inline]
@@ -1705,7 +1701,7 @@ impl uv::StreamReader for SendQueue {
     }
     #[inline]
     fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
-        // Zig: `errEnum() orelse bun.sys.E.CANCELED` — map the raw libuv errno
+        // Originally `errEnum() orelse bun.sys.E.CANCELED` — map the raw libuv errno
         // to `bun_sys::E`, defaulting to CANCELED for unmapped codes.
         let e = bun_sys::windows::translate_uv_error_to_e(err);
         IPCHandlers::WindowsNamedPipe::on_read_error(this, e);
@@ -1778,7 +1774,7 @@ fn handle_ipc_message(
 ) {
     #[cfg(debug_assertions)]
     {
-        // PORT NOTE: Zig formats the JSValue via ConsoleObject.Formatter for
+        // PORT NOTE: the original formats the JSValue via ConsoleObject.Formatter for
         // the scoped log; the Rust `Formatter` has no `Default` and threading
         // it through here pulls in the full table-printer machinery for a
         // debug-only log line. Log the variant tag instead.
@@ -1903,7 +1899,6 @@ fn handle_ipc_message(
 
 fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
     let mut data = all_data;
-    // log("onData '{'}'", .{std.zig.fmtString(data)});
 
     // In the VirtualMachine case, `globalThis` is an optional, in case
     // the vm is freed before the socket closes.
@@ -2308,7 +2303,7 @@ pub fn ipc_serialize(
     message: JSValue,
     handle: JSValue,
 ) -> JsResult<JSValue> {
-    // `[[ZIG_EXPORT(zero_is_throw)]]`
+    // `[[RUST_EXPORT(zero_is_throw)]]`
     crate::cpp::IPCSerialize(global_object, message, handle)
 }
 
@@ -2319,8 +2314,6 @@ pub fn ipc_parse(
     serialized: JSValue,
     fd: JSValue,
 ) -> JsResult<JSValue> {
-    // `[[ZIG_EXPORT(zero_is_throw)]]`
+    // `[[RUST_EXPORT(zero_is_throw)]]`
     crate::cpp::IPCParse(global_object, target, serialized, fd)
 }
-
-// ported from: src/jsc/ipc.zig

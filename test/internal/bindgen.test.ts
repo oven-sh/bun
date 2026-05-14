@@ -46,7 +46,7 @@ it("bindgen add example", () => {
   expect(bindgen.add(5555555555555, 0)).toBe(-2132125469);
   expect(bindgen.add(-5555555555555, 0)).toBe(2132125469);
 
-  // Test Zig error handling
+  // Test native error handling
   expect(() => bindgen.add(2147483647, 1)).toThrow("Integer overflow while adding");
 });
 

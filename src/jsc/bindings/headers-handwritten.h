@@ -7,7 +7,7 @@
 
 #ifndef HEADERS_HANDWRITTEN
 #define HEADERS_HANDWRITTEN
-typedef uint16_t ZigErrorCode;
+typedef uint16_t BunErrorCode;
 typedef struct VirtualMachine VirtualMachine;
 // exists to make headers.h happy
 typedef struct CppWebSocket CppWebSocket;
@@ -16,15 +16,15 @@ namespace WTF {
 class String;
 }
 
-typedef struct ZigString {
+typedef struct UnsafeStringView {
     const unsigned char* ptr;
     size_t len;
-} ZigString;
+} UnsafeStringView;
 
 #ifndef __cplusplus
 typedef uint8_t BunStringTag;
 typedef union BunStringImpl {
-    ZigString zig;
+    UnsafeStringView view;
     void* wtf;
 } BunStringImpl;
 
@@ -35,19 +35,19 @@ class String;
 }
 
 typedef union BunStringImpl {
-    ZigString zig;
+    UnsafeStringView view;
     WTF::StringImpl* wtf;
 } BunStringImpl;
 
 enum class BunStringTag : uint8_t {
     Dead = 0,
     WTFStringImpl = 1,
-    ZigString = 2,
-    StaticZigString = 3,
+    UnsafeStringView = 2,
+    StaticUnsafeStringView = 3,
     Empty = 4,
 };
 
-/// Mirrors `bun.uws.ResponseKind` in src/uws_sys/uws.zig.
+/// Mirrors `bun.uws.ResponseKind` in src/uws/lib.rs.
 enum class UWSResponseKind : int32_t {
     TCP = 0,
     SSL = 1,
@@ -73,8 +73,8 @@ typedef struct BunString {
     // Zero copy is kind of a lie.
     // We clone it if it's non-ASCII UTF-8.
     // We don't clone it if it was marked as static
-    // if it was a ZigString, it still allocates a WTF::StringImpl.
-    // It's only truly zero-copy if it was already a WTFStringImpl (which it is if it came from JS and we didn't use ZigString)
+    // if it was a UnsafeStringView, it still allocates a WTF::StringImpl.
+    // It's only truly zero-copy if it was already a WTFStringImpl (which it is if it came from JS and we didn't use UnsafeStringView)
     WTF::String toWTFString(ZeroCopyTag) const;
 
     // If the string is empty, this will ensure m_impl is non-null by
@@ -92,21 +92,21 @@ typedef struct BunString {
 
 } BunString;
 
-typedef struct ZigErrorType {
-    ZigErrorCode code;
+typedef struct BunErrorType {
+    BunErrorCode code;
     JSC::EncodedJSValue value;
-} ZigErrorType;
-typedef union ErrorableZigStringResult {
-    ZigString value;
-    ZigErrorType err;
-} ErrorableZigStringResult;
-typedef struct ErrorableZigString {
-    ErrorableZigStringResult result;
+} BunErrorType;
+typedef union ErrorableUnsafeStringViewResult {
+    UnsafeStringView value;
+    BunErrorType err;
+} ErrorableUnsafeStringViewResult;
+typedef struct ErrorableUnsafeStringView {
+    ErrorableUnsafeStringViewResult result;
     bool success;
-} ErrorableZigString;
+} ErrorableUnsafeStringView;
 typedef union ErrorableStringResult {
     BunString value;
-    ZigErrorType err;
+    BunErrorType err;
 } ErrorableStringResult;
 typedef struct ErrorableString {
     ErrorableStringResult result;
@@ -134,7 +134,7 @@ typedef struct ResolvedSource {
 static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
-    ZigErrorType err;
+    BunErrorType err;
 } ErrorableResolvedSourceResult;
 typedef struct ErrorableResolvedSource {
     ErrorableResolvedSourceResult result;
@@ -161,19 +161,19 @@ const BunPluginTarget BunPluginTargetBrowser = 1;
 const BunPluginTarget BunPluginTargetNode = 2;
 const BunPluginTarget BunPluginTargetMax = BunPluginTargetNode;
 
-typedef uint8_t ZigStackFrameCode;
-const ZigStackFrameCode ZigStackFrameCodeNone = 0;
-const ZigStackFrameCode ZigStackFrameCodeEval = 1;
-const ZigStackFrameCode ZigStackFrameCodeModule = 2;
-const ZigStackFrameCode ZigStackFrameCodeFunction = 3;
-const ZigStackFrameCode ZigStackFrameCodeGlobal = 4;
-const ZigStackFrameCode ZigStackFrameCodeWasm = 5;
-const ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
+typedef uint8_t BunStackFrameCode;
+const BunStackFrameCode BunStackFrameCodeNone = 0;
+const BunStackFrameCode BunStackFrameCodeEval = 1;
+const BunStackFrameCode BunStackFrameCodeModule = 2;
+const BunStackFrameCode BunStackFrameCodeFunction = 3;
+const BunStackFrameCode BunStackFrameCodeGlobal = 4;
+const BunStackFrameCode BunStackFrameCodeWasm = 5;
+const BunStackFrameCode BunStackFrameCodeConstructor = 6;
 
 extern "C" void __attribute((__noreturn__)) Bun__panic(const char* message, size_t length);
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 
-typedef struct ZigStackFramePosition {
+typedef struct BunStackFramePosition {
     int32_t line_zero_based;
     int32_t column_zero_based;
     int32_t byte_position;
@@ -186,18 +186,18 @@ typedef struct ZigStackFramePosition {
     {
         return OrdinalNumber::fromZeroBasedInt(this->line_zero_based);
     }
-} ZigStackFramePosition;
+} BunStackFramePosition;
 
-typedef struct ZigStackFrame {
+typedef struct BunStackFrame {
     BunString function_name;
     BunString source_url;
-    ZigStackFramePosition position;
-    ZigStackFrameCode code_type;
+    BunStackFramePosition position;
+    BunStackFrameCode code_type;
     bool is_async;
     bool remapped;
     int32_t jsc_stack_frame_index;
 
-    ZigStackFrame()
+    BunStackFrame()
         : function_name {}
         , source_url {}
         , position {}
@@ -207,20 +207,20 @@ typedef struct ZigStackFrame {
         , jsc_stack_frame_index(-1)
     {
     }
-} ZigStackFrame;
+} BunStackFrame;
 
-typedef struct ZigStackTrace {
+typedef struct BunStackTrace {
     BunString* source_lines_ptr;
     OrdinalNumber* source_lines_numbers;
     uint8_t source_lines_len;
     uint8_t source_lines_to_collect;
-    ZigStackFrame* frames_ptr;
+    BunStackFrame* frames_ptr;
     uint8_t frames_len;
     uint8_t frames_cap;
     JSC::SourceProvider* referenced_source_provider;
-} ZigStackTrace;
+} BunStackTrace;
 
-typedef struct ZigException {
+typedef struct BunException {
     unsigned char type;
     uint16_t runtime_type;
     int errno_;
@@ -229,11 +229,11 @@ typedef struct ZigException {
     BunString path;
     BunString name;
     BunString message;
-    ZigStackTrace stack;
+    BunStackTrace stack;
     void* exception;
     bool remapped;
     int fd;
-} ZigException;
+} BunException;
 
 typedef uint8_t JSErrorCode;
 const JSErrorCode JSErrorCodeError = 0;
@@ -248,7 +248,7 @@ const JSErrorCode JSErrorCodeOutOfMemoryError = 8;
 const JSErrorCode JSErrorCodeStackOverflow = 253;
 const JSErrorCode JSErrorCodeUserErrorCode = 254;
 
-// Must be kept in sync with bun.schema.api.Loader in schema.zig
+// Must be kept in sync with `api::Loader` in the generated schema module.
 typedef uint8_t BunLoaderType;
 const BunLoaderType BunLoaderTypeNone = 254;
 const BunLoaderType BunLoaderTypeJSX = 1;
@@ -359,15 +359,15 @@ typedef struct {
 
 extern "C" const char* Bun__userAgent;
 
-extern "C" ZigErrorCode Zig_ErrorCodeParserError;
+extern "C" BunErrorCode Bun_ErrorCodeParserError;
 
-extern "C" void ZigString__free(const unsigned char* ptr, size_t len, void* allocator);
+extern "C" void UnsafeStringView__free(const unsigned char* ptr, size_t len, void* allocator);
 
 extern "C" bool Bun__transpileVirtualModule(
     JSC::JSGlobalObject* global,
     const BunString* specifier,
     const BunString* referrer,
-    ZigString* sourceCode,
+    UnsafeStringView* sourceCode,
     BunLoaderType loader,
     ErrorableResolvedSource* result);
 
@@ -403,13 +403,13 @@ extern "C" const char* Bun__version;
 extern "C" const char* Bun__version_with_sha;
 
 // Version exports removed - now handled by CMake-generated header (bun_dependency_versions.h)
-// Only keep the ones still exported from Zig
+// Only keep the ones still exported from the Rust runtime
 extern "C" const char* Bun__versions_uws;
 extern "C" const char* Bun__versions_usockets;
 
 extern "C" const char* Bun__version_sha;
 
-extern "C" void ZigString__freeGlobal(const unsigned char* ptr, size_t len);
+extern "C" void UnsafeStringView__freeGlobal(const unsigned char* ptr, size_t len);
 
 extern "C" size_t Bun__encoding__writeLatin1(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
 extern "C" size_t Bun__encoding__writeUTF16(const char16_t* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
@@ -472,7 +472,7 @@ bool Bun__deepMatch(
     bool replacePropsWithAsymmetricMatchers,
     bool isMatchingObjectContaining);
 
-extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);
+extern "C" void Bun__remapStackFramePositions(void*, BunStackFrame*, size_t);
 
 namespace Inspector {
 class ScriptArguments;

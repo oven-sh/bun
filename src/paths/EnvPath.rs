@@ -19,22 +19,20 @@ fn trim_path_delimiters(input: &[u8]) -> &[u8] {
     trimmed
 }
 
-// Zig: `pub fn EnvPath(comptime opts: EnvPathOptions) type { return struct { ... } }`
-// TODO(port): `EnvPathOptions` currently has no fields, so the comptime `opts`
-// parameter is vacuous. Re-introduce a `<const OPTS: EnvPathOptions>` const
-// generic (with `#[derive(core::marker::ConstParamTy)]` on `EnvPathOptions`)
-// once options are actually added.
+// TODO(port): `EnvPathOptions` currently has no fields, so a const-generic
+// `opts` parameter would be vacuous. Re-introduce a `<const OPTS: EnvPathOptions>`
+// const generic (with `#[derive(core::marker::ConstParamTy)]` on
+// `EnvPathOptions`) once options are actually added.
 #[derive(Default)]
 pub struct EnvPath {
-    // Zig: `std.mem.Allocator param` — dropped (non-AST crate, global mimalloc).
+    // No allocator param (non-AST crate, global mimalloc).
     buf: Vec<u8>,
 }
 
 /// Input accepted by [`EnvPath::append`].
 ///
-/// Zig's `append` takes `input: anytype` and switches on `@TypeOf(input)`:
-/// raw slices are trimmed, anything else is assumed already-trimmed and has
-/// `.slice()` called on it. In Rust we express that dispatch as a trait.
+/// Raw slices are trimmed; anything else is assumed already-trimmed and has
+/// `.slice()` called on it. The dispatch is expressed as a trait.
 pub trait EnvPathInput {
     fn as_trimmed(&self) -> &[u8];
 }
@@ -51,9 +49,9 @@ impl EnvPathInput for &mut [u8] {
     }
 }
 
-// "assume already trimmed" — the `else` arm in Zig calls `input.slice()` for any
-// `bun.Path(...)` instantiation. Blanket over all const params so callers may pass
-// any `&Path<u8, KIND, SEP, CHECK>` (e.g. `PathComponentBuilder.apply()`).
+// "assume already trimmed" — `input.slice()` is called for any `Path`
+// instantiation. Blanket over all const params so callers may pass any
+// `&Path<u8, KIND, SEP, CHECK>` (e.g. `PathComponentBuilder.apply()`).
 impl<const KIND: u8, const SEP_OPT: u8, const CHECK: u8> EnvPathInput
     for &crate::Path<u8, KIND, SEP_OPT, CHECK>
 {
@@ -68,14 +66,14 @@ impl EnvPath {
     }
 
     pub fn init_capacity(capacity: usize) -> Result<Self, AllocError> {
-        // PERF(port): Zig used `ArrayListUnmanaged.initCapacity` which is fallible;
-        // `Vec::with_capacity` aborts on OOM under the global mimalloc allocator.
+        // PERF(port): `Vec::with_capacity` aborts on OOM under the global
+        // mimalloc allocator (no fallible variant on stable).
         Ok(Self {
             buf: Vec::with_capacity(capacity),
         })
     }
 
-    // Zig `deinit` only freed `buf` — handled by `Drop` on `Vec<u8>`.
+    // `deinit` only freed `buf` — handled by `Drop` on `Vec<u8>`.
 
     pub fn slice(&self) -> &[u8] {
         self.buf.as_slice()
@@ -109,24 +107,21 @@ impl EnvPath {
 
 pub struct PathComponentBuilder<'a> {
     env_path: &'a mut EnvPath,
-    // Zig: `AbsPath(.{ .sep = .auto })`
     path_buf: crate::AutoAbsPath,
 }
 
 impl<'a> PathComponentBuilder<'a> {
     pub fn append(&mut self, component: &[u8]) {
-        let _ = self.path_buf.append(component); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = self.path_buf.append(component); // OOM/capacity: fire-and-forget
     }
 
     pub fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) {
-        let _ = self.path_buf.append_fmt(args); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = self.path_buf.append_fmt(args); // OOM/capacity: fire-and-forget
     }
 
     pub fn apply(mut self) -> Result<(), AllocError> {
         self.env_path.append(&self.path_buf)?;
-        // Zig: `this.path_buf.deinit();` — `path_buf` drops at end of scope.
+        // `path_buf` drops at end of scope.
         Ok(())
     }
 }
-
-// ported from: src/paths/EnvPath.zig

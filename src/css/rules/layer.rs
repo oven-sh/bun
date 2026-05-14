@@ -12,21 +12,20 @@ use crate::{PrintErr, Printer, SmallList};
 /// notation (`a.b.c`) creates sublayers.
 #[derive(Default)]
 pub struct LayerName {
-    // TODO(port): arena lifetime — Zig `[]const u8` segments borrow the parser
-    // arena. Phase B threads `'bump` once `CssRuleList` re-gains its arena
-    // lifetime; until then segments are laundered through `&'static [u8]` like
-    // every other CSS slice in this crate.
+    // TODO(port): arena lifetime — segments borrow the parser arena.
+    // Phase B threads `'bump` once `CssRuleList` re-gains its arena lifetime;
+    // until then segments are laundered through `&'static [u8]` like every
+    // other CSS slice in this crate.
     pub v: SmallList<&'static [u8], 1>,
 }
 
-// Zig: `pub fn HashMap(comptime V: type) type { return std.ArrayHashMapUnmanaged(...) }`
 // The inline hash/eql context is replaced by `Hash`/`PartialEq` impls on `LayerName` below.
-// TODO(port): ArrayHashMap must use wyhash (u32-truncated) to match Zig iteration order.
+// TODO(port): ArrayHashMap must use wyhash (u32-truncated) to preserve iteration order.
 pub type LayerNameHashMap<V> = ArrayHashMap<LayerName, V>;
 
 impl core::hash::Hash for LayerName {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        // Mirrors the Zig ArrayHashMap context: Wyhash(seed=0) over each part's bytes.
+        // ArrayHashMap context: Wyhash(seed=0) over each part's bytes.
         for part in self.v.slice() {
             state.write(part);
         }
@@ -52,9 +51,9 @@ impl Clone for LayerName {
 
 impl LayerName {
     pub fn clone_with_import_records(&self, _bump: &Arena, _: &mut Vec<ImportRecord>) -> Self {
-        // `[]const u8` segments are arena-borrowed, not owned, so the Zig
-        // `deepClone` here was a shallow `SmallList` copy. No import records to
-        // rewrite — layer names contain no URLs.
+        // Segments are arena-borrowed, not owned, so this `deep_clone` is a
+        // shallow `SmallList` copy. No import records to rewrite — layer names
+        // contain no URLs.
         LayerName { v: self.v.clone() }
     }
 
@@ -76,7 +75,6 @@ impl LayerName {
         parts.append(ident);
 
         loop {
-            // Zig: `const Fn = struct { pub fn tryParseFn(...) ... }`
             let try_parse_fn =
                 |i: &mut css::css_parser::Parser<'_>| -> css::css_parser::CssResult<&'static [u8]> {
                     let start_location = i.current_source_location();
@@ -109,9 +107,8 @@ impl LayerName {
     }
 
     pub fn deep_clone(&self, _bump: &Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` — `[]const u8` segments are
-        // arena-owned (identity copy per generics.zig "const strings"). Same
-        // body as `clone_with_import_records` above.
+        // PORT NOTE: byte-slice segments are arena-owned (identity copy,
+        // "const strings" rule). Same body as `clone_with_import_records` above.
         LayerName { v: self.v.clone() }
     }
 }
@@ -123,7 +120,6 @@ impl css::generics::ToCss for LayerName {
     }
 }
 
-// Zig: `pub fn format(self, writer: *std.Io.Writer) !void` → `impl Display`
 impl fmt::Display for LayerName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut first = true;
@@ -216,5 +212,3 @@ impl LayerStatementRule {
         }
     }
 }
-
-// ported from: src/css/rules/layer.zig

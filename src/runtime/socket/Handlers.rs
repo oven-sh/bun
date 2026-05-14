@@ -1,7 +1,7 @@
 use core::cell::Cell;
 use core::mem::offset_of;
 
-use bun_core::zig_string::Slice as ZigStringSlice;
+use bun_core::unsafe_string_view::Slice as UTF8Slice;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::generated::{
     SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers,
@@ -89,11 +89,10 @@ pub struct Handlers {
     pub protection_count: u32,
 }
 
-// PORT NOTE: bare JSValue fields are heap-stored here, but Zig keeps them alive via
+// PORT NOTE: bare JSValue fields are heap-stored here, but the implementation keeps them alive via
 // JSC protect()/unprotect() (GC roots), not stack scanning — so this is sound.
 
 /// Expands `$body` once per callback field with `$f` bound to the field ident.
-/// Mirrors Zig `inline for (callback_fields) |field| { @field(x, field) ... }`.
 macro_rules! for_each_callback_field {
     ($self:expr, |$f:ident| $body:block) => {{
         {
@@ -259,13 +258,12 @@ impl Handlers {
                         .poll_ref
                         .with_mut(|p| p.unref(bun_io::js_vm_ctx()));
                     listen_socket.strong_self.with_mut(|s| s.deinit());
-                    // PORT NOTE: Zig `strong_self.deinit()` → StrongOptional::deinit; field stays valid (empty)
+                    // PORT NOTE: `strong_self.deinit()` → StrongOptional::deinit; field stays valid (empty)
                 }
             } else {
                 // Client-mode Handlers is heap-allocated per-connection
-                // (Listener::connect_inner via `heap::alloc`). Zig does
-                // `this.deinit(); vm.allocator.destroy(this);` here — match
-                // that: free in place so callers that only hold a `*mut`
+                // (Listener::connect_inner via `heap::alloc`). Free in place
+                // so callers that only hold a `*mut`
                 // (and thus can't `drop(Box)`) don't leak the allocation or
                 // its `protect()`ed JSValues. Caller must still null its
                 // field when this returns true.
@@ -435,7 +433,6 @@ impl Handlers {
 
 impl Drop for Handlers {
     fn drop(&mut self) {
-        // Zig deinit: unprotect() + promise.deinit() + this.* = undefined
         self.unprotect();
         // `promise: Strong` drops itself.
     }
@@ -473,7 +470,7 @@ use bun_jsc::generated::SocketConfigHandlersBinaryType as GeneratedBinaryType;
 
 /// `handlers` is always `protect`ed in this struct.
 pub struct SocketConfig {
-    pub hostname_or_unix: ZigStringSlice,
+    pub hostname_or_unix: UTF8Slice,
     pub port: Option<u16>,
     pub fd: Option<Fd>,
     pub ssl: Option<SSLConfig>,
@@ -486,16 +483,15 @@ pub struct SocketConfig {
 }
 
 impl SocketConfig {
-    // PORT NOTE: Zig `deinit()` → Drop is automatic (all owned fields impl Drop).
-    // Zig `deinitExcludingHandlers()` preserves `handlers` at the same address so
+    // PORT NOTE: full `deinit()` → Drop is automatic (all owned fields impl Drop).
+    // `deinitExcludingHandlers()` preserves `handlers` at the same address so
     // outstanding `*Handlers` stay valid. Kept as explicit method.
 
     /// Deinitializes everything except `handlers`.
     pub fn deinit_excluding_handlers(&mut self) {
-        // TODO(port): in Zig this writes `undefined` to all non-handlers fields after
-        // freeing them, then restores `handlers`. In Rust we drop the owned non-handlers
-        // fields in place; `handlers` is left untouched so pointers into it remain valid.
-        self.hostname_or_unix = ZigStringSlice::empty();
+        // TODO(port): drop the owned non-handlers fields in place; `handlers` is left
+        // untouched so pointers into it remain valid.
+        self.hostname_or_unix = UTF8Slice::empty();
         self.ssl = None;
         // other scalar fields need no cleanup
     }
@@ -544,7 +540,7 @@ impl SocketConfig {
             };
             // PORT NOTE: `errdefer bun.memory.deinit(&ssl)` — ssl drops on `?`
             break 'blk SocketConfig {
-                hostname_or_unix: ZigStringSlice::empty(),
+                hostname_or_unix: UTF8Slice::empty(),
                 port: None,
                 fd: generated.fd.map(Fd::from_uv),
                 ssl,
@@ -577,7 +573,7 @@ impl SocketConfig {
             {
                 let without_prefix = slice[7..].to_vec();
                 // PORT NOTE: reshaped for borrowck — drop borrow of slice before reassigning
-                result.hostname_or_unix = ZigStringSlice::init_owned(without_prefix);
+                result.hostname_or_unix = UTF8Slice::init_owned(without_prefix);
             }
         } else if let Some(hostname) = generated.hostname.get() {
             if hostname.length() == 0 {
@@ -624,5 +620,3 @@ impl SocketConfig {
 
 // TODO(port): GeneratedTls is the union(enum) at jsc.generated.SocketConfig.tls
 use bun_jsc::generated::SocketConfigTls as GeneratedTls;
-
-// ported from: src/runtime/socket/Handlers.zig

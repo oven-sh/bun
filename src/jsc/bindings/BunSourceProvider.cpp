@@ -2,11 +2,11 @@
 
 #include "helpers.h"
 
-#include "ZigSourceProvider.h"
+#include "BunSourceProvider.h"
 #include "BunAnalyzeTranspiledModule.h"
 
 #include <JavaScriptCore/BytecodeCacheError.h>
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "wtf/Assertions.h"
 
 #include <JavaScriptCore/Completion.h>
@@ -17,7 +17,7 @@
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
 
-namespace Zig {
+namespace Bun {
 
 using Base = JSC::SourceProvider;
 using BytecodeCacheGenerator = JSC::BytecodeCacheGenerator;
@@ -71,7 +71,7 @@ extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* op
 extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
 
 Ref<SourceProvider> SourceProvider::create(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     ResolvedSource& resolvedSource,
     JSC::SourceProviderSourceType sourceType,
     bool isBuiltin)
@@ -172,10 +172,10 @@ SourceProvider::~SourceProvider()
         Bun__removeSourceProviderSourceMap(m_bunVM, this, &str);
     }
     if (m_resolvedSource.module_info != nullptr) {
-        zig__ModuleInfoDeserialized__deinit(static_cast<bun_ModuleInfoDeserialized*>(m_resolvedSource.module_info));
+        bun__ModuleInfoDeserialized__deinit(static_cast<bun_ModuleInfoDeserialized*>(m_resolvedSource.module_info));
         m_resolvedSource.module_info = nullptr;
     }
-    // The Rust/Zig side hands these as +1 (RuntimeTranspilerStore::run_from_js_thread:
+    // The Rust side hands these as +1 (RuntimeTranspilerStore::run_from_js_thread:
     // `out.dupeRef()` / `out.createIfDifferent(..)`; ModuleLoader paths likewise).
     // #9521 removed the early deref in `create()` because these strings are still
     // read after that point; the matching deref belongs here, once all uses are done.
@@ -400,9 +400,9 @@ int SourceProvider::readCache(JSC::VM& vm, const JSC::SourceCode& sourceCode)
     // }
 }
 
-extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)
+extern "C" BunString BunSourceProvider__getSourceSlice(SourceProvider* provider)
 {
     return Bun::toStringView(provider->source());
 }
 
-}; // namespace Zig
+}; // namespace Bun

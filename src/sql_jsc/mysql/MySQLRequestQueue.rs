@@ -7,8 +7,7 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 
 use crate::mysql::js_mysql_query::JSMySQLQuery;
-// PORT NOTE: Zig re-exports `MySQLConnection` from JSMySQLConnection.zig — the
-// queue's "connection" param is the JS-wrapper type (it calls
+// PORT NOTE: the queue's "connection" param is the JS-wrapper type (it calls
 // `reset_connection_timeout`/`on_error` which live on the wrapper, plus
 // `is_able_to_write` which forwards to the inner protocol struct).
 use crate::mysql::js_mysql_connection::JSMySQLConnection as MySQLConnection;
@@ -126,9 +125,9 @@ impl MySQLRequestQueue {
         // momentary `Deref` lifetime. All queue mutation below goes through
         // `Cell`/`JsCell` interior mutability — `&Self` is sufficient.
         let queue_ref: ParentRef<Self> = ParentRef::new(&conn_ref.connection.get().queue);
-        // PORT NOTE: reshaped for borrowck — Zig `defer { while ... }` cleanup
-        // became a post-block pass; early `return`s in the Zig loop become
-        // `break 'advance` so cleanup always runs at function exit.
+        // PORT NOTE: reshaped for borrowck — deferred cleanup became a
+        // post-block pass; early returns in the loop become `break 'advance`
+        // so cleanup always runs at function exit.
         'advance: {
             let mut offset: usize = 0;
 
@@ -226,7 +225,7 @@ impl MySQLRequestQueue {
             }
         }
 
-        // Zig: defer { while ... } — runs at function exit.
+        // Deferred cleanup pass — runs at function exit.
         while queue_ref.requests.get().readable_length() > 0 {
             let request: *mut JSMySQLQuery = queue_ref.requests.get().peek_item(0);
             // Queue holds a ref on every request (taken in `add()`), so the
@@ -322,14 +321,14 @@ impl MySQLRequestQueue {
         self.pipelined_requests.set(0);
         self.nonpipelinable_requests.set(0);
         self.waiting_to_prepare.set(false);
-        // `requests` drops at scope exit (Zig: defer requests.deinit()).
+        // `requests` drops at scope exit.
 
         while let Some(request) = requests.read_item() {
             // Queue held a ref on every request; pointer is non-null and live
             // until `deref()`. R-2: `ParentRef` yields `&T` only — every method
             // body reached below is `&self`.
             let req = ParentRef::from(NonNull::new(request).expect("queue item non-null"));
-            // Zig: defer request.deref() — moved to end of loop body; no early
+            // request.deref() moved to end of loop body; no early
             // exits between here and there.
             if !req.is_completed() {
                 if let Some(r) = reason {
@@ -346,9 +345,9 @@ impl MySQLRequestQueue {
 
 impl Drop for MySQLRequestQueue {
     fn drop(&mut self) {
-        // PORT NOTE: reshaped for borrowck — Zig iterates readableSlice(0) while
-        // discard(1)'ing, which in Rust would overlap & / &mut borrows on
-        // self.requests. read_item() peeks+discards in one &mut call.
+        // PORT NOTE: reshaped for borrowck — iterating readableSlice(0) while
+        // discard(1)'ing would overlap & / &mut borrows on self.requests.
+        // read_item() peeks+discards in one &mut call.
         while let Some(request) = self.requests.with_mut(|q| q.read_item()) {
             // Queue held a ref on every request; pointer is non-null and live
             // until `deref()`. R-2: `ParentRef` yields `&T` only.
@@ -361,8 +360,6 @@ impl Drop for MySQLRequestQueue {
         self.pipelined_requests.set(0);
         self.nonpipelinable_requests.set(0);
         self.waiting_to_prepare.set(false);
-        // self.requests drops automatically (Zig: this.#requests.deinit()).
+        // self.requests drops automatically.
     }
 }
-
-// ported from: src/sql_jsc/mysql/MySQLRequestQueue.zig

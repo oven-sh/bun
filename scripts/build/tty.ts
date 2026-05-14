@@ -26,7 +26,7 @@ export const red = (s: string): string => (useColor ? `\x1b[31m${s}\x1b[39m` : s
 /**
  * Hash a name to a stable 256-color. Same name → same color across runs,
  * so `[tinycc]` in stream output and `tinycc` in the done line match.
- * zig overridden to brand orange.
+ * `bun` overridden to brand orange.
  *
  * `color` defaults to this module's stderr-TTY check. stream.ts passes
  * its own — it writes to FD 3 (a terminal when set up by build.ts) while
@@ -34,7 +34,7 @@ export const red = (s: string): string => (useColor ? `\x1b[31m${s}\x1b[39m` : s
  */
 export function nameColor(name: string, text: string = name, color: boolean = useColor): string {
   if (!color) return text;
-  const overrides: Record<string, number> = { zig: 214 };
+  const overrides: Record<string, number> = { bun: 214 };
   const palette = [220, 184, 154, 120, 114, 86, 87, 81, 111, 147, 141, 183];
   let h = 2166136261;
   for (let i = 0; i < name.length; i++) {

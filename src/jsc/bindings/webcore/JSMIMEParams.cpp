@@ -17,7 +17,7 @@
 #include "wtf/text/StringBuilder.h"
 #include "wtf/text/WTFString.h"
 #include "wtf/ASCIICType.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "NodeValidator.h" // For Bun::V::
 #include "ErrorCode.h" // For Bun::ERR::
 #include "JavaScriptCore/JSMapInlines.h"
@@ -657,11 +657,11 @@ JSC_DEFINE_HOST_FUNCTION(constructMIMEParams, (JSGlobalObject * globalObject, Ca
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSC::Structure* structure = zigGlobalObject->m_JSMIMEParamsClassStructure.get(zigGlobalObject);
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
+    JSC::Structure* structure = bunGlobalObject->m_JSMIMEParamsClassStructure.get(bunGlobalObject);
 
     JSC::JSValue newTarget = callFrame->newTarget();
-    if (zigGlobalObject->m_JSMIMEParamsClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
+    if (bunGlobalObject->m_JSMIMEParamsClassStructure.constructor(bunGlobalObject) != newTarget) [[unlikely]] {
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor MIMEParams cannot be invoked without 'new'"_s);
             return {};
@@ -712,7 +712,7 @@ void setupJSMIMEParamsClassStructure(LazyClassStructure::Initializer& init)
     init.setConstructor(constructor);
 }
 
-JSValue createJSMIMEBinding(Zig::GlobalObject* globalObject)
+JSValue createJSMIMEBinding(Bun::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     JSObject* obj = constructEmptyObject(globalObject);

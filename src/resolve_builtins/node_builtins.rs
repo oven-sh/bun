@@ -1,9 +1,7 @@
 //! Single-source list of Node.js core module names.
 //!
-//! Zig spec `src/bundler/options.zig:180-364` hand-spells this list THREE
-//! times (Raw, Compat, Map) and derives a fourth (Patterns) via comptime
-//! `++`. The Rust port lost the comptime concat and hand-spelled it FOUR
-//! times. This module is the one declarative source: each name appears
+//! Earlier code hand-spelled this list multiple times (Raw, Compat, Map,
+//! Patterns). This module is the one declarative source: each name appears
 //! exactly once, tagged with whether it belongs in the Bun-compat subset.
 //!
 //! `NODE_BUILTINS_MAP` (the phf lookup set) is intentionally NOT emitted
@@ -18,21 +16,20 @@
 /// tt-muncher: `compat` names go in all three consts, `node_only` names are
 /// the five Bun-compat exclusions (buffer/fs/path/process/test) and go only
 /// in RAW/PATTERNS. Every current consumer inserts into a hash set, so the
-/// "compat-first, exclusions-last" order vs. Zig's strict-alpha order is not
+/// "compat-first, exclusions-last" order vs. strict-alpha order is not
 /// observable.
 macro_rules! node_builtins_table {
     (
         compat:    [ $( $c:literal ),* $(,)? ],
         node_only: [ $( $n:literal ),* $(,)? ] $(,)?
     ) => {
-        /// All Node.js core module bare names (Zig `NodeBuiltinPatternsRaw`).
+        /// All Node.js core module bare names.
         pub const NODE_BUILTIN_PATTERNS_RAW: &[&[u8]] = &[
             $( $c.as_bytes(), )*
             $( $n.as_bytes(), )*
         ];
 
-        /// `RAW ++ RAW.map(|m| "node:" ++ m)` — Zig `NodeBuiltinPatterns`,
-        /// which Zig builds via comptime `++`. `concat!` recovers that here.
+        /// `RAW ++ RAW.map(|m| "node:" ++ m)`, built via `concat!`.
         pub const NODE_BUILTIN_PATTERNS: &[&[u8]] = &[
             $( $c.as_bytes(), )*
             $( $n.as_bytes(), )*
@@ -40,8 +37,7 @@ macro_rules! node_builtins_table {
             $( concat!("node:", $n).as_bytes(), )*
         ];
 
-        /// RAW minus the `node_only` exclusions — Zig
-        /// `BunNodeBuiltinPatternsCompat`.
+        /// RAW minus the `node_only` exclusions.
         pub const BUN_NODE_BUILTIN_PATTERNS_COMPAT: &[&[u8]] = &[
             $( $c.as_bytes(), )*
         ];
@@ -103,9 +99,8 @@ node_builtins_table! {
         "worker_threads",
         "zlib",
     ],
-    // Bun-compat exclusions (commented-out / omitted in Zig's
-    // `BunNodeBuiltinPatternsCompat`): these five stay resolvable under
-    // `--target=bun` rather than being marked external.
+    // Bun-compat exclusions: these five stay resolvable under `--target=bun`
+    // rather than being marked external.
     node_only: [
         "buffer",
         "fs",
@@ -119,7 +114,7 @@ node_builtins_table! {
 mod tests {
     use super::*;
     #[test]
-    fn cardinalities_match_zig_spec() {
+    fn cardinalities_match_spec() {
         assert_eq!(NODE_BUILTIN_PATTERNS_RAW.len(), 57);
         assert_eq!(NODE_BUILTIN_PATTERNS.len(), 57 * 2);
         assert_eq!(BUN_NODE_BUILTIN_PATTERNS_COMPAT.len(), 52);

@@ -125,5 +125,3 @@ impl Cd {
         Builtin::done(interp, cmd, 1)
     }
 }
-
-// ported from: src/shell/builtin/cd.zig

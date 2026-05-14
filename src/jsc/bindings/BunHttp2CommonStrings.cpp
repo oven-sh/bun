@@ -4,7 +4,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <JavaScriptCore/SlotVisitorInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 

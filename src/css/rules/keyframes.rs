@@ -13,9 +13,8 @@ use super::ArrayList;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `<keyframes-name> = <custom-ident> | <string>`
-// PORT NOTE: Zig threaded the parser-input lifetime; Phase A keeps
-// `&'static [u8]` per PORTING.md §AST crates and the rules/mod.rs
-// `CssRule<R>` lifetime-erasure note. Phase B re-threads `'bump`.
+// PORT NOTE: Phase A keeps `&'static [u8]` per PORTING.md §AST crates and the
+// rules/mod.rs `CssRule<R>` lifetime-erasure note. Phase B re-threads `'bump`.
 pub enum KeyframesName {
     /// `<custom-ident>` of a `@keyframes` name.
     Ident(CustomIdent),
@@ -23,14 +22,12 @@ pub enum KeyframesName {
     Custom(&'static [u8]),
 }
 
-// Zig: `pub fn HashMap(comptime V: type) type { return std.ArrayHashMapUnmanaged(...) }`
-// → a generic type alias keyed by `KeyframesName` with the custom hash/eq below.
+// Generic type alias keyed by `KeyframesName` with the custom hash/eq below.
 pub type KeyframesNameHashMap<V> = bun_collections::ArrayHashMap<KeyframesName, V>;
 
 impl Hash for KeyframesName {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Matches Zig: hash only the underlying string bytes; variant tag does NOT
-        // participate (Zig's `hash` switches and calls `hashString` on the slice).
+        // Hash only the underlying string bytes; variant tag does NOT participate.
         match self {
             KeyframesName::Ident(ident) => state.write(ident.v()),
             KeyframesName::Custom(s) => state.write(s),
@@ -93,8 +90,8 @@ impl KeyframesName {
 
 impl KeyframesName {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` variant-walk. `Custom(&'static [u8])`
-        // is an arena-owned slice → identity copy (generics.zig "const strings").
+        // PORT NOTE: variant-walk deep clone. `Custom(&'static [u8])` is an
+        // arena-owned slice → identity copy ("const strings" rule).
         match self {
             Self::Ident(i) => Self::Ident(i.deep_clone(bump)),
             Self::Custom(s) => Self::Custom(s),
@@ -183,9 +180,7 @@ impl KeyframeSelector {
 // blocked_on: css::derive_parse (DeriveParse comptime macro replacement).
 
 impl KeyframeSelector {
-    // Zig: `pub const parse = css.DeriveParse(@This()).parse;`
-    // PORT NOTE: `DeriveParse` is a comptime type-generator producing `parse` from
-    // variant introspection. Expanded by hand here: try the tuple variant
+    // PORT NOTE: hand-expanded variant-introspection parse: try the tuple variant
     // (`Percentage`) first, then fall back to keyword idents (`from`/`to`).
     pub fn parse(input: &mut css::Parser) -> css::Result<KeyframeSelector> {
         if let Ok(p) = input.try_parse(Percentage::parse) {
@@ -258,9 +253,8 @@ impl KeyframesRule {
 
         let mut first_rule = true;
 
-        // Zig: `inline for (.{ "webkit", "moz", "ms", "o", "none" }) |prefix_name|` with
-        // `@field(this.vendor_prefix, prefix_name)`. VendorPrefix is a packed-bool struct
-        // (→ `bitflags!`), so iterate the flag constants directly and use `.contains()`.
+        // VendorPrefix is `bitflags!`, so iterate the flag constants in declaration
+        // order and use `.contains()`.
         const PREFIXES: [VendorPrefix; 5] = [
             VendorPrefix::WEBKIT,
             VendorPrefix::MOZ,
@@ -316,23 +310,21 @@ impl KeyframesRule {
         &mut self,
         _targets: &css::targets::Targets,
     ) -> &[css::css_rules::CssRule<T>] {
-        // PORT NOTE: Zig spec body is `@compileError(css.todo_stuff.depth)` — the fn is
-        // declared but never instantiated; its sole call site in `rules.zig`
-        // (`CssRuleList.minify` → `.keyframes` arm) is commented out and replaced with
-        // `debug("TODO: KeyframesRule", ...)`. lightningcss upstream computes per-keyframe
+        // PORT NOTE: this fn is declared but never instantiated upstream; its sole
+        // call site in `CssRuleList::minify` (`.keyframes` arm) is commented out
+        // and replaced with a TODO log. lightningcss upstream computes per-keyframe
         // *declaration* fallbacks inline in the minify loop rather than emitting whole
         // `CssRule` fallbacks here, so there is no rule-level fallback list to return.
-        // The faithful port of "compile-time-dead, returns []CssRule(T)" is the empty
-        // slice — matches the Zig program's observable behavior (no fallbacks appended)
-        // without a runtime trap. Phase B wires the declaration-level path in
+        // The faithful port is the empty slice — same observable behavior (no fallbacks
+        // appended) without a runtime trap. Phase B wires the declaration-level path in
         // `CssRuleList::minify` directly and may delete this stub.
         let _ = self;
         &[]
     }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `VendorPrefix` is a
-        // `Copy` bitflag (generics.zig "simple copy types" → identity).
+        // PORT NOTE: field-walk deep clone. `VendorPrefix` is a `Copy` bitflag
+        // ("simple copy types" → identity).
         Self {
             name: self.name.deep_clone(bump),
             keyframes: self.keyframes.iter().map(|k| k.deep_clone(bump)).collect(),
@@ -348,9 +340,8 @@ impl KeyframesRule {
 
 pub struct KeyframesListParser;
 
-// PORT NOTE: in Zig these are nested `pub const DeclarationParser = struct { ... }`
-// namespaces that the css parser duck-types via `@hasDecl`. In Rust they become
-// trait impls on `KeyframesListParser`.
+// PORT NOTE: these are trait impls on `KeyframesListParser`, replacing the
+// original duck-typed nested namespaces.
 //
 // blocked_on: css::{DeclarationParser, AtRuleParser, QualifiedRuleParser,
 // RuleBodyItemParser} trait signatures (css_parser.rs round-5 surface),
@@ -451,5 +442,3 @@ const _: () = {
         }
     }
 };
-
-// ported from: src/css/rules/keyframes.zig

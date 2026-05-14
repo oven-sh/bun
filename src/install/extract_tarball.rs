@@ -87,15 +87,13 @@ pub fn build_url(
         full_name_,
         version,
         string_buf,
-        // Zig: `FileSystem.DirnameStore.print(fmt, args)` — format directly into
-        // the store's tail; no intermediate `String`.
+        // Format directly into the store's tail; no intermediate `String`.
         |args| FileSystem::instance().dirname_store().print(args),
     )
 }
 
-/// Generic URL builder. The Zig version threads `comptime PrinterContext`,
-/// `comptime ReturnType`, `comptime ErrorType` and a comptime `print` fn; in
-/// Rust the closure carries its own context and the generics collapse to `R, E`.
+/// Generic URL builder. The closure carries its own context and the
+/// generics collapse to `R, E`.
 pub fn build_url_with_printer<R, E>(
     registry_: &[u8],
     full_name_: &StringOrTinyString,
@@ -116,7 +114,7 @@ pub fn build_url_with_printer<R, E>(
     // default_format = "{s}/{s}/-/"
     // `bun_fmt::s` writes bytes straight through — registry hosts, package names
     // and semver tags are pre-validated ASCII, so we don't need `bstr::BStr`'s
-    // Utf8Chunks scan (Zig `{s}` parity).
+    // Utf8Chunks scan.
     let registry = s(registry);
     let full_name = s(full_name);
     let name = s(name);
@@ -229,9 +227,9 @@ impl ExtractTarball {
         let _tracer = bun_core::perf::trace("ExtractTarball.extract");
 
         let tmpdir = self.temp_dir;
-        // Zig: `var tmpname_buf: [bun.MAX_PATH_BYTES]u8` — UTF-8 on every
-        // platform; the Windows tmpdir path is converted to wide at the
-        // `open_dir_at_windows_a` boundary, not here.
+        // `tmpname_buf` is UTF-8 on every platform; the Windows tmpdir path
+        // is converted to wide at the `open_dir_at_windows_a` boundary, not
+        // here.
         let mut tmpname_buf = PathBuffer::uninit();
         let (name, basename) = self.name_and_basename();
 
@@ -479,8 +477,8 @@ impl ExtractTarball {
 
         let tmpdir = self.temp_dir;
         TL_BUFS.with_borrow_mut(|bufs| {
-            // PORT NOTE: reshaped for borrowck — Zig grabbed a raw `*TlBufs` from TLS;
-            // here the entire body lives inside the thread_local borrow closure.
+            // PORT NOTE: reshaped for borrowck — instead of a raw `*TlBufs` from
+            // TLS, the entire body lives inside the thread_local borrow closure.
             let folder_name: &[u8] = match self.resolution.tag {
                 ResolutionTag::Npm => directories::cached_npm_package_folder_name_print(
                     package_manager,
@@ -864,5 +862,3 @@ impl ExtractTarball {
         })
     }
 }
-
-// ported from: src/install/extract_tarball.zig

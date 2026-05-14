@@ -32,7 +32,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
         Err(e) if e == err!(MissingPackageJSON) => {
             attempt_to_create_package_json()?;
             // Re-parse argv: `CommandLineArguments` is not `Clone`, and `parse`
-            // is deterministic over process argv. Mirrors Zig passing the
+            // is deterministic over process argv. Equivalent to passing the
             // by-value `cli` struct to both `init` calls.
             let cli = CommandLineArguments::parse(Subcommand::Link)?;
             pm::init(&mut *ctx, cli, Subcommand::Link)?
@@ -201,7 +201,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                 if let Err(e) = node_modules.sym_link(
                     FileSystem::instance().top_level_dir_without_trailing_slash(),
                     name,
-                    // Zig: `.{ .is_directory = true }` — std.fs.Dir.SymLinkFlags.
+                    // is_directory = true
                     true,
                 ) {
                     if manager.options.log_level != LogLevel::Silent {
@@ -221,7 +221,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
             let mut link_dest_buf = PathBuffer::uninit();
             let mut link_rel_buf = PathBuffer::uninit();
 
-            // PORT NOTE: Zig passed `&node_modules_path` for both
+            // PORT NOTE: the original passed `&node_modules_path` for both
             // `target_node_modules_path` (`*const`) and `node_modules_path`
             // (`*mut`). Rust forbids `&` + `&mut` to the same value, so resolve
             // the fd path twice (cheap: one `getFdPath` syscall) into two
@@ -304,5 +304,3 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
 
     Ok(())
 }
-
-// ported from: src/cli/link_command.zig

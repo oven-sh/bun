@@ -65,7 +65,7 @@ const {
   getHashes,
   scrypt,
   scryptSync,
-} = $rust("node_crypto_binding.rs", "createNodeCryptoBindingZig");
+} = $rust("node_crypto_binding.rs", "createNodeCryptoBindingNative");
 
 const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
 
@@ -153,7 +153,7 @@ crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
   return CryptoHasher.hash(algorithm, input, outputEncoding);
 };
 
-// TODO: move this to zig
+// TODO: move this to native code
 function pbkdf2(password, salt, iterations, keylen, digest, callback) {
   if (typeof digest === "function") {
     callback = digest;

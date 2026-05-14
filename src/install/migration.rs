@@ -855,7 +855,7 @@ pub fn migrate_npm_lockfile<'a>(
     // held across `&mut self` calls to `string_buf()` / `get_or_put_id()`. The
     // fields actually touched are disjoint (string_bytes/string_pool resp.
     // package_index + read of resolutions), so this is sound under Tree
-    // Borrows and matches the Zig spec, but SB retags through `Unique<T>`.
+    // Borrows and matches the spec, but SB retags through `Unique<T>`.
     // Fix by split-borrowing the disjoint fields (see the `bin` path above) or
     // by setting Vec lengths up-front and indexing safely.
 
@@ -936,7 +936,7 @@ pub fn migrate_npm_lockfile<'a>(
         let dependencies_start = deps_cursor;
         let resolutions_start = res_cursor;
 
-        // PORT NOTE: Zig used `defer` here to write dependencies_list/resolution_list and
+        // PORT NOTE: the original used a deferred block here to write dependencies_list/resolution_list and
         // increment package_idx at every loop exit. Reshaped for borrowck — inlined as
         // `finalize_pkg!` at the one early-continue and at natural end-of-loop.
         macro_rules! finalize_pkg {
@@ -1162,10 +1162,10 @@ pub fn migrate_npm_lockfile<'a>(
                             let behavior = dep_key.behavior;
 
                             // PORT NOTE: capture tag and git/github owner before moving
-                            // `version` into the buffer (Zig copies the struct by value; Rust
+                            // `version` into the buffer (the original copied the struct by value; Rust
                             // moves it). The owner is needed when `version.tag` is git/github
                             // but the package's `resolved` URL infers as something else, in
-                            // which case Zig reads `res_version.value.{git,github}.owner` from
+                            // which case the original read `res_version.value.{git,github}.owner` from
                             // the original parsed dependency version.
                             let version_tag = version.tag;
                             let version_git_owner = match version_tag {
@@ -1564,7 +1564,7 @@ pub fn migrate_npm_lockfile<'a>(
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile: this,
-        // TODO(port): lifetime — LoadResult holds &mut Lockfile in Zig; verify Rust ownership
+        // TODO(port): lifetime — LoadResult originally held &mut Lockfile; verify Rust ownership
         migrated: Migrated::Npm,
         loaded_from_binary_lockfile: false,
         serializer_result: Default::default(),
@@ -1593,5 +1593,3 @@ fn package_name_from_path(pkg_path: &[u8]) -> &[u8] {
 fn string_hash(s: &[u8]) -> u64 {
     Semver::semver_string::Builder::string_hash(s)
 }
-
-// ported from: src/install/migration.zig

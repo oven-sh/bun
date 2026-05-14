@@ -1,16 +1,16 @@
 // CoreGraphics / ImageIO backend for Bun.Image — implemented entirely in C++.
 //
-// Calling dlsym'd CG/ImageIO functions through Zig function pointers crashed
-// on x86_64 macOS (arm64 was fine). Rather than thunking call-by-call, this
-// file owns every framework call: clang generates the SysV/AAPCS64 prologues
-// natively, and the Zig boundary is two extern-C entry points with only
-// scalar/pointer args.
+// Calling dlsym'd CG/ImageIO functions through raw extern function pointers
+// crashed on x86_64 macOS (arm64 was fine). Rather than thunking call-by-call,
+// this file owns every framework call: clang generates the SysV/AAPCS64
+// prologues natively, and the Rust boundary is two extern-C entry points with
+// only scalar/pointer args.
 //
 // Decode renders to RGBA via vImage rather than CGBitmapContext+DrawImage:
 // CGBitmapContext refuses non-premultiplied alpha, so the old draw-then-
 // unpremultiply path lost ±1 LSB on RGB wherever α<255 — and worse, the
 // default source-over blend composited the image *over* whatever the caller's
-// uninitialised buffer held (0xAA in Zig debug). vImageBuffer_InitWithCGImage
+// uninitialised buffer held (the debug allocator's fill pattern). vImageBuffer_InitWithCGImage
 // converts to a caller-chosen pixel format directly — including straight
 // alpha — so PNG round-trip stays byte-exact and we drop the manual unpremul
 // loop. Encode likewise wraps the straight-alpha buffer in a CGImage via
@@ -260,7 +260,7 @@ enum : int32_t { CG_OK = 0,
 
 // Decode `bytes[0..len)` into a caller-allocated RGBA8 buffer.
 // Two-phase: pass `out=nullptr` to get dimensions; then call again with a
-// buffer of `w*h*4` to fill it. Avoids allocating in C++ so the Zig side owns
+// buffer of `w*h*4` to fill it. Avoids allocating in C++ so the Rust side owns
 // the buffer in `bun.default_allocator` like every other decode path.
 int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
     uint32_t* out_w, uint32_t* out_h, uint8_t* out)
@@ -314,8 +314,8 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
     auto rc = s->vImageBuffer_InitWithCGImage(&buf, &fmt, nullptr, r.img, kBunVImageNoAllocate);
     // The contract is that kvImageNoAllocate honours buf.data exactly, but be
     // defensive: an OS that ignored the flag would set buf.data to its own
-    // malloc and leave `out` uninitialised, which on a Zig debug build is
-    // 0xAA — that's the garbage we shipped before the constant was fixed.
+    // malloc and leave `out` uninitialised, surfacing the debug allocator's
+    // fill pattern — that's the garbage we shipped before the constant was fixed.
     if (rc != 0 || buf.data != out) return CG_DECODE_FAILED;
     return CG_OK;
 }
@@ -334,7 +334,7 @@ int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t he
     Pool pool(s);
     // Thread-local pending result so the size-probe and the copy-out share one
     // encode. Safe: each WorkPool thread runs at most one PipelineTask at a
-    // time, and the two calls are back-to-back in codecs.zig.
+    // time, and the two calls are back-to-back in codecs.rs.
     thread_local CFRef pending = nullptr;
     if (out && pending) {
         long n = s->CFDataGetLength(pending);
@@ -425,7 +425,7 @@ int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t he
 
 // ── Geometry via vImage ────────────────────────────────────────────────────
 //
-// These take packed RGBA8 (rowBytes = w*4) on both ends so the Zig side can
+// These take packed RGBA8 (rowBytes = w*4) on both ends so the Rust side can
 // keep allocating with `bun.default_allocator`. The ARGB8888 kernels are
 // channel-order agnostic for 4×u8, so RGBA works without a permute. They run
 // on Apple's AMX units on M-series — typically 2-4× the Highway path — and we
@@ -555,8 +555,9 @@ int64_t bun_coregraphics_clipboard_change_count()
 } // extern "C"
 
 #else
-// Non-Apple: stubs so the link succeeds; Zig only references these under
-// Environment.isMac so they're dead code, but LTO needs the definitions.
+// Non-Apple: stubs so the link succeeds; the Rust side only references these
+// under cfg(target_os = "macos") so they're dead code, but LTO needs the
+// definitions.
 extern "C" int bun_coregraphics_decode(const void*, unsigned long, unsigned long long, void*, void*, void*) { return 1; }
 extern "C" int bun_coregraphics_encode(const void*, unsigned, unsigned, int, int, void*, void*) { return 1; }
 extern "C" int bun_coregraphics_scale(const void*, unsigned, unsigned, void*, unsigned, unsigned) { return 1; }

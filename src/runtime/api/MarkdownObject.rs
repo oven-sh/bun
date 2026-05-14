@@ -2,9 +2,9 @@
 
 use bun_core::StackCheck;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
-// PORT NOTE: Zig's `bun.md` is `src/md/root.zig`; the Rust crate's lib.rs is a
-// thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
-// SpanType, TextType, SpanDetail, Renderer, helpers, types, ansi, …) as `md`.
+// PORT NOTE: the `bun_md` crate's lib.rs is a thin mod-decl shim, so alias the
+// `root` module (which re-exports BlockType, SpanType, TextType, SpanDetail,
+// Renderer, helpers, types, ansi, …) as `md`.
 use crate::node::StringOrBuffer;
 use bun_md::parser::ParserError;
 use bun_md::root as md;
@@ -16,7 +16,7 @@ fn create_utf8_for_js(global: &JSGlobalObject, utf8: &[u8]) -> JsResult<JSValue>
     bun_jsc::bun_string_jsc::create_utf8_for_js(global, utf8)
 }
 
-/// `JSValue.push` (JSValue.zig:404).
+/// `JSValue.push`.
 #[inline]
 fn js_array_push(arr: JSValue, global: &JSGlobalObject, item: JSValue) -> JsResult<()> {
     arr.push(global, item)
@@ -183,9 +183,8 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
         }
 
         // Handle remaining boolean options (autolinks/headings are only settable via compound options above)
-        // TODO(port): comptime reflection over md::Options bool fields — Zig used
-        // `inline for (@typeInfo(md.Options).@"struct".fields)` to iterate every bool
-        // field (excluding the six handled above), checking both camelCase and
+        // TODO(port): the original iterated every bool field of `md::Options`
+        // via reflection (excluding the six handled above), checking both camelCase and
         // snake_case keys. Phase B should generate this list from md::Options
         // (proc-macro or hand-maintained const slice in bun_md).
         for (snake, camel, set) in md::Options::BOOL_FIELD_SETTERS {
@@ -274,9 +273,8 @@ pub fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
 
 /// `Bun.markdown.react(text, components?, options?)` — returns a React Fragment element
 /// containing the parsed markdown as children.
-// TODO(port): Zig used `jsc.MarkedArgumentBuffer.wrap(renderReactImpl)` to generate
-// the host-fn shim that allocates a MarkedArgumentBuffer. Here we hand-roll the
-// equivalent until bun_jsc provides a `#[marked_args]` attribute.
+// TODO(port): hand-rolled host-fn shim that allocates a `MarkedArgumentBuffer`
+// — replace once bun_jsc provides a `#[marked_args]` attribute.
 #[bun_jsc::host_fn]
 pub fn render_react(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     MarkedArgumentBuffer::new(|marked_args| render_react_impl(global_this, callframe, marked_args))
@@ -438,7 +436,7 @@ struct Components {
     u: JSValue,
     br: JSValue,
 }
-// PORT NOTE: `Default` for JSValue must be `JSValue::ZERO` (encoded 0), matching Zig's `.zero` initializers.
+// PORT NOTE: `Default` for JSValue must be `JSValue::ZERO` (encoded 0).
 
 struct ParseStackEntry {
     children: JSValue,
@@ -466,9 +464,9 @@ impl Default for ParseStackEntry {
     }
 }
 
-// PORT NOTE: Zig used a hand-rolled `*anyopaque + VTable`; the Rust `bun_md`
-// `Renderer` is `&mut dyn RendererImpl`, so the trait already gives us
-// `&mut self` — the `*_impl` bodies below are plain methods, no pointer
+// PORT NOTE: `bun_md`'s `Renderer` is `&mut dyn RendererImpl`, so the trait
+// already gives us `&mut self` — the `*_impl` bodies below are plain methods,
+// no pointer
 // round-trip needed.
 impl<'a> md::types::RendererImpl for ParseRenderer<'a> {
     fn enter_block(
@@ -677,9 +675,8 @@ impl<'a> ParseRenderer<'a> {
         let tag_index = get_block_type_tag(block_type, entry.data);
 
         // For headings, compute slug before counting props
-        // PORT NOTE: own the slug bytes — leave_heading() borrows the tracker mutably,
-        // and we need self again below for get_block_component(). Mirrors the Zig
-        // path which allocator-allocated the slug.
+        // PORT NOTE: own the slug bytes — leave_heading() borrows the tracker
+        // mutably, and we need self again below for get_block_component().
         let slug: Option<Vec<u8>> = if block_type == md::BlockType::H {
             self.heading_tracker.leave_heading().map(|s| s.to_vec())
         } else {

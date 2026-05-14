@@ -1,5 +1,5 @@
 #include "root.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include "helpers.h"
 
@@ -20,7 +20,7 @@ using namespace JSC;
 extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr);
 extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 
-extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
+extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const UnsafeStringView* name, UnsafeStringView* value);
 extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name, BunString* value);
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
 
@@ -37,8 +37,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    UnsafeStringView name = toUnsafeStringView(propertyName.publicName());
+    UnsafeStringView value = { nullptr, 0 };
 
     if (name.len == 0) [[unlikely]]
         return JSValue::encode(jsUndefined());
@@ -47,7 +47,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
         return JSValue::encode(jsUndefined());
     }
 
-    JSValue result = jsString(vm, Zig::toStringCopy(value));
+    JSValue result = jsString(vm, Bun::toStringCopy(value));
     thisObject->putDirect(vm, propertyName, result, 0);
     return JSValue::encode(result);
 }
@@ -68,10 +68,10 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalOb
 }
 
 // Proxy-related env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase
-// variants) are read by fetch()'s Zig-side proxy resolution via
-// env_loader.getHttpProxyFor(). Writes from JS must sync back to the Zig env
+// variants) are read by fetch()'s native-side proxy resolution via
+// env_loader.getHttpProxyFor(). Writes from JS must sync back to the native env
 // map so runtime changes take effect. Unlike the generic getter, this does
-// NOT cache on the JS object — the Zig env map is the single source of truth
+// NOT cache on the JS object — the native env map is the single source of truth
 // so set-then-get stays consistent and the CustomAccessor isn't clobbered.
 JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
@@ -140,8 +140,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
 
     auto* clientData = WebCore::clientData(vm);
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    UnsafeStringView name = toUnsafeStringView(propertyName.publicName());
+    UnsafeStringView value = { nullptr, 0 };
 
     auto hasExistingValue = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().dataPrivateName());
     RETURN_IF_EXCEPTION(scope, {});
@@ -153,7 +153,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
         return JSValue::encode(jsUndefined());
     }
 
-    JSValue out = jsString(vm, Zig::toStringCopy(value));
+    JSValue out = jsString(vm, Bun::toStringCopy(value));
     thisObject->putDirect(vm, clientData->builtinNames().dataPrivateName(), out, 0);
 
     return JSValue::encode(out);
@@ -228,14 +228,14 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * gl
         return JSValue::encode(result);
     }
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    UnsafeStringView name = toUnsafeStringView(propertyName.publicName());
+    UnsafeStringView value = { nullptr, 0 };
 
     if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
         return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
+    return JSValue::encode(jsString(vm, Bun::toStringCopy(value)));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsNodeTLSRejectUnauthorizedSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
@@ -282,14 +282,14 @@ JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * global
         return JSValue::encode(result);
     }
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    UnsafeStringView name = toUnsafeStringView(propertyName.publicName());
+    UnsafeStringView value = { nullptr, 0 };
 
     if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
         return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
+    return JSValue::encode(jsString(vm, Bun::toStringCopy(value)));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
@@ -344,7 +344,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
 }
 #endif
 
-JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
+JSValue createEnvironmentVariablesMap(Bun::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -370,7 +370,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     bool hasNodeTLSRejectUnauthorized = false;
     bool hasBunConfigVerboseFetch = false;
 
-    // Proxy-related env vars need write-back to the Zig env map so that
+    // Proxy-related env vars need write-back to the native env map so that
     // fetch()'s getHttpProxyFor() observes runtime changes.
     static constexpr ASCIILiteral proxyVarNames[] = {
         "HTTP_PROXY"_s,
@@ -440,10 +440,10 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         // This causes strange issues when the environment variable name is an integer.
         if (chars[0] >= '0' && chars[0] <= '9') [[unlikely]] {
             if (auto index = parseIndex(identifier)) {
-                ZigString valueString = { nullptr, 0 };
-                ZigString nameStr = toZigString(name);
+                UnsafeStringView valueString = { nullptr, 0 };
+                UnsafeStringView nameStr = toUnsafeStringView(name);
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
-                    JSValue value = jsString(vm, Zig::toStringCopy(valueString));
+                    JSValue value = jsString(vm, Bun::toStringCopy(valueString));
                     RETURN_IF_EXCEPTION(scope, {});
                     object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexLikePutDirect);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -485,7 +485,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     for (size_t j = 0; j < proxyVarCount; j++) {
         // Known limitation: `delete process.env.NO_PROXY` removes the accessor
-        // without calling the setter, leaving Zig's env map stale (same as TZ).
+        // without calling the setter, leaving the native env map stale (same as TZ).
         // Use `process.env.NO_PROXY = ""` to unset. DontDelete would throw in
         // strict mode, so we leave it deletable and document the gap.
         unsigned attrs = JSC::PropertyAttribute::CustomAccessor | 0;

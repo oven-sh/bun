@@ -91,8 +91,8 @@ pub mod expect {
     pub use super::expect_core::mock;
     pub use super::diff_format::DiffFormatter;
 
-    /// `Expect.js.*GetCached` / `*SetCached` accessors (Zig: `Expect.js.capturedValueGetCached`
-    /// etc., generate-classes.ts `cache: true` slots from jest.classes.ts:226). Exposed as a
+    /// `Expect.js.*GetCached` / `*SetCached` accessors (generate-classes.ts `cache: true`
+    /// slots from jest.classes.ts:226). Exposed as a
     /// sibling `js` module so matcher drafts can write `super::js::captured_value_get_cached(..)`
     /// — `Expect::js::..` does not resolve in Rust (no inherent associated modules).
     pub mod js {
@@ -112,13 +112,12 @@ pub mod expect {
         Expect::get_signature(matcher_name, args, not)
     }
 
-    /// Const-context twin of `get_signature` — Zig's `getSignature` is a
-    /// `comptime` fn (.zig:103-109) that concatenates string literals. Rust
-    /// has no const-fn string concat, so call sites that need a `&'static
-    /// str` constant (e.g. inside `const_format::concatcp!`) use this macro
-    /// instead. `use super::get_signature;` imports both the fn (value
-    /// namespace) and this macro (macro namespace), so runtime callers keep
-    /// `get_signature(...)` and const callers write `get_signature!(...)`.
+    /// Const-context twin of `get_signature`. Rust has no const-fn string
+    /// concat, so call sites that need a `&'static str` constant (e.g. inside
+    /// `const_format::concatcp!`) use this macro instead. `use
+    /// super::get_signature;` imports both the fn (value namespace) and this
+    /// macro (macro namespace), so runtime callers keep `get_signature(...)`
+    /// and const callers write `get_signature!(...)`.
     macro_rules! __get_signature {
         ($matcher:expr, $args:expr, true $(,)?) => {
             ::const_format::concatcp!(
@@ -144,12 +143,11 @@ pub mod expect {
 
     use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
     use bun_jsc::console_object::Formatter;
-    use bun_jsc::console_object::formatter::ZigFormatter;
+    use bun_jsc::console_object::formatter::BunFormatter;
 
-    /// `value.to_fmt(&mut formatter)` → `Display` adapter (Zig
-    /// `value.toFmt(&formatter)`). Returns the `ZigFormatter` wrapper.
+    /// `value.to_fmt(&mut formatter)` → `Display` adapter. Returns the `BunFormatter` wrapper.
     pub trait JSValueTestExt {
-        fn to_fmt<'a, 'b>(self, f: &'a mut Formatter<'b>) -> ZigFormatter<'a, 'b>;
+        fn to_fmt<'a, 'b>(self, f: &'a mut Formatter<'b>) -> BunFormatter<'a, 'b>;
         fn jest_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool>;
         fn jest_strict_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool>;
         fn jest_deep_match(self, other: JSValue, global: &JSGlobalObject, replace_props: bool) -> JsResult<bool>;
@@ -182,8 +180,8 @@ pub mod expect {
     }
     impl JSValueTestExt for JSValue {
         #[inline]
-        fn to_fmt<'a, 'b>(self, f: &'a mut Formatter<'b>) -> ZigFormatter<'a, 'b> {
-            ZigFormatter::new(f, self)
+        fn to_fmt<'a, 'b>(self, f: &'a mut Formatter<'b>) -> BunFormatter<'a, 'b> {
+            BunFormatter::new(f, self)
         }
         #[inline]
         fn jest_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
@@ -199,7 +197,7 @@ pub mod expect {
         }
         #[inline]
         fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()> {
-            // Port of Zig `JSValue.jestSnapshotPrettyFormat` (JSValue.zig:562).
+            // Equivalent to `JSValue.jestSnapshotPrettyFormat`.
             use super::pretty_format::{JestPrettyFormat, FormatOptions, MessageLevel};
             let fmt_options = FormatOptions {
                 enable_colors: false,
@@ -215,12 +213,11 @@ pub mod expect {
                 out,
                 fmt_options,
             )?;
-            // Zig: `try out.flush()` — `FormatOptions.flush` is false, so the
-            // formatter does not flush internally; a buffered `out` would
-            // otherwise drop trailing snapshot bytes. Propagate the writer
-            // error as a thrown JS error so the caller's `.is_err()` branch
-            // (expect.rs `to_match_snapshot_value_kind`) fires, matching the
-            // Zig `!void` contract.
+            // `FormatOptions.flush` is false, so the formatter does not flush
+            // internally; a buffered `out` would otherwise drop trailing
+            // snapshot bytes. Propagate the writer error as a thrown JS error
+            // so the caller's `.is_err()` branch (expect.rs
+            // `to_match_snapshot_value_kind`) fires.
             out.flush().map_err(|e| global.throw_error(e, "snapshot writer flush failed"))?;
             Ok(())
         }
@@ -310,13 +307,13 @@ pub mod expect {
         }
     }
 
-    /// Result of `JSValue::as_big_int_compare` (Zig `JSBigInt.CompareResult`).
+    /// Result of `JSValue::as_big_int_compare` (`JSBigInt.CompareResult`).
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
 
     /// Two-argument `throw_*` adapters — Phase-A matcher drafts called
-    /// `global.throw_pretty(FMT, format_args!(FMT, ..))` (Zig's `comptime fmt`
-    /// + `args`). Rust's `Arguments<'_>` already encloses the format string,
+    /// `global.throw_pretty(FMT, format_args!(FMT, ..))` (a `fmt` + `args`
+    /// pair). Rust's `Arguments<'_>` already encloses the format string,
     /// so the leading `&str` is redundant; these shims drop it and forward to
     /// the bun_jsc inherents (`throw_pretty` runs the `<r>/<d>` → ANSI/strip
     /// pass at runtime; `throw`/`throw_invalid_arguments` do not).
@@ -352,9 +349,8 @@ pub mod expect {
     }
 
     // ── numeric ordering matchers (toBe{Greater,Less}Than[OrEqual]) ───────
-    // Four near-identical Zig matchers (toBeGreaterThan.zig:1-59 etc.) are
-    // copy-pasted upstream; collapse to one body parameterised by relation.
-    // Rust-side dedup, not a parity restore.
+    // Four near-identical matchers were originally copy-pasted; collapse to
+    // one body parameterised by relation. Rust-side dedup, not a parity restore.
 
     #[derive(Copy, Clone)]
     pub(super) enum OrderingRelation { Gt, Ge, Lt, Le }
@@ -393,7 +389,7 @@ pub mod expect {
             }
         }
         /// `other.asBigIntCompare(value)` arm — operands swapped, so the
-        /// relation is mirrored (Zig writes this out longhand per-matcher).
+        /// relation is mirrored.
         #[inline]
         fn cmp_bigint_rev(self, r: BigIntCompare) -> bool {
             use BigIntCompare::*;
@@ -408,8 +404,8 @@ pub mod expect {
 
     impl Expect {
         /// Shared body for `toBeGreaterThan` / `toBeGreaterThanOrEqual` /
-        /// `toBeLessThan` / `toBeLessThanOrEqual`. The four upstream Zig files
-        /// differ only in `name`, the `>`/`>=`/`<`/`<=` operator, and which
+        /// `toBeLessThan` / `toBeLessThanOrEqual`. The four matchers differ
+        /// only in `name`, the `>`/`>=`/`<`/`<=` operator, and which
         /// `BigIntCompare` arms count as a pass — all of which `rel` encodes.
         pub(super) fn numeric_ordering_matcher(
             &self,

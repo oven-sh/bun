@@ -60,7 +60,7 @@ impl Yield {
 }
 
 thread_local! {
-    /// Debug-only re-entrancy guard. See Zig `_dbg_catch_exec_within_exec`.
+    /// Debug-only re-entrancy guard.
     static DBG_CATCH_EXEC_WITHIN_EXEC: Cell<usize> = const { Cell::new(0) };
 }
 
@@ -109,8 +109,7 @@ impl Yield {
         // smallvec::SmallVec<[NodeId; 4]> is the right shape.
         let mut pipeline_stack: Vec<NodeId> = Vec::with_capacity(4);
 
-        // Zig used a labelled `state: switch` as a tail-call trampoline. Rust
-        // lowers it to `loop { state = match state { ... } }`.
+        // Tail-call trampoline lowered to `loop { state = match state { ... } }`.
         let mut state = self;
         loop {
             state = match state {
@@ -159,5 +158,3 @@ impl Yield {
         None
     }
 }
-
-// ported from: src/shell/Yield.zig

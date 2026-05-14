@@ -30,7 +30,7 @@ impl Percentage {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let x = self.v * 100.0;
         let int_value: Option<i32> = if (x - x.trunc()) == 0.0 {
-            // PORT NOTE: Rust `as` saturates on overflow/NaN where Zig is UB.
+            // PORT NOTE: Rust `as` saturates on overflow/NaN where the original was UB.
             Some(self.v as i32)
         } else {
             None
@@ -43,7 +43,7 @@ impl Percentage {
         };
 
         if self.v != 0.0 && self.v.abs() < 0.01 {
-            // TODO(port): fixed-size stack writer — Zig used std.Io.Writer.fixed over [32]u8.
+            // TODO(port): fixed-size stack writer over [32]u8.
             let mut backing = [0u8; 32];
             let mut fbs = css::serializer::FixedBufWriter::new_mut(&mut backing);
             if percent.to_css_generic(&mut fbs).is_err() {
@@ -174,7 +174,7 @@ impl<D: PartialEq + Clone> PartialEq for DimensionPercentage<D> {
 // ─── B-2 round 5: generic-D method block un-gated ─────────────────────────
 // `Zero`/`MulF32`/`TryAdd`/`Parse` protocol traits live in
 // `crate::values::protocol` until `generics::parse_tocss_numeric_gated`
-// un-gates. The bound set below mirrors the full Zig comptime-method surface
+// un-gates. The bound set below mirrors the full duck-typed method surface
 // on `D`; per-method `where` clauses narrow further so plain
 // `DimensionPercentage<D>` (no behavior) needs only `D: Clone`.
 impl<D> DimensionPercentage<D>
@@ -234,13 +234,13 @@ where
     where
         D: PartialEq,
     {
-        // TODO(port): Zig used css.implementEql (reflection). Phase B: #[derive(PartialEq)] on enum.
+        // TODO(port): originally `css.implementEql` (reflection). Phase B: #[derive(PartialEq)] on enum.
         self == other
     }
 
     pub fn deep_clone(&self) -> Self {
         match self {
-            // PORT NOTE: Zig branched on `comptime needs_deepclone` to avoid cloning POD types.
+            // PORT NOTE: the original branched on `needs_deepclone` to avoid cloning POD types.
             // In Rust, D: Clone covers both — Copy types' clone is a bitwise copy.
             Self::Dimension(d) => Self::Dimension(d.clone()),
             Self::Percentage(p) => Self::Percentage(*p),
@@ -250,13 +250,13 @@ where
     }
 
     // PORT NOTE: `deinit` dropped — Box<Calc<...>> frees via Drop; D's Drop (if any) runs
-    // automatically. Zig body only freed owned fields, so no explicit `impl Drop` needed.
+    // automatically. Cleanup only freed owned fields, so no explicit `impl Drop` needed.
 
     pub fn zero() -> Self
     where
         D: protocol::Zero,
     {
-        // TODO(port): Zig special-cased D == f32 → 0.0. Handle via trait impl on f32 in Phase B.
+        // TODO(port): originally special-cased D == f32 → 0.0. Handle via trait impl on f32 in Phase B.
         Self::Dimension(D::zero())
     }
 
@@ -265,7 +265,7 @@ where
         D: protocol::Zero,
     {
         match self {
-            // TODO(port): Zig special-cased D == f32 → d == 0.0. Handle via trait impl on f32.
+            // TODO(port): originally special-cased D == f32 → d == 0.0. Handle via trait impl on f32.
             Self::Dimension(d) => d.is_zero(),
             Self::Percentage(p) => p.is_zero(),
             _ => false,
@@ -276,7 +276,7 @@ where
     where
         D: protocol::MulF32,
     {
-        // TODO(port): Zig special-cased D == f32 → lhs * rhs. Handle via trait impl on f32.
+        // TODO(port): originally special-cased D == f32 → lhs * rhs. Handle via trait impl on f32.
         lhs.mul_f32(rhs)
     }
 
@@ -352,7 +352,7 @@ where
             (Self::Calc(this_calc), _) => match this_calc.as_ref() {
                 Calc::Value(v) => return v.add_recursive(other),
                 Calc::Sum { left, right } => {
-                    // PORT NOTE: reshaped for borrowck — Zig wrapped sum.left/right (raw ptrs)
+                    // PORT NOTE: reshaped for borrowck — the original wrapped sum.left/right (raw ptrs)
                     // directly in This{.calc = ...}. Here we deep_clone since Box is owning.
                     // TODO(port): lifetime — sum.left/right ownership semantics need review.
                     let left_calc = Self::Calc(left.deep_clone_boxed());
@@ -569,8 +569,8 @@ pub enum NumberOrPercentage {
 }
 
 impl NumberOrPercentage {
-    // PORT NOTE: Zig used `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss`
-    // (comptime reflection derives). Hand-rolled here as the trivial two-variant
+    // PORT NOTE: originally `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss`
+    // (reflection derives). Hand-rolled here as the trivial two-variant
     // try-parse cascade so `AlphaValue::parse` doesn't panic at runtime.
     pub fn parse(input: &mut css::Parser) -> CssResult<NumberOrPercentage> {
         if let Ok(n) = input.try_parse(crate::values::number::CSSNumberFns::parse) {
@@ -598,7 +598,7 @@ impl NumberOrPercentage {
     // }
 
     pub fn deep_clone(&self) -> NumberOrPercentage {
-        // PORT NOTE: Zig used css.implementDeepClone (reflection) → #[derive(Clone)].
+        // PORT NOTE: originally `css.implementDeepClone` (reflection) → #[derive(Clone)].
         self.clone()
     }
 
@@ -617,5 +617,3 @@ impl PartialEq for Percentage {
 }
 
 crate::css_eql_partialeq!(NumberOrPercentage);
-
-// ported from: src/css/values/percentage.zig

@@ -2,14 +2,14 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include "JavaScriptCore/SourceOrigin.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "MiString.h"
 
 namespace Bake {
 
 class DevServerSourceProvider;
 
-// Function to be implemented in Zig to register the source provider
+// Implemented on the Rust side to register the source provider
 extern "C" void Bun__addDevServerSourceProvider(void* bun_vm, DevServerSourceProvider* opaque_source_provider, BunString* specifier);
 extern "C" void Bun__removeDevServerSourceProvider(void* bun_vm, DevServerSourceProvider* opaque_source_provider, BunString* specifier);
 
@@ -26,11 +26,11 @@ public:
         JSC::SourceProviderSourceType sourceType)
     {
         auto provider = adoptRef(*new DevServerSourceProvider(source, sourceMapJSONPtr, sourceMapJSONLength, sourceOrigin, WTF::move(sourceURL), startPosition, sourceType));
-        auto* zigGlobalObject = uncheckedDowncast<::Zig::GlobalObject>(globalObject);
+        auto* bunGlobalObject = uncheckedDowncast<::Bun::GlobalObject>(globalObject);
         auto specifier = Bun::toString(provider->sourceURL());
-        provider->m_globalObject = zigGlobalObject;
+        provider->m_globalObject = bunGlobalObject;
         provider->m_specifier = specifier;
-        Bun__addDevServerSourceProvider(zigGlobalObject->bunVM(), provider.ptr(), &specifier);
+        Bun__addDevServerSourceProvider(bunGlobalObject->bunVM(), provider.ptr(), &specifier);
         return provider;
     }
 
@@ -67,7 +67,7 @@ private:
     }
 
     MiString m_sourceMapJSON;
-    Zig::GlobalObject* m_globalObject;
+    Bun::GlobalObject* m_globalObject;
     BunString m_specifier;
 };
 

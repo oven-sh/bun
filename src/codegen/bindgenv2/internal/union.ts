@@ -31,7 +31,7 @@ export function union(name: string, alternatives: NamedAlternatives): NamedUnion
 
 /**
  * The order of types in this union is significant. Each type is tried in order, and the first one
- * that successfully converts determines the active field in the corresponding Zig tagged union.
+ * that successfully converts determines the active field in the corresponding tagged union.
  *
  * This means that it is an error to specify `RawAny` or `StrongAny` as anything other than the
  * last alternative, as conversion to any subsequent types would never be attempted.
@@ -69,14 +69,14 @@ export function union(
       get bindgenType() {
         return `bindgen.BindgenUnion(&.{ ${alternatives.map(a => a.bindgenType).join(", ")} })`;
       }
-      zigType(style?: CodeStyle) {
+      bunType(style?: CodeStyle) {
         if (style !== "pretty") {
-          return `bun.meta.TaggedUnion(&.{ ${alternatives.map(a => a.zigType()).join(", ")} })`;
+          return `bun.meta.TaggedUnion(&.{ ${alternatives.map(a => a.bunType()).join(", ")} })`;
         }
         return dedent(`bun.meta.TaggedUnion(&.{
           ${joinIndented(
             10,
-            alternatives.map(a => a.zigType("pretty") + ","),
+            alternatives.map(a => a.bunType("pretty") + ","),
           )}
         })`);
       }
@@ -106,7 +106,7 @@ export function union(
     get bindgenType() {
       return `bindgen_generated.internal.${name}`;
     }
-    zigType(style?: CodeStyle) {
+    bunType(style?: CodeStyle) {
       return `bindgen_generated.${name}`;
     }
     get dependencies() {
@@ -142,7 +142,7 @@ export function union(
           ${joinIndented(
             10,
             Object.entries(namedAlternatives).map(([altName, altType]) => {
-              return `${altName}: ${altType.zigType("pretty")},`;
+              return `${altName}: ${altType.bunType("pretty")},`;
             }),
           )}
 
@@ -156,11 +156,11 @@ export function union(
 
         pub const Bindgen${name} = struct {
           const Self = @This();
-          pub const ZigType = ${name};
+          pub const BunType = ${name};
           pub const ExternType = bindgen.ExternTaggedUnion(&.{ ${alternatives
             .map(a => a.bindgenType + ".ExternType")
             .join(", ")} });
-          pub fn convertFromExtern(extern_value: Self.ExternType) Self.ZigType {
+          pub fn convertFromExtern(extern_value: Self.ExternType) Self.BunType {
             return switch (extern_value.tag) {
               ${joinIndented(
                 14,

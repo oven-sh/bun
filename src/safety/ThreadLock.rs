@@ -8,5 +8,3 @@ pub use bun_core::{ThreadLock, ThreadLockGuard};
 // `ci_assert` feature is plumbed into `bun_core`, switch the gate there and
 // have this const follow it.
 pub(crate) const ENABLED: bool = cfg!(feature = "ci_assert");
-
-// ported from: src/safety/ThreadLock.zig

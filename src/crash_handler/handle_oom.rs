@@ -3,7 +3,7 @@ use bun_core::Error;
 
 // fn isOomOnlyError(comptime ErrorUnionOrSet: type) bool
 //
-// Zig's `isOomOnlyError` is pure comptime `@typeInfo` reflection over an
+// `isOomOnlyError` is pure const-eval reflection over an
 // error set: it iterates the set's members and checks every name == "OutOfMemory".
 // Rust has no error-set reflection. The equivalent is encoded structurally in
 // the `HandleOom` trait impls below — the `AllocError` impls ARE the
@@ -40,10 +40,9 @@ pub fn handle_oom<A: HandleOom>(error_union_or_set: A) -> A::Output {
     error_union_or_set.handle_oom()
 }
 
-/// Encodes Zig's comptime return-type block (`return_type: { ... }`) of
-/// `handleOom`. The Zig branched on `@typeInfo(ArgType)` (error_union vs
-/// error_set) and on `isOomOnlyError(ArgType)`; each impl below is one arm of
-/// that comptime switch.
+/// Encodes the const-eval return-type block of `handleOom`. The original
+/// branched on the type info of `ArgType` (error_union vs error_set) and on
+/// `isOomOnlyError(ArgType)`; each impl below is one arm of that switch.
 pub trait HandleOom {
     type Output;
     fn handle_oom(self) -> Self::Output;
@@ -71,8 +70,8 @@ impl HandleOom for AllocError {
 }
 
 // ── .error_union, mixed error set → same union with OOM subtracted ───────
-// Zig computed the narrowed type via
-//   `@TypeOf(switch (err) { error.OutOfMemory => unreachable, else => |e| e })`.
+// The original computed the narrowed type by subtracting `OutOfMemory` from
+// the error set.
 // Rust error enums are nominal, not sets — there is no set subtraction. For
 // the catch-all `bun_core::Error` we compare against the interned tag and
 // return the same type. Per-crate `thiserror` enums that carry an
@@ -99,5 +98,3 @@ impl HandleOom for Error {
         }
     }
 }
-
-// ported from: src/crash_handler/handle_oom.zig

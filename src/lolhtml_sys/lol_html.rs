@@ -25,7 +25,7 @@ pub struct SourceLocationBytes {
 
 #[inline(always)]
 fn auto_disable() {
-    // TODO(port): bun_core::feature_flags::DISABLE_LOLHTML — comptime flag in Zig
+    // TODO(port): bun_core::feature_flags::DISABLE_LOLHTML — was a comptime flag
     if bun_core::feature_flags::DISABLE_LOLHTML {
         unreachable!();
     }
@@ -228,7 +228,7 @@ impl HTMLRewriterBuilder {
     ///
     /// WARNING: Pointers passed to handlers are valid only during the
     /// handler execution. So they should never be leaked outside of handlers.
-    // TODO(port): Zig used comptime fn-value params to monomorphize trampolines per callback.
+    // TODO(port): original used comptime fn-value params to monomorphize trampolines per callback.
     // Rust cannot take const fn pointers as const generics; modeled via DirectiveCallback trait.
     // PORT NOTE: handler-data params are `Option<NonNull<H>>`, not
     // `Option<&mut H>` — callers routinely pass the SAME allocation for
@@ -292,7 +292,7 @@ impl HTMLRewriterBuilder {
     /// WARNING: Pointers passed to handlers are valid only during the
     /// handler execution. So they should never be leaked outside of handlers.
     // TODO(port): comptime fn-value params → trait-based trampolines (see add_document_content_handlers)
-    // PORT NOTE: Zig also checked `handler != null` (in addition to `handler_data != null`); the trait
+    // PORT NOTE: original also checked `handler != null` (in addition to `handler_data != null`); the trait
     // model assumes the handler is always present when data is Some, so (handler=null, data=non-null)
     // is unrepresentable here.
     // PORT NOTE: see `add_document_content_handlers` — `Option<NonNull<H>>` to
@@ -333,7 +333,7 @@ impl HTMLRewriterBuilder {
         }
     }
 
-    // TODO(port): Zig took comptime Writer/Done fn-values; modeled via OutputSink trait
+    // TODO(port): original took comptime Writer/Done fn-values; modeled via OutputSink trait
     //
     // PORT NOTE: takes `*mut S` (not `&mut S`) so the userdata pointer stored
     // in the C rewriter retains the caller's raw-pointer provenance (typically
@@ -372,7 +372,7 @@ impl HTMLRewriterBuilder {
     }
 }
 
-/// Trait modeling Zig's `comptime Writer/Done` fn-value pair for `build`.
+/// Trait modeling the original `comptime Writer/Done` fn-value pair for `build`.
 pub trait OutputSink {
     fn write(&mut self, bytes: &[u8]);
     fn done(&mut self);
@@ -385,7 +385,7 @@ unsafe extern "C" fn output_sink_function<S: OutputSink>(
 ) {
     auto_disable();
 
-    // Zig: @setRuntimeSafety(false)
+    // (originally `@setRuntimeSafety(false)`)
     // SAFETY: user_data was set to &mut S in build(); ptr[0..len] is valid for the duration of this call
     let this = unsafe { bun_core::callback_ctx::<S>(user_data) };
     match len {
@@ -900,7 +900,7 @@ impl HTMLString {
 
     pub fn slice(&self) -> &[u8] {
         auto_disable();
-        // Zig: @setRuntimeSafety(false)
+        // (originally `@setRuntimeSafety(false)`)
         // lol_html.h: several getters (lol_html_take_last_error, lol_html_element_get_attribute,
         // lol_html_doctype_*_get) return { data: NULL, len: 0 } to mean "absent". `ffi::slice`
         // tolerates the (null, 0) shape.
@@ -1137,7 +1137,7 @@ impl Comment {
 
     pub fn replace(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
-        // PORT NOTE: Zig source calls lol_html_comment_before here (likely an upstream bug); ported faithfully
+        // PORT NOTE: original calls lol_html_comment_before here (likely an upstream bug); ported faithfully
         // SAFETY: content ptr/len describe a valid slice
         match unsafe {
             lol_html_comment_before(self, ptr_without_panic(content), content.len(), is_html)
@@ -1226,19 +1226,19 @@ impl DocEnd {
 pub type DirectiveFunctionType<Container> =
     unsafe extern "C" fn(*mut Container, *mut c_void) -> Directive;
 
-// Zig: fn DirectiveFunctionTypeForHandler(comptime Container, comptime UserDataType) type
+// Originally `fn DirectiveFunctionTypeForHandler(comptime Container, comptime UserDataType) type`
 //      = *const fn (*UserDataType, *Container) bool;
 // Rust models this as a trait the user-data type implements per container.
 pub trait DirectiveCallback<Container> {
     fn call(&mut self, container: &mut Container) -> bool;
 }
 
-// Zig: fn DocTypeHandlerCallback(comptime UserDataType) type — unused alias, kept for parity
+// Originally `fn DocTypeHandlerCallback(comptime UserDataType) type` — unused alias, kept for parity
 pub type DocTypeHandlerCallback<U> = fn(&mut DocType, &mut U) -> bool;
 
-// Zig: pub fn DirectiveHandler(comptime Container, comptime UserDataType, comptime Callback) DirectiveFunctionType(Container)
+// Originally `pub fn DirectiveHandler(comptime Container, comptime UserDataType, comptime Callback) DirectiveFunctionType(Container)`.
 // Rust: monomorphized extern "C" trampoline per <Container, UserDataType>.
-// TODO(port): Zig took the callback as a comptime fn-value (multiple callbacks per type possible).
+// TODO(port): original took the callback as a comptime fn-value (multiple callbacks per type possible).
 // Rust trait dispatch allows one callback per (UserDataType, Container) pair. If callers need
 // multiple, Phase B can add a const-generic fn-pointer wrapper or distinct ZST marker types.
 pub unsafe extern "C" fn directive_handler<Container, U: DirectiveCallback<Container>>(
@@ -1311,7 +1311,7 @@ pub enum Encoding {
 }
 
 impl Encoding {
-    // Zig: std.enums.EnumMap(Encoding, []const u8) populated at comptime.
+    // Originally `std.enums.EnumMap(Encoding, []const u8)` populated at comptime.
     // For 2 entries a plain match is equivalent and avoids the EnumMap dependency.
     pub fn label(self) -> &'static [u8] {
         match self {
@@ -1320,5 +1320,3 @@ impl Encoding {
         }
     }
 }
-
-// ported from: src/lolhtml_sys/lol_html.zig

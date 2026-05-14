@@ -133,7 +133,7 @@ pub struct WikilinkDetail<'a> {
 
 /// Renderer interface. The parser calls these methods to produce output.
 //
-// PORT NOTE: Zig's `*anyopaque + *const VTable` manual fat-pointer is collapsed
+// PORT NOTE: a manual data-pointer + vtable-pointer fat pointer is collapsed
 // into `&mut dyn RendererImpl`. LIFETIMES.tsv classified `ptr` as
 // `&'a mut dyn RendererImpl` (BORROW_PARAM) and `vtable` as `&'static VTable`
 // (STATIC); the trait object encodes both.
@@ -141,7 +141,7 @@ pub struct Renderer<'a> {
     pub ptr: &'a mut dyn RendererImpl,
 }
 
-/// Trait backing the `Renderer` fat pointer (was Zig `Renderer.VTable`).
+/// Trait backing the `Renderer` fat pointer (replaces a manual `Renderer.VTable`).
 pub trait RendererImpl {
     fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()>;
     fn leave_block(&mut self, block_type: BlockType, data: u32) -> JsResult<()>;
@@ -234,8 +234,8 @@ pub struct Attribute<'a> {
     pub substr_types: &'a [SubstrType],
 }
 
-// PORT NOTE: Zig nests `SubstrType`/`SubstrOffset` inside `Attribute`; Rust has
-// no nested type defs in structs, so they are hoisted to module scope.
+// PORT NOTE: `SubstrType`/`SubstrOffset` were nested inside `Attribute`; Rust
+// has no nested type defs in structs, so they are hoisted to module scope.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum SubstrType {
@@ -326,9 +326,9 @@ pub struct Container {
 }
 
 /// Block flags stored in MD_BLOCK.
-// PORT NOTE: Zig `packed struct(u32)` with bool fields + u28 padding. Not every
-// field is `bool` (padding), so per PORTING.md this is a transparent newtype
-// with manual shift accessors rather than `bitflags!`.
+// PORT NOTE: packed `u32` with bool fields + 28-bit padding. Not every field
+// is `bool` (padding), so per PORTING.md this is a transparent newtype with
+// manual shift accessors rather than `bitflags!`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Default, Eq, PartialEq)]
 pub struct BlockFlags(pub u32);
@@ -432,8 +432,8 @@ pub struct Flags {
 }
 
 impl Flags {
-    // Private base mirroring the Zig field defaults so the named presets below
-    // can use struct-update syntax in const context.
+    // Private base holding the field defaults so the named presets below can
+    // use struct-update syntax in const context.
     const DEFAULTS: Flags = Flags {
         collapse_whitespace: false,
         permissive_atx_headers: false,
@@ -566,5 +566,3 @@ pub fn task_mark_from_data(data: u32) -> u8 {
 pub fn is_task_checked(task_mark: u8) -> bool {
     task_mark != 0 && task_mark != b' '
 }
-
-// ported from: src/md/types.zig

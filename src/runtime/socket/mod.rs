@@ -1,5 +1,3 @@
-//! Port of `src/runtime/socket/socket.zig`.
-//!
 //! TCP/TLS socket JS bindings (`Bun.connect` / `Bun.listen` socket wrappers).
 //!
 //! The full method-body port lives in `socket_body.rs`; this module wires the
@@ -40,7 +38,6 @@ pub mod windows_named_pipe_context;
 pub mod ssl_wrapper {
     pub use bun_uws::ssl_wrapper::*;
 
-    /// Zig `init(ssl_options: jsc.API.ServerConfig.SSLConfig, ...)`.
     /// Thin wrapper over `SSLWrapper::init_from_options` so callers in this
     /// tier can keep passing `&SSLConfig` directly.
     pub fn init<T: Copy>(
@@ -104,7 +101,6 @@ pub mod udp_socket {
     pub use super::udp_socket_draft::*;
 }
 pub use udp_socket::UDPSocket;
-
 
 // ─── RawSocketEvents glue ────────────────────────────────────────────────────
 // `uws_handlers::RawSocketEvents<SSL>` is the raw-pointer dispatch trait the
@@ -177,5 +173,3 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         let _ = unsafe { NewSocket::on_handshake(this, s, ok, err) };
     }
 }
-
-// ported from: src/runtime/socket/socket.zig

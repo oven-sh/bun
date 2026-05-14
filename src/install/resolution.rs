@@ -7,7 +7,7 @@ use bun_alloc::AllocError;
 use bun_core::fmt::{PathFormatOptions, PathSep, fmt_path_u8 as fmt_path};
 use bun_semver as semver;
 use bun_semver::String;
-// PORT NOTE: Zig `String.Buf` → `bun_semver::string::Buf<'_>`.
+// PORT NOTE: `String.Buf` maps to `bun_semver::string::Buf<'_>`.
 use bun_core::strings;
 use bun_semver::string::Buf as StringBuf;
 use bun_semver::version::VersionInt;
@@ -365,8 +365,8 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     }
 
     /// Named `clone_into` (not `clone`) to avoid shadowing `Clone::clone` now
-    /// that `ResolutionType: Clone + Copy`. Mirrors Zig
-    /// `Resolution.clone(buf, Builder, builder)`.
+    /// that `ResolutionType: Clone + Copy`. Mirrors the historical
+    /// `Resolution.clone(buf, Builder, builder)` signature.
     pub fn clone_into<B>(&self, buf: &[u8], builder: &mut B) -> Self
     where
         B: StringBuilderLike,
@@ -496,7 +496,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     }
 }
 
-// PORT NOTE: the duck-typed `Builder` Zig comptime param maps to the
+// PORT NOTE: the duck-typed `Builder` param maps to the
 // `bun_semver::StringBuilder` trait (`count` + `append<T>`); local alias kept
 // so dependents that named `resolution::StringBuilderLike` still resolve.
 pub use bun_semver::StringBuilder as StringBuilderLike;
@@ -554,13 +554,13 @@ pub struct URLFormatter<'a, SemverInt: VersionInt> {
 }
 
 impl<'a, SemverInt: VersionInt> URLFormatter<'a, SemverInt> {
-    /// Byte-exact port of Zig `URLFormatter.format` (`writer.writeAll` / `{s}`).
+    /// Byte-exact `URLFormatter.format` (raw `write_all` semantics).
     ///
     /// Prefer this over the `Display` impl whenever the output is persisted to
     /// disk (yarn.lock, lockfile JSON): `core::fmt::Display` routes through
     /// `&str` and the `BStr` adapter is *lossy* on non-UTF-8 bytes (a Linux
     /// folder/tarball path under a Latin-1 directory would emit U+FFFD instead
-    /// of the original byte). `write_to` mirrors Zig's `writeAll(slice)` and
+    /// of the original byte). `write_to` uses raw `write_all(slice)` and
     /// pushes the lockfile string-buffer bytes through unchanged.
     pub fn write_to<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
     where
@@ -655,10 +655,9 @@ pub struct Formatter<'a, SemverInt: VersionInt> {
 }
 
 impl<'a, SemverInt: VersionInt> Formatter<'a, SemverInt> {
-    /// Byte-exact port of Zig `Formatter.format`. See [`URLFormatter::write_to`]
-    /// for rationale — `Display` is lossy on non-UTF-8 path bytes; this writes
-    /// the lockfile string-buffer slices verbatim via `write_all`, matching
-    /// Zig's `writer.writeAll` / `{s}`.
+    /// Byte-exact `Formatter.format`. See [`URLFormatter::write_to`] for
+    /// rationale — `Display` is lossy on non-UTF-8 path bytes; this writes
+    /// the lockfile string-buffer slices verbatim via `write_all`.
     pub fn write_to<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
     where
         W: bun_core::io::Write + ?Sized,
@@ -880,8 +879,8 @@ pub fn value_init<SemverInt: VersionInt>(field: TaggedValue<SemverInt>) -> Value
     value
 }
 
-// Zig `enum(u8) { ..., _ }` is non-exhaustive — values outside the named set are
-// valid (lockfile bytes may carry unknown tags, and every `switch` has an `else`
+// The on-disk tag is non-exhaustive — values outside the named set are
+// valid (lockfile bytes may carry unknown tags, and every `match` has a wildcard
 // arm). A `#[repr(u8)] enum` would be UB for such values, so Tag is a transparent
 // u8 newtype with associated consts. Const patterns (structural `PartialEq`) keep
 // `match tag { Tag::Npm => ... }` working, and the `_` arms in callers stay live.
@@ -948,7 +947,7 @@ impl Tag {
             || self == Tag::Github
     }
 
-    /// Mirrors `bun.tagName(Tag, tag)` — returns the Zig snake_case tag name,
+    /// Mirrors `bun.tagName(Tag, tag)` — returns the snake_case tag name,
     /// or `None` for an unnamed (non-exhaustive) value.
     pub fn name(self) -> Option<&'static str> {
         Some(match self {
@@ -993,5 +992,3 @@ pub enum FromPnpmLockfileError {
 bun_core::oom_from_alloc!(FromPnpmLockfileError);
 
 bun_core::named_error_set!(FromPnpmLockfileError);
-
-// ported from: src/install/resolution.zig

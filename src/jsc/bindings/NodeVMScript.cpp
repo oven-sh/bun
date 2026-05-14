@@ -111,9 +111,9 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
     }
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    Structure* structure = zigGlobalObject->NodeVMScriptStructure();
-    if (zigGlobalObject->NodeVMScript() != newTarget) [[unlikely]] {
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
+    Structure* structure = bunGlobalObject->NodeVMScriptStructure();
+    if (bunGlobalObject->NodeVMScript() != newTarget) [[unlikely]] {
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Script cannot be invoked without 'new'"_s);
             return {};
@@ -585,15 +585,15 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
 
     contextOptions.notContextified = notContextified;
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
     JSObject* context = asObject(contextObjectValue);
     auto* targetContext = NodeVMGlobalObject::create(vm,
-        zigGlobalObject->NodeVMGlobalObjectStructure(),
+        bunGlobalObject->NodeVMGlobalObjectStructure(),
         contextOptions, importer);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (notContextified) {
-        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, zigGlobalObject->NodeVMSpecialSandboxStructure(), targetContext);
+        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, bunGlobalObject->NodeVMSpecialSandboxStructure(), targetContext);
         RETURN_IF_EXCEPTION(scope, {});
         targetContext->setSpecialSandbox(specialSandbox);
         RELEASE_AND_RETURN(scope, runInContext(targetContext, script, targetContext->specialSandbox(), callFrame->argument(1)));

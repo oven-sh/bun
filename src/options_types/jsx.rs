@@ -1,5 +1,5 @@
-//! Port of `bundler/options.zig` `JSX` namespace (`Runtime`, `ImportSource`,
-//! `Pragma`, `RuntimeDevelopmentPair`, `RuntimeMap`, `Defaults`).
+//! The bundler's `JSX` namespace (`Runtime`, `ImportSource`, `Pragma`,
+//! `RuntimeDevelopmentPair`, `RuntimeMap`, `Defaults`).
 //!
 //! Canonical home (D042): previously triplicated across
 //! `bundler/options.rs`, `js_parser/parser.rs`, and
@@ -12,11 +12,10 @@ use crate::schema::api;
 use bun_core::strings;
 use std::borrow::Cow;
 
-/// Port of `options.JSX.Runtime` (options.zig:1359 — `pub const Runtime =
-/// api.JsxRuntime;`). 4-state including `_None` so `Pragma.runtime` preserves
-/// the zero value when an `api.Jsx` arrives with `runtime == _none` (Zig
-/// options.zig:1344 assigns it directly). `#[default]` is `Automatic` (Zig:
-/// `runtime: api.Api.JsxRuntime = .automatic`).
+/// `options.JSX.Runtime` — alias for `api.JsxRuntime`. 4-state including
+/// `_None` so `Pragma.runtime` preserves the zero value when an `api.Jsx`
+/// arrives with `runtime == _none` (it is assigned through directly).
+/// `#[default]` is `Automatic`.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Runtime {
@@ -45,7 +44,7 @@ pub struct RuntimeDevelopmentPair {
     pub development: Option<bool>,
 }
 
-/// Port of `options.JSX.RuntimeMap` (`bun.ComptimeStringMap`, options.zig:1179).
+/// `options.JSX.RuntimeMap` — compile-time string map.
 pub static RUNTIME_MAP: phf::Map<&'static [u8], RuntimeDevelopmentPair> = phf::phf_map! {
     b"classic" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
     b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
@@ -54,16 +53,16 @@ pub static RUNTIME_MAP: phf::Map<&'static [u8], RuntimeDevelopmentPair> = phf::p
     b"react-jsxdev" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
 };
 
-/// Port of Zig `[]const string` for `Pragma.{factory,fragment}`.
+/// String list for `Pragma.{factory,fragment}`.
 ///
-/// In Zig (options.zig:1193) the field is a fat slice that, by default, points
-/// at the static `Defaults.Factory` array — copying the struct is a 16-byte
-/// pointer copy with **zero** allocations. The original Rust port boxed every
-/// element (`Box<[Box<[u8]>]>`), making `Pragma::default()` / `Clone` cost ~10
-/// heap allocations and dominating mimalloc samples in the resolver hot path.
+/// The field originally was a fat slice that, by default, pointed at the
+/// static `Defaults.Factory` array — copying the struct was a 16-byte pointer
+/// copy with **zero** allocations. The first Rust port boxed every element
+/// (`Box<[Box<[u8]>]>`), making `Pragma::default()` / `Clone` cost ~10 heap
+/// allocations and dominating mimalloc samples in the resolver hot path.
 ///
-/// `MemberList` restores Zig's cost model: the overwhelmingly-common case
-/// (`Static`) borrows a `&'static [&'static [u8]]` so default+clone are a
+/// `MemberList` restores the original cost model: the overwhelmingly-common
+/// case (`Static`) borrows a `&'static [&'static [u8]]` so default+clone are a
 /// pointer copy; only an explicit override (`/** @jsx foo */`, tsconfig
 /// `jsxFactory`, …) materialises an `Owned` boxed slice.
 #[derive(Debug, Clone)]
@@ -143,9 +142,9 @@ impl<'a> Iterator for MemberListIter<'a> {
 
 impl<'a> ExactSizeIterator for MemberListIter<'a> {}
 
-/// Port of `options.JSX.ImportSource` (options.zig:1208).
+/// `options.JSX.ImportSource`.
 ///
-/// Zig stores `[]const u8` borrowing `Defaults.ImportSourceDev`/`ImportSource`;
+/// Defaults borrow `defaults::IMPORT_SOURCE_DEV` / `IMPORT_SOURCE`;
 /// `Cow::Borrowed` matches that (zero-alloc default/clone), `Cow::Owned` covers
 /// the `set_import_source()` override path.
 #[derive(Debug, Clone)]
@@ -164,18 +163,18 @@ impl Default for ImportSource {
     }
 }
 
-/// Port of `options.JSX.Pragma` (options.zig:1192).
+/// `options.JSX.Pragma`.
 ///
-/// All string fields default to borrowed `'static` data (matching Zig's
-/// `Defaults.*` slice initialisers), so `Pragma::default()` and the derived
-/// `Clone` perform **zero** heap allocations in the common case. Hot callers
-/// — `RuntimeTranspilerStore` (per transpiled module) and `Resolver`
+/// All string fields default to borrowed `'static` data (the `defaults::*`
+/// slices), so `Pragma::default()` and the derived `Clone` perform **zero**
+/// heap allocations in the common case. Hot callers —
+/// `RuntimeTranspilerStore` (per transpiled module) and `Resolver`
 /// (per resolve) — clone this struct on every operation.
 #[derive(Debug, Clone)]
 pub struct Pragma {
     // these need to be arrays
-    // Zig: `[]const string` — either the static `Defaults.Factory` or a
-    // heap slice from `memberListToComponentsIfDifferent`.
+    // Either the static `Defaults.Factory` or a heap slice from
+    // `memberListToComponentsIfDifferent`.
     pub factory: MemberList,
     pub fragment: MemberList,
     pub runtime: Runtime,
@@ -215,9 +214,8 @@ impl Default for Pragma {
 
 impl Pragma {
     pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // PORT NOTE: spec options.zig:1213 takes `*std.hash.Wyhash`, which is the
-        // algorithm behind `bun.hash` — distinct from `bun.Wyhash11`. Using
-        // `Wyhash11` would yield a different cache key than the Zig path.
+        // PORT NOTE: this must use `bun_wyhash::Wyhash` — distinct from
+        // `Wyhash11`. Using `Wyhash11` would yield a different cache key.
         for factory in self.factory.iter() {
             hasher.update(factory);
         }
@@ -267,10 +265,10 @@ impl Pragma {
             || &*self.package_name == b"@emotion/react"
     }
 
-    /// Port of `options.JSX.Pragma.setImportSource` (Zig wraps
-    /// `strings.concatIfNeeded`). When `package_name` is the default
-    /// `"react"`, this borrows the interned `defaults::IMPORT_SOURCE*` —
-    /// matching Zig's interned-string fast path with zero allocations.
+    /// `options.JSX.Pragma.setImportSource` — wraps a concat-if-needed helper.
+    /// When `package_name` is the default `"react"`, this borrows the interned
+    /// `defaults::IMPORT_SOURCE*` — an interned-string fast path with zero
+    /// allocations.
     pub fn set_import_source(&mut self) {
         self.import_source.development = Self::concat_or_interned(
             &self.package_name,
@@ -373,7 +371,7 @@ impl Pragma {
     }
 }
 
-/// Port of `options.JSX.Defaults` (options.zig).
+/// `options.JSX.Defaults`.
 pub mod defaults {
     pub const FACTORY: &[&[u8]] = &[b"React", b"createElement"];
     pub const FRAGMENT: &[&[u8]] = &[b"React", b"Fragment"];

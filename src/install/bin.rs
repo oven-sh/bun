@@ -133,10 +133,10 @@ impl Bin {
         }
     }
 
-    /// Zig: `Bin.clone(buf, prev_external_strings, all_extern_strings,
+    /// original: `Bin.clone(buf, prev_external_strings, all_extern_strings,
     /// extern_strings_slice, Builder, builder)`.
     ///
-    /// PORT NOTE: the Zig API takes both the full `all_extern_strings` buffer
+    /// PORT NOTE: the original API takes both the full `all_extern_strings` buffer
     /// and a writable tail subslice into the **same** buffer — the full slice
     /// is only used by `ExternalStringList::init` to compute the tail's
     /// offset. In Rust those two views alias (`&[T]` overlapping `&mut [T]` is
@@ -238,7 +238,7 @@ impl Bin {
                             (current_len + num_props).saturating_sub(extern_strings.len()),
                         )
                         .map_err(|_| AllocError)?;
-                    // PORT NOTE: reshaped for borrowck — Zig bumped `items.len += num_props`
+                    // PORT NOTE: reshaped for borrowck — the original bumped `items.len += num_props`
                     // up-front and wrote into the spare-capacity region by raw pointer
                     // (leaving partially-init slots on mid-loop bailout); here we push
                     // incrementally so a bailout leaves only the slots actually written.
@@ -682,13 +682,13 @@ impl<'a> NamesIterator<'a> {
     }
 }
 
-// PORT NOTE: BACKREF — Zig stores `*const ArrayList(Dependency)` /
+// PORT NOTE: BACKREF — the original stores `*const ArrayList(Dependency)` /
 // `*const ArrayList(u8)` (non-exclusive). `PackageInstaller` holds a
 // `&mut Lockfile` alongside a `Box<[TreeContext]>` whose `binaries` queues
 // alias into `lockfile.buffers`; a `&'a Vec<_>` borrow here would force the
 // `TreeContext.binaries` field to carry an unsatisfiable `'static` (the
 // installer outlives no concrete lifetime for its own self-borrowed buffers).
-// `BackRef<Vec<_>>` mirrors the Zig ownership model exactly.
+// `BackRef<Vec<_>>` mirrors the original ownership model exactly.
 pub struct PriorityQueueContext {
     pub dependencies: bun_ptr::BackRef<Vec<Dependency>>,
     pub string_buf: bun_ptr::BackRef<Vec<u8>>,
@@ -721,7 +721,7 @@ impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
 // Min-heap keyed by `PriorityQueueContext::less_than` (string-order of dep names).
 pub type PriorityQueue = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext>;
 
-// PORT NOTE: Zig's `Bin.PriorityQueue.Context` is an inherent associated type;
+// PORT NOTE: the original's `Bin.PriorityQueue.Context` is an inherent associated type;
 // `inherent_associated_types` is unstable, so callers use `Bin::PriorityQueueContext`.
 pub type Context = PriorityQueueContext;
 
@@ -743,7 +743,7 @@ pub struct Linker<'a> {
     /// Usually will be the same as `node_modules_path`.
     /// Used to support native bin linking.
     ///
-    /// PORT NOTE: Zig uses `*bun.AbsPath(.{})` and intentionally aliases this
+    /// PORT NOTE: the original uses `*bun.AbsPath(.{})` and intentionally aliases this
     /// with `node_modules_path` (the common case). A `&'a AbsPath` would
     /// conflict with the `&'a mut AbsPath` borrow on `node_modules_path`, so
     /// keep it as a raw pointer; the only read site dereferences it under a
@@ -841,7 +841,7 @@ impl<'a> Linker<'a> {
 
         if let Some(seen) = self.seen.as_deref_mut() {
             // PORT NOTE: StringHashMap::get_or_put boxes the key on insert; the
-            // Zig wrote `entry.key_ptr.* = dupe(abs_dest)` which is implicit here.
+            // the original wrote `entry.key_ptr.* = dupe(abs_dest)` which is implicit here.
             let _ = seen.get_or_put(abs_dest.as_bytes());
         }
 
@@ -1042,8 +1042,8 @@ impl<'a> Linker<'a> {
         abs_dest: &ZStr,
         global: bool,
     ) {
-        // PORT NOTE: Zig declares `var shim_buf: [65536]u8` and later
-        // `@ptrCast(@alignCast(...))`s it to `[*]u16` inside encode_into. In Zig
+        // PORT NOTE: the original declares `var shim_buf: [65536]u8` and later
+        // `@ptrCast(@alignCast(...))`s it to `[*]u16` inside encode_into. There
         // `@alignCast` is a *runtime safety check* (panics in safe builds on
         // misalignment), but in Rust constructing a `&mut [u16]` from a pointer
         // that is not 2-aligned is *immediate language UB* — the reference
@@ -1084,7 +1084,7 @@ impl<'a> Linker<'a> {
                         return;
                     }
 
-                    // PORT NOTE: borrowck — Zig's `save()`/`defer restore()` returns a
+                    // PORT NOTE: borrowck — the original's `save()`/`defer restore()` returns a
                     // `ResetScope` holding `&mut Path`, which would keep
                     // `node_modules_path` exclusively borrowed across `append()`.
                     // Snapshot the length and restore via `set_length` after.
@@ -1208,7 +1208,7 @@ impl<'a> Linker<'a> {
         match sys::symlink_running_executable(rel_target, abs_dest) {
             sys::Result::Err(err) => {
                 if err.get_errno() != sys::Errno::EEXIST && err.get_errno() != sys::Errno::ENOENT {
-                    self.err = Some(err.to_zig_err());
+                    self.err = Some(err.to_bun_raw_err());
                     Self::chmod_on_ok(&self.err, abs_target);
                     return;
                 }
@@ -1216,12 +1216,12 @@ impl<'a> Linker<'a> {
                 // ENOENT means `.bin` hasn't been created yet. Should only happen if this isn't global
                 if err.get_errno() == sys::Errno::ENOENT {
                     if global {
-                        self.err = Some(err.to_zig_err());
+                        self.err = Some(err.to_bun_raw_err());
                         Self::chmod_on_ok(&self.err, abs_target);
                         return;
                     }
 
-                    // PORT NOTE: reshaped for borrowck — Zig's `var s = path.save();
+                    // PORT NOTE: reshaped for borrowck — the original's `var s = path.save();
                     // defer s.restore();` returns a `ResetScope` holding `&mut Path`;
                     // capture `len()` and restore via `set_length()` so the path
                     // can be re-borrowed for `append`/`slice` in between.
@@ -1234,7 +1234,7 @@ impl<'a> Linker<'a> {
                     match sys::symlink_running_executable(rel_target, abs_dest) {
                         sys::Result::Err(real_error) => {
                             // It was just created, no need to delete destination and symlink again
-                            self.err = Some(real_error.to_zig_err());
+                            self.err = Some(real_error.to_bun_raw_err());
                             Self::chmod_on_ok(&self.err, abs_target);
                             return;
                         }
@@ -1243,7 +1243,7 @@ impl<'a> Linker<'a> {
                             return;
                         }
                     }
-                    // NOTE: unreachable in Zig too — the third symlink call below the
+                    // NOTE: unreachable in the original too — the third symlink call below the
                     // switch in the original is dead code (both arms above return).
                 }
 
@@ -1260,7 +1260,7 @@ impl<'a> Linker<'a> {
         // TODO(port): std.fs.deleteTreeAbsolute → bun_sys equivalent
         let _ = sys::delete_tree_absolute(abs_dest.as_bytes());
         if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {
-            self.err = Some(err.to_zig_err());
+            self.err = Some(err.to_bun_raw_err());
         }
         Self::chmod_on_ok(&self.err, abs_target);
     }
@@ -1298,7 +1298,7 @@ impl<'a> Linker<'a> {
     ///
     /// Falls through to (1) when nothing exists so the existing
     /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
-    // PORT NOTE: reshaped for borrowck — Zig took `*const Linker` but only read
+    // PORT NOTE: reshaped for borrowck — the original took `*const Linker` but only read
     // `is_native_binlink_redirect()`. Hoist that bool to a parameter so the
     // caller can drop its `&self` borrow before mutably calling
     // `link_bin_or_create_shim`. Result borrows the threadlocal join buffer
@@ -1337,7 +1337,7 @@ impl<'a> Linker<'a> {
         // SAFETY: `target_node_modules_path` is set at construction to either
         // a caller-owned `AbsPath` or the same buffer as `node_modules_path`;
         // both outlive `self` and are not mutated for the duration of this
-        // read (mirrors Zig's aliasing `*AbsPath`).
+        // read (mirrors the original's aliasing `*AbsPath`).
         let dest_dir_without_trailing_slash =
             strings::without_trailing_slash(unsafe { (*self.target_node_modules_path).slice() });
 
@@ -1362,7 +1362,7 @@ impl<'a> Linker<'a> {
 
     /// Returns the offset into `self.abs_dest_buf` where the destination dir ends
     /// (i.e. where the bin name should be written).
-    // PORT NOTE: reshaped — Zig returned a `[]u8` view (remain) into abs_dest_buf;
+    // PORT NOTE: reshaped — the original returned a `[]u8` view (remain) into abs_dest_buf;
     // returning an offset avoids overlapping &mut borrows of self.
     pub fn build_destination_dir(&mut self, global: bool) -> usize {
         let dest_dir_without_trailing_slash =
@@ -1403,7 +1403,7 @@ impl<'a> Linker<'a> {
 
         // PORT NOTE: reshaped for borrowck — `link_bin_or_create_shim(&mut self, ..)`
         // is called while `abs_target` / `abs_dest` borrow `self.abs_target_buf`
-        // / `self.abs_dest_buf`. The Zig holds raw `[]u8` views (no exclusivity
+        // / `self.abs_dest_buf`. The original holds raw `[]u8` views (no exclusivity
         // implied) and `link_bin_or_create_shim` never reads or writes those two
         // buffers (it only touches `rel_buf`, `node_modules_path`, `seen`, `err`,
         // `skipped_due_to_missing_bin`). Detach the `abs_dest` borrow via a raw
@@ -1554,7 +1554,7 @@ impl<'a> Linker<'a> {
                         // SAFETY: `join_abs_string_z` writes into the thread-local
                         // `PARSER_JOIN_INPUT_BUFFER`; result does not borrow
                         // `package_dir`. Detached so `abs_target_buf` can be
-                        // reused inside the loop body (see Zig comment below).
+                        // reused inside the loop body (see the original comment below).
                         ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
                     };
 
@@ -1566,7 +1566,7 @@ impl<'a> Linker<'a> {
                                 // avoid erroring when the directory does not exist
                                 return;
                             }
-                            self.err = Some(err.to_zig_err());
+                            self.err = Some(err.to_bun_raw_err());
                             return;
                         }
                     };
@@ -1592,7 +1592,7 @@ impl<'a> Linker<'a> {
                                     // `link_bin_or_create_shim` does not write to (only
                                     // `rel_buf`/`node_modules_path`/`seen`/`err`/
                                     // `skipped_due_to_missing_bin` are touched). Mirrors
-                                    // the Zig aliasing.
+                                    // the original aliasing.
                                     ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
                                 };
 
@@ -1699,7 +1699,7 @@ impl<'a> Linker<'a> {
                     let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
                         Ok(d) => d,
                         Err(err) => {
-                            self.err = Some(err.to_zig_err());
+                            self.err = Some(err.to_bun_raw_err());
                             return;
                         }
                     };
@@ -1732,5 +1732,3 @@ impl<'a> Linker<'a> {
         }
     }
 }
-
-// ported from: src/install/bin.zig

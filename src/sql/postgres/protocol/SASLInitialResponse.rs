@@ -46,7 +46,5 @@ impl SASLInitialResponse {
         Ok(())
     }
 
-    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
+    // Thin wrapper helper — see src/sql/postgres/protocol/WriteWrap.rs
 }
-
-// ported from: src/sql/postgres/protocol/SASLInitialResponse.zig

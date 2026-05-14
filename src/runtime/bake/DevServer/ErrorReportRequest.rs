@@ -24,8 +24,8 @@ use bun_core::{Ordinal, Output};
 use bun_core::{String as BunString, strings};
 use bun_io::Write as _;
 use bun_jsc::{
-    JSErrorCode, JSRuntimeType, ZigException, ZigStackFrame, ZigStackFrameCode,
-    ZigStackFramePosition, ZigStackTrace,
+    BunException, BunStackFrame, BunStackFrameCode, BunStackFramePosition, BunStackTrace,
+    JSErrorCode, JSRuntimeType,
 };
 use bun_paths::path_buffer_pool;
 use bun_uws::{self as uws, AnyResponse, Request};
@@ -41,7 +41,7 @@ pub struct ErrorReportRequest {
     // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
     // outlives every in-flight request (BackRef invariant).
     dev: bun_ptr::BackRef<DevServer>,
-    // PORT NOTE: BodyReaderMixin is a Zig comptime mixin parameterized by
+    // PORT NOTE: BodyReaderMixin is a comptime mixin parameterized by
     // (Self, "body", run_with_body, finalize). Modeled as a generic helper that
     // stores the buffered body and dispatches to the two callbacks below.
     body: uws::BodyReaderMixin<ErrorReportRequest>,
@@ -113,7 +113,7 @@ impl ErrorReportRequest {
         // TODO(port): narrow error set
 
         // .finalize has to be called last, but only in the non-error path.
-        // PORT NOTE: Zig used `defer if (should_finalize_self) ctx.finalize()`
+        // PORT NOTE: the original used `defer if (should_finalize_self) ctx.finalize()`
         // with `should_finalize_self` flipped to true only at the very end.
         // On error return, BodyReaderMixin calls `on_error` → `finalize`, so
         // here we simply call `finalize` directly at the success tail.
@@ -123,7 +123,7 @@ impl ErrorReportRequest {
         // PERF(port): was stack-fallback (65536) + ArenaAllocator — profile in Phase B
         let arena = Arena::new();
         // PERF(port): was stack-fallback (65536) + ArenaAllocator — profile in Phase B
-        // The Zig used a separate per-source-map arena that was reset between
+        // The original used a separate per-source-map arena that was reset between
         // parses; the Rust `source_map_store::get_parsed_source_map` (the
         // canonical impl on `DevServer.source_maps`) takes `&self` and
         // allocates VLQ scratch + result mappings into the global mimalloc
@@ -135,22 +135,22 @@ impl ErrorReportRequest {
         // SAFETY: `ctx` is the live heap allocation from `run` (caller contract).
         let dev: &DevServer = unsafe { &*ctx }.dev.get();
 
-        // Read payload, assemble ZigException
+        // Read payload, assemble BunException
         let name = read_string32(&mut reader)?;
         let message = read_string32(&mut reader)?;
         let browser_url = read_string32(&mut reader)?;
         let stack_count = reader.read_int_le::<u32>()?.min(255); // does not support more than 255
-        let mut frames: Vec<ZigStackFrame> = Vec::with_capacity(stack_count as usize);
+        let mut frames: Vec<BunStackFrame> = Vec::with_capacity(stack_count as usize);
         for _ in 0..stack_count {
             let line = reader.read_int_le::<i32>()?;
             let column = reader.read_int_le::<i32>()?;
             let function_name = read_string32(&mut reader)?;
             let file_name = read_string32(&mut reader)?;
-            frames.push(ZigStackFrame {
+            frames.push(BunStackFrame {
                 function_name: BunString::init(function_name),
                 source_url: BunString::init(file_name),
                 position: if line > 0 {
-                    ZigStackFramePosition {
+                    BunStackFramePosition {
                         line: Ordinal::from_one_based(line),
                         column: if column < 1 {
                             Ordinal::INVALID
@@ -160,13 +160,13 @@ impl ErrorReportRequest {
                         line_start_byte: 0,
                     }
                 } else {
-                    ZigStackFramePosition {
+                    BunStackFramePosition {
                         line: Ordinal::INVALID,
                         column: Ordinal::INVALID,
                         line_start_byte: 0,
                     }
                 },
-                code_type: ZigStackFrameCode::NONE,
+                code_type: BunStackFrameCode::NONE,
                 is_async: false,
                 remapped: false,
                 jsc_stack_frame_index: -1,
@@ -190,11 +190,11 @@ impl ErrorReportRequest {
 
         let mut runtime_lines: Option<[&[u8]; 5]> = None;
         let mut first_line_of_interest: usize = 0;
-        let mut top_frame_position = ZigStackFramePosition::INVALID;
+        let mut top_frame_position = BunStackFramePosition::INVALID;
         let mut region_of_interest_line: u32 = 0;
         for frame in frames.iter_mut() {
-            // PORT NOTE: Zig read `frame.source_url.value.ZigString.slice()` —
-            // every `source_url` here is `Tag::ZigString` (built via
+            // PORT NOTE: the original read `frame.source_url.value.UnsafeStringView.slice()` —
+            // every `source_url` here is `Tag::UnsafeStringView` (built via
             // `String::init(&[u8])`), so `byte_slice()` is the equivalent view.
             let source_url: &[u8] = frame.source_url.byte_slice();
             // The browser code strips "http://localhost:3000" when the string
@@ -206,7 +206,7 @@ impl ErrorReportRequest {
             // Get and cache the parsed source map
             let gop = bun_core::handle_oom(parsed_source_maps.get_or_put(id));
             if !gop.found_existing {
-                // PERF(port): Zig reset a per-map arena here; the Rust port
+                // PERF(port): the original reset a per-map arena here; the Rust port
                 // allocates VLQ/result into the global heap and frees on Drop.
                 match dev.source_maps.get_parsed_source_map(id) {
                     None => {
@@ -245,7 +245,7 @@ impl ErrorReportRequest {
                 || frame.position.line.zero_based() < generated_mappings[1].lines.zero_based()
             {
                 frame.source_url = BunString::init(RUNTIME_NAME); // matches value in source map
-                frame.position = ZigStackFramePosition::INVALID;
+                frame.position = BunStackFramePosition::INVALID;
                 continue;
             }
 
@@ -254,7 +254,7 @@ impl ErrorReportRequest {
                 .mappings
                 .find(frame.position.line, frame.position.column);
             if let Some(remapped_position) = &remapped {
-                frame.position = ZigStackFramePosition {
+                frame.position = BunStackFramePosition {
                     line: Ordinal::from_zero_based(remapped_position.original_line()),
                     column: Ordinal::from_zero_based(remapped_position.original_column()),
                     line_start_byte: 0,
@@ -289,7 +289,7 @@ impl ErrorReportRequest {
                 } else if index == 0 {
                     // Should be picked up by above but just in case.
                     frame.source_url = BunString::init(RUNTIME_NAME);
-                    frame.position = ZigStackFramePosition::INVALID;
+                    frame.position = BunStackFramePosition::INVALID;
                 }
             }
         }
@@ -299,7 +299,7 @@ impl ErrorReportRequest {
             // Ensure that trimming will not remove ALL frames.
             let mut all_runtime = true;
             for frame in frames.iter() {
-                // PORT NOTE: Zig compared `slice().ptr == runtime_name` —
+                // PORT NOTE: the original compared `slice().ptr == runtime_name` —
                 // pointer-identity on the borrowed RUNTIME_NAME slice.
                 let is_runtime = frame.position.is_invalid()
                     && frame.source_url.byte_slice().as_ptr() == RUNTIME_NAME.as_ptr();
@@ -313,7 +313,7 @@ impl ErrorReportRequest {
             }
 
             // Move all frames up
-            // PORT NOTE: reshaped — Zig copied items down then truncated; Rust
+            // PORT NOTE: reshaped — the original copied items down then truncated; Rust
             // `Vec::retain` does the same in-place compaction with the same
             // relative order.
             frames.retain(|frame| {
@@ -322,12 +322,12 @@ impl ErrorReportRequest {
             });
         }
 
-        let mut exception = ZigException {
+        let mut exception = BunException {
             r#type: JSErrorCode::Error,
             runtime_type: JSRuntimeType::NOTHING,
             name: BunString::init(name),
             message: BunString::init(message),
-            stack: ZigStackTrace::from_frames(&mut frames),
+            stack: BunStackTrace::from_frames(&mut frames),
             exception: core::ptr::null_mut(),
             remapped: false,
             browser_url: BunString::init(browser_url),
@@ -341,7 +341,7 @@ impl ErrorReportRequest {
         {
             let stderr = Output::error_writer_buffered();
             let _flush = Output::flush_guard();
-            // PERF(port): was comptime bool dispatch — `print_externally_remapped_zig_exception`
+            // PERF(port): was comptime bool dispatch — `print_externally_remapped_bun_exception`
             // takes runtime `allow_ansi_color`, so no `inline else` split needed.
             let ansi_colors = Output::enable_ansi_colors_stderr();
             // `dev.vm` is `*const` (shared-ref provenance from `Options.vm`);
@@ -349,7 +349,7 @@ impl ErrorReportRequest {
             // singleton (`VirtualMachine::get() -> *mut`), which carries
             // mutable provenance. Single JS thread — no aliasing `&mut`.
             let vm = dev.vm_mut();
-            let _ = vm.print_externally_remapped_zig_exception(
+            let _ = vm.print_externally_remapped_bun_exception(
                 &mut exception,
                 None,
                 stderr,
@@ -431,7 +431,7 @@ pub fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_stor
         return None;
     }
     let after_host = &source_url[strings::without_trailing_slash(browser_url).len()..];
-    // PORT NOTE: `client_prefix ++ "/"` is comptime string concat in Zig.
+    // PORT NOTE: `client_prefix ++ "/"` is comptime string concat in the original.
     if !(after_host.starts_with(CLIENT_PREFIX.as_bytes())
         && after_host.get(CLIENT_PREFIX.len()) == Some(&b'/'))
     {
@@ -577,5 +577,3 @@ fn read_string32<'a>(
     r.pos = end;
     Ok(s)
 }
-
-// ported from: src/bake/DevServer/ErrorReportRequest.zig

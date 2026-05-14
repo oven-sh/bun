@@ -59,10 +59,9 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
-        // Zig: .{ .globalThis = globalThis, .quote_strings = true } — make_formatter sets quote_strings.
-        // PORT NOTE: Zig aliased one `*Formatter` for all three fmt adapters; Rust `to_fmt`
-        // takes `&mut Formatter` so three live adapters need three formatters (matches
-        // toBeLessThan.rs / toContainEqual.rs).
+        // make_formatter sets quote_strings.
+        // PORT NOTE: `to_fmt` takes `&mut Formatter`, so three live adapters need three
+        // formatters (matches toBeLessThan.rs / toContainEqual.rs).
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         let mut formatter3 = super::make_formatter(global);
@@ -114,5 +113,3 @@ impl Expect {
         )
     }
 }
-
-// ported from: src/test_runner/expect/toBeWithin.zig

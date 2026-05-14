@@ -1,6 +1,5 @@
 use bun_core::strings;
 
-// PORT NOTE: Zig anonymous return struct `{ tag: []const u8, is_weak: bool }`.
 // Borrows from the input slice; not a persistent heap struct.
 struct Parsed<'a> {
     tag: &'a [u8],
@@ -16,7 +15,7 @@ fn parse(tag_str: &[u8]) -> Parsed<'_> {
     if str.starts_with(b"W/") {
         is_weak = true;
         str = &str[2..];
-        // PORT NOTE: Zig `std.mem.trimLeft(u8, str, " \t")` — bun_string has no
+        // PORT NOTE: bun_string has no
         // multi-char trim_left; inline it (trailing was already stripped above).
         while let [b' ' | b'\t', rest @ ..] = str {
             str = rest;
@@ -47,7 +46,7 @@ pub fn append_to_headers(bytes: &[u8], headers: &mut Headers) -> Result<(), bun_
     let len = {
         use std::io::Write;
         let mut cursor = &mut etag_buf[..];
-        // Zig's `bun.fmt.hexIntLower(u64)` always emits exactly 16 hex chars
+        // Always emit exactly 16 hex chars
         // (zero-padded). `{:x}` alone is variable-width.
         write!(cursor, "\"{:016x}\"", hash).expect("unreachable");
         40 - cursor.len()
@@ -59,7 +58,6 @@ pub fn append_to_headers(bytes: &[u8], headers: &mut Headers) -> Result<(), bun_
 
 #[inline]
 fn xxhash64(seed: u64, bytes: &[u8]) -> u64 {
-    // Zig: `std.hash.XxHash64.hash(0, bytes)`.
     bun_core::hash::xxhash64(seed, bytes)
 }
 
@@ -94,7 +92,6 @@ pub fn if_none_match(
 
 // ═══════════════════════════════════════════════════════════════════════
 // Headers — moved from bun_http.
-// Source: src/http/Headers.zig
 //
 // Core struct + tier-safe methods only. The following stay in `bun_http`
 // (T5) as they pull in higher-tier or sibling deps that http_types (T3)
@@ -119,7 +116,7 @@ pub type HeaderEntryList = bun_collections::MultiArrayList<HeaderEntry>;
 
 /// Column accessors for `HeaderEntry` MultiArrayList storage.
 ///
-/// `header_entries.slice().items_name()` was a Zig MultiArrayList convenience.
+/// `header_entries.slice().items_name()` is a MultiArrayList column convenience.
 /// Returns a normal `&self`-tied borrow; `StringPointer` is `Copy` so callers
 /// that need to mutate `header_entries` afterwards copy the index out first.
 pub trait HeaderEntryColumns {
@@ -151,12 +148,12 @@ impl HeaderEntryColumns for HeaderEntryList {
 pub struct Headers {
     pub entries: HeaderEntryList,
     pub buf: Vec<u8>,
-    // PORT NOTE: Zig stored `std.mem.Allocator param`; non-AST crate →
-    // global mimalloc, field dropped (PORTING.md §allocators).
+    // PORT NOTE: allocator parameter dropped; non-AST crate →
+    // global mimalloc (PORTING.md §allocators).
 }
 
 impl Clone for Headers {
-    // PORT NOTE: Zig `!Headers`; only fallible calls were allocations — abort on OOM.
+    // PORT NOTE: was a fallible constructor; only fallible calls were allocations — abort on OOM.
     fn clone(&self) -> Headers {
         Headers {
             entries: self
@@ -210,7 +207,7 @@ impl Headers {
             .unwrap_or_else(|_| bun_alloc::out_of_memory());
     }
 
-    // PORT NOTE: Zig `deinit()` — handled by Drop on Vec/MultiArrayList.
+    // Cleanup is handled by Drop on Vec/MultiArrayList.
 
     pub fn get_content_disposition(&self) -> Option<&[u8]> {
         self.get(b"content-disposition")
@@ -232,9 +229,8 @@ impl Headers {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// wtf::writeHTTPDate — moved from bun_jsc.
-// Source: src/jsc/WTF.zig (writeHTTPDate only — the rest of `wtf` is
-// string-builder/date-parse machinery that stays jsc-side).
+// wtf::writeHTTPDate — moved from bun_jsc (writeHTTPDate only — the rest of
+// `wtf` is string-builder/date-parse machinery that stays jsc-side).
 // ═══════════════════════════════════════════════════════════════════════
 
 pub mod wtf {
@@ -265,5 +261,3 @@ pub mod wtf {
         &buffer[..res as usize]
     }
 }
-
-// ported from: src/http_types/ETag.zig

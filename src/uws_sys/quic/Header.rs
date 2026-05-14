@@ -53,7 +53,7 @@ impl Header {
 
 /// `enum lsqpack_tnv`. Only the entries a request encoder actually emits are
 /// named; the rest are still reachable via `Qpack::from_raw`.
-// TODO(port): Zig `enum(u8) { ... _ }` is non-exhaustive — unnamed u8 values
+// TODO(port): the underlying C enum is non-exhaustive — unnamed u8 values
 // are valid. If callers ever construct unnamed indices, switch to
 // `#[repr(transparent)] pub struct Qpack(u8)` with associated consts.
 #[repr(u8)]
@@ -339,5 +339,3 @@ mod classify_tests {
         }
     }
 }
-
-// ported from: src/uws_sys/quic/Header.zig

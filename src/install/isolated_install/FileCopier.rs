@@ -48,15 +48,14 @@ impl FileCopier {
         })
     }
 
-    // Zig `deinit` only called `this.walker.deinit()`; `Walker` owns its
+    // The original `deinit` only called `this.walker.deinit()`; `Walker` owns its
     // resources and drops automatically, so no explicit `Drop` impl is needed.
 
     pub fn copy(&mut self) -> sys::Result<()> {
-        // Zig: `bun.MakePath.makeOpenPath(FD.cwd().stdDir(), this.dest_subpath.sliceZ(), .{})`.
         // `make_open_path` is u8-only; on Windows the OS-unit path is u16 so
         // narrow it via the same infallible `from_w_path` transcode that
-        // `bun_sys::make_path_w` uses (bun.zig:2319). Zig stays in u16 the
-        // whole way and has no error path here, so don't synthesise EINVAL on
+        // `bun_sys::make_path_w` uses. The original stayed in u16 the
+        // whole way and had no error path here, so don't synthesise EINVAL on
         // conversion — store paths are built from UTF-8 package names and are
         // always WTF-8 round-trippable. On POSIX `OSPathChar == u8` and
         // `slice_z()` already yields `&ZStr`, so deref-coerce to `&[u8]`.
@@ -134,8 +133,8 @@ impl FileCopier {
                 return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::copyfile));
             }
         };
-        // Zig: `defer dest_dir.close();` — `Dir` is a non-owning Copy handle
-        // with no Drop impl, so close explicitly on every exit path.
+        // `Dir` is a non-owning Copy handle with no Drop impl, so close
+        // explicitly on every exit path.
         let _close_dest_dir = sys::CloseOnDrop::dir(dest_dir);
 
         let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
@@ -156,8 +155,8 @@ impl FileCopier {
                     _ => continue,
                 }
 
-                // PORT NOTE: reshaped for borrowck — Zig's `var s = path.save();
-                // defer s.restore();` returns a `ResetScope` that holds
+                // PORT NOTE: reshaped for borrowck — `path.save()` returns a
+                // `ResetScope` that holds
                 // `&mut Path`, which would keep `self.src_path` /
                 // `self.dest_subpath` exclusively borrowed for the rest of the
                 // iteration. Capture the saved length and restore via
@@ -299,5 +298,3 @@ impl FileCopier {
         sys::Result::Ok(())
     }
 }
-
-// ported from: src/install/isolated_install/FileCopier.zig

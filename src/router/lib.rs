@@ -21,7 +21,7 @@ use bun_http_types::URLPath::URLPath;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Cross-crate name aliases. These are pure re-exports of real lower-tier types
-// (no shadow structs); kept as a private module so Zig-shaped paths
+// (no shadow structs); kept as a private module so the canonical short paths
 // (`bun_ast::Log`, `Fs::Entry`, `api::LoadedRouteConfig`) read naturally.
 // ──────────────────────────────────────────────────────────────────────────
 // `bun.hash(bytes)` — std.hash.Wyhash seed 0. NOT Wyhash11 (different algo).
@@ -77,7 +77,6 @@ use bun_ast::Log as RouteLoaderLog;
 // cross-tier decoupling
 // ──────────────────────────────────────────────────────────────────────────
 
-// Ground truth: src/bundler/options.zig `pub const RouteConfig = struct { ... }`.
 // Defined here so T4 router is self-contained; `bun_bundler::options` re-exports
 // this (`pub use bun_router::RouteConfig`) so the original path keeps resolving.
 #[derive(Debug, Clone, Default)]
@@ -218,9 +217,8 @@ fn index_route_hash() -> u32 {
 }
 
 // Param/List are lifetime-parameterized: `name` borrows the route name
-// (DirnameStore-backed) and `value` borrows the *request URL buffer*. The Zig
-// version stores raw slices with no ownership; the correct Rust port is a
-// borrowed `&'a [u8]`, not a forged `'static`.
+// (DirnameStore-backed) and `value` borrows the *request URL buffer*. The
+// correct model is a borrowed `&'a [u8]`, not a forged `'static`.
 //
 // `bun_url::route_param::Param<'a>` is now lifetime-generic (TYPE_ONLY
 // move-down landed); collapse the local copy to a re-export so the param list
@@ -317,8 +315,8 @@ impl<'a> Router<'a> {
             }
         }
 
-        // PERF(port): Zig reused a threadlocal `params_list` to avoid realloc.
-        // A borrowed `List<'a>` cannot soundly live in a `'static` thread_local,
+        // PERF(port): a threadlocal `params_list` would avoid realloc, but a
+        // borrowed `List<'a>` cannot soundly live in a `'static` thread_local,
         // so we allocate per-request; revisit with an arena/SmallVec if hot.
         {
             let mut params_list = route_param::List::default();
@@ -367,8 +365,8 @@ struct RouteIndex {
 
 // TODO(b2-blocked): bun_collections::MultiArrayElement derive — proc-macro not
 // yet landed, so MultiArrayList<RouteIndex> can't expose per-field column
-// accessors. Hand-rolled SoA struct (semantically identical to Zig's
-// MultiArrayList(RouteIndex)) until the derive exists.
+// accessors. Hand-rolled SoA struct (semantically a `MultiArrayList<RouteIndex>`)
+// until the derive exists.
 #[derive(Default)]
 pub struct RouteIndexList {
     route: Vec<Box<Route>>,
@@ -431,8 +429,7 @@ pub struct Routes {
     pub list: RouteIndexList,
     /// Index into `list`'s columns where dynamic routes begin (sorted after
     /// static). Stored as an offset+len instead of materialized slices to avoid
-    /// a self-referential struct — Zig sliced `route_list.items(.route)[i..]`
-    /// directly; in Rust we re-slice on each `match_dynamic` call.
+    /// a self-referential struct — re-slice on each `match_dynamic` call.
     pub dynamic_start: Option<usize>,
     pub dynamic_len: usize,
 
@@ -444,8 +441,8 @@ pub struct Routes {
     pub static_: StringHashMap<*const Route>,
 
     /// Corresponds to "index.js" on the filesystem.
-    /// Spec (router.zig:386-396) stores `index: ?*Route` — a raw pointer
-    /// co-owned with `list` (points into a `Box<Route>` owned by
+    /// Stored as a raw pointer co-owned with `list` (points into a `Box<Route>`
+    /// owned by
     /// `list.route`). Stored as `NonNull` (not `&'a Route`) so `Routes` claims
     /// no borrow it doesn't actually take; matches `static_` above.
     pub index: Option<NonNull<Route>>,
@@ -538,8 +535,8 @@ impl Routes {
             return None;
         }
 
-        // PORT NOTE: Zig moved params into a local MatchContextType then back via
-        // defer; in Rust a plain reborrow suffices.
+        // PORT NOTE: a plain reborrow suffices here (no need to round-trip
+        // params through a local MatchContextType).
         if let Some(route_ptr) = self.match_(path, params) {
             // SAFETY: pointers from static_/dynamic alias Box<Route> stored in
             // self.list, which outlives self.
@@ -644,7 +641,7 @@ impl<'a> RouteLoader<'a> {
 
         // static route
         if route.param_count == 0 {
-            // PORT NOTE: Zig getOrPut → std Entry API (StringHashMap = std HashMap).
+            // PORT NOTE: get-or-insert via std Entry API (StringHashMap = std HashMap).
             if let Some(existing) = self.static_list.get(route.match_name.slice()) {
                 let source = bun_ast::Source::init_empty_file(route.abs_path.slice());
                 self.log.add_error_fmt(
@@ -735,8 +732,8 @@ impl<'a> RouteLoader<'a> {
     ) -> Routes {
         let mut route_dirname_len: u16 = 0;
 
-        // Zig: `FileSystem.instance().relative(base_dir, config.dir)` — thin wrapper
-        // around `path_handler.relative` (resolver/fs.zig:439). Call bun_paths directly
+        // `FileSystem.instance().relative(base_dir, config.dir)` is a thin
+        // wrapper around `path_handler.relative`. Call bun_paths directly
         // to avoid the higher-tier bun_resolver dep.
         let relative_dir = bun_paths::resolve_path::relative(base_dir, &config.dir);
         if !relative_dir.starts_with(b"..") {
@@ -822,7 +819,7 @@ impl<'a> RouteLoader<'a> {
             dynamic_len,
             static_: this.static_list,
             // Points into a Box<Route> now owned by `route_list`; co-owned raw
-            // pointer (router.zig:386-396 stores `?*Route`).
+            // pointer.
             index: this.index,
             config,
             index_id,
@@ -841,8 +838,8 @@ impl<'a> RouteLoader<'a> {
         if let Some(entries) = root_dir_info.get_entries_const() {
             let mut iter = entries.iter();
             'outer: while let Some(entry_ptr) = iter.next() {
-                // PORT NOTE: `iter()` yields raw `*mut Entry` (matching Zig's
-                // `*Entry` map value type, fs.zig:117). Reborrow locally for
+                // PORT NOTE: `iter()` yields raw `*mut Entry` (the map value
+                // type is a raw pointer). Reborrow locally for
                 // each access so `&` reads and the `&mut` `kind()` call do not
                 // overlap. Single iterator active for this scan; serialized via
                 // `RealFS.entries_mutex`.
@@ -851,11 +848,10 @@ impl<'a> RouteLoader<'a> {
                     continue 'outer;
                 }
 
-                // Zig: `entry.kind(&fs.fs, false)` (router.zig:416). Thread the
-                // resolver's fs `Implementation` through — `Entry.kind` derefs
-                // it to lazily stat when `need_stat` is true, so null would be
-                // a latent crash / silent route-drop once the stub forwards it.
-                // Zig `Entry.Kind` is exactly `{dir, file}` (resolver/fs.zig:378).
+                // Thread the resolver's fs `Implementation` through —
+                // `Entry.kind` derefs it to lazily stat when `need_stat` is
+                // true, so null would be a latent crash / silent route-drop once
+                // the stub forwards it. `Entry.Kind` is exactly `{dir, file}`.
                 // SAFETY: no other live borrow of `*entry_ptr` here.
                 let kind = unsafe { &mut *entry_ptr }.kind(resolver.fs_impl(), false);
                 // SAFETY: shared read-only borrow for the match arms; the only
@@ -919,7 +915,7 @@ impl<'a> RouteLoader<'a> {
     }
 }
 
-// Zig: `packed struct(u32) { offset: u16, len: u16 }` — bitcast-compatible u32.
+// `{ offset: u16, len: u16 }` packed into a bitcast-compatible u32.
 #[repr(transparent)]
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub struct TinyPtr(u32);
@@ -987,9 +983,9 @@ impl TinyPtr {
 }
 
 // On Windows we need to normalize this path to have forward slashes.
-// Zig heap-allocates a separate buffer (`allocator.dupe`) so it doesn't mutate
-// memory it doesn't own (router.zig:537-547). The Rust port interns the
-// normalized path into `DirnameStore` (process-lifetime arena) instead, so
+// Earlier code heap-allocated a separate buffer so it didn't mutate memory it
+// didn't own. We instead intern the normalized path into `DirnameStore`
+// (process-lifetime arena), so
 // `abs_path` is uniformly a `PathString` over `'static` bytes on every
 // platform — keeping `RouteIndexList.filepath: &'static [u8]` sound and
 // avoiding the borrow-then-move at `RouteLoader::load_all`.
@@ -1038,9 +1034,9 @@ impl Route {
         public_dir_: &[u8],
         routes_dirname_len: u16,
     ) -> Option<Route> {
-        // PORT NOTE: `entry` is a raw `*mut Entry` (matching Zig's `*Entry`)
-        // because `base_`/`extname` may borrow `(*entry).base_` (tiny inline
-        // string, fs.zig:333) and a `&mut Entry` parameter would alias them.
+        // PORT NOTE: `entry` is a raw `*mut Entry` because `base_`/`extname`
+        // may borrow `(*entry).base_` (tiny inline string) and a `&mut Entry`
+        // parameter would alias them.
         // Reads go through `unsafe { &*entry }`; the single mutation
         // (`set_abs_path`) goes through `unsafe { &mut *entry }` after
         // `base_`/`extname` are no longer used.
@@ -1192,9 +1188,8 @@ impl Route {
                     let entry_r = unsafe { &*entry };
                     let parts = [entry_r.dir(), entry_r.base()];
                     let abs_len = FileSystem::instance().abs_buf(&parts, route_file_buf).len();
-                    // Zig: `abs_path_str = FileSystem.instance.absBuf(...)`
-                    // (router.zig:743). Rebind so the later getFdPath error
-                    // message prints the computed path instead of `b""`.
+                    // Rebind so the later getFdPath error message prints the
+                    // computed path instead of `b""`.
                     // SAFETY: lifetime-laundered raw view into route_file_buf
                     // (same pattern as `public_path` above) so the buffer can
                     // be reborrowed mutably for the NUL write / open below.
@@ -1246,7 +1241,6 @@ impl Route {
                     .append(_abs)
                     .expect("unreachable");
 
-                // Zig: `entry.abs_path = PathString.init(abs_path_str)`.
                 // SAFETY: sole mutation; `base_`/`extname` (which may borrow
                 // `(*entry).base_.remainder_buf`) are not used after this.
                 unsafe { &mut *entry }.set_abs_path(bun_core::PathString::init(abs_path_str));
@@ -1254,9 +1248,8 @@ impl Route {
 
             #[cfg(windows)]
             let abs_path: AbsPath = {
-                // Zig: `allocator.dupe(u8, platformToPosixBuf(...))` — process-
-                // lifetime heap dup. Intern into DirnameStore so the slice is
-                // genuinely `'static` and `arena_slice()` is sound on Windows.
+                // Intern into DirnameStore so the slice is genuinely `'static`
+                // and `arena_slice()` is sound on Windows.
                 let normalized = bun_paths::resolve_path::platform_to_posix_buf(
                     abs_path_str,
                     &mut bufs.normalized_abs_path_buf,
@@ -1282,7 +1275,7 @@ impl Route {
 
             // PORT NOTE: name/match_name/public_path are already `&'static` via
             // DirnameStore::append above. `entry.base()` borrows the entry (it
-            // may be inline-stored for ≤31-byte names, fs.zig:333); intern it
+            // may be inline-stored for ≤31-byte names); intern it
             // explicitly to get `&'static` without a lifetime transmute.
             // SAFETY: read-only reborrow; the `&mut` write above is dead.
             let basename: &'static [u8] = FileSystem::instance()
@@ -1418,7 +1411,7 @@ pub struct Match<'a> {
     pub basename: &'a [u8],
 
     pub hash: u32,
-    // PORT NOTE: raw `*mut` (not `&'a mut`) to match Zig's `*Param.List`.
+    // PORT NOTE: raw `*mut` (not `&'a mut`).
     // `MatchedRoute` (bun_runtime) stores this self-referentially — a
     // `&'a mut List` here would be invalidated under Stacked Borrows the
     // moment any `&mut MatchedRoute` is taken. Callers that need a borrow
@@ -1508,17 +1501,17 @@ impl<'a> Match<'a> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Traits introduced to replace Zig's `comptime T: type` duck-typing
-// (Resolver, Server, RequestContext). Phase B should colocate these with
+// Traits abstracting the duck-typed Resolver/Server/RequestContext interfaces.
+// Phase B should colocate these with
 // the canonical types in bun_resolver / bun_runtime.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait ResolverLike {
-    // `bun_resolver::fs::FileSystem` is a singleton in Zig, so `'static` here
+    // `bun_resolver::fs::FileSystem` is a process singleton, so `'static` here
     // is faithful and avoids threading the resolver borrow into RouteLoader<'a>.
     fn fs(&self) -> &'static FileSystem;
-    /// Zig: `&fs.fs` — the resolver's `Implementation` field, passed to
-    /// `Entry.kind` for lazy stat.
+    /// The resolver's fs `Implementation` field, passed to `Entry.kind` for
+    /// lazy stat.
     fn fs_impl(&self) -> *mut Fs::Implementation;
     /// Returns an arena handle (not a borrow) so the resolver's `&mut self`
     /// borrow ends before the recursive `load()` re-borrows it.
@@ -2061,8 +2054,7 @@ mod tests {
     }
 
     fn make_test(cwd_path: &[u8], data: &[(&str, &str)]) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig used comptime field iteration over an anonymous struct.
-        // Ported as runtime slice of (path, content) pairs.
+        // PORT NOTE: ported as a runtime slice of (path, content) pairs.
         Output::init_test();
         debug_assert!(cwd_path.len() > 1 && cwd_path != b"/" && !cwd_path.ends_with(b"bun"));
         // const bun_tests_dir = try std.fs.cwd().makeOpenPath("bun-test-scratch", .{});
@@ -2261,7 +2253,7 @@ mod tests {
     fn pattern_match() {
         type Entry = Param<'static>;
 
-        // TODO(port): Zig used anonymous-struct field iteration; ported as explicit array.
+        // TODO(port): ported as an explicit array.
         let regular_list: &[(&[u8], &[u8], &[Entry])] = &[
             (b"404", b"404", &[]),
             (
@@ -2475,25 +2467,25 @@ mod tests {
     #[test]
     #[ignore = "TODO(port): depends on Test::make filesystem fixture harness"]
     fn github_api_route_loader() {
-        // TODO(port): port body once Test::make is implemented; see router.zig:1571-1678
+        // TODO(port): port body once Test::make is implemented.
     }
 
     #[test]
     #[ignore = "TODO(port): depends on Test::make filesystem fixture harness"]
     fn sample_route_loader() {
-        // TODO(port): port body once Test::make is implemented; see router.zig:1680-1782
+        // TODO(port): port body once Test::make is implemented.
     }
 
     #[test]
     #[ignore = "TODO(port): depends on Test::make filesystem fixture harness"]
     fn routes_basic() {
-        // TODO(port): port body once Test::make is implemented; see router.zig:1784-1832
+        // TODO(port): port body once Test::make is implemented.
     }
 
     #[test]
     #[ignore = "TODO(port): depends on Test::make filesystem fixture harness"]
     fn dynamic_routes() {
-        // TODO(port): port body once Test::make is implemented; see router.zig:1834-1868
+        // TODO(port): port body once Test::make is implemented.
     }
 
     #[test]
@@ -2533,5 +2525,3 @@ mod tests {
         }
     }
 }
-
-// ported from: src/router/router.zig

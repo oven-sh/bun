@@ -22,10 +22,9 @@ bun_core::declare_scope!(HTTPContext, hidden);
 const POOL_SIZE: usize = 64;
 const MAX_KEEPALIVE_HOSTNAME: usize = 128;
 
-/// Zig: `fn NewHTTPContext(comptime ssl: bool) type { return struct { ... } }`
 /// The const-generic `SSL` is load-bearing for monomorphization (gates hot
 /// inner-loop branches); do not demote to a runtime bool.
-// PORT NOTE: renamed NewHTTPContext→HTTPContext — `New` is a Zig type-factory
+// PORT NOTE: renamed NewHTTPContext→HTTPContext — `New` was a type-factory
 // naming convention, not part of the type's identity; LIFETIMES.tsv already
 // aliases `*NewHTTPContext(true)` as `HttpsContext`.
 #[derive(bun_ptr::CellRefCounted)]
@@ -49,7 +48,7 @@ pub struct HTTPContext<const SSL: bool> {
     pub secure: Option<*mut SSL_CTX>,
     /// HTTP/2 sessions with at least one active stream, available for
     /// concurrent attachment if `hasHeadroom()`.
-    // TODO(port): lifetime — Zig stores `*H2.ClientSession` with manual
+    // TODO(port): lifetime — `*ClientSession` with manual
     // `.ref()`/`.deref()`. Kept as raw pointers; ref/deref is intrusive.
     pub active_h2_sessions: Vec<*mut h2::ClientSession>,
     /// HTTPClients whose fresh TLS connect is in flight and whose request
@@ -60,8 +59,7 @@ pub struct HTTPContext<const SSL: bool> {
     pub pending_h2_connects: Vec<Box<h2::PendingConnect>>,
 }
 
-// Intrusive refcount: Zig `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`.
-// `*T` crosses FFI (group.ext) and is recovered from socket ext, so per
+// Intrusive refcount: `*T` crosses FFI (group.ext) and is recovered from socket ext, so per
 // PORTING.md this stays intrusive rather than `Rc<T>`. Derived via
 // `#[derive(CellRefCounted)]` above; default `destroy` (`heap::take`) applies
 // (this struct is Box-allocated for custom-SSL entries; statics never hit 0).
@@ -78,8 +76,8 @@ pub type ActiveSocket<const SSL: bool> = TaggedPtrUnion<ActiveSocketTypes<SSL>>;
 /// is foreign even when every element is local).
 pub struct ActiveSocketTypes<const SSL: bool>;
 
-// PORT NOTE: tags assigned 1024 - i to match Zig's `TagTypeEnumWithTypeMap`
-// (`@typeName(Types[0])` → 1024, descending).
+// PORT NOTE: tags assigned 1024 - i, descending, for compatibility with the
+// existing tagged-pointer encoding.
 impl<const SSL: bool> bun_ptr::tagged_pointer::TypeList for ActiveSocketTypes<SSL> {
     const LEN: usize = 4;
     const MIN_TAG: bun_ptr::tagged_pointer::TagType = 1024 - 3;
@@ -285,7 +283,7 @@ impl<const SSL: bool> ExistingSocket<SSL> {
     }
 }
 
-/// `dispatch.zig` reaches `Handler` via this name. The ext stores
+/// `dispatch` reaches `Handler` via this name. The ext stores
 /// `*anyopaque` (the `ActiveSocket` tagged pointer), so dispatch reads
 /// it as `**anyopaque` and `Handler` decodes the tag.
 // PORT NOTE: was `pub type ActiveSocketHandler = Handler<SSL>;` (inherent
@@ -886,8 +884,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
             .clone()
             .unwrap_or_else(|| client.url.clone());
         // TODO(port): URL.hostname is a borrowed slice — assigning a local
-        // overwrites lifetime. Preserved as-is via raw lifetime erasure matching
-        // the Zig pointer assignment semantics.
+        // overwrites lifetime. Preserved via raw lifetime erasure to keep
+        // pointer-assignment semantics.
         client.connected_url.hostname =
             // SAFETY: hostname borrows either a static literal or `client.url`/
             // `client.http_proxy` which outlive `connected_url` for the
@@ -1082,9 +1080,9 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
         // subsumes `pending_h2_connects.deinit()`.
 
         // `init_with_opts` can fail before `group.init()` runs (HTTPThread
-        // cache-miss error path frees the half-init context). Spec
-        // HTTPThread.zig:277 raw-frees without `deinit`; tolerate that here
-        // by skipping group teardown when it was never linked into the loop.
+        // cache-miss error path frees the half-init context without running
+        // teardown); tolerate that here by skipping group teardown when it was
+        // never linked into the loop.
         if !self.group.loop_.is_null() {
             // Force-close any remaining sockets before unlinking the group so
             // the loop never dereferences a freed `*Context` via `group->ext`.
@@ -1105,7 +1103,7 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
     }
 }
 
-/// Named so `dispatch.zig` can `vtable.make` it. Ext is the
+/// Named so `dispatch` can `vtable.make` it. Ext is the
 /// `ActiveSocket` tagged-pointer word.
 pub struct Handler<const SSL: bool>;
 
@@ -1347,14 +1345,11 @@ pub struct DeadSocket {
     garbage: u8,
 }
 
-// TODO(port): Zig used `pub var dead_socket align(@alignOf(usize)) = .{}` and
-// a module-level `var dead_socket = &DeadSocket.dead_socket`. Using a static
-// + accessor; revisit if `&'static mut` is needed for TaggedPtrUnion::init.
+// TODO(port): using a static + accessor; revisit if `&'static mut` is needed
+// for TaggedPtrUnion::init.
 static DEAD_SOCKET: DeadSocket = DeadSocket { garbage: 0 };
 
 #[inline]
 fn dead_socket() -> *const DeadSocket {
     &raw const DEAD_SOCKET
 }
-
-// ported from: src/http/HTTPContext.zig

@@ -47,7 +47,7 @@ impl PrepareOK {
         Ok(())
     }
 
-    // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
+    // See Decode trait in src/sql/mysql/protocol/NewReader.rs
     pub fn decode<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
@@ -94,8 +94,7 @@ pub struct ExecuteParams<'a> {
     pub _marker: core::marker::PhantomData<&'a ()>,
 }
 
-// PORT NOTE: Zig `deinit` freed `params` (and each Value inside) via default_allocator.
-// Ownership of params stays with the caller (borrowed slice) — no Drop here.
+// PORT NOTE: ownership of params stays with the caller (borrowed slice) — no Drop here.
 
 impl<'a> Execute<'a> {
     fn write_null_bitmap<C: WriterContext>(
@@ -159,7 +158,7 @@ impl<'a> Execute<'a> {
                 }
 
                 let value = (self.params.to_data)(self.params.ctx, i, param_type.r#type)?;
-                // PORT NOTE: Zig `defer value.deinit()` — handled by Drop on `value`.
+                // PORT NOTE: cleanup handled by Drop on `value`.
                 if param_type.r#type.is_binary_format_supported() {
                     writer.write(value.slice())?;
                 } else {
@@ -170,7 +169,7 @@ impl<'a> Execute<'a> {
         Ok(())
     }
 
-    // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
+    // See src/sql/mysql/protocol/NewWriter.rs
     pub fn write<C: WriterContext>(
         &self,
         writer: NewWriter<C>,
@@ -178,5 +177,3 @@ impl<'a> Execute<'a> {
         self.write_internal(writer)
     }
 }
-
-// ported from: src/sql/mysql/protocol/PreparedStatement.zig

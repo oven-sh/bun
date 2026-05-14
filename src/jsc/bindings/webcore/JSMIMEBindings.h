@@ -2,13 +2,13 @@
 
 #include "root.h"
 
-namespace Zig {
+namespace Bun {
 class GlobalObject;
 }
 
 namespace WebCore {
 
 // Function to create a unified MIME binding object
-JSC::JSValue createMIMEBinding(Zig::GlobalObject* globalObject);
+JSC::JSValue createMIMEBinding(Bun::GlobalObject* globalObject);
 
 } // namespace WebCore

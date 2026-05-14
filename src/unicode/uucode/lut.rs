@@ -5,17 +5,16 @@ use bun_collections::HashMap;
 // TODO(port): confirm bun_collections::HashMap exposes a std-compatible Entry API
 use bun_collections::hash_map::Entry;
 
-/// Zig `u21` has no Rust equivalent; codepoints are carried as `u32` and
-/// range-asserted at the boundary.
+/// Codepoints fit in 21 bits but are carried as `u32` and range-asserted at
+/// the boundary.
 const MAX_U21: u32 = (1 << 21) - 1;
 
 const BLOCK_SIZE: usize = 256;
 type Block = [u8; BLOCK_SIZE];
 
-/// Context trait for `Generator`. Mirrors the Zig duck-typed `Context` param,
-/// which must provide:
-///   - `get(Context, u21) Elem`: returns the mapping for a given codepoint
-///   - `eql(Context, Elem, Elem) bool`: returns true if two mappings are equal
+/// Context trait for `Generator`. Implementors must provide:
+///   - `get(&Context, u32) -> Elem`: returns the mapping for a given codepoint
+///   - `eql(&Context, &Elem, &Elem) -> bool`: returns true if two mappings are equal
 pub trait GeneratorContext<Elem> {
     fn get(&self, cp: u32) -> Result<Elem, bun_core::Error>;
     fn eql(&self, a: &Elem, b: &Elem) -> bool;
@@ -34,12 +33,11 @@ pub struct Generator<Elem, Context: GeneratorContext<Elem>> {
 }
 
 impl<Elem: Clone, Context: GeneratorContext<Elem>> Generator<Elem, Context> {
-    // Zig's `BlockMap` is a `std.HashMap(Block, u16, ...)` with a hand-written
-    // Wyhash context over the raw bytes and `std.mem.eql(u8, ...)` equality.
+    // The block-dedup map keys on raw block bytes with bytewise equality.
     // `bun_collections::HashMap<[u8; 256], u16>` is wyhash-backed and `[u8; N]`
-    // already hashes/compares bytewise, so the custom context collapses away.
+    // already hashes/compares bytewise, so no custom hasher is needed.
 
-    // TODO(port): narrow error set (Zig inferred set: ctx.get's error ∪ OOM ∪ {BlockTooLarge, Stage2TooLarge})
+    // TODO(port): narrow error set (ctx.get's error ∪ OOM ∪ {BlockTooLarge, Stage2TooLarge})
     pub fn generate(&self) -> Result<Tables<Elem>, bun_core::Error> {
         let mut blocks_map: HashMap<Block, u16> = HashMap::default();
 
@@ -121,5 +119,3 @@ impl<Elem: Copy> Tables<Elem> {
         self.stage3[self.stage2[(self.stage1[high as usize] + low) as usize] as usize]
     }
 }
-
-// ported from: src/unicode/uucode/lut.zig

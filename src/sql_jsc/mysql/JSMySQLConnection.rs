@@ -110,7 +110,7 @@ impl Drop for DerefOnDrop {
 
 impl JSMySQLConnection {
     /// RAII pair for `ref_()` / `deref()`: bumps the intrusive refcount now and
-    /// releases it on drop. Replaces the Zig `this.ref(); defer this.deref();`
+    /// releases it on drop. Replaces the `this.ref(); defer this.deref();`
     /// idiom. The guard stashes a raw pointer (not `&Self`) so no Rust
     /// reference is held across the potential free in `deref()`; the `&self`
     /// receiver here is only borrowed for the bump itself.
@@ -369,7 +369,7 @@ impl JSMySQLConnection {
     }
 
     pub fn close(&self) {
-        // Zig `this.ref(); defer { updateReferenceType(); deref(); }`. Re-enter
+        // `this.ref(); defer { updateReferenceType(); deref(); }`. Re-enter
         // through a `ParentRef` (lifetime-erased `&Self`) so no Rust borrow is
         // held across the potential free in `deref()`. Guard drop order is
         // LIFO: `_ref` (deref) drops last, after `update_reference_type()` has
@@ -394,7 +394,7 @@ impl JSMySQLConnection {
         if self.vm().is_shutting_down() {
             return self.close();
         }
-        // Zig `this.ref(); defer this.deref();` — raw-pointer RAII guard so no
+        // `this.ref(); defer this.deref();` — raw-pointer RAII guard so no
         // reference is live across the potential free.
         let _ref = self.ref_guard();
         let _loop_guard = self.event_loop().entered();
@@ -416,7 +416,7 @@ impl JSMySQLConnection {
     ///
     /// Raw-pointer-shaped (not `&mut self`): ends in `heap::take(this)`, and a
     /// `&mut self` protector live across the dealloc would be UB under Stacked
-    /// Borrows — direct mapping of Zig's `fn deinit(this: *@This())`.
+    /// Borrows.
     fn deinit(this: *mut Self) {
         // SAFETY: routed only through `CellRefCounted::destroy` (refcount==0);
         // `this` is the live `heap::alloc` ptr from `create_instance`, sole
@@ -554,12 +554,12 @@ impl JSMySQLConnection {
         let options_str = arguments[7].to_bun_string(global_object)?;
         let path_str = arguments[8].to_bun_string(global_object)?;
 
-        // PORT NOTE: Zig packed all five strings into one `StringBuilder`-owned
-        // arena and handed `[]const u8` slices into it to `MySQLConnection.init`.
-        // The Rust `init` takes `Box<[u8]>` per field (each separately owned),
-        // so we just copy each string into its own allocation. `options_buf`
-        // (the original arena handle, kept only so `cleanup()` could free it)
-        // becomes an empty box.
+        // PORT NOTE: the original packed all five strings into one
+        // `StringBuilder`-owned arena and handed sub-slices of it to
+        // `MySQLConnection.init`. The Rust `init` takes `Box<[u8]>` per field
+        // (each separately owned), so we just copy each string into its own
+        // allocation. `options_buf` (the original arena handle, kept only so
+        // `cleanup()` could free it) becomes an empty box.
         let username: Box<[u8]> = Box::from(username_str.to_utf8_without_ref().slice());
         let password: Box<[u8]> = Box::from(password_str.to_utf8_without_ref().slice());
         let database: Box<[u8]> = Box::from(database_str.to_utf8_without_ref().slice());
@@ -708,7 +708,7 @@ impl JSMySQLConnection {
     ) -> JsResult<JSValue> {
         this.stop_timers();
 
-        // Zig `defer this.updateReferenceType();` — R-2: `&Self` is `Copy`, so
+        // `defer this.updateReferenceType();` — R-2: `&Self` is `Copy`, so
         // the scopeguard closure captures a shared reborrow and the body's
         // `connection_mut()` borrow is non-overlapping.
         scopeguard::defer! {
@@ -787,11 +787,10 @@ impl JSMySQLConnection {
     }
 
     fn fail_with_js_value(&self, value: JSValue) {
-        // Zig `this.ref(); defer { ...; updateReferenceType(); deref(); }` —
+        // `this.ref(); defer { ...; updateReferenceType(); deref(); }` —
         // runs on every exit path. Re-enter through a raw pointer so no
         // reference is live across the potential free in `deref()`. LIFO drop
-        // order: the `defer!` body runs first, then `_ref` releases the count
-        // — matches Zig.
+        // order: the `defer!` body runs first, then `_ref` releases the count.
         let p = ParentRef::new(self);
         let _ref = self.ref_guard();
         scopeguard::defer! {
@@ -879,8 +878,8 @@ impl JSMySQLConnection {
         // PORT NOTE: `MySQLStatement::structure(&mut self) -> &CachedStructure`
         // would keep `*statement` exclusively borrowed for the lifetime of the
         // returned ref, blocking the `&statement.columns` / `fields_flags` reads
-        // below. Stash a `ParentRef` (lifetime-erased `&T`; Zig holds it by
-        // value) and `as_deref` at the `to_js` call site — `*statement`
+        // below. Stash a `ParentRef` (lifetime-erased `&T`) and `as_deref` at
+        // the `to_js` call site — `*statement`
         // outlives this fn (held via `request`'s intrusive ref), satisfying
         // the `ParentRef` liveness invariant.
         let cached_structure: Option<ParentRef<CachedStructure>> = match result_mode {
@@ -1009,11 +1008,11 @@ impl JSMySQLConnection {
     }
 }
 
-/// Referenced by `dispatch.zig` (kind = `.mysql[_tls]`).
+/// Referenced by the socket dispatch layer (kind = `.mysql[_tls]`).
 pub struct SocketHandler<const SSL: bool>;
 
-// PORT NOTE: Zig's `pub const SocketType = uws.NewSocketHandler(ssl)` is an
-// inherent associated type, which is unstable in Rust (`feature(inherent_associated_types)`).
+// PORT NOTE: an inherent `SocketType = uws.NewSocketHandler(ssl)` associated
+// type is unstable in Rust (`feature(inherent_associated_types)`).
 // Spell out `NewSocketHandler<SSL>` at every use site instead.
 impl<const SSL: bool> SocketHandler<SSL> {
     fn _socket(s: NewSocketHandler<SSL>) -> AnySocket {
@@ -1074,7 +1073,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         _: i32,
         _: Option<*mut c_void>,
     ) {
-        // Zig `defer this.deref();` — releases the socket ref taken in on_open.
+        // `defer this.deref();` — releases the socket ref taken in on_open.
         // RAII guard adopts that existing ref (no `ref_()` here); raw-pointer
         // shaped so no reference outlives the potential free.
         let _ref = DerefOnDrop(this.as_ctx_ptr());
@@ -1096,10 +1095,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_data(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, data: &[u8]) {
-        // Zig `this.ref(); defer this.deref();` + `defer { resetConnectionTimeout(); ... }`.
+        // `this.ref(); defer this.deref();` + `defer { resetConnectionTimeout(); ... }`.
         // Both guards re-enter via raw pointer so no reference is live across
         // the potential free. Guard drop order is LIFO, so `_ref` (deref) runs
-        // last — matches Zig.
+        // last.
         let p = ParentRef::new(this);
         let _ref = this.ref_guard();
 
@@ -1154,13 +1153,11 @@ use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as ResultMode;
 // pub const js = jsc.Codegen.JSMySQLConnection; — re-exported via `use ... as js` above.
 // fromJS / fromJSDirect / toJS — provided by #[bun_jsc::JsClass] derive.
 
-/// Zig re-export pattern: `MySQLQuery.zig` / `MySQLRequestQueue.zig` /
-/// `JSMySQLQuery.zig` import the JS-wrapper type under the bare
-/// `MySQLConnection` name (the connection state-machine struct lives in
-/// `my_sql_connection`). Surface the alias here so `super::js_mysql_connection::
-/// MySQLConnection` resolves to this type, not the protocol-layer struct.
+/// Re-export: `MySQLQuery` / `MySQLRequestQueue` / `JSMySQLQuery` import the
+/// JS-wrapper type under the bare `MySQLConnection` name (the connection
+/// state-machine struct lives in `my_sql_connection`). Surface the alias here
+/// so `super::js_mysql_connection::MySQLConnection` resolves to this type, not
+/// the protocol-layer struct.
 pub use JSMySQLConnection as MySQLConnection;
 
 pub type Writer = my_sql_connection::Writer;
-
-// ported from: src/sql_jsc/mysql/JSMySQLConnection.zig

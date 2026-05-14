@@ -104,8 +104,6 @@ pub mod protocol {
     pub mod notice_response_jsc;
 }
 
-// Re-exports of base-crate protocol/types modules (Zig: thin re-exports).
+// Thin re-exports of base-crate protocol/types modules.
 pub use bun_sql::postgres::postgres_protocol as base_protocol;
 pub use bun_sql::postgres::postgres_types as base_types;
-
-// ported from: src/sql_jsc/postgres.zig

@@ -11,7 +11,7 @@
 #include "node_api.h"
 #include <JavaScriptCore/JSWeakValue.h>
 #include "JSFFIFunction.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "napi_handle_scope.h"
 #include "napi_finalizer.h"
 #include "wtf/Assertions.h"
@@ -23,7 +23,7 @@
 #include <unordered_set>
 #include <variant>
 
-extern "C" void napi_internal_register_cleanup_zig(napi_env env);
+extern "C" void napi_internal_register_cleanup_native(napi_env env);
 extern "C" void napi_internal_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
@@ -174,15 +174,15 @@ struct NapiEnv : public WTF::RefCounted<NapiEnv> {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(NapiEnv);
 
 public:
-    NapiEnv(Zig::GlobalObject* globalObject, const napi_module& napiModule)
+    NapiEnv(Bun::GlobalObject* globalObject, const napi_module& napiModule)
         : m_globalObject(globalObject)
         , m_napiModule(napiModule)
         , m_vm(JSC::getVM(globalObject))
     {
-        napi_internal_register_cleanup_zig(this);
+        napi_internal_register_cleanup_native(this);
     }
 
-    static Ref<NapiEnv> create(Zig::GlobalObject* globalObject, const napi_module& napiModule)
+    static Ref<NapiEnv> create(Bun::GlobalObject* globalObject, const napi_module& napiModule)
     {
         return adoptRef(*new NapiEnv(globalObject, napiModule));
     }
@@ -379,8 +379,8 @@ public:
         return static_cast<bool>(m_pendingException);
     }
 
-    inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
-    // `bun test --isolate` creates a fresh Zig::GlobalObject per file and
+    inline Bun::GlobalObject* globalObject() const { return m_globalObject; }
+    // `bun test --isolate` creates a fresh Bun::GlobalObject per file and
     // gcUnprotect()s the previous one. NapiEnv outlives its owning global —
     // GC-enqueued NapiFinalizerTasks hold a Ref<NapiEnv> and run on the event
     // loop *after* the swap. Finalizer.run opens a NapiHandleScope via
@@ -390,7 +390,7 @@ public:
     // segfault when the marker later walks it). The isolation swap calls this
     // to point surviving envs at the new global before unprotecting the old
     // one.
-    inline void retargetGlobalObject(Zig::GlobalObject* newGlobal)
+    inline void retargetGlobalObject(Bun::GlobalObject* newGlobal)
     {
         ASSERT(&JSC::getVM(newGlobal) == &m_vm);
         m_globalObject = newGlobal;
@@ -491,7 +491,7 @@ public:
     };
 
 private:
-    Zig::GlobalObject* m_globalObject = nullptr;
+    Bun::GlobalObject* m_globalObject = nullptr;
     napi_module m_napiModule;
     // ListHashSet preserves insertion order so cleanup() can run finalizers in reverse
     // (LIFO), matching Node.js teardown semantics for napi_wrap references.
@@ -575,11 +575,11 @@ public:
 
 // If a module registered itself by calling napi_module_register in a static constructor, run this
 // to run the module's entrypoint.
-void executePendingNapiModule(Zig::GlobalObject* globalObject);
+void executePendingNapiModule(Bun::GlobalObject* globalObject);
 
 }
 
-namespace Zig {
+namespace Bun {
 using namespace JSC;
 
 static inline JSValue toJS(napi_value val)
@@ -587,12 +587,12 @@ static inline JSValue toJS(napi_value val)
     return JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(val));
 }
 
-static inline Zig::GlobalObject* toJS(napi_env val)
+static inline Bun::GlobalObject* toJS(napi_env val)
 {
     return val->globalObject();
 }
 
-static inline napi_value toNapi(JSC::JSValue val, Zig::GlobalObject* globalObject)
+static inline napi_value toNapi(JSC::JSValue val, Bun::GlobalObject* globalObject)
 {
     if (val.isCell()) {
         if (auto* scope = globalObject->m_currentNapiHandleScopeImpl.get()) {
@@ -940,7 +940,7 @@ public:
                                // and receives the actual count of args.
         napi_value* argv, // [out] Array of values
         napi_value* this_arg, // [out] Receives the JS 'this' arg for the call
-        void** data, Zig::GlobalObject* globalObject);
+        void** data, Bun::GlobalObject* globalObject);
 
     JSValue newTarget()
     {

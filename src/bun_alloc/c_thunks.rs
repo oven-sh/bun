@@ -24,7 +24,7 @@ use crate::mimalloc;
 
 /// zlib `alloc_func` → `mi_malloc(items * size)` (non-zeroing).
 ///
-/// Panics-via-`unreachable!` on OOM (mirrors the original Zig thunk). The
+/// Panics-via-`unreachable!` on OOM. The
 /// opaque cookie is ignored (never dereferenced) and `mi_malloc` is `safe fn`,
 /// so this thunk has no memory-safety preconditions; a safe fn item still
 /// coerces to the `Option<unsafe extern "C" fn>` field at the assignment site.

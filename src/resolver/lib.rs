@@ -1,4 +1,3 @@
-// Port of src/resolver/resolver.zig
 #![allow(
     dead_code,
     unused_variables,
@@ -61,8 +60,8 @@ pub use tsconfig_json::TSConfigJSON;
 ///
 /// Every `PathString::init` in this crate is fed a slice returned from
 /// `FilenameStore::append_*` / `DirnameStore::append_*`, both of which are
-/// `'static` BSS singletons that never free (LIFETIMES.tsv:
-/// `resolver/fs.zig:Entry.abs_path → STATIC`). Centralizing the lifetime
+/// `'static` BSS singletons that never free (`Entry.abs_path` is classified
+/// `STATIC` in LIFETIMES.tsv). Centralizing the lifetime
 /// extension here removes the per-call-site erasure.
 ///
 /// TODO(port): once `bun_core::PathString::slice` is changed to return
@@ -88,7 +87,7 @@ pub use __phase_a_body::{
 /// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
 pub use ::bun_install_types::resolver_hooks as install_types;
 
-/// Minimal real subset of `src/resolver/fs.zig` so `bun_resolver::fs::X` paths
+/// Minimal real subset of the original so `bun_resolver::fs::X` paths
 /// resolve for downstream crates during B-2. Full Phase-A draft remains in
 /// `fs.rs` (gated) until bun_alloc::BSSStringList / bun_output land.
 pub mod fs {
@@ -103,7 +102,7 @@ pub mod fs {
     // `append_parts`. Backed by `bun_alloc::BSSStringList` singletons emitted
     // via `bss_string_list!` (per-monomorphization static + first-call init).
     //
-    // Zig type params are pre-transformed to match `BSSStringList<COUNT, ITEM_LENGTH>`'s
+    // the type params are pre-transformed to match `BSSStringList<COUNT, ITEM_LENGTH>`'s
     // `COUNT = _COUNT * 2, ITEM_LENGTH = _ITEM_LENGTH + 1` const-generic encoding.
 
     // PORT NOTE: `BSSStringList(2048, 128)` → `<{2048*2}, {128+1}>`
@@ -131,7 +130,7 @@ pub mod fs {
                     value: &[u8],
                 ) -> core::result::Result<&'static [u8], bun_core::Error> {
                     // SAFETY: `$backing()` returns the raw `*mut` process-lifetime singleton
-                    // (Zig `*Self`); `BSSStringList::append` takes `*mut Self` and serializes
+                    //; `BSSStringList::append` takes `*mut Self` and serializes
                     // all mutation through its internal `mutex` (no aliased `&mut` is ever
                     // formed). The returned slice borrows its never-freed backing storage
                     // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc), so
@@ -147,7 +146,7 @@ pub mod fs {
                     unsafe { bun_alloc::BSSStringList::append($backing(), parts) }
                         .map_err(|_| bun_core::err!("OutOfMemory"))
                 }
-                /// Zig: `FileSystem.DirnameStore.print(fmt, args)` — format
+                /// `FileSystem.DirnameStore.print(fmt, args)` — format
                 /// directly into the store's tail; no intermediate `String`.
                 pub fn print(
                     &self,
@@ -170,12 +169,12 @@ pub mod fs {
     string_store_impl!(DirnameStore, DIRNAME_STORE_ZST, dirname_store_backing);
     string_store_impl!(FilenameStore, FILENAME_STORE_ZST, filename_store_backing);
 
-    // Method names matching Zig `BSSStringList.append` / `appendLowerCase`
-    // (allocators.zig) — `OOM!T` mapped per PORTING.md.
+    // Method names matching `BSSStringList.append` / `appendLowerCase`
+    // — `OOM!T` mapped per PORTING.md.
     macro_rules! string_store_append_impl {
         ($t:ty, $backing:ident) => {
             impl $t {
-                /// Zig: `<Store>.append(allocator, value)`.
+                /// `<Store>.append(allocator, value)`.
                 #[inline]
                 pub fn append(
                     &self,
@@ -188,7 +187,7 @@ pub mod fs {
                     unsafe { bun_alloc::BSSStringList::append($backing(), value) }
                         .map_err(|_| bun_alloc::AllocError)
                 }
-                /// Zig: `<Store>.appendLowerCase(allocator, value)`.
+                /// `<Store>.appendLowerCase(allocator, value)`.
                 #[inline]
                 pub fn append_lower_case(
                     &self,
@@ -206,7 +205,7 @@ pub mod fs {
 
     // ── FileSystem ───────────────────────────────────────────────────────
 
-    /// Port of `FileSystem` in `fs.zig`.
+    /// `FileSystem`.
     pub struct FileSystem {
         pub top_level_dir: &'static [u8],
 
@@ -219,14 +218,14 @@ pub mod fs {
         pub filename_store: &'static FilenameStore,
     }
 
-    // Global mutable singleton; Zig used `var instance: FileSystem = undefined`.
+    // Global mutable singleton; lazy-init pattern.
     // `RacyCell` is the alias-safe static cell — `init()` is the only writer,
     // serialized at startup; readers go through `instance()`.
     pub static INSTANCE: bun_core::RacyCell<core::mem::MaybeUninit<FileSystem>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
     pub static INSTANCE_LOADED: AtomicBool = AtomicBool::new(false);
 
-    /// Port of `FileSystem.max_fd` global in `fs.zig`.
+    /// `FileSystem.max_fd` global.
     // PORT NOTE: Windows uses `HANDLE` (no monotone ordering); tracked POSIX-only.
     #[cfg(not(windows))]
     pub static MAX_FD: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
@@ -234,7 +233,7 @@ pub mod fs {
     static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
     impl FileSystem {
-        /// Port of `FileSystem.tmpname` in `fs.zig`:
+        /// `FileSystem.tmpname`.:
         /// `pub fn tmpname(extname: string, buf: []u8, hash: u64) std.fmt.BufPrintError![:0]u8`
         pub fn tmpname<'b>(
             extname: &[u8],
@@ -242,7 +241,7 @@ pub mod fs {
             hash: u64,
         ) -> core::result::Result<&'b mut ZStr, bun_core::Error> {
             // PORT NOTE: `std.time.nanoTimestamp()` — bun_core has no `time` module yet;
-            // use std directly (matches Zig which also calls std.time).
+            // use std directly.
             let nanos: u128 = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
@@ -269,7 +268,7 @@ pub mod fs {
 
         #[inline]
         pub fn instance() -> &'static mut FileSystem {
-            // SAFETY: caller guarantees init() was called (matches Zig global singleton).
+            // SAFETY: caller guarantees init() was called.
             unsafe { (*INSTANCE.get()).assume_init_mut() }
         }
 
@@ -293,7 +292,7 @@ pub mod fs {
             unsafe { (*INSTANCE.get()).assume_init_ref() }
         }
 
-        /// Port of `FileSystem.init` (fs.zig:90-108). First call writes the
+        /// `FileSystem.init`. First call writes the
         /// global `INSTANCE`; subsequent calls return it untouched. Delegates
         /// `Implementation` construction to `RealFS::init` so the process
         /// RLIMIT_NOFILE is raised and `file_limit`/`file_quota` carry the
@@ -305,14 +304,14 @@ pub mod fs {
             Self::init_with_force::<false>(top_level_dir)
         }
 
-        /// Port of `FileSystem.initWithForce` (fs.zig). When `FORCE`, re-seeds
+        /// `FileSystem.initWithForce`. When `FORCE`, re-seeds
         /// the singleton even if already loaded — used by the router test
         /// harness which `chdir`s between fixtures and needs a fresh
         /// `top_level_dir`.
         pub fn init_with_force<const FORCE: bool>(
             top_level_dir: Option<&[u8]>,
         ) -> core::result::Result<*mut FileSystem, bun_core::Error> {
-            // SAFETY: matches Zig global singleton init pattern; called from
+            // SAFETY: process-lifetime singleton init pattern; called from
             // `Transpiler::init` before any worker spawn.
             unsafe {
                 if INSTANCE_LOADED.load(Ordering::Acquire) && !FORCE {
@@ -322,10 +321,10 @@ pub mod fs {
             let cwd: &'static [u8] = match top_level_dir {
                 // PORT NOTE: intern into the process-lifetime `DirnameStore` so
                 // callers may pass a borrowed path without leaking it themselves
-                // (Zig had no lifetime; the singleton outlives every caller).
+                //.
                 Some(d) => DirnameStore::instance().append_slice(d)?,
                 None => {
-                    // Spec fs.zig:161 — `bun.getcwdAlloc(allocator)`.
+                    // `bun.getcwdAlloc(allocator)`.
                     let mut buf = bun_paths::PathBuffer::default();
                     let n = bun_sys::getcwd(&mut buf[..])?;
                     DirnameStore::instance().append_slice(&buf[..n])?
@@ -336,7 +335,7 @@ pub mod fs {
             // `Path::init_top_level_dir` reach `bun_paths::fs::FileSystem::
             // instance()` (a strict `OnceLock` — panics if unset), and the
             // doc-comment on that `init` names this as the intended seeding
-            // point. Zig had a single `Fs.FileSystem.instance` global so the
+            // point. the original had a single `Fs.FileSystem.instance` global so the
             // split is a porting artifact; this keeps both halves in lockstep.
             // The call is a no-op on subsequent inits (`OnceLock::set` returns
             // `Err`). `cwd` is passed as raw bytes — POSIX paths are not
@@ -360,7 +359,7 @@ pub mod fs {
             }
         }
 
-        /// Port of `FileSystem.setMaxFd` in `fs.zig`.
+        /// `FileSystem.setMaxFd`.
         #[inline]
         pub fn set_max_fd(_fd: bun_sys::RawFd) {
             #[cfg(windows)]
@@ -372,89 +371,89 @@ pub mod fs {
                 if !bun_core::feature_flags::STORE_FILE_DESCRIPTORS {
                     return;
                 }
-                // SAFETY: single-threaded mutation in resolver context (matches Zig global `max_fd`).
+                // SAFETY: single-threaded mutation in resolver context.
                 MAX_FD.fetch_max(_fd, Ordering::Relaxed);
             }
         }
 
-        /// Port of `FileSystem.max_fd` global in `fs.zig` — highest fd seen via `set_max_fd`.
+        /// `FileSystem.max_fd` global — highest fd seen via `set_max_fd`.
         #[inline]
         #[cfg(not(windows))]
         pub fn max_fd() -> bun_sys::RawFd {
-            // SAFETY: single-threaded read in resolver context (matches Zig global `max_fd`).
+            // SAFETY: single-threaded read in resolver context.
             MAX_FD.load(Ordering::Relaxed)
         }
 
-        /// Port of `FileSystem.absBuf` in `fs.zig`.
+        /// `FileSystem.absBuf`.
         pub fn abs_buf<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b [u8] {
             use bun_paths::resolve_path::{join_abs_string_buf, platform};
             join_abs_string_buf::<platform::Loose>(self.top_level_dir, buf, parts)
         }
 
-        /// Port of `FileSystem.absBufChecked` in `fs.zig` — returns `None` on overflow.
+        /// `FileSystem.absBufChecked`. — returns `None` on overflow.
         pub fn abs_buf_checked<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> Option<&'b [u8]> {
             use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
             join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir, buf, parts)
         }
 
-        /// Port of `FileSystem.absBufZ` in `fs.zig` — like `abs_buf` but writes a
+        /// `FileSystem.absBufZ`. — like `abs_buf` but writes a
         /// NUL sentinel and returns a `ZStr` borrowing `buf`.
         pub fn abs_buf_z<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b ZStr {
             use bun_paths::resolve_path::{join_abs_string_buf_z, platform};
             join_abs_string_buf_z::<platform::Loose>(self.top_level_dir, buf, parts)
         }
 
-        /// Port of `FileSystem.normalizeBuf` in `fs.zig`.
+        /// `FileSystem.normalizeBuf`.
         pub fn normalize_buf<'b>(&self, buf: &'b mut [u8], str: &[u8]) -> &'b [u8] {
             use bun_paths::resolve_path::{normalize_string_buf, platform};
             normalize_string_buf::<false, platform::Auto, false>(str, buf)
         }
 
-        /// Port of `FileSystem.abs` in `fs.zig` — joins against `top_level_dir`
+        /// `FileSystem.abs`. — joins against `top_level_dir`
         /// into the resolver-shared threadlocal join buffer.
         pub fn abs(&self, parts: &[&[u8]]) -> &[u8] {
             use bun_paths::resolve_path::{join_abs_string, platform};
             join_abs_string::<platform::Loose>(self.top_level_dir, parts)
         }
 
-        /// Port of `FileSystem.absAlloc` in `fs.zig`.
+        /// `FileSystem.absAlloc`.
         pub fn abs_alloc(
             &self,
             parts: &[&[u8]],
         ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
             use bun_paths::resolve_path::{join_abs_string, platform};
             let joined = join_abs_string::<platform::Loose>(self.top_level_dir, parts);
-            // PORT NOTE: Zig duped via `allocator.dupe`; route through DirnameStore so
+            // PORT NOTE: the original duped via `allocator.dupe`; route through DirnameStore so
             // the resolver's `&'static [u8]` storage contract holds.
             DirnameStore::instance()
                 .append_slice(joined)
                 .map_err(|_| bun_alloc::AllocError)
         }
 
-        /// Port of `FileSystem.relative` in `fs.zig` — `bun.path.relative(from, to)`.
+        /// `FileSystem.relative`. — `bun.path.relative(from, to)`.
         pub fn relative(&self, from: &[u8], to: &[u8]) -> &'static [u8] {
             bun_paths::resolve_path::relative(from, to)
         }
 
-        /// Port of `FileSystem.relativeTo` in `fs.zig` — relative path from
+        /// `FileSystem.relativeTo`. — relative path from
         /// `top_level_dir` to `to`. Returns a slice into the resolver-shared
         /// threadlocal relative buffer; caller must dup before the next call.
         pub fn relative_to(&self, to: &[u8]) -> &'static [u8] {
             bun_paths::resolve_path::relative(self.top_level_dir, to)
         }
 
-        /// Port of `FileSystem.relativeFrom` in `fs.zig`.
+        /// `FileSystem.relativeFrom`.
         pub fn relative_from(&self, from: &[u8]) -> &'static [u8] {
             bun_paths::resolve_path::relative(from, self.top_level_dir)
         }
 
-        /// Zig: `f.top_level_dir` — cached cwd captured at `FileSystem::init`.
+        /// `f.top_level_dir` — cached cwd captured at `FileSystem::init`.
         #[inline]
         pub fn top_level_dir(&self) -> &'static [u8] {
             self.top_level_dir
         }
 
-        /// Zig: `f.top_level_dir = slice` (PackageManager.zig:776). `dir` must be
+        /// `f.top_level_dir = slice`. `dir` must be
         /// `'static` (interned in `DirnameStore` or a process-lifetime buffer
         /// like `cwd_buf`). Takes `&mut self` — callers hold `&'static mut
         /// FileSystem` from `instance()`; only called during single-threaded
@@ -465,7 +464,7 @@ pub mod fs {
             bun_core::set_top_level_dir(dir);
         }
 
-        /// Zig: `topLevelDirWithoutTrailingSlash` (fs.zig).
+        /// `topLevelDirWithoutTrailingSlash`.
         pub fn top_level_dir_without_trailing_slash(&self) -> &'static [u8] {
             let d = self.top_level_dir;
             if d.len() > 1 && d.last() == Some(&bun_paths::SEP) {
@@ -475,7 +474,7 @@ pub mod fs {
             }
         }
 
-        /// Zig: `FileSystem.normalize` (fs.zig:415) —
+        /// `FileSystem.normalize` —
         /// `path_handler.normalizeString(str, true, .auto)`.
         #[inline]
         pub fn normalize<'a>(&self, str: &'a [u8]) -> &'a [u8] {
@@ -483,26 +482,26 @@ pub mod fs {
             normalize_string::<true, platform::Auto>(str)
         }
 
-        /// Zig: `f.dirname_store` (fs.zig:76).
+        /// `f.dirname_store`.
         #[inline]
         pub fn dirname_store(&self) -> &'static DirnameStore {
             self.dirname_store
         }
-        /// Zig: `f.filename_store` (fs.zig:77).
+        /// `f.filename_store`.
         #[inline]
         pub fn filename_store(&self) -> &'static FilenameStore {
             self.filename_store
         }
 
-        /// Zig: `FileSystem.RealFS.getDefaultTempDir()` — `BUN_TMPDIR` or the
+        /// `FileSystem.RealFS.getDefaultTempDir()` — `BUN_TMPDIR` or the
         /// platform fallback. Process-static once-computed.
         #[inline]
         pub fn get_default_temp_dir() -> &'static [u8] {
             RealFS::get_default_temp_dir()
         }
 
-        /// Zig: `fs.fs.readDirectory(dir, null, generation, store_fd)`
-        /// (fs.zig:872 `RealFS.readDirectory`). Returns the cached
+        /// `fs.fs.readDirectory(dir, null, generation, store_fd)`
+        /// (`RealFS.readDirectory`). Returns the cached
         /// `*EntriesOption` slot owned by the resolver's BSSMap singleton
         /// (process-lifetime).
         #[inline]
@@ -526,7 +525,7 @@ pub mod fs {
     // `bun_wyhash`, `bun_options_types`) remain here as an extension trait.
     pub use bun_paths::fs::{Path, PathName};
 
-    /// Resolver-tier `fs.zig:Path` methods that pull deps `bun_paths` can't
+    /// Resolver-tier `Path` methods that pull deps `bun_paths` can't
     /// reach (`FilenameStore`/`DirnameStore`, `bun_wyhash`, `bun_options_types`,
     /// `bun_string`). Import this trait to call `.loader()` / `.dupe_alloc()` /
     /// `.hash_key()` on a `Path`.
@@ -540,7 +539,7 @@ pub mod fs {
     }
 
     impl<'a> PathResolverExt<'a> for Path<'a> {
-        /// Port of `Path.dupeAlloc` in `fs.zig` — interns `text`/`pretty` into the
+        /// `Path.dupeAlloc`. — interns `text`/`pretty` into the
         /// process-static `FilenameStore` so the returned `Path` borrows `'static`
         /// data. PORT NOTE: TYPE_ONLY shim — full overlap/slice-range
         /// short-circuiting lives in the gated `fs_full::Path::dupe_alloc`; this
@@ -567,7 +566,7 @@ pub mod fs {
             Ok(new_path)
         }
 
-        /// Port of `Path.dupeAllocFixPretty` in `fs.zig`.
+        /// `Path.dupeAllocFixPretty`.
         fn dupe_alloc_fix_pretty(&self) -> Result<Path<'static>, bun_core::Error> {
             #[cfg(not(windows))]
             {
@@ -593,13 +592,13 @@ pub mod fs {
             }
         }
 
-        /// Port of `Path.hashKey` in `fs.zig`.
+        /// `Path.hashKey`.
         fn hash_key(&self) -> u64 {
             if self.is_file() {
                 return bun_wyhash::hash(self.text);
             }
 
-            // PERF(port): Zig used incremental `std.hash.Wyhash.update`; bun_wyhash
+            // PERF(port): the original used incremental `std.hash.Wyhash.update`; bun_wyhash
             // exposes only the stateless `WyhashStateless` (aligned-chunk update +
             // tail final) and one-shot `hash`. Concat to a temp and one-shot.
             let mut buf = Vec::with_capacity(self.namespace.len() + 8 + self.text.len());
@@ -609,7 +608,7 @@ pub mod fs {
             bun_wyhash::hash(&buf)
         }
 
-        /// Port of `Path.hashForKit` in `fs.zig`.
+        /// `Path.hashForKit`.
         ///
         /// This hash is used by the hot-module-reloading client in order to
         /// identify modules. Since that code is JavaScript, the hash must remain in
@@ -620,7 +619,7 @@ pub mod fs {
             self.hash_key() & ((1u64 << 52) - 1)
         }
 
-        /// Port of `Path.packageName` in `fs.zig`.
+        /// `Path.packageName`.
         fn package_name(&self) -> Option<&[u8]> {
             let mut name_to_use = self.pretty;
             // SEP_STR ++ "node_modules" ++ SEP_STR
@@ -639,7 +638,7 @@ pub mod fs {
             Some(pkgname)
         }
 
-        /// Port of `Path.loader` in `fs.zig`.
+        /// `Path.loader`.
         fn loader(&self, loaders: &bun_ast::LoaderHashTable) -> Option<bun_ast::Loader> {
             use bun_ast::Loader;
             if self.is_data_url() {
@@ -722,8 +721,7 @@ pub mod fs {
     fn temp_entries_option_write(value: EntriesOption) -> &'static mut EntriesOption {
         TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
             slot.write(value);
-            // SAFETY: just wrote; threadlocal storage outlives caller (matches Zig
-            // `&temp_entries_option`). Re-erase to 'static for the BSSMap-shaped
+            // SAFETY: just wrote; threadlocal storage outlives caller. Re-erase to 'static for the BSSMap-shaped
             // unbounded `&mut EntriesOption` return type — the `RefMut` guard
             // drops immediately on return, so no live `RefCell` borrow aliases
             // the escaped reference.
@@ -732,7 +730,7 @@ pub mod fs {
     }
 
     // ── RealFS.Tmpfile ───────────────────────────────────────────────────
-    /// Port of `FileSystem.RealFS.Tmpfile` (fs.zig). The Zig POSIX impl never
+    /// `FileSystem.RealFS.Tmpfile`. The the original POSIX impl never
     /// touched its `*RealFS` arg (it always opens at cwd); the Windows impl
     /// only needs the temp-dir path, which routes via `tmpdir_path`.
     pub struct RealFsTmpfile {
@@ -764,7 +762,7 @@ pub mod fs {
             }
         }
 
-        /// Zig: `Tmpfile.create(*RealFS, name)` — POSIX path opens at cwd
+        /// `Tmpfile.create(*RealFS, name)` — POSIX path opens at cwd
         /// (the `*RealFS` arg is unused there); Windows opens under the
         /// process temp dir.
         pub fn create(&mut self, name: &ZStr) -> core::result::Result<(), bun_core::Error> {
@@ -809,7 +807,7 @@ pub mod fs {
             }
         }
 
-        /// Zig: `Tmpfile.promoteToCWD(from_name, name)`.
+        /// `Tmpfile.promoteToCWD(from_name, name)`.
         pub fn promote_to_cwd(
             &mut self,
             from_name: &ZStr,
@@ -871,8 +869,8 @@ pub mod fs {
         }
     }
 
-    /// Port of `FileSystem.RealFS.EntriesOption` in `fs.zig`.
-    // PORT NOTE: Zig stores `*DirEntry` (raw, BSSMap-owned). Modeled as
+    /// `FileSystem.RealFS.EntriesOption`.
+    // PORT NOTE: the original stores `*DirEntry` (raw, BSSMap-owned). Modeled as
     // an unbounded `&mut DirEntry` so resolver match arms (`Entries(entries) =>
     // entries.dir`) auto-deref. The backing storage is the BSSMap singleton;
     // `'static` is the ARENA lifetime.
@@ -887,22 +885,22 @@ pub mod fs {
     }
 
     /// Downstream-facing alias — `bun_glob::GlobWalker` named the result of
-    /// `RealFS::read_directory` `ReadDirResult`; the Zig type is `EntriesOption`.
+    /// `RealFS::read_directory` `ReadDirResult`; the original type was `EntriesOption`.
     pub type ReadDirResult = EntriesOption;
 
     // SAFETY: ARENA — `EntriesOption` holds an unbounded `&mut DirEntry` (whose `data`
     // map stores `*mut Entry` into the BSSMap singleton). All access is serialized
-    // through `RealFS.entries_mutex`; Zig used a `threadlocal var instance`. The
+    // through `RealFS.entries_mutex`. The
     // raw-pointer fields are the only thing blocking auto-Sync.
     unsafe impl Sync for EntriesOption {}
     unsafe impl Send for EntriesOption {}
 
-    /// Port of `FileSystem.RealFS.EntriesOption.Map` in `fs.zig`:
+    /// `FileSystem.RealFS.EntriesOption.Map`.:
     /// `allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 256, true)`.
     /// `store_keys=false` → Rust `BSSMapInner<V, COUNT, RM_SLASH>` (est_key_len unused on inner shape).
     pub type EntriesOptionMap = bun_alloc::BSSMapInner<EntriesOption, 2048, true>;
 
-    // Per-monomorphization singleton storage for `EntriesOption.Map` — Zig kept
+    // Per-monomorphization singleton storage for `EntriesOption.Map` — originally kept
     // `var instance` inside the generic; Rust emits it here at the declare site.
     bun_alloc::bss_map_inner! { pub entries_option_map : EntriesOption, 2048, true }
 
@@ -967,7 +965,7 @@ pub mod fs {
         ) -> core::result::Result<*mut EntriesOption, bun_core::Error> {
             // PORT NOTE: `BSSMapInner::put` mutates `result.index` to record placement; callers
             // (e.g. `dir_info_cached_maybe_log`) re-read `result.index` post-`put`, so the
-            // mutation must be visible — pass through directly (Zig: `*Result`).
+            // mutation must be visible — pass through directly.
             self.inner()
                 .put(result, value)
                 .map(|v| std::ptr::from_mut::<EntriesOption>(v))
@@ -981,12 +979,12 @@ pub mod fs {
         }
     }
 
-    /// Zig: `pub const Implementation = RealFS;`
+    /// `pub const Implementation = RealFS;`
     pub type Implementation = RealFS;
 
     // ── RealFS ───────────────────────────────────────────────────────────
 
-    /// Port of `FileSystem.RealFS` in `fs.zig`.
+    /// `FileSystem.RealFS`.
     pub struct RealFS {
         pub entries_mutex: Mutex,
         /// Port of `entries: *EntriesOption.Map`. The resolver body addresses
@@ -999,7 +997,7 @@ pub mod fs {
     }
 
     impl RealFS {
-        /// Port of `RealFS.init` (fs.zig:823-837) — raise RLIMIT_NOFILE and
+        /// `RealFS.init`. — raise RLIMIT_NOFILE and
         /// record the resulting fd budget so `need_to_close_files` can decide
         /// whether to cache directory fds.
         pub fn init(cwd: &'static [u8]) -> RealFS {
@@ -1050,7 +1048,7 @@ pub mod fs {
             }
         }
 
-        /// Port of `RealFS.openDir` in `fs.zig` — `open(path, O_DIRECTORY)`.
+        /// `RealFS.openDir`. — `open(path, O_DIRECTORY)`.
         pub fn open_dir(
             &self,
             unsafe_dir_string: &[u8],
@@ -1075,14 +1073,14 @@ pub mod fs {
             }
             #[cfg(not(windows))]
             {
-                // PORT NOTE: Zig used `std.fs.openDirAbsolute` on POSIX, which
+                // PORT NOTE: the original used `std.fs.openDirAbsolute` on POSIX, which
                 // reduces to `open(path, O_DIRECTORY)`; route through
                 // `bun_sys::open_a` for the NUL-termination handling.
                 bun_sys::open_a(unsafe_dir_string, bun_sys::O::DIRECTORY, 0).map_err(Into::into)
             }
         }
 
-        /// Port of `RealFS.readdir` in `fs.zig` — iterate `handle` and populate a
+        /// `RealFS.readdir`. — iterate `handle` and populate a
         /// fresh `DirEntry` (re-using `prev_map` Entry slots where the name matches).
         fn readdir<I: DirEntryIterator>(
             &mut self,
@@ -1118,7 +1116,7 @@ pub mod fs {
             Ok(dir)
         }
 
-        /// Port of `RealFS.readDirectoryError` in `fs.zig` — cache (or threadlocal-
+        /// `RealFS.readDirectoryError`. — cache (or threadlocal-
         /// stash) an `EntriesOption::Err` for `dir` and hand back its address.
         fn read_directory_error(
             &mut self,
@@ -1156,7 +1154,7 @@ pub mod fs {
             )))
         }
 
-        /// Port of `RealFS.readDirectory` in `fs.zig`.
+        /// `RealFS.readDirectory`.
         pub fn read_directory(
             &mut self,
             dir_: &[u8],
@@ -1175,7 +1173,7 @@ pub mod fs {
         // https://twitter.com/jarredsumner/status/1655787337027309568
         // https://twitter.com/jarredsumner/status/1655714084569120770
         // https://twitter.com/jarredsumner/status/1655464485245845506
-        /// Port of `RealFS.readDirectoryWithIterator` in `fs.zig`.
+        /// `RealFS.readDirectoryWithIterator`.
         ///
         /// Caller borrows the returned `EntriesOption`. When `FeatureFlags::ENABLE_ENTRY_CACHE`
         /// is `false`, it is not safe to store this pointer past the current function call.
@@ -1192,7 +1190,7 @@ pub mod fs {
 
             crate::Resolver::assert_valid_cache_key(dir);
             let mut cache_result: Option<bun_alloc::Result> = None;
-            // Zig: `entries_mutex.lock(); defer entries_mutex.unlock();` — RAII guard.
+            // `entries_mutex.lock(); defer entries_mutex.unlock();` — RAII guard.
             // `MutexGuard` stores a raw `*const Mutex` so it does not keep `&self`
             // borrowed across the body below.
             let _unlock_guard = if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
@@ -1242,7 +1240,7 @@ pub mod fs {
                 },
             };
 
-            // PORT NOTE: Zig `defer { if (...) handle.close() }` — runs on every exit. Use
+            // PORT NOTE: the conditional close must run on every exit. Use
             // scopeguard so close happens even if `readdir`/`put` early-return with `?`.
             let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
             let _close_guard = scopeguard::guard(handle, move |h| {
@@ -1261,7 +1259,7 @@ pub mod fs {
                     DirnameStore::instance().append_slice(dir_maybe_trail_slash)?
                 }
             } else {
-                // PORT NOTE: Zig stored the caller-provided slice directly (no lifetime
+                // PORT NOTE: the original stored the caller-provided slice directly (no lifetime
                 // system). Intern into DirnameStore so the cache entry never dangles —
                 // `append_slice` is a bump-pointer copy, cost is bounded.
                 DirnameStore::instance().append_slice(dir)?
@@ -1278,7 +1276,7 @@ pub mod fs {
                 Err(err) => {
                     if let Some(existing) = in_place {
                         // SAFETY: see above.
-                        // PORT NOTE: Zig `clear_and_free`; bun_collections::StringHashMap exposes `clear`.
+                        // PORT NOTE: the original used `clear_and_free`; bun_collections::StringHashMap exposes `clear`.
                         unsafe { (*existing).data.clear() };
                     }
                     return Ok(self.read_directory_error(dir, err)?);
@@ -1286,7 +1284,7 @@ pub mod fs {
             };
 
             if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
-                // PORT NOTE: Zig `entries_ptr = in_place orelse allocator.create(DirEntry)`.
+                // PORT NOTE: `entries_ptr = in_place orelse allocator.create(DirEntry)`.
                 // `EntriesOption::Entries` here holds an unbounded `&mut DirEntry` (raw, BSSMap-stored
                 // pointer), so a fresh slot is a leaked `Box<DirEntry>` whose lifetime is the
                 // `entries_option_map()` singleton (process-static).
@@ -1296,7 +1294,7 @@ pub mod fs {
                 };
                 if let Some(original) = in_place {
                     // SAFETY: BSSMap-owned; entries_mutex held.
-                    // PORT NOTE: Zig `clear_and_free`; bun_collections::StringHashMap exposes `clear`.
+                    // PORT NOTE: the original used `clear_and_free`; bun_collections::StringHashMap exposes `clear`.
                     unsafe { (*original).data.clear() };
                 }
                 if store_fd && !entries.fd.is_valid() {
@@ -1318,7 +1316,7 @@ pub mod fs {
 
             // ENABLE_ENTRY_CACHE = false: stash in the threadlocal and hand back its
             // address. The leaked Box lives until the next `read_directory` call on
-            // this thread (matches Zig — threadlocal `temp_entries_option`).
+            // this thread.
             let entries_ptr = bun_core::heap::into_raw(Box::new(entries));
             // SAFETY: freshly-leaked Box; re-borrow as 'static for the threadlocal slot.
             Ok(temp_entries_option_write(EntriesOption::Entries(unsafe {
@@ -1326,9 +1324,9 @@ pub mod fs {
             })))
         }
 
-        /// Port of `RealFS.bustEntriesCache` in `fs.zig`.
+        /// `RealFS.bustEntriesCache`.
         pub fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
-            // Zig took no lock here, but `entries` is the process-global
+            // the original took no lock here, but `entries` is the process-global
             // BSSMap singleton and `remove` mutates it; callers (transpiler /
             // hot-reloader / VM) reach this without `RESOLVER_MUTEX`, so take
             // `entries_mutex` to satisfy `EntriesMap::inner`'s aliasing
@@ -1338,7 +1336,7 @@ pub mod fs {
             self.entries.remove(file_path)
         }
 
-        /// Port of `RealFS.kind` in `fs.zig` — lstat + (if symlink) open + fstat +
+        /// `RealFS.kind`. — lstat + (if symlink) open + fstat +
         /// readlink to populate an `EntryCache`. Windows: `GetFileAttributesW` +
         /// (if reparse point) `CreateFileW`-follow + `GetFinalPathNameByHandle`
         /// realpath.
@@ -1473,7 +1471,7 @@ pub mod fs {
                         )?
                         .handle()
                     } else {
-                        // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
+                        // PORT NOTE: `bun.openFileForPath` — O_PATH is
                         // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
                         #[cfg(any(target_os = "linux", target_os = "android"))]
                         let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
@@ -1483,8 +1481,8 @@ pub mod fs {
                     };
                     FileSystem::set_max_fd(file.native());
 
-                    // PORT NOTE: Zig `defer { if (...) file.close() else cache.fd = file }` runs on
-                    // BOTH success and error paths — use scopeguard so close-or-store happens even if
+                    // PORT NOTE: the conditional close-or-store must run on
+                    // BOTH success and error paths — use scopeguard so it happens even if
                     // fstat()/get_fd_path() return early with `?`.
                     let need_to_close_files = self.need_to_close_files();
                     let cache_ptr: *mut EntryCache = &raw mut cache;
@@ -1533,7 +1531,7 @@ pub mod fs {
     }
 
     impl RealFS {
-        /// Port of `RealFS.needToCloseFiles` in `fs.zig`.
+        /// `RealFS.needToCloseFiles`.
         #[inline]
         pub fn need_to_close_files(&self) -> bool {
             if !bun_core::feature_flags::STORE_FILE_DESCRIPTORS {
@@ -1544,7 +1542,7 @@ pub mod fs {
             {
                 // 'false' is okay here because windows gives you a seemingly unlimited number of
                 // open file handles, while posix has a lower limit. Handles are automatically
-                // closed when the process exits. See fs.zig `needToCloseFiles` for the full
+                // closed when the process exits. See `RealFS::need_to_close_files` for the full
                 // rationale (handle ordering on Windows is non-monotone, so MAX_FD tracking
                 // doesn't apply).
                 return false;
@@ -1558,7 +1556,7 @@ pub mod fs {
             }
         }
 
-        /// Port of `RealFS.entriesAt` in `fs.zig` — index lookup with generation-check
+        /// `RealFS.entriesAt`. — index lookup with generation-check
         /// re-read (open + readdir + cache replace) when the cached listing is stale.
         pub fn entries_at(
             &mut self,
@@ -1575,7 +1573,7 @@ pub mod fs {
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };
-                    // Spec fs.zig:617 — `bun.openDirForIteration(FD.cwd(), dir)`, NOT
+                    // `bun.openDirForIteration(FD.cwd(), dir)`, NOT
                     // `RealFS.openDir`. On Windows the two diverge: `open_dir` passes
                     // `read_only: true` (no DELETE access on the handle), whereas
                     // `openDirForIteration` uses the default `WindowsOpenDirOptions`
@@ -1589,7 +1587,7 @@ pub mod fs {
                             return self.read_directory_error(dir, err.into()).ok();
                         }
                     };
-                    // PORT NOTE: Zig `defer handle.close()` — runs on every exit.
+                    // PORT NOTE: `handle.close()` must run on every exit.
                     let _close_guard = scopeguard::guard(handle, |h| {
                         let _ = bun_sys::close(h);
                     });
@@ -1682,13 +1680,13 @@ pub mod fs {
             }
         }
 
-        /// Port of `RealFS.platformTempDir()` in `fs.zig`.
+        /// `RealFS.platformTempDir()`.
         pub fn platform_temp_dir() -> &'static [u8] {
             static ONCE: bun_core::Once<&'static [u8]> = bun_core::Once::new();
             ONCE.call(Self::platform_temp_dir_compute)
         }
 
-        /// Port of `RealFS.tmpdirPath()` in `fs.zig`:
+        /// `RealFS.tmpdirPath()`.:
         /// `pub fn tmpdirPath() []const u8 { return bun.env_var.BUN_TMPDIR.getNotEmpty() orelse platformTempDir(); }`
         pub fn tmpdir_path() -> &'static [u8] {
             bun_core::env_var::BUN_TMPDIR
@@ -1696,7 +1694,7 @@ pub mod fs {
                 .unwrap_or_else(Self::platform_temp_dir)
         }
 
-        /// Port of `RealFS.getDefaultTempDir()` in `fs.zig`.
+        /// `RealFS.getDefaultTempDir()`.
         pub fn get_default_temp_dir() -> &'static [u8] {
             bun_core::env_var::BUN_TMPDIR
                 .get()
@@ -1706,7 +1704,7 @@ pub mod fs {
 
     // ── `file_system` namespace shim ─────────────────────────────────────
     // The Phase-A resolver body addresses types via `Fs::file_system::*` (the
-    // Zig nesting was `FileSystem.RealFS.EntriesOption` etc.). Re-export the
+    // the original nesting was `FileSystem.RealFS.EntriesOption` etc.). Re-export the
     // flat types under the nested module paths the body expects.
     /// Re-exports from the full `fs.rs` port: `BOM` (detect/strip tables) and
     /// the canonical read-file helpers, so `cache::Fs` (here and in
@@ -1718,7 +1716,7 @@ pub mod fs {
     };
 
     /// Re-export `StatHash` from the full `fs.rs` port so `bun_runtime::server::FileRoute`
-    /// can hash mtimes/sizes without inlining the formatter (Zig: `bun.fs.StatHash`).
+    /// can hash mtimes/sizes without inlining the formatter.
     pub use super::fs_full::stat_hash;
     pub use super::fs_full::stat_hash::StatHash;
 
@@ -1732,12 +1730,12 @@ pub mod fs {
         /// reaching `ModKey` via this re-export hold the inline-`fs` `RealFS`,
         /// which is a different type, so they need an entry point that doesn't
         /// require `fs_full::RealFS`. Body is the spec `generate` minus the
-        /// dead args (linker.zig:58 → fs.zig `ModKey.generate`).
+        /// dead args (the linker calls into `ModKey.generate`).
         pub fn from_file(file: &bun_sys::File) -> core::result::Result<Self, bun_core::Error> {
             let stat = file.stat()?;
 
             const NS_PER_S: i128 = 1_000_000_000;
-            // PORT NOTE: `bun_sys::Stat` is `libc::stat`; Zig's
+            // PORT NOTE: `bun_sys::Stat` is `libc::stat`; the original's
             // `std.fs.File.stat()` returned a normalized struct with
             // `mtime: i128` ns. Reconstruct from `st_mtime` (sec) +
             // `st_mtime_nsec` (ns). The `libc` crate flattens BSD/Darwin
@@ -1758,7 +1756,7 @@ pub mod fs {
             // Don't generate a modification key if the file is too new
             let now = bun_core::time::nano_timestamp();
             let now_seconds = now / NS_PER_S;
-            // PORT NOTE: Zig had `seconds > seconds` (always false) — preserved
+            // PORT NOTE: the original had `seconds > seconds` (always false) — preserved
             #[allow(clippy::eq_op)]
             if seconds > seconds || (seconds == now_seconds && mtime > now) {
                 return Err(bun_core::err!("Unusable"));
@@ -1788,7 +1786,7 @@ pub mod fs {
 
 // ──────────────────────────────────────────────────────────────────────────
 // DirEntryAccessor — `bun_glob::walk::Accessor` impl backed by the resolver's
-// DirEntry cache. Port of `glob.walk.DirEntryAccessor` (GlobWalker.zig).
+// DirEntry cache. `glob.walk.DirEntryAccessor`.
 //
 // Lives here (not in `bun_glob`) because it needs `fs::DirEntry`/
 // `RealFS::read_directory`, and `bun_resolver` already depends on `bun_glob`.
@@ -1828,7 +1826,7 @@ pub mod dir_entry_accessor {
         }
     }
 
-    // PORT NOTE: Zig `FS.DirEntry.EntryMap.Iterator` (key_ptr/value_ptr shape).
+    // PORT NOTE: `FS.DirEntry.EntryMap.Iterator` (key_ptr/value_ptr shape).
     // `dir_entry::EntryMap` = `StringHashMap<*mut Entry>` which derefs to
     // `std::collections::HashMap<Box<[u8]>, *mut Entry>`; iterate that directly.
     type EntryMapIter = bun_collections::hashbrown::hash_map::Iter<
@@ -1855,7 +1853,7 @@ pub mod dir_entry_accessor {
         // not a BSS-arena slice, so minting a `'static` borrow via
         // `from_raw_parts` would be a lifetime lie. `RawSlice` encapsulates
         // the outlives-holder invariant so `slice()` is safe.
-        // Mirrors Zig `IterResult.NameWrapper.value: []const u8` (no lifetime).
+        // Mirrors `IterResult.NameWrapper.value: []const u8` (no lifetime).
         pub value: bun_ptr::RawSlice<u8>,
     }
 
@@ -1906,7 +1904,7 @@ pub mod dir_entry_accessor {
                 // The key is a `Box<[u8]>` owned by `DirEntry.data` and valid
                 // until the next `read_directory` regeneration; `name_slice()`
                 // re-narrows the lifetime so it never escapes the iter result.
-                // Mirrors Zig `nextval.key_ptr.*`.
+                // Mirrors `nextval.key_ptr.*`.
                 Ok(Some(DirEntryIterResult {
                     name: DirEntryNameWrapper {
                         value: bun_ptr::RawSlice::new(&**key),
@@ -2026,7 +2024,7 @@ pub mod dir_entry_accessor {
         fn getcwd(path_buf: &mut PathBuffer) -> Maybe<&[u8]> {
             let cwd = FS::instance().fs.cwd;
             path_buf[..cwd.len()].copy_from_slice(cwd);
-            // TODO(port): Zig version has no return; assuming it should return the copied slice
+            // TODO(port): the original has no return; assuming it should return the copied slice
             Ok(&path_buf[..cwd.len()])
         }
     }
@@ -2034,7 +2032,7 @@ pub mod dir_entry_accessor {
 pub use dir_entry_accessor::DirEntryAccessor;
 
 // ──────────────────────────────────────────────────────────────────────────
-// `cache` — port of `src/bundler/cache.zig` (`Set`/`Fs`/`Entry`/`JavaScript`/
+// `cache` — port of the original (`Set`/`Fs`/`Entry`/`JavaScript`/
 // `Json`). These types live below `bun_bundler` in
 // the crate graph because `Resolver.caches` is typed by them and the bundler
 // constructs/assigns it (`transpiler.resolver.caches = Set::init()`). The
@@ -2052,7 +2050,7 @@ pub mod cache {
 
     bun_core::declare_scope!(CacheFs, visible);
 
-    /// Port of `cache::Set` (cache.zig:1).
+    /// `cache::Set`.
     pub struct Set {
         pub js: JavaScript,
         pub fs: Fs,
@@ -2074,7 +2072,7 @@ pub mod cache {
         }
     }
 
-    /// Port of `cache::Fs` (cache.zig:18).
+    /// `cache::Fs`.
     pub struct Fs {
         pub shared_buffer: MutableString,
         pub macro_shared_buffer: MutableString,
@@ -2094,7 +2092,7 @@ pub mod cache {
         }
     }
 
-    /// Port of `Fs.Entry.ExternalFreeFunction` (cache.zig:26).
+    /// `Fs.Entry.ExternalFreeFunction`.
     #[repr(C)]
     pub struct ExternalFreeFunction {
         pub ctx: *mut c_void,
@@ -2124,8 +2122,8 @@ pub mod cache {
     /// Provenance-tagged backing for [`Entry`] source bytes.
     ///
     /// Replaces the prior `&'static [u8]` + `Box::leak`/`heap::take` pair
-    /// (forbidden per docs/PORTING.md §Forbidden patterns). Zig's `string`
-    /// field (cache.zig:20) carried an implicit allocator contract; Rust makes
+    /// (forbidden per docs/PORTING.md §Forbidden patterns). the `string`
+    /// field carried an implicit allocator contract; Rust makes
     /// provenance explicit so `deinit` matches on the variant instead of
     /// guessing — the old scheme would `heap::take` a `MutableString`-owned
     /// pointer on the `use_shared_buffer=true` path (UB).
@@ -2134,13 +2132,13 @@ pub mod cache {
         Empty,
         /// Heap-owned buffer (default-allocator path). Freed when this variant
         /// drops. Stored as `Vec<u8>` (not `Box<[u8]>`) so a sentinel NUL can
-        /// sit in spare capacity past `len`, matching fs.zig:1671.
+        /// sit in spare capacity past `len`.
         Owned(Vec<u8>),
         /// Bytes live in a caller-supplied `bun_alloc::Arena` (the per-call
         /// `MimallocArena` from `ParseOptions.arena`). NOT freed on `deinit` —
         /// bulk-reclaimed by `mi_heap_destroy` when the arena drops. This is
         /// the `allocator != bun.default_allocator` arm of
-        /// `Fs.readFileWithAllocator` (cache.zig:146 → fs.zig:1617): the
+        /// `Fs.readFileWithAllocator` (the original → the original): the
         /// concurrent-transpiler path passed `this_parse.allocator` so the
         /// 1.6 MB vite chunk source landed in the per-job arena, not the
         /// worker thread's default mimalloc heap (which is never destroyed).
@@ -2256,9 +2254,9 @@ pub mod cache {
         }
     }
 
-    /// Port of `Fs.Entry` (cache.zig:19). `contents` is provenance-tagged (see
+    /// `Fs.Entry`. `contents` is provenance-tagged (see
     /// [`Contents`]); callers feed `entry.contents()` into `bun_ast::Source`.
-    /// Ownership is **manual** (`deinit`), matching Zig — callers frequently
+    /// Ownership is **manual** (`deinit`), matching the original — callers frequently
     /// hand the bytes off to a `Source` that outlives the `Entry`.
     pub struct Entry {
         pub contents: Contents,
@@ -2297,7 +2295,7 @@ pub mod cache {
             self.contents.as_slice()
         }
 
-        /// Port of `Entry.deinit` (cache.zig:39). NOT `Drop` — Zig callers free
+        /// `Entry.deinit`. NOT `Drop` — the original callers free
         /// explicitly (and frequently hand `contents` off to a `Source` that
         /// outlives the `Entry`).
         pub fn deinit(&mut self) {
@@ -2305,15 +2303,14 @@ pub mod cache {
                 // SAFETY: ctx/function pair was supplied together by the native plugin.
                 unsafe { func(self.external_free_function.ctx) };
             }
-            // Replacing the variant drops `Owned(Vec<u8>)` (matches Zig's
-            // `allocator.free(entry.contents)`); `Arena`/`SharedBuffer`/
+            // Replacing the variant drops `Owned(Vec<u8>)``); `Arena`/`SharedBuffer`/
             // `External`/`Empty` have trivial drops, so the shared-buffer and
             // arena paths are correct no-ops instead of the UB `heap::take`
             // they used to be.
             self.contents = Contents::Empty;
         }
 
-        /// Port of `Entry.closeFD` (cache.zig:48).
+        /// `Entry.closeFD`.
         pub fn close_fd(&mut self) -> Option<bun_sys::Error> {
             use bun_sys::FdExt as _;
             if self.fd.is_valid() {
@@ -2341,8 +2338,8 @@ pub mod cache {
         /// When we need to suspend/resume something that has pointers into the shared buffer, we need to
         /// switch out the shared buffer so that it is not in use.
         ///
-        /// Ownership transfer: in Zig (cache.zig:77/79) the field is overwritten WITHOUT freeing
-        /// the old buffer, because the suspended parse keeps pointers into it (see ModuleLoader.zig:488,
+        /// Ownership transfer: in the original (the original/79) the field is overwritten WITHOUT freeing
+        /// the old buffer, because the suspended parse keeps pointers into it (see the original,
         /// "this shared buffer is about to become owned by the AsyncModule struct"). In Rust, plain
         /// field assignment would drop+free the old buffer → use-after-free on resume. So we return
         /// the detached buffer; the caller MUST take ownership of it and keep it alive for as long as
@@ -2357,11 +2354,11 @@ pub mod cache {
             }
         }
 
-        // TODO(port): Zig `Fs.deinit` references `c.entries` which is not a field on `Fs` —
-        // dead code (Zig lazy compilation never instantiated it). No Drop impl needed beyond
+        // TODO(port): `Fs.deinit` references `c.entries` which is not a field on `Fs` —
+        // dead code. No Drop impl needed beyond
         // the auto-drop of `shared_buffer` / `macro_shared_buffer`.
 
-        /// Port of `Fs.readFileShared` (cache.zig:87) — read `path` into the
+        /// `Fs.readFileShared`. — read `path` into the
         /// caller's `shared` buffer (HMR / dev-server path).
         pub fn read_file_shared(
             &mut self,
@@ -2422,7 +2419,7 @@ pub mod cache {
             })
         }
 
-        /// Port of `Fs.readFile` (cache.zig:126).
+        /// `Fs.readFile`.
         pub fn read_file(
             &mut self,
             _fs: &mut fs_mod::FileSystem,
@@ -2441,7 +2438,7 @@ pub mod cache {
             )
         }
 
-        /// Port of `Fs.readFileWithAllocator` (cache.zig:146).
+        /// `Fs.readFileWithAllocator`.
         ///
         /// PORT NOTE: `comptime use_shared_buffer` is taken at runtime — the live
         /// callers (`ParseTask::get_code_for_parse_task_without_plugins`,
@@ -2449,13 +2446,13 @@ pub mod cache {
         /// resolver's earlier forward-decl already pinned this shape.
         /// PERF(port): re-monomorphize once both callers stabilize.
         ///
-        /// `arena` restores the Zig `allocator` param: when
+        /// `arena` restores the `allocator` param: when
         /// `!use_shared_buffer && arena.is_some()` the file body is read
         /// directly into `arena` (`Contents::Arena`), so the bytes are
         /// bulk-freed by `mi_heap_destroy` when the per-call `MimallocArena`
         /// drops instead of landing in the worker thread's default mimalloc
         /// heap (which is never destroyed). `None` keeps the global-heap
-        /// `Contents::Owned(Vec<u8>)` path. Zig: `transpiler.zig:838-839`
+        /// `Contents::Owned(Vec<u8>)` path. The original
         /// passed `if (use_shared_buffer) bun.default_allocator else
         /// this_parse.allocator`.
         pub fn read_file_with_allocator(
@@ -2469,7 +2466,7 @@ pub mod cache {
         ) -> Result<Entry, bun_core::Error> {
             let rfs = &_fs.fs;
 
-            // PORT NOTE: reshaped — Zig declared `file_handle = undefined` then assigned on each
+            // PORT NOTE: reshaped — the original declared `file_handle = undefined` then assigned on each
             // branch; restructured into a single let-expression to avoid `mem::zeroed()` on a
             // type that may have niche (NonZero) fields.
             let file_handle: bun_sys::File = if let Some(f) = _file_handle {
@@ -2524,7 +2521,7 @@ pub mod cache {
             let stream = self.stream;
 
             let contents = match (use_shared_buffer, arena) {
-                // Zig: `readFileWithHandleAndAllocator(this_parse.allocator, …)`
+                // `readFileWithHandleAndAllocator(this_parse.allocator, …)`
                 // — read straight into the per-call arena so the source bytes
                 // are reclaimed by `mi_heap_destroy` instead of pinning a
                 // segment in the worker thread's default heap.
@@ -2582,8 +2579,8 @@ pub mod cache {
         }
     }
 
-    /// Port of `cache::JavaScript` (cache.zig:204) — unit struct; AST caching is
-    /// "probably only relevant when bundling for production" (per the Zig
+    /// `cache::JavaScript`. — unit struct; AST caching is
+    /// "probably only relevant when bundling for production" (per the original interface
     /// comment), so the struct is empty and `parse`/`scan` are stateless.
     ///
     /// CYCLEBREAK: `parse`/`scan` need `bun_js_parser::Parser::init` + the
@@ -2629,7 +2626,7 @@ pub mod __phase_a_body {
     // `bun_install_types` dep (LAYERING: pass-through, no new edge).
     pub use ::bun_install_types::resolver_hooks::AutoInstaller as PackageManagerTrait;
 
-    // LAYERING: `PackageManager.initWithRuntime` (Zig resolver.zig:540) lives in
+    // LAYERING: `PackageManager.initWithRuntime` lives in
     // `bun_install`, which depends on this crate. The lazy-init body is defined
     // `#[no_mangle]` in `bun_install::auto_installer` and resolved at link time
     // (same pattern as `__bun_regex_*` / `__BUN_RUNTIME_HOOKS`). `install` is the
@@ -2676,7 +2673,7 @@ pub mod __phase_a_body {
         fn compile_exec_argv(&self) -> &[u8];
     }
 
-    /// `Dependency` namespace as the body spells it (Zig: `Dependency.Version` /
+    /// `Dependency` namespace as the body spells it (`Dependency.Version` /
     /// `Dependency.Behavior`). Re-exports the canonical `bun_install_types` items.
     pub mod Dependency {
         pub use ::bun_install_types::resolver_hooks::{
@@ -2706,7 +2703,7 @@ pub mod __phase_a_body {
 
         /// Value-dispatch over `Platform` to the const-generic `PlatformT`
         /// monomorphizations in `resolve_path`. The resolver body threads
-        /// `Platform::AUTO` / `Platform::Loose` at runtime (carried over from Zig's
+        /// `Platform::AUTO` / `Platform::Loose` at runtime (carried over from the original's
         /// `comptime _platform: Platform` callsites that took a function param).
         macro_rules! dispatch_platform {
             ($p:expr, |$P:ident| $body:expr) => {{
@@ -2771,8 +2768,9 @@ pub mod __phase_a_body {
                 |P| ::bun_paths::resolve_path::join_string_buf::<P>(buf, parts)
             )
         }
-        /// Zig `bun.pathLiteral` — compile-time platform-separator literal. Zig
-        /// rewrites `/` → `\` at comptime; Rust can't transform a borrowed
+        /// `bun.pathLiteral` — compile-time platform-separator literal. The
+        /// original rewrites `/` → `\` at compile time; Rust can't transform a
+        /// borrowed
         /// `&'static [u8]` in a const fn, so this is a macro that emits a fresh
         /// const array with the swap applied. Result is `&'static [u8; N]`
         /// (coerces to `&[u8]`).
@@ -2828,8 +2826,7 @@ pub mod __phase_a_body {
         pub(super) use ::bun_sys::*;
 
         /// Port of `std.fs.openDirAbsoluteZ` — `open(path, O_DIRECTORY|O_RDONLY|O_CLOEXEC[|O_NOFOLLOW])`.
-        /// `opts.iterate` is a no-op on POSIX (Zig only used it to pick `iterate=true`
-        /// on `IterableDir`, which is just an open mode hint).
+        /// `opts.iterate` is a no-op on POSIX.
         pub(super) fn open_dir_absolute_z(
             path: &::bun_core::ZStr,
             opts: OpenDirOptions,
@@ -2867,7 +2864,7 @@ pub mod __phase_a_body {
 
     /// `bun_sys::Fd` extension surface — thin method-syntax wrappers over the
     /// free functions `::bun_sys::{close, get_fd_path}` and `Fd::native`, so the
-    /// resolver body can spell `fd.close()` / `fd.get_fd_path(buf)` per the Zig.
+    /// resolver body can spell `fd.close()` / `fd.get_fd_path(buf)` per the original interface.
     trait FdExt: Sized {
         fn close(self);
         fn cast(self) -> bun_sys::RawFd;
@@ -2929,7 +2926,7 @@ pub mod __phase_a_body {
         pub(crate) use bun_ast::{Loader, LoaderHashTable, Target};
         pub use bun_options_types::bundle_enums::ModuleType;
 
-        /// Port of `bundler/options.zig` `Packages`.
+        /// `Packages`.
         #[derive(Clone, Copy, PartialEq, Eq, Default)]
         pub enum Packages {
             #[default]
@@ -2937,7 +2934,7 @@ pub mod __phase_a_body {
             External,
         }
 
-        /// Port of `bundler/options.zig` `ExternalModules`.
+        /// `ExternalModules`.
         #[derive(Default)]
         pub struct ExternalModules {
             pub patterns: Vec<WildcardPattern>,
@@ -2966,7 +2963,7 @@ pub mod __phase_a_body {
         /// silently ignored every `--external` absolute path / package name.
         pub use bun_collections::StringSet;
 
-        /// Port of `bundler/options.zig` `Conditions`.
+        /// `Conditions`.
         #[derive(Default)]
         pub struct Conditions {
             pub import: crate::package_json::ConditionsMap,
@@ -2977,8 +2974,8 @@ pub mod __phase_a_body {
         /// `Copy` tag selecting one of the extension-order lists owned by
         /// [`BundleOptions`]. Replaces the previous `*const [Box<[u8]>]`
         /// self-reference (`Resolver.extension_order` pointing into
-        /// `Resolver.opts`) with a value type — the Zig save/restore pattern
-        /// (`resolver.zig:691-696` etc.) survives unchanged because the tag is
+        /// `Resolver.opts`) with a value type — the save/restore pattern
+        /// survives unchanged because the tag is
         /// `Copy`, and the actual slice is resolved on demand via
         /// [`BundleOptions::ext_order_slice`] / [`Resolver::extension_order`].
         #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -2992,10 +2989,10 @@ pub mod __phase_a_body {
             NodeModulesDefault,
             /// `opts.extension_order.node_modules.esm`
             NodeModulesEsm,
-            /// `opts.extension_order.css` (Zig reads `Defaults.CssExtensionOrder` directly)
+            /// `opts.extension_order.css`
             Css,
             /// `opts.main_field_extension_order` — used when resolving the `"main"`
-            /// package.json field (`resolver.zig:3703,3715,3721`).
+            /// package.json field.
             MainField,
         }
 
@@ -3005,7 +3002,7 @@ pub mod __phase_a_body {
             s.iter().map(|s| Box::<[u8]>::from(*s)).collect()
         }
 
-        /// Port of `bundler/options.zig` `ResolveFileExtensions`.
+        /// `ResolveFileExtensions`.
         pub struct ExtensionOrder {
             pub default: ExtensionOrderGroup,
             pub node_modules: ExtensionOrderGroup,
@@ -3043,7 +3040,7 @@ pub mod __phase_a_body {
             }
         }
         impl ExtensionOrder {
-            /// Port of `options.zig` `ResolveFileExtensions.kind`. Returns the
+            /// `ResolveFileExtensions.kind`. Returns the
             /// [`ExtOrder`] tag; resolve to a slice via
             /// [`BundleOptions::ext_order_slice`].
             pub fn kind(&self, kind: bun_ast::ImportKind, is_node_modules: bool) -> ExtOrder {
@@ -3119,7 +3116,7 @@ pub mod __phase_a_body {
         // field on the local `BundleOptions` subset stay source-compatible.
         pub use ::bun_options_types::ForceNodeEnv;
 
-        /// Port of `bundler/options.zig` `Framework` (Bake) — only the
+        /// `Framework` (Bake) — only the
         /// `built_in_modules` field, which is the sole resolver-read member.
         pub struct Framework {
             pub built_in_modules:
@@ -3142,8 +3139,8 @@ pub mod __phase_a_body {
             pub extra_cjs_extensions: Box<[Box<[u8]>]>,
             pub framework: Option<Framework>,
             pub global_cache: bun_options_types::global_cache::GlobalCache,
-            // Zig: `?*api.BunInstall` (options.zig:1753). Spec consumer
-            // `PackageManagerOptions.zig:load` only reads through it, so `*const`
+            // `?*api.BunInstall`. Spec consumer
+            // `PackageManagerOptions::load` only reads through it, so `*const`
             // — the bundler projects this from `Option<&api::BunInstall>` and a
             // `*mut` here would launder read-only provenance into a writable ptr.
             pub install: *const (),
@@ -3151,7 +3148,7 @@ pub mod __phase_a_body {
             pub load_tsconfig_json: bool,
             pub main_field_extension_order: Box<[Box<[u8]>]>,
             pub main_fields: Box<[Box<[u8]>]>,
-            /// Spec resolver.zig `auto_main` compares the *pointer* of
+            /// `auto_main` compares the *pointer* of
             /// `opts.main_fields` against `Target.DefaultMainFields.get(target)` to
             /// detect "user did not pass --main-fields". The bundler stores an owned
             /// `Box<[Box<[u8]>]>` whose pointer can never match a static, so the
@@ -3166,8 +3163,7 @@ pub mod __phase_a_body {
             pub production: bool,
             pub force_node_env: ForceNodeEnv,
             // Bundler-only fields read via `c.resolver.opts` in
-            // `linker_context/*` (Zig stores the full `BundleOptions` on the
-            // resolver). Projected by `bun_bundler` at link time.
+            // `linker_context/*`. Projected by `bun_bundler` at link time.
             pub output_dir: Box<[u8]>,
             pub root_dir: Box<[u8]>,
             pub public_path: Box<[u8]>,
@@ -3178,7 +3174,7 @@ pub mod __phase_a_body {
         }
 
         impl Default for BundleOptions {
-            /// Spec: `options.zig` field-init defaults. Only the fields the resolver
+            /// Spec: the original field-init defaults. Only the fields the resolver
             /// reads — `bun_bundler::Transpiler::init` overlays the per-field
             /// projections it can map (target/packages/jsx/bools/global_cache/…)
             /// before handing this to `Resolver::init1`.
@@ -3221,7 +3217,7 @@ pub mod __phase_a_body {
         }
 
         impl BundleOptions {
-            /// Port of `options.zig:1825 BundleOptions.setProduction`.
+            /// Port of `the original BundleOptions.setProduction`.
             pub fn set_production(&mut self, value: bool) {
                 if self.force_node_env == ForceNodeEnv::Unspecified {
                     self.production = value;
@@ -3230,10 +3226,10 @@ pub mod __phase_a_body {
             }
         }
 
-        // Port of `bundler/options.zig` `Target.DefaultMainFields`.
+        // `Target.DefaultMainFields`.
         //
         // These are the per-target default `--main-fields` orderings. `BundleOptions.main_fields`
-        // is initialised to alias one of these slices (see options.zig:1712 / 2022), and the
+        // is initialised to alias one of these slices (see the original / 2022), and the
         // resolver's `auto_main` heuristic at `load_as_main_field` compares the *pointer* of
         // `opts.main_fields` against `DEFAULT_MAIN_FIELDS.get(opts.target)` to detect whether the
         // user explicitly set a main-fields list. The previous `&[]` stub made that check always
@@ -3306,7 +3302,7 @@ pub mod __phase_a_body {
     // ── Process-lifetime arenas for DirInfo-cached parses ─────────────────────
     // The DirInfo cache (`DirInfo::hash_map_instance()`) is a true process-lifetime
     // singleton; entries hold `&'static PackageJSON` / `&'static TSConfigJSON` and
-    // borrow `&'static [u8]` source bytes. Zig models this with `bun.TrivialNew`
+    // borrow `&'static [u8]` source bytes. originally modeled with `bun.TrivialNew`
     // (heap-allocate, never free). PORTING.md §Forbidden bars `Box::leak`/
     // `mem::forget` for this — process-lifetime storage must go through
     // `LazyLock`. These append-only arenas are that storage; the `Box<T>` heap
@@ -3345,12 +3341,12 @@ pub mod __phase_a_body {
         bun_ptr::Interned::leak(owned).as_bytes()
     }
 
-    // Port of `const debuglog = Output.scoped(.Resolver, .hidden)` (resolver.zig:4).
+    // `const debuglog = Output.scoped(.Resolver, .hidden)`.
     // `bun_core::declare_scope!` emits the per-scope `static ScopedLogger`; the
     // `debuglog!` macro forwards to the real `bun_core::scoped_log!` so debug builds
     // emit and release builds dead-strip (PORTING.md §Logging).
     //
-    // PORT NOTE: resolver.zig:1692 also binds `const dev = Output.scoped(.Resolver,
+    // PORT NOTE: the original also binds `const dev = Output.scoped(.Resolver,
     // .visible)` for `bustDirCache` — same scope name, different visibility. Rust's
     // `declare_scope!` is one static per ident; route both through the `.hidden`
     // declaration (matches the file-top binding) and let `BUN_DEBUG_Resolver=1`
@@ -3395,7 +3391,7 @@ pub mod __phase_a_body {
         pub esm_absolute_package_path: PathBuffer,
         pub esm_absolute_package_path_joined: PathBuffer,
 
-        // PORT NOTE: Zig left this `= undefined`; `DirEntryResolveQueueItem` holds
+        // PORT NOTE: left uninitialized in the original; `DirEntryResolveQueueItem` holds
         // `&'static [u8]` fields, so a zeroed bit-pattern is UB in Rust. Use
         // `MaybeUninit` and `assume_init_{ref,mut}` at the (linear write-then-read)
         // use sites in `dir_info_cached_maybe_log`.
@@ -3428,10 +3424,10 @@ pub mod __phase_a_body {
     }
     // TODO(port): bun.ThreadlocalBuffers(Bufs) — lazily-allocated threadlocal Box<Bufs>.
     // In Rust we model it as a `thread_local! { static BUFS_PTR: Cell<*mut Bufs> }`
-    // caching a leaked `Box<Bufs>` pointer (the Box is never freed in Zig either —
+    // caching a leaked `Box<Bufs>` pointer (the Box is never freed in the original either —
     // process-lifetime scratch storage). The `bufs!()` macro hands out `&mut` to a
     // single field. This relies on the caller never holding two `bufs!()` borrows
-    // simultaneously across the same field; the Zig code already obeys that invariant.
+    // simultaneously across the same field; the original code already obeys that invariant.
     thread_local! {
         static BUFS_PTR: core::cell::Cell<*mut Bufs> = const { core::cell::Cell::new(core::ptr::null_mut()) };
     }
@@ -3454,7 +3450,7 @@ pub mod __phase_a_body {
         // (`PathBuffer` = `[u8; N]`, `[FD; 256]` where `Fd` is a
         // `#[repr(C)]` integer newtype, `[MaybeUninit<_>; 256]` which has
         // no validity requirement, `()`), so EVERY bit-pattern — not just
-        // all-zero — is a valid `Bufs`. Zig left these `= undefined`; each
+        // all-zero — is a valid `Bufs`. left uninitialized in the original; each
         // field is scratch (write-then-read within a single resolve call,
         // including `open_dirs` which is bounded by `open_dir_count`), so
         // there is no need to pay for zero-filling ~100 KiB on first use.
@@ -3487,7 +3483,7 @@ pub mod __phase_a_body {
     }
 
     pub struct PathPairIter<'a> {
-        index: u8, // u2 in Zig
+        index: u8, // originally a 2-bit field
         ctx: &'a mut PathPair,
     }
 
@@ -3528,7 +3524,7 @@ pub mod __phase_a_body {
     }
 
     // Re-export of `bun_ast::SideEffects`.
-    // Spec: options.zig:884 `Loader.sideEffects()` returns `bun.resolver.SideEffects`
+    // `Loader.sideEffects()` returns `bun.resolver.SideEffects`
     // — the SAME type stored in `Result.primary_side_effects_data`. Re-export so
     // `result.primary_side_effects_data = loader.side_effects()` type-checks.
     use bun_ast::SideEffects;
@@ -3572,7 +3568,7 @@ pub mod __phase_a_body {
                 debug_meta: None,
                 dirname_fd: FD::INVALID,
                 file_fd: FD::INVALID,
-                import_kind: ast::ImportKind::Stmt, // Zig: undefined
+                import_kind: ast::ImportKind::Stmt, // undefined
                 flags: ResultFlags::default(),
             }
         }
@@ -3596,7 +3592,7 @@ pub mod __phase_a_body {
         }
     }
 
-    // Convenience accessors mirroring the Zig packed-struct field syntax.
+    // Convenience accessors mirroring the packed-struct field syntax.
     impl ResultFlags {
         #[inline]
         pub fn is_external(&self) -> bool {
@@ -3788,9 +3784,9 @@ pub mod __phase_a_body {
                     r
                 };
                 let data = bun_ast::range_data(source, suggestion_range, self.suggestion_message);
-                // PORT NOTE: Zig spec writes `data.location.?.suggestion = m.suggestion_text`
-                // here, but `logger.Location` (logger.zig:73) has no `suggestion` field —
-                // `logErrorMsg` is uncalled in the Zig source so the field access is never
+                // PORT NOTE: the original wrote `data.location.?.suggestion = m.suggestion_text`
+                // here, but `logger.Location` has no `suggestion` field —
+                // `logErrorMsg` is uncalled in the original source so the field access is never
                 // type-checked under lazy compilation. Mirror the effective behavior (no-op).
                 let _ = &self.suggestion_text;
                 self.notes.push(data);
@@ -3875,7 +3871,7 @@ pub mod __phase_a_body {
             })
         }
 
-        // deinit → Drop (only frees `notes`; `indent` deinit was commented out in Zig)
+        // deinit → Drop (only frees `notes`; `indent` deinit was commented out in the original)
 
         #[cold]
         pub fn increase_indent(&mut self) {
@@ -3976,7 +3972,7 @@ pub mod __phase_a_body {
 
     impl PendingResolution {
         // PORT NOTE: deinitListItems → Drop on MultiArrayList<PendingResolution>
-        // (Zig body only freed `dependency` + `string_buf` per item; both are owned fields with Drop.)
+        //
 
         // deinit → Drop (frees dependency + string_buf; both have Drop)
 
@@ -3985,9 +3981,8 @@ pub mod __phase_a_body {
             dependency: Dependency::Version,
             resolution_id: Install::PackageID,
         ) -> core::result::Result<PendingResolution, bun_core::Error> {
-            // PORT NOTE: Zig body called `try esm.copy(allocator)` and left `string_buf`
-            // / `tag` defaulted; that fn was never compiled (Zig lazy-analyzes unreferenced
-            // fns). `Package::copy` is the count→allocate→clone Builder dance the live
+            // PORT NOTE: the original body called `try esm.copy(allocator)` and left `string_buf`
+            // / `tag` defaulted; that fn was never compiled. `Package::copy` is the count→allocate→clone Builder dance the live
             // call sites open-code, so thread the freshly-allocated buffer into
             // `string_buf` here so `Drop` frees what backs the cloned `esm` strings.
             let (esm, string_buf) = esm.copy()?;
@@ -4022,11 +4017,11 @@ pub mod __phase_a_body {
     // (the resolver mutex is one of the two documented guards for the entries singleton).
     pub(crate) static RESOLVER_MUTEX: std::sync::LazyLock<Mutex> =
         std::sync::LazyLock::new(Mutex::default);
-    // Zig had `resolver_Mutex_loaded` to lazily zero-init; Rust const init handles that.
+    // const init handles lazy zero-init.
 
     type BinFolderArray = BoundedArray<&'static [u8], 128>;
     // TODO(port): `BoundedArray` has no const constructor; init lazily under
-    // `BIN_FOLDERS_LOADED` (matches Zig's `bin_folders_loaded` lazy zero-init).
+    // `BIN_FOLDERS_LOADED`.
     static BIN_FOLDERS: bun_core::RacyCell<core::mem::MaybeUninit<BinFolderArray>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
     static BIN_FOLDERS_LOCK: std::sync::LazyLock<Mutex> = std::sync::LazyLock::new(Mutex::default);
@@ -4040,14 +4035,14 @@ pub mod __phase_a_body {
     // `Resolver.watcher` without a seam converter.
     pub use bun_watcher::AnyResolveWatcher;
 
-    // Zig: `pub fn ResolveWatcher(comptime Context: type, comptime onWatch: anytype) type` —
+    // `pub fn ResolveWatcher(comptime Context: type, comptime onWatch: anytype) type` —
     // type-generator returning a struct with `.init(ctx) -> AnyResolveWatcher` and a
     // monomorphized `watch` shim. Per PORTING.md (`fn Foo(comptime T) type` → `struct Foo<T>`).
     //
     // PORT NOTE: const fn-pointer generics (`adt_const_params` for fn ptrs) and
     // const params depending on type params are both forbidden. Reshape to a
     // runtime fn-pointer carried alongside the context — `init` produces the same
-    // `AnyResolveWatcher` erased shim as Zig's monomorphized `wrap`.
+    // `AnyResolveWatcher` erased shim as a monomorphized `wrap`.
 
     pub struct ResolveWatcher<C> {
         on_watch: fn(*mut C, &[u8], FD),
@@ -4064,7 +4059,7 @@ pub mod __phase_a_body {
             AnyResolveWatcher {
                 context: ctx.cast(),
                 // SAFETY: `fn(*mut C, ..)` and `fn(*mut (), ..)` are ABI-identical
-                // (Rust-ABI, thin-ptr first arg); the `wrap` shim in Zig did the
+                // (Rust-ABI, thin-ptr first arg); the `wrap` shim in the original did the
                 // same erase. The callback body discharges its own type-recovery.
                 callback: unsafe {
                     bun_ptr::cast_fn_ptr::<fn(*mut C, &[u8], FD), fn(*mut (), &[u8], FD)>(
@@ -4077,7 +4072,7 @@ pub mod __phase_a_body {
 
     pub struct Resolver<'a> {
         pub opts: options::BundleOptions,
-        // PORT NOTE: Zig `fs: *Fs.FileSystem` / `log: *logger.Log` are raw aliasing
+        // PORT NOTE: `fs: *Fs.FileSystem` / `log: *logger.Log` are raw aliasing
         // pointers — the bundler builds a `Resolver` per worker thread sharing the
         // process-wide `FileSystem` singleton, so `&'a mut` here would manufacture
         // aliased unique refs across threads (instant UB). Model as `*mut` and
@@ -4085,7 +4080,7 @@ pub mod __phase_a_body {
         pub fs: *mut Fs::FileSystem,
         pub log: *mut bun_ast::Log,
         // allocator dropped — global mimalloc
-        /// PORT NOTE: Zig stores `[]const []const u8` aliasing into
+        /// PORT NOTE: the original stores `[]const []const u8` aliasing into
         /// `r.opts.extension_order` and saves/restores it across nested resolves.
         /// Stored as a `Copy` enum tag (no self-reference) and resolved on demand
         /// via [`Self::extension_order`] / [`options::BundleOptions::ext_order_slice`].
@@ -4111,20 +4106,20 @@ pub mod __phase_a_body {
         /// [`AutoInstaller`]; the resolver only sees the trait object so it stays
         /// below `bun_install` in the dep graph. The runtime/bundler that enables
         /// auto-install (`opts.global_cache != .disable`) is responsible for
-        /// constructing the `PackageManager` (Zig: `PackageManager.initWithRuntime`)
+        /// constructing the `PackageManager`
         /// and assigning it here BEFORE resolution; the resolver no longer
         /// constructs it lazily — that would require depending on `bun_install`,
         /// which depends on us. When `None`, [`get_package_manager`] panics if the
         /// auto-install path is reached.
         pub package_manager: Option<NonNull<dyn AutoInstaller>>,
         pub on_wake_package_manager: Install::WakeHandler,
-        // Spec resolver.zig:477 `env_loader: ?*DotEnv.Loader` — raw nullable pointer.
+        // `env_loader: ?*DotEnv.Loader` — raw nullable pointer.
         // Stored as `NonNull` (not `&'a Loader`) because the same allocation is
         // mutably reborrowed via `Transpiler.env: *mut Loader` after this field is
         // set (e.g. bake/production.rs assigns this then calls `configure_defines()`
         // → `run_env_loader()` which takes `&mut *self.env`). Holding a live
         // `&Loader` across that `&mut Loader` would be aliased-&mut UB; a raw
-        // pointer carries no aliasing guarantee and matches the Zig shape.
+        // pointer carries no aliasing guarantee.
         pub env_loader: Option<NonNull<DotEnv::Loader<'a>>>,
         pub store_fd: bool,
 
@@ -4173,7 +4168,7 @@ pub mod __phase_a_body {
         /// This cache maps a directory path to information about that directory and
         /// all parent directories. When interacting with this structure, make sure
         /// to validate your keys with `Resolver.assertValidCacheKey`
-        // PORT NOTE: Zig `dir_cache: *DirInfo.HashMap` is a raw aliasing pointer to the
+        // PORT NOTE: `dir_cache: *DirInfo.HashMap` is a raw aliasing pointer to the
         // `DirInfo::hash_map_instance()` singleton. Modeled as `*mut` (not `&'static mut`)
         // for the same reason as `fs`/`log` above — every per-worker `Resolver` shares the
         // singleton, so a `&'static mut` here would manufacture aliased unique refs (UB).
@@ -4193,7 +4188,7 @@ pub mod __phase_a_body {
     }
 
     /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
-    /// `Resolver::log` pointer on drop — port of the Zig
+    /// `Resolver::log` pointer on drop — RAII form of the
     /// `defer resolver.log = orig_log` save/restore pattern.
     pub struct ResolverLogScope {
         slot: *mut *mut bun_ast::Log,
@@ -4212,7 +4207,7 @@ pub mod __phase_a_body {
 
     impl<'a> Resolver<'a> {
         /// Per-worker constructor — replaces the bundler's prior bitwise
-        /// `transpiler.* = from.*` (Zig ThreadPool.zig:308) for the resolver
+        /// `transpiler.* = from.*` for the resolver
         /// portion. Every `Copy` / raw-pointer field is copied from `from`; the
         /// per-worker `caches` (the only `Drop`-carrying field, via the
         /// `Json` cache's `MimallocArena`) and `debug_logs`/`timer` are freshly
@@ -4244,7 +4239,7 @@ pub mod __phase_a_body {
                 debug_logs: None,
                 elapsed: 0,
                 watcher: from.watcher,
-                // Spec ThreadPool.zig:313 `transpiler.resolver.caches = CacheSet.Set.init(allocator)`.
+                // `transpiler.resolver.caches = CacheSet.Set.init(allocator)`.
                 caches: CacheSet::init(),
                 generation: from.generation,
                 package_manager: from.package_manager,
@@ -4271,7 +4266,7 @@ pub mod __phase_a_body {
             }
         }
 
-        /// Port of Zig `r.fs` deref.
+        /// `r.fs` deref.
         ///
         /// PORT NOTE (Stacked Borrows): returns the RAW `*mut` (NOT `&'a mut`). A
         /// `&'a mut` accessor would let two `fs()` calls manufacture coexisting
@@ -4279,7 +4274,7 @@ pub mod __phase_a_body {
         /// aliased-&mut), and any later `&mut *self.fs` retag would pop a previously
         /// returned `&'a mut`'s SB tag while it's still nominally live for `'a`.
         /// Callers must `unsafe { &mut *r.fs() }` at the narrowest use site and let
-        /// the projection die at end-of-expression. Spec resolver.zig:455 stores raw
+        /// the projection die at end-of-expression. stores raw
         /// `*Fs.FileSystem` and dereferences per-use.
         #[inline(always)]
         pub fn fs(&self) -> *mut Fs::FileSystem {
@@ -4318,7 +4313,7 @@ pub mod __phase_a_body {
         }
 
         /// Resolve the current [`options::ExtOrder`] tag to the slice it names
-        /// inside `self.opts`. Port of Zig `r.extension_order` field read.
+        /// inside `self.opts`. `r.extension_order` field read.
         #[inline(always)]
         pub fn extension_order(&self) -> &[Box<[u8]>] {
             self.opts.ext_order_slice(self.extension_order)
@@ -4340,7 +4335,7 @@ pub mod __phase_a_body {
             unsafe { core::ptr::addr_of_mut!((*self.fs).fs) }
         }
 
-        /// Port of Zig `r.log` deref.
+        /// `r.log` deref.
         ///
         /// PORT NOTE (Stacked Borrows): returns RAW `*mut` (see `fs()` note). BACKREF
         /// — owner (Transpiler/BundleV2) outlives the Resolver; worker clones share
@@ -4353,7 +4348,7 @@ pub mod __phase_a_body {
         }
 
         /// Temporarily redirect `self.log` to `log`, returning a guard that
-        /// restores the previous pointer on drop. Port of the Zig
+        /// restores the previous pointer on drop. RAII form of the
         /// `const orig = r.log; r.log = &tmp; defer r.log = orig;` pattern.
         ///
         /// Takes a raw `*mut Self` (not `&mut self`) so the stored slot pointer
@@ -4409,7 +4404,7 @@ pub mod __phase_a_body {
             unsafe { &mut *self.log }
         }
 
-        /// Port of Zig `r.dir_cache` deref.
+        /// `r.dir_cache` deref.
         ///
         /// PORT NOTE (Stacked Borrows): returns RAW `*mut` (see `fs()` note). ARENA —
         /// `DirInfo::hash_map_instance()` singleton; never freed. Caller
@@ -4442,7 +4437,7 @@ pub mod __phase_a_body {
             unsafe { &mut *self.dir_cache }
         }
 
-        /// Port of resolver.zig `getPackageManager`. The Zig spec lazily calls
+        /// `getPackageManager`. The the original spec lazily calls
         /// `PackageManager.initWithRuntime` here; in the Rust crate graph that
         /// would be a `bun_resolver → bun_install` cycle, so the lazy init is
         /// dispatched through the link-time `extern "Rust"` factory
@@ -4450,14 +4445,14 @@ pub mod __phase_a_body {
         /// `bun_install::auto_installer`). The factory performs
         /// `HTTPThread.init` + `PackageManager.initWithRuntime` and returns the
         /// process-static singleton as a `dyn AutoInstaller`. We then wire
-        /// `on_wake` and cache the pointer — exactly the Zig body. Reached from
+        /// `on_wake` and cache the pointer. Reached from
         /// the auto-install path (`load_node_modules` global-cache block) when
         /// [`use_package_manager`] is `true`.
         pub fn get_package_manager(&mut self) -> *mut dyn AutoInstaller {
             if let Some(pm) = self.package_manager {
                 return pm.as_ptr();
             }
-            // Zig: `bun.HTTPThread.init(&.{}); const pm = PackageManager.initWithRuntime(
+            // `bun.HTTPThread.init(&.{}); const pm = PackageManager.initWithRuntime(
             //     this.log, this.opts.install, bun.default_allocator, .{}, this.env_loader.?);`
             let env = self
                 .env_loader
@@ -4466,7 +4461,7 @@ pub mod __phase_a_body {
                 // SAFETY: `DotEnv::Loader<'a>` is layout-identical across `'a`;
                 // `init_with_runtime` only borrows it for the synchronous init
                 // (the static `PackageManager` retains a raw `NonNull<Loader>`,
-                // matching Zig's `*DotEnv.Loader` aliasing).
+                // matching the original's `*DotEnv.Loader` aliasing).
                 .cast::<core::ffi::c_void>();
             // SAFETY: `__bun_resolver_init_package_manager` is defined
             // `#[no_mangle]` in `bun_install::auto_installer` and linked into the
@@ -4475,7 +4470,7 @@ pub mod __phase_a_body {
             // names the `PackageManager` singleton (`'static`).
             let pm: NonNull<dyn AutoInstaller> =
                 unsafe { __bun_resolver_init_package_manager(self.log, self.opts.install, env) };
-            // Zig: `pm.onWake = this.onWakePackageManager;`
+            // `pm.onWake = this.onWakePackageManager;`
             // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
             unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager.clone()) };
             self.package_manager = Some(pm);
@@ -4551,7 +4546,7 @@ pub mod __phase_a_body {
                 // allocator dropped
                 // Route through the per-monomorphization singleton so this field and
                 // `DirInfo::get_parent()` / `get_enclosing_browser_scope()` share storage
-                // (Zig `BSSMap.init()` is a per-type singleton, not a fresh alloc).
+                //` is a per-type singleton, not a fresh alloc).
                 dir_cache: DirInfo::hash_map_instance(),
                 mutex: &*RESOLVER_MUTEX,
                 caches: CacheSet::init(),
@@ -4611,7 +4606,7 @@ pub mod __phase_a_body {
             kind: ast::ImportKind,
         ) -> Option<MatchResult> {
             // SAFETY: PORT — `import_path` is caller-interned (DirnameStore/source text)
-            // and outlives the returned MatchResult. Zig used raw `[]const u8` here.
+            // and outlives the returned MatchResult. the original used raw `[]const u8` here.
             // TODO(port): thread an explicit `'a` through MatchResult instead.
             let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
             if source_dir.is_empty() {
@@ -4641,7 +4636,7 @@ pub mod __phase_a_body {
             // `self.debug_logs.as_mut()` borrow below.
             let log = unsafe { &mut *self.log() };
             if let Some(debug) = self.debug_logs.as_mut() {
-                // PORT NOTE: spec resolver.zig:650-658 — only consume `what`/`notes` inside
+                // PORT NOTE: only consume `what`/`notes` inside
                 // the arm that actually emits, so the success-at-non-verbose path touches
                 // nothing. `add_range_debug_with_notes`/`add_verbose_with_notes` take
                 // `&'static [u8]`; bypass them and build the `Msg` directly so the Log owns
@@ -4698,7 +4693,7 @@ pub mod __phase_a_body {
             global_cache: GlobalCache,
         ) -> ResultUnion {
             // SAFETY: PORT — `import_path` is caller-interned (source text / DirnameStore)
-            // and outlives the returned Result. Zig used raw `[]const u8` here.
+            // and outlives the returned Result. the original used raw `[]const u8` here.
             // TODO(port): thread an explicit lifetime through Result instead.
             let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
             let _tracer = ::bun_perf::trace(::bun_perf::PerfEvent::ModuleResolverResolve);
@@ -4721,7 +4716,7 @@ pub mod __phase_a_body {
             }
 
             let original_order = self.extension_order;
-            // PORT NOTE: Zig `defer r.extension_order = original_order` — reshaped for
+            // PORT NOTE: `r.extension_order = original_order` restore — reshaped for
             // borrowck so the restore happens explicitly at every return point below.
             self.extension_order = match kind {
                 ast::ImportKind::Url | ast::ImportKind::AtConditional | ast::ImportKind::At => {
@@ -4738,7 +4733,7 @@ pub mod __phase_a_body {
                 self.timer.reset();
             }
 
-            // Spec resolver.zig:703-707: `defer { if (tracing) r.elapsed += r.timer.read() }`
+            // `defer { if (tracing) r.elapsed += r.timer.read() }`
             // — fires on EVERY return path. Capture raw field ptrs (Copy) so the closure
             // does not hold a `&mut self` borrow across the function body.
             let elapsed_ptr: *mut u64 = core::ptr::addr_of_mut!(self.elapsed);
@@ -5145,7 +5140,7 @@ pub mod __phase_a_body {
                             return self.resolve(top, path, ast::ImportKind::EntryPointBuild);
                         }
                     }
-                    // unreachable in Zig (return after switch)
+                    // unreachable in the original (return after switch)
                 }
             }
             self.resolve(source_dir, import_path, kind)
@@ -5304,7 +5299,7 @@ pub mod __phase_a_body {
                                 buf[out_len] = 0;
                                 // SAFETY: buf[out_len] == 0 written above
                                 let span = bun_core::ZStr::from_buf(&buf[..], out_len);
-                                // Spec resolver.zig:1099 uses `try std.fs.openFileAbsoluteZ`,
+                                // uses `try std.fs.openFileAbsoluteZ`,
                                 // which propagates I/O errors so `resolveAndAutoInstall` can
                                 // return them as `Result.Union.failure`. Mirror that — never
                                 // panic on EACCES/EMFILE/ELOOP here.
@@ -6158,7 +6153,7 @@ pub mod __phase_a_body {
             // `dir_info_cached()` which, in the self-reference branch, returns the
             // SAME BSSMap slot. A `&mut` param carries an FnEntry protector under
             // Stacked Borrows; the inner retag would pop it (aliased-&mut UB).
-            // Spec resolver.zig:1761 takes raw `*DirInfo`; the arena handle Derefs
+            // takes raw `*DirInfo`; the arena handle Derefs
             // to `&DirInfo` per use so overlapping shared reads are sound.
             _dir_info: DirInfoRef,
             global_cache: GlobalCache,
@@ -6173,7 +6168,7 @@ pub mod __phase_a_body {
                 ));
                 debug.increase_indent();
             }
-            // PORT NOTE: Zig `defer { debug.decreaseIndent() }` — reshaped for borrowck;
+            // PORT NOTE: deferred `debug.decreaseIndent()` — reshaped for borrowck;
             // `decrease_indent()` is called explicitly at every return point below.
 
             // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
@@ -6312,7 +6307,7 @@ pub mod __phase_a_body {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
                                     let mut module_type = package_json.module_type;
-                                    // PORT NOTE: reshaped for borrowck — Zig held a single `ESModule`
+                                    // PORT NOTE: reshaped for borrowck — the original held a single `ESModule`
                                     // with a raw `*DebugLogs` across both `resolve` calls and the
                                     // intervening `handle_esm_resolution`. In Rust, keeping the
                                     // `ESModule` (which holds `&mut self.debug_logs`) alive across a
@@ -6337,7 +6332,7 @@ pub mod __phase_a_body {
                                     // paths. We also want to avoid any "%" characters in the absolute
                                     // directory path accidentally being interpreted as URL escapes.
                                     {
-                                        // PERF(port): extra conditions clone vs Zig — profile in Phase B.
+                                        // PERF(port): extra conditions clone vs the original — profile in Phase B.
                                         let esm_resolution = ESModule {
                                             conditions: conditions.clone().expect("oom"),
                                             debug_logs: self.debug_logs.as_mut(),
@@ -6425,7 +6420,7 @@ pub mod __phase_a_body {
                                             },
                                             dirname_fd: pkg_dir_info.get_file_descriptor(),
                                             file_fd: FD::INVALID,
-                                            // Spec resolver.zig:1930 — `Path.isNodeModule()` checks
+                                            // `Path.isNodeModule()` checks
                                             // `lastIndexOf(name.dir, SEP++"node_modules"++SEP)`, i.e. a
                                             // separator-bounded directory component on `name.dir` (not a
                                             // bare substring of the full text). `bun_paths::fs::Path<'static>`
@@ -6642,7 +6637,7 @@ pub mod __phase_a_body {
                             // Read the raw `NonNull` fields directly (NOT the
                             // `&'static`-yielding accessors) so mut-provenance from
                             // `intern_package_json` survives to the write inside
-                            // (Zig: resolver.zig:2074).
+                            // (the original: the original).
                             dir_info
                                 .package_json_for_dependencies
                                 .or(dir_info.package_json),
@@ -6688,7 +6683,7 @@ pub mod __phase_a_body {
                                     Install::PreinstallState::Done => {
                                         // PORT NOTE: `MatchResult.path_pair` is `Path<'static>`;
                                         // intern `import_path` so the disabled-module record
-                                        // outlives this frame (Zig had no lifetime here).
+                                        // outlives this frame.
                                         let interned = Fs::file_system::DirnameStore::instance()
                                             .append_slice(import_path)
                                             .expect("unreachable");
@@ -6793,7 +6788,7 @@ pub mod __phase_a_body {
                                         // paths. We also want to avoid any "%" characters in the absolute
                                         // directory path accidentally being interpreted as URL escapes.
                                         {
-                                            // PERF(port): extra conditions clone vs Zig — profile in Phase B.
+                                            // PERF(port): extra conditions clone vs the original — profile in Phase B.
                                             let esm_resolution = ESModule {
                                                 conditions: conditions.clone().expect("oom"),
                                                 debug_logs: self.debug_logs.as_mut(),
@@ -7030,7 +7025,7 @@ pub mod __phase_a_body {
                 }
                 if let Some(existing) = in_place {
                     // SAFETY: see block-wide note above.
-                    // PORT NOTE: Zig `clearAndFree` — `StringHashMap` (std::HashMap newtype)
+                    // PORT NOTE: the original used `clearAndFree` — `StringHashMap` (std::HashMap newtype)
                     // has no separate `clear_and_free`; `clear()` drops all entries.
                     unsafe { &mut *existing }.data.clear();
                 }
@@ -7101,7 +7096,7 @@ pub mod __phase_a_body {
 
         fn enqueue_dependency_to_resolve(
             &mut self,
-            // PORT NOTE: Zig `package_json_: ?*PackageJSON` (mutable). Carried as
+            // PORT NOTE: `package_json_: ?*PackageJSON` (mutable). Carried as
             // `NonNull` end-to-end so the mut-provenance from `intern_package_json`
             // survives to the `package_manager_package_id` write below — taking
             // `*const` and casting back to `*mut` would be UB under Stacked Borrows.
@@ -7144,7 +7139,7 @@ pub mod __phase_a_body {
                     // from `NonNull::from(&mut **last)` and no other live borrow
                     // exists here.
                     let package_json: &mut PackageJSON = unsafe { package_json.as_mut() };
-                    // PORT NOTE: Zig called `Package.fromPackageJSON(lockfile, pm,
+                    // PORT NOTE: the original called `Package.fromPackageJSON(lockfile, pm,
                     // log, package_json, features)` then `setHasInstallScript` then
                     // `lockfile.appendPackage`. The `Package` type is bun_install-
                     // internal; the `AutoInstaller` impl performs all three steps.
@@ -7212,10 +7207,10 @@ pub mod __phase_a_body {
                 }
             }
 
-            // PORT NOTE: 1:1 with Zig — `resolver.zig` ends this function with
+            // PORT NOTE: this function ends with
             // `bun.unreachablePanic("TODO: implement enqueueDependencyToResolve for
-            // non-root packages", .{})`. The non-root path is genuinely unimplemented
-            // in the Zig source; this is not a porting stub.
+            // non-root packages", .{})`. The non-root path is genuinely
+            // unimplemented; this is not a porting stub.
             unreachable!("TODO: implement enqueueDependencyToResolve for non-root packages")
         }
 
@@ -7311,7 +7306,7 @@ pub mod __phase_a_body {
                                         }
                                         esm_resolution.status =
                                             Status::ModuleNotFoundMissingExtension;
-                                        let _ = ext; // PORT NOTE: Zig stored `missing_suffix = ext` here; unused after `return null`.
+                                        let _ = ext; // PORT NOTE: the original stored `missing_suffix = ext` here; unused after `return null`.
                                         break;
                                     }
                                 }
@@ -7435,7 +7430,7 @@ pub mod __phase_a_body {
             &mut self,
             // PORT NOTE: `DirInfoRef` (not `&mut`) — forwards into `load_node_modules`
             // which re-enters `dir_cache` and may re-derive the same DirInfo slot.
-            // Spec resolver.zig:2584 takes raw `*DirInfo`.
+            // takes raw `*DirInfo`.
             source_dir_info: DirInfoRef,
             import_path: &[u8],
             kind: ast::ImportKind,
@@ -7491,7 +7486,7 @@ pub mod __phase_a_body {
                 .expect("unreachable");
 
             // `use_shared_buffer = false` above, so `entry_contents` is
-            // `Contents::Owned`/`Empty`. Zig reads with `bun.default_allocator` and
+            // `Contents::Owned`/`Empty`. the original reads with `bun.default_allocator` and
             // never frees (tsconfig is interned into the permanent DirInfo cache).
             // PORTING.md §Forbidden bars `mem::forget`/`from_raw_parts` to mint
             // `&'static`; route through the process-lifetime arena instead.
@@ -7516,7 +7511,7 @@ pub mod __phase_a_body {
             if result.has_base_url() {
                 // this might leak
                 if !bun_paths::is_absolute(&result.base_url) {
-                    // PORT NOTE: Zig interns into `dirname_store` and stores the
+                    // PORT NOTE: the original interns into `dirname_store` and stores the
                     // arena slice; Rust `base_url: Box<[u8]>` owns its bytes, so
                     // copy `abs_buf`'s thread-local result directly instead of
                     // double-copying through the arena.
@@ -7538,7 +7533,7 @@ pub mod __phase_a_body {
                 result.base_url_for_paths = Box::from(abs);
             }
 
-            // PORT NOTE: Zig `TSConfigJSON.parse` returns `*TSConfigJSON` (already
+            // PORT NOTE: `TSConfigJSON.parse` returns `*TSConfigJSON` (already
             // heap). Return the `Box` so the caller (`dir_info_uncached`) takes
             // ownership — intermediate configs in an extends-chain are dropped via
             // `heap::take`, the final one is interned into the DirInfo cache.
@@ -7562,7 +7557,7 @@ pub mod __phase_a_body {
         ) -> core::result::Result<Option<core::ptr::NonNull<PackageJSON>>, bun_core::Error>
         {
             use crate::package_json::{IncludeDependencies, IncludeScripts};
-            // PORT NOTE: Zig threaded both as comptime params; `IncludeDependencies` is a
+            // PORT NOTE: the original threaded both as comptime params; `IncludeDependencies` is a
             // const generic on `PackageJSON::parse`, `IncludeScripts` is runtime (it only
             // gates one branch).
             let include_scripts = if self.care_about_scripts {
@@ -7589,7 +7584,7 @@ pub mod __phase_a_body {
             };
             let Some(pkg) = pkg else { return Ok(None) };
 
-            // PORT NOTE: Zig `PackageJSON.new` = `bun.TrivialNew` (heap-allocate,
+            // PORT NOTE: `PackageJSON.new` = `bun.TrivialNew` (heap-allocate,
             // never freed — DirInfo cache holds `&'static` refs). PORTING.md
             // §Forbidden bars `Box::leak`; intern into the process-lifetime arena
             // owned alongside the DirInfo singleton instead.
@@ -7615,7 +7610,7 @@ pub mod __phase_a_body {
             self.dir_info_cached_maybe_log(false, path).ok().flatten()
         }
 
-        // PORT NOTE: Zig's `dirInfoCachedMaybeLog` takes `comptime enable_logging`
+        // PORT NOTE: the original's `dirInfoCachedMaybeLog` takes `comptime enable_logging`
         // and `comptime follow_symlinks`. `follow_symlinks` is `true` at every call
         // site, so it's dropped here; `enable_logging` is a plain runtime parameter
         // (it gates one cold error-formatting branch) so this large dir-walk function
@@ -7850,7 +7845,7 @@ pub mod __phase_a_body {
             // PORT NOTE: capture only what the cleanup needs by-value (store_fd) / by-Cell
             // (open_dir_count) so the guard doesn't pin `&mut self` across the loop
             // body. `need_to_close_files()` is evaluated AT DROP TIME (matching
-            // Zig's `defer`), not snapshotted up-front — the loop body calls
+            // the original's `defer`), not snapshotted up-front — the loop body calls
             // `Fs.FileSystem.setMaxFd()` which can flip `needToCloseFiles()`
             // mid-walk. Reach the RealFS via the `&'static` singleton accessor
             // instead of capturing a raw `*mut RealFS` (the read is `&self`-only).
@@ -7945,7 +7940,7 @@ pub mod __phase_a_body {
                         };
 
                         // bun.fs.debug("open({s})", .{sentinel}) — TODO(port): scoped log
-                        // Restore the byte we NUL-terminated above (Zig: `defer path[len] = prev_char`).
+                        // Restore the byte we NUL-terminated above.
                         // No early-return path exists between the write and here, so a guard is unnecessary.
                         path[nul_at] = prev_char;
 
@@ -8016,7 +8011,7 @@ pub mod __phase_a_body {
                     if _safe_path.is_none() {
                         // Now that we've opened the topmost directory successfully, it's reasonable to store the slice.
                         // `path` spans `input_path_len + 1` for the NUL-splice above; the
-                        // logical input is `path[..input_path_len]` (Zig resolver.zig:2750).
+                        // logical input is `path[..input_path_len]`.
                         let input = &path[..input_path_len];
                         if input[input.len() - 1] != SEP {
                             let parts: [&[u8]; 2] = [input, SEP_STR.as_bytes()];
@@ -8028,7 +8023,7 @@ pub mod __phase_a_body {
 
                     let safe_path = _safe_path.unwrap();
 
-                    // Spec resolver.zig:2965 calls `std.mem.indexOf` (returns 0 for an
+                    // calls `std.mem.indexOf` (returns 0 for an
                     // empty needle), not `bun.strings.indexOf` (returns null for an
                     // empty needle). On Windows `queue_top_unsafe_path` is empty when
                     // `windows_filesystem_root` cannot classify the input — e.g.
@@ -8096,7 +8091,7 @@ pub mod __phase_a_body {
                     new_entry.data.reserve(64);
 
                     let mut dir_iterator = bun_sys::iterate_dir(open_dir);
-                    // PORT NOTE: Zig `while (dir_iterator.next().unwrap()) |entry|` —
+                    // PORT NOTE: `while (dir_iterator.next().unwrap()) |entry|` —
                     // `.unwrap()` was on the inner `Maybe(?Entry)`; the Rust `WrappedIterator::next`
                     // is already flattened to `Result<Option<IteratorResult>>`, so the `.unwrap()`
                     // moved to `?`-style break-on-error.
@@ -8121,11 +8116,11 @@ pub mod __phase_a_body {
                     }
                     if let Some(existing) = in_place {
                         // SAFETY: see block-wide note above.
-                        // PORT NOTE: Zig `clear_and_free`; bun_collections::StringHashMap exposes `clear`.
+                        // PORT NOTE: the original used `clear_and_free`; bun_collections::StringHashMap exposes `clear`.
                         unsafe { &mut *existing }.data.clear();
                     }
                     new_entry.fd = if self.store_fd { open_dir } else { FD::INVALID };
-                    // PORT NOTE: Zig `entries_ptr = in_place orelse allocator.create(DirEntry)` then
+                    // PORT NOTE: `entries_ptr = in_place orelse allocator.create(DirEntry)` then
                     // `entries_ptr.* = new_entry` (no drop glue). `DirEntry.data` is a `HashMap`
                     // (`NonNull` inside), so a zeroed slot is UB and `*ptr = new_entry` would drop it.
                     // Box `new_entry` directly for the fresh case; assign-into only for `in_place`.
@@ -8157,7 +8152,7 @@ pub mod __phase_a_body {
                 // ONE `&mut HashMap` and derive BOTH slot pointers from it so they share a parent
                 // tag — a second `&mut *self.dir_cache()` Unique retag of the whole `BSSMapInner`
                 // (whose `backing_buf` is inline) would pop `dir_info_ptr`'s tag before
-                // `dir_info_uncached` writes through it. Spec resolver.zig:3022/3030 routes both
+                // `dir_info_uncached` writes through it. routes both
                 // through the single raw `r.dir_cache: *HashMap` with no intermediate retag.
                 // NOTE: erasing `&mut V` to `*mut V` does NOT, by itself, survive a sibling Unique
                 // retag of the parent allocation; the shared `dc` parent is what keeps both live.
@@ -8393,7 +8388,7 @@ pub mod __phase_a_body {
             // imports-map entry resolving to `./<file>` that dirname equals
             // `dir_info.abs_path`, re-deriving `&mut` to the SAME slot while a
             // `&mut` param's FnEntry protector is live is aliased-&mut UB.
-            // Spec resolver.zig:3182 takes raw `*DirInfo`.
+            // takes raw `*DirInfo`.
             dir_info: DirInfoRef,
             kind: ast::ImportKind,
             global_cache: GlobalCache,
@@ -8406,7 +8401,7 @@ pub mod __phase_a_body {
                     bstr::BStr::new(package_json.source.path.text)
                 ));
                 debug.increase_indent();
-                // defer debug.decreaseIndent() — TODO(port): missing matching decrease in Zig too
+                // defer debug.decreaseIndent() — TODO(port): missing matching decrease in the original too
             }
             let imports_map = package_json.imports.as_ref().unwrap();
 
@@ -8421,7 +8416,7 @@ pub mod __phase_a_body {
             }
             let mut module_type = options::ModuleType::Unknown;
 
-            // PORT NOTE: reshaped for borrowck — Zig kept a raw `*DebugLogs` inside
+            // PORT NOTE: reshaped for borrowck — originally kept a raw `*DebugLogs` inside
             // `ESModule` across the subsequent `&mut self` calls. In Rust that is
             // aliased-&mut UB, so the `ESModule` is constructed as a temporary whose
             // borrow of `self.debug_logs` ends as soon as `resolve_imports` returns.
@@ -8589,7 +8584,7 @@ pub mod __phase_a_body {
             &mut self,
             path: &[u8],
             // PORT NOTE: `DirInfoRef` (not `&mut`) — `get_enclosing_browser_scope()`
-            // may return `dir_info` itself (resolver.zig:4161 self-browser-scope),
+            // may return `dir_info` itself (the original self-browser-scope),
             // which would alias a live `&mut`. Spec uses raw `*DirInfo`.
             dir_info: DirInfoRef,
             _field_rel_path: &[u8],
@@ -8693,8 +8688,8 @@ pub mod __phase_a_body {
             r
         }
 
-        // nodeModulePathsForJS / Resolver__propForRequireMainPaths: see src/jsc/resolver_jsc.zig
-        // (no Zig callers; exported to C++ only)
+        // nodeModulePathsForJS / Resolver__propForRequireMainPaths: see `resolver_jsc`
+        // (no native callers; exported to C++ only)
 
         // PORT NOTE: `dir_info` is a `DirInfoRef` (matching spec `*DirInfo`) so
         // `load_index_with_extension` may re-borrow without aliasing the caller's `&mut`.
@@ -8815,7 +8810,7 @@ pub mod __phase_a_body {
         pub fn load_as_index_with_browser_remapping(
             &mut self,
             // PORT NOTE: `DirInfoRef` (not `&mut`) — `get_enclosing_browser_scope()`
-            // may return `dir_info` itself (resolver.zig:4161 self-browser-scope),
+            // may return `dir_info` itself (the original self-browser-scope),
             // which would alias a live `&mut`. Spec uses raw `*DirInfo`.
             dir_info: DirInfoRef,
             path_: &[u8],
@@ -8968,7 +8963,7 @@ pub mod __phase_a_body {
                 }};
             }
 
-            // PORT NOTE: `DirInfoRef` (matching spec resolver.zig:3674 raw `*DirInfo`).
+            // PORT NOTE: `DirInfoRef` (matching raw `*DirInfo`).
             // The callees fetch `get_enclosing_browser_scope()` which can resolve
             // back to this same BSSMap slot — holding a `&mut` here would alias.
             let dir_info: DirInfoRef = match self.dir_info_cached(path) {
@@ -8998,7 +8993,7 @@ pub mod __phase_a_body {
                     let main_field_keys =
                         bun_ptr::RawSlice::<Box<[u8]>>::new(&self.opts.main_fields);
                     let mf_ext_order = options::ExtOrder::MainField;
-                    // Spec resolver.zig compares the *pointer* of `opts.main_fields`
+                    // `auto_main` compares the *pointer* of `opts.main_fields`
                     // against the per-target default to detect "user did not pass
                     // --main-fields"; the bundler now projects that as an explicit
                     // bool because the owned `Box<[Box<[u8]>]>` can never alias a
@@ -9148,8 +9143,8 @@ pub mod __phase_a_body {
             path: &[u8],
             extension_order: options::ExtOrder,
         ) -> Option<LoadResult> {
-            // SAFETY: PORT — RealFS is the global singleton (fs.zig); Zig held a raw
-            // pointer here (resolver.zig:3784). Derive provenance from the raw
+            // SAFETY: PORT — RealFS is the global singleton; the original held a raw
+            // pointer here. Derive provenance from the raw
             // `*mut FileSystem` field so intervening `unsafe { &mut *self.fs() }` calls in
             // `load_extension` / `dirname_store.append_slice` don't invalidate `rfs`
             // under Stacked Borrows. We re-borrow `&mut *rfs` at each use site.
@@ -9317,7 +9312,7 @@ pub mod __phase_a_body {
             // https://github.com/microsoft/TypeScript/issues/4595
             if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
                 let ext = &base[last_dot..base.len()];
-                // PORT NOTE: spec resolver.zig:3890-3891 — Zig `and` binds tighter than `or`, so the
+                // PORT NOTE: `and` binds tighter than `or`, so the
                 // node_modules gate only applies to the `.mjs` arm. Mirror that precedence exactly.
                 if ext == b".js"
                     || ext == b".jsx"
@@ -9499,7 +9494,7 @@ pub mod __phase_a_body {
             let result = _result;
 
             // SAFETY: PORT — RealFS / DirEntry are global ARENA singletons (BSSMap-backed);
-            // Zig held raw pointers here (resolver.zig:4004 `rfs: *Fs.FileSystem.RealFS`).
+            // the original held raw pointers here (`rfs: *Fs.FileSystem.RealFS`).
             // Derive `rfs_ptr` from the raw `*mut FileSystem` field so later `unsafe { &mut *self.fs() }` calls
             // (`abs_buf` / `dirname_store.append_slice` in the parent-symlink block) cannot
             // invalidate it under Stacked Borrows. Re-borrow at EACH use site so no `&mut`
@@ -9907,7 +9902,7 @@ pub mod __phase_a_body {
                             None
                         }
                     };
-                    // PORT NOTE: spec resolver.zig:4207 assigns info.tsconfig_json here (a raw
+                    // PORT NOTE: assigns info.tsconfig_json here (a raw
                     // ?*TSConfigJSON), then frees that allocation in the merge loop below before
                     // reassigning. With Rust references (Option<&'static TSConfigJSON>, dir_info.rs)
                     // that briefly-dangling state is UB. Defer the assignment to after the merge —
@@ -9990,7 +9985,7 @@ pub mod __phase_a_body {
                                 // backing storage before overwriting so the PathsMap from the
                                 // deeper config doesn't leak. Each value is a []string slice
                                 // that was separately heap-allocated in TSConfigJSON.parse()
-                                // (tsconfig_json.zig), so free those before the map itself.
+                                //, so free those before the map itself.
                                 // (In Rust, dropping the map frees values automatically.)
                                 mc.paths = core::mem::take(&mut parent_config.paths);
                                 mc.base_url_for_paths =
@@ -10028,7 +10023,7 @@ pub mod __phase_a_body {
     }
 
     impl<'a> Resolver<'a> {
-        /// Port of `pub fn deinit(r: *ThisResolver)` (resolver.zig:601-604).
+        /// `pub fn deinit(r: *ThisResolver)`.
         ///
         /// PORT NOTE: NOT `impl Drop` — the bundler builds a `Resolver` per worker
         /// thread (see `for_worker`), and all instances share the same `dir_cache`
@@ -10039,13 +10034,13 @@ pub mod __phase_a_body {
         pub fn deinit(&mut self) {
             // Caller is the sole remaining owner at shutdown; no other Resolver alias is live.
             for di in self.dir_cache_mut().values_mut() {
-                // Zig: `di.deinit()` — releases owned PackageJSON / TSConfigJSON resources
+                // `di.deinit()` — releases owned PackageJSON / TSConfigJSON resources
                 // in-place (side effects beyond memory: those Drops close cached fds /
                 // deref intrusive refcounts). Ported as `DirInfo::reset`.
                 di.reset();
             }
             // dir_cache is &'static — do not deinit the singleton here
-            // TODO(port): Zig calls dir_cache.deinit() but it's a global BSSMap; revisit ownership
+            // TODO(port): the original calls dir_cache.deinit() but it's a global BSSMap; revisit ownership
         }
     }
 
@@ -10210,7 +10205,7 @@ pub mod __phase_a_body {
 
     impl Dirname {
         /// NOT `std.fs.path.dirname`. Resolver-specific upward-traversal dirname
-        /// (resolver.zig:4297): returns trailing-sep-INCLUSIVE slice, never `None`,
+        ///: returns trailing-sep-INCLUSIVE slice, never `None`,
         /// `is_sep_any` on all platforms. Do NOT replace with `bun_core::dirname`.
         pub fn dirname(path: &[u8]) -> &[u8] {
             if path.is_empty() {
@@ -10267,6 +10262,4 @@ pub mod __phase_a_body {
         pub base_path: &'b [u8],
         pub package_json: *const PackageJSON,
     }
-
-    // ported from: src/resolver/resolver.zig
 } // end  mod __phase_a_body

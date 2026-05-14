@@ -18,7 +18,7 @@ use crate::defines;
 use bun_ast::ExprData;
 use std::sync::OnceLock;
 
-// Zig: `string = []const u8`; each entry is a property-access chain (`&[_]string{...}`).
+// Each entry is a property-access chain of byte-string segments.
 pub static GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES: &[&[&[u8]]] = &[
     // Array: Static methods
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array#Static_methods
@@ -191,8 +191,8 @@ pub static GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING: &[&[&[u8]]] 
     // Haven't seen a bundle size improvement from adding more to this list yet.
 ];
 
-// PORTING.md §Concurrency: `OnceLock` for lazily-initialised statics (Zig used
-// const struct literals; `DefineData` is not const-constructible in Rust).
+// PORTING.md §Concurrency: `OnceLock` for lazily-initialised statics
+// (`DefineData` is not const-constructible in Rust).
 //
 // `DefineData` is not `Send`/`Sync` in general (it carries `ExprData`, whose
 // boxed variants hold `NonNull<_>`). The four instances stored here only ever
@@ -272,7 +272,7 @@ mod identifiers {
 pub enum PureGlobalIdentifierValue {
     NaN,
     Infinity,
-    /// Zig: `@"strict undefined"`
+    /// "strict undefined"
     StrictUndefined,
     Other,
 }
@@ -289,5 +289,3 @@ impl PureGlobalIdentifierValue {
 }
 
 include!("defines_table.generated.rs");
-
-// ported from: src/bundler/defines-table.zig

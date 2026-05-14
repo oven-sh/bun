@@ -2,7 +2,7 @@ use bun_alloc::AllocError;
 use bun_sys::walker_skippable::Walker;
 use bun_sys::{self as sys, EntryKind, Fd, FdDirExt, FdExt};
 // `bun.AbsPath(.{ .sep = .auto, .unit = .os })` / `bun.Path(.{ .sep = .auto, .unit = .os })`
-// take a comptime config struct in Zig. `.unit = .os` means u8 on POSIX, u16
+// take a config struct. `.unit = .os` means u8 on POSIX, u16
 // on Windows — encoded here via the `OSPathChar` type alias so the struct's
 // `slice()`/`slice_z()` produce the platform-native width without per-field
 // `#[cfg]` divergence.
@@ -47,8 +47,8 @@ impl Hardlinker {
         })
     }
 
-    // Zig `deinit` only called `this.walker.deinit()`; Walker's Drop handles that.
-    // No explicit Drop impl needed.
+    // The original `deinit` only called `this.walker.deinit()`; Walker's Drop
+    // handles that. No explicit Drop impl needed.
 
     pub fn link(&mut self) -> Result<sys::Result<()>, AllocError> {
         if crate::PackageManager::verbose_install() {
@@ -63,9 +63,8 @@ impl Hardlinker {
         #[cfg(windows)]
         {
             let mut cwd_buf = bun_paths::w_path_buffer_pool::get();
-            // PORT NOTE: Zig spelt `FD.cwd().getFdPathW(buf)`; the Rust `Fd`
-            // newtype lives in `bun_core` and has no sys-layer methods, so call
-            // the free fn.
+            // PORT NOTE: the Rust `Fd` newtype lives in `bun_core` and has no
+            // sys-layer methods, so call the free fn.
             // PORT NOTE: `get_fd_path_w` writes the raw `\\?\C:\...` result into
             // `cwd_buf` and returns a SUB-SLICE (offset 4, or 6 for UNC) after
             // stripping the long-path prefix. We can't keep that slice borrowed
@@ -101,16 +100,16 @@ impl Hardlinker {
                     sys::Result::Err(err) => return Ok(sys::Result::Err(err)),
                 };
 
-                // PORT NOTE: reshaped for borrowck — Zig's `var s = path.save();
-                // defer s.restore();` returns a `ResetScope` that holds `&mut Path`,
+                // PORT NOTE: reshaped for borrowck — `path.save()` returns a
+                // `ResetScope` that holds `&mut Path`,
                 // which would keep `self.src`/`self.dest` exclusively borrowed for
                 // the rest of the iteration. Capture the saved length directly and
                 // restore via `set_length` after the body (and before any error
                 // return) so the truncation happens on every exit, matching `defer`.
                 let src_saved_len = self.src.len();
                 // `OsAbsPath`/`OsPath` use `CheckLength::ASSUME`, so `append`'s
-                // `Err(MaxPathExceeded)` arm is statically unreachable (Zig returns
-                // `void` here) -- see `path_options::AssumeOk`.
+                // `Err(MaxPathExceeded)` arm is statically unreachable
+                // -- see `path_options::AssumeOk`.
                 self.src.append(entry.path.as_slice()).assume_ok();
 
                 let dest_saved_len = self.dest.len();
@@ -130,8 +129,8 @@ impl Hardlinker {
                             // `dest` may already be absolute (global virtual store
                             // entries live under the cache, not cwd); only prefix the
                             // working-directory path when it's project-relative.
-                            // PORT NOTE: borrowck — Zig held both `dest_cwd` and
-                            // `self.dest.slice()` simultaneously; here `dest_cwd`
+                            // PORT NOTE: borrowck — the original held both `dest_cwd`
+                            // and `self.dest.slice()` simultaneously; here `dest_cwd`
                             // borrows `cwd_buf` and `self.dest.slice()` borrows
                             // `self`, which is fine, but stash the dest slice once
                             // so the borrow doesn't span the buffer-mut below.
@@ -156,8 +155,8 @@ impl Hardlinker {
                                 joined,
                             );
 
-                            // Zig allocated `srcfile_path_buf` here but never used it;
-                            // dropped in the port (dead code in the original).
+                            // The original allocated `srcfile_path_buf` here but never
+                            // used it; dropped in the port (dead code in the original).
 
                             match sys::link_w(self.src.slice_z(), destfile_path) {
                                 sys::Result::Ok(()) => {}
@@ -254,13 +253,13 @@ impl Hardlinker {
                     sys::Result::Err(err) => return Ok(sys::Result::Err(err)),
                 };
 
-                // PORT NOTE: reshaped for borrowck — Zig's `var s = dest.save();
-                // defer s.restore();` returns a `ResetScope` holding `&mut Path`,
+                // PORT NOTE: reshaped for borrowck — `dest.save()` returns a
+                // `ResetScope` holding `&mut Path`,
                 // which would keep `self.dest` exclusively borrowed across the
                 // body. Capture `len()` and restore via `set_length()` after the
                 // body so the truncation runs on every exit, matching `defer`.
                 let dest_saved_len = self.dest.len();
-                let _ = self.dest.append(entry.path.as_bytes()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                let _ = self.dest.append(entry.path.as_bytes()); // OOM/capacity: original aborted; port keeps fire-and-forget
 
                 let err: Option<sys::Error> = 'body: {
                     match entry.kind {
@@ -328,5 +327,3 @@ impl Hardlinker {
         }
     }
 }
-
-// ported from: src/install/isolated_install/Hardlinker.zig

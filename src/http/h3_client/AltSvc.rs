@@ -131,7 +131,7 @@ struct Record {
     expires_at: i64,
 }
 
-// TODO(port): module-level mutable state. Zig used a plain `var`; safe because
+// TODO(port): module-level mutable state; safe because
 // every access is on the single HTTP thread (see module doc). Phase B may want
 // a `SyncUnsafeCell` / thread-local instead of `static mut`.
 // PORTING.md §Global mutable state: HTTP-thread-only map → RacyCell.
@@ -159,7 +159,7 @@ fn key<'a>(buf: &'a mut [u8], hostname: &[u8], port: u16) -> &'a [u8] {
     // port is at most 5 digits + ':' — bufPrint cannot overflow.
     use std::io::Write;
     let mut cursor: &mut [u8] = buf;
-    // Zig `{s}` writes raw bytes; bstr Display would lossy-expand invalid UTF-8
+    // Write raw bytes; bstr Display would lossy-expand invalid UTF-8
     // (1 byte → 3-byte U+FFFD) and could overflow the bound above. Write the
     // hostname verbatim, then format only the port.
     cursor.write_all(hostname).expect("unreachable");
@@ -222,7 +222,7 @@ pub fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
             return;
         }
     }
-    // PORT NOTE: `StringHashMap::put` dupes the key on insert (matches Zig getOrPut).
+    // PORT NOTE: `StringHashMap::put` dupes the key on insert.
     let _ = cache().put(
         k,
         Record {
@@ -257,5 +257,3 @@ pub fn lookup(origin_host: &[u8], origin_port: u16) -> Option<u16> {
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────
-
-// ported from: src/http/h3_client/AltSvc.zig

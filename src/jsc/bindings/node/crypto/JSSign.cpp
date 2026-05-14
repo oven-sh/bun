@@ -2,7 +2,7 @@
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSType.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -491,11 +491,11 @@ JSC_DEFINE_HOST_FUNCTION(constructSign, (JSC::JSGlobalObject * globalObject, JSC
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSC::Structure* structure = zigGlobalObject->m_JSSignClassStructure.get(zigGlobalObject);
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
+    JSC::Structure* structure = bunGlobalObject->m_JSSignClassStructure.get(bunGlobalObject);
 
     JSC::JSValue newTarget = callFrame->newTarget();
-    if (zigGlobalObject->m_JSSignClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
+    if (bunGlobalObject->m_JSSignClassStructure.constructor(bunGlobalObject) != newTarget) [[unlikely]] {
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Sign cannot be invoked without 'new'"_s);
             return {};

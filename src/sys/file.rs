@@ -1,8 +1,8 @@
-//! `bun.sys.File` — high-level file handle. Port of `src/sys/File.zig`.
+//! `bun.sys.File` — high-level file handle. Port of `src/sys/.
 //!
 //! Thin `#[repr(transparent)]` wrapper over [`crate::Fd`]. Unlike `std::fs::File`,
 //! this is `Copy` and **does not close on Drop** — callers must `.close()`
-//! explicitly (matching Zig). All methods preserve OS errno via [`crate::Maybe`].
+//! explicitly. All methods preserve OS errno via [`crate::Maybe`].
 #![allow(clippy::module_inception)]
 
 use super::*;
@@ -13,8 +13,7 @@ pub struct File {
 }
 
 /// Port of `bun.sys.File.ReadToEndResult` — `{ bytes, err? }` pair so
-/// callers can recover the partially-read buffer even on error (Zig
-/// returns the buffer regardless and tags `.err`).
+/// callers can recover the partially-read buffer even on error.
 #[derive(Default)]
 pub struct ReadToEndResult {
     pub bytes: Vec<u8>,
@@ -31,10 +30,10 @@ impl ReadToEndResult {
 }
 
 // `File` high-level helpers — wrap the syscall surface above.
-// Single consolidated `impl` block (Zig: src/sys/File.zig).
+// Single consolidated `impl` block.
 impl File {
     // ── construction / identity ──────────────────────────────────────────
-    /// `File.from(fd)` — wrap an existing fd. Zig's `from(anytype)` overload
+    /// `File.from(fd)` — wrap an existing fd. the original `from(anytype)` overload
     /// set collapses to this + the `From` impls below in Rust.
     #[inline]
     pub fn from_fd(fd: Fd) -> Self {
@@ -67,26 +66,25 @@ impl File {
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Self> {
         open(path, flags, mode).map(Self::from_fd)
     }
-    /// File.zig `openat` — accepts a non-sentinel `&[u8]` (Zig: `path: anytype`
-    /// dispatches to `openatA` for non-sentinel slices). `&ZStr` callers
+    /// `openat` — accepts a non-sentinel `&[u8]`. `&ZStr` callers
     /// deref-coerce to `&[u8]`.
     pub fn openat(dir: Fd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
         openat_a(dir, path, flags, mode).map(Self::from_fd)
     }
-    /// snake_case alias (Zig: `File.openat`).
+    /// snake_case alias.
     #[inline]
     pub fn open_at(dir: Fd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
         Self::openat(dir, path, flags, mode)
     }
-    /// File.zig `makeOpen` — `openat` against cwd, auto-creating parent
+    /// `makeOpen` — `openat` against cwd, auto-creating parent
     /// directories on the first failure (mkdir -p of `dirname(path)`, then
     /// retry once).
     #[inline]
     pub fn make_open(path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
         Self::make_openat(Fd::cwd(), path, flags, mode)
     }
-    /// File.zig `makeOpenat` — `openat`; on failure, `bun.makePath(dir, dirname(path))`
-    /// (errors from `makePath` are swallowed, matching `catch {}` in Zig) then
+    /// `makeOpenat` — `openat`; on failure, `bun.makePath(dir, dirname(path))`
+    /// (errors from `makePath` are swallowed, matching `catch {}` originally) then
     /// retry the open once. If `path` has no dirname, the original error is
     /// returned.
     pub fn make_openat(dir: Fd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
@@ -107,13 +105,13 @@ impl File {
         openat_a(dir, path, flags, 0o666).map(Self::from_fd)
     }
     /// `std.fs.cwd().createFileW(path, .{})` replacement (Windows wide-path).
-    /// Default `.{}` in Zig means `.truncate = true, .read = false`.
+    /// Default `.{}` originally means `.truncate = true, .read = false`.
     #[cfg(windows)]
     pub fn create_w(dir: Fd, path: &[u16]) -> Maybe<Self> {
         let flags = O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC;
         openat_windows(dir, path, flags, 0o666).map(Self::from_fd)
     }
-    /// Port of `bun.sys.File.openatOSPath` (File.zig:65) — `openat` accepting
+    /// Port of `bun.sys.File.openatOSPath` — `openat` accepting
     /// the platform-native NUL-terminated path type (`ZStr` POSIX / `WStr`
     /// Windows). Returns a `File` wrapper around the opened fd.
     #[inline]
@@ -136,7 +134,7 @@ impl File {
     pub fn write_all(&self, mut buf: &[u8]) -> Maybe<()> {
         while !buf.is_empty() {
             let n = write(self.handle, buf)?;
-            // File.zig:118-133 — `if (amt == 0) return .success;` (matches Zig).
+            // `if (amt == 0) return .success;`.
             if n == 0 {
                 return Ok(());
             }
@@ -145,7 +143,7 @@ impl File {
         Ok(())
     }
     /// `File.readAll(buf: []u8)` — loop `read()` into a **fixed** caller-owned
-    /// slice until EOF or full. Returns total bytes read (sys.zig `readAll`).
+    /// slice until EOF or full. Returns total bytes read.
     pub fn read_all(&self, buf: &mut [u8]) -> Maybe<usize> {
         let mut rest = &mut *buf;
         let mut total_read: usize = 0;
@@ -166,11 +164,11 @@ impl File {
     }
     pub fn read_to_end(&self) -> Maybe<Vec<u8>> {
         let mut v = Vec::new();
-        // File.zig `readToEnd` — fstat-presized, pread-from-0; not a cursor read.
+        // `readToEnd` — fstat-presized, pread-from-0; not a cursor read.
         self.read_to_end_with_array_list(&mut v, SizeHint::UnknownSize)?;
         Ok(v)
     }
-    /// File.zig `readToEndSmall` — `readToEndWithArrayList(.probably_small)`.
+    /// `readToEndSmall` — `readToEndWithArrayList(.probably_small)`.
     /// Reserves only 64 bytes initially instead of fstat-presizing; for files
     /// callers expect to be tiny (`.bun-tag`, lockfile markers, etc.).
     pub fn read_to_end_small(&self) -> Maybe<Vec<u8>> {
@@ -180,7 +178,7 @@ impl File {
     }
     /// `File.readToEndWithArrayList(buf, hint)` — like `read_all` but takes a
     /// `SizeHint` so callers can pre-reserve. Returns total bytes appended.
-    /// File.zig:298 — `probably_small` reserves 64; `unknown_size` fstats and
+    /// `probably_small` reserves 64; `unknown_size` fstats and
     /// reserves `size+16`.
     pub fn read_to_end_with_array_list(&self, list: &mut Vec<u8>, hint: SizeHint) -> Maybe<usize> {
         match hint {
@@ -200,12 +198,12 @@ impl File {
             }
         })
     }
-    /// Port of `bun.sys.File.readFillBuf` (src/sys/File.zig). Reads until
+    /// Port of `bun.sys.File.readFillBuf`. Reads until
     /// `buf` is full or EOF; returns the filled prefix.
     pub fn read_fill_buf<'b>(&self, buf: &'b mut [u8]) -> Maybe<&'b mut [u8]> {
         let mut read_amount: usize = 0;
         while read_amount < buf.len() {
-            // PORT NOTE: File.zig:278 — POSIX uses pread() from offset 0 so a
+            // PORT NOTE: POSIX uses pread() from offset 0 so a
             // pre-advanced cursor doesn't truncate; Windows falls back to read().
             #[cfg(unix)]
             let rc = pread(self.handle, &mut buf[read_amount..], read_amount as i64);
@@ -259,7 +257,7 @@ impl File {
     pub fn get_pos(&self) -> Maybe<u64> {
         lseek(self.handle, 0, libc::SEEK_CUR).map(|p| p as u64)
     }
-    /// `File.getEndPos()` (File.zig:209) — `getFileSize(self.handle)`.
+    /// `File.getEndPos()` — `getFileSize(self.handle)`.
     /// On Windows that's `GetFileSizeEx` directly on the HANDLE (NOT via
     /// libuv `fstat`, which would require a uv-kind fd).
     pub fn get_end_pos(&self) -> Maybe<usize> {
@@ -268,7 +266,7 @@ impl File {
     pub fn stat(&self) -> Maybe<Stat> {
         fstat(self.handle)
     }
-    /// Port of `bun.sys.File.kind` (File.zig:220).
+    /// Port of `bun.sys.File.kind`.
     ///
     /// Be careful about using this on Linux or macOS — calls `fstat()`
     /// internally there. On Windows it routes through `GetFileType`.
@@ -293,7 +291,7 @@ impl File {
         #[cfg(not(windows))]
         {
             let st = self.stat()?;
-            // Zig spec (File.zig:258): unrecognized `st_mode & IFMT` falls back to
+            // Originally: unrecognized `st_mode & IFMT` falls back to
             // `.file`, not `.unknown`. `kind_from_mode` returns `Unknown` for that
             // case, so post-process here to match the spec's else arm.
             let k = kind_from_mode(st.st_mode as Mode);
@@ -310,10 +308,7 @@ impl File {
     /// `File.closeAndMoveTo` — atomically rename `src` → `dest` (cwd-relative),
     /// closing the handle after the rename so `move_file_z_with_handle`'s
     /// EXDEV fallback (fstat/lseek/copy on `from_handle`) sees a live handle.
-    /// (Zig closes first on Windows because its rename uses `MoveFileExW`; the
-    /// Rust port goes through `rename_at_w` → `NtSetInformationFile` which
-    /// opens its own source handle, so keeping `self` open across the call is
-    /// fine and avoids passing a closed handle into the EXDEV fallback.)
+    ///
     pub fn close_and_move_to(
         self,
         src: &ZStr,
@@ -321,7 +316,7 @@ impl File {
     ) -> core::result::Result<(), bun_core::Error> {
         let cwd = Fd::cwd();
         let result = move_file_z_with_handle(self.handle, cwd, src, cwd, dest);
-        let _ = self.close(); // close error is non-actionable (Zig parity: discarded)
+        let _ = self.close(); // close error is non-actionable (discarded)
         result
     }
     /// `bun.sys.File.getPath` — `getFdPath(self.handle, buf)`.
@@ -336,16 +331,15 @@ impl File {
     }
 
     // ── one-shot path helpers (open + io + close) ───────────────────────
-    /// `bun.sys.File.readFrom` — open + read + close. Accepts `&[u8]` (Zig:
-    /// `path: anytype`); `&ZStr` callers deref-coerce.
+    /// `bun.sys.File.readFrom` — open + read + close. Accepts `&[u8]`; `&ZStr` callers deref-coerce.
     pub fn read_from(dir: Fd, path: &[u8]) -> Maybe<Vec<u8>> {
         let f = Self::openat(dir, path, O::RDONLY, 0)?;
-        // File.zig: closes the fd on the error path too (no leak on read failure).
+        // closes the fd on the error path too (no leak on read failure).
         let v = f.read_to_end();
         let _ = close(f.handle);
         v
     }
-    /// `bun.sys.File.readFileFrom` (File.zig:381) — open + read; returns BOTH
+    /// `bun.sys.File.readFileFrom` — open + read; returns BOTH
     /// the open `File` handle and the bytes. Caller owns the fd and must
     /// `close()` it. On read error the fd is closed before returning (no leak).
     pub fn read_file_from(
@@ -361,11 +355,11 @@ impl File {
             }
         }
     }
-    /// `bun.sys.File.readFromUserInput` (File.zig:367) — normalize a
+    /// `bun.sys.File.readFromUserInput` — normalize a
     /// user-provided relative path against the resolver's cached
     /// `top_level_dir` (NOT a fresh `getcwd()`), then `readFrom`.
     ///
-    /// Zig reads `bun.fs.FileSystem.instance.top_level_dir` directly; in the
+    /// Originally this read `bun.fs.FileSystem.instance.top_level_dir` directly; in the
     /// Rust crate map that lives in `bun_resolver::fs` (T5) which `bun_sys`
     /// (T1) must not depend on (PORTING.md §Forbidden: no fn-ptr hooks to
     /// break dep cycles). Callers pass `top_level_dir` explicitly instead.
@@ -384,13 +378,13 @@ impl File {
     }
     /// `bun.sys.File.writeFile` — open + write + close.
     pub fn write_file(dir: Fd, path: &ZStr, data: &[u8]) -> Maybe<()> {
-        // File.zig:141 — mode 0o664; `defer file.close()` (close on all paths).
+        // mode 0o664; `defer file.close()` (close on all paths).
         let f = Self::openat(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
         let r = f.write_all(data);
         let _ = close(f.handle);
         r
     }
-    /// Port of `bun.sys.File.writeFileWithPathBuffer` (File.zig) Windows arm —
+    /// Port of `bun.sys.File.writeFileWithPathBuffer` Windows arm —
     /// like [`write_file`] but takes the platform-native path type so Windows
     /// callers can pass a `&WStr` without round-tripping through UTF-8.
     pub fn write_file_os_path(dir: Fd, path: &bun_paths::OSPathSliceZ, data: &[u8]) -> Maybe<()> {

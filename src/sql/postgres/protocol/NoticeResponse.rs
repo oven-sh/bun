@@ -7,7 +7,7 @@ pub struct NoticeResponse {
     pub messages: Vec<FieldMessage>,
 }
 
-// Zig `deinit` only freed owned fields (per-message deinit + list free).
+// Cleanup only needs to free owned fields (per-message + list buffer).
 // Vec<FieldMessage> drops each element (FieldMessage's Drop) and the buffer
 // automatically, so no explicit Drop body is needed.
 
@@ -27,7 +27,7 @@ impl NoticeResponse {
         Ok(Self::default())
     }
 
-    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
+    // Decoder helper — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(
         context: Container,
     ) -> Result<Self, bun_core::Error> {
@@ -35,7 +35,5 @@ impl NoticeResponse {
     }
 }
 
-// Zig `toJS` re-export from sql_jsc deleted per PORTING.md — `to_js` lives as
+// `toJS` re-export from sql_jsc deleted per PORTING.md — `to_js` lives as
 // an extension-trait method in the bun_sql_jsc crate.
-
-// ported from: src/sql/postgres/protocol/NoticeResponse.zig

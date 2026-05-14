@@ -23,7 +23,7 @@ bitflags::bitflags! {
         const DARK  = 1 << 1;
         /// Forbids the user agent from overriding the color scheme for the element.
         const ONLY  = 1 << 2;
-        // Zig: __unused: u5 = 0  (padding — bitflags handles this implicitly)
+        // (5 unused padding bits — bitflags handles this implicitly)
     }
 }
 
@@ -97,7 +97,6 @@ impl ColorScheme {
     }
 }
 
-// Zig: `const Map = bun.ComptimeEnumMap(enum { normal, only, light, dark });`
 // ≤8 entries → plain match on bytes (per PORTING.md).
 #[derive(Clone, Copy)]
 enum ColorSchemeKeyword {
@@ -118,7 +117,7 @@ fn color_scheme_map_get(ident: &[u8]) -> Option<ColorSchemeKeyword> {
 }
 
 /// A value for the [resize](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#resize) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))` — intentionally unimplemented upstream.
+// TODO(port): intentionally unimplemented upstream.
 pub struct Resize;
 
 /// A value for the [cursor](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#cursor) property.
@@ -143,7 +142,7 @@ pub struct CursorImage {
 /// used in the `cursor` property.
 ///
 /// See [Cursor](Cursor).
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))` — intentionally unimplemented upstream.
+// TODO(port): intentionally unimplemented upstream.
 pub struct CursorKeyword;
 
 /// A value for the [caret-color](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#caret-color) property.
@@ -155,15 +154,15 @@ pub enum ColorOrAuto {
 }
 
 /// A value for the [caret-shape](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#caret-shape) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))` — intentionally unimplemented upstream.
+// TODO(port): intentionally unimplemented upstream.
 pub struct CaretShape;
 
 /// A value for the [caret](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#caret) shorthand property.
-// TODO(port): Zig source is `@compileError(css.todo_stuff.depth)` — intentionally unimplemented upstream.
+// TODO(port): intentionally unimplemented upstream.
 pub struct Caret;
 
 /// A value for the [user-select](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#content-selection) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))` — intentionally unimplemented upstream.
+// TODO(port): intentionally unimplemented upstream.
 pub struct UserSelect;
 
 /// A value for the [appearance](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#appearance-switching) property.
@@ -184,7 +183,7 @@ pub enum Appearance {
     SliderHorizontal,
     SquareButton,
     Textarea,
-    // TODO(port): arena-owned slice in Zig (`[]const u8`); using raw fat ptr until 'bump threading in Phase B.
+    // TODO(port): originally an arena-owned byte slice; using raw fat ptr until 'bump threading in Phase B.
     NonStandard(*const [u8]),
 }
 
@@ -229,8 +228,8 @@ impl ColorSchemeHandler {
                         dest.push(define_var(b"--buncss-dark", css::Token::Ident(b"initial")));
                     }
                 }
-                // PORT NOTE: Zig pushed `property.deepClone(arena)`; ColorScheme is
-                // `Copy` (bitflags u8), so reconstruct the variant directly.
+                // PORT NOTE: ColorScheme is `Copy` (bitflags u8), so reconstruct
+                // the variant directly instead of deep-cloning the whole `Property`.
                 dest.push(Property::ColorScheme(color_scheme));
                 true
             }
@@ -249,7 +248,7 @@ impl ColorSchemeHandler {
 fn define_var(name: &'static [u8], value: css::Token) -> Property {
     // PORT NOTE: `name` is `&'static [u8]` because all call sites pass byte-string literals.
     // `TokenList.v` is `Vec<TokenOrValue>` (std Vec — see custom.rs:320), so no arena
-    // threading is needed here despite Zig's `ArrayList(TokenOrValue)`.
+    // threading is needed here.
     Property::Custom(css::css_properties::custom::CustomProperty {
         name: css::css_properties::custom::CustomPropertyName::Custom(DashedIdent { v: name }),
         value: css::TokenList {
@@ -257,5 +256,3 @@ fn define_var(name: &'static [u8], value: css::Token) -> Property {
         },
     })
 }
-
-// ported from: src/css/properties/ui.zig

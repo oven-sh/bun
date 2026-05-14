@@ -27,8 +27,7 @@ pub mod options_jsc;
 #[path = "PluginRunner.rs"]
 pub mod PluginRunner;
 
-// LAYERING: `output_file_jsc` (port of `src/bundler_jsc/output_file_jsc.zig`)
-// constructs `webcore::Blob`/`Store`, `api::BuildArtifact`, and
+// LAYERING: `output_file_jsc` constructs `webcore::Blob`/`Store`, `api::BuildArtifact`, and
 // `node::PathOrFileDescriptor`. Those types live in `bun_runtime`, which is
 // not a dependency of this crate. The module has been moved to
 // `bun_runtime::api::output_file_jsc`; nothing depends on

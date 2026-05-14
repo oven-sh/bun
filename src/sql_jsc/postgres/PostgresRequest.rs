@@ -16,10 +16,10 @@ use crate::shared::QueryBindingIterator;
 
 bun_core::declare_scope!(Postgres, visible);
 
-/// Zig: `comptime MessageType: @Type(.enum_literal)` — the set of backend
-/// message tags `PostgresSQLConnection.on()` dispatches over. Defined here
-/// (the dispatch site) rather than in `bun_sql::postgres::protocol` because
-/// it is purely a compile-time switch tag in Zig with no wire encoding.
+/// The set of backend message tags `PostgresSQLConnection.on()` dispatches
+/// over. Defined here (the dispatch site) rather than in
+/// `bun_sql::postgres::protocol` because it is purely a dispatch tag with no
+/// wire encoding.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
 pub enum MessageType {
     DataRow,
@@ -61,8 +61,8 @@ pub fn write_bind<Context: WriterContext>(
     writer.write(b"B")?;
     let length = writer.length()?;
 
-    // Zig `.String` (bun.String) vs `.string` ([]const u8) both snake_case to
-    // `string`; the bun.String overload is `bun_string` on NewWriter.
+    // The bun.String overload is `bun_string` on NewWriter; the byte-slice
+    // overload is `string`.
     writer.bun_string(&cursor_name)?;
     writer.string(name)?;
 
@@ -503,5 +503,3 @@ pub type Queue = bun_collections::linear_fifo::LinearFifo<
 >;
 
 use crate::postgres::postgres_sql_connection::{SslMode, TlsStatus};
-
-// ported from: src/sql_jsc/postgres/PostgresRequest.zig

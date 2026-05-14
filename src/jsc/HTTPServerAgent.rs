@@ -48,8 +48,7 @@ impl HTTPServerAgent {
     // dep). The C++ side only needs `Bun__HTTPServerAgent__setEnabled` for
     // linkage; the per-event notifiers are called from Rust → C++ (FFI decls
     // below) and are wired from `bun_runtime` once that tier un-gates. The
-    // event-body Zig ports are preserved in HTTPServerAgent.zig and will land
-    // when `AnyServer` is reachable.
+    // event-body notifiers will land when `AnyServer` is reachable.
 
     // #endregion
 }
@@ -120,7 +119,7 @@ impl Drop for Route {
 
 // #endregion
 
-// #region C++ agent reference type for Zig
+// #region C++ agent reference type for Rust
 
 bun_opaque::opaque_ffi! {
     /// Opaque handle to the C++ `InspectorHTTPServerAgent`.
@@ -183,7 +182,7 @@ unsafe extern "C" {
     );
 
     // `Bun__HTTPServerAgent__notifyServer{Started,Stopped,RoutesUpdated}` are
-    // `[[ZIG_EXPORT(nothrow)]]` — declared once in `crate::cpp::raw` (cppbind),
+    // `[[RUST_EXPORT(nothrow)]]` — declared once in `crate::cpp::raw` (cppbind),
     // called below with explicit casts to the codegen's opaque param types.
 }
 
@@ -200,7 +199,7 @@ impl InspectorHTTPServerAgent {
         // null). The C++ side never reads `server_instance` as anything but an
         // opaque token, so passing the raw pointer through is sound.
         let agent = Self::opaque_mut(agent);
-        // SAFETY: `[[ZIG_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
+        // SAFETY: `[[RUST_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
         // above; remaining args are by-value scalars / `&BunString`.
         unsafe {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerStarted(
@@ -220,7 +219,7 @@ impl InspectorHTTPServerAgent {
         timestamp: f64,
     ) {
         let agent = Self::opaque_mut(agent);
-        // SAFETY: `[[ZIG_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
+        // SAFETY: `[[RUST_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
         // via `opaque_mut`; remaining args are by-value scalars.
         unsafe {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerStopped(
@@ -238,7 +237,7 @@ impl InspectorHTTPServerAgent {
         routes: &mut [Route],
     ) {
         let agent = Self::opaque_mut(agent);
-        // SAFETY: `[[ZIG_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
+        // SAFETY: `[[RUST_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
         // via `opaque_mut`; `routes` is a valid `&mut [Route]` slice.
         unsafe {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerRoutesUpdated(
@@ -254,7 +253,7 @@ impl InspectorHTTPServerAgent {
 
 // #endregion
 
-// #region Zig -> C++
+// #region Rust -> C++
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
@@ -273,5 +272,3 @@ pub type RequestId = i32;
 pub type RouteId = i32;
 pub type HotReloadId = i32;
 pub type HTTPMethod = bun_http::Method;
-
-// ported from: src/jsc/HTTPServerAgent.zig

@@ -34,7 +34,7 @@ use bun_ast::{Index, Ref};
 pub struct ServerComponentParseTask {
     pub task: ThreadPoolTask,
     pub data: Data,
-    // BACKREF (LIFETIMES.tsv) — Zig `*BundleV2` is mutable; written through in `on_complete`.
+    // BACKREF (LIFETIMES.tsv) — raw `*BundleV2` is mutable; written through in `on_complete`.
     // `ParentRef` (write-provenance via `NonNull::from(&mut self)` at construction)
     // so deref sites are safe; `None` only for the FRU `Default` placeholder.
     pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
@@ -55,7 +55,7 @@ pub struct ReferenceProxy {
 }
 
 pub struct ClientEntryWrapper {
-    // TODO(port): lifetime — Zig `[]const u8` borrowed from caller; never freed in this file.
+    // TODO(port): lifetime — `[]const u8` borrowed from caller; never freed in this file.
     pub path: Box<[u8]>,
 }
 
@@ -98,7 +98,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         // `ctx` already a `ParentRef<BundleV2>` with write provenance
         // (constructed from `NonNull::from(&mut self)` in `bundle_v2.rs`).
         ctx,
-        // SAFETY: Zig leaves `.task = undefined`; consumer overwrites before read.
+        // SAFETY: `.task` is left uninitialized here; consumer overwrites before read.
         task: Default::default(),
         value,
         external: ExternalFreeFunction::NONE,
@@ -106,11 +106,11 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     });
     let result = bun_core::heap::into_raw(result);
 
-    // Zig matched `worker.ctx.loop().*` on `AnyEventLoop::{js, mini}`.
+    // Match `worker.ctx.loop().*` on `AnyEventLoop::{js, mini}`.
     // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
     // of `linker.r#loop` is centralised in `LinkerContext::any_loop_mut`.
     //
-    // Zig `worker.ctx.loop().*` is non-optional (.zig:52) — `BundleV2::init`
+    // `worker.ctx.loop().*` is non-optional — `BundleV2::init`
     // always sets `linker.r#loop` before scheduling any ServerComponentParseTask.
     // Running `on_complete` inline on the worker thread would violate
     // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
@@ -137,7 +137,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
             );
         }
     }
-    // Zig: `defer worker.unget()` — runs at function exit, i.e. after enqueue.
+    // `defer worker.unget()` — runs at function exit, i.e. after enqueue.
     worker.unget();
 }
 
@@ -157,7 +157,7 @@ fn task_callback(
         .as_deref()
         .expect("ServerComponentParseTask.ctx set at enqueue");
     // PORT NOTE: `Source` is not `Clone`; the original is consumed here
-    // (Zig copied by value). Take it up-front so `ab`'s borrow of it ends
+    // (the original copied by value). Take it up-front so `ab`'s borrow of it ends
     // (via NLL) before we move it into `Success`.
     let source = core::mem::take(&mut task.source);
     let mut ab = AstBuilder::init(bump, &source, ctx.transpiler().options.hot_module_reloading)?;
@@ -177,7 +177,7 @@ fn task_callback(
     let mut bundled_ast: JSAst = ab.to_bundled_ast(target)?;
 
     // `wrapper_ref` is used to hold the HMR api ref (see comment in
-    // `src/ast/Ast.zig`)
+    // `src/ast`)
     bundled_ast.wrapper_ref = hmr_api_ref;
 
     Ok(Success {
@@ -200,7 +200,7 @@ impl ServerComponentParseTask {
 }
 
 impl Default for ServerComponentParseTask {
-    /// Mirrors Zig's `task: ThreadPoolLib.Task = .{ .callback = &taskCallbackWrap }`
+    /// Mirrors `task: ThreadPoolLib.Task = .{ .callback = &taskCallbackWrap }`
     /// default-field-value. Callers (`bundle_v2.rs`) supply `data`/`ctx`/`source`
     /// via FRU and rely on this for the intrusive `task` link.
     fn default() -> Self {
@@ -391,5 +391,3 @@ fn generate_client_reference_proxy(
 
     Ok(())
 }
-
-// ported from: src/bundler/ServerComponentParseTask.zig

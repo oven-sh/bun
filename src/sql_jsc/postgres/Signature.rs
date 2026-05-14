@@ -19,19 +19,17 @@ impl Signature {
         }
     }
 
-    // PORT NOTE: Zig `deinit` only freed the four owned slices via
-    // `bun.default_allocator.free`. With `Box<[T]>` fields, Rust's `Drop`
-    // handles this automatically — no explicit `Drop` impl needed.
+    // PORT NOTE: cleanup only frees the four owned slices. With `Box<[T]>`
+    // fields, Rust's `Drop` handles this automatically — no explicit `Drop`
+    // impl needed.
 
     pub fn hash(&self) -> u64 {
-        // PORT NOTE: Zig `std.hash.Wyhash.init(0)` + `update` + `final`. The
-        // `bun_wyhash` crate exposes the streaming API as `Wyhash11` (and a
-        // stateless `hash`); for now use the one-shot `bun_wyhash::hash` over
-        // a concatenated byte view.
-        // `Int4` (= u32) is `NoUninit`; safe `&[u32]` → `&[u8]` view (matches
-        // Zig `std.mem.sliceAsBytes`).
+        // PORT NOTE: the `bun_wyhash` crate exposes the streaming API as
+        // `Wyhash11` (and a stateless `hash`); for now use the one-shot
+        // `bun_wyhash::hash` over a concatenated byte view.
+        // `Int4` (= u32) is `NoUninit`; safe `&[u32]` → `&[u8]` view.
         let fields_bytes: &[u8] = bun_core::cast_slice(&self.fields[..]);
-        // PERF(port): Zig fed two slices into a streaming Wyhash; bun_wyhash
+        // PERF(port): originally fed two slices into a streaming Wyhash; bun_wyhash
         // currently lacks the std-compatible streaming `Wyhash` type. Concatenate
         // into a temp Vec until `bun_wyhash::Wyhash` (streaming, seed-0) lands.
         // TODO(b2-blocked): bun_wyhash::Wyhash (streaming std-compatible API)
@@ -41,7 +39,7 @@ impl Signature {
         bun_wyhash::hash(&buf)
     }
 
-    // TODO(port): narrow error set — Zig inferred set mixes JSError (from
+    // TODO(port): narrow error set — the original inferred set mixes JSError (from
     // QueryBindingIterator / Tag::from_js), OOM, and error.InvalidQueryBinding.
     pub fn generate(
         global_object: &JSGlobalObject,
@@ -139,5 +137,3 @@ impl Signature {
         })
     }
 }
-
-// ported from: src/sql_jsc/postgres/Signature.zig

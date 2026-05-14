@@ -71,7 +71,7 @@ fn global_clear_exception(global: &JSGlobalObject) {
 
 #[inline]
 fn global_to_js_value(global: &JSGlobalObject) -> JSValue {
-    // Spec JSGlobalObject.zig `toJSValue` — `@enumFromInt(@intFromPtr(globalThis))`.
+    // Mirrors `JSGlobalObject::toJSValue` — reinterpret the global pointer as a JSValue cell.
     JSValue::from_cell(std::ptr::from_ref::<JSGlobalObject>(global))
 }
 
@@ -86,16 +86,16 @@ fn vm_set_execution_forbidden(vm: *mut jsc::VM, forbidden: bool) {
 
 /// Reborrow `&VirtualMachine` as `&mut VirtualMachine`.
 ///
-/// SAFETY: The Zig spec passes `*JSC.VirtualMachine` (mutable, freely-aliasing)
-/// everywhere; `VirtualMachine` is single-threaded per JS thread and the REPL
-/// is the sole driver of `tick()` / `wait_for_promise()` here. Phase-B port
-/// stores `&VirtualMachine` for borrowck simplicity and casts at the call site.
+/// SAFETY: `VirtualMachine` is treated as a freely-aliasing mutable pointer
+/// everywhere; it is single-threaded per JS thread and the REPL is the sole
+/// driver of `tick()` / `wait_for_promise()` here. Phase-B port stores
+/// `&VirtualMachine` for borrowck simplicity and casts at the call site.
 #[inline]
 #[allow(invalid_reference_casting)]
 fn vm_mut<'a>(vm: &'a VirtualMachine) -> &'a mut VirtualMachine {
     // Launder through a raw pointer; rustc's `invalid_reference_casting` lint is
-    // silenced above because the Zig spec's `*JSC.VirtualMachine` is a freely-
-    // aliasing mutable pointer and `VirtualMachine` is `!Sync` single-thread state.
+    // silenced above because `VirtualMachine` is treated as a freely-aliasing
+    // mutable pointer and is `!Sync` single-thread state.
     let ptr: *mut VirtualMachine = core::ptr::from_ref(vm).cast_mut();
     unsafe { &mut *ptr }
 }
@@ -1792,15 +1792,15 @@ impl<'a> Repl<'a> {
         opts.features.top_level_await = true; // Enable top-level await in REPL
         // Keep `lower_using` at its default (true) here even though JavaScriptCore
         // supports `using` / `await using` natively. The REPL transform in
-        // `ast/repl_transforms.zig` rewrites every top-level `s_local` into a
+        // `ast/repl_transforms` rewrites every top-level `s_local` into a
         // hoisted `var` + assignment for cross-input persistence, which would
         // silently discard disposal semantics if `using` declarations survived
         // until that pass. Lowering wraps the declaration in `try/finally` first,
         // which the REPL transform passes through intact.
 
         // Initialize macro context from transpiler (required for import processing)
-        // PORT NOTE: Zig spec mutates `vm.transpiler` (`*Transpiler`) here; `vm`
-        // is `&VirtualMachine` in this port, so go through `vm_mut` (see its
+        // PORT NOTE: the original mutated `vm.transpiler` directly; `vm` is
+        // `&VirtualMachine` in this port, so go through `vm_mut` (see its
         // SAFETY comment) to lazily seed the macro context.
         if vm.transpiler.macro_context.is_none() {
             vm_mut(vm).transpiler.macro_context = Some(bun_js_parser::Macro::MacroContext::init(
@@ -1845,8 +1845,8 @@ impl<'a> Repl<'a> {
         let mut buffer_printer = bun_js_printer::BufferPrinter::init(buffer_writer);
 
         // Create symbol map from ast.symbols
-        // PORT NOTE: Zig used `Symbol.NestedList.init(&.{ast.symbols})` (borrows
-        // a stack 1-slot slice). `Map::init_with_one_list` takes ownership of
+        // PORT NOTE: the original borrowed a stack 1-slot slice of `ast.symbols`.
+        // `Map::init_with_one_list` takes ownership of
         // `ast.symbols` instead — see Symbol.rs PORT NOTE on the dangling-slice
         // hazard.
         let symbols_map =
@@ -1894,8 +1894,8 @@ impl<'a> Repl<'a> {
         writer: &mut bun_core::io::Writer,
         enable_colors: bool,
     ) {
-        // PORT NOTE: Zig writes straight through `*std.Io.Writer`. The Rust
-        // `bun_core::io::Writer` vtable doesn't implement `bun_io::Write`, so
+        // PORT NOTE: the `bun_core::io::Writer` vtable doesn't implement
+        // `bun_io::Write`, so
         // buffer through a `Vec<u8>` (which does) and flush in one shot — REPL
         // error output is tiny.
         let Some(global) = self.global else {
@@ -2518,5 +2518,3 @@ pub fn exec(ctx: crate::cli::Command::Context) -> Result<(), bun_core::Error> {
 }
 
 const VERSION: &str = Environment::VERSION_STRING;
-
-// ported from: src/cli/repl.zig

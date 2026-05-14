@@ -11,7 +11,7 @@ use crate::{Opcode, Request, SendStatus, Socket, WebSocketUpgradeContext, uws_re
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Opaque uWS WebSocket handle, parameterized by the SSL flag passed to the C
-/// shims. In Zig this is `NewWebSocket(ssl_flag)` returning `opaque {}`.
+/// shims. Models the legacy `NewWebSocket(ssl_flag)` opaque-type factory.
 #[repr(C)]
 pub struct NewWebSocket<const SSL_FLAG: i32> {
     _p: core::cell::UnsafeCell<[u8; 0]>,
@@ -36,8 +36,8 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
     /// Caller must guarantee the user data was set to a `*mut T` for this socket.
     #[inline]
     pub unsafe fn as_<T>(&mut self) -> Option<&mut T> {
-        // SAFETY: mirrors Zig `@setRuntimeSafety(false)` + ptrCast/alignCast of
-        // the opaque user-data pointer. Caller upholds the type invariant.
+        // SAFETY: unchecked cast of the opaque user-data pointer.
+        // Caller upholds the type invariant.
         unsafe {
             let p = c::uws_ws_get_user_data(SSL_FLAG, self.raw());
             p.cast::<T>().as_mut()
@@ -106,7 +106,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
 
     /// Run `callback(ctx)` while the socket is corked.
     ///
-    /// Zig: `cork(ctx: anytype, comptime callback: anytype)` — the callback is
+    /// `cork(ctx, callback)` — the callback is
     /// monomorphized into an `extern "C"` trampoline. Rust cannot const-generic
     /// over a fn value, so we tunnel `(ctx, callback)` through the user-data
     /// pointer instead.
@@ -187,7 +187,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
     }
 
     pub fn get_buffered_amount(&mut self) -> u32 {
-        // TODO(port): C decl returns usize but Zig wrapper types this as u32 —
+        // TODO(port): C decl returns usize but the wrapper types this as u32 —
         // verify which is correct in Phase B.
         u32::try_from(c::uws_ws_get_buffered_amount(SSL_FLAG, self.raw())).unwrap()
     }
@@ -396,7 +396,7 @@ impl AnyWebSocket {
         opcode: Opcode,
         compress: bool,
     ) -> bool {
-        // Zig: switch (ssl) { inline else => |tls| uws.NewApp(tls).publishWithOptions(...) }
+        // Dispatch on SSL to the right `NewApp(tls).publishWithOptions(...)`.
         // S012: `NewApp<SSL>` is a ZST opaque — route the `*mut → &mut` deref
         // through `bun_opaque::opaque_deref_mut` (caller still vouches that
         // `app` is the matching `uws_app_t*`; the `ssl` flag selects the
@@ -498,7 +498,7 @@ impl Default for WebSocketBehavior {
     }
 }
 
-/// User-data type stored on a uWS WebSocket. Replaces Zig's `comptime Type`
+/// User-data type stored on a uWS WebSocket. Replaces the `Type`
 /// parameter to `WebSocketBehavior.Wrap`.
 ///
 /// `HAS_ON_*` consts replace `@hasDecl(Type, "...")` — set to `false` to leave
@@ -538,8 +538,8 @@ pub trait WebSocketHandler: Sized + 'static {
     unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]);
 }
 
-/// Server type that handles the HTTP→WS upgrade. Replaces Zig's
-/// `comptime ServerType` parameter to `WebSocketBehavior.Wrap`.
+/// Server type that handles the HTTP→WS upgrade. Replaces the
+/// `ServerType` parameter to `WebSocketBehavior.Wrap`.
 pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
     // TODO(port): `*NewApp(is_ssl).Response` — exact Rust type pending App.rs port.
     /// # Safety
@@ -560,7 +560,7 @@ pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
     );
 }
 
-/// Zig: `WebSocketBehavior.Wrap(ServerType, Type, ssl)` — a type containing
+/// `WebSocketBehavior.Wrap(ServerType, Type, ssl)` — a type containing
 /// `extern "C"` trampolines that downcast user-data and forward to `Type`'s
 /// methods, plus `apply()` to fill a `WebSocketBehavior`.
 pub struct Wrap<Server, T, const SSL: bool>(PhantomData<(Server, T)>);
@@ -572,7 +572,7 @@ where
 {
     #[inline(always)]
     fn make_ws(raw_ws: *mut RawWebSocket) -> AnyWebSocket {
-        // Zig: @unionInit(AnyWebSocket, if (ssl) "ssl" else "tcp", @ptrCast(raw_ws))
+        // Wrap as `AnyWebSocket::Ssl` or `AnyWebSocket::Tcp` based on the SSL flag.
         if SSL {
             AnyWebSocket::Ssl(raw_ws)
         } else {
@@ -868,5 +868,3 @@ pub mod c {
         ) -> usize;
     }
 }
-
-// ported from: src/uws_sys/WebSocket.zig

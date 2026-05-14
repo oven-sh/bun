@@ -83,10 +83,10 @@ pub fn array_to_js(this: &E::Array, global: &JSGlobalObject) -> Result<JSValue, 
 }
 
 pub fn bool_to_js(this: &E::Boolean, _ctx: &JSGlobalObject) -> JSValue {
-    // Zig returns `jsc.C.JSValueRef` via `JSValueMakeBoolean`; the Rust C-API
-    // shim is `#[deprecated]` in favour of `JSValue`. `JSValue::js_boolean`
-    // yields the same encoded immediate (`ValueTrue`/`ValueFalse`) without the
-    // FFI hop. Callers needing a raw ref can `.as_ref()` on the result.
+    // The C-API shim (`JSValueRef` via `JSValueMakeBoolean`) is `#[deprecated]`
+    // in favour of `JSValue`. `JSValue::js_boolean` yields the same encoded
+    // immediate (`ValueTrue`/`ValueFalse`) without the FFI hop. Callers needing
+    // a raw ref can `.as_ref()` on the result.
     JSValue::js_boolean(this.value)
 }
 
@@ -125,7 +125,7 @@ pub fn object_to_js(this: &E::Object, global: &JSGlobalObject) -> Result<JSValue
     Ok(obj)
 }
 
-/// `E.String.toJS` (src/js_parser_jsc/expr_jsc.zig:79).
+/// `E.String.toJS`.
 ///
 /// Stamps the body for both `EString` nominal types: the full T4
 /// `bun_ast::E::String` (used by `data_to_js` / macros) and the
@@ -136,7 +136,7 @@ pub fn object_to_js(this: &E::Object, global: &JSGlobalObject) -> Result<JSValue
 macro_rules! impl_string_to_js {
     ($name:ident, $ty:ty) => {
         pub fn $name(s: &$ty, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
-            // TODO(port): Zig mutates `s` via `resolveRopeIfNeeded(allocator)`;
+            // TODO(port): the original mutated `s` via `resolveRopeIfNeeded`;
             // callers only have `&` and there is no bump arena in scope here.
             // Phase B should either thread a bump arena + interior-mut rope or
             // resolve ropes before reaching here. For now, assert non-rope
@@ -175,5 +175,3 @@ macro_rules! impl_string_to_js {
 }
 impl_string_to_js!(string_to_js, E::String);
 impl_string_to_js!(value_string_to_js, bun_ast::E::EString);
-
-// ported from: src/js_parser_jsc/expr_jsc.zig

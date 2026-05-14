@@ -285,8 +285,8 @@ pub enum Kind {
 }
 
 impl Kind {
-    // TODO(port): Zig `jsonStringify` hooks into std.json; wire to whatever
-    // JSON-serialize trait the AST uses in Rust (serde::Serialize or custom).
+    // TODO(port): wire to whatever JSON-serialize trait the AST uses
+    // (serde::Serialize or custom).
     pub fn json_stringify(self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
         // TODO(port): narrow error set
         writer.write_str(<&'static str>::from(self))
@@ -310,5 +310,3 @@ pub struct Break {
 pub struct Continue {
     pub label: Option<LocRef>, // = None
 }
-
-// ported from: src/js_parser/ast/S.zig

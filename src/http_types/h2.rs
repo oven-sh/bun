@@ -5,10 +5,8 @@
 //!     `h2_frame_parser` module, which layers `WireWriter`-based `write()`
 //!     and `to_js()` on top as local extension traits.
 //!
-//! The Zig tree carries TWO copies of these types (`src/http/H2FrameParser.zig`
-//! and a private duplicate inside `src/runtime/api/bun/h2_frame_parser.zig`);
-//! the http copy's own doc-comment already promised this dedup. This module is
-//! that promise kept on the Rust side.
+//! These wire types were previously duplicated between the http client and the
+//! node:http2 binding; this module is the single shared copy.
 #![allow(non_camel_case_types, non_upper_case_globals)]
 
 // ─── connection / sizing constants ──────────────
@@ -21,12 +19,12 @@ pub const MAX_STREAM_ID: u32 = i32::MAX as u32;
 /// `std.math.maxInt(u24)`
 pub const MAX_FRAME_SIZE: u32 = 0x00FF_FFFF;
 pub const DEFAULT_WINDOW_SIZE: u32 = u16::MAX as u32;
-/// PORT NOTE: Zig type was `u24`; Rust has no `u24`, so widened to `u32`.
+/// PORT NOTE: conceptually a `u24`; Rust has no `u24`, so widened to `u32`.
 pub const DEFAULT_MAX_FRAME_SIZE: u32 = 16384;
 
 // ─── frame type / flags ─────────────────────────
 //
-// PORT NOTE: Zig `enum(u8) { …, _ }` is non-exhaustive (any u8 is a valid
+// PORT NOTE: this is conceptually a non-exhaustive byte enum (any u8 is a valid
 // value). A `#[repr(u8)]` Rust enum is UB for unknown discriminants received
 // off the wire, so callers dispatch on the raw `u8` (`FrameHeader.type_`) and
 // only ever use this enum for *outbound* frame construction (`X as u8`).
@@ -81,7 +79,7 @@ pub enum SettingsFlags {
 
 // ─── error / setting codes ──────────────────────
 //
-// Non-exhaustive in Zig (`_` catch-all). Newtype-over-int instead of
+// Conceptually non-exhaustive. Newtype-over-int instead of
 // `#[repr]` enums so any value off the wire is well-defined; consumers match
 // on `.0` or the associated consts.
 
@@ -129,12 +127,12 @@ pub fn u32_from_bytes(src: &[u8]) -> u32 {
     u32::from_be_bytes([src[0], src[1], src[2], src[3]])
 }
 
-/// Zig: `packed struct(u32) { reserved: bool = false, uint31: u31 = 0 }`.
+/// 32-bit value carrying a 31-bit integer plus a reserved/E flag.
 ///
-/// PORT NOTE (intentional divergence): Zig's `toUInt32()` is `@bitCast` of
-/// `packed struct(u32){ reserved: bool, uint31: u31 }`, which on little-endian
+/// PORT NOTE (intentional divergence): a previous formulation bit-cast a
+/// little-endian packed struct, which
 /// places `reserved` in bit 0 and yields `(uint31 << 1) | reserved`. That is a
-/// latent RFC 7540 §6.3 bug in Zig's deprecated PRIORITY path — the wire
+/// latent RFC 7540 §6.3 bug in the deprecated PRIORITY path — the wire
 /// format wants the reserved/E bit at bit 31. We keep the RFC-compliant
 /// `(reserved << 31) | uint31` layout here, which already matches
 /// `from_bytes`/`encode_into` and the on-wire `StreamPriority.stream_identifier`.
@@ -178,10 +176,10 @@ impl UInt31WithReserved {
 // `StreamPriority`, `SettingsPayloadUnit` and `FullSettingsPayload` are
 // `#[repr(C, packed)]` with integer-only fields and therefore have no padding
 // bytes and no niches. They implement `bytemuck::Pod`, so the per-`from()`
-// byte-view that the Zig parser did via `@ptrCast` is the safe
+// byte-view of the wire bytes is the safe
 // `bytemuck::bytes_of_mut`.
 
-/// Zig: `packed struct(u40) { streamIdentifier: u32 = 0, weight: u8 = 0 }`.
+/// 5-byte wire struct: `streamIdentifier: u32` + `weight: u8`.
 #[repr(C, packed)]
 #[derive(Copy, Clone, Default)]
 pub struct StreamPriority {
@@ -215,7 +213,7 @@ impl StreamPriority {
     }
 }
 
-/// Zig: `packed struct(u72) { length: u24, type: u8, flags: u8, streamIdentifier: u32 }`.
+/// 9-byte wire frame header: `length: u24, type: u8, flags: u8, streamIdentifier: u32`.
 ///
 /// NOT `#[repr(packed)]` — the `u24` length is widened to a native `u32`
 /// in-memory; wire encoding is handled in `decode()`/`encode_into()` instead
@@ -265,7 +263,7 @@ impl FrameHeader {
     }
 }
 
-/// Zig: `packed struct(u48) { type: u16, value: u32 }`.
+/// 6-byte wire struct: `type: u16` + `value: u32`.
 #[repr(C, packed)]
 #[derive(Copy, Clone, Default)]
 pub struct SettingsPayloadUnit {
@@ -301,7 +299,7 @@ impl SettingsPayloadUnit {
     }
 }
 
-/// Zig: `packed struct(u336)` — 7 × (`u16` type + `u32` value) = 42 bytes.
+/// 42-byte wire struct — 7 × (`u16` type + `u32` value).
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
 pub struct FullSettingsPayload {
@@ -388,5 +386,3 @@ impl FullSettingsPayload {
         dst.copy_from_slice(bytemuck::bytes_of(&swap));
     }
 }
-
-// ported from: src/http/H2FrameParser.zig + src/runtime/api/bun/h2_frame_parser.zig (wire types)

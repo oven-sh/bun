@@ -103,8 +103,8 @@ impl<T> Weak<T> {
         let Some(function) = self.try_swap() else {
             return JSValue::ZERO;
         };
-        // PORT NOTE: Zig source (Weak.zig:50) calls `function.call(global, args)`
-        // which predates the `thisValue` param on JSValue.call; pass `.undefined`.
+        // PORT NOTE: the original `function.call(global, args)` predates the
+        // `thisValue` param on JSValue.call; pass `.undefined`.
         function
             .call(&self.global_this.unwrap(), JSValue::UNDEFINED, args)
             .unwrap_or(JSValue::ZERO)
@@ -193,5 +193,3 @@ impl<T> Drop for Weak<T> {
         unsafe { WeakImpl::destroy(r#ref) };
     }
 }
-
-// ported from: src/jsc/Weak.zig

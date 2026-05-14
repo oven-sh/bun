@@ -4,8 +4,8 @@ use core::ffi::c_void as _; // (no FFI here; placeholder to mirror import block 
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 
-// Zig `bun.bit_set.StaticBitSet(256)` resolves to `ArrayBitSet(usize, 256)`
-// (size > @bitSizeOf(usize)). Stable Rust cannot branch a type on a const
+// `bun.bit_set.StaticBitSet(256)` resolves to `ArrayBitSet(usize, 256)`
+// (size > usize bit-width). Stable Rust cannot branch a type on a const
 // generic, so per bit_set.rs guidance we pick `ArrayBitSet` directly. The
 // inline scanner in inlines.rs depends on `is_set()` being real — a no-op
 // stub here makes every byte fall through the fast path and disables all
@@ -26,9 +26,9 @@ use super::types::{
     self, Align, BlockType, Container, Flags, Mark, NUM_OPENER_STACKS, OFF, OpenerStack, Renderer,
     TABLE_MAXCOLCOUNT, VerbatimLine,
 };
-use crate::RenderOptions; // Zig: `root.RenderOptions` (root.zig → crate lib.rs)
+use crate::RenderOptions;
 
-// Re-exports that Zig nested under `Parser.*` — Rust has no struct-scoped type
+// Re-exports nested under `Parser.*` upstream — Rust has no struct-scoped type
 // aliases, so they live at module scope as `parser::EmphDelim` etc.
 pub use super::inlines::{EmphDelim, MAX_EMPH_MATCHES};
 pub use super::ref_defs::RefDef;
@@ -38,7 +38,7 @@ pub use super::ref_defs::RefDef;
 // lifetime. PORTING.md says "no struct lifetimes in Phase A", but raw-ptr here
 // would obscure every `ch()` call; one obvious `'a` is the honest mapping.
 pub struct Parser<'a> {
-    // Zig field `std.mem.Allocator` param — dropped; global mimalloc.
+    // Allocator param dropped; uses the global mimalloc allocator.
     pub text: &'a [u8],
     pub size: OFF,
     pub flags: Flags,
@@ -58,10 +58,9 @@ pub struct Parser<'a> {
     // Dynamic arrays
     pub marks: Vec<Mark>,
     pub containers: Vec<Container>,
-    // TODO(port): Zig uses `ArrayListAlignedUnmanaged(u8, .@"4")` — 4-byte
-    // alignment is load-bearing for `BlockHeader` reinterpretation via
-    // `getBlockHeaderAt`. Phase B: wrap in an aligned-vec newtype or store
-    // `Vec<u32>` and byte-view it.
+    // TODO(port): 4-byte alignment is load-bearing for `BlockHeader`
+    // reinterpretation via `getBlockHeaderAt`. Phase B: wrap in an aligned-vec
+    // newtype or store `Vec<u32>` and byte-view it.
     pub block_bytes: Vec<u8>,
     pub buffer: Vec<u8>,
     pub emph_delims: Vec<EmphDelim>,
@@ -125,8 +124,8 @@ impl Default for BlockHeader {
     }
 }
 
-/// `Parser.Error` in Zig is `bun.JSError || bun.StackOverflow`, i.e. the union
-/// of `{ OutOfMemory, JSError, JSTerminated }` with `{ StackOverflow }`.
+/// `Parser::Error` is the union of `{ OutOfMemory, JSError, JSTerminated }`
+/// with `{ StackOverflow }`.
 // TODO(port): narrow error set — `bun_jsc::JsError` already covers the first
 // three; Phase B may want `enum { Js(JsError), StackOverflow }` instead.
 // TODO(b1): thiserror/strum not in workspace deps — derive dropped, hand-roll if needed.
@@ -207,8 +206,8 @@ impl<'a> Parser<'a> {
         p
     }
 
-    // Zig `fn deinit(self: *Parser)` only frees the `ArrayListUnmanaged` fields.
-    // All of those are now `Vec<_>`, so `Drop` is automatic — no explicit impl.
+    // The only owned resources are the `Vec<_>` fields, so `Drop` is automatic
+    // — no explicit impl needed.
 
     #[inline]
     pub fn ch(&self, off: OFF) -> u8 {
@@ -260,12 +259,9 @@ impl<'a> Parser<'a> {
     // Delegated methods (re-exports)
     // ========================================
     //
-    // In Zig these are `pub const foo = other_mod.foo;` aliases that pull free
-    // functions into `Parser`'s decl namespace so they dispatch as methods
-    // (`parser.foo(...)`). Rust has no decl-aliasing; instead each sibling
-    // module defines its own `impl Parser<'_> { ... }` block (multiple `impl`
-    // blocks per type within one crate are idiomatic). The list below is kept
-    // as documentation so the .zig ↔ .rs diff stays line-aligned.
+    // Each sibling module defines its own `impl Parser<'_> { ... }` block
+    // (multiple `impl` blocks per type within one crate are idiomatic). The
+    // list below is kept as documentation of which methods live where.
     //
     // render_blocks.rs — impl Parser:
     //   enter_block, leave_block, process_code_block, process_html_block,
@@ -326,10 +322,10 @@ pub fn render_to_html(
     let input = helpers::skip_utf8_bom(text);
 
     let mut html_renderer = HtmlRenderer::init(input, render_opts);
-    // Zig `errdefer html_renderer.deinit()` — Drop handles cleanup on `?`.
+    // Drop handles cleanup on the early-return paths below.
 
     let mut parser = Parser::init(input, flags, html_renderer.renderer());
-    // Zig `defer parser.deinit()` — Drop handles cleanup at scope exit.
+    // Drop handles cleanup at scope exit.
 
     // HtmlRenderer never returns JSError/JSTerminated, so OutOfMemory is the only possible error.
     match parser.process_doc() {
@@ -357,9 +353,7 @@ pub fn render_with_renderer<'a>(
     let input = helpers::skip_utf8_bom(text);
 
     let mut p = Parser::init(input, flags, rend);
-    // Zig `defer p.deinit()` — Drop.
+    // Drop handles cleanup at scope exit.
 
     p.process_doc()
 }
-
-// ported from: src/md/parser.zig

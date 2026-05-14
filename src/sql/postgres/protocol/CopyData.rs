@@ -22,7 +22,7 @@ impl CopyData {
         Ok(Self { data })
     }
 
-    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
+    // See src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(
         &mut self,
         mut reader: NewReader<Container>,
@@ -39,7 +39,7 @@ impl CopyData {
         let data = self.data.slice();
         let count: u32 =
             u32::try_from(core::mem::size_of::<u32>() + data.len() + 1).expect("int cast");
-        // Zig: [_]u8{'d'} ++ toBytes(Int32(count)) — `int32` returns big-endian [u8;4].
+        // 'd' followed by big-endian count. `int32` returns big-endian [u8;4].
         let count_bytes = int32(count);
         let header: [u8; 5] = [
             b'd',
@@ -53,7 +53,7 @@ impl CopyData {
         Ok(())
     }
 
-    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
+    // See src/sql/postgres/protocol/WriteWrap.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
@@ -61,5 +61,3 @@ impl CopyData {
         self.write_internal(writer)
     }
 }
-
-// ported from: src/sql/postgres/protocol/CopyData.zig

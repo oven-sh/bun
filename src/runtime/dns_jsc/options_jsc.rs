@@ -10,8 +10,8 @@ use bun_dns::{
     Options, PROTOCOL_MAP, Protocol, ResultAny, SOCKET_TYPE_MAP, SocketType,
 };
 use bun_dns::{addr_info_count, address_to_string};
-// PORT NOTE: Zig's `Options.FromJSError` is the error-set union of all the
-// per-field `Invalid*` variants plus `JSError`. The Rust enum lives in
+// PORT NOTE: `Options.FromJSError` is the error-set union of all the
+// per-field `Invalid*` variants plus `JSError`. The enum lives in
 // `bun_dns` (which has no `bun_jsc` dep), so the `JsError → JSError` mapping is
 // done locally via the `js()` helper below.
 use bun_dns::OptionsFromJsError as FromJSError;
@@ -53,8 +53,8 @@ pub fn options_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Option
                 return Err(FromJSError::InvalidFlags);
             }
 
-            // TODO(port): Zig coerces to `std.c.AI` (packed struct of bools backed
-            // by c_int). Options.flags in Rust should be an `AIFlags` bitflags
+            // TODO(port): the original coerced to a packed AI flag struct backed
+            // by c_int. Options.flags should be an `AIFlags` bitflags
             // newtype; here we coerce to i32 and store/bit-test as u32.
             let flags_int: i32 = js(flags.coerce::<i32>(global))?;
             options.flags = flags_int;
@@ -221,9 +221,8 @@ pub fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResult<JSVal
     obj.put(
         global,
         b"family",
-        // PORT NOTE: `this.address.any.family` — Zig's std.net.Address stores a
-        // sockaddr union under `.any` with a `.family` field. The Rust
-        // `bun_sys::net::Address` exposes `.family() -> i32`.
+        // PORT NOTE: `bun_sys::net::Address` is a sockaddr wrapper exposing
+        // `.family() -> i32`.
         match this.address.family() {
             f if f == super::netc::AF_INET as _ => JSValue::js_number(4.0),
             f if f == super::netc::AF_INET6 as _ => JSValue::js_number(6.0),
@@ -264,7 +263,7 @@ pub fn addr_info_to_js_array(
                 array.put_index(global, j, result_to_js(&result, global)?)?;
                 j += 1;
             }
-            // Zig field name is `.next`; libc crate uses `ai_next`.
+            // libc crate field is `ai_next`.
             current = this_node.ai_next;
         }
     }
@@ -272,8 +271,5 @@ pub fn addr_info_to_js_array(
     Ok(array)
 }
 
-// (unused import in Zig: `JSError = bun.JSError` — dropped)
 #[allow(unused_imports)]
 use bun_dns::GetAddrInfo as _GetAddrInfo;
-
-// ported from: src/runtime/dns_jsc/options_jsc.zig

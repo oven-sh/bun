@@ -19,9 +19,9 @@ use crate::{CallFrame, JSGlobalObject, JSValue};
 use core::ffi::{c_char, c_int, c_void};
 
 /// Declare an `extern` block with the JSC calling convention (`"sysv64"` on
-/// win-x64, `"C"` elsewhere). Mirrors Zig's single `jsc.conv` constant
-/// (`src/jsc/jsc.zig:9`); Rust forbids non-literal ABI strings, so the
-/// cfg-split lives here once instead of being hand-duplicated at each site.
+/// win-x64, `"C"` elsewhere). Equivalent to a single shared `jsc.conv`
+/// constant; Rust forbids non-literal ABI strings, so the cfg-split lives here
+/// once instead of being hand-duplicated at each site.
 ///
 /// Two call shapes:
 ///   jsc_abi_extern! { fn foo(); safe fn bar(); }            // bare body

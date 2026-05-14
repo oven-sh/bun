@@ -21,7 +21,7 @@ use bun_resolver::DataURL;
 
 use crate::chunk::{Content, CssImportOrderKind};
 
-// PORT NOTE: Zig stores `*Chunk` / `*LinkerContext` (freely-aliasing mutable
+// PORT NOTE: original stored `*Chunk` / `*LinkerContext` (freely-aliasing mutable
 // pointers). We mirror that with raw pointers rather than `&mut` / `&` so that
 // (a) the container_of `container_of` recovery of `*mut BundleV2` from
 // `linker` retains write provenance over the whole bundle, and (b) multiple
@@ -52,8 +52,8 @@ unsafe impl Send for PrepareCssAstTask {}
 pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `PrepareCssAstTask.task` (intrusive thread-pool
     // node); the thread pool hands us exclusive access for the callback's
-    // duration. We only read the two raw-pointer fields, matching Zig's
-    // `*const PrepareCssAstTask`.
+    // duration. We only read the two raw-pointer fields, matching the original
+    // `*const PrepareCssAstTask` contract.
     let prepare_css_asts: &PrepareCssAstTask =
         unsafe { &*bun_core::from_field_ptr!(PrepareCssAstTask, task, task) };
     let linker: *mut LinkerContext = prepare_css_asts.linker;
@@ -90,7 +90,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
     // Remove duplicate rules across files. This must be done in serial, not
     // in parallel, and must be done from the last rule to the first rule.
     {
-        // PORT NOTE: Zig accesses `chunk.content.css.{imports_in_chunk_in_order,asts}`
+        // PORT NOTE: original accesses `chunk.content.css.{imports_in_chunk_in_order,asts}`
         // through the union field at each use site while also holding `entry` as a raw
         // pointer into `imports_in_chunk_in_order`. In Rust, every `chunk.content.css.*`
         // re-enters the `Content` enum and re-borrows `chunk.content` as a whole, which
@@ -112,8 +112,8 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                     let len = inner.len();
                     let mut rules = BundlerCssRuleList::default();
                     if len > 0 {
-                        // PORT NOTE: Zig `SmallList(LayerName,1).fromBabyListNoDeinit(layers.inner().*)`
-                        // is a bitwise Vec→SmallList header transfer. In Rust the
+                        // PORT NOTE: original used a bitwise Vec→SmallList header
+                        // transfer (`SmallList(LayerName,1).fromBabyListNoDeinit`). In Rust the
                         // `Chunk::Layers` payload is the lifetime-erased shadow
                         // `ungate_support::bun_css::LayerName { v: Vec<Box<[u8]>> }`,
                         // not the real `css_parser::LayerName { v: SmallList<&'static [u8],1> }`,
@@ -151,12 +151,12 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                     css_chunk.asts[i] = ast;
                 }
                 CssImportOrderKind::ExternalPath(p) => {
-                    // PORT NOTE: Zig keeps `conditions: ?*ImportConditions` as a raw
+                    // PORT NOTE: original kept `conditions: ?*ImportConditions` as a raw
                     // pointer to index 0 while the `while j != 1` loop reads
                     // `entry.conditions.len` / `.at(j)`. Taking `&mut` at index 0 here
                     // would exclusively borrow the whole `entry.conditions` Vec for
                     // the duration, aliasing those reads. The pointer is not actually
-                    // dereferenced until after the loop (.zig:119), so defer acquiring
+                    // dereferenced until after the loop, so defer acquiring
                     // the index-0 borrow until `actual_conditions` is built below.
                     let had_conditions = entry.conditions.len() > 0;
                     if had_conditions {
@@ -184,15 +184,15 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         while j != 1 {
                             j -= 1;
 
-                            // PORT NOTE: Zig has no destructors, so when `ast_import` falls
-                            // out of scope the bitwise-duplicated `ImportConditions` inside
+                            // PORT NOTE: the original had no destructors, so when `ast_import`
+                            // falls out of scope the bitwise-duplicated `ImportConditions` inside
                             // it (see `ptr::read` below) is simply abandoned. In Rust,
                             // dropping `ast_import` would run `Drop` on that aliased
                             // `ImportConditions` — freeing Global-backed buffers
                             // (`MediaList.media_queries: Vec`, `SupportsCondition::{Box,Vec}`,
                             // `LayerName.v: SmallList`) that are still owned by
                             // `entry.conditions[j]`, i.e. a double-free / UAF. Wrap in
-                            // `ManuallyDrop` to mirror Zig's leak-on-scope-exit; the only
+                            // `ManuallyDrop` to mirror the original leak-on-scope-exit; the only
                             // *fresh* allocation this leaks is the 1-element `rules.v` Vec
                             // buffer — same trade-off documented at the top of
                             // findImportedFilesInCSSOrder.rs for the `entry.conditions`
@@ -211,8 +211,8 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                         loc: Location::dummy(),
                                         ..Default::default()
                                     };
-                                    // SAFETY: Zig `entry.conditions.at(j).*` — shallow struct
-                                    // copy. The duplicate is never dropped (`ManuallyDrop`
+                                    // SAFETY: shallow struct copy of `entry.conditions.at(j)`.
+                                    // The duplicate is never dropped (`ManuallyDrop`
                                     // above), so the aliased heap stays singly-owned by
                                     // `entry.conditions[j]`.
                                     *import_rule.conditions_mut() =
@@ -277,9 +277,9 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                 b"text/css",
                                 strings::trim(print_result.code.as_slice(), b" \n\r\t"),
                             );
-                            // PORT NOTE: Zig allocated into the worker arena (`arena`).
+                            // PORT NOTE: original allocated into the worker arena (`arena`).
                             // `encode_string_as_shortest_data_url` returns a heap `Vec<u8>`;
-                            // copy it into the worker bump so ownership matches Zig (freed
+                            // copy it into the worker bump so ownership matches (freed
                             // at bundle teardown via arena reset). SAFETY: arena outlives
                             // the chunk, so the `'bump → 'static` launder is sound — same
                             // contract as every other CSS slice in this file.
@@ -291,8 +291,8 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
 
                     let mut empty_conditions = ImportConditions::default();
                     // Index 0 is disjoint from every `at(j)` (j>=1) read above; only
-                    // now do we materialize the exclusive borrow that Zig's raw pointer
-                    // held the whole time.
+                    // now do we materialize the exclusive borrow that the original's raw
+                    // pointer held the whole time.
                     let actual_conditions: &mut ImportConditions = if had_conditions {
                         entry.conditions.mut_(0)
                     } else {
@@ -318,7 +318,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                 p.pretty,
                                 entry.condition_import_records.len() as u32,
                             );
-                            // SAFETY: Zig `actual_conditions.*` — shallow struct copy.
+                            // SAFETY: shallow struct copy of `*actual_conditions`.
                             *import_rule.conditions_mut() =
                                 unsafe { core::ptr::read(actual_conditions) };
                             rules.v.push(BundlerCssRule::Import(import_rule));
@@ -344,7 +344,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             [source_index.get() as usize]
                             .as_deref()
                             .expect("css ast present");
-                        // SAFETY: Zig `original_stylesheet.*` — bitwise shallow copy of the
+                        // SAFETY: bitwise shallow copy of the
                         // stylesheet header. All interior allocations are arena-owned and never
                         // freed via this view, so the duplicated `Vec`/`Vec` headers are
                         // sound for read-only / reslice use below.
@@ -397,19 +397,19 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             let mut new_rules = BundlerCssRuleList::default();
                             for rule in &original_rules[0..prefix_end] {
                                 if matches!(rule, BundlerCssRule::LayerStatement(_)) {
-                                    // SAFETY: Zig by-value copy of arena-backed rule.
+                                    // SAFETY: by-value copy of arena-backed rule.
                                     new_rules.v.push(unsafe { core::ptr::read(rule) });
                                 }
                             }
                             for rule in &original_rules[prefix_end..] {
-                                // SAFETY: Zig by-value copy of arena-backed rule.
+                                // SAFETY: by-value copy of arena-backed rule.
                                 new_rules.v.push(unsafe { core::ptr::read(rule) });
                             }
                             // `ast.rules` is the shallow-copied header aliasing the
                             // source stylesheet's arena buffer (see `ptr::read` above).
                             // Dropping it would `drop_in_place` the aliased rules and
-                            // free the shared backing array. Leak the header (Zig
-                            // semantics: bitwise overwrite) before installing the
+                            // free the shared backing array. Leak the header (bitwise
+                            // overwrite, as in the original) before installing the
                             // freshly-allocated list.
                             core::mem::forget(core::mem::replace(&mut ast.rules, new_rules));
                         }
@@ -438,7 +438,7 @@ fn wrap_rules_with_conditions(
         // Generate "@layer" wrappers. Note that empty "@layer" rules still have
         // a side effect (they set the layer order) so they cannot be removed.
         if let Some(l) = &item.layer {
-            // SAFETY: Zig `const layer = l.v;` — by-value `?LayerName` copy. The
+            // SAFETY: by-value `?LayerName` copy of `l.v`. The
             // `SmallList<&'static [u8],1>` payload is arena-backed and never
             // freed via this view, so the bitwise duplicate is sound (same as
             // every other `ptr::read` shallow-copy in this file).
@@ -453,7 +453,7 @@ fn wrap_rules_with_conditions(
                     // `ast.rules.v` may be the shallow-copied / offset-resliced
                     // header aliasing the source stylesheet's buffer (see the
                     // `ptr::read` / `Vec::from_raw_parts` above) — dropping it
-                    // would free into another allocation. Zig's `= .{}` is a
+                    // would free into another allocation. The original did a
                     // bitwise overwrite; mirror that by leaking the header.
                     core::mem::forget(core::mem::take(&mut ast.rules.v));
                     do_block_rule = false;
@@ -525,5 +525,3 @@ fn wrap_rules_with_conditions(
 pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
-
-// ported from: src/bundler/linker_context/prepareCssAstsForChunk.zig

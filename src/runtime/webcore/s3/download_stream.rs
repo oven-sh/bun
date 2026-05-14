@@ -16,7 +16,7 @@ use bun_threading::Mutex;
 bun_core::declare_scope!(S3, hidden);
 
 pub struct S3HttpDownloadStreamingTask {
-    // PORT NOTE: `MaybeUninit` because `AsyncHTTP` contains non-null references, so the Zig
+    // PORT NOTE: `MaybeUninit` because `AsyncHTTP` contains non-null references, so the original
     // `= undefined`-then-init pattern can't use `mem::zeroed()` here (mirrors `S3HttpSimpleTask`).
     pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
     /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
@@ -42,17 +42,17 @@ pub struct S3HttpDownloadStreamingTask {
     pub proxy_url: Box<[u8]>,
 }
 
-// Hot-dispatch tag for `ConcurrentTask::from` (Zig: variant of `jsc.Task` TaggedPointerUnion).
+// Hot-dispatch tag for `ConcurrentTask::from` (variant of the `jsc.Task` TaggedPointerUnion).
 impl Taskable for S3HttpDownloadStreamingTask {
     const TAG: TaskTag = task_tag::S3HttpDownloadStreamingTask;
 }
 
 impl Default for S3HttpDownloadStreamingTask {
     fn default() -> Self {
-        // PORT NOTE: only the Zig-defaulted fields (`has_schedule_callback` .. `concurrent_task`)
+        // PORT NOTE: only the originally-defaulted fields (`has_schedule_callback` .. `concurrent_task`)
         // are observed via this path; the rest are placeholders that the caller (client.rs
         // `..Default::default()`) overwrites before the task pointer escapes. `http` is zeroed
-        // to mirror Zig's `= undefined` + later overwrite (see S3HttpSimpleTask PORT NOTE).
+        // to mirror the `= undefined` + later overwrite (see S3HttpSimpleTask PORT NOTE).
         Self {
             // never read — fully overwritten by `AsyncHTTP::init` before first use.
             http: core::mem::MaybeUninit::uninit(),
@@ -63,7 +63,7 @@ impl Default for S3HttpDownloadStreamingTask {
             callback: |_, _, _, _| {},
             range: None,
             proxy_url: Box::default(),
-            // — Zig field defaults —
+            // — original field defaults —
             has_schedule_callback: AtomicBool::new(false),
             signal_store: bun_http::signals::Store::default(),
             signals: Signals::default(),
@@ -78,7 +78,7 @@ impl Default for S3HttpDownloadStreamingTask {
 }
 
 impl S3HttpDownloadStreamingTask {
-    // Zig: `pub const new = bun.TrivialNew(@This());`
+    // `bun.TrivialNew` equivalent.
     pub fn new(init: Self) -> Box<Self> {
         Box::new(init)
     }
@@ -152,10 +152,10 @@ impl S3HttpDownloadStreamingTask {
                 }
                 break 'brk MutableString::default();
             } else {
-                // PORT NOTE: Zig copies the MutableString struct by value here (shallow copy of
-                // ptr+len+cap), then `.reset()` zeros the source — i.e. an ownership transfer.
+                // PORT NOTE: original copied the MutableString struct by value here (shallow copy of
+                // ptr+len+cap), then `.reset()` zeroed the source — i.e. an ownership transfer.
                 // `core::mem::take` gives the same observable semantics in Rust without the
-                // transient aliasing the Zig code relied on.
+                // transient aliasing the original code relied on.
                 let buffer = core::mem::take(&mut self.reported_response_buffer);
                 break 'brk buffer;
             }
@@ -190,7 +190,7 @@ impl S3HttpDownloadStreamingTask {
         // the state is atomic let's load it once
         let state = self_.get_state();
         let has_more = state.has_more();
-        // Zig `defer { this.mutex.unlock(); if (!has_more) this.deinit(); }` — keep as a scopeguard
+        // Original deferred `{ this.mutex.unlock(); if (!has_more) this.deinit(); }` — keep as a scopeguard
         // so any future early-exit / unwind through `report_progress` still unlocks + deinits.
         let this_ptr = this;
         scopeguard::defer! {
@@ -217,7 +217,7 @@ impl S3HttpDownloadStreamingTask {
     fn update_state(
         &mut self,
         async_http: &mut AsyncHTTP<'static>,
-        // PORT NOTE: reshaped for borrowck — Zig passed `result` by value; Rust borrows so the
+        // PORT NOTE: reshaped for borrowck — original passed `result` by value; Rust borrows so the
         // caller (process_http_callback) can still read `result.body` afterward.
         result: &HTTPClientResult,
         state: &mut State,
@@ -234,7 +234,7 @@ impl S3HttpDownloadStreamingTask {
                 0
             });
             if state.status_code() == 0 {
-                // PORT NOTE: Zig explicitly `deinit()`s `certificate_info` / `metadata` here.
+                // PORT NOTE: original explicitly `deinit()`s `certificate_info` / `metadata` here.
                 // In the Rust port both types free their owned buffers via `Drop`, and
                 // `HTTPClientResult` is dropped by the caller after this returns, so the
                 // explicit-free calls become no-ops.
@@ -248,10 +248,10 @@ impl S3HttpDownloadStreamingTask {
             }
             // store the new state
             self.set_state(*state);
-            // TODO(port): Zig does `this.http = async_http.*;` (struct copy). Phase B: confirm
+            // TODO(port): original does `this.http = async_http.*;` (struct copy). Phase B: confirm
             // AsyncHTTP copy/move semantics in Rust.
-            // SAFETY: `async_http` points to a live AsyncHTTP owned by the HTTP thread; Zig does a
-            // plain struct copy (`this.http = async_http.*`) — bitwise read+write matches that.
+            // SAFETY: `async_http` points to a live AsyncHTTP owned by the HTTP thread; the original
+            // does a plain struct copy (`this.http = async_http.*`) — bitwise read+write matches that.
             // `self.http` was previously initialised in `execute_s3_streaming_download`.
             unsafe { core::ptr::write(self.http.as_mut_ptr(), core::ptr::read(async_http)) };
         }
@@ -267,13 +267,13 @@ impl S3HttpDownloadStreamingTask {
     ) -> bool {
         // lets lock and unlock to be safe we know the state is not in the middle of a callback when locked
         self.mutex.lock();
-        // Zig `defer this.mutex.unlock();` — handled at every return below.
+        // Original deferred `this.mutex.unlock();` — handled at every return below.
         // TODO(port): replace with RAII MutexGuard once bun_threading::Mutex exposes one.
         let unlock = |s: &mut Self| s.mutex.unlock();
 
         // remember the state is atomic load it once, and store it again
         let mut state = self.get_state();
-        // old state should have more otherwise its a http.zig bug
+        // old state should have more otherwise its an HTTP-layer bug
         debug_assert!(state.has_more());
         let is_done = !result.has_more;
         let wait_until_done = self.update_state(async_http, &result, &mut state);
@@ -289,12 +289,12 @@ impl S3HttpDownloadStreamingTask {
 
         if should_enqueue {
             if let Some(body) = result.body {
-                // .zig:207 does `this.response_buffer = body.*;`, but `body` is
-                // `&this.response_buffer` (see http/client.zig:600), so that line is a no-op
-                // self-assign in Zig. In Rust, a `ptr::read` + assign here would run Drop on the
+                // The original does `this.response_buffer = body.*;`, but `body` is
+                // `&this.response_buffer` (set by the HTTP client), so that line is a no-op
+                // self-assign. In Rust, a `ptr::read` + assign here would run Drop on the
                 // old `self.response_buffer`, freeing the Vec allocation that `body` (and the
                 // freshly-stored value) still point at — a use-after-free / double-free. The net
-                // effect of .zig:207-211 is: append `body`'s bytes to `reported_response_buffer`,
+                // effect is: append `body`'s bytes to `reported_response_buffer`,
                 // then reset the buffer. Do exactly that, operating on `body` directly.
                 if !body.list.as_slice().is_empty() {
                     let _ = self.reported_response_buffer.write(body.list.as_slice());
@@ -326,7 +326,7 @@ impl S3HttpDownloadStreamingTask {
         false
     }
 
-    /// this is the callback from the http.zig AsyncHTTP is always called from the HTTPThread
+    /// this is the AsyncHTTP callback; always called from the HTTPThread
     pub fn http_callback(
         this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,
@@ -368,8 +368,8 @@ impl Drop for S3HttpDownloadStreamingTask {
     }
 }
 
-/// Zig: `packed struct(u64)` — not all-bool, so manual bitfield over a transparent u64.
-/// Layout (LSB-first, matching Zig packed-struct bit order):
+/// Packed `u64` bitfield — not all-bool, so manual bitfield over a transparent u64.
+/// Layout (LSB-first, matching the original packed-struct bit order):
 ///   bits  0..32 : status_code (u32)
 ///   bits 32..48 : request_error (u16)
 ///   bit  48     : has_more (bool)
@@ -378,7 +378,7 @@ impl Drop for S3HttpDownloadStreamingTask {
 #[derive(Copy, Clone)]
 pub struct State(pub u64);
 
-// Zig: `pub const AtomicType = std.atomic.Value(u64);`
+// Atomic counterpart for `State`.
 pub type StateAtomicType = AtomicU64;
 
 impl State {
@@ -419,5 +419,3 @@ impl Default for State {
         State(1u64 << State::HAS_MORE_SHIFT)
     }
 }
-
-// ported from: src/runtime/webcore/s3/download_stream.zig

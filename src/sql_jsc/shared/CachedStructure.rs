@@ -107,8 +107,8 @@ impl CachedStructure {
             // SAFETY: `heap_ids` has capacity `non_duplicated_count` and every
             // slot in [0..non_duplicated_count] was initialized in the loop above.
             unsafe { heap_ids.set_len(non_duplicated_count) };
-            // Ownership transfer of heap `ids` to CachedStructure (Zig: cached_structure
-            // becomes responsible for freeing the alloc'd slice).
+            // Ownership transfer of heap `ids` to CachedStructure, which
+            // becomes responsible for freeing the boxed slice.
             self.set(global_object, None, Some(heap_ids.into_boxed_slice()));
         } else {
             // Every element in `ids[..]` was `.write()`n above; C++ reads them as
@@ -128,10 +128,8 @@ impl CachedStructure {
     }
 }
 
-// PORT NOTE: Zig `deinit` only freed owned fields:
-//   - `structure.deinit()`  → handled by `impl Drop for StrongOptional`
-//   - per-element `name.deinit()` + `default_allocator.free(fields)`
-//     → handled by `Drop` on `Box<[ExternColumnIdentifier]>` (each element drops itself)
+// Cleanup is fully covered by Drop:
+//   - the cached `structure` Strong ref → `impl Drop for StrongOptional`
+//   - per-element `name` refs + the `fields` allocation
+//     → `Drop` on `Box<[ExternColumnIdentifier]>` (each element drops itself)
 // so no explicit `impl Drop` body is needed.
-
-// ported from: src/sql_jsc/shared/CachedStructure.zig

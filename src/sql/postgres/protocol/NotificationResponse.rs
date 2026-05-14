@@ -11,9 +11,8 @@ pub struct NotificationResponse {
     pub payload: Vec<u8>,
 }
 
-// PORT NOTE: Zig `deinit` only freed `channel`/`payload` via `clearAndFree(bun.default_allocator)`.
-// `Vec<u8>` (= `Vec<u8>`) owns its allocation and frees on Drop, so no explicit `impl Drop`
-// is needed here.
+// PORT NOTE: cleanup only needs to free `channel`/`payload`. `Vec<u8>` owns its
+// allocation and frees on Drop, so no explicit `impl Drop` is needed here.
 
 impl NotificationResponse {
     // PORT NOTE: reshaped from out-param `fn(this: *@This(), ...) !void` with `this.* = .{...}`
@@ -38,12 +37,10 @@ impl NotificationResponse {
         })
     }
 
-    // Zig: `pub const decode = DecoderWrap(NotificationResponse, decodeInternal).decode;`
+    // Decoder helper — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(
         context: Container,
     ) -> Result<Self, bun_core::Error> {
         Self::decode_internal(NewReader { wrapped: context })
     }
 }
-
-// ported from: src/sql/postgres/protocol/NotificationResponse.zig

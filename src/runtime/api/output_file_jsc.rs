@@ -1,4 +1,4 @@
-//! `to_js`/`to_blob` bridges for `bundler/OutputFile.zig`. Exposed as an
+//! `to_js`/`to_blob` bridges for `bundler::OutputFile`. Exposed as an
 //! extension trait so call sites stay `output.to_js(global)`.
 //!
 //! LAYERING: this file lives in `bun_runtime` (not `bun_bundler_jsc`) because
@@ -11,7 +11,7 @@ use bun_jsc::{JSGlobalObject, JSValue, StrongOptional};
 use bun_bundler::options_impl::LoaderExt as _;
 use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
 use bun_core::Output;
-use bun_core::{PathString, ZigStringSlice};
+use bun_core::{PathString, UTF8Slice};
 use bun_http_types::MimeType::MimeType;
 
 use crate::api::js_bundler::BuildArtifact;
@@ -22,12 +22,10 @@ use crate::webcore::blob::store::StoreExt as _;
 use crate::webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
 
 /// Heap-dupe `path` into an owning `PathLike` so the resulting `Blob.Store`
-/// outlives the borrowed source. Mirrors Zig's `allocator.dupe(u8, path)`.
+/// outlives the borrowed source. Mirrors `allocator.dupe(u8, path)`.
 #[inline]
 fn dupe_path_like(path: &[u8]) -> PathLike {
-    PathLike::EncodedSlice(
-        ZigStringSlice::init_dupe(path).unwrap_or_else(|_| bun_core::out_of_memory()),
-    )
+    PathLike::EncodedSlice(UTF8Slice::init_dupe(path).unwrap_or_else(|_| bun_core::out_of_memory()))
 }
 
 /// Set the store's `mime_type` and point `blob.content_type` at it. The
@@ -44,7 +42,7 @@ fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
             (*store_ptr).mime_type.value.as_ref()
         }));
     } else {
-        // No store (empty bytes). Zig still assigns `blob.content_type` from the
+        // No store (empty bytes). The original still assigns `blob.content_type` from the
         // loader's mime so `contentTypeOrMimeType()` keeps returning a value.
         let owned: Box<[u8]> = Box::from(mime.value.as_ref());
         blob.content_type.set(bun_core::heap::into_raw(owned));
@@ -68,7 +66,7 @@ impl SavedFile {
         .expect("unreachable");
 
         let mut blob = Blob::init_with_store(store, global_this);
-        // PORT NOTE: Zig overwrites `blob.content_type = mime.value` here;
+        // PORT NOTE: the original overwrites `blob.content_type = mime.value` here;
         // `init_with_store` already populated it from the store's `File`
         // mime (which is the same value), so the overwrite is a no-op.
         blob.size.set(byte_size as BlobSizeType);
@@ -97,7 +95,7 @@ impl OutputFileJsc for OutputFile {
             _ => {}
         }
 
-        // PORT NOTE: each Zig arm reassigns `this.value = .buffer{.{}}` after
+        // PORT NOTE: each original arm reassigns `this.value = .buffer{.{}}` after
         // consuming the payload. Taking the value out up-front avoids the
         // borrowck conflict between `&mut self.value` (match scrutinee) and
         // `self.{hash,loader,...}` reads inside the arms.
@@ -259,5 +257,3 @@ impl OutputFileJsc for OutputFile {
         }
     }
 }
-
-// ported from: src/bundler_jsc/output_file_jsc.zig

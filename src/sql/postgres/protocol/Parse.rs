@@ -5,7 +5,7 @@ use super::write_wrap::WriteWrap;
 use super::z_helpers::z_count;
 use crate::postgres::types::int_types::{Int4, int32};
 
-// PORT NOTE: Zig `deinit` is a no-op (`_ = this;`), so all three slice fields are
+// PORT NOTE: there is no cleanup to do, so all three slice fields are
 // borrowed for the lifetime of the write. PORTING.md says "never put a lifetime
 // param on a struct in Phase A", but none of Box / &'static / raw fit a transient
 // borrow-only message builder, so this struct carries an explicit `'a`.
@@ -17,7 +17,7 @@ pub struct Parse<'a> {
     pub params: &'a [Int4],
 }
 
-// Zig `pub fn deinit(this: *Parse) void { _ = this; }` — no-op, so no `Drop` impl.
+// No cleanup is required, so no `Drop` impl.
 
 impl<'a> Parse<'a> {
     pub fn write_internal<Context: super::new_writer::WriterContext>(
@@ -35,9 +35,8 @@ impl<'a> Parse<'a> {
             + z_count(self.name).max(1)
             + z_count(self.query).max(1);
 
-        // Zig: `[_]u8{'P'} ++ toBytes(Int32(count))` — 1 tag byte + 4 length bytes.
-        // `std.mem.toBytes` is native-endian raw bytes of the value; `Int32(count)`
-        // is the PostgresTypes big-endian wrapper, so the on-wire layout matches.
+        // 1 tag byte + 4 length bytes. `int32(count)` returns the big-endian
+        // `[u8; 4]` PostgresTypes wrapper, so the on-wire layout is correct.
         let mut header = [0u8; 1 + size_of::<u32>()];
         header[0] = b'P';
         header[1..].copy_from_slice(&int32(count));
@@ -51,7 +50,7 @@ impl<'a> Parse<'a> {
         Ok(())
     }
 
-    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
+    // Thin wrapper mirroring `WriteWrap` — see src/sql/postgres/protocol/WriteWrap.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
@@ -59,5 +58,3 @@ impl<'a> Parse<'a> {
         self.write_internal(writer)
     }
 }
-
-// ported from: src/sql/postgres/protocol/Parse.zig

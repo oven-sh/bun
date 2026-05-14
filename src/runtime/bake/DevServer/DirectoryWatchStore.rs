@@ -21,14 +21,14 @@ use bun_paths::{self as path, path_buffer_pool};
 use bun_sys::{self, Fd, FdExt, O};
 use bun_watcher::{self, Watcher};
 
-// Re-use the parent module's `DevServer` ScopedLogger (Zig: `const debug = DevServer.debug`).
+// Re-use the parent module's `DevServer` ScopedLogger (`const debug = DevServer.debug`).
 // The `use crate::bake::dev_server::DevServer` import above brings in both the
 // `struct DevServer` (type namespace) and the `static DevServer: ScopedLogger`
 // (value namespace) declared in `dev_server/mod.rs`.
 
 /// List of active watchers. Can be re-ordered on removal
 pub struct DirectoryWatchStore {
-    // TODO(port): Zig stores keys as `[]const u8` sub-slices into a duped
+    // TODO(port): the original stores keys as sub-slices into a duped
     // buffer (trailing slash trimmed), then frees the slice via allocator.
     // `Box<[u8]>` cannot represent "free the larger backing allocation from a
     // sub-slice"; Phase B may need a thin key newtype or trim-before-dupe.
@@ -39,7 +39,7 @@ pub struct DirectoryWatchStore {
 }
 
 impl Default for DirectoryWatchStore {
-    // Zig: `pub const empty: DirectoryWatchStore = .{ ... }`
+    // `pub const empty: DirectoryWatchStore = .{ ... }`
     fn default() -> Self {
         Self {
             watches: ArrayHashMap::default(),
@@ -172,7 +172,7 @@ impl DirectoryWatchStore {
         debug_assert!(!specifier.is_empty());
         // TODO: watch the parent dir too.
         // PORT NOTE: take a raw pointer so the &mut self borrow from owner() does
-        // not overlap subsequent self.* field accesses (Zig has no borrowck here).
+        // not overlap subsequent self.* field accesses (the original has no borrowck here).
         let dev: *mut DevServer = self.owner();
 
         let file_path_slice = file_path.slice();
@@ -297,7 +297,7 @@ impl DirectoryWatchStore {
         let dir_name: Box<[u8]> = Box::<[u8]>::from(dir_name_to_watch);
         // errdefer free(dir_name) — handled by Drop.
 
-        // TODO(port): Zig sets key_ptr to a sub-slice of `dir_name` (trailing
+        // TODO(port): the original sets key_ptr to a sub-slice of `dir_name` (trailing
         // slash trimmed) while the allocation backing it is the full dupe.
         // With Box<[u8]> keys we instead dupe the trimmed slice as the key and
         // keep `dir_name` separately for addDirectory/getHash. Verify Watcher
@@ -356,7 +356,7 @@ impl DirectoryWatchStore {
     /// Caller must detach the dependency from the linked list it is in.
     pub fn free_dependency_index(&mut self, index: DepIndex) -> Result<(), AllocError> {
         // TODO(port): narrow error set
-        // Zig frees `specifier` here; in Rust assigning Dep::default() drops the Box.
+        // The original frees `specifier` here; in Rust assigning Dep::default() drops the Box.
         // Zero out the slot so that DevServer.deinit and memoryCost, which
         // iterate `dependencies` without consulting the free list, do
         // not touch the freed allocation or stale borrowed pointers.
@@ -388,7 +388,7 @@ impl DirectoryWatchStore {
             &[],
         );
 
-        // Zig: alloc.free(store.watches.keys()[entry_index]) — Box key drops on swap_remove_at.
+        // `alloc.free(store.watches.keys()[entry_index])` — Box key drops on swap_remove_at.
         self.watches.swap_remove_at(entry_index);
 
         if self.watches.len() == 0 {
@@ -398,7 +398,7 @@ impl DirectoryWatchStore {
             self.dependencies_free_list.clear();
         }
 
-        // Zig: defer if (entry.dir_fd_owned) entry.dir.close();
+        // `defer if (entry.dir_fd_owned) entry.dir.close();`
         // No early returns above, so close at fn end instead of via scopeguard.
         if entry.dir_fd_owned {
             entry.dir.close();
@@ -432,9 +432,9 @@ impl DirectoryWatchStore {
                 let dep_next = self.dependencies[index.get_usize()].next;
                 let dep_path = self.dependencies[index.get_usize()].source_file_path;
                 it = dep_next;
-                // Pointer-identity comparison (Zig: `dep.source_file_path.ptr == file_path.ptr`).
+                // Pointer-identity comparison (`dep.source_file_path.ptr == file_path.ptr`).
                 if dep_path.slice().as_ptr() == file_path.as_ptr() {
-                    // Zig: bun.handleOom(store.freeDependencyIndex(...))
+                    // `bun.handleOom(store.freeDependencyIndex(...))`
                     self.free_dependency_index(index).expect("OOM");
                 } else {
                     self.dependencies[index.get_usize()].next = new_chain;
@@ -499,7 +499,7 @@ pub struct Dep {
 }
 
 impl Default for Dep {
-    // Zig: `pub const empty: Dep = .{ .next = .none, .source_file_path = "", .specifier = &.{} }`
+    // `pub const empty: Dep = .{ .next = .none, .source_file_path = "", .specifier = &.{} }`
     fn default() -> Self {
         Self {
             next: None,
@@ -509,8 +509,6 @@ impl Default for Dep {
     }
 }
 
-// Zig: `pub const Index = bun.GenericIndex(u32, Dep);`
+// `pub const Index = bun.GenericIndex(u32, Dep);`
 pub enum DepMarker {}
 pub type DepIndex = bun_core::GenericIndex<u32, DepMarker>;
-
-// ported from: src/bake/DevServer/DirectoryWatchStore.zig

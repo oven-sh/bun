@@ -44,8 +44,8 @@ use crate::image::codecs;
 use bun_sys::windows;
 
 /// `codecs::Error || error{BackendUnavailable}`
-// TODO(port): narrow error set — Zig flat-unions codecs::Error with BackendUnavailable;
-// variants used in this file are inlined here. Phase B should reconcile with codecs::Error.
+// TODO(port): narrow error set — variants used in this file are inlined here;
+// Phase B should reconcile with `codecs::Error`.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, thiserror::Error, strum::IntoStaticStr)]
 pub enum BackendError {
     #[error("BackendUnavailable")]
@@ -62,8 +62,8 @@ pub enum BackendError {
 use BackendError::*;
 
 impl BackendError {
-    /// Reshape Zig's `(codecs.Error || error{BackendUnavailable})!T` into the
-    /// Rust caller's `Result<Option<T>, codecs::Error>` convention used by
+    /// Reshape `Result<T, BackendError>` into the caller's
+    /// `Result<Option<T>, codecs::Error>` convention used by
     /// `codecs.rs` (`Ok(None)` = BackendUnavailable → fall through to the
     /// pure-Rust codec path).
     #[inline]
@@ -81,8 +81,7 @@ impl BackendError {
 
 bun_core::named_error_set!(BackendError);
 
-// Zig: `dupGlobal` is `error{OutOfMemory}!?[]u8`, flat-unioned into
-// `clipboard()`'s `error{BackendUnavailable, OutOfMemory}` set.
+// `dupGlobal`'s OOM path flat-unions into `clipboard()`'s error set.
 bun_core::oom_from_alloc!(BackendError);
 
 pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
@@ -426,9 +425,9 @@ fn release<T>(p: *mut T) {
 /// method, so `decode`/`encode` read as straight-line safe code.
 ///
 /// Not an owning smart pointer — release is still explicit via
-/// `scopeguard::defer! { release(p.as_ptr()) }` at the call site, matching
-/// the Zig original's `defer release(p)` shape. `Copy` so the defer-guard
-/// closure captures a copy and the handle stays usable afterwards.
+/// `scopeguard::defer! { release(p.as_ptr()) }` at the call site.
+/// `Copy` so the defer-guard closure captures a copy and the handle
+/// stays usable afterwards.
 #[repr(transparent)]
 struct ComPtr<T>(ptr::NonNull<T>);
 
@@ -999,7 +998,7 @@ pub fn has_clipboard_image() -> bool {
     false
 }
 
-// TODO(port): narrow error set — Zig: error{BackendUnavailable, OutOfMemory}!?[]u8
+// TODO(port): narrow error set — only `BackendUnavailable` and OOM are reachable here.
 pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     // hwnd=null associates the open with the current task; fine for read-only.
     // SAFETY: null hwnd is documented as valid.
@@ -1100,5 +1099,3 @@ fn dup_global<const PREFIX: usize>(
     out[PREFIX..].copy_from_slice(unsafe { bun_core::ffi::slice(ptr_, size) });
     Ok(Some(out))
 }
-
-// ported from: src/runtime/image/backend_wic.zig

@@ -28,9 +28,9 @@ impl Default for FieldDescription {
 
 impl FieldDescription {
     pub fn type_tag(&self) -> types::Tag {
-        // `types::Tag` is a `#[repr(transparent)] struct(Short)` newtype (Zig
-        // models the OID enum as non-exhaustive `enum(short){…,_}`), so wrap
-        // the truncated value directly.
+        // `types::Tag` is a `#[repr(transparent)] struct(Short)` newtype that
+        // models the OID enum as non-exhaustive, so wrap the truncated value
+        // directly.
         types::Tag(self.type_oid as Short)
     }
 
@@ -76,10 +76,8 @@ impl FieldDescription {
     }
 }
 
-// Zig: `pub fn deinit` only deinits the owned `name_or_index` field.
-// In Rust, `ColumnIdentifier` impls `Drop`, so field-drop is implicit — no explicit `Drop` needed.
+// Cleanup only needs to release the owned `name_or_index` field;
+// `ColumnIdentifier` impls `Drop`, so field-drop is implicit — no explicit `Drop` needed.
 
-// Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
+// Decoder helper marker — see src/sql/postgres/protocol/DecoderWrap.rs
 pub use self::FieldDescription as _DecoderWrapTarget;
-
-// ported from: src/sql/postgres/protocol/FieldDescription.zig

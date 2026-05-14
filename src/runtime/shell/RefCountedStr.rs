@@ -4,15 +4,13 @@ bun_core::declare_scope!(RefCountedEnvStr, hidden);
 
 pub struct RefCountedStr {
     pub(super) refcount: Cell<u32>,
-    // PORT NOTE: Zig stored `[*]const u8` + `u32` len; Rust holds the owning
-    // `Box<[u8]>` directly so `byte_slice`/`free_str` need no raw-parts rebuild.
+    // Holds the owning `Box<[u8]>` directly so `byte_slice`/`free_str`
+    // need no raw-parts rebuild.
     data: Box<[u8]>,
 }
 
 impl RefCountedStr {
-    // PORT NOTE: Zig `init` takes a `[]const u8` whose backing storage was allocated
-    // with `bun.default_allocator` and transfers ownership of it. In Rust we accept a
-    // `Box<[u8]>` (global mimalloc) and store it directly.
+    // Takes ownership of a `Box<[u8]>` (global mimalloc) and stores it directly.
     pub fn init(slice: Box<[u8]>) -> *mut RefCountedStr {
         bun_core::scoped_log!(RefCountedEnvStr, "init: {}", bstr::BStr::new(&*slice));
         // bun.handleOom(bun.default_allocator.create(...)) → Box::new (aborts on OOM)
@@ -74,5 +72,3 @@ impl Default for RefCountedStr {
         }
     }
 }
-
-// ported from: src/shell/RefCountedStr.zig

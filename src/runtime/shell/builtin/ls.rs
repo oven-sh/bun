@@ -41,8 +41,8 @@ pub struct ExecState {
     pub output_queue: std::collections::VecDeque<*mut OutputTask<Ls>>,
 }
 
-/// Custom parse error for invalid options. Spec: ls.zig `Opts.ParseError` (ls
-/// uses its own per-byte parser, not the shared `FlagParser`).
+/// Custom parse error for invalid options (ls uses its own per-byte parser,
+/// not the shared `FlagParser`).
 pub enum LsParseError {
     /// Carries an owned 1-byte copy of the offending flag char.
     IllegalOption(Box<[u8]>),
@@ -212,7 +212,7 @@ impl Ls {
         Self::next(interp, cmd)
     }
 
-    /// Spec: ls.zig `onShellLsTaskDone`.
+    /// Worker→main completion callback for a finished `ShellLsTask`.
     pub fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellLsTask) {
         // SAFETY: task was heap-allocated in create(); reclaim.
         let mut task = unsafe { bun_core::heap::take(task) };
@@ -234,8 +234,8 @@ impl Ls {
         OutputTask::<Ls>::start(output_task, interp, errstr.as_deref()).run(interp);
     }
 
-    /// Spec: ls.zig `parseOpts` / `parseFlags`. Returns the index of the
-    /// first non-flag arg, or `None` if there are no positional args.
+    /// Returns the index of the first non-flag arg, or `None` if there are
+    /// no positional args.
     fn parse_opts(interp: &Interpreter, cmd: NodeId) -> Result<Option<usize>, LsParseError> {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
@@ -272,7 +272,7 @@ impl Ls {
                 b'r' => opts.reverse_order = true,
                 b'1' => opts.one_file_per_line = true,
                 // The remaining short flags are recognised but currently no-op
-                // (mirrors Zig — most fields exist only for parsing parity).
+                // (most fields exist only for parsing parity).
                 b'b' | b'B' | b'c' | b'C' | b'D' | b'f' | b'F' | b'g' | b'G' | b'h' | b'H'
                 | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p' | b'q' | b'Q'
                 | b's' | b'S' | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'x' | b'X' | b'Z' => {}
@@ -367,8 +367,8 @@ pub enum ResultKind {
     Idk,
 }
 
-/// Spec: ls.zig `ShellLsTask`. Opens the path, iterates its entries (or
-/// prints the path itself for files / `-d`), accumulating into `output`.
+/// Opens the path, iterates its entries (or prints the path itself for
+/// files / `-d`), accumulating into `output`.
 pub struct ShellLsTask {
     pub cmd: NodeId,
     pub opts: Opts,
@@ -422,8 +422,7 @@ impl ShellLsTask {
         bun_core::heap::into_raw(task)
     }
 
-    /// Spec: ls.zig `ShellLsTask.enqueue`. Spawns a subtask for a recursively
-    /// discovered subdirectory.
+    /// Spawns a subtask for a recursively discovered subdirectory.
     fn enqueue(&mut self, name: &[u8]) {
         let new_path = self.join(name);
         let subtask = ShellLsTask::create(
@@ -437,9 +436,9 @@ impl ShellLsTask {
         );
         // SAFETY: `task_count` points into the `Box<Ls>` ExecState which
         // outlives every in-flight task (see `next`). `subtask` is freshly
-        // heap-allocated; spec ls.zig `enqueue` calls `subtask.schedule()` =
-        // raw `WorkPool.schedule` (no keep-alive ref) — runs on a worker
-        // thread with no JS-VM thread-local.
+        // heap-allocated; `subtask.schedule()` is a raw `WorkPool.schedule`
+        // (no keep-alive ref) — runs on a worker thread with no JS-VM
+        // thread-local.
         unsafe {
             (*self.task_count).fetch_add(1, Ordering::Relaxed);
             (*subtask).print_directory = true;
@@ -447,7 +446,6 @@ impl ShellLsTask {
         }
     }
 
-    /// Spec: ls.zig `ShellLsTask.join`.
     fn join(&self, child: &[u8]) -> ZBox {
         if !self.is_absolute {
             // If relative paths enabled, stdlib join is preferred over
@@ -470,7 +468,6 @@ impl ShellLsTask {
         ZBox::from_bytes(out)
     }
 
-    /// Spec: ls.zig `ShellLsTask.run`.
     pub fn run_from_thread_pool(this: &mut ShellLsTask) {
         // Cache current time once per task for timestamp formatting.
         if this.opts.long_listing {
@@ -544,7 +541,6 @@ impl ShellLsTask {
         this.output.push(b'\n');
     }
 
-    /// Spec: ls.zig `shouldSkipEntry`.
     fn should_skip_entry(&self, name: &[u8]) -> bool {
         if self.opts.show_all {
             return false;
@@ -561,7 +557,6 @@ impl ShellLsTask {
         false
     }
 
-    /// Spec: ls.zig `addEntry`.
     // TODO more complex output like multi-column
     fn add_entry(&mut self, name: &[u8], dir_fd: bun_sys::Fd) {
         if self.should_skip_entry(name) {
@@ -576,7 +571,6 @@ impl ShellLsTask {
         }
     }
 
-    /// Spec: ls.zig `addEntryLong`.
     fn add_entry_long(&mut self, name: &[u8], dir_fd: bun_sys::Fd) {
         // Use lstatat to not follow symlinks (so symlinks show as 'l' type).
         let name_z = ZBox::from_bytes(name);
@@ -628,14 +622,12 @@ impl ShellLsTask {
         self.output.push(b'\n');
     }
 
-    /// Spec: ls.zig `addDotEntriesIfNeeded`.
     fn add_dot_entries_if_needed(&mut self, dir_fd: bun_sys::Fd) {
         // `add_entry()` already checks if we can add "." and ".." to the result.
         self.add_entry(b".", dir_fd);
         self.add_entry(b"..", dir_fd);
     }
 
-    /// Spec: ls.zig `errorWithPath`.
     fn error_with_path(&self, err: bun_sys::Error) -> bun_sys::Error {
         err.with_path(self.path.as_bytes())
     }
@@ -647,7 +639,6 @@ impl ShellLsTask {
     }
 }
 
-/// Spec: ls.zig `getFileTypeChar`.
 fn get_file_type_char(mode: u32) -> u8 {
     let file_type = mode & (S::IFMT as u32);
     match file_type {
@@ -661,7 +652,6 @@ fn get_file_type_char(mode: u32) -> u8 {
     }
 }
 
-/// Spec: ls.zig `formatPermissions`.
 fn format_permissions(mode: u32) -> [u8; 9] {
     let mut perms = [b'-'; 9];
     // Owner permissions.
@@ -733,8 +723,8 @@ fn format_permissions(mode: u32) -> [u8; 9] {
     perms
 }
 
-/// Spec: ls.zig `formatTime`. Format as `"Mon DD HH:MM"` for recent files
-/// (within ~6 months) or `"Mon DD  YYYY"` for older files.
+/// Format as `"Mon DD HH:MM"` for recent files (within ~6 months) or
+/// `"Mon DD  YYYY"` for older files.
 fn format_time(timestamp: i64, now_secs: u64) -> [u8; 12] {
     const MONTH_NAMES: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -770,8 +760,7 @@ fn format_time(timestamp: i64, now_secs: u64) -> [u8; 12] {
 }
 
 /// Howard Hinnant's `civil_from_days` — converts days-since-1970-01-01 to a
-/// proleptic-Gregorian (year, month[1..=12], day[1..=31]). Port of the calendar
-/// arithmetic Zig gets from `std.time.epoch`.
+/// proleptic-Gregorian (year, month[1..=12], day[1..=31]).
 fn civil_from_days(z: i64) -> (i32, u8, u8) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);
@@ -799,8 +788,8 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
     }
 }
 
-/// Spec: ls.zig `Opts`. Only the fields the current port actually consults
-/// are kept; the rest are recognised by `parse_flag` but not stored.
+/// Only the fields the current implementation actually consults are kept;
+/// the rest are recognised by `parse_flag` but not stored.
 #[derive(Clone, Copy, Default)]
 pub struct Opts {
     /// `-a`, `--all` — do not ignore entries starting with `.`
@@ -818,5 +807,3 @@ pub struct Opts {
     /// `-1` — list one file per line
     pub one_file_per_line: bool,
 }
-
-// ported from: src/shell/builtin/ls.zig

@@ -6,9 +6,9 @@
 //! weak-count header word ("4 uses tree-wide, 8 bytes per allocation is negligible,
 //! and you lose `Rc::downgrade`/`make_mut`/`get_mut`").
 //!
-//! This module therefore re-exports `Rc`/`Arc`/`Weak` under the Zig names so that
-//! mechanical `bun_ptr::shared::*` references resolve, and documents the 1:1 method
-//! mapping for Phase-B reviewers diffing against `src/ptr/shared.zig`.
+//! This module therefore re-exports `Rc`/`Arc`/`Weak` under the historical names
+//! so that mechanical `bun_ptr::shared::*` references resolve, and documents the
+//! 1:1 method mapping for Phase-B reviewers.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -26,14 +26,14 @@ use std::sync::Arc;
 ///   (`feature(allocator_api)`); see `// TODO(port)` on `SharedIn` below.
 /// * `atomic` — picks `Rc` vs `Arc`.
 /// * `allow_weak` — `Rc`/`Arc` always carry a weak count, so this is always
-///   effectively `true`. The Zig flag existed only to save 4 bytes when weak
+///   effectively `true`. The flag existed only to save 4 bytes when weak
 ///   pointers were not needed.
 /// * `deinit` — `Rc`/`Arc` always run `Drop` on the inner `T`. To suppress
 ///   `Drop`, wrap the payload in `ManuallyDrop<T>` at the call site.
 //
-// TODO(port): this struct is kept only as documentation of the Zig surface; no
-// Rust code should construct it. Remove once all `WithOptions` call sites are
-// migrated to plain `Rc<T>`/`Arc<T>`.
+// TODO(port): this struct is kept only as documentation of the historical
+// surface; no Rust code should construct it. Remove once all `WithOptions`
+// call sites are migrated to plain `Rc<T>`/`Arc<T>`.
 #[allow(dead_code)]
 pub struct Options {
     // If non-null, the shared pointer will always use the provided allocator. This saves a small
@@ -73,17 +73,17 @@ impl Default for Options {
 
 /// A shared pointer, allocated using the default allocator.
 ///
-/// Zig's `Shared(*T)` and `Shared(?*T)` both map to `Rc<T>` in Rust:
-/// `Shared(?*T)` → `Option<Rc<T>>` at the field/param site (the optionality moves
-/// outside the smart pointer; `Rc<T>` is already null-pointer-optimized so
-/// `Option<Rc<T>>` is one word).
+/// `Shared` maps to `Rc<T>` in Rust; an optional shared pointer is
+/// `Option<Rc<T>>` at the field/param site (the optionality moves outside the
+/// smart pointer; `Rc<T>` is already null-pointer-optimized so `Option<Rc<T>>`
+/// is one word).
 ///
 /// This type is not thread-safe: all pointers to the same piece of data must live on the same
 /// thread. See `AtomicShared` for a thread-safe version.
 ///
-/// ## Method map (Zig → Rust)
+/// ## Method map
 ///
-/// | Zig                         | Rust                                          |
+/// | original                    | Rust                                          |
 /// |-----------------------------|-----------------------------------------------|
 /// | `Shared(*T).alloc(v)`       | `Rc::new(v)` (infallible; aborts on OOM)      |
 /// | `Shared(*T).allocIn(v, a)`  | — (allocator_api unstable; `// TODO(port)`)   |
@@ -137,8 +137,8 @@ pub type AtomicSharedIn<T /*, A */> = Arc<T>;
 // covered by one of `Rc<T>` / `Arc<T>` / `Option<Rc<T>>` / `Option<Arc<T>>` /
 // `ManuallyDrop<T>` payload. Phase B: rewrite each call site to the concrete
 // std type and delete this generic shim. The compile-time assertion
-// `allow_weak ⇒ deinit` from the Zig is moot because std `Rc`/`Arc` always
-// support weak and always run `Drop`.
+// `allow_weak ⇒ deinit` is moot because std `Rc`/`Arc` always support weak
+// and always run `Drop`.
 pub type WithOptions<T> = Rc<T>;
 
 // ───────────────────────────────────────────────────────────────────────────────
@@ -151,9 +151,9 @@ pub type WithOptions<T> = Rc<T>;
 /// accessed. This upgrading can fail if no shared pointers exist anymore, as the shared
 /// data will have been deinitialized in that case.
 ///
-/// ## Method map (Zig → Rust)
+/// ## Method map
 ///
-/// | Zig                  | Rust                                  |
+/// | original             | Rust                                  |
 /// |----------------------|---------------------------------------|
 /// | `w.upgrade()`        | `w.upgrade()` (→ `Option<Rc<T>>`)     |
 /// | `w.clone()`          | `w.clone()`                           |
@@ -171,9 +171,10 @@ pub type AtomicWeak<T> = std::sync::Weak<T>;
 // FullData / NonAtomicCount / AtomicCount
 // ───────────────────────────────────────────────────────────────────────────────
 //
-// The Zig `FullData` struct (value + strong_count + weak_count + allocator +
-// thread_lock) is the moral equivalent of `RcInner<T>` / `ArcInner<T>` in std,
-// which are private implementation details. We do not re-implement them.
+// The historical `FullData` struct (value + strong_count + weak_count +
+// allocator + thread_lock) is the moral equivalent of `RcInner<T>` /
+// `ArcInner<T>` in std, which are private implementation details. We do not
+// re-implement them.
 //
 // `NonAtomicCount` ↔ `Cell<usize>` inside `RcInner`.
 // `AtomicCount`    ↔ `AtomicUsize` inside `ArcInner` (with the same
@@ -191,13 +192,11 @@ pub type AtomicWeak<T> = std::sync::Weak<T>;
 // in a hot array, revisit with a `#[repr(C)]` hand-rolled inner — but per
 // PORTING.md this is explicitly deprioritized.
 
-// `RawCount` was `u32` in Zig; std uses `usize`. The overflow assertion
+// `RawCount` was `u32` historically; std uses `usize`. The overflow assertion
 // (`old != maxInt(RawCount)`) is replaced by std's own abort-on-overflow check
 // in `Arc::clone` (it aborts if the count would exceed `isize::MAX`).
 
-// `parsePointer` (Zig comptime reflection over `*T` / `?*T`) has no Rust
-// analogue and is not needed: optionality is expressed at the use site as
-// `Option<Rc<T>>`, and slices/const are rejected by the type system rather than
-// a comptime check.
-
-// ported from: src/ptr/shared.zig
+// `parsePointer` (type reflection over pointer shape) has no Rust analogue and
+// is not needed: optionality is expressed at the use site as `Option<Rc<T>>`,
+// and slices/const are rejected by the type system rather than a compile-time
+// check.

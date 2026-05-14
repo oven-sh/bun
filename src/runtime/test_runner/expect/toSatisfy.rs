@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 #[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
-use bun_core::ZigString;
+use bun_core::UnsafeStringView;
 
 use super::Expect;
 use super::get_signature;
@@ -40,7 +40,7 @@ pub fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> 
         Ok(r) => r,
         Err(e) => {
             let err = global.take_exception(e);
-            let fmt = ZigString::init(b"toSatisfy() predicate threw an exception");
+            let fmt = UnsafeStringView::init(b"toSatisfy() predicate threw an exception");
             return Err(global.throw_value(global.create_aggregate_error(&[err], &fmt)?));
         }
     };
@@ -68,9 +68,8 @@ pub fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> 
     // PERF(port): was `comptime getSignature(...)` — profile in Phase B (const-eval signature)
     let signature = get_signature("toSatisfy", "<green>expected<r>", false);
 
-    // PORT NOTE: reshaped for borrowck — Zig held two `*Formatter` aliases via `toFmt`;
-    // Rust `to_fmt(&mut Formatter)` borrows exclusively, so use a second formatter for the
-    // received value (matches the toBeGreaterThan.rs pattern).
+    // PORT NOTE: reshaped for borrowck — `to_fmt(&mut Formatter)` borrows exclusively, so use a
+    // second formatter for the received value (matches the toBeGreaterThan.rs pattern).
     let mut formatter2 = super::make_formatter(global);
     this.throw(
         global,
@@ -82,5 +81,3 @@ pub fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> 
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toSatisfy.zig

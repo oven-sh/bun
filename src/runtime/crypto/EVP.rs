@@ -2,7 +2,7 @@ use core::ffi::{CStr, c_uint};
 
 use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
-use bun_core::{self as bstr, String as BunString, ZigString, strings};
+use bun_core::{self as bstr, String as BunString, UnsafeStringView, strings};
 
 use crate::jsc::JSGlobalObject;
 
@@ -25,12 +25,12 @@ pub use bun_sha_hmac::evp::Algorithm;
 /// Higher-tier helpers on the lowered `Algorithm` enum (orphan rules prevent an
 /// inherent `impl` on a foreign type, so callers `use evp::AlgorithmExt as _;`).
 pub trait AlgorithmExt: Copy + Sized {
-    /// NUL-terminated tag name, equivalent to Zig's `@tagName(algorithm)` (which
-    /// yields `[:0]const u8`). Needed for `EVP_get_digestbyname` which reads a
-    /// C string.
+    /// NUL-terminated tag name, equivalent to `@tagName(algorithm)` (which
+    /// yielded a NUL-terminated string). Needed for `EVP_get_digestbyname` which
+    /// reads a C string.
     fn tag_cstr(self) -> &'static CStr;
 
-    /// `bun.String` view of every algorithm tag name. Mirrors Zig's comptime
+    /// `bun.String` view of every algorithm tag name. Mirrors the original compile-time
     /// `EnumArray(Algorithm, bun.String)` table; returned as a flat slice since
     /// the enum is foreign and cannot derive `enum_map::Enum`.
     fn names() -> &'static [BunString];
@@ -59,12 +59,12 @@ impl AlgorithmExt for Algorithm {
             Algorithm::Shake128 => c"shake128",
             Algorithm::Shake256 => c"shake256",
             // upstream enum is `#[non_exhaustive]`; the variant set is closed in
-            // practice (mirrors EVP.zig 1:1).
+            // practice (mirrors the spec 1:1).
             _ => unreachable!("unhandled EVP algorithm variant"),
         }
     }
 
-    // TODO(port): Zig built this at comptime via a labeled block iterating
+    // TODO(port): the original built this at compile time via a labeled block iterating
     // EnumArray. bun_core::String is not const-constructible; use a lazy static.
     fn names() -> &'static [BunString] {
         static NAMES: std::sync::OnceLock<[BunString; ALL.len()]> = std::sync::OnceLock::new();
@@ -100,13 +100,13 @@ const ALL: [Algorithm; 19] = [
     Algorithm::Shake256,
 ];
 
-/// Zig `JSValue.toEnumFromMap`'s comptime `one_of` literal for `EVP.Algorithm` —
+/// `JSValue.toEnumFromMap`'s compile-time `one_of` literal for `EVP.Algorithm` —
 /// `enumFieldNames` joined as `"'a', 'b', … 'y' or 'z'"` (declaration order).
 pub const ALGORITHM_ONE_OF: &str = "'blake2b256', 'blake2b512', 'blake2s256', 'md4', 'md5', \
 'ripemd160', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha512-224', 'sha512-256', \
 'sha3-224', 'sha3-256', 'sha3-384', 'sha3-512', 'shake128' or 'shake256'";
 
-/// Case-sensitive name → `Algorithm` (Rust port of the Zig `ComptimeStringMap`).
+/// Case-sensitive name → `Algorithm` (Rust port of the original `ComptimeStringMap`).
 ///
 /// PERF(port): replaces a `phf::Map`. 32 keys spread across lengths 3..=11
 /// (max bucket = 7) — a length-gated `match` rejects misses on a single `usize`
@@ -300,7 +300,7 @@ impl EVP {
     }
 
     pub fn by_name_and_engine(engine: *mut boringssl::ENGINE, name: &[u8]) -> Option<EVP> {
-        // Zig used getWithEql(name, eqlCaseInsensitiveASCIIIgnoreLength).
+        // The original used `getWithEql(name, eqlCaseInsensitiveASCIIIgnoreLength)`.
         if let Some(algorithm) = lookup_ignore_case(name) {
             if let Some(md) = algorithm.md() {
                 // `Algorithm::md()` lives in `bun_sha_hmac`
@@ -309,7 +309,7 @@ impl EVP {
                 return Some(EVP::init(algorithm, md.cast::<boringssl::EVP_MD>(), engine));
             }
 
-            // PORT NOTE: Zig's `@tagName(algorithm)` is `[:0]const u8` (NUL-terminated).
+            // PORT NOTE: the original `@tagName(algorithm)` is NUL-terminated.
             // strum's `<&'static str>::from(algorithm)` is NOT NUL-terminated, so use the
             // explicit `tag_cstr()` table for the C-string FFI.
             // SAFETY: FFI into BoringSSL; EVP_get_digestbyname expects a NUL-terminated
@@ -323,7 +323,7 @@ impl EVP {
         None
     }
 
-    pub fn by_name(name: &ZigString, global: &JSGlobalObject) -> Option<EVP> {
+    pub fn by_name(name: &UnsafeStringView, global: &JSGlobalObject) -> Option<EVP> {
         let name_str = name.to_slice();
         // `RareData::boring_engine()` returns `*mut` to bun_jsc's local opaque `ENGINE`
         // stub (bun_jsc has no bun_boringssl_sys dep). Both name the same C `ENGINE`
@@ -353,12 +353,10 @@ impl Drop for EVP {
 
 pub type Digest = [u8; boringssl::EVP_MAX_MD_SIZE as usize];
 
-// PORT NOTE: Zig nests `PBKDF2`/`pbkdf2` inside the `EVP` struct; the
+// PORT NOTE: the original nests `PBKDF2`/`pbkdf2` inside the `EVP` struct; the
 // `crypto::EVP` re-export (module alias) lets `crypto::EVP::pbkdf2` resolve
 // through this module. The `pbkdf2` submodule is gated (blocked on bun_jsc
 // arg-parsing surface), so re-export the standalone helper from the parent
 // stub for now.
 // TODO(b2-blocked): bun_jsc — un-gate `super::pbkdf2` and swap to `pub use super::pbkdf2 as PBKDF2;`.
 pub use super::pbkdf2;
-
-// ported from: src/runtime/crypto/EVP.zig

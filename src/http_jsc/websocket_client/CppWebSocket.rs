@@ -10,7 +10,7 @@
 
 use core::ffi::c_void;
 
-use bun_core::{String as BunString, ZigString};
+use bun_core::{String as BunString, UnsafeStringView};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_uws_sys::{Socket, SslCtx};
 
@@ -49,7 +49,7 @@ unsafe extern "C" {
     fn WebSocket__didReceiveText(
         websocket_context: &CppWebSocket,
         clone: bool,
-        text: *const ZigString,
+        text: *const UnsafeStringView,
     );
     fn WebSocket__didReceiveBytes(
         websocket_context: &CppWebSocket,
@@ -88,7 +88,7 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    pub fn did_receive_text(&self, clone: bool, text: &ZigString) {
+    pub fn did_receive_text(&self, clone: bool, text: &UnsafeStringView) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
         let event_loop = VirtualMachine::get().event_loop_mut();
@@ -170,7 +170,7 @@ impl CppWebSocket {
 }
 
 impl CppWebSocket {
-    // PORT NOTE: `ref` is a Rust keyword; using raw identifier to match Zig fn name.
+    // PORT NOTE: `ref` is a Rust keyword; using raw identifier to match the original fn name.
     pub fn r#ref(&self) {
         bun_jsc::mark_binding!();
         WebSocket__incrementPendingActivity(self);
@@ -191,7 +191,7 @@ impl CppWebSocket {
 /// RAII owner of one pending-activity ref on a C++ `WebCore::WebSocket`.
 ///
 /// Construction calls [`CppWebSocket::r#ref`]; `Drop` calls
-/// [`CppWebSocket::unref`]. Replaces the Zig `ws.ref(); defer ws.unref();`
+/// [`CppWebSocket::unref`]. Replaces the manual `ws.ref(); ... ws.unref();`
 /// pattern when the ref must outlive the constructing scope (e.g. stored on a
 /// queued task).
 pub struct CppWebSocketRef(core::ptr::NonNull<CppWebSocket>);
@@ -213,5 +213,3 @@ impl Drop for CppWebSocketRef {
         CppWebSocket::opaque_ref(self.0.as_ptr()).unref();
     }
 }
-
-// ported from: src/http_jsc/websocket_client/CppWebSocket.zig

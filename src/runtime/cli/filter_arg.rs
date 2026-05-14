@@ -22,7 +22,7 @@ fn glob_ignore_fn(val: &[u8]) -> bool {
         return false;
     }
 
-    // PERF(port): Zig used `inline for` over a comptime tuple — plain loop over const slice here.
+    // PERF(port): was an unrolled loop over a comptime tuple — plain loop over const slice here.
     for skip in SKIP_LIST {
         if val == *skip {
             return true;
@@ -32,8 +32,8 @@ fn glob_ignore_fn(val: &[u8]) -> bool {
     false
 }
 
-// PORT NOTE: Zig `glob.GlobWalker(globIgnoreFn, glob.walk.DirEntryAccessor, false)` is a
-// comptime type-generator taking (ignore_fn, Accessor type, sentinel: bool). In Rust the
+// PORT NOTE: `GlobWalker` was originally a comptime type-generator taking
+// (ignore_fn, Accessor type, sentinel: bool). In Rust the
 // ignore filter is a runtime parameter on `init_with_cwd`, and `DirEntryAccessor` lives in
 // `bun_resolver` (it depends on the resolver's DirEntry cache).
 type GlobWalker = glob::GlobWalker<bun_resolver::DirEntryAccessor, false>;
@@ -55,8 +55,8 @@ pub fn get_candidate_package_patterns<'a>(
 
     let mut workdir = workdir_;
 
-    // PORT NOTE: reshaped Zig `while (true) : (workdir = dirname(workdir) orelse break)` as a
-    // labeled loop with an inner labeled block; `continue` → `break 'body`, `break` → `break 'walk`.
+    // PORT NOTE: reshaped a `while`-with-continue-expression as a labeled loop
+    // with an inner labeled block; `continue` → `break 'body`, `break` → `break 'walk`.
     'walk: loop {
         'body: {
             let mut name_buf = PathBuffer::uninit();
@@ -84,8 +84,8 @@ pub fn get_candidate_package_patterns<'a>(
             // `defer allocator.free(json_source.contents)` — deleted; `json_source` owns its
             // contents and drops at end of scope.
 
-            // PERF(port): Zig threaded `ctx.allocator` through `parsePackageJSONUTF8`; the Rust
-            // signature takes a `&Bump` arena explicitly. Nodes go through the global Store, so
+            // PERF(port): the Rust `parse_package_json_utf8` signature takes a
+            // `&Bump` arena explicitly. Nodes go through the global Store, so
             // this only buffers transient parser scratch — fresh per-iteration is fine.
             let bump = bun_alloc::Arena::new();
             let json = json::parse_package_json_utf8(&json_source, log, &bump)?;
@@ -135,7 +135,7 @@ pub fn get_candidate_package_patterns<'a>(
             return Ok(&root_buf[0..parent_trimmed.len()]);
         }
 
-        // continue-expression of the Zig `while`
+        // loop continue-expression
         workdir = match bun_core::dirname(workdir) {
             Some(d) => d,
             None => break 'walk,
@@ -167,8 +167,8 @@ pub enum PatternKind {
 }
 
 pub struct Pattern {
-    // PERF(port): in Zig, `.name`-kind patterns borrowed the caller's filter slice and only
-    // `.path`-kind patterns were heap-allocated (see `deinit`). Here both are `Box<[u8]>` so
+    // PERF(port): originally `.name`-kind patterns borrowed the caller's filter slice and only
+    // `.path`-kind patterns were heap-allocated. Here both are `Box<[u8]>` so
     // `Drop` is uniform; revisit if filter-arg construction shows up in profiles.
     pub pattern: Box<[u8]>,
     pub kind: PatternKind,
@@ -226,7 +226,7 @@ impl FilterSet {
             } else {
                 self_.has_name_filters = true;
                 list.push(Pattern {
-                    // PERF(port): Zig borrowed `filter_utf8_` here; we dupe to keep `Pattern` owning.
+                    // PERF(port): dupe `filter_utf8_` here to keep `Pattern` owning rather than borrowing.
                     pattern: Box::<[u8]>::from(filter_utf8),
                     kind: PatternKind::Name,
                 });
@@ -237,7 +237,7 @@ impl FilterSet {
     }
 
     // `pub fn deinit` — deleted: `Vec<Pattern>` drops each `Box<[u8]>` automatically.
-    // The Zig conditionally freed only `.path`-kind patterns; see PERF note on `Pattern.pattern`.
+    // Only `.path`-kind patterns were conditionally freed originally; see PERF note on `Pattern.pattern`.
 
     pub fn matches_path(&self, path: &[u8]) -> bool {
         for filter in &self.filters {
@@ -263,7 +263,7 @@ impl FilterSet {
 }
 
 pub struct PackageFilterIterator {
-    // `patterns` and `root_dir` borrow from the caller (Zig: `[]const u8`).
+    // `patterns` and `root_dir` borrow from the caller.
     // Callers keep them alive for the iterator's lifetime — `RawSlice`
     // invariant. Revisit in Phase B (likely `<'a>` on the struct).
     patterns: bun_ptr::RawSlice<Box<[u8]>>,
@@ -281,7 +281,7 @@ impl PackageFilterIterator {
         patterns: &[Box<[u8]>],
         root_dir: &[u8],
     ) -> Result<PackageFilterIterator, bun_core::Error> {
-        // TODO(port): narrow error set (Zig signature was `!PackageFilterIterator` but body is infallible)
+        // TODO(port): narrow error set (original signature was fallible but body is infallible)
         Ok(PackageFilterIterator {
             // Caller keeps `patterns`/`root_dir` alive for the iterator's lifetime — `RawSlice` invariant.
             patterns: bun_ptr::RawSlice::new(patterns),
@@ -314,10 +314,10 @@ impl PackageFilterIterator {
         // TODO(port): narrow error set
         // pattern_idx < patterns.len() checked by caller.
         let pattern: &[u8] = &self.patterns.slice()[self.pattern_idx];
-        // PERF(port): Zig created an `ArenaAllocator` here and handed it to the walker (which takes
+        // PERF(port): the original handed an `ArenaAllocator` to the walker (which took
         // ownership). bun_glob's Rust API copies `pattern`/`cwd` internally.
         let cwd: &[u8] = self.root_dir.slice();
-        // `try (try ...).unwrap()`: outer `?` is the Zig `!`, inner converts `Maybe(Self)` to `!Self`.
+        // outer `?` propagates the result; inner converts `Maybe(Self)` to a plain `Result`.
         let walker = GlobWalker::init_with_cwd(
             pattern,
             cwd,
@@ -363,8 +363,8 @@ impl PackageFilterIterator {
                     return Ok(None);
                 }
             }
-            // PORT NOTE: reshaped for borrowck — Zig captured `path` from `walkerNext` then
-            // returned it; here we must end the `&mut self` borrow before re-borrowing on the
+            // PORT NOTE: reshaped for borrowck — we must end the `&mut self`
+            // borrow on the captured `path` before re-borrowing on the
             // else branch. We rely on NLL to make this work; if it doesn't, restructure in Phase B.
             if let Some(path) = self.walker_next()? {
                 return Ok(Some(path));
@@ -384,5 +384,3 @@ impl Drop for PackageFilterIterator {
         }
     }
 }
-
-// ported from: src/cli/filter_arg.zig

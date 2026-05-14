@@ -23,7 +23,7 @@ pub use braces::{
 };
 
 // ─── B-2 un-gate: lexer / parser / AST ──────────────────────────────────────
-// Port of `shell.zig` lex/parse — moved down from `bun_runtime::shell::shell_body`
+// Shell lexer/parser — moved down from `bun_runtime::shell::shell_body`
 // so `Interpreter::parse` can consume it without the (still-gated) JSC bridge.
 #[path = "parse.rs"]
 pub mod parse;

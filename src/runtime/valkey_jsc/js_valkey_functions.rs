@@ -11,7 +11,7 @@ use super::protocol_jsc as protocol;
 use super::valkey;
 use super::valkey_command_body::{Args as CommandArgs, Command, Meta as CommandMeta};
 
-type Slice = bun_jsc::ZigStringSlice;
+type Slice = bun_jsc::UTF8Slice;
 
 /// Reinterpret an ASCII byte-string literal as `&str` for the
 /// `throw_invalid_argument_type` family (which take `&'static str`).
@@ -28,7 +28,6 @@ const fn bname(b: &'static [u8]) -> &'static str {
 
 fn require_not_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> JsResult<()> {
     if this.is_subscriber() {
-        // Zig: `this.globalObject.ERR(.REDIS_INVALID_STATE, fmt, .{function_name}).throw()`
         // `global_object: GlobalRef` derefs safely (BACKREF — VM-owned global outlives client).
         let global: &JSGlobalObject = &this.global_object;
         return Err(global
@@ -46,7 +45,6 @@ fn require_not_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> JsResu
 
 fn require_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> JsResult<()> {
     if !this.is_subscriber() {
-        // Zig: `this.globalObject.ERR(.REDIS_INVALID_STATE, fmt, .{function_name}).throw()`
         // `global_object: GlobalRef` derefs safely (BACKREF — VM-owned global outlives client).
         let global: &JSGlobalObject = &this.global_object;
         return Err(global
@@ -78,7 +76,7 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
 
 /// Shim around `protocol::valkey_error_to_js` that:
 /// 1. accepts whatever error type `JSValkeyClient::send` currently returns
-///    (presently `bun_core::Error`; the Zig spec uses an open `!` set) and
+///    (presently `bun_core::Error`) and
 ///    converts it to `RedisError` so the user-visible error code matches the
 ///    real failure variant, and
 /// 2. wraps the resulting `JSValue` in `Ok` for use in `JsResult<JSValue>`
@@ -165,9 +163,9 @@ pub(crate) mod compile {
     }
 }
 
-// PORT NOTE: The Zig `compile.@"(...)"(...)` comptime type-generators take
-// `comptime []const u8` params (not expressible as Rust const generics on
-// stable). Each generator is ported as a `macro_rules!` that emits a
+// PORT NOTE: The original implementation used compile-time type-generators
+// keyed by a parameter-shape string (not expressible as Rust const generics on
+// stable). Each generator is implemented as a `macro_rules!` that emits a
 // `#[bun_jsc::host_fn(method)]` inside the `impl JSValkeyClient` block.
 // Names: @"()"→cmd_noargs!, @"(key: RedisKey)"→cmd_key!,
 // @"(key: RedisKey, ...args: RedisKey[])"→cmd_key_varargs!,
@@ -448,7 +446,6 @@ macro_rules! cmd_key_value_varargs {
 impl JSValkeyClient {
     #[bun_jsc::host_fn(method)]
     pub fn js_send(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        // Zig: `defer command.deref()`.
         let command = OwnedString::new(frame.argument(0).to_bun_string(global)?);
 
         let args_array = frame.argument(1);
@@ -973,7 +970,6 @@ impl JSValkeyClient {
     pub fn hincrby(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         require_not_subscriber(this, b"hincrby")?;
 
-        // Zig: `defer key.deref()` / `defer field.deref()` / `defer value.deref()`.
         let key = OwnedString::new(frame.argument(0).to_bun_string(global)?);
         let field = OwnedString::new(frame.argument(1).to_bun_string(global)?);
         let value = OwnedString::new(frame.argument(2).to_bun_string(global)?);
@@ -1002,7 +998,6 @@ impl JSValkeyClient {
     ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"hincrbyfloat")?;
 
-        // Zig: `defer key.deref()` / `defer field.deref()` / `defer value.deref()`.
         let key = OwnedString::new(frame.argument(0).to_bun_string(global)?);
         let field = OwnedString::new(frame.argument(1).to_bun_string(global)?);
         let value = OwnedString::new(frame.argument(2).to_bun_string(global)?);
@@ -1031,7 +1026,6 @@ impl JSValkeyClient {
     ) -> JsResult<JSValue> {
         require_not_subscriber(this, command)?;
 
-        // Zig: `defer key.deref()`.
         let key = OwnedString::new(frame.argument(0).to_bun_string(global)?);
 
         let second_arg = frame.argument(1);
@@ -1071,8 +1065,8 @@ impl JSValkeyClient {
                 let value_str = object_iter.value.to_bun_string(global)?;
                 // PERF(port): was assume_capacity
                 args.push(value_str.to_utf8());
-                // Zig: `defer value_str.deref()` — `to_utf8()` already bumped
-                // (or copied) the ref the slice needs, so release ours now.
+                // `to_utf8()` already bumped (or copied) the ref the slice
+                // needs, so release ours now.
                 value_str.deref();
             }
         } else if second_arg.is_array() {
@@ -1231,7 +1225,7 @@ impl JSValkeyClient {
     // Implement ping (send a PING command with an optional message)
     #[bun_jsc::host_fn(method)]
     pub fn ping(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        // PORT NOTE: reshaped from Zig stack-array + slice pattern to Option<JSArgument>
+        // PORT NOTE: reshaped from stack-array + slice pattern to Option<JSArgument>
         let message: Option<JSArgument> = if !frame.argument(0).is_undefined_or_null() {
             // Only use the first argument if provided, ignore any additional arguments
             let Some(m) = from_js(global, frame.argument(0))? else {
@@ -1875,11 +1869,12 @@ impl JSValkeyClient {
                     ));
                 }
                 Err(_) => {
-                    // TODO(port): {f} format spec on ZigString
+                    // TODO(port): {f} format spec on UnsafeStringView
                     return Err(global.throw(format_args!(
                         "Failed to remove handler for channel {}",
                         // `JSString` is an `opaque_ffi!` ZST — safe deref.
-                        bun_jsc::JSString::opaque_ref(channel.as_string()).get_zig_string(global)
+                        bun_jsc::JSString::opaque_ref(channel.as_string())
+                            .get_unsafe_string_view(global)
                     )));
                 }
             };
@@ -1993,5 +1988,3 @@ impl JSValkeyClient {
 
     // cluster(subcommand: "KEYSLOT", key: RedisKey)
 }
-
-// ported from: src/runtime/valkey_jsc/js_valkey_functions.zig

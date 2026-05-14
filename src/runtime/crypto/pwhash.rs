@@ -1,14 +1,12 @@
-//! `std.crypto.pwhash` shim.
+//! Password-hashing shim for `Bun.password`.
 //!
-//! Zig's `Bun.password` is built on `std.crypto.pwhash.{argon2, bcrypt}`. Neither
-//! algorithm is provided by BoringSSL, so this module mirrors the Zig stdlib API
-//! surface that `PasswordObject` consumes (`strHash` / `strVerify` / `Params` /
-//! `Mode` / `Encoding`) and routes to the pure-Rust `rust-argon2` and `bcrypt`
-//! crates from crates.io.
+//! Neither argon2 nor bcrypt is provided by BoringSSL, so this module exposes
+//! the API surface that `PasswordObject` consumes (`strHash` / `strVerify` /
+//! `Params` / `Mode` / `Encoding`) and routes to the pure-Rust `rust-argon2`
+//! and `bcrypt` crates from crates.io.
 //!
-//! API shape is locked to `vendor/zig/lib/std/crypto/{argon2, bcrypt}.zig` so
-//! the bodies below are a drop-in for the Zig stdlib semantics:
-//!   * argon2: PHC string format only (Zig `strHash` rejects `.crypt`), 32-byte
+//! Behaviour is locked to the historical `Bun.password` semantics:
+//!   * argon2: PHC string format only (`strHash` rejects `.crypt`), 32-byte
 //!     random salt, 32-byte tag, version 0x13.
 //!   * bcrypt: modular-crypt `$2b$…` 60-byte string for hashing; verification
 //!     additionally accepts the PHC `$bcrypt$…` form (decoded locally — the
@@ -51,7 +49,7 @@ pub mod argon2 {
     // it via the absolute `::argon2` path so it doesn't collide with this module.
     use ::argon2 as vendor;
 
-    /// Zig `default_salt_len` / `default_hash_len` (vendor/zig/lib/std/crypto/argon2.zig).
+    /// Default salt and tag lengths for `Bun.password` argon2 hashes.
     const DEFAULT_SALT_LEN: usize = 32;
     const DEFAULT_HASH_LEN: u32 = 32;
 
@@ -80,7 +78,7 @@ pub mod argon2 {
         pub t: u32,
         /// Memory cost in KiB.
         pub m: u32,
-        /// Parallelism degree (Zig: u24).
+        /// Parallelism degree (logically a u24).
         pub p: u32,
     }
 
@@ -111,8 +109,8 @@ pub mod argon2 {
     fn map_err(e: vendor::Error) -> Error {
         use vendor::Error as E;
         match e {
-            // Zig's PhcFormatHasher emits these tags; keep them recognisable so
-            // PasswordObject's `errorName(err)` formatting stays stable.
+            // Keep these error tags recognisable so `PasswordObject`'s
+            // `errorName(err)` formatting stays stable.
             E::DecodingFail | E::IncorrectType | E::IncorrectVersion => {
                 bun_core::err!("InvalidEncoding")
             }
@@ -142,25 +140,22 @@ pub mod argon2 {
         options: HashOptions,
         out: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {
-        // Zig: `switch (options.encoding) { .crypt => return Error.InvalidEncoding, .phc => … }`
+        // Argon2 hashing only supports PHC encoding; `.crypt` is rejected.
         if options.encoding != Encoding::Phc {
             return Err(bun_core::err!("InvalidEncoding"));
         }
 
-        // Zig: `var salt: [default_salt_len]u8 = undefined; crypto.random.bytes(&salt);`
+        // Fresh random salt of the default length.
         let mut salt = [0u8; DEFAULT_SALT_LEN];
         getrandom::fill(&mut salt).map_err(|_| bun_core::err!("Unexpected"))?;
 
-        // Zig (argon2.zig:499) deliberately disables the `m < 8*p` floor check
-        // ("BUN: this is a breaking change so lets reenable it later") and
-        // instead clamps the working memory at argon2.zig:502-505 to
-        // `@max(m_rounded_down, 2*sync_points*p)`. rust-argon2's
-        // `Context::new` hard-rejects `mem_cost < 8*lanes` with
+        // Bun historically disabled the `m < 8*p` floor check (a breaking
+        // change to re-enable later) and instead clamps the working memory.
+        // rust-argon2's `Context::new` hard-rejects `mem_cost < 8*lanes` with
         // `MemoryTooLittle`, so clamp here so the call succeeds. Note: the
-        // encoded `m=` and the H0 prehash will reflect the clamped value,
-        // which diverges from Zig for the (in-practice never used) `m < 8*p`
-        // edge case — acceptable per the porting fix, and strictly better
-        // than throwing `WeakParameters`.
+        // encoded `m=` and the H0 prehash will reflect the clamped value
+        // for the (in-practice never used) `m < 8*p` edge case — acceptable
+        // per the porting fix, and strictly better than throwing `WeakParameters`.
         let mem_cost = options.params.m.max(8 * options.params.p);
 
         let config = vendor::Config {
@@ -171,8 +166,8 @@ pub mod argon2 {
             mem_cost,
             time_cost: options.params.t,
             // Hashing always runs single-threaded here regardless of `p` —
-            // matches the Zig stdlib, which fans memory across `p` lanes but
-            // computes them on the calling thread.
+            // memory is fanned across `p` lanes but all lanes are computed
+            // on the calling thread.
             thread_mode: vendor::ThreadMode::Sequential,
             variant: options.mode.to_variant(),
             version: vendor::Version::Version13,
@@ -181,8 +176,7 @@ pub mod argon2 {
         let encoded = vendor::hash_encoded(password, &salt, &config).map_err(map_err)?;
         let bytes = encoded.as_bytes();
 
-        // Zig: `phc_format.serialize(…, buf)` writes into the caller buffer and
-        // errors `NoSpaceLeft` on overflow.
+        // Serialize into the caller buffer; error `NoSpaceLeft` on overflow.
         if bytes.len() > out.len() {
             return Err(bun_core::err!("NoSpaceLeft"));
         }
@@ -196,17 +190,15 @@ pub mod argon2 {
         password: &[u8],
         _options: VerifyOptions,
     ) -> Result<(), Error> {
-        // Zig accepts the encoded hash as `[]const u8` but PHC strings are
-        // 7-bit ASCII; reject non-ASCII input as a decode failure to match
-        // `phc_format.deserialize` behaviour.
+        // PHC strings are 7-bit ASCII; reject non-ASCII input as a decode
+        // failure.
         let encoded = super::phc_ascii_str(encoded_hash)?;
 
-        // Zig (argon2.zig:565-567) only accepts version 0x13: an explicit
-        // `v=` segment that isn't `19` is `InvalidEncoding`, and a missing
-        // `v=` segment still hashes with 0x13 (kdf hard-codes `version`).
-        // rust-argon2's `verify_encoded` instead accepts `v=16` (computing
-        // with Version10) and defaults a missing segment to Version10, so
-        // pre-scan and normalise here before delegating.
+        // Only version 0x13 is accepted: an explicit `v=` segment that isn't
+        // `19` is `InvalidEncoding`, and a missing `v=` segment still hashes
+        // with 0x13. rust-argon2's `verify_encoded` instead accepts `v=16`
+        // (computing with Version10) and defaults a missing segment to
+        // Version10, so pre-scan and normalise here before delegating.
         let normalised: std::borrow::Cow<'_, str> = 'norm: {
             // Encoded shape is `$<alg>$[v=N$]m=..,t=..,p=..$<salt>$<hash>`.
             // Locate the segment immediately after the alg-id.
@@ -228,7 +220,7 @@ pub mod argon2 {
                 std::borrow::Cow::Borrowed(encoded)
             } else {
                 // No `v=` segment — splice in `v=19$` so rust-argon2 hashes
-                // with Version13 like Zig's kdf does.
+                // with Version13.
                 let mut s = String::with_capacity(encoded.len() + 5);
                 s.push_str(&encoded[..=alg_end]);
                 s.push_str("v=19$");
@@ -240,7 +232,7 @@ pub mod argon2 {
         match vendor::verify_encoded(&normalised, password) {
             Ok(true) => Ok(()),
             // `rust-argon2` constant-time compares and returns `Ok(false)` on
-            // mismatch; Zig surfaces this as `error.PasswordVerificationFailed`.
+            // mismatch; surface this as `PasswordVerificationFailed`.
             Ok(false) => Err(bun_core::err!("PasswordVerificationFailed")),
             Err(e) => Err(map_err(e)),
         }
@@ -254,14 +246,14 @@ pub mod bcrypt {
 
     /// `std.crypto.pwhash.bcrypt.hash_length`
     pub const HASH_LENGTH: usize = 60;
-    /// Zig `salt_length` / `dk_length` (vendor/zig/lib/std/crypto/bcrypt.zig).
+    /// Salt and derived-key lengths for bcrypt.
     const SALT_LENGTH: usize = 16;
     const DK_LENGTH: usize = 23;
 
     /// `std.crypto.pwhash.bcrypt.Params`
     #[derive(Copy, Clone)]
     pub struct Params {
-        /// log2 rounds (Zig: u6; clamped 4..=31 by caller).
+        /// log2 rounds (logically a u6; clamped 4..=31 by caller).
         pub rounds_log: u8,
         pub silently_truncate_password: bool,
     }
@@ -285,7 +277,7 @@ pub mod bcrypt {
             E::CostNotAllowed(_) => bun_core::err!("WeakParameters"),
             E::Rand(_) => bun_core::err!("Unexpected"),
             // InvalidHash / InvalidCost / InvalidPrefix / InvalidSaltLen /
-            // InvalidBase64 — all map to Zig's `InvalidEncoding`.
+            // InvalidBase64 — all map to `InvalidEncoding`.
             _ => bun_core::err!("InvalidEncoding"),
         }
     }
@@ -297,13 +289,13 @@ pub mod bcrypt {
         options: HashOptions,
         out: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {
-        // Zig's `CryptFormatHasher.create` checks `buf.len < hash_length` first.
+        // Reject before hashing if the output buffer cannot hold the result.
         if out.len() < HASH_LENGTH {
             return Err(bun_core::err!("NoSpaceLeft"));
         }
-        // Bun only ever requests `.crypt`. Zig's `.phc` path emits `$bcrypt$…`
-        // via the PHC serializer, which the Rust `bcrypt` crate does not
-        // implement; surface that as an encoding error rather than silently
+        // Bun only ever requests `.crypt`. The `.phc` path would emit
+        // `$bcrypt$…` via a PHC serializer, which the Rust `bcrypt` crate does
+        // not implement; surface that as an encoding error rather than silently
         // returning the wrong format.
         if options.encoding != Encoding::Crypt {
             return Err(bun_core::err!("InvalidEncoding"));
@@ -311,9 +303,9 @@ pub mod bcrypt {
 
         let cost = u32::from(options.params.rounds_log);
 
-        // Zig's `silently_truncate_password == false` path (bcrypt.zig:473-484)
-        // pre-hashes >72-byte passwords via HMAC-SHA512 keyed by the salt and
-        // never errors; the `bcrypt` crate's `non_truncating_*` instead returns
+        // The `silently_truncate_password == false` path would pre-hash
+        // >72-byte passwords via HMAC-SHA512 keyed by the salt and never
+        // error; the `bcrypt` crate's `non_truncating_*` instead returns
         // `Err(Truncation)` (and trips at `>=72`, not `>72`). Bun's only caller
         // (`PasswordObject`) always passes `true` and pre-hashes long passwords
         // itself, so hard-assert here rather than ship a divergent codepath.
@@ -324,12 +316,12 @@ pub mod bcrypt {
         );
 
         // `hash_with_result` → `_hash_password(.., err_on_truncation = false)`:
-        // null-terminates then clamps to 72 bytes, exactly matching Zig's
-        // `State.init` when `silently_truncate_password == true`.
+        // null-terminates then clamps to 72 bytes — the
+        // `silently_truncate_password == true` semantics.
         let parts = vendor::hash_with_result(password, cost).map_err(map_err)?;
 
         // `format_for_version(TwoB)` yields the canonical `$2b$cc$<22 salt><31 hash>`
-        // 60-byte string — identical to Zig's `crypt_format.strHashInternal`.
+        // 60-byte string.
         let encoded = parts.format_for_version(vendor::Version::TwoB);
         let bytes = encoded.as_bytes();
         debug_assert_eq!(bytes.len(), HASH_LENGTH);
@@ -357,20 +349,19 @@ pub mod bcrypt {
         );
         let _ = options;
 
-        // Zig (bcrypt.zig:794-798) dispatches on prefix:
-        //   `$2…`      → CryptFormatHasher.verify
-        //   otherwise  → PhcFormatHasher.verify (`$bcrypt$r=N$<salt>$<hash>`)
+        // Dispatch on prefix:
+        //   `$2…`      → modular-crypt verify
+        //   otherwise  → PHC verify (`$bcrypt$r=N$<salt>$<hash>`)
         // `PasswordObject::Algorithm::get` sniffs both `$2` *and* `$bcrypt`
         // (PasswordObject.rs:268), so PHC-encoded bcrypt hashes do reach here.
         if !encoded.starts_with("$2") {
             return verify_phc(encoded, password);
         }
 
-        // Crypt path: `CryptFormatHasher.verify` checks `str.len == hash_length`;
-        // the Rust crate does the same inside `split_hash`.
+        // Crypt path: requires `str.len == hash_length`; the Rust crate
+        // checks this inside `split_hash`.
         match vendor::verify(password, encoded) {
             Ok(true) => Ok(()),
-            // Zig: `if (!mem.eql(u8, wanted_s[3..], str[3..])) return PasswordVerificationFailed`.
             // The Rust crate compares only the 23-byte raw digest (constant-time)
             // and ignores the version prefix, which is the same observable
             // contract — any `$2a/b/x/y$` hash with matching salt+digest passes.
@@ -379,10 +370,9 @@ pub mod bcrypt {
         }
     }
 
-    /// Zig `PhcFormatHasher.verify` — `$bcrypt$r=N$<b64 salt>$<b64 hash>`.
+    /// PHC bcrypt verify — `$bcrypt$r=N$<b64 salt>$<b64 hash>`.
     ///
-    /// The Rust `bcrypt` crate has no PHC codec, so parse the string here
-    /// (matching Zig's `phc_format.deserialize` for the `HashResult` shape),
+    /// The Rust `bcrypt` crate has no PHC codec, so parse the string here,
     /// recompute via the raw block cipher, and compare the 23-byte digests.
     fn verify_phc(encoded: &str, password: &[u8]) -> Result<(), Error> {
         let invalid = || bun_core::err!("InvalidEncoding");
@@ -390,12 +380,12 @@ pub mod bcrypt {
         // alg_id
         let rest = encoded.strip_prefix('$').ok_or_else(invalid)?;
         let (alg_id, rest) = rest.split_once('$').ok_or_else(invalid)?;
-        // Zig: `if (!mem.eql(u8, hash_result.alg_id, alg_id)) return PasswordVerificationFailed`
+        // Mismatched algorithm id is a verification failure, not an encoding error.
         if alg_id != "bcrypt" {
             return Err(bun_core::err!("PasswordVerificationFailed"));
         }
 
-        // r=N (Zig field is u6; phc_format would reject anything that doesn't fit)
+        // r=N (logically a u6; the PHC format would reject anything that doesn't fit)
         let (params, rest) = rest.split_once('$').ok_or_else(invalid)?;
         let rounds_str = params.strip_prefix("r=").ok_or_else(invalid)?;
         let rounds_log: u8 = rounds_str.parse().map_err(|_| invalid())?;
@@ -405,7 +395,7 @@ pub mod bcrypt {
 
         // salt / hash — `phc_format.BinValue` uses `std.base64.standard_no_pad`.
         let (salt_b64, hash_b64) = rest.split_once('$').ok_or_else(invalid)?;
-        let decoder = &bun_base64::zig_base64::STANDARD_NO_PAD.decoder;
+        let decoder = &bun_base64::std_base64::STANDARD_NO_PAD.decoder;
 
         let mut salt = [0u8; SALT_LENGTH];
         if decoder
@@ -431,7 +421,7 @@ pub mod bcrypt {
             .decode(&mut expected, hash_b64.as_bytes())
             .map_err(|_| invalid())?;
 
-        // Zig drives the cipher with whatever `rounds_log: u6` it decoded; the
+        // The PHC format admits any `rounds_log` that fits in a u6; the
         // Rust crate's raw `bcrypt()` asserts `cost < 32`, so reject the
         // out-of-range tail here rather than panic. (Values <4 or ≥32 never
         // appear in hashes Bun produced.)
@@ -439,8 +429,8 @@ pub mod bcrypt {
             return Err(bun_core::err!("WeakParameters"));
         }
 
-        // Replicate Zig `bcryptWithTruncation` / the crate's `_hash_password`:
-        // null-terminate then clamp to 72 bytes before feeding the cipher.
+        // Replicate the crate's `_hash_password`: null-terminate then clamp
+        // to 72 bytes before feeding the cipher.
         let mut buf = [0u8; 72];
         let copy_len = password.len().min(72);
         buf[..copy_len].copy_from_slice(&password[..copy_len]);
@@ -448,7 +438,7 @@ pub mod bcrypt {
 
         let computed = vendor::bcrypt(u32::from(rounds_log), salt, &buf[..used]);
 
-        // Zig: `if (!mem.eql(u8, &hash, expected_hash)) return PasswordVerificationFailed`.
+        // Digest mismatch is a verification failure.
         if computed[..DK_LENGTH] == expected {
             Ok(())
         } else {
@@ -456,5 +446,3 @@ pub mod bcrypt {
         }
     }
 }
-
-// ported from: vendor/zig/lib/std/crypto/{argon2,bcrypt}.zig

@@ -16,7 +16,7 @@ use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
 use bun_ast::{self as js_ast, E, Expr, ExprData, Op, OpCode, OptionalChain};
 
-// Zig: `fn ParseSuffix(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
+// Originally `fn ParseSuffix(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block. The 50+ per-token `t_*` helpers are private; only `parse_suffix` is
 // surfaced. Round-G un-gates the per-token bodies (same JsxT pattern as parseStmt.rs).
@@ -437,7 +437,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let loc = left.loc;
         let prev = *left;
-        // PORT NOTE: Zig allocates an E::If with `undefined` yes/no then writes through the
+        // PORT NOTE: original allocates an E::If with `undefined` yes/no then writes through the
         // arena pointer (`ternary.data.e_if.yes`). The `Data::EIf(StoreRef<E::If>)` payload is a
         // boxed arena slot, so we mirror that: allocate first, then fill via DerefMut on StoreRef.
         let mut ternary = p.new_expr(
@@ -556,7 +556,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    // Zig used `inline` @field/@tagName comptime dispatch for the 30+ simple binary
+    // Original used `inline` @field/@tagName comptime dispatch for the 30+ simple binary
     // operators below. Rust has no struct-field-name reflection; each is written out.
     // PORT NOTE: bodies are uniform — `if level.gte(L) {Done}; next; new Binary{op,left,right}`.
 
@@ -586,7 +586,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        // PORT NOTE: Zig wrote `@enumFromInt(@intFromEnum(Op.Level.assign) - 1)`; equivalent to `Level::Assign.sub(1)`.
+        // PORT NOTE: original wrote `@enumFromInt(@intFromEnum(Op.Level.assign) - 1)`; equivalent to `Level::Assign.sub(1)`.
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
@@ -1448,15 +1448,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         flags: EFlags,
     ) -> Result<(), Error> {
         let p = self;
-        // PORT NOTE: Zig kept a separate `left_value` local + `left = &left_value`
-        // to work around a Zig codegen bug ("creates a new address to stack locals
+        // PORT NOTE: original kept a separate `left_value` local + `left = &left_value`
+        // to work around an upstream-compiler codegen bug ("creates a new address to stack locals
         // each & usage"). Rust has no such bug, so we mutate `left` directly and
         // drop the trailing/deferred `left_and_out.* = left_value` writebacks.
 
         let mut optional_chain: Option<OptionalChain> = None;
         loop {
             if p.lexer.loc().start == p.after_arrow_body_loc.start {
-                // PORT NOTE: Zig labeled-switch `next_token: switch (...) { continue :next_token ... }`
+                // PORT NOTE: original labeled-switch `next_token: switch (...) { continue :next_token ... }`
                 // becomes a plain loop re-reading `p.lexer.token` each iteration.
                 loop {
                     match p.lexer.token {
@@ -1502,12 +1502,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             optional_chain = None;
 
             // Each of these tokens are split into a function to conserve
-            // stack space. Currently in Zig, the compiler does not reuse
-            // stack space between scopes This means that having a large
-            // function with many scopes and local variables consumes
-            // enormous amounts of stack space.
+            // stack space. The compiler used by the original implementation
+            // did not reuse stack space between scopes, so a large function
+            // with many scopes and local variables consumed enormous amounts
+            // of stack space.
             //
-            // PORT NOTE: Zig used `inline ... => |tag| @field(@This(), @tagName(tag))(p, level, left)`
+            // PORT NOTE: original used `inline ... => |tag| @field(@This(), @tagName(tag))(p, level, left)`
             // for comptime name-based dispatch. Rust has no @field/@tagName reflection, so each
             // arm is written out explicitly.
             let continuation = match p.lexer.token {
@@ -1617,5 +1617,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 }
-
-// ported from: src/js_parser/ast/parseSuffix.zig

@@ -3,21 +3,21 @@ use core::ptr::NonNull;
 
 use crate::schema_api as api;
 use bun_core::String as BunString;
-use bun_core::ZigStringSlice;
-use bun_url::URL as ZigURL;
+use bun_core::UTF8Slice;
+use bun_url::URL as BunURL;
 
+use crate::BunStackFrame;
 use crate::SourceProvider;
-use crate::ZigStackFrame;
 
 /// Represents a JavaScript stack trace
 #[repr(C)]
-pub struct ZigStackTrace {
+pub struct BunStackTrace {
     pub source_lines_ptr: *mut BunString,
     pub source_lines_numbers: *mut i32,
     pub source_lines_len: u8,
     pub source_lines_to_collect: u8,
 
-    pub frames_ptr: *mut ZigStackFrame,
+    pub frames_ptr: *mut BunStackFrame,
     pub frames_len: u8,
     pub frames_cap: u8,
 
@@ -25,13 +25,13 @@ pub struct ZigStackTrace {
     /// If so, then .deref must be called on it to release the memory.
     ///
     /// `Option<NonNull<_>>` niche-optimizes to a single thin pointer, matching
-    /// the Zig `?*SourceProvider` ABI exactly.
+    /// the C ABI nullable-pointer layout exactly.
     pub referenced_source_provider: Option<NonNull<SourceProvider>>,
 }
 
-impl ZigStackTrace {
-    pub fn from_frames(frames_slice: &mut [ZigStackFrame]) -> ZigStackTrace {
-        ZigStackTrace {
+impl BunStackTrace {
+    pub fn from_frames(frames_slice: &mut [BunStackFrame]) -> BunStackTrace {
+        BunStackTrace {
             source_lines_ptr: ptr::dangling_mut(),
             source_lines_numbers: ptr::dangling_mut(),
             source_lines_len: 0,
@@ -48,10 +48,10 @@ impl ZigStackTrace {
     pub fn to_api(
         &self,
         root_path: &[u8],
-        origin: Option<&ZigURL<'_>>,
+        origin: Option<&BunURL<'_>>,
     ) -> Result<api::StackTrace, bun_alloc::AllocError> {
-        // Zig: `comptime std.mem.zeroes(api.StackTrace)` — `Default` is the semantic
-        // equivalent (`Vec` fields are NonNull and not zero-safe).
+        // Zero-initialize the result; `Default` is used because the `Vec`
+        // fields are NonNull and not zero-safe.
         let mut stack_trace = api::StackTrace::default();
         {
             let mut source_lines_iter = self.source_line_iterator();
@@ -61,10 +61,10 @@ impl ZigStackTrace {
             if source_line_len > 0 {
                 let n_lines = usize::try_from((source_lines_iter.i + 1).max(0)).expect("int cast");
                 let mut source_lines: Vec<api::SourceLine> = Vec::with_capacity(n_lines);
-                // PORT NOTE: Zig packed all line texts into a single contiguous
-                // `source_line_buf` and stored sub-slices in each `SourceLine`.
-                // The Rust `api::SourceLine.text` is `Box<[u8]>` (owns its bytes),
-                // so each line gets its own allocation instead.
+                // PORT NOTE: an earlier implementation packed all line texts into
+                // a single contiguous `source_line_buf` and stored sub-slices in
+                // each `SourceLine`. `api::SourceLine.text` is `Box<[u8]>` (owns
+                // its bytes), so each line gets its own allocation instead.
                 // PERF(port): one alloc per line vs one shared buffer — profile in Phase B.
                 source_lines_iter = self.source_line_iterator();
                 while let Some(source) = source_lines_iter.next() {
@@ -73,7 +73,7 @@ impl ZigStackTrace {
                         text: Box::<[u8]>::from(text),
                         line: source.line,
                     });
-                    // `defer source.text.deinit()` → handled by Drop on ZigStringSlice at end of scope.
+                    // Cleanup of `source.text` is handled by Drop on UTF8Slice at end of scope.
                 }
                 stack_trace.source_lines = source_lines;
             }
@@ -93,13 +93,13 @@ impl ZigStackTrace {
         Ok(stack_trace)
     }
 
-    pub fn frames(&self) -> &[ZigStackFrame] {
+    pub fn frames(&self) -> &[BunStackFrame] {
         // SAFETY: frames_ptr points to a caller-owned buffer of at least frames_len elements
-        // (populated by C++ via FFI; see ZigException.zig:111).
+        // (populated by C++ via FFI; see BunException).
         unsafe { bun_core::ffi::slice(self.frames_ptr, self.frames_len as usize) }
     }
 
-    pub fn frames_mutable(&mut self) -> &mut [ZigStackFrame] {
+    pub fn frames_mutable(&mut self) -> &mut [BunStackFrame] {
         // SAFETY: frames_ptr points to a caller-owned buffer of at least frames_len elements.
         unsafe { bun_core::ffi::slice_mut(self.frames_ptr, self.frames_len as usize) }
     }
@@ -109,7 +109,7 @@ impl ZigStackTrace {
     pub fn source_lines_mut(&mut self) -> &mut [BunString] {
         // SAFETY: `source_lines_ptr` points to a caller-owned buffer of at least
         // `source_lines_len` initialized elements (populated by C++ via FFI;
-        // see ZigException.zig:108). The borrow is tied to `&mut self`.
+        // see BunException). The borrow is tied to `&mut self`.
         unsafe { bun_core::ffi::slice_mut(self.source_lines_ptr, self.source_lines_len as usize) }
     }
 
@@ -117,7 +117,7 @@ impl ZigStackTrace {
     #[inline]
     pub fn source_line_numbers(&self) -> &[i32] {
         // SAFETY: `source_lines_numbers` points to a caller-owned buffer of at
-        // least `source_lines_len` initialized elements (see ZigException.zig:108).
+        // least `source_lines_len` initialized elements (see BunException).
         unsafe { bun_core::ffi::slice(self.source_lines_numbers, self.source_lines_len as usize) }
     }
 
@@ -134,13 +134,13 @@ impl ZigStackTrace {
 }
 
 pub struct SourceLineIterator<'a> {
-    pub trace: &'a ZigStackTrace,
+    pub trace: &'a BunStackTrace,
     pub i: i32,
 }
 
 pub struct SourceLine {
     pub line: i32,
-    pub text: ZigStringSlice,
+    pub text: UTF8Slice,
 }
 
 impl<'a> SourceLineIterator<'a> {
@@ -187,5 +187,3 @@ impl<'a> SourceLineIterator<'a> {
         Some(result)
     }
 }
-
-// ported from: src/jsc/ZigStackTrace.zig

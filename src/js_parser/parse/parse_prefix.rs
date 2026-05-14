@@ -22,11 +22,10 @@ use bun_ast::g::{Arg, Property, PropertyKind};
 use bun_ast::op::Level;
 use bun_ast::{self as js_ast, B, E, Expr, ExprData, ExprNodeList, G, OpCode, scope, symbol};
 
-// TODO(port): narrow error set — Zig used `anyerror!Expr` throughout
+// TODO(port): narrow error set — original used a catch-all error type throughout
 type PResult<T> = core::result::Result<T, bun_core::Error>;
 
-// Zig: `fn ParsePrefix(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// File-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block. The 30+ per-token `t_*` helpers are private; only `parse_prefix` is
 // surfaced. Round-G un-gates the per-token bodies (same JsxT pattern as parseStmt.rs); helper
 // names pfx_-prefixed to avoid colliding with parseStmt.rs / parseSuffix.rs mixins on the same `P`.
@@ -276,7 +275,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let _ = p
                 .push_scope_for_parse_pass(scope::Kind::FunctionArgs, loc)
                 .expect("unreachable");
-            // PORT NOTE: Zig `defer p.popScope()` — reshaped so pop_scope runs before `?` propagates
+            // PORT NOTE: deferred `pop_scope` — reshaped so pop_scope runs before `?` propagates
             let mut fn_or_arrow_data = FnOrArrowDataParse {
                 needs_async_loc: loc,
                 ..Default::default()
@@ -337,7 +336,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         p.lexer.scan_reg_exp()?;
         // always set regex_flags_start to null to make sure we don't accidentally use the wrong value later
-        // PORT NOTE: Zig `defer p.lexer.regex_flags_start = null` — reset after both success and
+        // PORT NOTE: deferred `p.lexer.regex_flags_start = null` — reset after both success and
         // the `next()?` error path. Reshaped: capture, advance, then unconditionally reset before
         // propagating any error from `next()`.
         let value = E::Str::new(p.lexer.raw());
@@ -424,7 +423,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let mut flags = UnaryFlags::default();
-        // Zig: `value.isPropertyAccess()` — `.e_dot, .e_index => true`.
+        // `value.isPropertyAccess()` — `.e_dot, .e_index => true`.
         if matches!(
             value.data,
             ExprData::EIdentifier(_) | ExprData::EDot(_) | ExprData::EIndex(_)
@@ -705,7 +704,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // This will become the new expr
-        // PORT NOTE: Zig allocates E::New with undefined fields then fills via the arena
+        // PORT NOTE: original allocated E::New with undefined fields then filled via the arena
         // pointer. Reshaped: parse target into a local, then construct E::New once.
         let mut target = Expr::EMPTY;
         p.parse_expr_with_flags(Level::Member, flags, &mut target)?;
@@ -764,7 +763,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let dots_loc = p.lexer.loc();
                     p.lexer.next()?;
-                    // PORT NOTE: reshaped for borrowck — Zig wrote into unusedCapacitySlice()[0]
+                    // PORT NOTE: reshaped for borrowck — original wrote into unusedCapacitySlice()[0]
                     // then bumped len; here we parse into a local then push.
                     let mut value = Expr::EMPTY;
                     p.parse_expr_or_bindings(Level::Comma, Some(&mut self_errors), &mut value)?;
@@ -776,7 +775,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 _ => {
-                    // PORT NOTE: reshaped for borrowck — Zig wrote into unusedCapacitySlice()[0]
+                    // PORT NOTE: reshaped for borrowck — original wrote into unusedCapacitySlice()[0]
                     let mut item = Expr::EMPTY;
                     p.parse_expr_or_bindings(Level::Comma, Some(&mut self_errors), &mut item)?;
                     items.push(item);
@@ -846,7 +845,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         while p.lexer.token != T::TCloseBrace {
             if p.lexer.token == T::TDotDotDot {
                 p.lexer.next()?;
-                // PORT NOTE: reshaped for borrowck — Zig wrote into unusedCapacitySlice()[0]
+                // PORT NOTE: reshaped for borrowck — original wrote into unusedCapacitySlice()[0]
                 // with `value: Expr.empty` then parsed into &property.value.?
                 let mut value = Expr::EMPTY;
                 p.parse_expr_or_bindings(Level::Comma, Some(&mut self_errors), &mut value)?;
@@ -1082,5 +1081,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 }
-
-// ported from: src/js_parser/ast/parsePrefix.zig

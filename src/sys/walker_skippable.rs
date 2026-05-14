@@ -11,8 +11,8 @@ fn hash_with_seed(seed: u64, bytes: &[u8]) -> u64 {
     Wyhash11::hash(seed, bytes)
 }
 
-// TODO(port): `DirIterator.NewWrappedIterator(if (Environment.isWindows) .u16 else .u8)` —
-// `dir_iterator::WrappedIterator` is parameterized on the native OS path char in Zig.
+// TODO(port): `dir_iterator::WrappedIterator` should be parameterized on the
+// native OS path char (u16 on Windows, u8 elsewhere).
 type WrappedIterator = dir_iterator::WrappedIterator;
 
 type NameBufferList = Vec<OSPathChar>;
@@ -20,8 +20,8 @@ type NameBufferList = Vec<OSPathChar>;
 pub struct Walker {
     stack: Vec<StackItem>,
     name_buffer: NameBufferList,
-    // PORT NOTE: reshaped for borrowck — Zig stored `skip_filenames`/`skip_dirnames` as
-    // sub-slices borrowed from `skip_all`. Rust stores index ranges into `skip_all` instead
+    // PORT NOTE: reshaped for borrowck — `skip_filenames`/`skip_dirnames` were originally
+    // sub-slices borrowed from `skip_all`. We store index ranges into `skip_all` instead
     // (self-referential slices are not expressible without raw pointers).
     skip_filenames: Range<usize>,
     skip_dirnames: Range<usize>,
@@ -37,8 +37,7 @@ pub struct WalkerEntry<'a> {
     pub dir: Fd,
     pub basename: &'a OSPathSliceZ,
     pub path: &'a OSPathSliceZ,
-    // PORT NOTE: Zig used `std.fs.Dir.Entry.Kind`; mapped to `bun_core::FileKind`
-    // (re-exported as `crate::EntryKind`).
+    // PORT NOTE: uses `bun_core::FileKind` (re-exported as `crate::EntryKind`).
     pub kind: sys::EntryKind,
 }
 
@@ -156,8 +155,7 @@ impl Walker {
                             };
                             {
                                 self.stack.push(StackItem {
-                                    // TODO(port): Zig passed encoding `if windows .u16 else .u8`;
-                                    // assumed native-encoding overload.
+                                    // TODO(port): assumed native-encoding overload.
                                     iter: dir_iterator::iterate(new_dir),
                                     dirname_len: cur_len,
                                 });
@@ -193,8 +191,7 @@ impl Drop for Walker {
     fn drop(&mut self) {
         if !self.stack.is_empty() {
             for item in &mut self.stack[1..] {
-                // Zig had `if (self.stack.items.len != 0)` here, which is always true inside
-                // this branch — preserved as-is.
+                // The non-empty check is always true inside this branch — preserved as-is.
                 item.iter.dir().close();
             }
             // `self.stack` Vec drops itself.
@@ -234,7 +231,7 @@ pub fn walk(
     }
 
     stack.push(StackItem {
-        // TODO(port): Zig passed encoding `if windows .u16 else .u8`; assumed native-encoding overload.
+        // TODO(port): assumed native-encoding overload.
         iter: dir_iterator::iterate(self_),
         dirname_len: 0,
     });
@@ -249,5 +246,3 @@ pub fn walk(
         resolve_unknown_entry_types: false,
     })
 }
-
-// ported from: src/sys/walker_skippable.zig

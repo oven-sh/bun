@@ -16,8 +16,8 @@ use bun_sys::{self as sys, Fd};
 use libc as system;
 
 // ── Darwin spawn extensions missing from the `libc` crate ────────────────
-// Values/signatures match <spawn.h> on macOS 14 SDK; Zig's translate-c picks
-// these up via `bun.c`, but the Rust `libc` crate omits the `_np` variants.
+// Values/signatures match <spawn.h> on macOS 14 SDK; the Rust `libc` crate
+// omits the `_np` variants so we declare them here.
 #[cfg(target_os = "macos")]
 mod darwin_spawn_np {
     use core::ffi::{c_char, c_int};
@@ -87,11 +87,10 @@ mod posix_compat {
         pub const INTR: Errno = Errno(4);
     }
 
-    /// `std.posix.errno(rc)` — Zig: with libc, `rc == -1 ⇒ read __errno`,
-    /// else `.SUCCESS`. The `posix_spawn*` family instead returns the errno
-    /// **directly** (0 on success). The Phase-A draft conflated both call
-    /// conventions; preserve that here so behaviour matches the .zig source
-    /// 1:1, and let Phase-B audit (TODO(port) below).
+    /// Errno classifier: with libc, `rc == -1 ⇒ read __errno`, else `.SUCCESS`.
+    /// The `posix_spawn*` family instead returns the errno **directly** (0 on
+    /// success). The original draft conflated both call conventions; preserve
+    /// that here, and let a later audit split them (TODO(port) below).
     // TODO(port): split into `errno_from_posix_spawn(rc)` (rc IS errno) vs
     // `errno_from_ret(rc)` (rc == -1 ⇒ read libc errno) and route call sites.
     #[inline]
@@ -113,7 +112,7 @@ mod posix_compat {
         CString::new(path).map_err(|_| err!("Unexpected"))
     }
 
-    /// `std.posix.unexpectedErrno` — Zig logs + returns `error.Unexpected`.
+    /// `std.posix.unexpectedErrno` equivalent — log + return an `Unexpected` error.
     pub fn unexpected_errno(_e: Errno) -> Error {
         err!("Unexpected")
     }
@@ -211,7 +210,7 @@ pub mod bun_spawn {
 
         pub fn chdir(&mut self, path: &[u8]) -> Result<(), Error> {
             // previous buffer (if any) is dropped by assignment
-            // TODO(port): CString::new rejects interior NUL; Zig dupeZ did not check
+            // TODO(port): CString::new rejects interior NUL; the original did not check
             self.chdir_buf = Some(CString::new(path).map_err(|_| err!("Unexpected"))?);
             Ok(())
         }
@@ -228,9 +227,9 @@ pub mod bun_spawn {
     }
 
     impl Default for Attr {
-        // Must match Zig field defaults (spawn.zig Attr): `pty_slave_fd: i32 = -1`.
-        // `#[derive(Default)]` would yield `0` (stdin), which makes `spawn_z` take
-        // the PTY path and call setsid()+ioctl(TIOCSCTTY, 0) in the child.
+        // Must default `pty_slave_fd` to `-1`. `#[derive(Default)]` would yield
+        // `0` (stdin), which makes `spawn_z` take the PTY path and call
+        // setsid()+ioctl(TIOCSCTTY, 0) in the child.
         fn default() -> Self {
             Self {
                 detached: false,
@@ -255,11 +254,11 @@ pub mod bun_spawn {
         pub fn set(&mut self, flags: u16) -> Result<(), Error> {
             self.flags = flags;
             // FreeBSD's <spawn.h> has no POSIX_SPAWN_SETSID; bun-spawn.cpp
-            // calls setsid() in the child for `detached`, which process.zig
-            // sets directly on this struct BEFORE calling set(). Preserve
-            // that value when the flag bit isn't available.
-            // TODO(port): Zig used `@hasDecl(bun.c, "POSIX_SPAWN_SETSID")`; approximated
-            // here as unix-not-freebsd. Phase B should use a build-time cfg from bindgen.
+            // calls setsid() in the child for `detached`, which the spawn
+            // process code sets directly on this struct BEFORE calling set().
+            // Preserve that value when the flag bit isn't available.
+            // TODO(port): availability check approximated here as unix-not-freebsd.
+            // Should use a build-time cfg from bindgen.
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // glibc/musl/bionic <spawn.h> all define POSIX_SPAWN_SETSID as 0x80;
@@ -281,7 +280,6 @@ pub mod bun_spawn {
     }
 }
 
-// mostly taken from zig's posix_spawn.zig
 pub mod posix_spawn {
     use super::bun_spawn;
     use super::*;
@@ -351,12 +349,11 @@ pub mod posix_spawn {
             spawn_errno(errno(unsafe {
                 system::posix_spawnattr_getflags(&self.attr, &mut flags)
             }))?;
-            Ok(flags as u16) // Zig: `@as(u16, @bitCast(flags))`
+            Ok(flags as u16) // bitcast c_short -> u16
         }
 
         pub fn set(&mut self, flags: u16) -> Result<(), Error> {
-            // Zig: `@as(c_short, @bitCast(flags))` — `as` between same-width
-            // signed/unsigned is the bitcast.
+            // `as` between same-width signed/unsigned is a bitcast.
             let flags_s: c_short = flags as c_short;
             // SAFETY: self.attr is a live posix_spawnattr_t
             spawn_errno(errno(unsafe {
@@ -419,7 +416,7 @@ pub mod posix_spawn {
             flags: u32,
             mode: mode_t,
         ) -> Result<(), Error> {
-            // Zig: `@as(c_int, @bitCast(flags))`
+            // bitcast u32 -> c_int
             let flags_c: c_int = flags as c_int;
             // SAFETY: self.actions is live; path is NUL-terminated
             spawn_errno(errno(unsafe {
@@ -496,7 +493,7 @@ pub mod posix_spawn {
     pub type Actions = bun_spawn::Actions;
     #[cfg(unix)]
     pub type Attr = bun_spawn::Attr;
-    // TODO(b2-blocked): not(unix) Actions/Attr aliased PosixSpawn* in the Zig
+    // TODO(b2-blocked): not(unix) Actions/Attr aliased PosixSpawn* in an early
     // draft, but Windows goes through `process.rs::spawn_process_windows`
     // (libuv), never these. Leave undeclared on Windows for now.
 
@@ -520,7 +517,7 @@ pub mod posix_spawn {
         // SAFETY: path is NUL-terminated; argv/envp are NULL-terminated arrays of C strings
         let rc =
             unsafe { posix_spawn_bun(&raw mut pid, path.as_ptr(), &raw const req, argv, envp) };
-        let _ = &mut req; // keep req alive across the call (matches Zig taking &req of a local copy)
+        let _ = &mut req; // keep the local copy of req alive across the call
 
         if cfg!(debug_assertions) {
             // SAFETY: argv has at least one element (the NULL terminator)
@@ -857,8 +854,8 @@ pub mod posix_spawn {
     ) -> sys::Result<WaitPidResult> {
         type PidStatus = c_int;
         let mut status: PidStatus = 0;
-        // PORT NOTE: reshaped for borrowck — Zig passes the same `?*Rusage` every loop
-        // iteration via @ptrCast(usage); convert once to a raw ptr that is Copy.
+        // PORT NOTE: reshaped for borrowck — pass the same optional `*mut Rusage`
+        // every loop iteration; convert once to a raw ptr that is Copy.
         let usage_ptr: *mut system::rusage = match usage {
             Some(u) => std::ptr::from_mut::<process::Rusage>(u).cast(),
             None => ptr::null_mut(),
@@ -895,5 +892,3 @@ pub mod posix_spawn {
 }
 
 use crate::spawn_process as process;
-
-// ported from: src/runtime/api/bun/spawn.zig

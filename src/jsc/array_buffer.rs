@@ -46,8 +46,8 @@ impl Default for ArrayBuffer {
 
 // TODO(port): move to <jsc>_sys
 //
-// PORT NOTE (aliasing): Zig declares these with `*jsc.JSGlobalObject` (mutable
-// pointer), but `JSGlobalObject` is an opaque ZST handle on the Rust side — the
+// PORT NOTE (aliasing): the C++ side uses a mutable `JSGlobalObject*`, but
+// `JSGlobalObject` is an opaque ZST handle on the Rust side — the
 // `&JSGlobalObject` reference covers zero bytes, and all mutation happens inside
 // C++ on memory Rust never observes. Declaring the FFI parameter as
 // `*const JSGlobalObject` (ABI-identical) lets `&JSGlobalObject` coerce directly
@@ -104,7 +104,7 @@ unsafe extern "C" {
     // ABI-identical to non-null `*const`); `ptr`/`len`/`ctx` are opaque
     // round-trip pointers C++ stores into the new `ArrayBufferContents` and
     // forwards to `dealloc` on GC (never dereferenced as Rust data on this
-    // path) — same contract as `Zig__GlobalObject__create`'s `console`/`worker_ptr`.
+    // path) — same contract as `Bun__GlobalObject__create`'s `console`/`worker_ptr`.
     // The public wrappers (`make_*_with_bytes_no_copy`) are already safe and
     // forward these raw pointers verbatim, so the validity obligation lives at
     // that layer.
@@ -243,7 +243,7 @@ impl ArrayBuffer {
             return Ok(result);
         }
 
-        // bun_sys::mmap takes raw i32 prot/flags (mirrors Zig std.posix.PROT / .{ .TYPE = .SHARED }).
+        // bun_sys::mmap takes raw i32 prot/flags (POSIX PROT_*/MAP_SHARED).
         // Windows impl ignores these and returns ENOTSUP.
         #[cfg(unix)]
         let (prot, map_flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);
@@ -267,7 +267,7 @@ impl ArrayBuffer {
     }
 
     pub const EMPTY: ArrayBuffer = ArrayBuffer {
-        ptr: core::ptr::NonNull::<u8>::dangling().as_ptr(), // Zig: &.{} (non-null empty)
+        ptr: core::ptr::NonNull::<u8>::dangling().as_ptr(), // non-null empty sentinel
         len: 0,
         byte_len: 0,
         value: JSValue::ZERO,
@@ -280,9 +280,9 @@ impl ArrayBuffer {
 
     #[inline]
     pub fn stream(self) -> ArrayBufferStream<'static> {
-        // TODO(port): lifetime — Zig returns a stream over self.slice() (raw ptr-backed).
-        // Spec routes through `slice()` which yields `&.{}` for detached buffers; mirror
-        // that here to avoid passing a null ptr to `from_raw_parts_mut` (UB even at len 0).
+        // TODO(port): lifetime — this returns a stream over self.slice() (raw ptr-backed).
+        // Route through `slice()`, which yields an empty slice for detached buffers,
+        // to avoid passing a null ptr to `from_raw_parts_mut` (UB even at len 0).
         if self.is_detached() {
             return std::io::Cursor::new(&mut [][..]);
         }
@@ -292,10 +292,9 @@ impl ArrayBuffer {
         std::io::Cursor::new(slice)
     }
 
-    // PORT NOTE: Zig took `comptime kind: JSType`. Restored via
-    // `#![feature(adt_const_params)]` — `JSType` derives `ConstParamTy`, so
-    // `KIND` is a true const-generic and the `match` const-folds (Zig's
-    // `@compileError` arm becomes a post-mono `panic!` on the unreachable arm).
+    // PORT NOTE: `KIND` is a const-generic via `#![feature(adt_const_params)]` —
+    // `JSType` derives `ConstParamTy`, so the `match` const-folds and the
+    // unreachable arm becomes a post-mono `panic!`.
     pub fn create<const KIND: JSType>(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
         crate::mark_binding!();
         match KIND {
@@ -309,7 +308,7 @@ impl ArrayBuffer {
             JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
                 Bun__createArrayBufferForCopy(global, bytes.as_ptr().cast(), bytes.len())
             }),
-            _ => panic!("ArrayBuffer::create: KIND not implemented"), // Zig: @compileError
+            _ => panic!("ArrayBuffer::create: KIND not implemented"),
         }
     }
 
@@ -326,7 +325,7 @@ impl ArrayBuffer {
             JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
                 Bun__createArrayBufferForCopy(global, ptr::null(), 0)
             }),
-            _ => panic!("ArrayBuffer::create_empty: KIND not implemented"), // Zig: @compileError
+            _ => panic!("ArrayBuffer::create_empty: KIND not implemented"),
         }
     }
 
@@ -360,7 +359,7 @@ impl ArrayBuffer {
             JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || {
                 Bun__allocArrayBufferForCopy(global, len as usize, &mut ptr_out)
             })?,
-            _ => panic!("ArrayBuffer::alloc: KIND not implemented"), // Zig: @compileError
+            _ => panic!("ArrayBuffer::alloc: KIND not implemented"),
         };
         // SAFETY: Bun__alloc*ForCopy writes a valid `len`-byte buffer pointer into ptr_out on success.
         let slice = unsafe { bun_core::ffi::slice_mut(ptr_out, len as usize) };
@@ -399,7 +398,7 @@ impl ArrayBuffer {
                 let owned = unsafe { bun_core::heap::take(bytes as *mut [u8]) };
                 jsc::JSUint8Array::from_bytes(global, owned)
             }
-            _ => unreachable!("Not implemented yet"), // Zig: @compileError
+            _ => unreachable!("Not implemented yet"),
         }
     }
 
@@ -459,10 +458,9 @@ impl ArrayBuffer {
                 self.ptr.cast(),
                 self.byte_len,
                 Some(MarkedArrayBuffer_deallocator),
-                // PORT NOTE: Zig passes `&bun.default_allocator` as opaque ctx; the
-                // deallocator ignores it (mi_free needs no ctx). Any non-null
-                // sentinel would do; pass the data ptr itself for symmetry with
-                // `MarkedArrayBuffer::to_js`.
+                // PORT NOTE: the deallocator ignores `ctx` (mi_free needs no ctx).
+                // Any non-null sentinel would do; pass the data ptr itself for
+                // symmetry with `MarkedArrayBuffer::to_js`.
                 self.ptr.cast(),
             );
         }
@@ -550,10 +548,9 @@ impl ArrayBuffer {
     /// ```js
     ///    new ArrayBuffer(view.buffer, view.byteOffset, view.byteLength)
     /// ```
-    // PORT NOTE: Zig `byteSlice(self: *const @This()) []u8` is sound under Zig's
-    // aliasing model but cannot be transliterated to `&self -> &mut [_]` in Rust
-    // (forbidden aliased-`&mut` per PORTING.md §Forbidden). Split into a shared
-    // accessor (`&self -> &[u8]`) and an exclusive one (`&mut self -> &mut [u8]`).
+    // PORT NOTE: `&self -> &mut [_]` would be a forbidden aliased-`&mut` in Rust
+    // (per PORTING.md §Forbidden). Split into a shared accessor
+    // (`&self -> &[u8]`) and an exclusive one (`&mut self -> &mut [u8]`).
     #[inline]
     pub fn byte_slice(&self) -> &[u8] {
         if self.is_detached() {
@@ -589,19 +586,18 @@ impl ArrayBuffer {
         self.byte_slice_mut()
     }
 
-    /// Zig `asU16`: `@alignCast(asU16Unaligned())`. `@alignCast` is a checked
-    /// cast in Zig safe builds, so we debug-assert the same precondition here
-    /// before handing out a naturally-aligned `&mut [u16]`. Callers that cannot
-    /// guarantee alignment must use [`as_u16_unaligned`] instead.
+    /// Aligned variant of [`as_u16_unaligned`]. The alignment precondition is
+    /// debug-asserted before handing out a naturally-aligned `&mut [u16]`.
+    /// Callers that cannot guarantee alignment must use [`as_u16_unaligned`]
+    /// instead.
     #[inline]
     pub fn as_u16(&mut self) -> &mut [u16] {
         bun_core::Unaligned::slice_align_cast_mut(self.as_u16_unaligned())
     }
 
-    /// Zig `asU16Unaligned() []align(1) u16`. Returns a slice of
-    /// [`Unaligned<u16>`](bun_core::Unaligned) — Rust forbids forming
-    /// `&[u16]` over a possibly-odd address, so the align(1) wrapper carries
-    /// the "load via `read_unaligned`" obligation to the caller.
+    /// Returns a slice of [`Unaligned<u16>`](bun_core::Unaligned) — Rust forbids
+    /// forming `&[u16]` over a possibly-odd address, so the align(1) wrapper
+    /// carries the "load via `read_unaligned`" obligation to the caller.
     #[inline]
     pub fn as_u16_unaligned(&mut self) -> &mut [bun_core::Unaligned<u16>] {
         if self.is_detached() {
@@ -654,9 +650,9 @@ impl Default for ArrayBufferStrong {
 
 impl ArrayBufferStrong {
     pub fn clear(&mut self) {
-        // TODO(port): Zig source references `this.ref` which is not a field on this struct
-        // (only `array_buffer` and `held` exist). This appears to be dead/broken code upstream.
-        // Porting as a no-op matching the orelse-return on a missing field.
+        // TODO(port): the original referenced `this.ref`, which is not a field
+        // on this struct (only `array_buffer` and `held` exist). This appears to
+        // be dead/broken code upstream. Ported as a no-op.
         let _ = self;
     }
 
@@ -669,14 +665,14 @@ impl ArrayBufferStrong {
     }
 }
 
-// Zig `deinit` only calls `this.held.deinit()`; `crate::Strong` already impls `Drop`,
+// Cleanup only needs to release `held`; `crate::Strong` already impls `Drop`,
 // so no explicit `impl Drop for ArrayBufferStrong` is needed.
 
 // ──────────────────────────────────────────────────────────────────────────
 // BinaryType
 // ──────────────────────────────────────────────────────────────────────────
 
-#[repr(u8)] // Zig: enum(u4) — Rust has no u4; u8 is the smallest backing.
+#[repr(u8)] // smallest backing repr (only 14 variants)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
 pub enum BinaryType {
     Buffer,
@@ -865,11 +861,11 @@ impl TypedArrayType {
         }
     }
 
-    // LAYERING: Zig's `toNapi` (array_buffer.zig:524) maps to
-    // `napi_typedarray_type`, which is defined in `bun_runtime` (a higher-tier
-    // crate that depends on `bun_jsc`). The conversion lives next to its target
-    // type as `napi_typedarray_type::from_typed_array_type` in
-    // `bun_runtime::napi` to avoid the dep cycle.
+    // LAYERING: the `toNapi` conversion maps to `napi_typedarray_type`, which is
+    // defined in `bun_runtime` (a higher-tier crate that depends on `bun_jsc`).
+    // The conversion lives next to its target type as
+    // `napi_typedarray_type::from_typed_array_type` in `bun_runtime::napi` to
+    // avoid the dep cycle.
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -878,9 +874,9 @@ impl TypedArrayType {
 
 pub struct MarkedArrayBuffer {
     pub buffer: ArrayBuffer,
-    // TODO(port): Zig stores `?std.mem.Allocator` to track ownership of the byte buffer.
-    // In Rust the global allocator is implicit; we keep a bool flag so `destroy` knows
-    // whether to mi_free the backing storage.
+    // TODO(port): the original stored an optional allocator to track ownership of
+    // the byte buffer. In Rust the global allocator is implicit; we keep a bool
+    // flag so `destroy` knows whether to mi_free the backing storage.
     pub owns_buffer: bool,
 }
 
@@ -893,8 +889,8 @@ impl Default for MarkedArrayBuffer {
     }
 }
 
-// TODO(port): Zig `ArrayBuffer.Stream = std.io.FixedBufferStream([]u8)`.
-// `std::io::Cursor<&mut [u8]>` is the closest in-memory equivalent.
+// TODO(port): a fixed-buffer in-memory stream over `[]u8`.
+// `std::io::Cursor<&mut [u8]>` is the closest equivalent.
 // Hoisted to module scope (inherent associated type aliases are unstable).
 pub type ArrayBufferStream<'a> = std::io::Cursor<&'a mut [u8]>;
 
@@ -974,8 +970,7 @@ impl MarkedArrayBuffer {
     pub fn to_node_buffer(&self, global: &JSGlobalObject) -> JSValue {
         // `JSValue::create_buffer` takes `&mut [u8]` (ownership transfers to JSC
         // via the deallocator). `ArrayBuffer` is `Copy` over a raw pointer, so
-        // copy the descriptor and project a mutable slice — matches Zig
-        // `jsc.JSValue.createBuffer(ctx, this.buffer.byteSlice())`.
+        // copy the descriptor and project a mutable slice.
         let mut buf = self.buffer;
         JSValue::create_buffer(global, buf.byte_slice_mut())
     }
@@ -1013,10 +1008,10 @@ impl MarkedArrayBuffer {
 #[allow(non_upper_case_globals)]
 pub use bun_alloc::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
 
-// LAYERING: `BlobArrayBuffer_deallocator` (array_buffer.zig:646) releases a
-// `Blob::Store` ref. `Store` is a `bun_runtime` type, so the `#[no_mangle]`
-// export lives next to it at `bun_runtime::webcore::blob::Store` — `bun_jsc`
-// cannot own this symbol without a dep cycle. C++ links by name only.
+// LAYERING: `BlobArrayBuffer_deallocator` releases a `Blob::Store` ref.
+// `Store` is a `bun_runtime` type, so the `#[no_mangle]` export lives next to
+// it at `bun_runtime::webcore::blob::Store` — `bun_jsc` cannot own this symbol
+// without a dep cycle. C++ links by name only.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Free functions
@@ -1065,8 +1060,8 @@ bun_opaque::opaque_ffi! {
     pub struct JSCArrayBuffer;
 }
 
-// Zig: `pub const Ref = bun.ptr.ExternalShared(Self)` with
-// `external_shared_descriptor = struct { ref, deref }` (array_buffer.zig:673).
+/// External-shared smart pointer for `JSC::ArrayBuffer` (refcount managed by
+/// the `ext_ref`/`ext_deref` descriptor below).
 pub type JSCArrayBufferRef = bun_ptr::ExternalShared<JSCArrayBuffer>;
 
 // SAFETY: `JSC__ArrayBuffer__ref`/`deref` operate on JSC's internal
@@ -1092,5 +1087,3 @@ impl JSCArrayBuffer {
         }
     }
 }
-
-// ported from: src/jsc/array_buffer.zig

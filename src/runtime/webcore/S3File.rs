@@ -384,8 +384,8 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
         if aws_options.changed_credentials {
             break 'brk blob::Store::init_s3(path, None, aws_options.credentials).expect("oom");
         } else {
-            // PORT NOTE: Zig `initS3WithReferencedCredentials` bumps the
-            // intrusive ref on `default_credentials` (a `*S3Credentials`).
+            // PORT NOTE: `initS3WithReferencedCredentials` originally bumped
+            // an intrusive ref on `default_credentials` (a `*S3Credentials`).
             // The Rust `Store::S3` field is `Arc<S3Credentials>` (separate rc
             // layer), so we can't share the existing intrusive allocation —
             // deep-clone the value instead and let `init_s3` `Arc::new` it.
@@ -591,7 +591,7 @@ impl S3BlobStatTask {
                     .resolve(global, JSValue::js_number(stat_result.size as f64))?;
             }
             s3::S3StatResult::NotFound(err) | s3::S3StatResult::Failure(err) => {
-                // TODO(port): Zig binds same payload name for .not_found and .failure arms; verify NotFound carries an error payload
+                // TODO(port): the `.not_found` and `.failure` arms share a payload shape; verify NotFound carries an error payload
                 let value = s3_error_to_js_with_async_stack(
                     &err,
                     global,
@@ -728,8 +728,7 @@ impl S3BlobStatTask {
 }
 
 // PORT NOTE: `Method.fromJS` lives in `bun_http_jsc` so `bun_http_types` stays
-// JSC-free. Thin local alias keeps the `getPresignUrlFrom` body diff-stable
-// against the Zig.
+// JSC-free. Thin local alias keeps the `getPresignUrlFrom` body readable.
 #[inline]
 fn method_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Method>> {
     bun_http_jsc::method_jsc::from_js(global, value)
@@ -753,7 +752,6 @@ pub fn get_presign_url_from(
     let mut expires: usize = 86400; // 1 day default
 
     let s3 = this.store.get().as_ref().unwrap().data.as_s3();
-    // Zig: `.{ .credentials = s3.getCredentials().*, .request_payer = s3.request_payer }`.
     // `acl`/`storage_class`/`content_*` deliberately stay at their `None`
     // defaults here — they are only seeded from the store when extra_options
     // is provided (via `getCredentialsWithOptions` below).
@@ -1011,8 +1009,8 @@ pub mod exports {
         bun_jsc::to_js_host_call(global, || super::get_presign_url(this, global, callframe))
     }
 
-    /// `@export(&getStat, .{ .name = "JSS3File__stat" })` — direct
-    /// `callconv(jsc.conv)` method (Zig body already swallows JsError → .zero).
+    /// Exported as `JSS3File__stat` — direct `callconv(jsc.conv)` method
+    /// (the body already swallows JsError → .zero).
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
     pub fn JSS3File__stat(
@@ -1044,5 +1042,3 @@ bun_jsc::jsc_abi_extern! {
 pub fn create_js_s3_file(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
     BUN__createJSS3File(global, callframe)
 }
-
-// ported from: src/runtime/webcore/S3File.zig

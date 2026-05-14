@@ -148,9 +148,9 @@ export function getJS2NativeCPP() {
     .filter(x => x.type === "rust")
     .flatMap(
       call => (
-        externs.push(`extern "C" SYSV_ABI JSC::EncodedJSValue ${symbol(call)}_workaround(Zig::GlobalObject*);` + "\n"),
+        externs.push(`extern "C" SYSV_ABI JSC::EncodedJSValue ${symbol(call)}_workaround(Bun::GlobalObject*);` + "\n"),
         [
-          `static ALWAYS_INLINE JSC::JSValue ${symbol(call)}(Zig::GlobalObject* global) {`,
+          `static ALWAYS_INLINE JSC::JSValue ${symbol(call)}(Bun::GlobalObject* global) {`,
           `    return JSValue::decode(${symbol(call)}_workaround(global));`,
           `}` + "\n\n",
         ]
@@ -169,7 +169,7 @@ export function getJS2NativeCPP() {
             })});`,
           ),
         "") || "",
-        `static ALWAYS_INLINE JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
+        `static ALWAYS_INLINE JSC::JSValue ${x.symbol_generated}(Bun::GlobalObject* globalObject) {`,
         `  return JSC::JSFunction::create(globalObject->vm(), globalObject, ${x.call_length}, ${JSON.stringify(
           x.display_name,
         )}_s, ${symbol({
@@ -199,10 +199,10 @@ export function getJS2NativeCPP() {
       .filter(x => x.type === "bind")
       .map(
         x =>
-          `extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${basename(x.filename.replace(/\.bind\.ts$/, ""))}_${x.symbol}(Zig::GlobalObject*);`,
+          `extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${basename(x.filename.replace(/\.bind\.ts$/, ""))}_${x.symbol}(Bun::GlobalObject*);`,
       ),
-    `typedef JSC::JSValue (*JS2NativeFunction)(Zig::GlobalObject*);`,
-    `static ALWAYS_INLINE JSC::JSValue callJS2Native(int32_t index, Zig::GlobalObject* global) {`,
+    `typedef JSC::JSValue (*JS2NativeFunction)(Bun::GlobalObject*);`,
+    `static ALWAYS_INLINE JSC::JSValue callJS2Native(int32_t index, Bun::GlobalObject* global) {`,
     ` switch(index) {`,
     ...nativeCalls.map(
       x =>
@@ -229,7 +229,7 @@ export function getJS2NativeCPP() {
 // the C++ side declares in GeneratedJS2Native.h. The C++ output is invariant;
 // only the implementer of the symbol changes.
 //
-// Two ABI shapes (mirroring the historical Zig codegen output exactly):
+// Two ABI shapes (matching what GeneratedJS2Native.h declares):
 //   • nativeCalls (type "rust")  → `${sym}_workaround(global) -> JSValue`
 //   • wrapperCalls (type "rust") → `${sym}(global, callframe) -> JSValue`
 //

@@ -34,10 +34,10 @@ pub mod mysql_native_password {
         }
 
         // Stage 1: SHA1(password)
-        // TODO(port): Zig passed `jsc.VirtualMachine.get().rareData().boringEngine()`;
-        // engine is optional and bun_jsc is higher-tier — pass null (matches
-        // bun_install::integrity / bun_exe_format::macho precedent). Revisit if
-        // profiling shows the engine matters here (it accelerates HW SHA only).
+        // TODO(port): the BoringSSL engine arg is optional and bun_jsc is
+        // higher-tier — pass null (matches bun_install::integrity /
+        // bun_exe_format::macho precedent). Revisit if profiling shows the
+        // engine matters here (it accelerates HW SHA only).
         SHA1::hash(password, &mut stage1, core::ptr::null_mut());
 
         // Stage 2: SHA1(SHA1(password))
@@ -95,8 +95,8 @@ pub mod caching_sha2_password {
         Ok(result)
     }
 
-    // Zig: `enum(u8) { success = 0x03, continue_auth = 0x04, _ }` — non-exhaustive,
-    // so represent as a transparent u8 newtype rather than a closed Rust enum.
+    // The wire byte is open (any u8) — represent as a transparent u8 newtype
+    // rather than a closed Rust enum.
     #[repr(transparent)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug)]
     pub struct FastAuthStatus(pub u8);
@@ -124,8 +124,7 @@ pub mod caching_sha2_password {
     }
 
     impl Response {
-        // Zig `deinit` only freed `self.data` — Data's own Drop handles that, so no
-        // explicit Drop impl needed here.
+        // No explicit Drop impl needed — `Data`'s own Drop handles freeing.
 
         // TODO(port): narrow error set
         pub fn decode_internal<Context: ReaderContext>(
@@ -144,7 +143,7 @@ pub mod caching_sha2_password {
             Ok(())
         }
 
-        // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
+        // See Decode trait in src/sql/mysql/protocol/NewReader.rs
         pub fn decode<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
@@ -291,7 +290,7 @@ pub mod caching_sha2_password {
             Ok(())
         }
 
-        // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
+        // See src/sql/mysql/protocol/NewWriter.rs
         pub fn write<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,
@@ -306,7 +305,7 @@ pub mod caching_sha2_password {
     }
 
     impl PublicKeyResponse {
-        // Zig `deinit` only freed `self.data` — Data's own Drop handles that.
+        // No explicit Drop impl needed — `Data`'s own Drop handles freeing.
 
         // TODO(port): narrow error set
         pub fn decode_internal<Context: ReaderContext>(
@@ -342,7 +341,7 @@ pub mod caching_sha2_password {
             Ok(())
         }
 
-        // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
+        // See src/sql/mysql/protocol/NewWriter.rs
         pub fn write<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,
@@ -351,5 +350,3 @@ pub mod caching_sha2_password {
         }
     }
 }
-
-// ported from: src/sql/mysql/protocol/Auth.zig

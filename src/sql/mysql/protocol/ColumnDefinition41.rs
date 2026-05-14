@@ -43,7 +43,7 @@ impl Default for ColumnDefinition41 {
 }
 
 bitflags::bitflags! {
-    // Zig `packed struct` field order is LSB-first; `_padding: u2` rounds to 16 bits.
+    // Bit values are LSB-first; the wire format pads to 16 bits.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
     pub struct ColumnFlags: u16 {
         const NOT_NULL         = 1 << 0;
@@ -75,8 +75,8 @@ impl ColumnFlags {
     }
 }
 
-// Zig `deinit` only deinit'd owned `Data`/`ColumnIdentifier` fields — their `Drop` impls
-// handle that automatically in Rust, so no explicit `impl Drop` is needed here.
+// Owned `Data`/`ColumnIdentifier` fields are cleaned up by their own `Drop`
+// impls, so no explicit `impl Drop` is needed here.
 
 impl ColumnDefinition41 {
     // TODO(port): narrow error set
@@ -126,25 +126,22 @@ impl ColumnDefinition41 {
         self.fixed_length_fields_length = reader.encoded_len_int()?;
         self.character_set = reader.int::<u16>()?;
         self.column_length = reader.int::<u32>()?;
-        // PORT NOTE: Zig FieldType is a NON-exhaustive `enum(u8)` so `@enumFromInt` accepts
-        // any byte. Rust `#[repr(u8)] enum` is exhaustive, so unknown bytes go through
-        // `from_raw`'s match and error here instead. This diverges from Zig (which keeps
-        // the value) but is sound; if a new server sends an unknown type, we fail loudly
-        // rather than carry an invalid discriminant. TODO(b2): switch FieldType to a
-        // `#[repr(transparent)] struct(u8)` newtype to match Zig's non-exhaustive
-        // semantics exactly.
+        // PORT NOTE: the wire byte is open (any u8 is a valid type id). Rust
+        // `#[repr(u8)] enum` is exhaustive, so unknown bytes go through
+        // `from_raw`'s match and error here instead. If a new server sends an
+        // unknown type, we fail loudly rather than carry an invalid
+        // discriminant. TODO(b2): switch FieldType to a
+        // `#[repr(transparent)] struct(u8)` newtype to keep the raw value.
         let type_byte = reader.int::<u8>()?;
         self.column_type = FieldType::from_raw(type_byte)
             .ok_or_else(|| bun_core::err!("UnknownMySQLFieldType"))?;
         self.flags = ColumnFlags::from_int(reader.int::<u16>()?);
         self.decimals = reader.int::<u8>()?;
 
-        // PORT NOTE: Zig called `name_or_index.deinit()` before reassigning; in Rust the
-        // assignment below drops the previous value automatically.
-        // PORT NOTE: reshaped for borrowck — Zig passed `this.name` by value; pass by ref here.
-        // PORT NOTE: `ColumnIdentifier::init` consumes its `Data` (Zig moved by-value
-        // and `errdefer name.deinit()`). We can't move `self.name` while `&mut self`
-        // is borrowed, so feed it a Temporary view of the same bytes.
+        // The assignment below drops the previous `name_or_index` automatically.
+        // PORT NOTE: reshaped for borrowck — `ColumnIdentifier::init` consumes
+        // its `Data`, but we can't move `self.name` while `&mut self` is
+        // borrowed, so feed it a Temporary view of the same bytes.
         let name_view = Data::Temporary(bun_ptr::RawSlice::new(self.name.slice()));
         self.name_or_index = ColumnIdentifier::init(name_view)?;
 
@@ -155,9 +152,8 @@ impl ColumnDefinition41 {
         Ok(())
     }
 
-    // TODO(port): `decoderWrap(ColumnDefinition41, decodeInternal).decode` is a comptime
-    // type-generator that produces a `.decode` wrapper. Phase B: express as a trait impl
-    // (e.g. `impl Decode for ColumnDefinition41`) or a macro from `new_reader`.
+    // TODO(port): express as a trait impl (e.g. `impl Decode for
+    // ColumnDefinition41`) or a macro from `new_reader`.
     pub fn decode<Context: ReaderContext>(
         &mut self,
         reader: &mut NewReader<Context>,
@@ -165,5 +161,3 @@ impl ColumnDefinition41 {
         self.decode_internal(reader)
     }
 }
-
-// ported from: src/sql/mysql/protocol/ColumnDefinition41.zig

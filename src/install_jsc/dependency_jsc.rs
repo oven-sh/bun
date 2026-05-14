@@ -1,7 +1,6 @@
-//! JSC bridges for `bun_install::Dependency`. In Zig this was aliased back into
-//! `src/install/dependency.zig` so call sites were unchanged; in Rust the
-//! `to_js`/`from_js` surface lives here as extension-trait methods on the base
-//! type (see PORTING.md "Idiom map" — `*_jsc` alias lines are deleted).
+//! JSC bridges for `bun_install::Dependency`. The `to_js`/`from_js` surface
+//! lives here as extension-trait methods on the base type (see PORTING.md
+//! "Idiom map" — `*_jsc` alias lines are deleted).
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
@@ -178,7 +177,7 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     };
     let name_slice = name_value.to_slice(global)?;
 
-    // PORT NOTE: reshaped for borrowck — Zig built `name`/`alias`/`buf` as
+    // PORT NOTE: reshaped for borrowck — `name`/`alias`/`buf` were originally
     // overlapping slices into a StringBuilder's single allocation. Rust's
     // `StringBuilder::append` returns `&[u8]` borrowing `&mut self`, so we
     // can't hold two appended slices at once. Instead, build into an owned
@@ -230,5 +229,3 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
 
     version_to_js(&dep, buf, global)
 }
-
-// ported from: src/install_jsc/dependency_jsc.zig

@@ -1,7 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 #[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter as ConsoleFormatter;
-use bun_core::ZigString;
+use bun_core::UnsafeStringView;
 
 use super::DiffFormatter;
 use super::Expect;
@@ -46,8 +46,8 @@ pub fn to_have_property(
     }
 
     let not = this.flags.get().not();
-    let mut path_string = ZigString::EMPTY;
-    expected_property_path.to_zig_string(&mut path_string, global)?;
+    let mut path_string = UnsafeStringView::EMPTY;
+    expected_property_path.to_unsafe_string_view(&mut path_string, global)?;
 
     let mut pass = !value.is_undefined_or_null();
     let mut received_property: JSValue = JSValue::ZERO;
@@ -69,9 +69,8 @@ pub fn to_have_property(
     }
 
     // handle failure
-    // PORT NOTE: Zig shares one `*Formatter` across both `to_fmt` calls; in Rust each `to_fmt`
-    // takes `&mut Formatter`, so use a second formatter for the second value (matches toBe.rs /
-    // toInclude.rs / toStartWith.rs).
+    // PORT NOTE: each `to_fmt` takes `&mut Formatter`, so use a second formatter for the second
+    // value (matches toBe.rs / toInclude.rs / toStartWith.rs).
     let mut formatter = super::make_formatter(global);
     let mut formatter2 = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.
@@ -123,7 +122,7 @@ pub fn to_have_property(
             "\n\nExpected path: <green>{}<r>\n\nExpected value: <green>{}<r>\n\n",
             "Unable to find property\n",
         );
-        // TODO(port): format_args! requires a literal; FMT inlined below to match Zig `++` concat.
+        // TODO(port): format_args! requires a literal; FMT inlined below.
         return this.throw(
             global,
             signature,
@@ -145,5 +144,3 @@ pub fn to_have_property(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveProperty.zig

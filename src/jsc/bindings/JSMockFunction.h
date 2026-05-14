@@ -46,7 +46,7 @@ public:
     // This list includes activeSpies
     JSC::Strong<JSC::Unknown> activeMocks;
 
-    // Called by Zig::GlobalObject::visitChildren
+    // Called by Bun::GlobalObject::visitChildren
     template<typename Visitor>
     void visit(Visitor& visitor);
 };

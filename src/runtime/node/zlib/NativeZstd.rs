@@ -22,7 +22,7 @@ mod _impl {
     // `src/codegen/generate-classes.ts` for `values: [...]` in `zlib.classes.ts`.
 
     /// Placeholder WorkPoolTask callback — overwritten by CompressionStream::write
-    /// before the task is ever scheduled (mirrors Zig `.{ .callback = undefined }`).
+    /// before the task is ever scheduled.
     /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
     /// struct-init site; the body never dereferences the pointer.
     fn unset_task_callback(_: *mut WorkPoolTask) {
@@ -36,7 +36,7 @@ mod _impl {
     #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
     pub struct NativeZstd {
-        // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive single-thread refcount.
+        // Intrusive single-thread refcount.
         pub ref_count: Cell<u32>,
         // LIFETIMES.tsv: JSC_BORROW. The global outlives this m_ctx payload;
         // `BackRef` centralises the single unsafe deref so the trait impl is safe.
@@ -53,16 +53,15 @@ mod _impl {
         pub task: JsCell<WorkPoolTask>,
     }
 
-    // `pub const ref/deref = RefCount.ref/deref;` — wired via `CompressionStreamImpl::{ref_,deref}`
-    // below; deref-to-zero reconstitutes the Box (running Drop) and frees, mirroring `bun.destroy`.
+    // ref/deref are wired via `CompressionStreamImpl::{ref_,deref}` below;
+    // deref-to-zero reconstitutes the Box (running Drop) and frees.
     //
-    // `pub const js = jsc.Codegen.JSNativeZstd; toJS/fromJS/fromJSDirect = js.*;` — provided by
-    // `#[bun_jsc::JsClass]` derive (wires to_js / from_js / from_js_direct).
+    // toJS/fromJS/fromJSDirect are provided by the `#[bun_jsc::JsClass]` derive.
     //
-    // `const impl = CompressionStream(@This());` and the `pub const write = impl.write; ...` re-exports
-    // resolve through the `CompressionStreamImpl` trait below — `CompressionStream::<NativeZstd>` then
-    // supplies write / run_from_js_thread / write_sync / reset / close / set_on_error / get_on_error /
-    // finalize as the generic mixin, just like the Zig comptime fn.
+    // The CompressionStream mixin's write/writeSync/reset/close/etc. resolve
+    // through the `CompressionStreamImpl` trait below — `CompressionStream::<NativeZstd>`
+    // then supplies write / run_from_js_thread / write_sync / reset / close /
+    // set_on_error / get_on_error / finalize as the generic mixin.
 
     impl NativeZstd {
         // C-ABI shim is emitted by `#[bun_jsc::JsClass]` (calls `<Self>::constructor`);
@@ -511,7 +510,7 @@ mod _impl {
 
         #[inline]
         fn state_ptr(&self) -> *mut c_void {
-            // Mirrors Zig `@ptrCast(this.state)` on `?*anyopaque` — passes null through if unset.
+            // Passes null through if unset.
             self.state.unwrap_or(ptr::null_mut())
         }
     }
@@ -520,10 +519,7 @@ mod _impl {
     // Stamps `impl CompressionContext for Context`, `impl Taskable`/
     // `CompressionStreamImpl for NativeZstd`, and `pub mod js { … }` so
     // `CompressionStream::<NativeZstd>::*` (write/writeSync/reset/close/
-    // emit_error/…) can reach this struct's fields the way the Zig comptime mixin
-    // did via duck-typed `this.field` access.
+    // emit_error/…) can reach this struct's fields.
     crate::__impl_compression_stream!(NativeZstd, Context, "NativeZstd");
     crate::__compression_stream_mixin_reexports!(NativeZstd);
 } // mod _impl
-
-// ported from: src/runtime/node/zlib/NativeZstd.zig

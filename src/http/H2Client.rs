@@ -12,8 +12,8 @@ use core::sync::atomic::AtomicI32;
 
 /// Advertised as SETTINGS_INITIAL_WINDOW_SIZE; replenished via WINDOW_UPDATE
 /// once half has been consumed.
-// PORT NOTE: Zig type was `u31` (HTTP/2 window sizes are 31-bit); Rust has no
-// `u31`, so widen to `u32`. Value `1 << 24` is well within range.
+// PORT NOTE: HTTP/2 window sizes are 31-bit; Rust has no `u31`, so widen to
+// `u32`. Value `1 << 24` is well within range.
 pub const LOCAL_INITIAL_WINDOW_SIZE: u32 = 1 << 24;
 
 /// Advertised as SETTINGS_MAX_HEADER_LIST_SIZE and enforced as a hard cap on
@@ -37,10 +37,9 @@ pub const WRITE_BUFFER_CONTROL_LIMIT: usize = 1024 * 1024;
 /// Live-object counters for the leak test in fetch-http2-leak.test.ts.
 /// Incremented at allocation, decremented in deinit. Read from the JS thread
 /// via TestingAPIs.liveCounts so they must be atomic.
-// PORT NOTE: Zig names are `live_sessions`/`live_streams` (snake_case module
-// vars). Kept verbatim so cross-crate readers (`bun_http_jsc`) and the gated
-// submodules see the same identifier the Zig uses; SCREAMING_SNAKE aliases
-// preserved for the existing internal references.
+// PORT NOTE: keep `live_sessions`/`live_streams` snake_case so cross-crate
+// readers (`bun_http_jsc`) and the gated submodules see the same identifier;
+// SCREAMING_SNAKE aliases preserved for existing internal references.
 #[allow(non_upper_case_globals)]
 pub static live_sessions: AtomicI32 = AtomicI32::new(0);
 #[allow(non_upper_case_globals)]
@@ -66,9 +65,9 @@ pub use client_session::ClientSession;
 pub use pending_connect::PendingConnect;
 pub use stream::Stream;
 
-// PORT NOTE: Zig had `pub const TestingAPIs = @import("../http_jsc/headers_jsc.zig").H2TestingAPIs;`
-// — a `*_jsc` alias. Deleted per PORTING.md: `to_js`/host-fn surfaces live in the
-// `*_jsc` crate via extension traits; the base crate has no mention of jsc.
+// PORT NOTE: a `TestingAPIs` re-export of `H2TestingAPIs` was deleted per
+// PORTING.md: `to_js`/host-fn surfaces live in the `*_jsc` crate via extension
+// traits; the base crate has no mention of jsc.
 
 // ═══════════════════════════════════════════════════════════════════════
 // B-2 bridge: thin `h2_*` forwarders on HTTPClient / HTTPContext that the
@@ -136,9 +135,8 @@ pub(crate) mod bridge {
             // slices point only at (a) the thread-local
             // `SHARED_REQUEST_HEADERS_BUF` static and (b) `self.header_buf`,
             // which is itself `&'static [u8]` — neither is tied to the `&mut
-            // self` borrow. Erasing to `'static` matches the Zig
-            // `buildRequest` (returns slices into module-static storage) and
-            // lets `ClientSession::attach` re-borrow `client` while the
+            // self` borrow. Erasing to `'static` lets
+            // `ClientSession::attach` re-borrow `client` while the
             // `Request` is still live. Same pattern as lib.rs `on_writable`.
             unsafe { self.build_request(body_len).detach_lifetime() }
         }
@@ -157,5 +155,3 @@ pub(crate) mod bridge {
         }
     }
 }
-
-// ported from: src/http/H2Client.zig

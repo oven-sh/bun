@@ -3,7 +3,7 @@
 #include "JSBuffer.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 
 // These modules are implemented in native code as a function which writes ESM
@@ -12,7 +12,7 @@
 
 // To add a new native module
 //   1. Add a new line to `BUN_FOREACH_NATIVE_MODULE`
-//   2. Add a case to `module_loader.zig` that resolves the import.
+//   2. Add a case to `ModuleLoader.rs` that resolves the import.
 //   3. Add a new file in this folder named after the module, camelcase and suffixed with Module,
 //      like "NodeBufferModule.h" or "BunJSCModule.h". It should call DEFINE_NATIVE_MODULE(name).
 //
@@ -79,8 +79,8 @@
       JSC::MarkedArgumentBuffer &exportValues)
 
 #define INIT_NATIVE_MODULE(numberOfExportNames)                                \
-  Zig::GlobalObject *globalObject =                                            \
-      static_cast<Zig::GlobalObject *>(lexicalGlobalObject);                   \
+  Bun::GlobalObject *globalObject =                                            \
+      static_cast<Bun::GlobalObject *>(lexicalGlobalObject);                   \
   JSC::VM &vm = globalObject->vm();                                            \
   JSC::JSObject *defaultObject = JSC::constructEmptyObject(                    \
       globalObject, globalObject->objectPrototype(), numberOfExportNames);     \
@@ -107,11 +107,11 @@
   while (0) {                                                                  \
   }
 
-namespace Zig {
+namespace Bun {
 #define FORWARD_DECL_GENERATOR(id, enumName) \
 void generateNativeModule_##enumName( \
   JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey, \
   Vector<JSC::Identifier, 4> &exportNames, \
   JSC::MarkedArgumentBuffer &exportValues);
 BUN_FOREACH_ESM_NATIVE_MODULE(FORWARD_DECL_GENERATOR)
-} // namespace Zig
+} // namespace Bun

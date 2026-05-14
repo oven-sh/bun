@@ -1,7 +1,6 @@
-// PORT NOTE: phf_set! rejects duplicate keys at compile time; Zig's
-// ComptimeStringMap silently dedups. The v1 list repeats several v2.3 entries
-// verbatim — duplicates dropped here (commented inline) so the macro compiles
-// while keeping .zig↔.rs diffability.
+// PORT NOTE: phf_set! rejects duplicate keys at compile time, unlike a
+// silently-deduplicating comptime map. The v1 list repeats several v2.3 entries
+// verbatim — duplicates dropped here (commented inline) so the macro compiles.
 pub static ALL_YARN_COMMANDS: phf::Set<&'static [u8]> = phf::phf_set! {
     // yarn v2.3 commands
     b"add",
@@ -76,5 +75,3 @@ pub static ALL_YARN_COMMANDS: phf::Set<&'static [u8]> = phf::phf_set! {
     // b"workspace",
     // b"workspaces",
 };
-
-// ported from: src/cli/list-of-yarn-commands.zig

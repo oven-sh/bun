@@ -22,7 +22,7 @@ pub struct FallbackHandler {
 }
 
 impl FallbackHandler {
-    // TODO(port): Zig computed this via @typeInfo(FallbackHandler).Struct.fields.len.
+    // TODO(port): keep in sync with the number of fields in `FallbackHandler`.
     #[allow(dead_code)]
     const FIELD_COUNT: usize = 2;
 
@@ -32,21 +32,18 @@ impl FallbackHandler {
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
-        // The Zig source does `inline for (std.meta.fields(FallbackHandler))` and uses
-        // `@field` / `@unionInit` keyed on the field name. Rust has no field reflection,
-        // so we expand each (field, Property variant, has_vendor_prefix) pair via macro.
+        // Rust has no field reflection, so we expand each (field, Property variant,
+        // has_vendor_prefix) pair via macro.
         // TODO(port): proc-macro — if the field list grows, generate these arms from a
         // single source of truth shared with `Property`/`PropertyIdTag`.
 
         let arena = dest.bump();
 
-        // PORT NOTE: Zig's `inline for` over `std.meta.fields(FallbackHandler)` dispatched
-        // each (field, Property variant) pair via a single generic body using `@field` /
-        // `@unionInit` + `css.generic.{deepClone,isCompatible,hasGetFallbacks}`. Rust has
-        // no field reflection and the generic-trait surface (`DeepClone`/`IsCompatible`/
+        // PORT NOTE: each (field, Property variant) pair is dispatched via a single
+        // generic body. The generic-trait surface (`DeepClone`/`IsCompatible`/
         // `get_fallbacks` on `SmallList<TextShadow,1>`) is still partially gated, so we
         // expand each pair via a macro that takes per-type closures for those three ops.
-        // This keeps the *control flow* identical while letting each payload type use its
+        // This keeps the *control flow* uniform while letting each payload type use its
         // own inherent methods until the trait lattice un-gates.
         macro_rules! handle_unprefixed {
             (
@@ -60,7 +57,7 @@ impl FallbackHandler {
                     let mut val = ($dc)(payload, arena);
 
                     if $self_field.is_none() {
-                        // PORT NOTE: `has_fallbacks` only used in the vendor-prefixed branch in Zig.
+                        // PORT NOTE: `has_fallbacks` only used in the vendor-prefixed branch.
                         ($fb)(&mut val, arena, context.targets, dest);
                     }
 
@@ -73,7 +70,7 @@ impl FallbackHandler {
                     } else if let Some(index) = *$self_field {
                         dest[index] = Property::$Variant(val);
                     } else {
-                        // val dropped — Rust Drop handles cleanup (Zig: val.deinit(context.arena))
+                        // val dropped — Drop handles cleanup
                         drop(val);
                     }
 
@@ -139,9 +136,8 @@ impl FallbackHandler {
                 macro_rules! match_unparsed_prefixed {
                     ($self_field:ident, $Variant:ident, $FeatureVariant:ident) => {
                         if val.property_id.tag() == PropertyIdTag::$Variant {
-                            // PORT NOTE: Zig accessed `@field(val.property_id, field.name)[1]`
-                            // to get the VendorPrefix from the PropertyId payload. Mapped to
-                            // the generated `PropertyId::prefix()` accessor.
+                            // PORT NOTE: the VendorPrefix is read from the PropertyId payload
+                            // via the generated `PropertyId::prefix()` accessor.
                             let newval = if val.property_id.prefix().contains(VendorPrefix::NONE) {
                                 val.get_prefixed(arena, context.targets, Feature::$FeatureVariant)
                             } else {
@@ -183,10 +179,8 @@ impl FallbackHandler {
         _dest: &mut css::DeclarationList,
         _context: &mut css::PropertyHandlerContext,
     ) {
-        // Zig: inline for (std.meta.fields(FallbackHandler)) |f| @field(this, f.name) = null;
+        // Reset every field to None.
         self.color = None;
         self.text_shadow = None;
     }
 }
-
-// ported from: src/css/properties/prefix_handler.zig

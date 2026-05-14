@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 use bun_ast::Loc;
 use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
-use bun_core::{self, ZigStringSlice, strings};
+use bun_core::{self, UTF8Slice, strings};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
 use bun_sourcemap::{
     self as sourcemap, LineOffsetTable, LineOffsetTableColumns as _, Ordinal, ParsedSourceMap,
@@ -29,7 +29,7 @@ type Bitset = DynamicBitSet;
 /// We use two bitsets since the typical size will be decently small,
 /// bitsets are simple and bitsets are relatively fast to construct and query
 pub struct Report {
-    pub source_url: ZigStringSlice,
+    pub source_url: UTF8Slice,
     pub executable_lines: Bitset,
     pub lines_which_have_executed: Bitset,
     pub line_hits: LinesHits,
@@ -115,12 +115,12 @@ impl Report {
 }
 
 // Report::deinit only freed owned containers; Rust drops Bitset/Vec/Vec fields automatically.
-// Note: source_url is NOT freed, matching the Zig deinit (caller owns it).
+// Note: source_url is NOT freed (caller owns it).
 
 pub mod text {
     use super::*;
-    // PORT NOTE: Zig `Output.prettyFmt(fmt, comptime bool)` is a comptime string
-    // rewrite. The `pretty_fmt!` macro only accepts literal `true`/`false` today,
+    // PORT NOTE: `Output.prettyFmt(fmt, enable)` was originally a compile-time
+    // string rewrite. The `pretty_fmt!` macro only accepts literal `true`/`false` today,
     // so call the runtime rewriter for the `ENABLE_COLORS` const-generic sites.
     // PERF(port): runtime `pretty_fmt` allocates a small Vec per call — profile in
     // Phase B; if hot, hoist into `const` once the proc-macro lands.
@@ -337,7 +337,7 @@ pub mod lcov {
 
         // ** Track all executable lines **
         // Executable lines that were not hit should be marked as 0
-        // PORT NOTE: Zig cloned the bitset before iterating; `DynamicBitSet::iterator`
+        // PORT NOTE: original cloned the bitset before iterating; `DynamicBitSet::iterator`
         // borrows `&self` so the clone is unnecessary.
         let mut iter = report.executable_lines.iterator::<true, true>();
 
@@ -392,7 +392,7 @@ impl<'a> Generator<'a> {
         // The C++ side (CodeCoverage.cpp) invokes this callback with `(nullptr, 0, 0)` when
         // basicBlocks is empty. `core::slice::from_raw_parts` requires a non-null, aligned
         // pointer even for zero-length slices, so we must bail before constructing the slice
-        // (matches the Zig spec, which early-returns on `blocks.len == 0`).
+        // (early-returns on `blocks.len == 0`).
         if blocks_len == 0 {
             return;
         }
@@ -409,11 +409,11 @@ impl<'a> Generator<'a> {
             return;
         }
 
-        // PORT NOTE: Zig assigns the slice by value with no ownership transfer here.
+        // PORT NOTE: the slice is assigned by value with no ownership transfer here.
         // `from_utf8_never_free` already detaches the lifetime by design, and
         // `generate_report_from_blocks` only borrows `&self`, so no &/&mut overlap.
         let source_url =
-            ZigStringSlice::from_utf8_never_free(this.byte_range_mapping.source_url.slice());
+            UTF8Slice::from_utf8_never_free(this.byte_range_mapping.source_url.slice());
         *this.result = this
             .byte_range_mapping
             .generate_report_from_blocks(source_url, blocks, function_blocks, ignore_sourcemap)
@@ -444,7 +444,7 @@ impl Default for BasicBlockRange {
 pub struct ByteRangeMapping {
     pub line_offset_table: line_offset_table::List,
     pub source_id: i32,
-    pub source_url: ZigStringSlice,
+    pub source_url: UTF8Slice,
 }
 
 // TODO(port): IdentityContext(u64) hasher — key is already a wyhash, hash fn should be identity
@@ -486,8 +486,8 @@ fn thread_map_opt() -> Option<NonNull<ByteRangeMappingHashMap>> {
 }
 
 impl ByteRangeMapping {
-    /// Zig: `pub threadlocal var map: ?*HashMap = null;` — read-only accessor
-    /// for the per-thread `ByteRangeMappingHashMap`. Returns `None` if no
+    /// Read-only accessor for the per-thread `ByteRangeMappingHashMap`
+    /// (a thread-local `Option<*HashMap>`). Returns `None` if no
     /// coverage data was recorded on this thread.
     ///
     /// The pointer borrows the thread-local `Box`, which is pinned for the
@@ -504,7 +504,7 @@ impl ByteRangeMapping {
 
     pub fn generate_report_from_blocks(
         &self,
-        source_url: ZigStringSlice,
+        source_url: UTF8Slice,
         blocks: &[BasicBlockRange],
         function_blocks: &[BasicBlockRange],
         ignore_sourcemap: bool,
@@ -513,8 +513,8 @@ impl ByteRangeMapping {
 
         let mut executable_lines: Bitset = Bitset::default();
         let mut lines_which_have_executed: Bitset = Bitset::default();
-        // PORT NOTE: Zig's `SavedSourceMap.get` returns a `?*ParsedSourceMap` with a +1
-        // intrusive ref (Zig: `defer if (parsed_mappings_) |p| p.deref()`). The Rust port
+        // PORT NOTE: `SavedSourceMap.get` originally returned a raw pointer with a +1
+        // intrusive ref released by a deferred `deref()`. The Rust port
         // models this as `Option<Arc<ParsedSourceMap>>`, so the +1 is released
         // automatically when `parsed_mappings_` drops at scope exit — no explicit guard
         // is required.
@@ -847,7 +847,7 @@ impl ByteRangeMapping {
     pub fn compute(
         source_contents: &[u8],
         source_id: i32,
-        source_url: ZigStringSlice,
+        source_url: UTF8Slice,
     ) -> ByteRangeMapping {
         ByteRangeMapping {
             // TODO(port): VirtualMachine::get().allocator dropped — LineOffsetTable::generate uses global mimalloc
@@ -860,7 +860,7 @@ impl ByteRangeMapping {
 }
 
 // ByteRangeMapping::deinit only freed line_offset_table; Rust drops it automatically.
-// source_url is NOT freed, matching Zig deinit.
+// source_url is NOT freed (caller owns it).
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ByteRangeMapping__generate(
@@ -973,5 +973,3 @@ pub struct Block {
     pub start_line: u32,
     pub end_line: u32,
 }
-
-// ported from: src/sourcemap_jsc/CodeCoverage.zig

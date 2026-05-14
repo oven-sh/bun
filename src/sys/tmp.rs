@@ -9,8 +9,7 @@ const ALLOW_TMPFILE: bool = false;
 // not folders!
 pub struct Tmpfile<'a> {
     pub destination_dir: Fd,
-    // BORROW_PARAM (Tmpfile.zig:5): caller-supplied tmp name, valid for the
-    // lifetime of the Tmpfile.
+    // BORROW_PARAM: caller-supplied tmp name, valid for the lifetime of the Tmpfile.
     pub tmpfilename: &'a ZStr,
     pub fd: Fd,
     pub using_tmpfile: bool,
@@ -27,9 +26,9 @@ impl<'a> Tmpfile<'a> {
         };
 
         'open: loop {
-            // ALLOW_TMPFILE = false (Zig comment: O_TMPFILE doesn't seem to work
-            // very well). Dead in Zig too, but Zig comptime drops it; Rust still
-            // type-checks `if false` bodies, so the body must resolve.
+            // ALLOW_TMPFILE = false (O_TMPFILE doesn't seem to work very well).
+            // Dead branch, but Rust still type-checks `if false` bodies, so the
+            // body must resolve.
             if ALLOW_TMPFILE {
                 // SAFETY: literal is NUL-terminated; len excludes the NUL.
                 let dot = ZStr::from_static(b".\0");
@@ -44,7 +43,7 @@ impl<'a> Tmpfile<'a> {
                             fd.make_lib_uv_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;
                         break 'open;
                     }
-                    // PORT NOTE: Zig matched .OPNOTSUPP; on Linux that aliases ENOTSUP.
+                    // PORT NOTE: on Linux EOPNOTSUPP aliases ENOTSUP.
                     Err(err) => match err.get_errno() {
                         E::EINVAL | E::ENOTSUP | E::ENOSYS => {
                             tmpfile.using_tmpfile = false;
@@ -99,5 +98,3 @@ impl<'a> Tmpfile<'a> {
         )
     }
 }
-
-// ported from: src/sys/tmp.zig

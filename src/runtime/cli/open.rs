@@ -30,7 +30,7 @@ pub fn open_url(url: &ZStr) {
         return fallback(url.as_bytes());
     }
 
-    // TODO(port): ZStr literals — Zig used [:0]const u8 array; using &[u8] here and
+    // TODO(port): ZStr literals — using &[u8] here and
     // relying on spawn_sync to NUL-terminate as needed.
     #[cfg(target_os = "android")]
     let am_args: [&[u8]; 6] = [
@@ -91,7 +91,7 @@ pub fn open_url(url: &ZStr) {
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, strum::IntoStaticStr, enum_map::Enum)]
-#[strum(serialize_all = "snake_case")] // match Zig @tagName: .vscode → "vscode"
+#[strum(serialize_all = "snake_case")] // tag-name format: .vscode → "vscode"
 pub enum Editor {
     None,
     Sublime,
@@ -106,8 +106,8 @@ pub enum Editor {
     Other,
 }
 
-// PORT NOTE: Zig's `std.EnumMap(Editor, string)` / `std.EnumMap(Editor, []const [:0]const u8)`
-// were comptime-initialized sparse maps. `bin_name` ported per PORTING.md as
+// PORT NOTE: these were originally compile-time-initialized sparse `EnumMap`s.
+// `bin_name` ported per PORTING.md as
 // `enum_map::EnumMap<E, Option<V>>`; `bin_path` kept as a match-fn because of `#[cfg]` gating.
 
 static NAME_MAP: phf::Map<&'static [u8], Editor> = phf::phf_map! {
@@ -201,10 +201,10 @@ impl Editor {
         if let Some(paths) = bin_path(editor) {
             for path in paths {
                 // TODO(port): replace std.fs.cwd().openFile with bun_sys equivalent
-                // (bun_sys::File::open / bun_sys::access). Zig used std.fs directly here.
+                // (bun_sys::File::open / bun_sys::access).
                 match bun_sys::File::open_at(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0) {
                     bun_sys::Result::Ok(opened) => {
-                        let _ = opened.close(); // close error is non-actionable (Zig parity: discarded)
+                        let _ = opened.close(); // close error is non-actionable; discarded
                         if let Some(out) = out {
                             *out = path.as_bytes();
                         }
@@ -363,12 +363,12 @@ impl Editor {
 
         spawned.argc = i;
         // TODO(port): std.process.Child is banned (PORTING.md: no std::process).
-        // Zig stored `std.process.Child.init(args_buf[0..i], default_allocator)` here and
-        // spawned a detached std.Thread to run it. Phase B should replace with
+        // The original stored a child-process handle here and spawned a detached
+        // thread to run it. Phase B should replace with
         // crate::process::spawn (async) or a bun_threading worker that owns
         // SpawnedEditorContext and calls bun.spawnSync.
         let spawned_ptr = bun_core::heap::into_raw(spawned);
-        // PORT NOTE: Zig used `std.Thread.spawn(.{}, autoClose, .{spawned})` then `.detach()`.
+        // PORT NOTE: spawn `autoClose` on a detached thread.
         // bun_threading has no detached-spawn helper; std::thread::spawn matches semantics
         // (the JoinHandle is dropped, detaching the thread).
         // SAFETY: `spawned_ptr` is a uniquely-owned Box raw pointer; ownership is
@@ -378,8 +378,8 @@ impl Editor {
         std::thread::Builder::new()
             .spawn(move || auto_close(spawned_addr as *mut SpawnedEditorContext))
             .map_err(|_| {
-                // Zig parity: `errdefer default_allocator.destroy(spawned)` (open.zig:234)
-                // covers `try std.Thread.spawn`. After `into_raw`, Box's Drop guard is gone,
+                // Error path must free `spawned` if the thread fails to start.
+                // After `into_raw`, Box's Drop guard is gone,
                 // so reclaim explicitly on the spawn-failure path.
                 // SAFETY: closure never ran, so we are still the sole owner of `spawned_ptr`.
                 drop(unsafe { bun_core::heap::take(spawned_addr as *mut SpawnedEditorContext) });
@@ -500,10 +500,10 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
         argv[j] = unsafe { bun_core::ffi::slice(p, l) };
     }
 
-    // TODO(port): Zig called `child_process.spawn()` then `.wait()` via std.process.Child.
+    // TODO(port): the original called `child_process.spawn()` then `.wait()`.
     // Mapped to sync::spawn (bun.spawnSync) per src/CLAUDE.md guidance.
-    // FIXME(windows-leak): Zig's autoClose (open.zig:329-335) used std.process.Child
-    // directly (CreateProcessW) and never created a uv loop. The sync::spawn substitution
+    // FIXME(windows-leak): the original `autoClose` used CreateProcessW
+    // directly and never created a uv loop. The sync::spawn substitution
     // requires a `WindowsOptions.loop_`; `MiniEventLoop::init_global` heap-allocates a
     // MiniEventLoop + uv_loop_t into a thread-local that is NEVER torn down. Because this
     // runs on a fresh detached std::thread per `Editor::open()` call, every editor-open on
@@ -536,7 +536,7 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
 
 pub struct EditorContext {
     pub editor: Option<Editor>,
-    // PORT NOTE: `name`/`path` are never freed in Zig; `path` is backed by
+    // PORT NOTE: `name`/`path` are never freed; `path` is backed by
     // `Fs.FileSystem.instance.dirname_store` (process-lifetime arena) or aliases `name`.
     pub name: &'static [u8],
     pub path: &'static [u8],
@@ -593,7 +593,7 @@ impl EditorContext {
             basename = &basename_buf[0..basename.len() + 3];
         }
 
-        // TODO(port): Zig used std.fs.Dir.writeFile / openFile. Map to bun_sys::File.
+        // TODO(port): map to bun_sys::File.
         // `write_file` wants a `&ZStr`; NUL-terminate `basename` into a path buffer.
         let mut basename_zbuf = PathBuffer::uninit();
         let basename_z = bun_paths::resolve_path::z(basename, &mut basename_zbuf);
@@ -716,5 +716,3 @@ impl EditorContext {
         self.editor = Some(Editor::None);
     }
 }
-
-// ported from: src/cli/open.zig

@@ -3,13 +3,13 @@
 #include "root.h"
 #include "headers-handwritten.h"
 
-namespace Zig {
+namespace Bun {
 class SourceProvider;
 }
 
 namespace Bun {
 
-// Per-VM cache mapping resolved specifier (absolute path) → Zig::SourceProvider,
+// Per-VM cache mapping resolved specifier (absolute path) → Bun::SourceProvider,
 // populated only under `bun test --isolate`. Survives global swaps so a fresh
 // global's module fetch reuses an already-transpiled provider (and hits JSC's
 // CodeCache + Bun__analyzeTranspiledModule for module_info) instead of
@@ -17,7 +17,7 @@ namespace Bun {
 //
 // Storage lives on JSVMClientData; this class is a stateless facade so the
 // gating, key, and tag-cacheability decisions live in exactly one place. The
-// map stores Zig::SourceProvider directly (not a wrapper struct) — everything
+// map stores Bun::SourceProvider directly (not a wrapper struct) — everything
 // callers need to branch on (sourceType(), m_resolvedSource.tag, module_info)
 // already lives on the provider.
 class IsolatedModuleCache {
@@ -48,12 +48,12 @@ public:
         }
     }
 
-    static Zig::SourceProvider* lookup(JSC::VM&, const WTF::String& key);
+    static Bun::SourceProvider* lookup(JSC::VM&, const WTF::String& key);
 
     // Inserts only when isTagCacheable(provider.m_resolvedSource.tag); no-op
     // otherwise. Asserts isNewEntry — a duplicate insert means a lookup was
     // bypassed, which is exactly the gating bug this consolidation prevents.
-    static void insert(JSC::VM&, const WTF::String& key, Zig::SourceProvider&);
+    static void insert(JSC::VM&, const WTF::String& key, Bun::SourceProvider&);
 
     static void evict(JSC::VM&, const WTF::String& key);
     static void clear(JSC::VM&);

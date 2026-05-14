@@ -6,9 +6,9 @@ use bun_sys::{self as sys, E, Fd, FdDirExt};
 use crate::VM;
 
 pub struct HeapProfilerConfig {
-    // PORT NOTE: Zig held borrowed `[]const u8` for the process lifetime; the
-    // config originates from CLI args and lives until exit, so `&'static [u8]`
-    // matches the ownership exactly.
+    // PORT NOTE: the config originates from CLI args and lives until exit, so
+    // `&'static [u8]` matches the ownership exactly (process-lifetime borrowed
+    // bytes, never freed here).
     pub name: &'static [u8],
     pub dir: &'static [u8],
     pub text_format: bool,
@@ -37,7 +37,7 @@ pub fn generate_and_write_profile(vm: &mut VM, config: HeapProfilerConfig) -> Re
     }
 
     let profile_slice = profile_string.to_utf8();
-    // `defer profile_slice.deinit()` — handled by Drop on ZigStringSlice.
+    // `defer profile_slice.deinit()` — handled by Drop on UTF8Slice.
 
     // Determine the output path using AutoAbsPath
     let mut path_buf = AutoAbsPath::init_top_level_dir();
@@ -152,5 +152,3 @@ fn generate_default_filename(buf: &mut PathBuffer, text_format: bool) -> Result<
     // PORT NOTE: reshaped for borrowck — recompute slice from buf after dropping cursor borrow.
     Ok(&buf.as_slice()[..written])
 }
-
-// ported from: src/jsc/BunHeapProfiler.zig

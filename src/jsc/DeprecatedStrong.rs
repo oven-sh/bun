@@ -3,18 +3,16 @@ use core::ptr::NonNull;
 
 use crate::JSValue;
 
-// PORT NOTE: This file is a Zig file-level struct. In Zig it is referenced as
-// `jsc.Strong.Deprecated` (see bottom-of-file alias `const Strong = jsc.Strong.Deprecated`).
-// Ported here as `DeprecatedStrong`.
+// Originally referenced as `jsc.Strong.Deprecated`; named `DeprecatedStrong` here.
 //
-// PORT NOTE: Zig `deinit` → `impl Drop`. The manual `ref()`/`unref()` path
-// overlaps teardown; to avoid Drop double-`unprotect`ing after a final `unref`,
-// `unref()` zeroes `raw` and clears `safety` when it frees (debug builds), so
-// Drop becomes a no-op (`unprotect` on ZERO is a no-op; `safety == None` skips
-// the canary free).
+// PORT NOTE: cleanup is handled via `impl Drop`. The manual `ref()`/`unref()`
+// path overlaps teardown; to avoid Drop double-`unprotect`ing after a final
+// `unref`, `unref()` zeroes `raw` and clears `safety` when it frees (debug
+// builds), so Drop becomes a no-op (`unprotect` on ZERO is a no-op;
+// `safety == None` skips the canary free).
 // TODO(port): release builds have no ref_count, so a caller that does the final
 // `unref()` and then lets Drop fire would double-unprotect — audit call sites
-// in Phase B (Zig contract: ref/unref pairs are balanced, deinit is the release).
+// in Phase B (contract: ref/unref pairs are balanced, Drop is the release).
 
 // `enable_safety = bun.Environment.ci_assert`
 // TODO(port): map `Environment.ci_assert` to the correct cfg; using debug_assertions as proxy.
@@ -94,8 +92,8 @@ impl DeprecatedStrong {
 
     pub fn swap(&mut self, next: JSValue) -> JSValue {
         let prev = self.raw;
-        // PORT NOTE: `*self = ...` drops the old value in place (runs Drop),
-        // matching Zig's explicit `this.deinit(); this.* = .init(next);`.
+        // PORT NOTE: `*self = ...` drops the old value in place (runs Drop)
+        // before assigning the freshly initialized replacement.
         *self = Self::init(next);
         prev
     }
@@ -161,7 +159,7 @@ pub struct Optional {
 }
 
 impl Optional {
-    // PORT NOTE: Zig `pub const empty = .initNonCell(null)` — inlined as a struct
+    // PORT NOTE: equivalent to `init_non_cell(None)` but inlined as a struct
     // literal so it can be `const` (init_non_cell debug_asserts, which is non-const).
     pub const EMPTY: Optional = Optional {
         backing: DeprecatedStrong {
@@ -182,8 +180,8 @@ impl Optional {
         }
     }
 
-    // PORT NOTE: Zig `deinit` dropped — `backing: DeprecatedStrong` is dropped
-    // automatically (its Drop impl runs `unprotect` + canary free).
+    // PORT NOTE: explicit cleanup is unnecessary — `backing: DeprecatedStrong`
+    // is dropped automatically (its Drop impl runs `unprotect` + canary free).
 
     pub fn get(&self) -> Option<JSValue> {
         let result = self.backing.get();
@@ -223,5 +221,3 @@ impl Optional {
 // suppress unused warning in release builds
 #[allow(unused_macros)]
 const _: bool = enable_safety!();
-
-// ported from: src/jsc/DeprecatedStrong.zig

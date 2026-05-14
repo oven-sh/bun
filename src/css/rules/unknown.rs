@@ -5,7 +5,7 @@ use crate::{PrintErr, Printer};
 /// An unknown at-rule, stored as raw tokens.
 pub struct UnknownAtRule {
     /// The name of the at-rule (without the @).
-    // TODO(port): arena lifetime — Zig `[]const u8` backed by parser arena.
+    // TODO(port): arena lifetime — slice backed by parser arena.
     pub name: &'static [u8],
     /// The prelude of the rule.
     pub prelude: TokenList,
@@ -41,7 +41,7 @@ impl UnknownAtRule {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         use crate::generics::DeepClone as _;
         // PORT NOTE: `css.implementDeepClone` field-walk. `name: &'static [u8]`
-        // is an arena-owned slice → identity copy (generics.zig "const strings"
+        // is an arena-owned slice → identity copy (the generics "const strings"
         // rule); `TokenList` carries `#[derive(DeepClone)]`.
         Self {
             name: self.name,
@@ -51,5 +51,3 @@ impl UnknownAtRule {
         }
     }
 }
-
-// ported from: src/css/rules/unknown.zig

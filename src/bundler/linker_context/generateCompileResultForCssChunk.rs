@@ -220,7 +220,7 @@ fn generate_compile_result_for_css_chunk_impl(
             if !output.is_empty() {
                 // CONCURRENCY: key set is frozen before parallel codegen; take a
                 // shared `&AtomicUsize` so concurrent workers updating the same
-                // source counter never alias a `&mut` (Zig: @atomicRmw .Add .monotonic).
+                // source counter never alias a `&mut` (atomic add, monotonic ordering).
                 if let Some(bytes) = chunk.files_with_parts_in_chunk.get(&idx.get()) {
                     let _ = bytes.fetch_add(output.len(), Ordering::Relaxed);
                 }
@@ -237,5 +237,3 @@ fn generate_compile_result_for_css_chunk_impl(
 pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
-
-// ported from: src/bundler/linker_context/generateCompileResultForCssChunk.zig

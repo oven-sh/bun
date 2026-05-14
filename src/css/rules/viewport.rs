@@ -28,7 +28,7 @@ impl ViewportRule {
 impl ViewportRule {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` field-walk. `VendorPrefix` is a
-        // `Copy` bitflag (generics.zig "simple copy types" → identity).
+        // `Copy` bitflag (the generics "simple copy types" rule → identity).
         Self {
             vendor_prefix: self.vendor_prefix,
             declarations: super::dc::decl_block_static(&self.declarations, bump),
@@ -36,5 +36,3 @@ impl ViewportRule {
         }
     }
 }
-
-// ported from: src/css/rules/viewport.zig

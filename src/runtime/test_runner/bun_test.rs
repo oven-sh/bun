@@ -14,10 +14,10 @@ use crate::cli::test_command::{self, CommandLineReporter};
 use super::execution::TimespecExt as _;
 
 bun_core::declare_scope!(bun_test_group, hidden);
-// `group` in the Zig is `debug.group` (an Output.scoped). The macro form differs;
+// `group` is `debug.group` (an Output.scoped). The macro form differs;
 // callers use `group_log!` / `group_begin!` / `group_end!` below.
 /// Thin macro over `debug::group::begin()` so call sites stay `group_begin!()`
-/// (Zig: `group.begin(@src())` — Rust uses `#[track_caller]` for source loc).
+/// (`group.begin(@src())` — Rust uses `#[track_caller]` for source loc).
 macro_rules! group_begin {
     () => {
         $crate::test_runner::debug::group::begin()
@@ -159,10 +159,10 @@ pub mod js_fns {
         }
     }
 
-    // Zig: `fn genericHook(comptime tag) type { return struct { pub fn hookFn(...) } }`
+    // Originally `fn genericHook(comptime tag) type { return struct { pub fn hookFn(...) } }`.
     // PORT NOTE: reshaped — `adt_const_params` is unstable, so the body takes
     // `tag` at runtime and 5 thin `#[host_fn]` wrappers below supply the
-    // per-tag entry points (one fn per JS function, matching Zig's comptime
+    // per-tag entry points (one fn per JS function, matching the original comptime
     // monomorphization for JSFunction::create).
     pub fn generic_hook_impl(
         tag: GenericHookTag,
@@ -330,7 +330,7 @@ pub mod js_fns {
     }
 
     /// Per-tag `#[host_fn]` entry points (one fn per JS function so
-    /// `JSFunction::create` gets a distinct address). Replaces Zig's
+    /// `JSFunction::create` gets a distinct address). Replaces the
     /// `genericHook(comptime tag).hookFn` type-generator.
     pub mod generic_hook {
         use super::*;
@@ -358,7 +358,7 @@ pub use js_fns::GenericHookTag as HookKind;
 /// `bun.ptr.shared.WithOptions(*BunTest, .{ .allow_weak = true, .Allocator = bun.DefaultAllocator })`
 /// → `Rc<BunTestCell>` (single-thread, weak-capable, interior-mutable).
 ///
-/// Zig's `BunTestPtr.get()` hands back a freely-aliasing `*BunTest`; the Rust
+/// `BunTestPtr.get()` originally handed back a freely-aliasing `*BunTest`; the Rust
 /// port mutates through this handle pervasively (re-entrantly via JS callbacks).
 /// `Rc<T>` does **not** wrap `T` in `UnsafeCell`, so the previous
 /// `Rc::as_ptr(&rc) as *mut T` + write was UB. The payload now lives in an
@@ -368,7 +368,7 @@ pub type BunTestPtrWeak = Weak<BunTestCell>;
 pub type BunTestPtrOptional = Option<Rc<BunTestCell>>;
 
 /// `UnsafeCell` newtype so `Rc<BunTestCell>` permits mutation of the shared
-/// `BunTest` (Zig: `*BunTest` aliases freely; Rust requires `UnsafeCell` for
+/// `BunTest` (the original `*BunTest` aliases freely; Rust requires `UnsafeCell` for
 /// any write reachable through a shared/`*const` path).
 #[repr(transparent)]
 pub struct BunTestCell(UnsafeCell<BunTest>);
@@ -379,14 +379,14 @@ impl BunTestCell {
         Rc::new(Self(UnsafeCell::new(bt)))
     }
 
-    /// Zig `BunTestPtr.get()` → `*BunTest`.
+    /// `BunTestPtr.get()` → `*BunTest`.
     ///
     /// Returns `&mut` because every call site mutates. The borrow is derived
     /// from `UnsafeCell::get()` so provenance is valid for writes even while
     /// other `Rc`/`Weak` handles exist.
     ///
     /// **Aliasing contract:** the test runner is single-threaded and this is
-    /// the moral equivalent of Zig's freely-aliasing `*T`. Callers must not
+    /// the moral equivalent of the original freely-aliasing `*T`. Callers must not
     /// hold the returned `&mut` across a re-entrancy point (JS callback,
     /// `Collection::step`, `Execution::step`, `BunTest::run`) that itself calls
     /// `.get()` — re-derive afterwards instead. Prefer [`as_ptr`](Self::as_ptr)
@@ -486,17 +486,17 @@ impl BunTestRoot {
         // call's reborrow; the next `Jest::runner()` hands out a fresh
         // an exclusive `&mut TestRunner`, invalidating that tag, so later derefs at
         // `BunTest::run`/`on_uncaught_exception` would be use-after-invalidation
-        // under Stacked Borrows. Zig (.zig:178) just passes a stable `*BunTestRoot`.
+        // under Stacked Borrows. The original just passes a stable `*BunTestRoot`.
         // SAFETY: single-threaded; `RUNNER` outlives every BunTest. Field
         // projection via `addr_of_mut!` creates no intermediate `&mut TestRunner`.
         let stable_root: *mut BunTestRoot = Jest::runner_ptr()
             .map(|p| unsafe { core::ptr::addr_of_mut!((*p.as_ptr()).bun_test_root) })
             .unwrap_or(std::ptr::from_mut::<BunTestRoot>(self));
 
-        // Zig: active_file = .new(undefined); active_file.get().?.init(...)
+        // `active_file = .new(undefined); active_file.get().?.init(...)`
         // TODO(port): in-place init — Rc::new_cyclic or two-phase init may be
         // needed because BunTest stores a backref to BunTestRoot.
-        // PORT NOTE: Zig stores `?*CommandLineReporter` (raw, untracked); the
+        // PORT NOTE: the original stores `?*CommandLineReporter` (raw, untracked); the
         // reporter is the global `CommandLineReporter` owned by
         // `test_command::exec` which outlives every `BunTest`. `exit_file()`
         // nulls this before the file is dropped.
@@ -604,7 +604,7 @@ pub struct BunTest {
     pub file_id: FileId,
     /// null if the runner has moved on to the next file but a strong reference to BunTest is still keeping it alive
     ///
-    /// PORT NOTE: Zig stores `?*CommandLineReporter` (raw, mutable). Stored as
+    /// PORT NOTE: the original stores `?*CommandLineReporter` (raw, mutable). Stored as
     /// `NonNull` (not `&`) so callbacks (`handle_test_completed`, junit writer,
     /// uncaught-exception handler) can write through it without deriving `&mut`
     /// from `&` (UB). The reporter is owned by `test_command::exec`'s stack
@@ -651,7 +651,7 @@ impl BunTest {
             first_last,
             extra_execution_entries: Vec::new(),
             // PORT NOTE: `EventLoopTimer` has no `Default`; `init_paused` sets
-            // `next = EPOCH, state = PENDING` (matches Zig's zero-init).
+            // `next = EPOCH, state = PENDING` (matches the original zero-init).
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: false,
         }
@@ -802,7 +802,7 @@ impl BunTest {
         };
         // defer this.ref = null → already taken above
         // defer ref_in.deref() — RefPtr<T> currently has NO Drop impl, so decrement the
-        // intrusive count explicitly at scope exit (mirrors .zig:472). Without this the
+        // intrusive count explicitly at scope exit. Without this the
         // paired promise then/catch path never sees has_one_ref()==true and the RefData leaks.
         let ref_in = scopeguard::guard(ref_in, |r: RefDataPtr| r.deref());
 
@@ -892,13 +892,13 @@ impl BunTest {
     }
 
     pub fn add_result(&mut self, result: RefDataValue) {
-        let _ = self.result_queue.write_item(result); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = self.result_queue.write_item(result); // OOM/capacity: original aborts; port keeps fire-and-forget
         // PERF(port): was bun.handleOom — Vec/Deque push aborts on OOM
     }
 
     pub fn run(this_strong: BunTestPtr, global_this: &JSGlobalObject) -> JsResult<()> {
         let _g = group_begin!();
-        // Zig: `const this = this_strong.get().?` — a freely-aliasing `*BunTest`.
+        // `const this = this_strong.get().?` — a freely-aliasing `*BunTest`.
         // `Collection::step` / `Execution::step` re-enter and call `.get()` on
         // the same `Rc`, so we keep a raw `*mut` (via `UnsafeCell`) and reborrow
         // per-use instead of holding one long-lived `&mut` that would alias.
@@ -913,7 +913,7 @@ impl BunTest {
             }
             (*this).in_run_loop = true;
         }
-        // Zig: `defer this.in_run_loop = false`. The guard captures the raw ptr
+        // `defer this.in_run_loop = false`. The guard captures the raw ptr
         // (not a `&mut bool`) so no `&mut` is held across the loop body.
         let _reset = scopeguard::guard(this, |p| {
             // SAFETY: `p` is the same `UnsafeCell`-derived ptr; `this_strong`
@@ -989,7 +989,7 @@ impl BunTest {
         bun_core::scoped_log!(bun_test_group, "advance from {}", <&'static str>::from(self.phase));
         // PORT NOTE: capture `self.phase` by raw ptr so the deferred log doesn't
         // hold a `&self` borrow across the `self.phase = …` writes below
-        // (Zig `defer` closes over `*BunTest` by pointer, not by borrow).
+        // (the original `defer` closes over `*BunTest` by pointer, not by borrow).
         let phase_ptr: *const Phase = &raw const self.phase;
         scopeguard::defer! {
             // SAFETY: `self` outlives this guard (drops at end of this fn body).
@@ -1027,7 +1027,7 @@ impl BunTest {
                 } else {
                     None
                 };
-                // PORT NOTE: Zig `prng.random()` yields a `std.Random` interface
+                // PORT NOTE: the original `prng.random()` yields a `Random` interface
                 // wrapper; the Rust `Order::Config.randomize` takes the PRNG
                 // itself (`Option<DefaultPrng>`), so pass it through directly.
                 let should_randomize = per_file_prng.take();
@@ -1144,7 +1144,7 @@ impl BunTest {
             }
         }
 
-        // Zig: `var dcb_ref: ?*RefData = null;` — a raw observer alias, NOT a
+        // `var dcb_ref: ?*RefData = null;` — a raw observer alias, NOT a
         // counted handle. The single +1 from `ref()` is owned by
         // `dcb_data.ref`; `dcb_ref` just remembers the address so the
         // pending-promise branch can `dupe()` it and the tail can branch on
@@ -1184,7 +1184,7 @@ impl BunTest {
                         let this_ref: RefDataPtr = if let Some(dcb_ref_value) = dcb_ref {
                             // SAFETY: `dcb_ref_value` aliases the live RefData
                             // owned by `dcb_data.r#ref` (set just above; GC
-                            // roots `done_callback` for this frame). Zig:
+                            // roots `done_callback` for this frame).
                             // `dcb_ref_value.dupe()` — bump 1→2.
                             unsafe { bun_ptr::IntrusiveRc::init_ref(dcb_ref_value.as_ptr()) }
                         } else {
@@ -1306,9 +1306,9 @@ impl Drop for BunTest {
 
 // `export const Bun__TestScope__Describe2__bunTestThen = jsc.toJSHostFn(bunTestThen);`
 //
-// PORT NOTE: Zig's `export const X = jsc.toJSHostFn(f)` mints a *function*
+// PORT NOTE: the original `export const X = jsc.toJSHostFn(f)` mints a *function*
 // symbol named `X` (the comptime wrapper is inlined into a fresh fn item).
-// `ZigGlobalObject::promiseHandlerID` (C++) compares the fn-ptr passed to
+// `BunGlobalObject::promiseHandlerID` (C++) compares the fn-ptr passed to
 // `JSValue::then` against `&Bun__TestScope__Describe2__bunTestThen` by
 // identity, so the Rust thunk MUST be the symbol itself — exporting a
 // `static JSHostFn = thunk` puts the name in `.data` (nm `d`), and the address
@@ -1574,7 +1574,7 @@ pub enum ScopeMode {
 }
 
 impl ScopeMode {
-    /// Port of Zig `@tagName`.
+    /// Tag-name string.
     pub fn tag_name(self) -> &'static str {
         match self {
             Self::Normal => "normal",
@@ -1594,7 +1594,7 @@ pub enum Only {
 }
 
 impl Only {
-    /// Port of Zig `@tagName`.
+    /// Tag-name string.
     pub fn tag_name(self) -> &'static str {
         match self {
             Self::No => "no",
@@ -1649,7 +1649,7 @@ impl BaseScope {
         self.has_callback = has_callback;
         if let Some(parent) = self.parent {
             // SAFETY: parent backref valid; tree is single-threaded and parent
-            // outlives child. `parent` is `*mut` (Zig: `?*DescribeScope`).
+            // outlives child. `parent` is `*mut` (`?*DescribeScope`).
             let parent = unsafe { &mut *parent };
             if self.only != Only::No {
                 parent.mark_contains_only();
@@ -1908,13 +1908,11 @@ impl Default for RunOneResult {
 }
 
 pub use super::timers::fake_timers::FakeTimers;
-// PORT NOTE: Zig nested types (`Execution.ConcurrentGroup`, `Order.Cfg`, …) are
+// PORT NOTE: the original nested types (`Execution.ConcurrentGroup`, `Order.Cfg`, …) are
 // top-level items in the sibling Rust modules. Alias the *modules* under the
-// Zig struct names so `Execution::ConcurrentGroup` / `Order::AllOrderResult`
+// original struct names so `Execution::ConcurrentGroup` / `Order::AllOrderResult`
 // resolve as module paths without per-reference rewrites.
 pub use super::execution as Execution;
 pub use super::debug;
 pub use super::scope_functions as ScopeFunctions;
 pub use super::order as Order;
-
-// ported from: src/test_runner/bun_test.zig

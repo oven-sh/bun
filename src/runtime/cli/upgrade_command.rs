@@ -7,7 +7,7 @@ use bun_alloc::Arena as Bump;
 use bun_core::Global::SyncCStr;
 use bun_core::MutableString;
 #[allow(unused_imports)]
-use bun_core::ZigString;
+use bun_core::UnsafeStringView;
 use bun_core::{self, Environment, Global, Output, Progress, env_var, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 use bun_dotenv as DotEnv;
@@ -27,7 +27,7 @@ use crate::api::bun::process::sync as spawn_sync;
 use crate::cli::Command;
 
 // PORT NOTE: `sync::Options.argv` is `Vec<Box<[u8]>>` (owns its rows). Helper
-// to build it from borrowed slices — Zig was `&.{...}` of `[]const u8`.
+// to build it from borrowed slices — the original was a borrowed slice array.
 #[inline]
 fn build_argv(parts: &[&[u8]]) -> Vec<Box<[u8]>> {
     parts.iter().map(|p| Box::<[u8]>::from(*p)).collect()
@@ -61,7 +61,7 @@ impl FileSystemTmpdirExt for fs::FileSystem {
 
 // PORT NOTE: `bun.argv` is an `Argv` newtype (not `&[&[u8]]`), so
 // `strings::contains_any` can't take it directly. Local helper that scans the
-// process argv for an exact match — same semantics as Zig's
+// process argv for an exact match — same semantics as
 // `strings.containsAny(bun.argv, ..)`.
 #[inline]
 fn argv_contains(target: &[u8]) -> bool {
@@ -186,7 +186,7 @@ impl UpgradeCommand {
 
     const DEFAULT_GITHUB_HEADERS: &'static [u8] = b"Acceptapplication/vnd.github.v3+json";
 
-    // PORT NOTE: Zig declared module-level `var` PathBuffers (github_repository_url_buf,
+    // PORT NOTE: the original declared module-level `var` PathBuffers (github_repository_url_buf,
     // current_executable_buf, unzip_path_buf, tmpdir_path_buf). They are single-use scratch
     // space; the port uses stack-local `PathBuffer::uninit()` at each call site instead
     // (reshaped for borrowck). No global state needed.
@@ -200,7 +200,7 @@ impl UpgradeCommand {
         // TODO(port): narrow error set
         let mut headers_buf: Vec<u8> = Self::DEFAULT_GITHUB_HEADERS.to_vec();
         // gonna have to free memory myself like a goddamn caveman due to a thread safety issue with ArenaAllocator
-        // (in Rust: Vec drops automatically; the Zig defer-free is a no-op here)
+        // (in Rust: Vec drops automatically; the original defer-free is a no-op here)
 
         let mut header_entries: headers::EntryList = headers::EntryList::default();
         let accept = headers::Entry {
@@ -226,7 +226,7 @@ impl UpgradeCommand {
 
         // PORT NOTE: reshaped for borrowck — write into a local Vec instead of static buf.
         // `AsyncHTTP::init_sync` wants `URL<'static>` / `&'static [u8]`, so back
-        // the buffers in the process-lifetime CLI arena (matches the Zig
+        // the buffers in the process-lifetime CLI arena (matches the
         // original which used module-level static buffers).
         let url_buf: &'static mut Vec<u8> = crate::cli::cli_arena().alloc(Vec::new());
         write!(
@@ -312,7 +312,7 @@ impl UpgradeCommand {
             bun_ast::Source::init_path_string(b"releases.json", metadata_body.list.as_slice());
         bun_ast::initialize_store();
         // PORT NOTE: `JSON::parse_utf8` needs a bump arena; this is a one-shot
-        // CLI path so use the process-lifetime CLI arena (Zig used the global
+        // CLI path so use the process-lifetime CLI arena (the original used the global
         // Expr/Stmt store which is process-lifetime anyway).
         let bump: &'static Bump = crate::cli::cli_arena();
         let expr = match JSON::parse_utf8(&source, &mut log, bump) {
@@ -385,7 +385,7 @@ impl UpgradeCommand {
 
                 Output::pretty_errorln(format_args!(
                     "JSON Error parsing releases from GitHub: <r><red>tag_name<r> is missing?\n{}",
-                    // Zig spec prints `metadata_body.list.items` here; `version.buf`
+                    // The spec prints `metadata_body.list.items` here; `version.buf`
                     // is still empty at this point so using it loses the payload.
                     bstr::BStr::new(metadata_body.list.as_slice())
                 ));
@@ -399,7 +399,7 @@ impl UpgradeCommand {
             let Some(assets_) = expr.as_property(b"assets") else {
                 break 'get_asset;
             };
-            // PORT NOTE: Zig `Expr.asArray()` returns an iterator; the T2
+            // PORT NOTE: the original `Expr.asArray()` returns an iterator; the T2
             // `bun_ast::Expr` only exposes the raw `EArray` payload,
             // so unwrap it and iterate `items` directly.
             let Some(assets) = assets_.expr.data.e_array() else {
@@ -558,7 +558,7 @@ impl UpgradeCommand {
         // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
         let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };
         let mut env_loader: DotEnv::Loader = {
-            // Zig leaks the map; allocate in the process-lifetime CLI arena.
+            // The original leaks the map; allocate in the process-lifetime CLI arena.
             DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init()))
         };
         env_loader.load_process()?;
@@ -580,8 +580,8 @@ impl UpgradeCommand {
         let mut version: Version = if !use_canary {
             // PORT NOTE: `Progress::start` returns `&mut Node` borrowing `refresher`;
             // leak the Progress and use raw pointers so we can pass both
-            // `&mut refresher` and `&mut progress` to `get_latest_version` (Zig
-            // freely aliased these).
+            // `&mut refresher` and `&mut progress` to `get_latest_version` (the
+            // original freely aliased these).
             let refresher: *mut Progress::Progress =
                 bun_core::heap::into_raw(Box::new(Progress::Progress::default()));
             // SAFETY: refresher is a fresh leaked allocation.
@@ -665,7 +665,7 @@ impl UpgradeCommand {
             // SAFETY: see above.
             unsafe { (*progress).unit = Progress::Unit::Bytes };
             unsafe { (*refresher).refresh() };
-            // Zig leaks this allocation intentionally — store in CLI arena.
+            // The original leaks this allocation intentionally — store in CLI arena.
             let zip_file_buffer: &'static mut MutableString = crate::cli::cli_arena()
                 .alloc(MutableString::init(version.size.max(1024) as usize)?);
 
@@ -766,7 +766,7 @@ impl UpgradeCommand {
                 Self::EXE_SUBPATH.as_bytes()
             };
 
-            // PORT NOTE: Zig used std.fs.Dir.createFileZ(.{ .truncate = true }); mapped to
+            // PORT NOTE: the original used `std.fs.Dir.createFileZ(.{ .truncate = true })`; mapped to
             // bun_sys::openat with WRONLY|CREAT|TRUNC and wrapped in sys::File for write_all.
             let zip_file = match sys::openat_a(
                 save_dir.fd(),
@@ -826,7 +826,7 @@ impl UpgradeCommand {
                     let unzip_argv: [&[u8]; 4] =
                         [unzip_exe.as_bytes(), b"-q", b"-o", tmpname.as_bytes()];
 
-                    // PORT NOTE: Zig used `std.process.Child` directly with all stdio
+                    // PORT NOTE: the original used `std.process.Child` directly with all stdio
                     // set to `.Inherit` and `.spawnAndWait()`. PORTING.md / src/CLAUDE.md
                     // map this to `bun.spawnSync` → `crate::api::bun::process::sync::spawn`.
                     let unzip_result = match spawn_sync::spawn(&spawn_sync::Options {
@@ -892,7 +892,7 @@ impl UpgradeCommand {
                     .expect("oom");
 
                     let mut buf = PathBuffer::uninit();
-                    // PORT NOTE: separate fallback buffer — Zig reused `buf` for the
+                    // PORT NOTE: separate fallback buffer — the original reused `buf` for the
                     // hardcoded path, but Rust borrowck holds `buf` for the lifetime of
                     // `which`'s returned `Option<&ZStr>` even across the `None` arm.
                     let mut buf2 = PathBuffer::uninit();
@@ -976,10 +976,10 @@ impl UpgradeCommand {
                     },
                 ];
 
-                // PORT NOTE: Zig used `std.process.Child.run` with `.max_output_bytes = 512`.
+                // PORT NOTE: the original used `std.process.Child.run` with `.max_output_bytes = 512`.
                 // PORTING.md bans `std::process`; mapped to `bun.spawnSync` with
                 // `.stdout = .buffer`. The 512-byte cap is handled below by slicing the
-                // captured stdout (`..min(len, 512)`), matching the Zig diagnostic path.
+                // captured stdout (`..min(len, 512)`), matching the original diagnostic path.
                 let result: spawn_sync::Result = 'spawn: {
                     let spawned = spawn_sync::spawn(&spawn_sync::Options {
                         argv: build_argv(&verify_argv),
@@ -992,7 +992,7 @@ impl UpgradeCommand {
                         windows: spawn_windows_options(),
                         ..Default::default()
                     });
-                    // Zig's `catch |err|` arm: any spawn-time failure (allocator/OOM
+                    // The original `catch |err|` arm: any spawn-time failure (allocator/OOM
                     // surfaces as `bun_core::Error`, posix_spawn surfaces as
                     // `bun_sys::Error`) → same diagnostic + cleanup.
                     let err_name: &'static [u8] = match spawned {
@@ -1005,11 +1005,11 @@ impl UpgradeCommand {
                         let _ = save_dir_.delete_tree(&version_name);
                     }
 
-                    // Zig matched `error.FileNotFound`; the bun.sys spawn path tags
+                    // The original matched `error.FileNotFound`; the bun.sys spawn path tags
                     // it as ENOENT. Accept both to keep snapshot parity across
                     // the std→bun.sys mapping.
                     if err_name == b"FileNotFound" || err_name == b"ENOENT" {
-                        // Zig: std.fs.cwd().access(exe, .{}) — we already chdir'd to tmpdir
+                        // `std.fs.cwd().access(exe, .{})` — we already chdir'd to tmpdir
                         if sys::exists(exe) {
                             // On systems like NixOS, the FileNotFound is actually the system-wide linker,
                             // as they do not have one (most systems have it at a known path). This is how
@@ -1086,7 +1086,7 @@ impl UpgradeCommand {
             // directly (via Deref/DerefMut) would materialize a fresh `&[u8]`
             // or `&mut [u8]` over the *whole* array, retagging it and
             // invalidating the raw-pointer-derived `&ZStr` views below. The
-            // Zig original freely re-slices a global `var` with no aliasing
+            // The original freely re-slices a global `var` with no aliasing
             // model; here the single `buf_ptr` is the shared provenance root.
             let mut current_executable_buf = PathBuffer::uninit();
             let buf_ptr: *mut u8 = current_executable_buf.as_mut_ptr();
@@ -1139,7 +1139,7 @@ impl UpgradeCommand {
             let target_dir: sys::Dir = target_dir_it;
 
             // PORT NOTE: `move_file_z` wants `&ZStr`; pre-compute a NUL-terminated
-            // copy of `exe` (Zig had it in a sentinel buffer).
+            // copy of `exe` (the original had it in a sentinel buffer).
             let mut exe_z_buf = PathBuffer::uninit();
             exe_z_buf[..exe.len()].copy_from_slice(exe);
             exe_z_buf[exe.len()] = 0;
@@ -1177,7 +1177,7 @@ impl UpgradeCommand {
                 if target_stat.st_size == dest_stat.st_size && target_stat.st_size > 0 {
                     let mut input_buf = vec![0u8; target_stat.st_size as usize];
 
-                    // PORT NOTE: `Dir::read_file` (Zig std.fs.Dir.readFile) is open + read_all + close.
+                    // PORT NOTE: `Dir::read_file` (`std.fs.Dir.readFile`) is open + read_all + close.
                     let target_hash = hash(
                         match sys::File::openat(
                             target_dir.fd(),
@@ -1187,7 +1187,7 @@ impl UpgradeCommand {
                         )
                         .and_then(|f| {
                             let n = f.read_all(&mut input_buf);
-                            let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
+                            let _ = f.close(); // close error is non-actionable (discarded for parity)
                             n
                         }) {
                             Ok(n) => &input_buf[..n],
@@ -1206,7 +1206,7 @@ impl UpgradeCommand {
                         match sys::File::openat(save_dir.fd(), exe, sys::O::RDONLY, 0).and_then(
                             |f| {
                                 let n = f.read_all(&mut input_buf);
-                                let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
+                                let _ = f.close(); // close error is non-actionable (discarded for parity)
                                 n
                             },
                         ) {
@@ -1255,7 +1255,7 @@ impl UpgradeCommand {
                         bstr::BStr::new(target_filename.as_bytes())
                     )
                     .expect("oom");
-                    // Zig: `std.fmt.allocPrintSentinel(..., 0)` — owned NUL-terminated string.
+                    // `std.fmt.allocPrintSentinel(..., 0)` — owned NUL-terminated string.
                     outdated_filename = Some(bun_core::ZBox::from_vec(buf));
                     if let Err(err) = sys::rename(
                         destination_executable_z,
@@ -1320,13 +1320,13 @@ impl UpgradeCommand {
                 let completions_argv: [&[u8]; 2] = [target_filename.as_bytes(), b"completions"];
 
                 let _ = env_loader.map.put(b"IS_BUN_AUTO_UPDATE", b"true");
-                // PORT NOTE: Zig used `std.process.Child.run` with `env_map = std_map.get()`
+                // PORT NOTE: the original used `std.process.Child.run` with `env_map = std_map.get()`
                 // and discarded the result (`_ = ... catch {}`). `bun.spawnSync` takes the
                 // C-style `[*:null]?[*:0]const u8` envp directly, so build it from the
                 // DotEnv map (`createNullDelimitedEnvMap` equivalent) instead of
                 // round-tripping through `std_env_map`. Output is buffered (matching
                 // `std.process.Child.run`'s default) and silently dropped along with any
-                // spawn error — same as the Zig.
+                // spawn error — same as the original.
                 if let Ok(envp) = env_loader.map.create_null_delimited_env_map() {
                     let _ = spawn_sync::spawn(&spawn_sync::Options {
                         argv: build_argv(&completions_argv),
@@ -1391,10 +1391,10 @@ impl UpgradeCommand {
 pub mod upgrade_js_bindings {
     use super::*;
 
-    // Zig spec: module-level `var tempdir_fd: ?bun.FD = null;` — process-global,
+    // Spec: module-level `var tempdir_fd: ?bun.FD = null;` — process-global,
     // not threadlocal. If open/close are invoked from different threads (main vs
     // worker VM) a `thread_local!` would make the close see `None` and leak the
-    // HANDLE. Match the Zig global with a `RacyCell`; access is test-only and
+    // HANDLE. Match the original global with a `RacyCell`; access is test-only and
     // effectively single-threaded.
     static TEMPDIR_FD: bun_core::RacyCell<Option<sys::Fd>> = bun_core::RacyCell::new(None);
 
@@ -1497,7 +1497,7 @@ pub mod upgrade_js_bindings {
 
             match sys::windows::Win32Error::from_nt_status(rc) {
                 sys::windows::Win32Error::SUCCESS => {
-                    // Zig: `bun.FD.fromNative(fd)` — system-kind handle on Windows.
+                    // `bun.FD.fromNative(fd)` — system-kind handle on Windows.
                     // SAFETY: test-only helper; access is single-threaded (JS thread).
                     unsafe {
                         TEMPDIR_FD.write(Some(sys::Fd::from_system(fd)));
@@ -1537,5 +1537,3 @@ pub mod upgrade_js_bindings {
 pub fn export() {
     // force-reference — drop in Rust (linker keeps #[no_mangle])
 }
-
-// ported from: src/cli/upgrade_command.zig

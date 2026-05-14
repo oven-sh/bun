@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// This must match the layout of WebSocketDeflate.Params in WebSocketDeflate.zig
+// This must match the layout of `Params` in src/http_jsc/websocket_client/WebSocketDeflate.rs
 typedef struct {
     uint8_t server_max_window_bits;
     uint8_t client_max_window_bits;

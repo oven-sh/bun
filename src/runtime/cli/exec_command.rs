@@ -12,8 +12,7 @@ use crate::command::Context;
 
 pub struct ExecCommand;
 
-/// Process-lifetime arena for the exec command's `Transpiler`. Zig passed
-/// `ctx.allocator` (== `bun.default_allocator`); the Rust port threads an
+/// Process-lifetime arena for the exec command's `Transpiler`. Threads an
 /// `&'static Arena` per PORTING.md §AST crates. Same `Once`-guarded
 /// `RacyCell<MaybeUninit>` shape as `run_command::runner_arena` (Bump is
 /// `!Sync`, so `OnceLock` cannot hold it directly).
@@ -105,5 +104,3 @@ impl ExecCommand {
         // }
     }
 }
-
-// ported from: src/cli/exec_command.zig

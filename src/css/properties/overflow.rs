@@ -65,5 +65,3 @@ pub enum TextOverflow {
     /// Overflowing text is truncated with an ellipsis.
     Ellipsis,
 }
-
-// ported from: src/css/properties/overflow.zig

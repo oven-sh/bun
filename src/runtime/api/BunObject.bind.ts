@@ -16,7 +16,7 @@ export const braces = fn({
 
 export const gc = fn({
   args: {
-    vm: t.zigVirtualMachine,
+    vm: t.nativeVirtualMachine,
     force: t.boolean.default(false),
   },
   ret: t.usize,

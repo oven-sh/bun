@@ -12,7 +12,7 @@ use super::request_context::RequestContext;
 use super::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
 
 // The six monomorphizations of `NewRequestContext` (ssl × debug × h3).
-// In Zig these are nested as `HTTPServer.RequestContext` etc.
+// Originally these were nested as `HTTPServer.RequestContext` etc.
 type HttpCtx = RequestContext<HTTPServer, false, false, false>;
 type HttpsCtx = RequestContext<HTTPSServer, true, false, false>;
 type DebugHttpCtx = RequestContext<DebugHTTPServer, false, true, false>;
@@ -20,7 +20,7 @@ type DebugHttpsCtx = RequestContext<DebugHTTPSServer, true, true, false>;
 type HttpsH3Ctx = RequestContext<HTTPSServer, true, false, true>;
 type DebugHttpsH3Ctx = RequestContext<DebugHTTPSServer, true, true, true>;
 
-// PORT NOTE (§Dispatch): Zig used `bun.ptr.TaggedPointerUnion(...)`. The
+// PORT NOTE (§Dispatch): originally a tagged-pointer union. The
 // `bun_ptr::impl_tagged_ptr_union!` macro hits the orphan rule from outside
 // `bun_ptr`, so per §Dispatch store `(tag: u8, ptr: *mut ())` as two fields.
 // PERF(port): was TaggedPointerUnion pack — 8→16 bytes. AnyRequestContext is
@@ -95,9 +95,8 @@ impl AnyRequestContext {
 /// (ssl/debug/http3), so every method body is identical — this collapses what
 /// used to be six hand-written switch arms per accessor.
 ///
-/// Mirrors Zig's `inline fn dispatch(..., comptime cb: anytype, args)` which
-/// `inline for`s over `Pointer.type_map`. Rust closures cannot be generic over
-/// `T`, so a macro is the closest structural equivalent.
+/// Rust closures cannot be generic over `T`, so a macro is the closest
+/// structural equivalent to a per-variant inline dispatch.
 // TODO(port): if Phase B gives all six ctx types a shared `RequestContextLike`
 // trait (with `const IS_H3: bool` + `type Resp`), this macro can become a
 // method taking `impl FnOnce(&mut dyn RequestContextLike)` for the simple arms.
@@ -201,10 +200,9 @@ impl AnyRequestContext {
 
     pub fn on_abort(self, response: uws::AnyResponse) {
         dispatch!(self, (), |T, ctx| {
-            // PORT NOTE: Zig does a checked downcast of the `AnyResponse` arm
-            // to `*T.Resp` before forwarding. The Rust `RequestContext::on_abort`
-            // takes `uws::AnyResponse` directly (and re-checks H3 internally),
-            // so forward the enum as-is — the per-variant assert is redundant.
+            // PORT NOTE: `RequestContext::on_abort` takes `uws::AnyResponse`
+            // directly (and re-checks H3 internally), so forward the enum as-is —
+            // a per-variant downcast assert here would be redundant.
             T::on_abort(core::ptr::from_mut::<T>(ctx), response);
         })
     }
@@ -226,8 +224,8 @@ impl AnyRequestContext {
             .map(|r| unsafe { bun_ptr::detach_lifetime_ref(r) }))
     }
 
-    /// Mutable access to the attached DevServer. Zig passed `*DevServer`
-    /// freely; the Rust accessor above hands out `&` only. The `Box` slot
+    /// Mutable access to the attached DevServer. The accessor above hands out
+    /// `&` only. The `Box` slot
     /// inside `NewServer` has a stable address, so deriving `&mut` here is
     /// sound as long as the caller upholds the usual single-writer rule on the
     /// JS thread.
@@ -245,5 +243,3 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.deref())
     }
 }
-
-// ported from: src/runtime/server/AnyRequestContext.zig

@@ -104,7 +104,7 @@ impl Options {
 
         // required. Validated by `validatePort`.
         let _port: u16 = if let Some(p) = obj.get(global, "port")? {
-            // PORT NOTE: Zig `JSValue.isFinite()`; Rust shim until landed in bun_jsc.
+            // PORT NOTE: shim for `JSValue.isFinite()` until landed in bun_jsc.
             if !(p.is_number() && p.as_number().is_finite()) {
                 return Err(Self::throw_bad_port(global, p));
             }
@@ -239,10 +239,9 @@ impl SocketAddress {
         // - "[::1]" -> "::1"
         // - "0x.0x.0" -> "0.0.0.0"
         let paddr = host.latin1(); // presentation address
-        // PORT NOTE: Zig used `std.net.Ip{4,6}Address.parse`; Rust port uses
-        // `ares_inet_pton` (already linked) to fill the sockaddr in place.
-        // `std.net.Ip6Address.parse` accepts a `%scope` suffix and populates
-        // `scope_id`; `ares_inet_pton` does not, so we strip and parse it here.
+        // PORT NOTE: uses `ares_inet_pton` (already linked) to fill the
+        // sockaddr in place. `ares_inet_pton` does not accept a `%scope`
+        // suffix, so we strip and parse it here.
         // (WHATWG URL host parsing rejects zone identifiers, so in practice
         // `URL::host_()` should not yield one — handled defensively.)
         let addr = if paddr[0] == b'[' && paddr[paddr.len() - 1] == b']' {
@@ -388,11 +387,9 @@ impl SocketAddress {
         // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
         // copy the string.
         // PERF(port): was stack-fallback — profile in Phase B
-        // (Zig used std.heap.stackFallback(64, bun.default_allocator))
 
-        // NOTE: `zig translate-c` creates semantically invalid code for `C.ntohs`.
-        // Switch back to `htons(options.port)` when this issue gets resolved:
-        // https://github.com/ziglang/zig/issues/22804
+        // NOTE: port byte-order conversion uses Rust intrinsics
+        // (`u16::to_be` / `from_be`) rather than libc `htons`/`ntohs`.
         let addr: sockaddr = match options.family {
             AF::INET => {
                 let mut sin: inet::sockaddr_in = inet::sockaddr_in {
@@ -506,10 +503,9 @@ impl SocketAddress {
 
 impl Drop for SocketAddress {
     fn drop(&mut self) {
-        // Zig `deinit`: `this._presentation.deref()` then `destroy(this)`.
         // `bun_core::String` is `Copy` (no Drop), so the +1 on the cached
         // presentation must be released explicitly here. `deref()` on a `.Dead`
-        // string is a no-op, matching the Zig spec.
+        // string is a no-op.
         self._presentation.get().deref();
     }
 }
@@ -609,8 +605,8 @@ impl SocketAddress {
     /// and `::`, respectively).
     ///
     /// ### TODO
-    /// - replace `addressToString` in `dns.zig` w this
-    /// - use this impl in server.zig
+    /// - replace `addressToString` in the dns module w this
+    /// - use this impl in the server module
     pub fn address(&self) -> BunString {
         let cached = self._presentation.get();
         if cached.tag() != bun_core::Tag::Dead {
@@ -648,8 +644,8 @@ impl SocketAddress {
         JSValue::js_number(f64::from(this.family().int()))
     }
 
-    /// NOTE: zig std uses posix values only, while this returns whatever the
-    /// system uses. Do not compare to `std.posix.AF`.
+    /// NOTE: this returns whatever the system uses, which may differ from
+    /// POSIX-only constant tables.
     pub fn family(&self) -> AF {
         // NOTE: sockaddr_in and sockaddr_in6 have the same layout for family.
         // `sa_family_t` width varies (u8 on Darwin/the BSDs, u16 on Linux/
@@ -671,8 +667,7 @@ impl SocketAddress {
     /// Get the port number in host byte order.
     pub fn port(&self) -> u16 {
         // NOTE: sockaddr_in and sockaddr_in6 have the same layout for port.
-        // NOTE: `zig translate-c` creates semantically invalid code for `C.ntohs`.
-        // Switch back to `ntohs` when this issue gets resolved: https://github.com/ziglang/zig/issues/22804
+        // Port byte-order conversion uses `u16::from_be` rather than libc `ntohs`.
         u16::from_be(self._addr.port_raw())
     }
 
@@ -702,7 +697,7 @@ impl SocketAddress {
 
     #[bun_jsc::host_fn(method)]
     pub fn to_json(this: &Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        // PORT NOTE: Zig used an anon struct with `jsc.JSObject.create`; Rust
+        // PORT NOTE: the original used an anon struct with `jsc.JSObject.create`; Rust
         // requires a `PojoFields` impl, so use a local struct.
         struct ToJson {
             address: JSValue,
@@ -746,7 +741,7 @@ fn pton(global: &JSGlobalObject, af: c_int, addr: &ZStr, dst: *mut c_void) -> Js
             .throw()),
 
         // TODO: figure out proper way to convert a c errno into a js exception
-        // TODO(port): Zig set `.errno = std.c._errno().*` on the thrown SystemError;
+        // TODO(port): the original set `.errno = errno()` on the thrown SystemError;
         // `JSGlobalObject::throw_sys_error` / `SysErrOptions` are not yet on the
         // active stub, so the errno property is dropped for now.
         -1 => {
@@ -806,7 +801,6 @@ unsafe extern "C" {
 // const ipv4: BunString = BunString { tag: .WTFStringImpl, value: .{ .WTFStringImpl = IPv4 } };
 // const ipv6: BunString = BunString { tag: .WTFStringImpl, value: .{ .WTFStringImpl = IPv6 } };
 
-// FIXME: c-headers-for-zig casts AF_* and PF_* to `c_int` when it should be `comptime_int`
 #[repr(u16)]
 // TODO(port): repr should be inet::sa_family_t but Rust requires concrete int; sa_family_t is u16 on posix+win
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1030,7 +1024,6 @@ impl sockaddr {
     }
 
     // I'd bet money endianness is going to screw us here.
-    // Zig name: `@"127.0.0.1"`
     pub const LOOPBACK_V4: sockaddr = sockaddr {
         sin: inet::sockaddr_in {
             family: inet::AF_INET as inet::sa_family_t,
@@ -1041,7 +1034,6 @@ impl sockaddr {
     };
     // TODO: check that `::` is all zeroes on all platforms. Should correspond
     // to `IN6ADDR_ANY_INIT`.
-    // Zig name: `@"::"`
     pub const ANY_V6: sockaddr = sockaddr {
         sin6: inet::sockaddr_in6 {
             family: inet::AF_INET6 as inet::sa_family_t,
@@ -1123,5 +1115,3 @@ pub mod inet {
     pub use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
     pub type socklen_t = super::ares::ares_socklen_t;
 }
-
-// ported from: src/runtime/socket/SocketAddress.zig

@@ -91,17 +91,16 @@ impl HotMap {
         if gop.found_existing {
             panic!("HotMap already contains key");
         }
-        // PORT NOTE: `get_or_put` already boxed the key; Zig wrote
-        // `entry.key_ptr.* = dupe(key)` because its map didn't own keys.
+        // `get_or_put` already boxed (and now owns) the key; no separate dupe
+        // is needed.
         *gop.value_ptr = entry;
     }
 
     pub fn remove(&mut self, key: &[u8]) {
-        // PORT NOTE: Zig captured the stored key ptr to free post-removal; here
-        // the map owns the Box<[u8]> key and `swap_remove` drops it. Preserve
-        // the aliasing assert (caller must not pass the map's own key storage).
-        // Ordering doesn't matter for HotMap consumers — Zig's `orderedRemove`
-        // was incidental, not load-bearing.
+        // The map owns the Box<[u8]> key and `swap_remove` drops it; no
+        // separate free is needed. Preserve the aliasing assert (caller must
+        // not pass the map's own key storage). Ordering doesn't matter for
+        // HotMap consumers, so swap_remove is fine.
         let Some(i) = self._map.get_index(key) else {
             return;
         };
@@ -242,7 +241,8 @@ pub struct RareData {
     /// Erased `*mut webcore::blob::Store` (intrusive-refcounted on the runtime
     /// side). Constructed via `__bun_stdio_blob_store_new`; high tier casts back.
     /// `mode` is cached so [`Bun__Process__getStdinFdType`] doesn't have to
-    /// re-stat (Zig read `store.data.file.mode`).
+    /// re-stat (the typed `store.data.file.mode` is not reachable through the
+    /// erased pointer).
     pub stderr_store: Option<NonNull<c_void>>,
     pub stderr_mode: Mode,
     pub stdin_store: Option<NonNull<c_void>>,
@@ -315,15 +315,15 @@ pub struct RareData {
     pub temp_pipe_read_buffer: Option<Box<PipeReadBuffer>>,
 
     // PORT NOTE: `aws_signature_cache` field dropped — storage moved DOWN to
-    // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static). The
-    // Zig code always reached it via `getMainThreadVM()`, so it was a
-    // singleton in practice; hosting it in the consumer crate removes the
-    // upward `s3_signing → jsc` hook.
+    // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static). It
+    // was always reached via `getMainThreadVM()`, so it was a singleton in
+    // practice; hosting it in the consumer crate removes the upward
+    // `s3_signing → jsc` hook.
     pub s3_default_client: Strong,
     pub default_csrf_secret: Box<[u8]>,
 
-    /// Owned NUL-terminated buffer (`[:0]u8`). `len()` includes the trailing 0;
-    /// [`Self::tls_default_ciphers`] strips it to match Zig `dupeZ` semantics.
+    /// Owned NUL-terminated buffer. `len()` includes the trailing 0;
+    /// [`Self::tls_default_ciphers`] strips it before returning.
     pub tls_default_ciphers: Option<Box<[u8]>>,
 
     // proxy_env_storage moved to VirtualMachine — see comment there on why
@@ -333,7 +333,6 @@ pub struct RareData {
     pub path_buf: PathBuf,
 }
 
-// Type aliases matching Zig's local imports
 pub type FilePollStore = Async::file_poll::Store;
 
 impl Default for RareData {
@@ -475,8 +474,7 @@ pub struct Slot<'a> {
 }
 
 /// Helper macro: expands `$body` once per proxy-env field, binding `$name`
-/// (the static byte-string key) and `$field` (the field ident). Replaces
-/// the Zig `inline for (@typeInfo(...).fields)` iteration.
+/// (the static byte-string key) and `$field` (the field ident).
 macro_rules! for_each_proxy_field {
     ($self:expr, |$name:ident, $field:ident| $body:block) => {{
         // Uppercase fields are declared first. On Windows the case-insensitive
@@ -545,8 +543,7 @@ impl ProxyEnvSlots {
     /// parent's strings. Caller passes the parent's locked guard — the `Arc`
     /// load + clone is not atomic with respect to `Bun__setEnvValue`'s drop.
     pub fn clone_from(&mut self, parent: &ProxyEnvSlots) {
-        // PORT NOTE: reshaped for borrowck — Zig iterated fields via @typeInfo;
-        // here Arc::clone bumps the refcount.
+        // Arc::clone bumps the refcount on each non-null slot.
         self.HTTP_PROXY = parent.HTTP_PROXY.clone();
         self.http_proxy = parent.http_proxy.clone();
         self.HTTPS_PROXY = parent.HTTPS_PROXY.clone();
@@ -584,9 +581,7 @@ impl ProxyEnvSlots {
 /// A ref-counted heap-allocated byte slice. The env map stores borrowed
 /// `.bytes` slices; as long as any VM holds a ref, the bytes stay valid.
 ///
-/// PORT NOTE: Zig used intrusive `ThreadSafeRefCount`; LIFETIMES.tsv classifies
-/// holders as `Arc<RefCountedEnvValue>`, so the refcount lives in the `Arc`
-/// header and `ref`/`deref` become `Arc::clone`/`drop`.
+/// The refcount lives in the `Arc` header — holders use `Arc::clone`/`drop`.
 pub struct RefCountedEnvValue {
     pub bytes: Box<[u8]>,
 }
@@ -608,8 +603,7 @@ pub use bun_s3_signing::credentials::AWSSignatureCache;
 // RareData methods — simple accessors / lazy-init
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Expand `$body` once per embedded `SocketGroup` field — the Rust analogue of
-/// Zig's `inline for (socket_group_fields) |f| @field(this, f)`.
+/// Expand `$body` once per embedded `SocketGroup` field.
 macro_rules! for_each_socket_group {
     ($self:ident, |$g:ident| $body:block) => {{
         {
@@ -728,10 +722,10 @@ impl RareData {
     }
 
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
-        // PORT NOTE: Zig spec is `ENGINE_new().?` (panic on null). We cache the
-        // raw result; `EVP_DigestInit_ex` tolerates a NULL engine, so OOM here
-        // degrades to "no engine" rather than crashing. Debug-assert to surface
-        // the divergence without altering release behavior.
+        // We cache the raw `ENGINE_new()` result without panicking on null;
+        // `EVP_DigestInit_ex` tolerates a NULL engine, so OOM here degrades to
+        // "no engine" rather than crashing. Debug-assert to surface the case
+        // without altering release behavior.
         let ptr = *self
             .boring_ssl_engine
             .get_or_insert_with(|| boring::ENGINE_new());
@@ -749,11 +743,11 @@ impl RareData {
     }
 
     pub fn tls_default_ciphers(&self) -> Option<&[u8]> {
-        // PORT NOTE: Zig returns `[:0]const u8` whose `.len` excludes the NUL
-        // sentinel. The stored buffer is NUL-terminated (set_tls_default_ciphers
-        // appends 0), so strip the trailing NUL from the returned slice's length
-        // to match `dupeZ` semantics. Callers needing a C string can still take
-        // `.as_ptr()` — the NUL byte remains in storage one-past-the-end.
+        // The stored buffer is NUL-terminated (set_tls_default_ciphers appends
+        // 0), but callers expect the slice length to exclude the sentinel —
+        // strip the trailing NUL from the returned slice. Callers needing a C
+        // string can still take `.as_ptr()` — the NUL byte remains in storage
+        // one-past-the-end.
         self.tls_default_ciphers
             .as_deref()
             .map(|s| &s[..s.len() - 1])
@@ -779,9 +773,9 @@ impl RareData {
 
     pub fn spawn_sync_event_loop(&mut self, vm: &mut VirtualMachine) -> &mut SpawnSyncEventLoop {
         if self.spawn_sync_event_loop_.is_none() {
-            // PORT NOTE: in-place out-param init — Zig used Owned::new(undefined)
-            // then ptr.init(vm). `event_loop` inside captures `self`-addr, so the
-            // value must not move after init; allocate the Box first, init into it.
+            // In-place out-param init: `event_loop` inside captures the value's
+            // address, so the value must not move after init. Allocate the Box
+            // first, then init into it.
             let mut boxed = Box::<SpawnSyncEventLoop>::new_uninit();
             SpawnSyncEventLoop::init(
                 &mut *boxed,
@@ -895,8 +889,8 @@ impl RareData {
     // ── socket groups: lazy init ──────────────────────────────────────────
     #[inline]
     fn lazy_group<'a>(g: &'a mut SocketGroup, vm: &VirtualMachine) -> &'a mut SocketGroup {
-        // PORT NOTE: Zig took `comptime field: []const u8` + @field; Rust takes
-        // the field reference directly since callers know the field statically.
+        // Callers know the field statically, so we take the field reference
+        // directly rather than dispatching by name.
         if g.loop_.is_null() {
             g.init(vm.uws_loop(), None, core::ptr::null_mut());
         }
@@ -975,9 +969,9 @@ impl RareData {
 
     // ── close_all_socket_groups ───────────────────────────────────────────
     /// Drain every embedded socket group. Must run BEFORE JSC teardown — closeAll
-    /// fires on_close → JS callbacks → needs a live VM. RareData.deinit() runs
-    /// after `WebWorker__teardownJSCVM` (web_worker.zig), so doing the closeAll
-    /// there would dispatch into freed JSC heap.
+    /// fires on_close → JS callbacks → needs a live VM. `RareData::drop` runs
+    /// after `WebWorker__teardownJSCVM`, so doing the closeAll there would
+    /// dispatch into freed JSC heap.
     pub fn close_all_socket_groups(&mut self, vm: &VirtualMachine) {
         // closeAll() dispatches on_close into JS while the VM is still alive, so a
         // handler can call Bun.connect/postgres/etc. and re-populate a group we
@@ -1016,7 +1010,7 @@ impl RareData {
 //
 // Low tier owns the fstat + lazy-init flow; the actual `webcore::blob::Store`
 // allocation goes through `__bun_stdio_blob_store_new` (link-time extern
-// defined in `bun_runtime::webcore::blob`). Zig built `Blob.Store` inline.
+// defined in `bun_runtime::webcore::blob`).
 // ──────────────────────────────────────────────────────────────────────────
 
 impl RareData {
@@ -1075,8 +1069,8 @@ impl RareData {
                 Ok(stat) => stat.st_mode as Mode,
                 Err(_) => 0,
             };
-            // Zig: `if (fd.unwrapValid()) |valid| std.posix.isatty(valid.native()) else false`
-            // — on Windows an invalid stdin handle must short-circuit to false.
+            // On Windows an invalid stdin handle must short-circuit to false
+            // rather than calling isatty on it.
             let is_atty = fd.unwrap_valid().map(syscall::isatty).unwrap_or(false);
             let store = Self::stdio_ctor(fd, is_atty, mode);
             self.stdin_store = NonNull::new(store);
@@ -1101,7 +1095,7 @@ pub enum StdinFdType {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> StdinFdType {
     let rare = vm.as_mut().rare_data();
-    // PORT NOTE: Zig read `store.data.file.mode`; the store is erased here, so
+    // The store is erased here (no `store.data.file.mode` access), so
     // `stderr/stdout/stdin()` cache `mode` alongside the pointer.
     let mode = match fd {
         0 => {
@@ -1118,9 +1112,9 @@ pub extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> 
         }
         _ => unreachable!(),
     };
-    // Zig: `bun.S.ISFIFO(mode)` / `bun.S.ISSOCK(mode)` — platform-shimmed (works on
-    // Windows where libc::S_IFSOCK is undefined and on macOS where the libc constants
-    // are u16). `kind_from_mode` uses hard-coded u32 octal masks for the same effect.
+    // `kind_from_mode` uses hard-coded u32 octal masks instead of libc's
+    // S_ISFIFO/S_ISSOCK so it works on Windows (where libc::S_IFSOCK is
+    // undefined) and macOS (where the libc constants are u16).
     match bun_sys::kind_from_mode(mode) {
         bun_sys::FileKind::NamedPipe => StdinFdType::Pipe,
         bun_sys::FileKind::UnixDomainSocket => StdinFdType::Socket,
@@ -1214,5 +1208,3 @@ impl Drop for RareData {
 }
 
 pub use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop as SpawnSyncEventLoopReexport;
-
-// ported from: src/jsc/rare_data.zig

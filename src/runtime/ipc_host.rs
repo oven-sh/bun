@@ -1,6 +1,6 @@
 //! JS host entry points for the IPC module that need to name `bun_runtime`
-//! types (`Subprocess`, `Listener`). Spec: `src/jsc/ipc.zig:980-1088` +
-//! `VirtualMachine.zig` `Bun__Process__send_`.
+//! types (`Subprocess`, `Listener`). Covers the IPC `process.send`/`emit`
+//! entry points and `Bun__Process__send_`.
 //!
 //! LAYERING: `bun_jsc::ipc` defines the protocol/queue (mode-agnostic) and the
 //! `SendQueueOwner` trait. The host fns here close over the concrete
@@ -59,7 +59,7 @@ fn do_send_err(
             global_object,
             BunString::empty(),
             // `#[bun_jsc::host_fn]` emits the C-ABI shim under this name; the
-            // safe `emit_process_error_event` is `JSHostFnZig`, not `JSHostFn`.
+            // safe `emit_process_error_event` is `JSHostFnSafe`, not `JSHostFn`.
             __jsc_host_emit_process_error_event,
             1,
             Default::default(),
@@ -136,7 +136,7 @@ pub fn do_send(
         }
     }
 
-    let mut zig_handle: Option<Handle> = None;
+    let mut ipc_handle: Option<Handle> = None;
     if !handle.is_undefined_or_null() {
         if let Some(listener) = Listener::from_js(handle) {
             log!("got listener");
@@ -149,7 +149,7 @@ pub fn do_send(
                     // owned by uSockets; `get_socket` only reinterpret-casts to
                     // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
                     let fd = unsafe { &mut *socket_uws }.get_socket().get_fd();
-                    zig_handle = Some(Handle::init(fd, handle));
+                    ipc_handle = Some(Handle::init(fd, handle));
                 }
                 crate::socket::listener::ListenerType::NamedPipe(_named_pipe) => {}
                 crate::socket::listener::ListenerType::None => {}
@@ -164,7 +164,7 @@ pub fn do_send(
         message,
         IsInternal::External,
         callback,
-        zig_handle,
+        ipc_handle,
     );
 
     if status == SerializeAndSendResult::Failure {
@@ -213,8 +213,7 @@ pub fn emit_handle_ipc_message(
     Ok(JSValue::UNDEFINED)
 }
 
-// Zig: comptime { const Bun__Process__send = jsc.toJSHostFn(Bun__Process__send_); @export(...) }
-// The #[bun_jsc::host_fn] attribute emits the callconv(jsc.conv) shim and export.
+// The #[bun_jsc::host_fn] attribute emits the JSC host-call ABI shim and export.
 //
 // LAYERING: lives here (not in `bun_jsc::virtual_machine_exports`) because the
 // body — via `do_send` — names `Listener` (`bun_runtime`). The export is a

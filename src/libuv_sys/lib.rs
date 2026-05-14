@@ -8,7 +8,7 @@
 #![warn(unused_must_use)]
 //! Raw libuv FFI (Windows only). Re-exports the `libuv` module's contents at
 //! crate root so callers can write `bun_libuv_sys::fs_t` /
-//! `bun_sys::windows::libuv::uv_fs_open` (matching the Zig
+//! `bun_sys::windows::libuv::uv_fs_open` (matching the
 //! `bun.windows.libuv.*` namespace).
 pub mod libuv;
 #[cfg(windows)]

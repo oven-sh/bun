@@ -1,4 +1,4 @@
-//! Port of `src/install/lockfile/bun.lock.zig` — text lockfile (bun.lock) stringifier and parser.
+//! Text lockfile (bun.lock) stringifier and parser.
 
 use bun_collections::VecExt;
 use core::fmt::Write as _;
@@ -49,7 +49,7 @@ use super::{
 
 use bun_io::AsFmt;
 
-/// `Bin::to_json` indent callback typed against `AsFmt` (Zig passed
+/// `Bin::to_json` indent callback typed against `AsFmt` (the original passed
 /// `Stringifier.writeIndent` directly; here the writer types differ).
 fn write_indent_fmt(w: &mut AsFmt<'_>, indent: &mut u32) -> core::fmt::Result {
     for _ in 0..*indent {
@@ -58,7 +58,7 @@ fn write_indent_fmt(w: &mut AsFmt<'_>, indent: &mut u32) -> core::fmt::Result {
     Ok(())
 }
 
-/// Zig `String.arrayHashContext(lockfile, null)` — both arg and existing keys
+/// `String.arrayHashContext(lockfile, null)` — both arg and existing keys
 /// resolve against the lockfile's string buffer.
 #[inline]
 fn string_array_hash_context(buf: &[u8]) -> bun_semver::string::ArrayHashContext<'_> {
@@ -68,7 +68,7 @@ fn string_array_hash_context(buf: &[u8]) -> bun_semver::string::ArrayHashContext
     }
 }
 
-// PORT NOTE: reshaped for borrowck. Zig keeps a single `var string_buf =
+// PORT NOTE: reshaped for borrowck. The original kept a single `var string_buf =
 // lockfile.stringBuf()` for the whole parser, but in Rust that locks out every
 // other `lockfile.*` access (the `string_buf()` method borrows the whole
 // receiver). Construct a fresh `Buf` at each append site so the disjoint
@@ -85,8 +85,8 @@ macro_rules! sbuf {
 }
 
 // TODO(port): narrow to a concrete byte-writer trait once bun_io stabilizes.
-// PERF(port): anytype → dyn dispatch — profile in Phase B (Zig used `writer: anytype`;
-// PORTING.md prefers `impl Trait`, but the trait shape is unsettled so dyn for now).
+// PERF(port): duck-typed writer → dyn dispatch — profile in Phase B
+// (PORTING.md prefers `impl Trait`, but the trait shape is unsettled so dyn for now).
 type Writer = dyn bun_io::Write;
 // `bun_io::Write` returns `core::result::Result<_, bun_core::Error>` (see
 // `bun_io::write::Result`), so the writer error is just the global `bun_core::Error`.
@@ -168,7 +168,7 @@ impl Stringifier {
         let deps_buf = lockfile.buffers.dependencies.as_slice();
         let resolution_buf = lockfile.buffers.resolutions.as_slice();
         let pkgs = lockfile.packages.slice();
-        // PORT NOTE: Zig `pkgs.items(.field)` → derive(MultiArrayElement)-generated
+        // PORT NOTE: derive(MultiArrayElement)-generated
         // `items_<field>()` column accessors on `Slice<Package>`.
         let pkg_dep_lists: &[DependencySlice] = pkgs.items_dependencies();
         let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
@@ -931,7 +931,7 @@ impl Stringifier {
         path_buf: &mut [u8],
     ) -> Result<(), WriteError> {
         // TODO(port): narrow error set to { OutOfMemory, WriteFailed }
-        // PORT NOTE: Zig `defer optional_peers_buf.clearRetainingCapacity()` moved to fn tail.
+        // PORT NOTE: deferred `optional_peers_buf.clearRetainingCapacity()` moved to fn tail.
         // Error path (`?` on writer) aborts the whole save in the caller, so skipping the
         // clear on early-return cannot leak stale entries into a subsequent call.
 
@@ -1109,7 +1109,7 @@ impl Stringifier {
         path_buf: &mut [u8],
     ) -> Result<(), WriteError> {
         // TODO(port): narrow error set to { OutOfMemory, WriteFailed }
-        // PORT NOTE: Zig `defer optional_peers_buf.clearRetainingCapacity()` moved to fn tail.
+        // PORT NOTE: deferred `optional_peers_buf.clearRetainingCapacity()` moved to fn tail.
         // Error path (`?` on writer) aborts the whole save in the caller, so skipping the
         // clear on early-return cannot leak stale entries into a subsequent call.
 
@@ -1352,7 +1352,7 @@ pub enum ResolveError {
 }
 
 impl<T> PkgMap<T> {
-    // PORT NOTE: Zig `pub const Entry = T;` — inherent associated types are
+    // PORT NOTE: inherent associated types are
     // unstable in Rust; callers name `T` directly.
 
     pub fn init() -> Self {
@@ -2556,7 +2556,7 @@ pub fn parse_into_binary_lockfile(
                 .len()
                 .saturating_sub(lockfile.buffers.resolutions.len()),
         );
-        // Zig: ensureTotalCapacityPrecise → expandToCapacity → @memset(invalid_package_id).
+        // Reserve, expand, and memset to `invalid_package_id`.
         lockfile
             .buffers
             .resolutions
@@ -2567,8 +2567,8 @@ pub fn parse_into_binary_lockfile(
         // is chosen (dev -> optional -> prod -> peer)
         let mut seen_deps: bun_collections::StringArrayHashMap<()> = Default::default();
 
-        // PORT NOTE: Zig grabs `pkgs.items(.meta)` / `.items(.resolution)` as
-        // mutable column slices, writes index 0, then keeps the resolution slice
+        // PORT NOTE: the original grabbed `pkgs.items(.meta)` / `.items(.resolution)` as
+        // mutable column slices, wrote index 0, then kept the resolution slice
         // for read-only lookups. In Rust the two `[0]` writes are done first via
         // sequential `&mut` accessors so the loops can take all column views
         // immutably without overlapping exclusive borrows or `unsafe`.
@@ -2583,8 +2583,8 @@ pub fn parse_into_binary_lockfile(
 
         // Disjoint-field split of `lockfile.buffers` so each loop body can hold
         // `&mut dependencies[i]` and `&mut resolutions[i]` together with a shared
-        // `string_bytes` view (Zig's `*Dependency` / `lockfile.buffers.*.items`
-        // accesses freely alias the same struct).
+        // `string_bytes` view (the original `*Dependency` / `lockfile.buffers.*.items`
+        // accesses freely aliased the same struct).
         let buffers = &mut lockfile.buffers;
         let string_buf: &[u8] = buffers.string_bytes.as_slice();
         let dependencies: &mut [Dependency] = buffers.dependencies.as_mut_slice();
@@ -2779,8 +2779,8 @@ pub fn parse_into_binary_lockfile(
     Ok(())
 }
 
-// PORT NOTE: Zig signature takes `*BinaryLockfile` plus a `*Dependency` that
-// points into `lockfile.buffers.dependencies` — fine in Zig, illegal aliasing in
+// PORT NOTE: the original signature took `*BinaryLockfile` plus a `*Dependency` that
+// pointed into `lockfile.buffers.dependencies` — illegal aliasing in
 // Rust. The function only touches `buffers.resolutions[dep_id]` and reads
 // `text_lockfile_version`, so accept those disjoint pieces directly and let the
 // caller split-borrow `lockfile.buffers`.
@@ -2852,7 +2852,7 @@ fn dependency_resolution_failure(
     Ok(())
 }
 
-// PORT NOTE: Zig threaded `string_buf: *String.Buf` separately from `lockfile`.
+// PORT NOTE: the original threaded `string_buf: *String.Buf` separately from `lockfile`.
 // In Rust the `Buf` borrows the same `lockfile.buffers.string_bytes` /
 // `string_pool` fields, so the two parameters alias. The `buf` parameter is
 // dropped and each append constructs a fresh `sbuf!(lockfile)` so the borrow
@@ -2864,7 +2864,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     log: &mut bun_ast::Log,
     source: &bun_ast::Source,
     optional_peers_buf: &mut HashMap<u64, ()>,
-    // Zig: `if (check_for_bundled) string else void` → carried as Option, gated by const generic
+    // Originally `if (check_for_bundled) string else void` → carried as Option, gated by const generic
     pkg_path: Option<&[u8]>,
     bundled_pkgs: Option<&PkgPathSet>,
     workspaces_obj: Option<&Expr>,
@@ -3051,7 +3051,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
     {
         let bytes = lockfile.buffers.string_bytes.as_slice();
-        // Zig: `std.sort.pdq(..., Dependency.isLessThan)`. `slice::sort_by` is
+        // `slice::sort_by` is
         // also pattern-defeating quicksort; `Dependency::cmp` is the
         // total-order form of `isLessThan` (behavior group, then name ASC).
         lockfile.buffers.dependencies[off..].sort_by(|a, b| Dependency::cmp(bytes, a, b));
@@ -3064,5 +3064,3 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
         u32::try_from(end - off).expect("int cast"),
     ))
 }
-
-// ported from: src/install/lockfile/bun.lock.zig

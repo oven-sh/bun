@@ -129,13 +129,13 @@ impl GarbageCollectionController {
             }
         }
 
-        // PORT NOTE: in the Zig spec `vm.transpiler` is fully constructed
-        // before `JSGlobalObject.create` → `ensureWaker` → this `init`. The
-        // Rust port defers `Transpiler::init` to the high-tier
-        // `init_runtime_state` hook (which runs *after* `ensure_waker`), so
-        // `vm.transpiler.env` is still the zeroed null ptr here on the main
-        // boot path. Fall back to defaults when null — these are debug/tuning
-        // knobs (BUN_GC_TIMER_INTERVAL / BUN_GC_TIMER_DISABLE /
+        // PORT NOTE: historically `vm.transpiler` was fully constructed
+        // before `JSGlobalObject.create` → `ensureWaker` → this `init`. We
+        // now defer `Transpiler::init` to the high-tier `init_runtime_state`
+        // hook (which runs *after* `ensure_waker`), so `vm.transpiler.env` is
+        // still the zeroed null ptr here on the main boot path. Fall back to
+        // defaults when null — these are debug/tuning knobs
+        // (BUN_GC_TIMER_INTERVAL / BUN_GC_TIMER_DISABLE /
         // BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS) and the dot_env loader would
         // just be reading process env anyway.
         let env = vm.env_loader_opt();
@@ -187,7 +187,7 @@ impl GarbageCollectionController {
         VirtualMachine::get().as_mut()
     }
 
-    /// Explicit teardown (Zig `deinit`). Idempotent — `Drop` forwards here.
+    /// Explicit teardown. Idempotent — `Drop` forwards here.
     /// Kept as an inherent method because callers (web_worker, VM exit path)
     /// need to release the uws timers before the owning VM storage is freed.
     pub fn deinit(&mut self) {
@@ -326,5 +326,3 @@ pub enum GCTimerState {
     Scheduled,
     RunOnNextTick,
 }
-
-// ported from: src/jsc/GarbageCollectionController.zig

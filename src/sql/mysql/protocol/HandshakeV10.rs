@@ -34,8 +34,8 @@ impl Default for HandshakeV10 {
     }
 }
 
-// Zig `deinit` only frees owned fields (`server_version`, `auth_plugin_name`); Rust drops
-// `Data` / `Box<[u8]>` fields automatically, so no explicit `impl Drop` is needed.
+// `Data` / `Box<[u8]>` fields are dropped automatically, so no explicit
+// `impl Drop` is needed.
 
 impl HandshakeV10 {
     // TODO(port): narrow error set
@@ -66,8 +66,8 @@ impl HandshakeV10 {
         // Capability flags (lower 2 bytes)
         let capabilities_lower = reader.int::<u16>()?;
 
-        // Character set — Zig uses non-exhaustive `enum(u8)` so any byte is valid;
-        // Rust enum is exhaustive, so route through the range-checked constructor.
+        // Character set — the wire byte is open (any u8); the Rust enum is
+        // exhaustive, so route through the range-checked constructor.
         self.character_set = CharacterSet::from_raw(reader.int::<u8>()?);
 
         // Status flags
@@ -102,7 +102,5 @@ impl HandshakeV10 {
     }
 }
 
-// Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
+// See Decode trait in src/sql/mysql/protocol/NewReader.rs
 pub use self::HandshakeV10 as _DecoderWrapTarget;
-
-// ported from: src/sql/mysql/protocol/HandshakeV10.zig

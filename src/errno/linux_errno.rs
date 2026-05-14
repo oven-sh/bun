@@ -152,7 +152,7 @@ impl SystemErrno {
 
     /// On Linux `EOPNOTSUPP` and `ENOTSUP` share value 95; the enum defines
     /// only `ENOTSUP`. Provide this alias so cross-platform call sites that
-    /// match Zig's `.OPNOTSUPP` (npm.zig, copy_file) compile against one name.
+    /// match `OPNOTSUPP` (npm registry client, copy_file) compile against one name.
     pub const EOPNOTSUPP: SystemErrno = SystemErrno::ENOTSUP;
 }
 
@@ -181,7 +181,7 @@ use super::GetErrno;
 impl GetErrno for usize {
     #[inline]
     fn get_errno(self) -> E {
-        // `as` between same-width usize/isize is a bit-reinterpretation (Zig: @bitCast)
+        // `as` between same-width usize/isize is a bit-reinterpretation
         let signed = self as isize;
         let int = if signed > -4096 && signed < 0 {
             -signed
@@ -198,7 +198,5 @@ impl GetErrno for usize {
 //
 // TODO: the inclusion of  'u32' and 'isize' seems suspicious
 impl_get_errno_libc!(i32, u32, isize, i64);
-// c_int == i32 on all our targets; Zig listed both explicitly but Rust impl coherence forbids the duplicate.
-// may need to drop one or cfg-gate it. Zig listed both explicitly.
-
-// ported from: src/errno/linux_errno.zig
+// c_int == i32 on all our targets; the original listed both explicitly but Rust impl coherence forbids the duplicate.
+// May need to drop one or cfg-gate it.

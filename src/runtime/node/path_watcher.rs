@@ -8,13 +8,13 @@
 //! lock-ordering workarounds, a WorkPool directory crawler, and a bolted-on FSEvents
 //! side-channel.
 //!
-//! The Windows backend (`win_watcher.zig`, libuv `uv_fs_event`) never went through
+//! The Windows backend (`win_watcher.rs`, libuv `uv_fs_event`) never went through
 //! `bun.Watcher` and is a quarter of the size; this file gives Linux/macOS/FreeBSD
 //! the same shape:
 //!
 //!   PathWatcherManager        process-global, lazy, owns the OS resource
 //!     ├─ Linux:   one inotify fd + one reader thread, wd → PathWatcher map
-//!     ├─ macOS:   delegates to fs_events.zig (one CFRunLoop thread, one FSEventStream)
+//!     ├─ macOS:   delegates to fs_events.rs (one CFRunLoop thread, one FSEventStream)
 //!     └─ FreeBSD: one kqueue fd + one reader thread, fd → PathWatcher map
 //!
 //!   PathWatcher               one per unique (realpath, recursive) — deduped
@@ -73,12 +73,12 @@ pub struct PathWatcherManager {
     /// don't share — they want different OS registrations on every platform).
     ///
     /// Interior-mutable: written through `&'static PathWatcherManager` while holding
-    /// `mutex`. Zig's `*PathWatcherManager` aliases freely; in Rust the field must be
-    /// `UnsafeCell` so deriving `&mut` from a shared manager reference is defined.
+    /// `mutex`. The original `*PathWatcherManager` aliased freely; in Rust the field
+    /// must be `UnsafeCell` so deriving `&mut` from a shared manager reference is defined.
     watchers: UnsafeCell<StringArrayHashMap<*mut PathWatcher>>,
 
     /// Platform-specific dispatch maps (inotify wd_map / kqueue entries).
-    /// On macOS this is empty — FSEvents owns its own thread via `fs_events.zig`.
+    /// On macOS this is empty — FSEvents owns its own thread via `fs_events.rs`.
     /// Interior-mutable for the same reason as `watchers`.
     platform: UnsafeCell<Platform>,
 
@@ -136,7 +136,7 @@ impl PathWatcherManager {
             return Ok(m);
         }
 
-        // Process-lifetime singleton (Zig: `var default_manager`). Hand the
+        // Process-lifetime singleton. Hand the
         // allocation off via `heap::release`; it is published into
         // `DEFAULT_MANAGER` below and lives until process exit — except on the
         // `Platform::init` error path, which is the one place it is reclaimed.
@@ -189,7 +189,7 @@ pub struct PathWatcher {
     is_file: bool,
 
     /// JS `FSWatcher` contexts sharing this OS watch. Each gets its own ChangeEvent
-    /// for per-handler duplicate suppression (same as win_watcher.zig). Guarded by
+    /// for per-handler duplicate suppression (same as win_watcher.rs). Guarded by
     /// `manager.mutex` on all platforms — every emit path (inotify/kqueue reader
     /// threads and the Darwin FSEvents callback) holds it while iterating, so
     /// attach/detach can never race with dispatch.
@@ -218,8 +218,8 @@ impl EventType {
 
 /// Per-handler duplicate suppression.
 ///
-/// The predicate is intentionally identical to `win_watcher.zig` and the old
-/// `path_watcher.zig` so POSIX and Windows agree on which bursts are coalesced.
+/// The predicate is intentionally identical to `win_watcher.rs` and the old
+/// `path_watcher.rs` so POSIX and Windows agree on which bursts are coalesced.
 /// It suppresses only when, within the same millisecond, *both* the hash and
 /// the event type match the previous emission — arguably too aggressive, but
 /// changing it here would diverge from Windows; fixing all three together is
@@ -381,7 +381,7 @@ pub fn watch(
 ) -> sys::Result<*mut PathWatcher> {
     // The callback/updateEnd are comptime so the emit path can call them directly
     // without an indirect-call-per-event; assert they're what node_fs_watcher passes.
-    // PERF(port): was comptime monomorphization — Zig asserted at compile time.
+    // PERF(port): was monomorphization — originally asserted at compile time.
     // Compare against the *exact* fn pointers `FSWatcher` passes (not local wrappers,
     // which would be distinct fn items with distinct addresses).
     debug_assert!(callback as usize == FSWatcher::ON_PATH_UPDATE as usize);
@@ -558,8 +558,8 @@ fn walk_subtree<const DIRS_ONLY: bool>(
         if DIRS_ONLY && child_is_file {
             continue;
         }
-        // Zig: `bun.DirIterator.iterate(dfd, .u8)` — force-u8 mode so `name.slice()`
-        // is `[]const u8` even on Windows. The Rust iterator caches the UTF-8
+        // `bun.DirIterator.iterate(dfd, .u8)` — force-u8 mode so `name.slice()`
+        // is a byte slice even on Windows. The Rust iterator caches the UTF-8
         // transcode and exposes it as `slice_u8()`.
         let name = entry.name.slice_u8();
         let child_abs =
@@ -576,7 +576,7 @@ fn walk_subtree<const DIRS_ONLY: bool>(
     }
 }
 
-// Platform dispatch alias (Zig: `const Platform = switch (Environment.os) { ... }`).
+// Platform dispatch alias.
 // Android uses the same inotify backend as Linux (bionic exposes the same
 // `inotify_*` libc surface; the kernel ABI is identical).
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -594,9 +594,9 @@ type Platform = Kqueue;
 #[cfg(target_os = "freebsd")]
 type PlatformWatch = KqueueWatch;
 
-// win_watcher.zig imports PathWatcher.EventType from this file, so this type must
+// win_watcher.rs imports PathWatcher.EventType from this file, so this type must
 // resolve on Windows even though none of the code paths run. The stub keeps the
-// struct fields typed while the actual Windows backend lives in win_watcher.zig.
+// struct fields typed while the actual Windows backend lives in win_watcher.rs.
 #[cfg(windows)]
 type Platform = WindowsStub;
 #[cfg(windows)]
@@ -625,7 +625,7 @@ pub struct Linux {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 struct WdOwner {
-    /// Raw `*mut` (Zig: `*PathWatcher`). Stored in a long-lived map and mutated
+    /// Raw `*mut PathWatcher`. Stored in a long-lived map and mutated
     /// (`emit`, `platform.wds`) under `manager.mutex`; a `&PathWatcher` here would
     /// make every write-through a const→mut cast (UB). Lifetime: outlives the entry
     /// because `remove_watch` drops all of a watcher's wd entries before `destroy()`.
@@ -1025,9 +1025,9 @@ use bun_watcher::inotify_watcher::Event as InotifyEvent;
 // Darwin
 // ────────────────────────────────────────────────────────────────────────────────
 
-/// macOS: delegate to `fs_events.zig`, which already runs one CFRunLoop thread with
+/// macOS: delegate to `fs_events.rs`, which already runs one CFRunLoop thread with
 /// one FSEventStream covering every watched path. The PathWatcher itself is the
-/// FSEventsWatcher's opaque ctx — `fs_events.zig` calls back via `onFSEvent` below,
+/// FSEventsWatcher's opaque ctx — `fs_events.rs` calls back via `onFSEvent` below,
 /// and we fan out to the JS handlers.
 ///
 /// Unlike the old design, FSEvents is used for both files and directories (same as
@@ -1101,8 +1101,7 @@ impl Darwin {
     /// Takes a raw `*mut PathWatcher`: while we block on the FSEvents loop mutex
     /// inside `deinit`, the CF thread may concurrently take `manager.mutex` and
     /// raw-read `(*watcher).manager` (to bail on `None`). Holding a `&mut PathWatcher`
-    /// across that would be aliased-`&mut` UB under Stacked Borrows; Zig's pointer
-    /// model has no such restriction.
+    /// across that would be aliased-`&mut` UB under Stacked Borrows.
     fn remove_watch(_: &'static PathWatcherManager, watcher: *mut PathWatcher) {
         // SAFETY: caller is the sole logical owner (last handler detached, watcher
         // unlinked from the dedup map, `manager` already nulled). Project only the
@@ -1115,7 +1114,7 @@ impl Darwin {
         }
     }
 
-    /// Called from the CFRunLoop thread (`fs_events.zig`'s `_events_cb`) with the
+    /// Called from the CFRunLoop thread (`fs_events.rs`'s `_events_cb`) with the
     /// FSEvents loop mutex held. Take `manager.mutex` so iterating `handlers` can't
     /// race with `watch()`/`detach()` mutating it. The JS thread never holds
     /// `manager.mutex` across a call into FSEvents, so this is deadlock-free.
@@ -1187,7 +1186,7 @@ pub struct Kqueue {
 
 #[cfg(target_os = "freebsd")]
 struct KqEntry {
-    /// Raw `*mut` (Zig: `*PathWatcher`). See `WdOwner.watcher` — stored long-lived,
+    /// Raw `*mut PathWatcher`. See `WdOwner.watcher` — stored long-lived,
     /// mutated through (`emit`) under `manager.mutex`; outlives the entry because
     /// `remove_watch` clears all of a watcher's entries before `destroy()`.
     watcher: *mut PathWatcher,
@@ -1468,5 +1467,3 @@ impl WindowsStub {
     }
     fn remove_watch(_: &'static PathWatcherManager, _: &mut PathWatcher) {}
 }
-
-// ported from: src/runtime/node/path_watcher.zig

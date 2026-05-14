@@ -1,12 +1,11 @@
-// This is zig translate-c run on ffi.h
+// Hand-translated from ffi.h.
 // it turns out: FFI.h is faster than our implementation that calls into C++ bindings
 // so we just use this in some cases
 //
-// PORT NOTE: the original .zig is raw `zig translate-c` output. The meaningful
-// surface (EncodedJSValue + tag constants + inline coercion fns) is ported
-// below; the ~390 lines of compiler-builtin macro noise (`__clang__`,
-// `__INT_MAX__`, `__ARM_FEATURE_*`, …) emitted by translate-c are dropped —
-// they are never referenced.
+// The meaningful surface (EncodedJSValue + tag constants + inline coercion
+// fns) is reproduced below; the ~390 lines of compiler-builtin macro noise
+// (`__clang__`, `__INT_MAX__`, `__ARM_FEATURE_*`, …) emitted by C
+// preprocessing are dropped — they are never referenced.
 
 #![allow(non_snake_case, non_upper_case_globals, clippy::missing_safety_doc)]
 
@@ -92,8 +91,8 @@ pub fn jsvalue_to_uint64(value: EncodedJSValue) -> u64 {
         return jsvalue_to_int32(value) as c_longlong as u64;
     }
     if jsvalue_is_number(value) {
-        // PORT NOTE: Rust `as` saturates on overflow/NaN where Zig @intFromFloat is UB;
-        // callers already range-check via the int32/number tags so behavior matches.
+        // PORT NOTE: Rust `as` saturates on overflow/NaN; callers already
+        // range-check via the int32/number tags so behavior matches.
         return jsvalue_to_double(value) as u64;
     }
     JSVALUE_TO_UINT64_SLOW(value)
@@ -118,8 +117,8 @@ unsafe extern "C" {
     pub safe fn JSVALUE_TO_INT64_SLOW(value: EncodedJSValue) -> i64;
 }
 
-// In Zig these alias `jsc.JSValue.fromUInt64NoTruncate` / `fromInt64NoTruncate`
-// directly; Rust cannot bind a method as a free `const`, so forward through a fn.
+// Thin wrappers around `JSValue::from_uint64_no_truncate` / `from_int64_no_truncate`;
+// Rust cannot bind a method as a free `const`, so forward through a fn.
 #[inline]
 pub fn uint64_to_jsvalue_slow(global_object: &JSGlobalObject, val: u64) -> JSValue {
     JSValue::from_uint64_no_truncate(global_object, val)
@@ -137,8 +136,8 @@ pub fn uint64_to_jsvalue(global_object: *mut c_void, val: u64) -> EncodedJSValue
     if val < 9007199254740991 as c_ulonglong {
         return double_to_jsvalue(val as f64);
     }
-    // Caller passed a non-null *JSGlobalObject erased as anyopaque (matches
-    // Zig `.?` unwrap). `opaque_ref` is the safe ZST-handle deref (panics on null).
+    // Caller passed a non-null *JSGlobalObject erased as a void pointer.
+    // `opaque_ref` is the safe ZST-handle deref (panics on null).
     let global = JSGlobalObject::opaque_ref(global_object.cast::<JSGlobalObject>());
     uint64_to_jsvalue_slow(global, val).as_encoded()
 }
@@ -151,7 +150,7 @@ pub fn int64_to_jsvalue(global_object: *mut c_void, val: i64) -> EncodedJSValue 
     if val >= -(9007199254740991 as c_longlong) && val <= 9007199254740991 as c_longlong {
         return double_to_jsvalue(val as f64);
     }
-    // Caller passed a non-null *JSGlobalObject erased as anyopaque.
+    // Caller passed a non-null *JSGlobalObject erased as a void pointer.
     // `opaque_ref` is the safe ZST-handle deref (panics on null).
     let global = JSGlobalObject::opaque_ref(global_object.cast::<JSGlobalObject>());
     int64_to_jsvalue_slow(global, val).as_encoded()
@@ -167,7 +166,7 @@ pub fn int32_to_jsvalue(val: i32) -> EncodedJSValue {
 #[inline]
 pub fn double_to_jsvalue(val: f64) -> EncodedJSValue {
     // `f64::to_bits` is the stdlib safe bit-reinterpret (replaces the
-    // translate-c union pun `res.as_double = val; res.as_int64 += 1<<49`).
+    // original C union pun `res.as_double = val; res.as_int64 += 1<<49`).
     EncodedJSValue {
         as_int64: (val.to_bits() as i64).wrapping_add((1 as c_longlong) << 49),
     }
@@ -202,7 +201,7 @@ pub fn jsvalue_to_float(val: EncodedJSValue) -> f32 {
 #[inline]
 pub fn jsvalue_to_double(val: EncodedJSValue) -> f64 {
     // `f64::from_bits` is the stdlib safe bit-reinterpret (replaces the
-    // translate-c union pun `val.as_int64 -= 1<<49; val.as_double`).
+    // original C union pun `val.as_int64 -= 1<<49; val.as_double`).
     f64::from_bits(val.bits().wrapping_sub((1 as c_longlong) << 49) as u64)
 }
 
@@ -216,10 +215,10 @@ unsafe extern "C" {
     pub fn JSFunctionCall(globalObject: *mut c_void, callFrame: *mut c_void) -> *mut c_void;
 }
 
-// PORT NOTE: ~390 lines of translate-c compiler-builtin macro definitions
-// (`__block`, `__INTMAX_C_SUFFIX__`, `__clang_major__`, `__SIZEOF_*`,
-// `__ARM_FEATURE_*`, `__APPLE__`, …) from FFI.zig:121-509 intentionally
-// dropped — they are clang predefined-macro spew with no callers.
+// PORT NOTE: ~390 lines of compiler-builtin macro definitions (`__block`,
+// `__INTMAX_C_SUFFIX__`, `__clang_major__`, `__SIZEOF_*`, `__ARM_FEATURE_*`,
+// `__APPLE__`, …) from the C-derived header are intentionally dropped — they
+// are clang predefined-macro spew with no callers.
 
 pub const IS_BIG_ENDIAN: c_int = 0;
 pub const USE_JSVALUE64: c_int = 1;
@@ -239,5 +238,3 @@ pub const NOT_CELL_MASK: c_ulonglong = NUMBER_TAG | OTHER_TAG as c_ulonglong;
 pub const MAX_INT32: i64 = 2147483648;
 pub const MAX_INT52: i64 = 9007199254740991;
 pub const NUMBER_TAG: c_ulonglong = 0xfffe_0000_0000_0000;
-
-// ported from: src/jsc/FFI.zig

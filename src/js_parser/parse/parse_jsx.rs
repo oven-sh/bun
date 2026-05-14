@@ -11,8 +11,7 @@ use bun_collections::VecExt;
 use bun_core::err;
 use bun_core::strings;
 
-// Zig: `pub fn ParseJSXElement(comptime ...) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`
+// File-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`
 // (sealed trait + ZST), so this becomes a direct `impl` on `P` instead of a wrapper struct.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -345,7 +344,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let end_tag = JSXTag::parse(p)?;
 
                     if end_tag.name != tag.name {
-                        // TODO(port): arena param dropped from Zig signature.
+                        // TODO(port): arena param dropped from original signature.
                         p.log().add_range_error_fmt_with_note(
                             Some(p.source),
                             end_tag.range,
@@ -384,5 +383,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 }
-
-// ported from: src/js_parser/ast/parseJSXElement.zig

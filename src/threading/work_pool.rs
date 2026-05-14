@@ -9,8 +9,8 @@ pub struct WorkPool;
 
 /// A type that embeds an intrusive `task: Task` field. Declares the byte
 /// offset of that field once and provides the canonical container-of recovery
-/// used by every `fn(task: *mut Task)` thread-pool trampoline (the Rust
-/// equivalent of Zig's per-site `@fieldParentPtr("task", task)`).
+/// used by every `fn(task: *mut Task)` thread-pool trampoline (a per-site
+/// container-of recovery from the embedded field pointer).
 ///
 /// Implement via [`intrusive_work_task!`]; the trait carries the safety
 /// contract so call sites need only assert "scheduled via this field".
@@ -50,7 +50,7 @@ pub unsafe trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
 /// `Send` bound).
 pub unsafe trait OwnedTask: IntrusiveWorkTask + Send + 'static {
     /// Run the task. Receives ownership of the heap allocation; dropping
-    /// `self` frees it (Zig: `bun.destroy(this)` at end of callback).
+    /// `self` frees it at the end of the callback.
     fn run(self: Box<Self>);
 
     /// The C-ABI thread-pool callback shim. Generic over `Self`; recovers the
@@ -102,7 +102,7 @@ macro_rules! intrusive_work_task {
 /// inherent `fn run_owned(self: Box<Self>)`.
 ///
 /// The `Send` impl is part of the macro because every `OwnedTask` is *by
-/// construction* sent to a worker thread — Zig's `WorkPool.schedule` had no
+/// construction* sent to a worker thread — `WorkPool::schedule` itself has no
 /// such bound and the per-type fields (raw `*mut EventLoop`, `*const
 /// JSGlobalObject`) are auto-`!Send` only nominally. The safety obligation
 /// ("all fields are sound to move across threads") is restated once here
@@ -131,9 +131,8 @@ macro_rules! owned_task {
     };
 }
 
-// PORT NOTE: Zig used `bun.once` (a `Lock`+bool+data lazy-init pattern). Per
-// PORTING.md §Concurrency, that maps to `std::sync::OnceLock<T>` — std handles
-// the double-checked locking and gives a `&'static ThreadPool` directly.
+// Lazy one-time pool init via `std::sync::OnceLock<T>` — std handles the
+// double-checked locking and gives a `&'static ThreadPool` directly.
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
 
 #[cold]
@@ -165,8 +164,8 @@ impl WorkPool {
     pub fn schedule_owned<T: OwnedTask>(mut task: Box<T>) {
         // Install the monomorphized shim via the safe accessor — no raw
         // byte-offset write. `node` is left as the caller initialized it
-        // (always `Node::default()`); the Zig path never reset it at schedule
-        // time either.
+        // (always `Node::default()`); it has never been reset at schedule
+        // time.
         task.task_mut().callback = T::__callback;
         // The single into_raw for every OwnedTask scheduler call. Derive the
         // intrusive `*mut Task` *after* into_raw so provenance covers the full
@@ -185,8 +184,8 @@ impl WorkPool {
     }
 
     pub fn go<C: Send + 'static>(context: C, function: fn(C)) -> Result<(), bun_alloc::AllocError> {
-        // PERF(port): `function` was a comptime param in Zig (monomorphized into the
-        // callback); stored as a runtime field here — profile in Phase B.
+        // PERF(port): `function` could be monomorphized into the callback;
+        // stored as a runtime field here — profile in Phase B.
         #[repr(C)]
         struct TaskType<C> {
             task: Task,
@@ -217,5 +216,3 @@ impl WorkPool {
         Ok(())
     }
 }
-
-// ported from: src/threading/work_pool.zig

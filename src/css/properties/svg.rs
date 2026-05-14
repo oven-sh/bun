@@ -35,12 +35,12 @@ enum SVGPaintFallback {
 }
 
 /// A value for the [stroke-linecap](https://www.w3.org/TR/SVG2/painting.html#LineCaps) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))` —
-// a lazy compile error placeholder (never instantiated). Define the real enum in Phase B.
+// TODO(port): intentionally unimplemented upstream (compile-error placeholder, never
+// instantiated). Define the real enum in Phase B.
 pub enum StrokeLinecap {}
 
 /// A value for the [stroke-linejoin](https://www.w3.org/TR/SVG2/painting.html#LineJoin) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))`.
+// TODO(port): intentionally unimplemented upstream.
 pub enum StrokeLinejoin {}
 
 /// A value for the [stroke-dasharray](https://www.w3.org/TR/SVG2/painting.html#StrokeDashing) property.
@@ -49,7 +49,7 @@ enum StrokeDasharray {
     /// No dashing is used.
     None,
     /// Specifies a dashing pattern to use.
-    // PERF(port): css is an arena crate; Zig used ArrayListUnmanaged. Revisit
+    // PERF(port): css is an arena crate. Revisit
     // bun_alloc::ArenaVec<'bump, LengthPercentage> in Phase B.
     Values(Vec<LengthPercentage>),
 }
@@ -64,23 +64,21 @@ enum Marker {
 }
 
 /// A value for the [color-interpolation](https://www.w3.org/TR/SVG2/painting.html#ColorInterpolation) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))`.
+// TODO(port): intentionally unimplemented upstream.
 pub enum ColorInterpolation {}
 
 /// A value for the [color-rendering](https://www.w3.org/TR/SVG2/painting.html#ColorRendering) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))`.
+// TODO(port): intentionally unimplemented upstream.
 pub enum ColorRendering {}
 
 /// A value for the [shape-rendering](https://www.w3.org/TR/SVG2/painting.html#ShapeRendering) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))`.
+// TODO(port): intentionally unimplemented upstream.
 pub enum ShapeRendering {}
 
 /// A value for the [text-rendering](https://www.w3.org/TR/SVG2/painting.html#TextRendering) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))`.
+// TODO(port): intentionally unimplemented upstream.
 pub enum TextRendering {}
 
 /// A value for the [image-rendering](https://www.w3.org/TR/SVG2/painting.html#ImageRendering) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))`.
+// TODO(port): intentionally unimplemented upstream.
 pub enum ImageRendering {}
-
-// ported from: src/css/properties/svg.zig

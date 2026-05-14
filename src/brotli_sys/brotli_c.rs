@@ -130,7 +130,8 @@ impl BrotliDecoder {
                 decoded_ptr,
             )
         };
-        // PORT NOTE: reshaped for borrowck — Zig mutated `decoded.len` in place via `*[]u8`
+        // PORT NOTE: reshaped for borrowck — re-slice instead of mutating
+        // `decoded.len` in place.
         // SAFETY: decoded_ptr points to the same allocation; decoded_size <= original len per brotli contract
         *decoded = unsafe { core::slice::from_raw_parts_mut(decoded_ptr, decoded_size) };
         result
@@ -204,7 +205,7 @@ impl BrotliDecoder {
     }
 }
 
-#[repr(u32)] // Zig: enum(c_uint)
+#[repr(u32)] // c_uint
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliDecoderResult {
     err = 0,
@@ -213,14 +214,14 @@ pub enum BrotliDecoderResult {
     needs_more_output = 3,
 }
 
-// NOTE: brotli_c.zig (translate-c output) defines this error-code table three times
+// NOTE: the upstream C headers define this error-code table three times
 // (loose `BROTLI_DECODER_*` consts, a subset `BrotliDecoderErrorCode` enum, and the
 // full `BrotliDecoderErrorCode2` enum). They are intentionally collapsed here into the
 // single complete enum below; `BrotliDecoderErrorCode` is kept as an alias for FFI
 // signatures. Do not re-add the duplicates on a mechanical re-port.
 pub type BrotliDecoderErrorCode = BrotliDecoderErrorCode2;
 
-#[repr(i32)] // Zig: enum(c_int)
+#[repr(i32)] // c_int
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliDecoderErrorCode2 {
     NO_ERROR = 0,
@@ -258,7 +259,7 @@ pub enum BrotliDecoderErrorCode2 {
 pub const BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION: c_int = 0;
 pub const BROTLI_DECODER_PARAM_LARGE_WINDOW: c_int = 1;
 
-#[repr(u32)] // Zig: enum(c_uint)
+#[repr(u32)] // c_uint
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliDecoderParameter {
     DISABLE_RING_BUFFER_REALLOCATION = 0,
@@ -292,7 +293,7 @@ pub const BROTLI_MODE_GENERIC: c_int = 0;
 pub const BROTLI_MODE_TEXT: c_int = 1;
 pub const BROTLI_MODE_FONT: c_int = 2;
 
-#[repr(u32)] // Zig: enum(c_uint)
+#[repr(u32)] // c_uint
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliEncoderMode {
     generic = 0,
@@ -316,7 +317,7 @@ pub const BROTLI_PARAM_NPOSTFIX: c_int = 7;
 pub const BROTLI_PARAM_NDIRECT: c_int = 8;
 pub const BROTLI_PARAM_STREAM_OFFSET: c_int = 9;
 
-#[repr(u32)] // Zig: enum(c_uint)
+#[repr(u32)] // c_uint
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliEncoderParameter {
     mode = 0,
@@ -397,7 +398,7 @@ unsafe extern "C" {
 /// `&BrotliEncoder` does not assert immutability of the C-owned state.
 bun_opaque::opaque_ffi! { pub struct BrotliEncoder; }
 
-#[repr(u32)] // Zig: enum(c_uint)
+#[repr(u32)] // c_uint
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliEncoderOperation {
     process = 0,
@@ -423,7 +424,7 @@ impl<'a> Default for CompressionResult<'a> {
     }
 }
 
-// PORT NOTE: Zig's `BrotliEncoder.Operation` flattened to module-level alias
+// PORT NOTE: `BrotliEncoder.Operation` flattened to module-level alias
 // (inherent associated types are unstable in Rust).
 pub type Operation = BrotliEncoderOperation;
 
@@ -523,5 +524,3 @@ pub const BROTLI_MAX_QUALITY: c_int = 11;
 pub const BROTLI_DEFAULT_QUALITY: c_int = 11;
 pub const BROTLI_DEFAULT_WINDOW: c_int = 22;
 pub const BROTLI_DEFAULT_MODE: c_int = BROTLI_MODE_GENERIC;
-
-// ported from: src/brotli_sys/brotli_c.zig

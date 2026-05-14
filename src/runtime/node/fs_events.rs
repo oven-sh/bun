@@ -6,16 +6,15 @@ use bun_collections::VecExt;
 use bun_core::zstr;
 use bun_threading::{Mutex, UnboundedQueue};
 
-// Zig: `const Event = bun.jsc.Node.fs.Watcher.Event` /
-//      `const EventType = @import("./path_watcher.zig").PathWatcher.EventType`.
-// Both siblings are wired into `crate::node`, and intra-crate module cycles are
-// fine in Rust, so import the real shapes instead of mirroring them.
+// Both siblings (`node_fs_watcher` and `path_watcher`) are wired into
+// `crate::node`, and intra-crate module cycles are fine in Rust, so import
+// the real `Event` / `EventType` shapes instead of mirroring them.
 use super::node_fs_watcher::Event;
 use super::path_watcher::EventType;
 
-/// Minimal port of `std.Thread.Semaphore` (Zig) — `bun_threading` has no
-/// semaphore yet. Only `post`/`wait` are used (once each, to sync CF thread
-/// startup), so a Mutex+Condvar pair is sufficient.
+/// Minimal counting semaphore — `bun_threading` has no semaphore yet. Only
+/// `post`/`wait` are used (once each, to sync CF thread startup), so a
+/// Mutex+Condvar pair is sufficient.
 #[derive(Default)]
 struct Semaphore {
     inner: std::sync::Mutex<u32>,
@@ -272,7 +271,7 @@ static FSEVENTS_CF: std::sync::OnceLock<CoreFoundation> = std::sync::OnceLock::n
 static FSEVENTS_CS: std::sync::OnceLock<CoreServices> = std::sync::OnceLock::new();
 
 fn init_core_foundation() -> CoreFoundation {
-    // Zig used std.c.dlopen with .{ .LAZY = true, .LOCAL = true }
+    // dlopen with RTLD_LAZY | RTLD_LOCAL.
     let fsevents_cf_handle = bun_sys::dlopen(
         zstr!("/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"),
         bun_sys::RTLD::LAZY | bun_sys::RTLD::LOCAL,
@@ -371,9 +370,8 @@ impl Task {
         callback(ctx);
     }
 
-    /// Zig: `Task.New(comptime Type, comptime Callback).init(ctx)`
-    /// Rust: `Task::new(ctx, Callback)`
-    // PERF(port): was @call(.always_inline) on the wrapper — profile in Phase B
+    /// Construct a `Task` bound to `(ctx, callback)`.
+    // PERF(port): wrapper was previously force-inlined — profile in Phase B
     pub fn new<T>(ctx: &mut T, callback: fn(&mut T)) -> Task {
         // SAFETY: fn(&mut T) and fn(*mut ()) have identical single-pointer ABI;
         // ctx is always a valid &mut T at call time (see run()).
@@ -507,9 +505,9 @@ impl FSEventsLoop {
         // SAFETY: this is a valid freshly-boxed pointer
         unsafe {
             (*this).signal_source = signal_source;
-            // PORT NOTE: Zig std.Thread.spawn → std::thread::spawn. The raw `this`
-            // pointer is moved into the closure; the FSEventsLoop is heap-allocated
-            // and outlives the thread (joined in Drop).
+            // The raw `this` pointer is moved into the closure; the
+            // FSEventsLoop is heap-allocated and outlives the thread (joined
+            // in Drop).
             let this_addr = this as usize;
             (*this).thread = Some(std::thread::spawn(move || {
                 // SAFETY: see above — `this` is a valid heap allocation for the thread's lifetime.
@@ -804,9 +802,9 @@ impl FSEventsLoop {
             }
         }
         // PORT NOTE: reshaped for borrowck — enqueue after dropping the guard so we
-        // can take &mut self twice. Zig held the lock through enqueueTaskConcurrent;
-        // safe to release first since enqueue only pushes to a lock-free queue and
-        // signals CF, and `_schedule` re-acquires the mutex on the CF thread.
+        // can take &mut self twice. Safe to release the lock first since enqueue
+        // only pushes to a lock-free queue and signals CF, and `_schedule`
+        // re-acquires the mutex on the CF thread.
         let task = Task::new(self, FSEventsLoop::_schedule);
         self.enqueue_task_concurrent(task);
     }
@@ -887,7 +885,7 @@ impl Drop for FSEventsLoop {
 }
 
 pub struct FSEventsWatcher {
-    /// Borrowed from the owning `PathWatcher` (Zig: `[]const u8`). The
+    /// Borrowed from the owning `PathWatcher`. The
     /// PathWatcher heap-allocates this watcher and only frees it after `Drop`
     /// (→ `unregister_watcher`) has run, so the bytes outlive every read in
     /// `_events_cb` / `_schedule` — `RawSlice` invariant. The backing buffer is
@@ -896,7 +894,7 @@ pub struct FSEventsWatcher {
     pub path: bun_ptr::RawSlice<u8>,
     pub callback: Callback,
     pub flush_callback: UpdateEndCallback,
-    // Zig: `loop: ?*FSEventsLoop`. Stored as a raw pointer because the loop is
+    // Stored as a raw pointer because the loop is
     // shared with the CFRunLoop thread and mutated through `unregister_watcher`
     // on drop; holding a `&'static FSEventsLoop` and casting it to `*mut` would
     // be UB (write through pointer derived from shared ref). `Cell` so
@@ -979,9 +977,9 @@ pub fn watch(
         loop_ = FSEventsLoop::init()?;
         FSEVENTS_DEFAULT_LOOP.store(loop_, Ordering::Release);
         // First loop ever created → arrange `close_and_wait` to run from
-        // `Bun__onExit`. Spec `Global.zig:220` runs it BEFORE
-        // `runExitCallbacks()`, so push to the pre-exit list rather than
-        // the generic atexit list (storage lives in bun_core; forward dep).
+        // `Bun__onExit`, BEFORE `runExitCallbacks()`. Push to the pre-exit
+        // list rather than the generic atexit list (storage lives in
+        // bun_core; forward dep).
         bun_core::Global::add_pre_exit_callback(close_and_wait_on_exit);
     }
     Ok(FSEventsWatcher::init(
@@ -1011,5 +1009,3 @@ pub fn close_and_wait() {
         }
     }
 }
-
-// ported from: src/runtime/node/fs_events.zig

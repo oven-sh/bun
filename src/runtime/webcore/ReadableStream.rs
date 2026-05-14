@@ -25,7 +25,7 @@ pub struct Strong {
     held: bun_jsc::strong::Optional, // jsc.Strong.Optional = .empty
 }
 
-/// Re-export under the qualified name callers expect (Zig: `webcore.ReadableStream.Strong`).
+/// Re-export under the qualified name callers expect (originally: `webcore.ReadableStream.Strong`).
 pub type ReadableStreamStrong = Strong;
 
 impl Default for Strong {
@@ -74,7 +74,7 @@ impl Strong {
     }
 
     // deinit: body only calls held.deinit() → handled by Drop on bun_jsc::Strong.
-    // Commented-out Zig:
+    // Commented-out in the original:
     //   if (this.held.get()) |val| { ReadableStream__detach(val, this.held.globalThis.?); }
 
     pub fn tee(&mut self, global: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
@@ -127,7 +127,7 @@ unsafe extern "C" {
     );
     safe fn ReadableStream__abort(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__detach(stream: JSValue, global: &JSGlobalObject);
-    safe fn ZigGlobalObject__createNativeReadableStream(
+    safe fn BunGlobalObject__createNativeReadableStream(
         global: &JSGlobalObject,
         native_ptr: JSValue,
     ) -> JSValue;
@@ -194,7 +194,7 @@ impl ReadableStream {
                 // R-2: `lazy`/`started` are `JsCell`/`Cell`; shared borrow suffices.
                 let blobby = self.ptr.file().expect("matched File");
                 if let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() {
-                    // `store.clone()` carries the +1 that Zig's explicit `blob.store.?.ref()`
+                    // `store.clone()` carries the +1 that the original explicit `blob.store.?.ref()`
                     // provided after the raw-pointer copy in `initWithStore`.
                     let blob = Blob::init_with_store(store.clone(), global_this);
                     // it should be lazy, file shouldn't have opened yet.
@@ -266,7 +266,7 @@ impl ReadableStream {
     /// be careful, this can invalidate the stream do not call this multiple times
     /// this is meant to be called only once when we are done consuming the stream or from the ReadableStream.Strong.deinit
     pub fn detach_if_possible(&self, _global: &JSGlobalObject) {
-        // (intentionally empty in Zig)
+        // (intentionally empty originally)
     }
 
     pub fn is_disturbed(&self, global_object: &JSGlobalObject) -> bool {
@@ -310,20 +310,20 @@ impl ReadableStream {
                 // SAFETY: tag == Bytes ⇒ ptr is a non-null *ByteStream from C++.
                 ptr: Source::Bytes(ptr.cast::<ByteStream>()),
             }),
-            // .HTTPRequest / .HTTPSRequest commented out in Zig
+            // .HTTPRequest / .HTTPSRequest commented out originally
             _ => None,
         })
     }
 
     pub fn from_native(global_this: &JSGlobalObject, native: JSValue) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || {
-            ZigGlobalObject__createNativeReadableStream(global_this, native)
+            BunGlobalObject__createNativeReadableStream(global_this, native)
         })
     }
 
     pub fn from_owned_slice(
         global_this: &JSGlobalObject,
-        // Zig: `bytes: []u8` — owned slice; accept Vec<u8> / Box<[u8]> alike.
+        // Originally: `bytes: []u8` — owned slice; accept Vec<u8> / Box<[u8]> alike.
         bytes: impl Into<Vec<u8>>,
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
@@ -342,7 +342,7 @@ impl ReadableStream {
         };
         match &store.data {
             webcore::blob::store::Data::Bytes(_) => {
-                // PORT NOTE: Zig left `context: undefined` then called `setup()` to initialize
+                // PORT NOTE: originally left `context: undefined` then called `setup()` to initialize
                 // in place. Rust constructs with `Default` (no UB) and `setup()` overwrites
                 // the entire struct via `*self = ByteBlobLoader { ... }`.
                 let reader = NewSource::<ByteBlobLoader>::new_mut(NewSource {
@@ -368,7 +368,7 @@ impl ReadableStream {
                         } else {
                             None
                         },
-                        // `store.clone()` is the RAII +1 equivalent of Zig's `store.ref()`
+                        // `store.clone()` is the RAII +1 equivalent of `store.ref()`
                         // after the raw `.lazy = .{ .blob = store }` assignment.
                         lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Blob(store.clone())),
                         ..Default::default()
@@ -425,7 +425,7 @@ impl ReadableStream {
                             global_this.bun_vm().as_mut().event_loop().cast(),
                         )),
                         start_offset: Some(offset),
-                        // `store.clone()` is the RAII +1 equivalent of Zig's `store.ref()`.
+                        // `store.clone()` is the RAII +1 equivalent of `store.ref()`.
                         lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Blob(store.clone())),
                         ..Default::default()
                     },
@@ -442,7 +442,7 @@ impl ReadableStream {
         _parent: P,
         buffered_reader: &mut bun_io::BufferedReader,
     ) -> JsResult<JSValue> {
-        // TODO(port): Zig's `buffered_reader: anytype` — only ever instantiated with the
+        // TODO(port): `buffered_reader: anytype` — only ever instantiated with the
         // platform `PipeReader`/`PosixBufferedReader`.
         let source = NewSource::<FileReader>::new_mut(NewSource {
             global_this: Some(bun_ptr::BackRef::new(global_this)),
@@ -455,7 +455,7 @@ impl ReadableStream {
             },
             ..Default::default()
         });
-        // PORT NOTE: reshaped for borrowck — Zig passed `&source.context` as both reader-parent and self.
+        // PORT NOTE: reshaped for borrowck — the original passed `&source.context` as both reader-parent and self.
         let ctx_ptr: *mut FileReader = &raw mut source.context;
         source
             .context
@@ -587,7 +587,7 @@ impl Source {
 
 // ─── NewSource ───────────────────────────────────────────────────────────────
 //
-// Zig: `pub fn NewSource(comptime Context: type, comptime name_: []const u8,
+// Originally: `pub fn NewSource(comptime Context: type, comptime name_: []const u8,
 //                        comptime onStart, onPull, onCancel, deinit_fn,
 //                        setRefUnrefFn?, drainInternalBuffer?, memoryCostFn?,
 //                        toBufferedValue?) type { return struct {...} }`
@@ -595,7 +595,7 @@ impl Source {
 // Rust: the comptime fn-pointer bundle becomes a trait `SourceContext` that
 // each `Context` type implements; `NewSource<C>` is the generic struct.
 
-/// Trait capturing the comptime fn params of Zig's `NewSource(...)`.
+/// Trait capturing the comptime fn params of `NewSource(...)`.
 pub trait SourceContext: Sized {
     /// `name_` — used to look up `jsc.Codegen.JS{NAME}InternalReadableStreamSource`.
     const NAME: &'static str;
@@ -603,7 +603,7 @@ pub trait SourceContext: Sized {
     const SUPPORTS_REF: bool = false;
 
     // ─── codegen accessors (`.classes.ts` → `generated_classes.rs`) ───────────
-    // Zig: `js = @field(jsc.Codegen, "JS" ++ name ++ "InternalReadableStreamSource")`.
+    // Originally: `js = @field(jsc.Codegen, "JS" ++ name ++ "InternalReadableStreamSource")`.
     // Each context binds its per-type codegen module via `source_context_codegen!`.
     /// `js_${NAME}InternalReadableStreamSource::to_js` — `ptr` is the
     /// type-erased `*mut NewSource<Self>` (cast inside the macro impl).
@@ -625,10 +625,10 @@ pub trait SourceContext: Sized {
     /// here would deallocate the storage backing the live `&mut self` borrow (UAF).
     fn deinit_fn(&mut self);
 
-    /// `setRefUnrefFn` — default no-op (Zig: `?fn`, null ⇒ ref/unref are no-ops).
+    /// `setRefUnrefFn` — default no-op (originally: `?fn`, null ⇒ ref/unref are no-ops).
     fn set_ref_unref(&mut self, _enable: bool) {}
 
-    /// `drainInternalBuffer` — default returns empty (Zig: `?fn`, null ⇒ `.{}`).
+    /// `drainInternalBuffer` — default returns empty (originally: `?fn`, null ⇒ `.{}`).
     fn drain_internal_buffer(&mut self) -> Vec<u8> {
         Vec::<u8>::default()
     }
@@ -649,7 +649,7 @@ pub trait SourceContext: Sized {
 
     /// `@hasDecl(Context, "setRawMode")` — default: not present.
     /// Returns `None` if the context type does not support raw mode.
-    // TODO(port): Zig used @compileError when absent + codegen referenced; Rust default panics never reached if codegen omits it.
+    // TODO(port): originally used @compileError when absent + codegen referenced; Rust default panics never reached if codegen omits it.
     fn set_raw_mode(&mut self, _flag: bool) -> Option<bun_sys::Result<()>> {
         None
     }
@@ -659,12 +659,12 @@ pub trait SourceContext: Sized {
 }
 
 // TODO(port): #[bun_jsc::JsClass] — codegen name is "JS{C::NAME}InternalReadableStreamSource".
-// The Zig `js = @field(jsc.Codegen, ...)` + toJS/fromJS/fromJSDirect aliases are wired by the
+// The `js = @field(jsc.Codegen, ...)` + toJS/fromJS/fromJSDirect aliases are wired by the
 // derive; cached-property accessors (pendingPromiseSetCached, onDrainCallback{Get,Set}Cached)
 // are emitted by the .classes.ts generator.
 //
 // `repr(C)` keeps `context` at offset 0: C++ `wrapped()` returns `*mut NewSource<C>` and
-// [`ReadableStream::from_js`] casts that straight to `*mut C` (matching Zig, where `context`
+// [`ReadableStream::from_js`] casts that straight to `*mut C` (matching the original, where `context`
 // is the first field). With Rust's default repr the field is reordered and the cast reads
 // adjacent fields as the loader, returning empty bodies.
 #[repr(C)]
@@ -713,7 +713,7 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
 }
 
 // ─── per-type codegen accessors ──────────────────────────────────────────────
-// Zig: `js = @field(jsc.Codegen, "JS" ++ name ++ "InternalReadableStreamSource")`
+// Originally: `js = @field(jsc.Codegen, "JS" ++ name ++ "InternalReadableStreamSource")`
 // resolves to a *per-type* generated module; in Rust there is no inherent
 // associated-module syntax, so each `SourceContext` impl carries the codegen
 // extern symbols as associated consts (bound via `source_context_codegen!`).
@@ -813,7 +813,7 @@ impl<C: SourceContext> NewSource<C> {
     /// (or [`NewSourceCodegen::to_js`]), after which the GC finalizer drives
     /// teardown through [`Self::decrement_count`] → context `deinit_fn` →
     /// [`Self::deinit`]. Dropping a `Box` here would free the allocation while
-    /// the JS cell still points at it (UAF), so this mirrors Zig's `TrivialNew`
+    /// the JS cell still points at it (UAF), so this mirrors the original `TrivialNew`
     /// exactly and returns `*mut Self`.
     pub fn new(init: Self) -> *mut Self {
         bun_core::heap::into_raw(Box::new(init))
@@ -887,7 +887,7 @@ impl<C: SourceContext> NewSource<C> {
             return;
         }
         if let Some(close) = self.close_handler.take() {
-            // Zig: `if (close == &JSReadableStreamSource.onClose)` — identity check
+            // Originally: `if (close == &JSReadableStreamSource.onClose)` — identity check
             // against the *exact* fn pointer stored by `set_on_close_from_js`, so the
             // JS path receives `self` (not `close_ctx`, which is unset on that path).
             if close as usize == Self::on_js_close as fn(Option<*mut c_void>) as usize {
@@ -981,7 +981,7 @@ impl<C: SourceContext> NewSource<C> {
         match this.context.set_raw_mode(flag == JSValue::TRUE) {
             Some(Ok(())) => Ok(JSValue::UNDEFINED),
             Some(Err(e)) => Ok(e.to_js(global)),
-            // Zig: @compileError("setRawMode is not implemented on " ++ @typeName(Context))
+            // Originally: @compileError("setRawMode is not implemented on " ++ @typeName(Context))
             None => unreachable!("setRawMode is not implemented on {}", C::NAME),
         }
     }
@@ -1009,7 +1009,7 @@ impl<C: SourceContext> NewSource<C> {
 }
 
 // ─── codegen-facing inherent methods ─────────────────────────────────────────
-// Zig: `pub const drainFromJS = JSReadableStreamSource.drain;` etc. — the
+// Originally: `pub const drainFromJS = JSReadableStreamSource.drain;` etc. — the
 // `.classes.ts` → `generated_classes.rs` thunks call these by exact name on
 // `NewSource<C>` (aliased as `{Blob,Bytes,File}InternalReadableStreamSource`).
 impl<C: SourceContext> NewSource<C> {
@@ -1056,14 +1056,14 @@ impl<C: SourceContext> NewSource<C> {
         flags: JSValue,
         mut result: streams::Result,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: Zig matches on the union and falls through to `result.toJS`
+        // PORT NOTE: originally matches on the union and falls through to `result.toJS`
         // for non-handled tags; here `result` is consumed by `to_js(&mut self)`.
         match &result {
             streams::Result::Err(err) => match err {
                 streams::StreamError::Error(e) => {
                     Err(global_this.throw_value(e.to_js(global_this)))
                 }
-                // Zig's else arm reads `err.JSValue` directly — implicitly assumes only
+                // the original else arm reads `err.JSValue` directly — implicitly assumes only
                 // `.Error`/`.JSValue` reach `processResult` (would safety-panic on
                 // `.WeakJSValue`/`.AbortReason`). Preserve the intent (always throw on
                 // `.err`) defensively via `to_js_weak`, which handles all four variants
@@ -1285,5 +1285,3 @@ impl<C: SourceContext> NewSource<C> {
         self.to_buffered_value_from_js(global_this, call_frame, streams::BufferActionTag::Json)
     }
 }
-
-// ported from: src/runtime/webcore/ReadableStream.zig

@@ -17,7 +17,7 @@ use crate::{AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext, h2, h
 
 bun_core::declare_scope!(HTTPThread, hidden); // threadlog
 bun_core::declare_scope!(HTTPThread_log, visible); // log
-// TODO(port): Zig had two `Output.scoped(.HTTPThread, ...)` with different visibilities (.hidden + .visible).
+// TODO(port): two `Output.scoped(.HTTPThread, ...)` with different visibilities (.hidden + .visible).
 // Rust scope registry keys on name; pick one visibility in Phase B or split scope names.
 
 /// SSL context cache keyed by interned SSLConfig pointer.
@@ -85,9 +85,7 @@ use bun_event_loop::MiniEventLoop::MiniEventLoop;
 
 pub struct HttpThread {
     /// Per-thread `MiniEventLoop` singleton — published by
-    /// `MiniEventLoop::init_global()` in [`on_start`]; outlives the thread
-    /// (Zig: `bun.http.http_thread.loop = bun.jsc.MiniEventLoop.initGlobal(null, null)`,
-    /// HTTPThread.zig:228+235).
+    /// `MiniEventLoop::init_global()` in [`on_start`]; outlives the thread.
     pub loop_: *const MiniEventLoop<'static>,
     /// The raw uSockets loop inside `loop_.loop` — split out so HTTPContext
     /// can `SocketGroup::init` without naming MiniEventLoop.
@@ -139,8 +137,7 @@ pub struct HttpThread {
 }
 
 impl HttpThread {
-    /// Mirror of Zig `initOnce`'s `bun.http.http_thread = .{ ... }` field-init
-    /// list (HTTPThread.zig:195-206). `loop_`/`uws_loop` are filled in by
+    /// `initOnce` field-init list. `loop_`/`uws_loop` are filled in by
     /// `on_start` on the spawned thread; `timer` is started on the calling
     /// thread per spec.
     fn new() -> Self {
@@ -238,8 +235,9 @@ impl RequestBodyBuffer {
     }
 
     pub fn to_array_list(&mut self) -> Vec<u8> {
-        // TODO(port): Zig built an ArrayList over self.arena()/self.allocated_slice() with len=0.
-        // Rust Vec cannot adopt a foreign allocator+buffer; Phase B should expose a cursor type instead.
+        // TODO(port): Rust Vec cannot adopt a foreign allocator+buffer (the
+        // intent was a list view over self.allocated_slice() with len=0);
+        // Phase B should expose a cursor type instead.
         // PERF(port): was FixedBufferAllocator/StackFallback — redesign in Phase B (allocator() accessor
         // dropped per PORTING.md non-AST rule; callers should write into allocated_slice() directly).
         let mut arraylist = Vec::with_capacity(self.allocated_slice().len());
@@ -253,7 +251,7 @@ pub struct WriteMessage {
     pub kind: WriteMessageType,
 }
 
-#[repr(u8)] // Zig: enum(u2)
+#[repr(u8)] // logically a 2-bit enum
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum WriteMessageType {
     Data = 0,
@@ -296,11 +294,11 @@ pub const REQUEST_BODY_SEND_STACK_BUFFER_SIZE: usize = 32 * 1024;
 pub type Queue = UnboundedQueue<AsyncHttp<'static>>;
 
 // Clone: bitwise OK for the `*const c_void` CA-string pointers — they borrow
-// caller-owned config (Zig `[]stringZ`), not heap we free. The `Vec` itself
-// deep-clones its slot list.
+// caller-owned config (NUL-terminated C strings), not heap we free. The `Vec`
+// itself deep-clones its slot list.
 #[derive(Clone)]
 pub struct InitOpts {
-    // TODO(port): lifetime — Zig `[]stringZ` borrowed from caller config; copied into spawned thread.
+    // TODO(port): lifetime — borrowed from caller config; copied into spawned thread.
     pub ca: Vec<*const c_void>, // *const [*:0]const u8
     pub abs_ca_file_name: &'static [u8],
     pub for_install: bool,
@@ -308,9 +306,9 @@ pub struct InitOpts {
     pub on_init_error: fn(err: InitError, opts: &InitOpts) -> !,
 }
 
-// SAFETY: `ca` holds borrowed `[*:0]const u8` C-string pointers from caller
-// config (Zig `[]stringZ`). They are copied into the spawned HTTP thread and
-// only read there; no shared mutable state crosses the thread boundary.
+// SAFETY: `ca` holds borrowed NUL-terminated C-string pointers from caller
+// config. They are copied into the spawned HTTP thread and only read there;
+// no shared mutable state crosses the thread boundary.
 unsafe impl Send for InitOpts {}
 
 impl Default for InitOpts {
@@ -327,9 +325,9 @@ impl Default for InitOpts {
 fn on_init_error_noop(err: InitError, opts: &InitOpts) -> ! {
     match err {
         InitError::LoadCAFile => {
-            // SAFETY: `abs_ca_file_name` is Zig `stringZ` (`[:0]const u8`) by
-            // contract — already passed as a C string to BoringSSL via
-            // `init_with_thread_opts`, so `ptr[len] == 0` holds.
+            // SAFETY: `abs_ca_file_name` is NUL-terminated by contract — already
+            // passed as a C string to BoringSSL via `init_with_thread_opts`,
+            // so `ptr[len] == 0` holds.
             let path = unsafe {
                 bun_core::ZStr::from_raw(
                     opts.abs_ca_file_name.as_ptr(),
@@ -389,7 +387,7 @@ impl HttpThread {
         unsafe { &mut *self.uws_loop }
     }
 
-    /// Zig `timer.read()` returns u64 ns directly; Rust `Instant::elapsed().as_nanos()` is u128.
+    /// `Instant::elapsed().as_nanos()` is u128; we want a u64 ns reading.
     /// Checked narrow — overflows only after ~584 years of process uptime.
     #[inline]
     fn timer_read(&self) -> u64 {
@@ -446,7 +444,7 @@ impl HttpThread {
     /// [`HttpThread::lazy_https_init`] for rationale. Called on the HTTP
     /// thread from [`HttpThread::connect`]`::<true>` only; the `Option::take`
     /// is the once-guard. On failure, `on_init_error` diverges (matching the
-    /// eager-init crash semantics from Zig `onStart`).
+    /// eager-init crash semantics of `onStart`).
     #[inline]
     fn ensure_https_context_init(&mut self) {
         if let Some(opts) = self.lazy_https_init.take() {
@@ -517,7 +515,7 @@ impl HttpThread {
                 }
 
                 // Cache miss - create new SSL context
-                // TODO(port): Zig used allocator.create + manual destroy on error.
+                // TODO(port): manual destroy on error path.
                 let custom_context = bun_core::heap::release(Box::new(NewHttpContext::<true> {
                     ref_count: Cell::new(1),
                     pending_sockets: bun_collections::HiveArray::init(),
@@ -527,9 +525,8 @@ impl HttpThread {
                     pending_h2_connects: Vec::new(),
                 }));
                 if let Err(err) = custom_context.init_with_client_config(client) {
-                    // Spec HTTPThread.zig:277 raw-frees without `deinit` here
-                    // because `initWithOpts` fails before `group.init()` runs.
-                    // `impl Drop for HTTPContext` now tolerates an
+                    // `initWithOpts` fails before `group.init()` runs.
+                    // `impl Drop for HTTPContext` tolerates an
                     // uninitialized group (skips close_all/destroy when
                     // `group.loop_` is null), so reclaiming the Box is safe.
                     // SAFETY: custom_context was just Box::leak'd above and
@@ -1021,9 +1018,8 @@ fn evict_oldest_ssl_context() {
 fn start_queued_task(http: *mut AsyncHttp) {
     // SAFETY: http points to a live AsyncHttp queued by the caller thread.
     let cloned = crate::ThreadlocalAsyncHttp::new(unsafe { core::ptr::read(http) });
-    // PORT NOTE: Zig used struct copy `http.*`; AsyncHttp is byte-copied here
-    // since the original stays valid (real owner is `http`, copy is the
-    // HTTP-thread working set).
+    // PORT NOTE: AsyncHttp is byte-copied here since the original stays valid
+    // (real owner is `http`, copy is the HTTP-thread working set).
     let cloned = bun_core::heap::release(cloned);
     cloned.async_http.real = NonNull::new(http);
     // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
@@ -1059,8 +1055,7 @@ mod _event_loop_draft {
     use std::sync::Once;
 
     static INIT_ONCE: Once = Once::new();
-    // PORT NOTE: Zig `std.Thread.spawn` + `.detach()` allocates nothing on the
-    // heap. Rust's `Builder::spawn` allocates an `Arc<thread::Inner>` (48 B)
+    // PORT NOTE: Rust's `Builder::spawn` allocates an `Arc<thread::Inner>` (48 B)
     // shared between the `JoinHandle` and the new thread's TLS `current()`.
     // Dropping the handle leaves the only strong ref inside the spawned
     // thread's TLS, which LSAN does not scan as a root — so when the main
@@ -1068,7 +1063,7 @@ mod _event_loop_draft {
     // that TLS slot, LSAN reports the Arc as a direct leak and (with CI's
     // `abort_on_error=1`) the process SIGABRTs (exit 134). Park the handle in
     // a process-lifetime static so the Arc is always reachable from a global
-    // root, matching the Zig semantics of "detach" without the false positive.
+    // root — detach semantics without the false positive.
     static HTTP_THREAD_HANDLE: std::sync::OnceLock<std::thread::JoinHandle<()>> =
         std::sync::OnceLock::new();
 
@@ -1077,8 +1072,8 @@ mod _event_loop_draft {
     }
 
     fn init_once(opts: &InitOpts) {
-        // Spec HTTPThread.zig:195-206 — initialize the global (with timer
-        // started on the calling thread) BEFORE spawning, so `on_start`'s
+        // Initialize the global (with timer started on the calling thread)
+        // BEFORE spawning, so `on_start`'s
         // `crate::http_thread_mut()` finds `Some(..)` and can fill in
         // `loop_`/`uws_loop`/contexts.
         // SAFETY: `init_once` runs under `Once`; no other thread reads
@@ -1127,8 +1122,7 @@ mod _event_loop_draft {
             core::sync::atomic::Ordering::Relaxed,
         );
 
-        // Zig: `const loop = bun.jsc.MiniEventLoop.initGlobal(null, null)`
-        // (HTTPThread.zig:228). Critical side effect: `init_global` calls
+        // Critical side effect: `init_global` calls
         // `internal_loop_data.set_parent_raw(2 /* mini */, mini_ptr)` on this
         // thread's uSockets loop. Without it, the macOS DNS cache-miss path
         // (`dns::getaddrinfo` → `(*loop).internal_loop_data.get_parent()`)
@@ -1149,8 +1143,7 @@ mod _event_loop_draft {
             // `GetEnvironmentVariableW`, which expects a NUL-terminated LPCWSTR.
             // `bun_core::w!` does NOT append a sentinel on its own (see
             // src/sys/windows/mod.rs WATCHER_CHILD_ENV_Z note), so embed `\0`
-            // in the literal — Zig's `bun.strings.w("SystemRoot")` returns
-            // `[:0]const u16`, this matches that spec (HTTPThread.zig:231).
+            // in the literal — yields a NUL-terminated UTF-16 string.
             if bun_sys::windows::getenv_w(bun_core::w!("SystemRoot\0")).is_none() {
                 Output::err_generic(
                     "The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.",
@@ -1232,5 +1225,3 @@ mod _event_loop_draft {
 pub fn init(opts: &InitOpts) {
     _event_loop_draft::init(opts)
 }
-
-// ported from: src/http/HTTPThread.zig

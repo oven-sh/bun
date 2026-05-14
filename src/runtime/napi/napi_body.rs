@@ -1,5 +1,4 @@
 //! Node-API (N-API) implementation.
-//! Port of src/napi/napi.zig.
 
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr;
@@ -25,9 +24,9 @@ use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, Wor
 
 // ─── local shims for upstream-crate gaps (see PORTING.md §extension traits) ───
 
-/// Local extension shims for `JSValue` methods that exist in Zig but are not
-/// yet surfaced on the Rust `bun_jsc::JSValue` type. Declared as a trait so the
-/// call sites read identically to the Zig source.
+/// Local extension shims for `JSValue` methods not yet surfaced on the
+/// `bun_jsc::JSValue` type. Declared as a trait so the call sites read like
+/// inherent methods.
 trait JSValueNapiExt {
     fn js_type_loose(self) -> jsc::JSType;
     fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> jsc::JsResult<bool>;
@@ -46,7 +45,7 @@ unsafe extern "C" {
 }
 
 impl JSValueNapiExt for JSValue {
-    /// Zig `jsTypeLoose()` — like `js_type()` but returns `Cell` for non-cell
+    /// Like `js_type()` but returns `Cell` for non-cell
     /// values instead of triggering UB on the cell-type read.
     #[inline]
     fn js_type_loose(self) -> jsc::JSType {
@@ -57,8 +56,8 @@ impl JSValueNapiExt for JSValue {
         }
     }
     fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> jsc::JsResult<bool> {
-        // SAFETY: FFI; may run JS (getters on Proxy etc.). Zig: `fromJSHostCallGeneric` →
-        // check_slow (open scope before call, then `returnIfException`).
+        // SAFETY: FFI; may run JS (getters on Proxy etc.). Use `check_slow`
+        // (open scope before call, then return if exception is pending).
         bun_jsc::call_check_slow!(global, || unsafe {
             JSC__JSValue__isStrictEqual(self, other, global.as_mut_ptr())
         })
@@ -69,7 +68,7 @@ impl JSValueNapiExt for JSValue {
         unsafe { Bun__JSValue__isAsyncContextFrame(self) }
     }
     fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> jsc::JsResult<JSValue> {
-        // SAFETY: FFI; may throw OOM. Zig: `fromJSHostCall` → zero_is_throw.
+        // SAFETY: FFI; may throw OOM. Treat a zero return as a thrown exception.
         bun_jsc::call_zero_is_throw!(global, || unsafe {
             JSBuffer__bufferFromLength(global.as_mut_ptr(), len as i64)
         })
@@ -206,7 +205,7 @@ pub mod napi_env_external_shared_descriptor {
 }
 
 // SAFETY: NapiEnv refcount is managed externally by C++ via NapiEnv__ref/NapiEnv__deref;
-// the pointee remains valid while the count is > 0 (Zig: `external_shared_descriptor`).
+// the pointee remains valid while the count is > 0.
 unsafe impl bun_ptr::ExternalSharedDescriptor for NapiEnv {
     unsafe fn ext_ref(this: *mut Self) {
         // SAFETY: caller contract — `this` is a valid C++-owned napi_env.
@@ -310,9 +309,8 @@ impl NapiHandleScope {
     }
 }
 
-/// RAII guard for [`NapiHandleScope::open`] / [`NapiHandleScope::close`].
-/// The Rust spelling of Zig's `var hs = NapiHandleScope.open(env, false);
-/// defer if (hs) |s| NapiHandleScope.close(s, env);`.
+/// RAII guard for [`NapiHandleScope::open`] / [`NapiHandleScope::close`]:
+/// open on construction, close on `Drop`.
 pub struct NapiHandleScopeGuard<'a> {
     scope: *mut NapiHandleScope,
     env: &'a NapiEnv,
@@ -445,7 +443,7 @@ impl napi_typedarray_type {
         self.to_js_type().to_typed_array_type().to_c()
     }
 
-    /// Zig: `ArrayBuffer.TypedArrayType.toNapi` (array_buffer.zig:524).
+    /// `ArrayBuffer::TypedArrayType` → `napi_typedarray_type` mapping.
     ///
     /// LAYERING: lives here (not as `TypedArrayType::to_napi` in `bun_jsc`) because
     /// `napi_typedarray_type` is defined in `bun_runtime`, which depends on `bun_jsc`.
@@ -1441,7 +1439,7 @@ pub extern "C" fn napi_is_arraybuffer(
 }
 
 unsafe extern "C" {
-    // TODO(port): Zig signature has `data: [*]const u8`; N-API spec says `void**` out-param — verify in Phase B which is the source of truth.
+    // TODO(port): N-API spec says `void**` out-param for `data` — verify in Phase B.
     pub fn napi_create_arraybuffer(
         env: napi_env,
         byte_length: usize,
@@ -1508,9 +1506,8 @@ pub extern "C" fn napi_get_typedarray_info(
         return env.invalid_arg();
     };
     if let Some(ty) = unsafe { maybe_type.as_mut() } {
-        // Zig: `array_buffer.typed_array_type.toTypedArrayType().toNapi()`. The Rust
-        // `ArrayBuffer.typed_array_type` field is already a `JSType`, so map it
-        // straight to `napi_typedarray_type`.
+        // The `ArrayBuffer.typed_array_type` field is already a `JSType`, so
+        // map it straight to `napi_typedarray_type`.
         let Some(napi_ty) = napi_typedarray_type::from_js_type(array_buffer.typed_array_type)
         else {
             return env.invalid_arg();
@@ -1929,8 +1926,8 @@ impl napi_async_work {
 
     pub fn run_from_js(&mut self, vm: &mut VirtualMachine, global: &JSGlobalObject) {
         // Note: the "this" value here may already be freed by the user in `complete`
-        // PORT NOTE: Zig copied the struct; KeepAlive is not `Copy` in Rust, so
-        // move it out (the original slot may be freed under us by `complete`).
+        // PORT NOTE: KeepAlive is not `Copy`, so move it out
+        // (the original slot may be freed under us by `complete`).
         let mut poll_ref = core::mem::take(&mut self.poll_ref);
         // KeepAlive::unref needs an event-loop ctx so it cannot impl Drop
         // generically; this is a genuine one-off cleanup.
@@ -2043,7 +2040,7 @@ pub type napi_module = struct_napi_module;
 
 fn napi_span(ptr: *const u8, len: usize) -> &'static [u8] {
     // SAFETY: caller-supplied C string region; lifetime is the duration of the NAPI call.
-    // We use 'static here to match Zig's `[]const u8` borrow semantics across the FFI boundary.
+    // We use 'static here because the borrow crosses the FFI boundary unscoped.
     if ptr.is_null() {
         return &[];
     }
@@ -2300,7 +2297,7 @@ pub extern "C" fn napi_get_uv_event_loop(
     {
         // alignment error is incorrect.
         // TODO(@190n) investigate
-        // SAFETY: see Zig — @setRuntimeSafety(false) was used here.
+        // SAFETY: write through a possibly-misaligned out pointer is intentional.
         *loop_out = VirtualMachine::get().uv_loop();
     }
     #[cfg(not(windows))]
@@ -2352,8 +2349,8 @@ extern "C" fn napi_internal_register_cleanup_callback(data: *mut c_void) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
-    // SAFETY: caller guarantees env_ is non-null (Zig used `.?`).
+pub extern "C" fn napi_internal_register_cleanup_native(env_: napi_env) {
+    // SAFETY: caller guarantees env_ is non-null.
     let env = unsafe { &*env_ };
     env.to_js().bun_vm().as_mut().rare_data().push_cleanup_hook(
         env.to_js(),
@@ -2439,7 +2436,7 @@ pub extern "C" fn napi_internal_enqueue_finalizer(
     hint: *mut c_void,
 ) {
     let Some(fun) = fun else { return };
-    // SAFETY: env may be null per Zig's `orelse return`.
+    // SAFETY: env may be null; bail out if so.
     let Some(env_ref) = (unsafe { env.as_ref() }) else {
         return;
     };
@@ -2621,7 +2618,7 @@ impl ThreadSafeFunction {
                 if !self.has_queued_finalizer {
                     self.has_queued_finalizer = true;
                     // TODO(port): callback.deinit() — Strong handles drop on Drop; here we must
-                    // explicitly clear before enqueuing the finalize task to match Zig ordering.
+                    // explicitly clear before enqueuing the finalize task to preserve ordering.
                     // PORT NOTE: replace callback with a no-op variant to drop Strong now.
                     self.callback = TsfnCallback::Js(StrongOptional::empty());
                     self.poll_ref.disable();
@@ -2642,7 +2639,7 @@ impl ThreadSafeFunction {
             // `MutexGuard` holds the lock by raw pointer, so it does not borrow
             // `*self` across the `&mut self` calls below.
             let _g = self.lock.lock_guard();
-            // PORT NOTE: reshaped for borrowck — Zig holds the lock across these reads.
+            // PORT NOTE: reshaped for borrowck — the lock guard is held across these reads.
             let was_blocked = self.queue.is_blocked();
             let Some(t) = self.queue.data.read_item() else {
                 // When there are no tasks and the number of threads that have
@@ -2751,8 +2748,8 @@ impl ThreadSafeFunction {
         }
 
         let _ = self.queue.count.fetch_add(1, Ordering::SeqCst);
-        // Zig: bun.handleOom — Rust Vec push aborts on OOM by default.
-        let _ = self.queue.data.write_item(ctx); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        // OOM aborts the process; capacity overflow is a fire-and-forget drop.
+        let _ = self.queue.data.write_item(ctx);
         self.schedule_dispatch();
         NapiStatus::ok as napi_status
     }
@@ -2787,7 +2784,7 @@ impl ThreadSafeFunction {
         if let Some(fun) = self_.finalizer_fun {
             // PORT NOTE: ownership transfer of `env` into the Finalizer. We clone (bumps the
             // external refcount) and let the original drop with the Box below — net refcount
-            // delta is zero, equivalent to the Zig move. Avoids writing a zeroed `NonNull`
+            // delta is zero, equivalent to a move. Avoids writing a zeroed `NonNull`
             // sentinel back into the field, which is UB for `ExternalShared<T>`.
             let env = self_.env.clone();
             let finalizer = Finalizer {
@@ -3126,8 +3123,8 @@ mod v8_api {
     // MSVC-mangled symbol names contain `?@$` and are not valid Rust identifiers, so each entry
     // is exposed under a Rust-safe alias via `#[link_name = "..."]`. The list is purely for DCE
     // suppression / link-time existence checks and has no runtime callers — only the symbol
-    // *address* is taken (see `fix_dead_code_elimination`). Keep in sync with the Zig V8API
-    // windows arm in src/runtime/napi/napi.zig.
+    // *address* is taken (see `fix_dead_code_elimination`). Keep in sync with
+    // the V8API windows arm in `v8_api` below.
     #[rustfmt::skip]
     unsafe extern "C" {
         #[link_name = "?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ"]
@@ -3803,9 +3800,9 @@ pub fn fix_dead_code_elimination() {
     );
 
     // uv_functions_to_export
-    // TODO(port): Zig iterates std.meta.declarations(uv_functions_to_export) — Rust has no
-    // reflection over extern blocks. Phase B should script-generate this black_box list from
-    // the `uv_functions_to_export` module above, or rely on `#[used]` static fn-ptr arrays.
+    // TODO(port): Rust has no reflection over extern blocks. Phase B should
+    // script-generate this black_box list from the `uv_functions_to_export`
+    // module above, or rely on `#[used]` static fn-ptr arrays.
     #[cfg(unix)]
     {
         use uv_functions_to_export::*;
@@ -4130,7 +4127,7 @@ pub fn fix_dead_code_elimination() {
     }
 
     // V8API
-    // TODO(port): Zig iterates std.meta.declarations(V8API) — same reflection caveat as above.
+    // TODO(port): same reflection-over-extern-blocks caveat as above.
     #[cfg(not(windows))]
     {
         use v8_api::*;
@@ -4350,5 +4347,3 @@ impl NapiFinalizerTask {
         Self::run_on_js_thread(this);
     }
 }
-
-// ported from: src/napi/napi.zig

@@ -1,4 +1,4 @@
-//! Port of `src/runtime/ffi/FFI.zig` — `Bun.FFI` / `bun:ffi`.
+//! `Bun.FFI` / `bun:ffi`.
 //!
 //! B-2 second-pass: `ABIType` (CType) enum, `FFI`/`Function`/`Step`/`Compiled`
 //! structs, formatters, dlopen data path, and the JSC host-fn entry points
@@ -25,7 +25,7 @@ pub use host_fns::{generate_symbol_for_function, generate_symbols};
 // `pub` so `generated_js2native.rs` can reach `crate::ffi::ffi_body::bun__ffi__cc`
 // directly (the `$rust("ffi_body.rs", …)` call site names this file on disk).
 #[path = "ffi_body.rs"]
-pub mod ffi_body; // full Phase-A draft of FFI.zig
+pub mod ffi_body; // full Phase-A draft
 
 #[path = "FFIObject.rs"]
 pub mod ffi_object_draft;
@@ -34,12 +34,10 @@ pub mod ffi_object_draft;
 pub mod ffi_object {}
 
 // ─── DOMCall slowpath C-ABI exports ──────────────────────────────────────────
-// Zig: `host_fn.DOMCall(class, Container, fn, effect)` emits a `comptime
-// @export(&slowpath, .{ .name = class ++ "__" ++ fn ++ "__slowpath" })` where
-// `slowpath(global, this, args_ptr, args_len)` calls `toJSHostCall(global,
-// @src(), Container.fn, .{ global, this, args[0..len] })`. The bodies live in
+// Each DOMCall needs a `<class>__<fn>__slowpath(global, this, args_ptr, args_len)`
+// C symbol that wraps the host fn in `to_js_host_call`. The bodies live in
 // `ffi_object_draft::reader::*` / `ffi_object_draft::ptr` (already ported);
-// these shims are the missing `@export` wrappers.
+// these shims are the exported wrappers.
 mod dom_call_slowpath {
     use super::ffi_object_draft as ffi_object;
     use crate::jsc::{JSGlobalObject, JSValue};
@@ -55,7 +53,7 @@ mod dom_call_slowpath {
                 arguments_len: usize,
             ) -> JSValue {
                 // SAFETY: C++ DOMJIT slowpath caller passes a live global and a
-                // valid `[JSValue; arguments_len]` span (ZigLazyStaticFunctions).
+                // valid `[JSValue; arguments_len]` span (BunLazyStaticFunctions).
                 let (global, arguments) = unsafe {
                     (&*global, core::slice::from_raw_parts(arguments_ptr, arguments_len))
                 };
@@ -219,9 +217,8 @@ impl Offsets {
 /// Returns an owned byte string (heap-copied since `dlerror()`'s storage is
 /// not stable across calls).
 ///
-/// Note: never fails — the Zig `![]const u8` was allocator-fallible only;
-/// `Vec` write! is infallible and the POSIX path is unconditional, so the
-/// `Result` wrapper has been dropped.
+/// Note: never fails — `Vec` write! is infallible and the POSIX path is
+/// unconditional, so no `Result` wrapper is needed.
 pub(crate) fn get_dl_error() -> Box<[u8]> {
     #[cfg(windows)]
     {
@@ -261,7 +258,7 @@ pub use ffi_body::FFI;
 
 pub struct CompileC {
     pub source: Source,
-    // TODO(port): lifetime — Zig stored borrowed [:0]const u8 into `source`
+    // TODO(port): lifetime — should borrow a NUL-terminated byte slice from `source`
     pub current_file_for_errors: &'static ZStr,
     pub libraries: StringArray,
     pub library_dirs: StringArray,
@@ -512,5 +509,3 @@ impl CompilerRT {
         }
     }
 }
-
-// ported from: src/runtime/ffi/FFI.zig

@@ -18,7 +18,7 @@ pub enum ProfilerError {
 bun_core::named_error_set!(ProfilerError);
 
 pub struct CPUProfilerConfig {
-    // TODO(port): lifetime — these are borrowed slices in Zig (never freed here);
+    // TODO(port): lifetime — these are borrowed slices (never freed here);
     // using &'static for Phase A per PORTING.md (no struct lifetime params).
     pub name: &'static [u8],
     pub dir: &'static [u8],
@@ -80,8 +80,7 @@ pub fn stop_and_write_profile(
         config.md_format.then_some(&mut text_string),
     );
     // C++ handed back +1 refs into json_string/text_string. `bun_core::String`
-    // is `Copy` (no Drop), so wrap in `OwnedString` for scope-exit `deref()` —
-    // the Rust spelling of Zig's `defer json_string.deref(); defer text_string.deref();`.
+    // is `Copy` (no Drop), so wrap in `OwnedString` for scope-exit `deref()`.
     let json_string = OwnedString::new(json_string);
     let text_string = OwnedString::new(text_string);
 
@@ -183,8 +182,8 @@ fn build_output_path(
 
     // Append directory if specified
     if !config.dir.is_empty() {
-        // PORT NOTE: AutoAbsPath uses CheckLength::ASSUME — Err arm is unreachable
-        // (Zig call is infallible). See paths/Path.rs `options::Result` note.
+        // PORT NOTE: AutoAbsPath uses CheckLength::ASSUME — Err arm is unreachable.
+        // See paths/Path.rs `options::Result` note.
         path.join(&[config.dir]).expect("unreachable");
     }
 

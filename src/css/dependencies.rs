@@ -2,7 +2,7 @@
 use bun_collections::VecExt;
 
 use crate::SourceLocation;
-// const Location = css.Location; — shadowed by the local `Location` below in Zig too.
+// `css::Location` is intentionally shadowed by the local `Location` below.
 
 /// Options for `analyze_dependencies` in `PrinterOptions`.
 pub struct DependencyOptions {
@@ -35,9 +35,9 @@ impl Location {
         }
     }
 
-    // PORT NOTE: Zig `hash` / `eql` methods called `css.implementHash` / `css.implementEql`
-    // (comptime struct-field reflection). Replaced by `#[derive(Hash, PartialEq, Eq)]` above
-    // per PORTING.md §Comptime reflection.
+    // PORT NOTE: hash/equality were originally implemented via compile-time struct-field
+    // reflection. Replaced by `#[derive(Hash, PartialEq, Eq)]` above per
+    // PORTING.md §Comptime reflection.
 }
 
 /// An `@import` dependency.
@@ -110,7 +110,7 @@ impl ImportDependency {
 
         let placeholder = crate::css_modules::hash(
             bump,
-            // PORT NOTE: Zig "{s}_{s}", .{ filename, rule.url } → fmt::Arguments
+            // PORT NOTE: format `{filename}_{url}` via fmt::Arguments.
             format_args!(
                 "{}_{}",
                 bstr::BStr::new(filename),
@@ -202,5 +202,3 @@ impl SourceRange {
         }
     }
 }
-
-// ported from: src/css/dependencies.zig

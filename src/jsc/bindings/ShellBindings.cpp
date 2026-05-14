@@ -1,6 +1,6 @@
 #include "root.h"
 
-#include "ZigGeneratedClasses.h"
+#include "BunGeneratedClasses.h"
 
 extern "C" SYSV_ABI size_t ShellInterpreter__estimatedSize(void* ptr);
 
@@ -9,7 +9,7 @@ namespace Bun {
 using namespace JSC;
 using namespace WTF;
 
-extern "C" SYSV_ABI EncodedJSValue Bun__createShellInterpreter(Zig::GlobalObject* _Nonnull globalObject, void* _Nonnull ptr, EncodedJSValue parsed_shell_script, EncodedJSValue resolve, EncodedJSValue reject)
+extern "C" SYSV_ABI EncodedJSValue Bun__createShellInterpreter(Bun::GlobalObject* _Nonnull globalObject, void* _Nonnull ptr, EncodedJSValue parsed_shell_script, EncodedJSValue resolve, EncodedJSValue reject)
 {
     auto& vm = globalObject->vm();
     const auto& existingArgs = uncheckedDowncast<WebCore::JSParsedShellScript>(JSValue::decode(parsed_shell_script))->values();

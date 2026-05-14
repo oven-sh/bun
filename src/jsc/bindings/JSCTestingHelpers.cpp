@@ -4,7 +4,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 
 #include <JavaScriptCore/JSString.h>
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 namespace Bun {
 using namespace JSC;
@@ -49,7 +49,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsLatin1String,
     return {};
 }
 
-JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)
+JSC::JSValue createJSCTestingHelpers(Bun::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

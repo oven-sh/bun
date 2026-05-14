@@ -20,17 +20,17 @@ pub use crate::flags as Flags;
 //
 // Thin `NonNull<T>` newtype — `Copy`, `Deref`/`DerefMut`. The pointee lives
 // until the owning Store/arena is `reset()`; callers must not hold a `StoreRef`
-// across that boundary. Matches Zig's `*T` payloads in `Expr.Data`.
+// across that boundary. The `*T` payloads in `Expr.Data` use it.
 // ───────────────────────────────────────────────────────────────────────────
 
 #[repr(transparent)]
 pub struct StoreRef<T>(NonNull<T>);
 
-// SAFETY: `StoreRef` is a thin pointer into a single-threaded bump arena (Zig
-// `*T`). We assert Send/Sync so payload types embedding `Option<StoreRef<T>>`
-// (e.g. `E::EString::next`) can sit in `static` tables — matches Zig where raw
-// pointers carry no thread-affinity. Callers are responsible for not actually
-// sharing a Store across threads (same contract as the Zig original).
+// SAFETY: `StoreRef` is a thin pointer into a single-threaded bump arena. We
+// assert Send/Sync so payload types embedding `Option<StoreRef<T>>` (e.g.
+// `E::EString::next`) can sit in `static` tables — raw pointers carry no
+// thread-affinity. Callers are responsible for not actually sharing a Store
+// across threads.
 //
 // Bounded on `T` so `StoreRef` cannot launder a `!Send`/`!Sync` payload (e.g.
 // `StoreRef<Cell<_>>`) past auto-trait inference: `Deref` yields `&T` (needs
@@ -58,7 +58,7 @@ impl<T> StoreRef<T> {
         StoreRef(NonNull::from(r))
     }
     /// Consume a `Box<T>` whose payload must outlive every Store reset
-    /// (Zig `deepClone(default_allocator)` semantics). Ownership transfers to
+    /// (`deepClone(default_allocator)` semantics). Ownership transfers to
     /// the returned `StoreRef`; the allocation is process-lifetime by design
     /// and is never dropped — mirrors `bun.default_allocator.create(T)` with
     /// no paired `destroy`. Prefer `from_bump` for arena-backed nodes.
@@ -75,8 +75,8 @@ impl<T> StoreRef<T> {
     #[inline]
     pub const fn from_static(r: &'static T) -> Self {
         // SAFETY: `r` is a non-null, aligned, dereferenceable `'static`
-        // reference. Provenance is shared/read-only: this mirrors Zig
-        // `@constCast` on prefill tables. The pointee is *never* written
+        // reference. Provenance is shared/read-only — a const-cast on prefill
+        // tables. The pointee is *never* written
         // through — `DerefMut` on a `StoreRef` produced here is UB and callers
         // must not do so (audited: only `Deref`/`get()` reads occur).
         StoreRef(unsafe { NonNull::new_unchecked(core::ptr::from_ref(r).cast_mut()) })
@@ -107,8 +107,7 @@ impl<T> DerefMut for StoreRef<T> {
     fn deref_mut(&mut self) -> &mut T {
         // SAFETY: StoreRef invariant. AST nodes are mutated in-place during
         // visiting; no two `StoreRef` to the same node are deref'd `&mut`
-        // simultaneously in single-threaded parser/visitor passes — same
-        // contract as the Zig original.
+        // simultaneously in single-threaded parser/visitor passes.
         unsafe { self.0.as_mut() }
     }
 }
@@ -118,8 +117,8 @@ impl<T> From<NonNull<T>> for StoreRef<T> {
         StoreRef(p)
     }
 }
-/// Pointer-identity comparison (matches the `NonNull<T>`/Zig `*T` semantics
-/// of the field this type replaces).
+/// Pointer-identity comparison (matches the `NonNull<T>` semantics of the
+/// field this type replaces).
 impl<T> PartialEq for StoreRef<T> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -161,7 +160,7 @@ pub struct StoreStr {
 }
 
 // SAFETY: same rationale as `StoreRef` — points into a single-threaded bump
-// arena (Zig `[]const u8`). Asserted Send/Sync so payload types can sit in
+// arena. Asserted Send/Sync so payload types can sit in
 // `static` Prefill tables; callers must not actually share a Store across
 // threads (unchanged contract).
 unsafe impl Send for StoreStr {}
@@ -315,8 +314,8 @@ impl core::fmt::Debug for StoreStr {
 // per-node `[Stmt]`/`[Expr]` views, …) that borrow from the parse arena.
 // Same contract as `StoreRef`/`StoreStr`: safe `::new`,
 // raw `NonNull<T>` + `u32` length, `Deref<Target=[T]>`, valid until the
-// owning arena resets. The `u32` length matches Zig's `[]T` (`u32` len under
-// `-Dwasm32` and the AST's practical bounds) and keeps the field at 12 bytes
+// owning arena resets. The `u32` length covers the AST's practical bounds
+// and keeps the field at 12 bytes
 // on 64-bit instead of 16 — relevant for hot AST nodes.
 #[repr(C)]
 pub struct StoreSlice<T> {
@@ -413,8 +412,8 @@ impl<T> StoreSlice<T> {
         unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
     }
 
-    /// Shorten the slice in place. Panics if `new_len > len` (mirrors Zig
-    /// `slice[0..new_len]` bounds check). The arena still owns the trailing
+    /// Shorten the slice in place. Panics if `new_len > len`
+    /// (`slice[0..new_len]` bounds check). The arena still owns the trailing
     /// elements; they are simply no longer reachable through this view.
     #[inline]
     pub fn truncate(&mut self, new_len: usize) {
@@ -422,8 +421,8 @@ impl<T> StoreSlice<T> {
         self.len = new_len as u32;
     }
 
-    /// Construct from a `BumpVec`/`ArenaVec` by leaking it into the bump arena
-    /// (Zig: `list.items` after `toOwnedSlice`). Convenience for the common
+    /// Construct from a `BumpVec`/`ArenaVec` by leaking it into the bump arena.
+    /// Convenience for the common
     /// `StoreSlice::new_mut(v.into_bump_slice_mut())` pattern.
     #[inline]
     pub fn from_bump<'b>(v: bun_alloc::ArenaVec<'b, T>) -> Self {
@@ -526,7 +525,7 @@ pub type ExprNodeList = Vec<Expr, bun_alloc::AstAlloc>;
 pub type StmtNodeList = StoreSlice<Stmt>;
 pub type BindingNodeList = StoreSlice<Binding>;
 
-#[repr(u8)] // Zig: enum(u2)
+#[repr(u8)] // values fit in a u2
 #[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum ImportItemStatus {
@@ -547,7 +546,7 @@ impl ImportItemStatus {
     }
 }
 
-#[repr(u8)] // Zig: enum(u2)
+#[repr(u8)] // values fit in a u2
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum AssignTarget {
@@ -633,7 +632,7 @@ pub struct SlotCounts {
 
 impl Default for SlotCounts {
     fn default() -> Self {
-        // EnumMap<_, u32>::default() zero-fills (Zig: SlotNamespace.CountsArray.initFill(0)).
+        // EnumMap<_, u32>::default() zero-fills.
         Self {
             slots: symbol::SlotNamespaceCountsArray::default(),
         }
@@ -642,7 +641,6 @@ impl Default for SlotCounts {
 
 impl SlotCounts {
     pub fn union_max(&mut self, other: SlotCounts) {
-        // TODO(port): `enum_map::EnumMap` exposes `.values()`; the Zig iterates raw arrays.
         for (a, b) in self.slots.values_mut().zip(other.slots.values()) {
             if *a < *b {
                 *a = *b;
@@ -709,7 +707,7 @@ impl NameMinifier {
     }
 }
 
-#[repr(u8)] // Zig: enum(u1)
+#[repr(u8)] // values fit in a u1
 #[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum OptionalChain {
@@ -1034,8 +1032,7 @@ impl DeclaredSymbolList {
         Ok(this)
     }
 }
-// TODO(port): arena threading — Zig passes `std.mem.Allocator` to every
-// MultiArrayList op. bun_collections::MultiArrayList owns its arena (global
+// TODO(port): arena threading — bun_collections::MultiArrayList owns its arena (global
 // mimalloc); if Phase B needs arena-backed SoA storage, add a `&'bump Bump`
 // param here.
 
@@ -1088,8 +1085,8 @@ pub type DependencyList = Vec<Dependency>;
 pub type ExprList = Vec<Expr>;
 pub type StmtList = Vec<Stmt>;
 pub type BindingList = Vec<Binding>;
-// PERF(port): Zig `std.array_list.Managed` — these may be arena-backed in
-// callers; revisit with bumpalo::collections::Vec if profiling shows churn.
+// PERF(port): these may be arena-backed in callers; revisit with
+// bumpalo::collections::Vec if profiling shows churn.
 
 /// Each file is made up of multiple parts, and each part consists of one or
 /// more top-level statements. Parts are used for tree shaking and code
@@ -1157,7 +1154,6 @@ pub enum PartTag {
     ImportToConvertFromRequire,
 }
 
-// Zig: std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false)
 // TODO(port): bun_collections::ArrayHashMap must accept a custom hasher ctx (RefHashCtx).
 pub type PartSymbolUseMap = ArrayHashMap<Ref, symbol::Use>;
 pub type PartSymbolPropertyUseMap = ArrayHashMap<Ref, StringHashMap<symbol::Use>>;
@@ -1207,7 +1203,7 @@ impl StmtOrExpr {
             StmtOrExpr::Expr(expr) => expr,
             StmtOrExpr::Stmt(stmt) => match stmt.data {
                 crate::stmt::Data::SFunction(mut s) => {
-                    // PORT NOTE: Zig moved `func.func` out by value; StoreRef arena
+                    // PORT NOTE: `func.func` is moved out by value; StoreRef arena
                     // slot is never individually dropped, so `take` (replace with
                     // Default) is the safe Rust equivalent.
                     let func = core::mem::take(&mut s.func);
@@ -1259,7 +1255,7 @@ pub struct NamedExport {
     pub alias_loc: crate::Loc,
 }
 
-#[repr(u8)] // Zig: enum(u4)
+#[repr(u8)] // values fit in a u4
 #[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum StrictModeKind {
@@ -1321,8 +1317,8 @@ impl<T> Batcher<T> {
     where
         T: Default,
     {
-        // TODO(port): bumpalo alloc_slice for uninit T — Zig `arena.alloc(Type, count)`.
-        // PERF(port): Zig left the slice uninitialized; bumpalo requires Default fill.
+        // TODO(port): bumpalo alloc_slice for uninit T.
+        // PERF(port): could leave the slice uninitialized; bumpalo requires Default fill.
         let all = bump.alloc_slice_fill_default(count);
         Ok(Self {
             head: StoreSlice::new_mut(all),
@@ -1334,14 +1330,14 @@ impl<T> Batcher<T> {
     }
 
     pub fn eat(&mut self, value: T) -> *mut T {
-        // PORT NOTE: Zig source `@ptrCast(&this.head.eat1(value).ptr)` appears to
-        // intend `this.eat1(value).ptr` cast to *T. Porting the apparent intent.
+        // PORT NOTE: ports the apparent intent of `this.eat1(value).ptr` cast
+        // to `*T`.
         self.eat1(value).as_ptr().cast_mut()
     }
 
     pub fn eat1(&mut self, value: T) -> StoreSlice<T> {
-        // `head` has at least 1 element remaining (caller contract — Zig would
-        // panic on bounds); `Batcher` holds the unique view of the allocation.
+        // `head` has at least 1 element remaining (caller contract — out of
+        // bounds would panic); `Batcher` holds the unique view of the allocation.
         let head = self.head.slice_mut();
         let (prev, rest) = head.split_at_mut(1);
         prev[0] = value;
@@ -1360,17 +1356,16 @@ impl<T> Batcher<T> {
         StoreSlice::new_mut(prev)
     }
 }
-// Zig: `pub fn NewBatcher(comptime Type: type) type` → Rust generic struct above.
+// Compatibility alias for the generic struct above.
 pub type NewBatcher<T> = Batcher<T>;
 
 // ═════════════════════════════════════════════════════════════════════════
 // Symbols pulled DOWN from higher-tier
 // crates so lower-tier callers (css, interchange, js_parser itself) can
-// resolve them here without forming a cycle. Ground truth for each port is
-// the named .zig file, NOT the sibling .rs (which may already forward-ref).
+// resolve them here without forming a cycle.
 // ═════════════════════════════════════════════════════════════════════════
 
-// ─── from bun_jsc::math (src/jsc/jsc.zig) ───────────────────────────────────
+// ─── from bun_jsc::math ────────────────────────────────────────────────────
 pub mod math {
     /// `Number.MAX_SAFE_INTEGER` (2^53 - 1)
     pub const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
@@ -1378,7 +1373,6 @@ pub mod math {
     pub const MIN_SAFE_INTEGER: f64 = -9007199254740991.0;
 
     unsafe extern "C" {
-        // Zig: `extern "c" fn Bun__JSC__operationMathPow(f64, f64) f64;`
         // Pure FFI (value-type args, no pointers, no errno) → no caller preconditions.
         safe fn Bun__JSC__operationMathPow(x: f64, y: f64) -> f64;
     }
@@ -1390,8 +1384,7 @@ pub mod math {
         Bun__JSC__operationMathPow(x, y)
     }
 }
-// ─── from bun_bundler::v2::MangledProps (src/bundler/bundle_v2.zig) ─────────
-// Zig: `std.AutoArrayHashMapUnmanaged(Ref, []const u8)`
+// ─── from bun_bundler::v2::MangledProps ─────────────────────────────────────
 // LIFETIMES.tsv: value slices point into the parser arena → `StoreStr`
 // (arena-owned, no `'bump` cascade).
 pub type MangledProps = ArrayHashMap<Ref, StoreStr>;

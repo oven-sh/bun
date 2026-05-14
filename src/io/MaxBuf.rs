@@ -137,5 +137,3 @@ pub enum Kind {
     Stdout,
     Stderr,
 }
-
-// ported from: src/io/MaxBuf.zig

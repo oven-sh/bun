@@ -64,7 +64,7 @@ export function enumeration(
     get bindgenType() {
       return `bindgen_generated.internal.${name}`;
     }
-    zigType(style?: CodeStyle) {
+    bunType(style?: CodeStyle) {
       return `bindgen_generated.${name}`;
     }
     toCpp(value: string): string {

@@ -10,7 +10,7 @@ pub fn post_process_html_chunk(
     worker: &mut thread_pool::Worker,
     chunk: &mut Chunk,
 ) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set — Zig `!void` but body has zero `try` sites (inferred-empty)
+    // TODO(port): narrow error set — original error set was inferred-empty (body has zero `try` sites)
     // This is where we split output into pieces
     let c = ctx.c();
     // E0509: StringJoiner has Drop, so FRU `..Default::default()` is illegal — assign field instead.
@@ -23,8 +23,8 @@ pub fn post_process_html_chunk(
     let compile_results = &chunk.compile_results_for_chunk;
 
     for compile_result in compile_results.iter() {
-        // PORT NOTE: Zig `j.push(.., bun.default_allocator)` — code() borrows from
-        // chunk.compile_results_for_chunk which outlives `j.done()`; arena arg dropped.
+        // PORT NOTE: code() borrows from chunk.compile_results_for_chunk which outlives
+        // `j.done()`; the original allocator arg is dropped.
         j.push_static(compile_result.code());
     }
 
@@ -36,7 +36,7 @@ pub fn post_process_html_chunk(
         alloc,
         &mut j,
         ctx.chunks.len() as u32, // @truncate
-    )); // Zig: `catch |err| bun.handleOom(err)`
+    )); // OOM is the only failure mode here
 
     // PORT NOTE: reshaped for borrowck (compute hash before assigning into chunk)
     let isolated_hash = c.generate_isolated_hash(chunk);
@@ -44,5 +44,3 @@ pub fn post_process_html_chunk(
 
     Ok(())
 }
-
-// ported from: src/bundler/linker_context/postProcessHTMLChunk.zig

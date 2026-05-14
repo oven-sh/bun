@@ -23,8 +23,7 @@ pub use bun_http_types::Method::HeaderName;
 // `bun_jsc::FetchHeaders`).
 pub use bun_http_types::ETag::{HeaderEntry as Entry, HeaderEntryList as EntryList, Headers};
 
-// PORT NOTE: `pub const toFetchHeaders = @import("../http_jsc/headers_jsc.zig").toFetchHeaders;`
-// deleted — to_fetch_headers lives as an extension-trait method in bun_http_jsc.
+// PORT NOTE: `to_fetch_headers` lives as an extension-trait method in bun_http_jsc.
 
 /// Extension constructors for `Headers` that depend on T5 crates
 /// (`bun_picohttp`). Kept as a trait so callers can keep writing
@@ -49,21 +48,20 @@ impl HeadersExt for Headers {
         result
             .entries
             .ensure_total_capacity(header_count)
-            .expect("OOM"); // Zig: bun.handleOom
+            .expect("OOM"); // abort on OOM
         result.buf.reserve_exact(buf_len);
         for header in headers {
             let name = header.name();
             let value = header.value();
-            // PORT NOTE: Zig used `@truncate` for offsets/lengths; mirror with `as u32`
-            // (silent wrap on >4GiB aggregate headers) rather than `try_from().unwrap()`.
+            // PORT NOTE: `as u32` (silent wrap on >4GiB aggregate headers)
+            // rather than `try_from().unwrap()` to keep the truncating semantics.
             let name_offset = result.buf.len() as u32;
             result.buf.extend_from_slice(name);
             let value_offset = result.buf.len() as u32;
             result.buf.extend_from_slice(value);
 
-            // PORT NOTE: Zig pre-set `entries.len = headers.len` then `set(i, ..)`.
-            // Rust `MultiArrayList` lacks `set_len`; capacity was reserved above
-            // so use `append_assume_capacity` which is equivalent.
+            // PORT NOTE: `MultiArrayList` lacks `set_len`; capacity was reserved
+            // above so `append_assume_capacity` is equivalent to pre-setting len.
             result.entries.append_assume_capacity(Entry {
                 name: api::StringPointer {
                     offset: name_offset,
@@ -88,5 +86,3 @@ impl HeadersExt for Headers {
 pub fn append_etag(bytes: &[u8], headers: &mut Headers) {
     let _ = bun_http_types::ETag::append_to_headers(bytes, headers);
 }
-
-// ported from: src/http/Headers.zig

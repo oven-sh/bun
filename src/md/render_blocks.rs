@@ -210,5 +210,3 @@ impl Parser<'_> {
         Ok(())
     }
 }
-
-// ported from: src/md/render_blocks.zig

@@ -1,12 +1,12 @@
-//! HTML `FormData` parsing + JS bridge. Moved from `url/url.zig` because the
-//! struct is webcore (fetch Body) and JSC-heavy; `url/` is JSC-free.
+//! HTML `FormData` parsing + JS bridge. Lives here (not under `url/`) because
+//! the struct is webcore (fetch Body) and JSC-heavy; `url/` is JSC-free.
 
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::{self, declare_scope, err, scoped_log};
-use bun_core::{ZigString, ZigStringSlice, strings};
+use bun_core::{UTF8Slice, UnsafeStringView, strings};
 use bun_jsc::{
     AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult,
-    ZigStringJsc as _,
+    UnsafeStringViewJsc as _,
 };
 use bun_semver::{self, SlicedString};
 use core::ffi::c_void;
@@ -24,8 +24,9 @@ pub struct FormData {
 }
 
 pub type Map = ArrayHashMap<bun_semver::String, FieldEntry>;
-// PORT NOTE: Zig used `bun.Semver.String.ArrayHashContext` + store_hash=false;
-// `bun_collections::ArrayHashMap` is wyhash-keyed — Phase B confirm context match.
+// PORT NOTE: keys were originally hashed with `Semver.String.ArrayHashContext`
+// + store_hash=false; `bun_collections::ArrayHashMap` is wyhash-keyed — Phase B
+// confirm context match.
 
 // `Encoding`, `get_boundary`, and `AsyncFormData` are JSC-free and live in the
 // lower-tier `bun_core::form_data` so `Body`/`Request`/`Response` can name them
@@ -51,7 +52,7 @@ impl AsyncFormDataExt for AsyncFormData {
                 );
                 promise.reject(
                     global,
-                    ZigString::init(b"FormData missing boundary").to_error_instance(global),
+                    UnsafeStringView::init(b"FormData missing boundary").to_error_instance(global),
                 )?;
                 return Ok(());
             }
@@ -105,16 +106,16 @@ pub enum FieldEntry {
 
 #[repr(C)]
 pub struct FieldExternal {
-    pub name: ZigString,
-    pub value: ZigString,
+    pub name: UnsafeStringView,
+    pub value: UnsafeStringView,
     pub blob: *mut Blob,
 }
 
 impl Default for FieldExternal {
     fn default() -> Self {
         FieldExternal {
-            name: ZigString::default(),
-            value: ZigString::default(),
+            name: UnsafeStringView::default(),
+            value: UnsafeStringView::default(),
             blob: core::ptr::null_mut(),
         }
     }
@@ -129,7 +130,7 @@ impl FormData {
     ) -> Result<JSValue, bun_core::Error> {
         match encoding {
             Encoding::URLEncoded => {
-                let str = ZigString::from_utf8(strings::without_utf8_bom(input));
+                let str = UnsafeStringView::from_utf8(strings::without_utf8_bom(input));
                 // C++ may throw (e.g. string too long) — `create_from_url_query`
                 // wraps the FFI in a validation scope and maps zero → JsError.
                 DOMFormData::create_from_url_query(global, &str).map_err(|_| err!("JSError"))
@@ -139,7 +140,6 @@ impl FormData {
     }
 }
 
-// Zig: `@export(&jsc.toJSHostFn(fromMultipartData), .{ .name = "FormData__jsFunctionFromMultipartData" })`
 #[bun_jsc::host_fn(export = "FormData__jsFunctionFromMultipartData")]
 pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // PORT NOTE: `jsc.markBinding(@src())` dropped — debug-only source marker.
@@ -147,7 +147,7 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     let args = frame.arguments_old::<2>();
     let input_value = args.ptr[0];
     let boundary_value = args.ptr[1];
-    let mut boundary_slice = ZigStringSlice::default();
+    let mut boundary_slice = UTF8Slice::default();
     // PORT NOTE: `defer boundary_slice.deinit()` — handled by `Drop`.
 
     let mut encoding = Encoding::URLEncoded;
@@ -172,7 +172,7 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
             )));
         }
     }
-    let mut input_slice = ZigStringSlice::default();
+    let mut input_slice = UTF8Slice::default();
     // PORT NOTE: `defer input_slice.deinit()` — handled by `Drop`.
     // Keep the `ArrayBuffer` view alive for the duration of `input`'s borrow.
     let input_array_buffer;
@@ -221,19 +221,18 @@ pub fn to_js_from_multipart_data(
         fn on_entry(wrap: &mut Self, name: bun_semver::String, field: Field, buf: &[u8]) {
             // SAFETY: `field.value` points into `buf` (caller-owned input), valid for this call.
             let value_str: &[u8] = unsafe { &*field.value };
-            let key = ZigString::init_utf8(name.slice(buf));
+            let key = UnsafeStringView::init_utf8(name.slice(buf));
 
             if field.is_file {
                 let filename_str = field.filename.slice(buf);
 
                 // PORT NOTE: dropped `bun.default_allocator` arg.
                 let mut blob = Blob::create(value_str, wrap.global, false);
-                let filename = ZigString::init_utf8(filename_str);
+                let filename = UnsafeStringView::init_utf8(filename_str);
 
-                // PORT NOTE: Zig used a labeled `:brk` block returning a borrowed
-                // `[]const u8`. `MimeType.value` is now `Cow<'static,[u8]>`, so
-                // split the two ownership cases instead of unifying through a
-                // single `&[u8]` (avoids borrowing a temporary).
+                // PORT NOTE: `MimeType.value` is `Cow<'static,[u8]>`, so split
+                // the two ownership cases instead of unifying through a single
+                // `&[u8]` (avoids borrowing a temporary).
                 if !field.content_type.is_empty() {
                     let ct = field.content_type.slice(buf);
                     blob.content_type_allocated.set(true);
@@ -280,11 +279,11 @@ pub fn to_js_from_multipart_data(
                     (&raw mut blob).cast::<c_void>(),
                     &filename,
                 );
-                // PORT NOTE: Zig `defer blob.detach()` — no early returns in
-                // this branch, so call explicitly at scope end.
+                // No early returns in this branch, so call `detach()`
+                // explicitly at scope end (defer-equivalent).
                 blob.detach();
             } else {
-                let value = ZigString::init_utf8(
+                let value = UnsafeStringView::init_utf8(
                     // > Each part whose `Content-Disposition` header does not
                     // > contain a `filename` parameter must be parsed into an
                     // > entry whose value is the UTF-8 decoded without BOM
@@ -454,5 +453,3 @@ pub fn for_each_multipart_entry<C>(
 
     Ok(())
 }
-
-// ported from: src/runtime/webcore/FormData.zig

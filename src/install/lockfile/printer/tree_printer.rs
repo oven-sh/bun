@@ -9,7 +9,7 @@ use bun_install::{
     self as install, Bin, Dependency, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager,
     PackageNameHash, Resolution, bin, resolution,
 };
-// PORT NOTE: Zig `slice.items(.field)` → trait-provided `items_<field>()`
+// PORT NOTE: `slice.items(.field)` → trait-provided `items_<field>()`
 // accessors on `MultiArrayList<Package>` / its `Slice`.
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::TrackInstalledBin;
@@ -41,7 +41,7 @@ where
     let packages_slice = lockfile.packages.slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
-    // PORT NOTE: Zig `slice.items(.field)` → derive(MultiArrayElement)-generated `items_<field>()`.
+    // PORT NOTE: `slice.items(.field)` → derive(MultiArrayElement)-generated `items_<field>()`.
     let workspace_res = &packages_slice.items_resolution()[workspace_package_id as usize];
     let names = packages_slice.items_name();
     let pkg_metas = packages_slice.items_meta();
@@ -561,7 +561,7 @@ where
                     done: false,
                     dir_iterator: None,
                     package_name: name,
-                    // PORT NOTE: Zig default `bun.invalid_fd.stdDir()` — never read on
+                    // PORT NOTE: default invalid fd — never read on
                     // the .map/.file/.named_file paths this arm covers.
                     destination_node_modules: SysDir::from_fd(Fd::INVALID),
                     buf: bun_paths::PathBuffer::uninit(),
@@ -590,8 +590,8 @@ where
                     let fmt = "<r> <d>- <r><b>{s}<r>\n";
 
                     if matches!(manager.track_installed_bin, TrackInstalledBin::Pending) {
-                        // PORT NOTE: `iterator.next()` returns `Result<Option<&[u8]>, E>` (Zig `!?[]const u8`);
-                        // `catch null` → `.unwrap_or(None)`. Reshaped for borrowck — `bin_name`'s
+                        // PORT NOTE: `iterator.next()` returns `Result<Option<&[u8]>, E>`;
+                        // `.unwrap_or(None)` swallows errors. Reshaped for borrowck — `bin_name`'s
                         // borrow of `iterator.buf` must end before the loop's `iterator.next()`.
                         if let Some(bin_name) = iterator.next().unwrap_or(None) {
                             let owned = Box::<[u8]>::from(bin_name);
@@ -634,5 +634,3 @@ where
 
     Ok(())
 }
-
-// ported from: src/install/lockfile/printer/tree_printer.zig

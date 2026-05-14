@@ -51,8 +51,8 @@ pub fn to_have_been_called_times(
             ),
             format_args!("{}, {}", times, calls.get_length(global)?),
         );
-        // TODO(port): Expect.throw signature — Zig passes (fmt_literal, args_tuple); Rust side
-        // likely wants a single format_args!. Reconcile in Phase B.
+        // TODO(port): Expect.throw signature — reconcile (fmt_literal, args_tuple) vs a
+        // single format_args! in Phase B.
     }
 
     let signature: &str = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", false);
@@ -67,5 +67,3 @@ pub fn to_have_been_called_times(
         format_args!("{}, {}", times, calls.get_length(global)?),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveBeenCalledTimes.zig

@@ -724,7 +724,7 @@ fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
         }
     }
 
-    // PORT NOTE: Zig built this table via @typeInfo reflection over single-char enum field names.
+    // PORT NOTE: the original built this table via comptime reflection over single-char enum field names.
     // Rust has no equivalent; the table is filled by hand with the same entries.
     const ESCAPE_TABLE: [EscapeVal; 256] = {
         let mut table = [EscapeVal::Other; 256];
@@ -1190,7 +1190,7 @@ fn overwrite_package_in_node_modules_folder(
     // FileCopier's path fields are `.unit = .os` (u16 on Windows). `Path::from`
     // is generic over the *input* width and converts internally, so accepting
     // `&[u8]` and producing `Path<OSPathChar>` is intentional. `.sep = .auto`
-    // (Zig spec) is required so `/` is normalized to `\` on Windows — the inputs
+    // (per spec) is required so `/` is normalized to `\` on Windows — the inputs
     // here arrive posix-normalized and are later passed to Win32 APIs.
     let dest_subpath = bun_paths::Path::<
         bun_paths::OSPathChar,
@@ -1503,14 +1503,12 @@ impl PatchArgKind {
         if strings::contains(argument, b"node_modules/") {
             return PatchArgKind::Path;
         }
-        // PORT NOTE: spec asymmetry — Zig (patchPackage.zig:1028) uses `hasPrefix`
+        // PORT NOTE: spec asymmetry — the original used `hasPrefix`
         // for the Windows-backslash arm but `contains` for the posix arm above.
-        // Match the spec exactly; if this is a Zig bug, fix both sides separately.
+        // Match the spec exactly; if this is an upstream bug, fix both sides separately.
         if cfg!(windows) && strings::has_prefix(argument, b"node_modules\\") {
             return PatchArgKind::Path;
         }
         PatchArgKind::NameAndVersion
     }
 }
-
-// ported from: src/install/PackageManager/patchPackage.zig

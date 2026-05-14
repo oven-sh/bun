@@ -48,5 +48,3 @@ impl<R> MediaRule<R> {
         }
     }
 }
-
-// ported from: src/css/rules/media.zig

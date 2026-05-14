@@ -3,7 +3,7 @@ use core::ptr::{self, NonNull};
 
 use bun_brotli::c;
 type Op = c::BrotliEncoderOperation;
-// TODO(port): exact path — Zig: bun.brotli.c.BrotliEncoder.Operation
+// TODO(port): confirm this is the exact `BrotliEncoder` operation type.
 
 // ─── type defs (real) ─────────────────────────────────────────────────────
 
@@ -98,10 +98,10 @@ mod _impl {
         pub task: JsCell<WorkPoolTask>,
     }
 
-    // `const impl = CompressionStream(@This())` — Zig mixin that provides
-    // write / runFromJSThread / writeSync / reset / close / setOnError /
-    // getOnError / finalize / emitError. In Rust these are generic associated
-    // fns on `CompressionStream::<NativeBrotli>` (see node_zlib_binding.rs).
+    // The CompressionStream mixin provides write / runFromJSThread / writeSync /
+    // reset / close / setOnError / getOnError / finalize / emitError. In Rust
+    // these are generic associated fns on `CompressionStream::<NativeBrotli>`
+    // (see node_zlib_binding.rs).
     // TODO(port): expose via inherent-looking methods so .classes.ts codegen can resolve them.
 
     impl NativeBrotli {
@@ -242,8 +242,7 @@ mod _impl {
         }
 
         /// `CellRefCounted::destroy` target (refcount hit zero). Runs `deinit`
-        /// then frees the Box-allocated payload — matches Zig
-        /// `bun.ptr.RefCount(.., deinit, .{}).deref()` → `deinit()` + `bun.destroy(this)`.
+        /// then frees the Box-allocated payload.
         ///
         /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
         /// whose generated trait `destroy` upholds the sole-owner contract.
@@ -256,8 +255,8 @@ mod _impl {
 
         /// RefCount destructor body (called when ref_count → 0).
         fn deinit(&mut self) {
-            // this_value / poll_ref have Drop impls; explicit calls kept for
-            // ordering parity with Zig.
+            // this_value / poll_ref have Drop impls; explicit calls kept to
+            // preserve teardown ordering.
             // TODO(port): confirm Strong/CountedKeepAlive Drop ordering is benign
             // and remove explicit deinit calls.
             self.this_value.set(StrongOptional::empty());
@@ -379,7 +378,7 @@ mod _impl {
             // Caller passes a valid BrotliEncoderOperation discriminant (Node
             // zlib constants 0..=3). Exhaustive match — `Op` is `#[repr(u32)]`
             // so the prior `c_int` bit-cast was a width hazard anyway. Out-of-
-            // range traps to match Zig `this.flush = @enumFromInt(flush)`.
+            // range traps (matches the original safety-checked enum cast).
             self.flush = match flush {
                 0 => Op::process,
                 1 => Op::flush,
@@ -522,8 +521,6 @@ mod _impl {
     crate::__impl_compression_stream!(NativeBrotli, Context, "NativeBrotli");
 
     fn code_for_error(err: c::BrotliDecoderErrorCode2) -> *const core::ffi::c_char {
-        // Zig: `inline for (std.meta.fieldNames(E), std.enums.values(E)) |n, v|
-        //          if (err == v) return "ERR_BROTLI_DECODER_" ++ n;`
         // Rust has no enum reflection — expand the table by hand. Keep in sync
         // with `bun_brotli::c::BrotliDecoderErrorCode2`.
         use c::BrotliDecoderErrorCode2 as E;
@@ -571,7 +568,7 @@ mod _impl {
     }
 
     /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
-    /// (see `CompressionStream::write` in node_zlib_binding.rs). Zig: `.callback = undefined`.
+    /// (see `CompressionStream::write` in node_zlib_binding.rs).
     /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
     /// struct-init site; the body never dereferences the pointer.
     fn noop_task_callback(_task: *mut WorkPoolTask) {}
@@ -580,5 +577,3 @@ mod _impl {
 } // mod _impl
 
 pub use _impl::NativeBrotli;
-
-// ported from: src/runtime/node/zlib/NativeBrotli.zig

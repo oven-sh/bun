@@ -1,6 +1,6 @@
 //! Valkey/Redis client — JSC bindings.
 //!
-//! Module layout mirrors `src/runtime/valkey_jsc/index.zig`: the protocol
+//! Module layout: the protocol
 //! state machine lives in [`valkey`] (`ValkeyClient`), the `.classes.ts`
 //! wrapper in [`js_valkey`] (`JSValkeyClient`), and the ~200 prototype
 //! methods in [`js_valkey_functions`]. RESP wire-format parsing is in the
@@ -49,10 +49,10 @@ pub use valkey::{Options, Protocol, Status, ValkeyClient};
 pub use valkey_context::ValkeyContext;
 
 // ── ValkeyCommand ────────────────────────────────────────────────────────────
-// Zig's `ValkeyCommand.zig` is a file-as-struct: it is both the namespace
-// *and* the `Command` type. Expose a `valkey_command` module that re-exports
-// the body's items so `command::PromisePair` / `command::Entry` resolve, and
-// alias it as `ValkeyCommand` for callers that match the Zig spelling.
+// `ValkeyCommand` doubles as both a namespace *and* the `Command` type.
+// Expose a `valkey_command` module that re-exports the body's items so
+// `command::PromisePair` / `command::Entry` resolve, and alias it as
+// `ValkeyCommand` for callers that match that spelling.
 pub mod valkey_command {
     pub use super::valkey_command_body::{Entry, Meta, Promise, PromisePair, entry, promise_pair};
     // `index.rs` re-exports `super::valkey_command::ValkeyCommand`.

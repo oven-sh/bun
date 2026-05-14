@@ -15,7 +15,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_crash_handler::handle_oom::handle_oom;
 
-// PORT NOTE: Zig file-level struct → Rust struct. `stmts` is a sub-slice of the
+// PORT NOTE: original file-level struct → Rust struct. `stmts` is a sub-slice of the
 // input `stmts` argument (in-place compacted), so it borrows from the caller.
 #[derive(Default)]
 pub struct ImportScanner<'a> {
@@ -34,7 +34,7 @@ fn raw_str(s: &'static [u8]) -> js_ast::StoreStr {
 impl<'a> ImportScanner<'a> {
     // TODO(port): narrow error set
     // PORT NOTE: round-E un-gate — `<P>` unbounded generic → concrete `P<'a, TS, SCAN>`.
-    // TODO(b2-ast-E): the Zig also accepts `bun.bundle_v2.AstBuilder` as P (comptime
+    // TODO(b2-ast-E): the original also accepts `bun.bundle_v2.AstBuilder` as P (comptime
     //   `P != AstBuilder` check). Round-E only handles the parser P; AstBuilder path
     //   needs a `ParserLike` trait or a separate monomorphization.
     pub fn scan<
@@ -46,7 +46,7 @@ impl<'a> ImportScanner<'a> {
         p: &mut P<'p, TYPESCRIPT, SCAN_ONLY>,
         stmts: &'a mut [Stmt],
         will_transform_to_common_js: bool,
-        // PORT NOTE: Zig used `if (comptime_bool) *T else void` for this param's
+        // PORT NOTE: original used `if (comptime_bool) *T else void` for this param's
         // type; Rust const generics can't gate a param type, so use Option and
         // debug-assert presence matches the const.
         mut hot_module_reloading_context: Option<&mut ConvertESMExportsForHmr>,
@@ -63,17 +63,17 @@ impl<'a> ImportScanner<'a> {
         let is_typescript_enabled: bool = TYPESCRIPT;
 
         for i in 0..stmts.len() {
-            // PORT NOTE: Zig iterated by value-copy then wrote back via index at
+            // PORT NOTE: original iterated by value-copy then wrote back via index at
             // the bottom; we index directly to allow in-place mutation + reassign.
             let mut stmt = stmts[i]; // copy
             match stmt.data {
                 js_ast::StmtData::SImport(mut import_ptr) => {
-                    // PORT NOTE: Zig did `var st = import_ptr.*; defer import_ptr.* = st;`
+                    // PORT NOTE: original did `var st = import_ptr.*; defer import_ptr.* = st;`
                     // (copy + unconditional write-back). Equivalent to mutating in place.
                     let st: &mut S::Import = &mut *import_ptr;
 
                     let import_record_index = st.import_record_index;
-                    // PORT NOTE: reshaped for borrowck — Zig held `record: *ImportRecord`
+                    // PORT NOTE: reshaped for borrowck — original held `record: *ImportRecord`
                     // for the whole arm; Rust can't keep a long-lived &mut alongside
                     // other `p.*` borrows. We take a raw pointer once and unsafe-deref
                     // at each use site (no operation below grows `p.import_records`, so
@@ -647,7 +647,7 @@ impl<'a> ImportScanner<'a> {
                     }
                 }
                 js_ast::StmtData::SExportDefault(mut st) => {
-                    // PORT NOTE: Zig used `defer` to record the export after the body;
+                    // PORT NOTE: original used `defer` to record the export after the body;
                     // capture default_name now and run the record after the body below.
                     let deferred_default_name = st.default_name;
 
@@ -787,5 +787,3 @@ impl<'a> ImportScanner<'a> {
         Ok(scanner)
     }
 }
-
-// ported from: src/js_parser/ast/ImportScanner.zig

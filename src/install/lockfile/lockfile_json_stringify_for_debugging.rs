@@ -20,7 +20,7 @@ use super::{FormatVersion, Lockfile, Package, package_index, tree};
 // used below: begin_object/end_object/begin_array/end_array/object_field/write/write_null/print.
 // `write` is generic over JSON-encodable scalars (bool, integers, &[u8]).
 //
-// PORT NOTE: Zig used `defer w.endObject() catch {}` so that closing braces are emitted
+// PORT NOTE: the original deferred `w.endObject()` so that closing braces are emitted
 // on both success and error paths (with the close error swallowed). In Rust the `?`
 // early-return drops the borrow on `w`, and a scopeguard would need a second `&mut w`.
 // Since this output is debug-only and an error mid-stream already yields malformed JSON,
@@ -86,8 +86,7 @@ where
             w.begin_object()?;
 
             let info: TarballInfo = *dep.version.tarball();
-            // Zig: `@tagName(info.uri)` then `switch (info.uri) { inline else => |s| s.slice(sb) }`
-            // — every TarballURI variant payload has `.slice(sb)`.
+            // Tag name + variant payload — every TarballURI variant payload has `.slice(sb)`.
             let (uri_tag, uri_slice): (&'static str, &[u8]) = match info.uri {
                 URI::Local(ref s) => ("local", s.slice(sb)),
                 URI::Remote(ref s) => ("remote", s.slice(sb)),
@@ -174,7 +173,7 @@ where
     {
         w.begin_object()?;
 
-        // Zig iterated `@typeInfo(Behavior).@"struct".fields[1..len-1]` (skips
+        // The original iterated `Behavior` fields via reflection (skipping
         // the leading `_unused_first` and trailing `_padding` bool/padding fields).
         // The Rust port iterates `Behavior::NAMED_FLAGS` — a flat (name, fn) table.
         for (name, getter) in Behavior::NAMED_FLAGS {
@@ -222,7 +221,7 @@ where
                 package_index::Entry::Id(id) => *id,
                 package_index::Entry::Ids(ids) => ids.as_slice()[0],
             };
-            // TODO(port): MultiArrayList column accessor — `packages.items(.name)` in Zig.
+            // TODO(port): MultiArrayList column accessor — `packages.items(.name)`.
             let name = this.packages.items_name()[first_id as usize].slice(sb);
             w.object_field(name)?;
             match entry {
@@ -380,7 +379,7 @@ where
                 w.object_field(b"arch")?;
                 w.begin_array()?;
 
-                // Zig: `Npm.Architecture.NameMap.kvs` — ComptimeStringMap kv array.
+                // `Npm.Architecture.NameMap.kvs` — string-map kv array.
                 for (key, value) in Npm::Architecture::NAME_MAP_KVS {
                     if pkg.meta.arch.has(*value) {
                         w.write(*key)?;
@@ -464,7 +463,7 @@ where
                 w.object_field(b"scripts")?;
                 w.begin_object()?;
 
-                // Zig: `inline for (comptime std.meta.fieldNames(Lockfile.Scripts))` —
+                // Originally an `inline for` over the script field names —
                 // tabulated explicitly via `Package::Scripts::FIELD_NAMES` since
                 // Rust has no field-by-name reflection.
                 for (field_name, getter) in PackageScripts::FIELD_NAMES {
@@ -546,7 +545,7 @@ where
     Ok(())
 }
 
-/// Mirrors Zig `@tagName(this.format)` for the non-exhaustive `FormatVersion`.
+/// Tag name for the non-exhaustive `FormatVersion`.
 fn format_version_name(v: FormatVersion) -> &'static str {
     match v {
         FormatVersion::V0 => "v0",
@@ -557,7 +556,7 @@ fn format_version_name(v: FormatVersion) -> &'static str {
     }
 }
 
-/// Mirrors Zig `@tagName(pkg.meta.origin)`.
+/// Tag name for `pkg.meta.origin`.
 fn origin_name(o: Origin) -> &'static str {
     match o {
         Origin::Local => "local",
@@ -569,7 +568,7 @@ fn origin_name(o: Origin) -> &'static str {
 /// Port of the `w: anytype` `std.json.WriteStream` protocol used by
 /// `Lockfile.jsonStringify`. `write` is bounded over [`JsonScalar`] so the
 /// concrete [`WriteStream`] impl can encode bool / integer / byte-string
-/// uniformly (Zig's `WriteStream.write` switches on `@TypeOf` at comptime).
+/// uniformly (the original `WriteStream.write` switched on the value type at comptime).
 pub trait JsonWriter {
     fn begin_object(&mut self) -> Result<(), bun_core::Error>;
     fn end_object(&mut self) -> Result<(), bun_core::Error>;
@@ -578,13 +577,13 @@ pub trait JsonWriter {
     fn object_field(&mut self, name: &[u8]) -> Result<(), bun_core::Error>;
     fn write<T: JsonScalar>(&mut self, value: T) -> Result<(), bun_core::Error>;
     fn write_null(&mut self) -> Result<(), bun_core::Error>;
-    /// Zig: `WriteStream.print` — emits the formatted bytes verbatim as a
+    /// `WriteStream.print` — emits the formatted bytes verbatim as a
     /// complete value (caller is responsible for any quoting / escaping).
     fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error>;
 }
 
-/// Dispatch trait standing in for Zig's `@TypeOf` switch inside
-/// `std.json.WriteStream.write`. Each impl emits the JSON encoding of `self`
+/// Dispatch trait standing in for the original comptime type switch inside
+/// the JSON write stream. Each impl emits the JSON encoding of `self`
 /// into `out` (no leading/trailing separator — the writer handles that).
 pub trait JsonScalar {
     fn write_json(&self, out: &mut Vec<u8>, opts: WriteStreamOptions);
@@ -603,7 +602,7 @@ macro_rules! json_scalar_uint {
             #[inline]
             fn write_json(&self, out: &mut Vec<u8>, opts: WriteStreamOptions) {
                 use std::io::Write as _;
-                // Zig std.json: `.emit_nonportable_numbers_as_strings` quotes any
+                // `.emit_nonportable_numbers_as_strings` quotes any
                 // integer outside ±2^53 so JS `JSON.parse` round-trips exactly.
                 let v = *self as u64;
                 if opts.emit_nonportable_numbers_as_strings && v > (1u64 << 53) {
@@ -629,10 +628,10 @@ impl<const N: usize> JsonScalar for &[u8; N] {
     }
 }
 
-/// Zig: `std.json.encodeJsonString` — quote + escape the minimal RFC-8259 set
+/// Quote + escape the minimal RFC-8259 set
 /// (`"`, `\`, U+0000..U+001F). Input is treated as already-valid UTF-8/WTF-8;
 /// the lockfile string buffer never carries lone control bytes outside that
-/// range, so the high-bit passthrough matches Zig's behaviour.
+/// range, so the high-bit passthrough is intentional.
 fn encode_json_string(s: &[u8], out: &mut Vec<u8>) {
     out.push(b'"');
     for &c in s {
@@ -661,16 +660,16 @@ pub struct WriteStreamOptions {
     /// would be `.minified`; the binding always passes `2`.
     pub indent: usize,
     pub emit_nonportable_numbers_as_strings: bool,
-    // `emit_null_optional_fields` is consumed by Zig's reflection-based
+    // `emit_null_optional_fields` is consumed by a reflection-based
     // `stringify`, not by `WriteStream` itself; `jsonStringify` is hand-rolled
     // and emits `write_null()` explicitly, so the flag is a no-op here. Kept
-    // for spec parity with the call site in `install_binding.zig`.
+    // for spec parity with the call site in `install_binding`.
     pub emit_null_optional_fields: bool,
 }
 
-/// Port of `std.json.WriteStream` over an in-memory `Vec<u8>`, sufficient for
-/// `std.json.fmt(lockfile, opts)` → `allocPrint` as used by
-/// `bun_install_js_bindings::jsParseLockfile` (install_binding.zig).
+/// JSON write stream over an in-memory `Vec<u8>`, sufficient for
+/// the lockfile JSON debugging format used by
+/// `bun_install_js_bindings::jsParseLockfile`.
 pub struct WriteStream {
     pub out: Vec<u8>,
     opts: WriteStreamOptions,
@@ -785,5 +784,3 @@ impl JsonWriter for WriteStream {
         Ok(())
     }
 }
-
-// ported from: src/install/lockfile/lockfile_json_stringify_for_debugging.zig

@@ -14,8 +14,7 @@ use core::mem::{offset_of, size_of};
 use bun_core::{PathString, RawSlice, WStr};
 use bun_sys::{self as sys, Fd, SystemErrno, Tag};
 
-// `Entry.Kind` in Zig is `jsc.Node.Dirent.Kind` == `std.fs.Dir.Entry.Kind`.
-// In the Rust port that maps to `bun_core::FileKind`, re-exported here as
+// `Entry.Kind` is `bun_core::FileKind`, re-exported here as
 // `bun_sys::EntryKind` (and as `crate::node::types::DirentKind`).
 use bun_sys::EntryKind;
 
@@ -92,7 +91,7 @@ mod platform {
     use bun_sys::darwin as posix_system;
     use core::ptr::addr_of;
 
-    /// Zig: `buf: [8192]u8 align(@alignOf(posix.system.dirent))`.
+    /// 8 KiB read buffer aligned to the platform `dirent`.
     /// Darwin's `struct dirent` (64-bit ino) leads with `d_ino: u64` (align 8);
     /// a bare `[u8; N]` field has alignment 1, so wrap it to force 8-byte
     /// alignment for the *first* record. Subsequent records are only 4-byte
@@ -119,7 +118,7 @@ mod platform {
 
         fn next_darwin(&mut self) -> Result {
             unsafe extern "C" {
-                // Private libsystem symbol; same one Zig's `posix.system.__getdirentries64` hits.
+                // Private libsystem symbol (`__getdirentries64`).
                 // SAFETY precondition: `buf` must be writable for `nbytes` and
                 // `basep` must point to a valid i64 — raw-pointer contract,
                 // cannot be `safe fn`.
@@ -185,8 +184,8 @@ mod platform {
                 // record is shorter than `size_of::<libc::dirent>()` (1048),
                 // so forming a `&libc::dirent` would assert validity past the
                 // record / buffer end. Never materialize a reference — read
-                // each field through the raw pointer (Zig spec:
-                // `*align(1) posix.system.dirent`).
+                // each field through the raw pointer (the records are
+                // unaligned in the buffer).
                 // SAFETY: self.index < self.end_index <= buf.len(); kernel
                 // wrote a valid (possibly 4-aligned) dirent record here.
                 let entry = unsafe { self.buf.0.as_ptr().add(self.index).cast::<libc::dirent>() };
@@ -238,16 +237,16 @@ mod platform {
     use super::*;
     use core::ptr::addr_of;
 
-    // Zig spec calls `posix.system.getdents()`. The Rust `libc` crate binds
-    // neither `getdents` nor `getdirentries` on FreeBSD, so declare the former
-    // to keep the struct shape and syscall surface mirroring the spec.
+    // The Rust `libc` crate binds neither `getdents` nor `getdirentries` on
+    // FreeBSD, so declare the former to keep the struct shape and syscall
+    // surface available.
     unsafe extern "C" {
         // SAFETY precondition: `buf` must be writable for `nbytes` bytes and
         // dirent-aligned — raw-pointer contract, cannot be `safe fn`.
         fn getdents(fd: core::ffi::c_int, buf: *mut core::ffi::c_char, nbytes: usize) -> isize;
     }
 
-    /// Zig: `buf: [8192]u8 align(@alignOf(posix.system.dirent))`.
+    /// 8 KiB read buffer aligned to the platform `dirent`.
     /// FreeBSD's `struct dirent` leads with `ino_t` (u64, align 8); a bare
     /// `[u8; N]` field has alignment 1, so wrap it to force 8-byte alignment.
     #[repr(C, align(8))]
@@ -288,8 +287,8 @@ mod platform {
                     self.end_index = usize::try_from(rc).expect("int cast");
                 }
                 // Records are variable-length; subsequent entries may not be
-                // 8-byte aligned (Zig: `*align(1) posix.system.dirent`). Never
-                // form a `&dirent` — read each field through the raw pointer.
+                // 8-byte aligned. Never form a `&dirent` — read each field
+                // through the raw pointer.
                 // SAFETY: index < end_index ≤ 8192; kernel wrote a valid record.
                 let entry = unsafe { self.buf.0.as_ptr().add(self.index).cast::<libc::dirent>() };
                 // SAFETY: entry points at a valid (possibly unaligned) dirent.
@@ -337,7 +336,7 @@ mod platform {
 mod platform {
     use super::*;
 
-    /// Zig: `buf: [8192]u8 align(@alignOf(linux.dirent64))`.
+    /// 8 KiB read buffer aligned to `linux.dirent64`.
     /// `dirent64` leads with `d_ino: u64` (align 8); a bare `[u8; N]` field has
     /// alignment 1, so wrap it to force 8-byte alignment of the buffer base.
     /// The kernel pads `d_reclen` to a multiple of 8, so every record stays
@@ -361,8 +360,7 @@ mod platform {
             'start_over: loop {
                 if self.index >= self.end_index {
                     // glibc doesn't expose getdents64; go straight to the
-                    // syscall (matches Zig's `linux.getdents64` raw-syscall
-                    // path).
+                    // raw `getdents64` syscall.
                     // SAFETY: buf is valid for 8192 bytes; fd is a plain c_int.
                     let rc = unsafe {
                         libc::syscall(
@@ -453,8 +451,8 @@ mod platform {
     // this may not always be the case (e.g. due to faulty VM/Sandboxing tools)
     // (Rust raw-pointer reads below use unaligned-safe casts.)
 
-    /// Helper to select `name_data` element type and result type from the const-bool generic.
-    /// Zig: `name_data: if (use_windows_ospath) [257]u16 else [513]u8`.
+    /// Helper to select `name_data` element type and result type from the const-bool generic
+    /// (`[257]u16` for OS-path mode, `[513]u8` otherwise).
     pub trait WindowsOsPath {
         type NameData: Sized;
         type Entry;
@@ -480,7 +478,7 @@ mod platform {
         const IS_U16: bool = false;
         #[inline]
         fn max_name_u16() -> usize {
-            // Zig: (self.name_data.len - 1) / 2
+            // (name_data.len() - 1) / 2
             (513 - 1) / 2
         }
         fn make_entry(
@@ -502,7 +500,7 @@ mod platform {
         const IS_U16: bool = true;
         #[inline]
         fn max_name_u16() -> usize {
-            // Zig: self.name_data.len - 1
+            // name_data.len() - 1
             257 - 1
         }
         fn make_entry(
@@ -586,8 +584,7 @@ mod platform {
                     };
                     let filter_ptr: *mut UNICODE_STRING = match self.name_filter {
                         Some((ptr, len)) => {
-                            // Zig spec uses @intCast which panics on overflow in safe builds;
-                            // mirror that with try_from rather than `as u16` silent truncation.
+                            // `try_from` panics on overflow rather than `as u16` silent truncation.
                             let len_bytes = u16::try_from(len * 2).expect("name_filter too long");
                             filter_us.Length = len_bytes;
                             filter_us.MaximumLength = len_bytes;
@@ -762,8 +759,7 @@ mod platform {
         pub dir: Fd,
         // NOTE: even if this buffer were aligned to align_of::<dirent_t>(), entries after
         // the first land at `size_of::<dirent_t>() + d_namlen` offsets (arbitrary), so the
-        // header is read via `read_unaligned` below regardless. The Zig original expresses
-        // the same thing with a `*align(1) dirent_t` cast.
+        // header is read via `read_unaligned` below regardless.
         pub buf: [u8; 8192],
         pub cookie: u64,
         pub index: usize,
@@ -813,7 +809,7 @@ mod platform {
                 // dirent header at this offset. The header is NOT naturally aligned (entries are
                 // packed as `[dirent_t][name bytes][dirent_t]...` with no padding between the
                 // variable-length name and the next header), so we must `read_unaligned` rather
-                // than form a `&dirent_t` — matching Zig's `*align(1) w.dirent_t` cast.
+                // than form a `&dirent_t` (the records in the buffer are unaligned).
                 let entry: w::dirent_t = unsafe {
                     core::ptr::read_unaligned(
                         self.buf.as_ptr().add(self.index).cast::<w::dirent_t>(),
@@ -858,9 +854,9 @@ pub use platform::NewIterator;
 // Wrapped iterator — selects the underlying `NewIterator<B>` and provides a
 // uniform `init`/`next`/`set_name_filter` surface.
 //
-// Zig parametrized this on a `PathType` enum (`.u8` / `.u16`). Rust's stable
-// const generics don't admit user enums, so we map to a `bool` (`false` ==
-// `.u8`, `true` == `.u16`) and split the `next()` impl per-value to avoid
+// Path type is parameterized as a `bool` (Rust's stable const generics don't
+// admit user enums): `false` == `.u8`, `true` == `.u16`. The `next()` impl is
+// split per-value to avoid
 // inherent associated types.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -912,7 +908,7 @@ where
                     seek: 0,
                     index: 0,
                     end_index: 0,
-                    // Zig `= undefined`; zero-init avoids Rust's invalid_value lint on [u8; N]
+                    // Zero-init avoids Rust's invalid_value lint on [u8; N]
                     buf: platform::DirentBuf([0u8; 8192]),
                     received_eof: false,
                 },
@@ -925,7 +921,7 @@ where
                     dir,
                     index: 0,
                     end_index: 0,
-                    // Zig `= undefined`; zero-init avoids Rust's invalid_value lint on [u8; N]
+                    // Zero-init avoids Rust's invalid_value lint on [u8; N]
                     buf: platform::DirentBuf([0u8; 8192]),
                 },
             };
@@ -937,7 +933,7 @@ where
                     dir,
                     index: 0,
                     end_index: 0,
-                    // Zig `= undefined`; zero-init avoids Rust's invalid_value lint on [u8; N]
+                    // Zero-init avoids Rust's invalid_value lint on [u8; N]
                     buf: platform::DirentBuf([0u8; 8192]),
                 },
             };
@@ -950,7 +946,7 @@ where
                     index: 0,
                     end_index: 0,
                     first: true,
-                    // Zig `= undefined`; zero-init avoids Rust's invalid_value lint on integer arrays
+                    // Zero-init avoids Rust's invalid_value lint on integer arrays
                     buf: [0u8; 8192],
                     // SAFETY: NameData is [u8; 513] or [u16; 257]; zero is a valid bit pattern.
                     name_data: unsafe { bun_core::ffi::zeroed_unchecked() },
@@ -966,7 +962,7 @@ where
                     cookie: 0, // wasi DIRCOOKIE_START
                     index: 0,
                     end_index: 0,
-                    // Zig `= undefined`; zero-init avoids Rust's invalid_value lint on [u8; N]
+                    // Zero-init avoids Rust's invalid_value lint on [u8; N]
                     buf: [0u8; 8192],
                 },
             };
@@ -994,5 +990,3 @@ where
 {
     NewWrappedIterator::<IS_U16>::init(self_)
 }
-
-// ported from: src/runtime/node/dir_iterator.zig

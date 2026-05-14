@@ -34,7 +34,7 @@ using namespace JSC;
 RefPtr<JSC::SourceProvider> createBuiltinsSourceProvider();
 
 JSHeapData::JSHeapData(Heap& heap)
-    : m_heapCellTypeForJSWorkerGlobalScope(JSC::IsoHeapCellType::Args<Zig::GlobalObject>())
+    : m_heapCellTypeForJSWorkerGlobalScope(JSC::IsoHeapCellType::Args<Bun::GlobalObject>())
     , m_heapCellTypeForNodeVMGlobalObject(JSC::IsoHeapCellType::Args<Bun::NodeVMGlobalObject>())
     , m_heapCellTypeForBakeGlobalObject(JSC::IsoHeapCellType::Args<Bake::GlobalObject>())
     , m_heapCellTypeForNapiHandleScopeImpl(JSC::IsoHeapCellType::Args<Bun::NapiHandleScopeImpl>())

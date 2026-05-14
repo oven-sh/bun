@@ -391,5 +391,3 @@ fn post_process_autolink_end(content: &[u8], beg: usize, end_in: usize) -> usize
 
     end
 }
-
-// ported from: src/md/autolinks.zig

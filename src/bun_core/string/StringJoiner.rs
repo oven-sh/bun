@@ -7,9 +7,9 @@ use crate::RawSlice;
 use crate::string::strings;
 use bun_alloc::AllocError;
 
-// PORT NOTE: Zig's `std.mem.Allocator` param field dropped — global mimalloc is used for
+// PORT NOTE: per-instance `Allocator` param field dropped — global mimalloc is used for
 // node and duplicated-string allocations.
-// PERF(port): Zig recommended a stack-fallback allocator here — profile in Phase B.
+// PERF(port): a stack-fallback allocator may help here — profile in Phase B.
 pub struct StringJoiner {
     /// Total length of all nodes
     pub len: usize,
@@ -22,7 +22,7 @@ pub struct StringJoiner {
 }
 
 // SAFETY: raw pointers in `tail`/`Node` are interior to the singly-linked
-// chain uniquely owned by this struct; no aliasing escapes. Zig original is
+// chain uniquely owned by this struct; no aliasing escapes. Instances are
 // passed across bundler worker threads (see Chunk.IntermediateOutput).
 unsafe impl Send for StringJoiner {}
 unsafe impl Sync for StringJoiner {}
@@ -39,7 +39,7 @@ impl Default for StringJoiner {
 }
 
 pub struct Node {
-    /// Replaces Zig's `NullableAllocator`: when `true`, `slice` was heap-allocated by
+    /// Replaces a nullable per-node allocator: when `true`, `slice` was heap-allocated by
     /// this joiner (via `push_cloned`) and is freed on node drop; when `false`, `slice`
     /// is borrowed and the caller guarantees it outlives `done()`.
     owns_slice: bool,
@@ -70,8 +70,8 @@ impl Node {
 
 // SAFETY: `Node` is a plain linked-list node; raw pointers are uniquely owned
 // through the chain rooted at `StringJoiner.head` and never shared aliased
-// across threads concurrently. The Zig original moves these between bundler
-// worker threads freely.
+// across threads concurrently. Nodes move between bundler worker threads
+// freely.
 unsafe impl Send for Node {}
 unsafe impl Sync for Node {}
 
@@ -107,7 +107,7 @@ impl Drop for Node {
 
 #[derive(Default)]
 pub struct Watcher {
-    // TODO(port): lifetime — callers may assign non-'static data; never freed in Zig.
+    // TODO(port): lifetime — callers may assign non-'static data; never freed.
     pub input: &'static [u8],
     pub estimated_count: u32,
     pub needs_newline: bool,
@@ -139,10 +139,10 @@ impl StringJoiner {
         self.push_owned(Box::from(data));
     }
 
-    // PORT NOTE: Zig signature was `push(data: []const u8, ?Allocator param)`.
-    // The optional allocator only encoded ownership of `data`, which has no Rust
-    // analogue for a borrowed `&[u8]`; callers wanting owned semantics use
-    // `push_owned`/`push_cloned` instead.
+    // PORT NOTE: the original signature carried an optional allocator that only
+    // encoded ownership of `data`, which has no Rust analogue for a borrowed
+    // `&[u8]`; callers wanting owned semantics use `push_owned`/`push_cloned`
+    // instead.
     pub fn push(&mut self, data: &[u8]) {
         if data.is_empty() {
             return;
@@ -189,8 +189,7 @@ impl StringJoiner {
         let len = self.len;
         self.len = 0;
 
-        // Zig: `allocator.alloc(u8, this.len)` — allocates uninitialized.
-        // `Vec::with_capacity` + `extend_from_slice` is also zero-fill-free
+        // `Vec::with_capacity` + `extend_from_slice` is zero-fill-free
         // (each push is a `memcpy` into spare capacity), and since the final
         // `len == capacity` the `into_boxed_slice` is a no-realloc move.
         let mut out = Vec::<u8>::with_capacity(len);
@@ -238,7 +237,6 @@ impl StringJoiner {
     }
 
     /// Walk the node chain yielding each node's slice in insertion order.
-    /// Mirrors Zig's `var el = joiner.head; while (el) |e| : (el = e.next) ...`.
     pub fn node_slices(&self) -> NodeSlices<'_> {
         NodeSlices {
             cur: match &self.head {
@@ -286,5 +284,3 @@ impl Drop for StringJoiner {
         Node::drain_chain(head, |_| {});
     }
 }
-
-// ported from: src/string/StringJoiner.zig

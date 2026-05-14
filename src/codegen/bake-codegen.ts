@@ -29,8 +29,8 @@ function rustVariantToSnakeCase(s: string) {
  * are converted to snake_case so existing consumers
  * (`hmr-runtime-client.ts`, `client/overlay.ts`, etc.) keep working.
  *
- * Enums marked `#[non_exhaustive]` get a trailing `_` member, mirroring the
- * Zig-era output where unknown wire bytes mapped to an `_` sentinel.
+ * Enums marked `#[non_exhaustive]` get a trailing `_` member so unknown wire
+ * bytes map to an `_` sentinel.
  */
 function convertRustEnum(rust: string, names: string[]) {
   let output = "/** Generated from dev_server/mod.rs */\n";

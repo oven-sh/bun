@@ -22,7 +22,7 @@ declare_scope!(ResumableSink, visible);
 /// Trait capturing the codegen'd JS-side accessors for a ResumableSink class
 /// (e.g. `jsc.Codegen.JSResumableFetchSink`).
 ///
-/// Models the Zig `comptime js: type` param, which carries a codegen module
+/// Models the original `comptime js: type` param, which carries a codegen module
 /// (a bag of free fns) by value. Rust generics carry types, not modules, so
 /// each monomorphization implements this trait by delegating to the matching
 /// `bun_jsc::generated::JS*` module — see [`impl_resumable_sink_js!`] below.
@@ -39,8 +39,8 @@ pub trait ResumableSinkJs {
 }
 
 /// Trait capturing the per-`Context` callbacks the sink invokes.
-/// In Zig these are `Context.writeRequestData` / `Context.writeEndRequest`.
-// Spec ResumableSink.zig:35 stores `context: *Context` (mutable). The only
+/// These map to `Context.writeRequestData` / `Context.writeEndRequest`.
+// Spec stores `context: *Context` (mutable). The only
 // in-tree impls (FetchTasklet / S3UploadStreamWrapper) mutate self in both
 // callbacks (e.g. `detachSink`, `deref`, clearing `endPromise`), so these
 // MUST be `&mut self`.
@@ -62,7 +62,7 @@ pub enum Status {
 // JSCell wrapper and crosses FFI as `*mut Self` (see generated_classes.rs
 // `${T}__create`/`${T}__fromJS`). C++ never dereferences it — it stores the
 // pointer as `void*` — so field FFI-safety is moot, but a stable layout keeps
-// `ResumableFetchSink__ZigStructSize` deterministic and silences the
+// `ResumableFetchSink__RustStructSize` deterministic and silences the
 // "unspecified layout" half of `improper_ctypes` at the extern block.
 #[repr(C)]
 #[derive(bun_ptr::CellRefCounted)]
@@ -175,7 +175,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
 
         if stream.is_locked(global_this) || stream.is_disturbed(global_this) {
             // PORT NOTE: `SystemError` has no `Default` impl upstream — spell out
-            // every field with its Zig default (SystemError.zig:1).
+            // every field with its default value (SystemError).
             let mut err = SystemError {
                 errno: 0,
                 code: BunString::static_(<&'static str>::from(ErrorCode::ERR_STREAM_CANNOT_PIPE)),
@@ -190,7 +190,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             err_instance.ensure_still_alive();
             this_ref.status = Status::Done;
             Self::on_end(this_ref.context, Some(err_instance));
-            // SAFETY: `this` allocated above; may free here (see Zig — caller
+            // SAFETY: `this` allocated above; may free here (see original — caller
             // gets a dangling ptr in the error path and must not deref it).
             unsafe { Self::deref_(this) };
             return this;
@@ -240,7 +240,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                 }
                 this_ref.status = Status::Piped;
                 // PORT NOTE: jsc.WebCore.Pipe.Wrap(@This(), onStreamPipe).init(this) — the
-                // Zig comptime fn-ptr param is reshaped as a `PipeHandler` impl on `Self`
+                // the original comptime fn-ptr param is reshaped as a `PipeHandler` impl on `Self`
                 // (see `impl PipeHandler` below); `Wrap::<Self>::init` erases `this` into
                 // the Pipe's ctx ptr.
                 byte_stream.pipe.set(Wrap::<Self>::init(this_ref));
@@ -479,7 +479,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     }
 
     fn on_stream_pipe(&mut self, mut stream: StreamResult) {
-        // PORT NOTE: Zig `onStreamPipe(this, stream, allocator)` frees
+        // PORT NOTE: originally `onStreamPipe(this, stream, allocator)` frees
         // `.owned`/`.owned_and_done` payloads with the *caller-supplied*
         // allocator. The Rust `Pipe`/`PipeHandler` reshape drops the allocator
         // param because every producer (`ByteStream::on_data` — the sole `Pipe`
@@ -512,7 +512,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             // `self` may now be dangling — do NOT touch it past this point.
         }
 
-        // Zig `defer { owned.deinit(allocator) }` — see allocator note above.
+        // Originally `defer { owned.deinit(allocator) }` — see allocator note above.
         if let StreamResult::Owned(owned) | StreamResult::OwnedAndDone(owned) = &mut stream {
             owned.clear_and_free();
         }
@@ -577,7 +577,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
 }
 
 // Satisfies `Wrap<T: PipeHandler>` so `Wrap::<Self>::init` can erase `*mut Self`
-// into a `Pipe`. Mirrors Zig `Pipe.Wrap(@This(), onStreamPipe)` where the
+// into a `Pipe`. Mirrors `Pipe.Wrap(@This(), onStreamPipe)` where the
 // comptime fn-ptr param is fixed to `on_stream_pipe`.
 impl<Js: ResumableSinkJs, Context: ResumableSinkContext> PipeHandler
     for ResumableSink<Js, Context>
@@ -590,7 +590,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> PipeHandler
 
 impl<Js: ResumableSinkJs, Context: ResumableSinkContext> Drop for ResumableSink<Js, Context> {
     fn drop(&mut self) {
-        // Zig `deinit`: detachJS + stream.deinit() + bun.destroy(this).
+        // Originally `deinit`: detachJS + stream.deinit() + bun.destroy(this).
         // `bun.destroy` is the Box free (handled by deref_); stream Drop is automatic.
         self.detach_js();
     }
@@ -604,7 +604,7 @@ pub enum ResumableSinkBackpressure {
 }
 
 /// Wire a zero-sized marker type to the matching `bun_jsc::generated::JS*`
-/// codegen module so it can stand in for the Zig `comptime js: type` param.
+/// codegen module so it can stand in for the original `comptime js: type` param.
 /// The marker is uninhabited (`enum {}`) — it carries the trait impl only.
 macro_rules! impl_resumable_sink_js {
     ($($name:ident),* $(,)?) => {$(
@@ -651,7 +651,7 @@ macro_rules! impl_resumable_sink_js {
 }
 impl_resumable_sink_js!(JSResumableFetchSink, JSResumableS3UploadSink);
 
-// Forward to the inherent methods on each Context type. The Zig spec uses
+// Forward to the inherent methods on each Context type. The spec uses
 // duck-typed `Context.writeRequestData` / `Context.writeEndRequest`; in Rust we
 // satisfy the trait bound by delegating to those inherent impls.
 // (S3UploadStreamWrapper's impl lives next to its struct in s3/client.rs.)
@@ -676,5 +676,3 @@ unsafe extern "C" {
         sink: JSValue,
     ) -> JSValue;
 }
-
-// ported from: src/runtime/webcore/ResumableSink.zig

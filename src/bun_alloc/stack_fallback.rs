@@ -1,16 +1,16 @@
-//! `StackFallback<N, A>` — port of Zig `std.heap.StackFallbackAllocator(N)`
-//! (vendor/zig/lib/std/heap.zig:376-481), inlining `FixedBufferAllocator`
-//! (vendor/zig/lib/std/heap/FixedBufferAllocator.zig). The `&mut [u8]` self-ref
-//! Zig keeps in `fixed_buffer_allocator.buffer` is replaced by computing
-//! `buf.get().cast::<u8>()` on demand, so the Rust struct is **not**
-//! self-referential and may be moved freely until the first `allocate`.
+//! `StackFallback<N, A>` — a stack-first allocator that bump-allocates from an
+//! inline buffer and spills to a fallback allocator when the buffer is full,
+//! inlining a fixed-buffer bump allocator. Rather than holding a self-referential
+//! `&mut [u8]` into the inline buffer, the base pointer is computed on demand via
+//! `buf.get().cast::<u8>()`, so the struct is **not** self-referential and may be
+//! moved freely until the first `allocate`.
 //!
 //! ### Relationship to `AstAlloc`
 //! `StackFallback` is a **standalone** [`Allocator`]; it is **not** composed
-//! under [`crate::ast_alloc::AstAlloc`] / `AST_HEAP`. In Zig, `stackFallback`
-//! and `ASTMemoryAllocator` are orthogonal — none of the 20 `stackFallback`
+//! under [`crate::ast_alloc::AstAlloc`] / `AST_HEAP`. `StackFallback` and
+//! `ASTMemoryAllocator` are orthogonal — none of the existing `StackFallback`
 //! callsites route AST-node allocation through it (the two `js_parser` uses
-//! pass `bun.default_allocator` as fallback, not the AST arena). A bump
+//! pass the default allocator as fallback, not the AST arena). A bump
 //! front-end on `AST_HEAP` was previously shipped and reverted (#53599 UAF;
 //! see the `PERF NOTE` on [`crate::ast_alloc::set_thread_heap`]). Under this
 //! standalone design `AstVec<T>` stays 24 B; only vecs that explicitly want
@@ -18,8 +18,6 @@
 //!
 //! ### Callsite shape
 //! ```ignore
-//! // Zig:  var sf = std.heap.stackFallback(4096, bun.default_allocator);
-//! //       var list = std.ArrayList(u8).initCapacity(sf.get(), 256);
 //! let sf = StackFallback::<4096>::with_global();
 //! let mut list: Vec<u8, _> = Vec::with_capacity_in(256, sf.get());
 //! // `&sf` borrows ⇒ `sf` is pinned for `list`'s lifetime; `Vec` is 32 B.
@@ -32,25 +30,24 @@ use core::ptr::{self, NonNull};
 
 use crate::{MimallocArena, alloc_result, mimalloc};
 
-/// `std.heap.StackFallbackAllocator(N)` — bump-allocate from an inline
-/// `[u8; N]` stack buffer; spill to `fallback` when it doesn't fit.
-/// `deallocate`/`grow` dispatch by address-range check ([`Self::owns`]).
+/// Bump-allocate from an inline `[u8; N]` stack buffer; spill to `fallback`
+/// when it doesn't fit. `deallocate`/`grow` dispatch by address-range check
+/// ([`Self::owns`]).
 ///
 /// Lives on the caller's stack frame; single-threaded by construction
 /// (`Cell` ⇒ `!Sync`, so `&StackFallback: !Send` — a `Vec<_, &Self>` cannot
 /// cross threads with a stack pointer inside it).
 ///
 /// `N` guidance: default to **1024** for "format a small string / build a
-/// short list" (modal Zig choice; well under the 8 KB Windows `__chkstk`
-/// threshold). **4096** for path-ish buffers. Cap at **16 KB** — anything
-/// larger should go straight to `MimallocArena`/`Global`.
+/// short list" (well under the 8 KB Windows `__chkstk` threshold). **4096**
+/// for path-ish buffers. Cap at **16 KB** — anything larger should go
+/// straight to `MimallocArena`/`Global`.
 #[repr(C)] // keep `buf` at a fixed offset; `align_of::<Self>() == align_of::<A>().max(word)`
 pub struct StackFallback<const N: usize, A: Allocator = std::alloc::Global> {
     /// Bump cursor into `buf`. `Cell` so `Allocator::allocate(&self)` can advance it.
     cur: Cell<usize>,
-    /// `get_called` debug guard (Zig heap.zig:398) — trips on second `get()`
-    /// without an intervening `reset()`, catching the "two Vecs share one
-    /// buffer" footgun.
+    /// Debug guard — trips on a second `get()` without an intervening
+    /// `reset()`, catching the "two Vecs share one buffer" footgun.
     #[cfg(debug_assertions)]
     got: Cell<bool>,
     fallback: A,
@@ -63,7 +60,7 @@ pub struct StackFallback<const N: usize, A: Allocator = std::alloc::Global> {
 pub type BumpWithFallback<const N: usize, A> = StackFallback<N, A>;
 
 impl<const N: usize, A: Allocator> StackFallback<N, A> {
-    /// Zig: `std.heap.stackFallback(N, fallback)`. `const` — `MaybeUninit<u8>:
+    /// Construct with a custom fallback allocator. `const` — `MaybeUninit<u8>:
     /// Copy`, so `[MaybeUninit::uninit(); N]` needs no inline-const;
     /// `Cell::new`/`UnsafeCell::new` are `const fn`.
     #[inline]
@@ -77,11 +74,10 @@ impl<const N: usize, A: Allocator> StackFallback<N, A> {
         }
     }
 
-    /// Zig: `StackFallbackAllocator.get()` — reset the bump region and return
-    /// the allocator handle. Debug-asserts single call (heap.zig:404). In Rust
-    /// the "handle" is just `&self` (blanket `impl Allocator for &Self` below),
-    /// so callers may equivalently write `Vec::new_in(&sf)` directly and skip
-    /// this.
+    /// Reset the bump region and return the allocator handle. Debug-asserts a
+    /// single call. In Rust the "handle" is just `&self` (blanket
+    /// `impl Allocator for &Self` below), so callers may equivalently write
+    /// `Vec::new_in(&sf)` directly and skip this.
     #[inline]
     pub fn get(&self) -> &Self {
         #[cfg(debug_assertions)]
@@ -92,7 +88,7 @@ impl<const N: usize, A: Allocator> StackFallback<N, A> {
         self
     }
 
-    /// Zig: `fixed_buffer_allocator.reset()` (FixedBufferAllocator.zig:145).
+    /// Reset the bump cursor and the debug `got` guard.
     /// `&mut self` proves no live borrows into `buf`.
     #[inline]
     pub fn reset(&mut self) {
@@ -119,7 +115,7 @@ impl<const N: usize, A: Allocator> StackFallback<N, A> {
         self.buf.get().cast::<u8>()
     }
 
-    /// Zig: `FixedBufferAllocator.ownsPtr` (FixedBufferAllocator.zig:46).
+    /// Whether `p` points into the inline buffer.
     /// Integer-address compare (NOT `offset_from` — `p` may belong to
     /// `fallback`, a different allocation).
     #[inline]
@@ -129,14 +125,15 @@ impl<const N: usize, A: Allocator> StackFallback<N, A> {
         q >= base && q < base.wrapping_add(N)
     }
 
-    /// Zig: `FixedBufferAllocator.isLastAllocation` (FixedBufferAllocator.zig:58).
+    /// Whether `[p, p+len)` is the most recent inline allocation (the one
+    /// ending at the bump cursor).
     #[inline(always)]
     fn is_last(&self, p: *const u8, len: usize) -> bool {
         p.addr().wrapping_add(len) == self.buf_base().addr().wrapping_add(self.cur.get())
     }
 
-    /// Zig: `FixedBufferAllocator.alloc` (FixedBufferAllocator.zig:62) — align
-    /// `cur` up, carve `len` bytes, or `None` if it doesn't fit.
+    /// Bump-allocate from the inline buffer — align `cur` up, carve `len`
+    /// bytes, or `None` if it doesn't fit.
     #[inline]
     fn bump(&self, layout: Layout) -> Option<NonNull<u8>> {
         let base = self.buf_base().addr();
@@ -159,7 +156,7 @@ impl<const N: usize, A: Allocator> StackFallback<N, A> {
     }
 
     /// `bumpalo::Bump::alloc` parity — move `val` into the bump front (or the
-    /// fallback on overflow). Aborts on OOM, matching Zig's `catch unreachable`.
+    /// fallback on overflow). Aborts on OOM.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn alloc<T>(&self, val: T) -> &mut T {
@@ -177,8 +174,7 @@ impl<const N: usize, A: Allocator> StackFallback<N, A> {
 }
 
 impl<const N: usize> StackFallback<N, std::alloc::Global> {
-    /// `std.heap.stackFallback(N, bun.default_allocator)` — the 90 % case
-    /// (15 of 20 Zig callsites pass `default_allocator`/`bun.default_allocator`).
+    /// Stack buffer with the global allocator as fallback — the 90% case.
     #[inline]
     pub const fn with_global() -> Self {
         Self::new(std::alloc::Global)
@@ -187,8 +183,8 @@ impl<const N: usize> StackFallback<N, std::alloc::Global> {
 
 // Implemented on `&Self` (NOT `Self`) so the buffer cannot be moved into an
 // owning container by value (`Box::new_in(x, sf)` would dangle). Mirrors
-// `unsafe impl Allocator for &MimallocArena` (MimallocArena.rs:652) and Zig's
-// `get()`-returns-borrowing-vtable shape.
+// `unsafe impl Allocator for &MimallocArena` (MimallocArena.rs:652) — a
+// `get()`-returns-borrowing-handle shape.
 //
 // SAFETY:
 // - `allocate`: returns either (a) a slice of `self.buf` aligned to
@@ -203,11 +199,11 @@ impl<const N: usize> StackFallback<N, std::alloc::Global> {
 // - `grow`/`shrink`: see per-method notes; old block is always either left
 //   valid (returned same ptr) or fully copied-then-deallocated before return.
 // `StackFallback` is `!Sync` (via `Cell`/`UnsafeCell`), enforcing single-
-// thread use of the cursor — same constraint as Zig's SFA.
+// thread use of the cursor.
 unsafe impl<const N: usize, A: Allocator> Allocator for &StackFallback<N, A> {
     #[inline]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        // Zig heap.zig:432 — try fixed buffer, else fallback.
+        // Try fixed buffer, else fallback.
         if let Some(p) = self.bump(layout) {
             return Ok(NonNull::slice_from_raw_parts(p, layout.size()));
         }
@@ -217,7 +213,7 @@ unsafe impl<const N: usize, A: Allocator> Allocator for &StackFallback<N, A> {
     #[inline]
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         if self.owns(ptr.as_ptr()) {
-            // Zig FixedBufferAllocator.free:125 — rewind only the last alloc.
+            // Rewind only the last alloc.
             if self.is_last(ptr.as_ptr(), layout.size()) {
                 self.cur.set(self.cur.get() - layout.size());
             }
@@ -235,7 +231,7 @@ unsafe impl<const N: usize, A: Allocator> Allocator for &StackFallback<N, A> {
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
         if self.owns(ptr.as_ptr()) {
-            // Zig FixedBufferAllocator.resize:86-101 — last-alloc bump-in-place.
+            // Last-alloc bump-in-place.
             if self.is_last(ptr.as_ptr(), old.size()) {
                 let add = new.size() - old.size();
                 if self.cur.get() + add <= N {
@@ -244,7 +240,7 @@ unsafe impl<const N: usize, A: Allocator> Allocator for &StackFallback<N, A> {
                 }
             }
             // Spill: alloc new (stack-or-fallback), memcpy, free old.
-            // Mirrors Zig `Allocator.realloc` slow path after `remap` returns null.
+            // The standard realloc slow path after an in-place remap fails.
             let newp = self.allocate(new)?;
             // SAFETY: `newp` is fresh ≥`new.size()` bytes; `old.size()` bytes at
             // `ptr` are init per `grow` contract; `old.size() <= new.size()`. If
@@ -270,9 +266,8 @@ unsafe impl<const N: usize, A: Allocator> Allocator for &StackFallback<N, A> {
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
         if self.owns(ptr.as_ptr()) {
-            // FixedBufferAllocator.resize:86-94 — last-alloc shrink rewinds
-            // `cur`; non-last shrink keeps the slot (already holds ≥new bytes
-            // at ≥old.align()).
+            // Last-alloc shrink rewinds `cur`; non-last shrink keeps the slot
+            // (already holds ≥new bytes at ≥old.align()).
             if self.is_last(ptr.as_ptr(), old.size()) {
                 self.cur.set(self.cur.get() - (old.size() - new.size()));
             }
@@ -503,9 +498,6 @@ unsafe impl Allocator for MimallocHeapRef {
         unsafe { self.grow(ptr, old, new) }
     }
 }
-
-// ported from: vendor/zig/lib/std/heap.zig (stackFallback / StackFallbackAllocator)
-// ported from: vendor/zig/lib/std/heap/FixedBufferAllocator.zig (inlined)
 
 #[cfg(test)]
 mod tests {

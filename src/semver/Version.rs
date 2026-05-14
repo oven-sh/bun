@@ -12,15 +12,15 @@ pub type Version = VersionType<u64>;
 pub type OldV2Version = VersionType<u32>;
 
 // ──────────────────────────────────────────────────────────────────────────
-// VersionInt — trait capturing the operations the Zig generic needed on
-// `comptime IntType: type`. Only u32 and u64 are instantiated.
+// VersionInt — trait capturing the operations the generic version type needs
+// on its integer parameter. Only u32 and u64 are instantiated.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait VersionInt: Copy + Default + Eq + Ord + fmt::Display + 'static {
     const ZERO: Self;
     const MAX: Self;
-    /// Zig: `_tag_padding: [if (IntType == u32) 4 else 0]u8` — explicit zeroed
-    /// padding so lockfile byte-serialization is deterministic.
+    /// Explicit zeroed padding (4 bytes for u32, 0 for u64) so lockfile
+    /// byte-serialization is deterministic.
     type TagPadding: Copy + Default + 'static;
     fn parse_ascii(s: &[u8]) -> Option<Self>;
 }
@@ -31,8 +31,7 @@ impl VersionInt for u64 {
     type TagPadding = [u8; 0];
     #[inline]
     fn parse_ascii(s: &[u8]) -> Option<Self> {
-        // Semantics match Zig `std.fmt.parseUnsigned(u64, s, 10) catch null`:
-        // None for empty, any non-[0-9] byte, or overflow. Callers rely on
+        // Returns None for empty, any non-[0-9] byte, or overflow. Callers rely on
         // the non-digit None case for pre-release identifier ordering
         // (semver identifiers are `[0-9A-Za-z-]+`, so `_` never appears).
         bun_core::parse_unsigned::<u64>(s, 10).ok()
@@ -59,15 +58,14 @@ pub struct VersionType<T: VersionInt> {
     pub major: T,
     pub minor: T,
     pub patch: T,
-    // Zig: `_tag_padding: [if (IntType == u32) 4 else 0]u8 = .{0} ** ...` —
-    // explicit zeroed bytes so the alignment gap before `tag` is deterministic
-    // for lockfile serialization (see padding_checker.zig).
+    // Explicit zeroed bytes so the alignment gap before `tag` is deterministic
+    // for lockfile serialization.
     #[doc(hidden)]
     pub _tag_padding: T::TagPadding,
     pub tag: Tag,
 }
 
-// Layout must match Zig `extern struct` exactly (lockfile binary format).
+// Layout must remain stable (lockfile binary format depends on it).
 const _: () = {
     assert!(core::mem::size_of::<Tag>() == 32);
     assert!(core::mem::align_of::<Tag>() == 8);
@@ -705,8 +703,8 @@ impl<T: VersionInt> VersionType<T> {
             return match T::parse_ascii(&bytes[0..byte_i as usize]) {
                 Some(v) => Some(v),
                 None => {
-                    // TODO(port): Output.prettyErrorln with @errorName — Rust parse
-                    // error doesn't carry a Zig-style tag name.
+                    // TODO(port): the original printed the error tag name; the
+                    // Rust parse error doesn't carry one.
                     bun_core::pretty_errorln!(
                         "ERROR parsing version: \"{}\", bytes: {}",
                         bstr::BStr::new(input),
@@ -994,7 +992,7 @@ pub struct Tag {
     pub build: ExternalString,
 }
 
-// TODO(port): unused module-level static in Zig (`var multi_tag_warn = false;`).
+// TODO(port): module-level static was always unused.
 // Kept as a note; remove if confirmed dead in Phase B.
 #[allow(dead_code)]
 static MULTI_TAG_WARN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
@@ -1002,9 +1000,9 @@ static MULTI_TAG_WARN: core::sync::atomic::AtomicBool = core::sync::atomic::Atom
 
 impl Tag {
     pub fn order_pre(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
-        // TODO(port): Zig parameterized this on IntType (u32 vs u64). Only the
-        // u64 instantiation is used at runtime (OldV2Version is migration-only),
-        // so we hardcode u64 here.
+        // TODO(port): the original was parameterized on the int type (u32 vs u64).
+        // Only the u64 instantiation is used at runtime (OldV2Version is
+        // migration-only), so we hardcode u64 here.
         let lhs_str = self.pre.slice(lhs_buf);
         let rhs_str = rhs.pre.slice(rhs_buf);
 
@@ -1097,9 +1095,9 @@ impl Tag {
         } else {
             let pre_slice = self.pre.slice(slice);
             buf[..pre_slice.len()].copy_from_slice(pre_slice);
-            // PORT NOTE: reshaped for borrowck — Zig does
-            // `String.init(buf.*, buf.*[0..pre_slice.len])` then advances buf.
-            // We capture the init args before advancing.
+            // PORT NOTE: reshaped for borrowck — the original initialized the
+            // String from `buf` and then advanced `buf` in one expression. We
+            // capture the init args before advancing.
             pre = SemverString::init(buf, &buf[0..pre_slice.len()]);
             *buf = &mut core::mem::take(buf)[pre_slice.len()..];
         }
@@ -1283,5 +1281,3 @@ impl<T: VersionInt> Default for ParseResult<T> {
         }
     }
 }
-
-// ported from: src/semver/Version.zig

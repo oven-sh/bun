@@ -12,10 +12,10 @@ use bstr::BStr;
 use crate::napi;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{Output, ZBox, env_var, fmt as bun_fmt, zstr};
-use bun_core::{ZStr, ZigString, strings};
+use bun_core::{UnsafeStringView, ZStr, strings};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsCell, JsClass,
-    JsError, JsResult, ModuleLoader, SystemError, VirtualMachine, ZigStringJsc, host_fn,
+    JsError, JsResult, ModuleLoader, SystemError, UnsafeStringViewJsc, VirtualMachine, host_fn,
 };
 use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::fs as Fs;
@@ -32,7 +32,7 @@ fn dir_exists(path: &'static [u8]) -> bool {
     bun_sys::directory_exists_at(Fd::cwd(), &z).unwrap_or(false)
 }
 
-/// Local non-throwing error-instance helpers — Zig's `toInvalidArguments` /
+/// Local non-throwing error-instance helpers — `toInvalidArguments` /
 /// `toTypeError` create and return the JS Error without throwing, which the
 /// upstream `bun_jsc` surface only offers as throwing variants.
 pub(super) trait GlobalObjectFfiExt {
@@ -42,7 +42,7 @@ pub(super) trait GlobalObjectFfiExt {
 impl GlobalObjectFfiExt for JSGlobalObject {
     #[inline]
     fn to_invalid_arguments(&self, msg: fmt::Arguments<'_>) -> JSValue {
-        // PORT NOTE: Zig wraps this with `ERR_INVALID_ARG_TYPE`; the
+        // PORT NOTE: should be wrapped with `ERR_INVALID_ARG_TYPE`; the
         // type-error instance is the closest non-throwing surface today.
         self.create_type_error_instance(msg)
     }
@@ -58,16 +58,16 @@ impl GlobalObjectFfiExt for JSGlobalObject {
 #[inline]
 fn create_object_2(
     global: &JSGlobalObject,
-    key1: &ZigString,
-    key2: &ZigString,
+    key1: &UnsafeStringView,
+    key2: &UnsafeStringView,
     value1: JSValue,
     value2: JSValue,
 ) -> JSValue {
     unsafe extern "C" {
         fn JSC__JSValue__createObject2(
             global: *const JSGlobalObject,
-            key1: *const ZigString,
-            key2: *const ZigString,
+            key1: *const UnsafeStringView,
+            key2: *const UnsafeStringView,
             value1: JSValue,
             value2: JSValue,
         ) -> JSValue;
@@ -85,10 +85,9 @@ fn strings_to_js_array(global: &JSGlobalObject, strs: &[bun_core::String]) -> Js
 
 // `bun_tcc_sys` is an un-gated workspace crate and a direct dep of
 // `bun_runtime`, so import it unconditionally. Runtime availability is governed
-// by `bun_core::Environment::ENABLE_TINYCC` (mirrors Zig
-// `Environment.enable_tinycc`) via the early-return guards in the host-fns
-// below — type resolution for `TCC::{Config, ConfigErr, OutputFormat, State}`
-// must succeed regardless.
+// by `bun_core::Environment::ENABLE_TINYCC` via the early-return guards in the
+// host-fns below — type resolution for `TCC::{Config, ConfigErr, OutputFormat,
+// State}` must succeed regardless.
 use bun_tcc_sys as TCC;
 
 bun_output::declare_scope!(TCC, visible);
@@ -145,7 +144,7 @@ unsafe extern "C" {
     /// `host_fn::NewRuntimeFunction` — `Bun__CreateFFIFunctionValue`.
     fn Bun__CreateFFIFunctionValue(
         global: *const JSGlobalObject,
-        symbol_name: *const ZigString,
+        symbol_name: *const UnsafeStringView,
         arg_count: u32,
         function_pointer: *const c_void,
         add_ptr_property: bool,
@@ -153,7 +152,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-/// `JSValue.exposed_to_ffi` (JSValue.zig:2467) — raw extern fn pointers fed to
+/// `JSValue::exposed_to_ffi` — raw extern fn pointers fed to
 /// the TCC-JIT'd C trampolines via `add_symbol`. Declared locally while the
 /// `bun_jsc::ffi` module stays gated.
 mod exposed_to_ffi {
@@ -183,7 +182,7 @@ mod exposed_to_ffi {
 #[inline]
 fn new_runtime_function(
     global: &JSGlobalObject,
-    symbol_name: &ZigString,
+    symbol_name: &UnsafeStringView,
     arg_count: u32,
     function_pointer: *const c_void,
     add_ptr_property: bool,
@@ -248,7 +247,6 @@ impl Default for FFI {
 
 impl FFI {
     pub fn finalize(self: Box<Self>) {
-        // Zig spec (ffi.zig:69): `pub fn finalize(_: *FFI) callconv(.c) void {}` —
         // INTENTIONAL no-op. Compiled trampolines / dlopen'd symbols may still be
         // reachable from JS after the wrapper is GC'd; teardown is owned by
         // `close()`. Under the `Box<Self>` finalize contract an empty body would
@@ -261,7 +259,7 @@ impl FFI {
 
 struct CompileC {
     source: Source,
-    current_file_for_errors: ZBox, // TODO(port): lifetime — Zig stored borrowed [:0]const u8
+    current_file_for_errors: ZBox, // TODO(port): lifetime — should borrow a NUL-terminated byte slice
     libraries: StringArray,
     library_dirs: StringArray,
     include_dirs: StringArray,
@@ -309,7 +307,7 @@ impl Source {
         // TODO(port): narrow error set
         match self {
             Source::File(file) => {
-                // TODO(port): Zig stored borrowed slice
+                // TODO(port): should be a borrowed slice, not a fresh allocation
                 *current_file_for_errors = ZBox::from_bytes(file.as_bytes());
                 state
                     .add_file(file)
@@ -367,8 +365,8 @@ mod stdarg {
         // libc declares these as `FILE *__stdinp;` — `AtomicPtr<c_void>` is
         // `#[repr(C)]` over a single `*mut c_void`, so the extern layout is
         // identical. We never read them; we hand TinyCC the *address* of the
-        // global (matching Zig's `@extern(*anyopaque, .{ .name = "__stdinp" })`)
-        // so JIT'd code that references `__stdoutp` loads the FILE* from there.
+        // global so JIT'd code that references `__stdoutp` loads the FILE*
+        // from there.
         unsafe extern "C" {
             #[link_name = "__stdinp"]
             static FFI_STDINP: AtomicPtr<c_void>;
@@ -406,7 +404,7 @@ mod stdarg {
     }
 
     pub fn inject(state: &mut TCC::State) {
-        // TODO(port): TCC::State::add_symbols API — Zig used addSymbolsComptime over a struct literal
+        // TODO(port): TCC::State::add_symbols API should accept a const-time symbol table
         state
             .add_symbols(&[
                 // printf family
@@ -531,15 +529,13 @@ impl CompileC {
     fn get_system_root_dir_once() {
         #[cfg(target_os = "macos")]
         {
-            // Zig: `bun.spawnSync(&.{ argv = ["xcrun", "-sdk", "macosx",
-            // "-show-sdk-path"], stdout = .buffer, ... })` to auto-detect the
-            // active SDK root. The Rust `bun::spawn_sync` helper isn't ported
-            // yet (see install/repository.rs TODO), so use std::process as a
-            // Phase-A shim — semantics match: inherit env, ignore stdin/stderr,
-            // capture stdout, treat any spawn/exit failure as "not found"
-            // (Zig: `catch return` / `if (process.result.isOK())`).
-            // `Command::new("xcrun")` does PATH lookup like `bun.which`, and
-            // /usr/bin is always in PATH on macOS, matching the Zig fallback.
+            // Run `xcrun -sdk macosx -show-sdk-path` to auto-detect the active
+            // SDK root. The `bun::spawn_sync` helper isn't ported yet (see
+            // install/repository.rs TODO), so use std::process as a Phase-A
+            // shim — semantics: inherit env, ignore stdin/stderr, capture
+            // stdout, treat any spawn/exit failure as "not found".
+            // `Command::new("xcrun")` does PATH lookup, and /usr/bin is always
+            // in PATH on macOS.
             let out = match std::process::Command::new("xcrun")
                 .arg("-sdk")
                 .arg("macosx")
@@ -556,7 +552,7 @@ impl CompileC {
             }
             use bstr::ByteSlice as _;
             let stdout = out.stdout.as_slice();
-            // Zig: `strings.trim(stdout, "\n\r")`
+            // Trim trailing newlines.
             let trimmed: &[u8] = stdout.trim_with(|c| c == '\n' || c == '\r');
             if trimmed.is_empty() {
                 return;
@@ -946,7 +942,7 @@ impl StringArray {
                     val,
                 ));
             }
-            let str = val.get_zig_string(global_this)?;
+            let str = val.get_unsafe_string_view(global_this)?;
             if str.len == 0 {
                 continue;
             }
@@ -971,7 +967,7 @@ impl StringArray {
                 value,
             ));
         }
-        let str = value.get_zig_string(global_this)?;
+        let str = value.get_unsafe_string_view(global_this)?;
         if str.len == 0 {
             return Ok(StringArray::default());
         }
@@ -1090,7 +1086,7 @@ impl FFI {
                     ));
                 }
 
-                let str = flags_value.get_zig_string(global_this)?;
+                let str = flags_value.get_unsafe_string_view(global_this)?;
                 if str.len > 0 {
                     compile_c.flags = str.to_owned_slice_z();
                 }
@@ -1116,7 +1112,7 @@ impl FFI {
                     let mut owned_value: ZBox = ZBox::from_bytes(b"");
                     if !iter.value.is_undefined_or_null() {
                         if iter.value.is_string() {
-                            let value = iter.value.get_zig_string(global_this)?;
+                            let value = iter.value.get_unsafe_string_view(global_this)?;
                             if value.len > 0 {
                                 owned_value = value.to_owned_slice_z();
                             }
@@ -1158,7 +1154,11 @@ impl FFI {
                         ));
                     }
                     if let Source::Files(files) = &mut compile_c.source {
-                        files.push(value.get_zig_string(global_this)?.to_owned_slice_z());
+                        files.push(
+                            value
+                                .get_unsafe_string_view(global_this)?
+                                .to_owned_slice_z(),
+                        );
                     }
                 }
             } else if !source_value.is_string() {
@@ -1168,7 +1168,9 @@ impl FFI {
                     source_value,
                 ));
             } else {
-                let source_path = source_value.get_zig_string(global_this)?.to_owned_slice_z();
+                let source_path = source_value
+                    .get_unsafe_string_view(global_this)?
+                    .to_owned_slice_z();
                 compile_c.source = Source::File(source_path);
             }
         }
@@ -1240,7 +1242,7 @@ impl FFI {
             }
             match &mut function.step {
                 Step::Failed { msg, .. } => {
-                    let res = ZigString::init(msg).to_error_instance(global_this);
+                    let res = UnsafeStringView::init(msg).to_error_instance(global_this);
                     return Err(global_this.throw_value(res));
                 }
                 Step::Pending => {
@@ -1249,7 +1251,7 @@ impl FFI {
                     );
                 }
                 Step::Compiled(compiled) => {
-                    let str = ZigString::init(function_name.as_bytes());
+                    let str = UnsafeStringView::init(function_name.as_bytes());
                     let cb = new_runtime_function(
                         global_this,
                         &str,
@@ -1271,7 +1273,7 @@ impl FFI {
             functions: JsCell::new(core::mem::take(&mut compile_c.symbols.map)),
             closed: Cell::new(false),
         });
-        // PORT NOTE: reshaped for borrowck — Zig nulled tcc_state and symbols after move
+        // PORT NOTE: reshaped for borrowck — tcc_state and symbols are moved out instead of nulled
 
         let js_object = lib.to_js(global_this);
         symbols_value_set_cached(js_object, global_this, obj);
@@ -1308,7 +1310,7 @@ impl FFI {
 
         if let Some(val) = generate_symbol_for_function(global_this, interface, func)
             .unwrap_or_else(|_| {
-                Some(ZigString::init(b"Out of memory").to_error_instance(global_this))
+                Some(UnsafeStringView::init(b"Out of memory").to_error_instance(global_this))
             })
         {
             return Ok(val);
@@ -1322,14 +1324,14 @@ impl FFI {
             .compile_callback(global_this, js_callback, func.threadsafe)
             .is_err()
         {
-            return Ok(ZigString::init(b"Out of memory").to_error_instance(global_this));
+            return Ok(UnsafeStringView::init(b"Out of memory").to_error_instance(global_this));
         }
         match &func.step {
             Step::Failed { msg, .. } => {
-                let message = ZigString::init(msg).to_error_instance(global_this);
+                let message = UnsafeStringView::init(msg).to_error_instance(global_this);
                 Ok(message)
             }
-            Step::Pending => Ok(ZigString::init(
+            Step::Pending => Ok(UnsafeStringView::init(
                 b"Failed to compile, but not sure why. Please report this bug",
             )
             .to_error_instance(global_this)),
@@ -1339,8 +1341,8 @@ impl FFI {
                 let compiled_ptr = unsafe { (*function_).step.compiled_ptr() };
                 Ok(create_object_2(
                     global_this,
-                    &ZigString::static_(b"ptr"),
-                    &ZigString::static_(b"ctx"),
+                    &UnsafeStringView::static_(b"ptr"),
+                    &UnsafeStringView::static_(b"ctx"),
                     JSValue::from_ptr_address(compiled_ptr as usize),
                     JSValue::from_ptr_address(function_ as usize),
                 ))
@@ -1378,7 +1380,9 @@ impl FFI {
 
         let mut function = Function::default();
         if let Some(val) = generate_symbol_for_function(global, object, &mut function)
-            .unwrap_or_else(|_| Some(ZigString::init(b"Out of memory").to_error_instance(global)))
+            .unwrap_or_else(|_| {
+                Some(UnsafeStringView::init(b"Out of memory").to_error_instance(global))
+            })
         {
             return val;
         }
@@ -1391,7 +1395,7 @@ impl FFI {
             .print_callback_source_code(None, None, &mut arraylist)
             .is_err()
         {
-            return ZigString::init(b"Error while printing code").to_error_instance(global);
+            return UnsafeStringView::init(b"Error while printing code").to_error_instance(global);
         }
         jsc::bun_string_jsc::create_utf8_for_js(global, &arraylist).unwrap_or(JSValue::ZERO)
     }
@@ -1429,7 +1433,9 @@ impl FFI {
             let mut arraylist: Vec<u8> = Vec::new();
             if function.print_source_code(&mut arraylist).is_err() {
                 // an error while generating source code
-                return Ok(ZigString::init(b"Error while printing code").to_error_instance(global));
+                return Ok(
+                    UnsafeStringView::init(b"Error while printing code").to_error_instance(global)
+                );
             }
             strs.push(bun_core::String::clone_utf8(&arraylist));
             // PERF(port): was appendAssumeCapacity
@@ -1453,7 +1459,11 @@ fn invalid_options_arg(global: &JSGlobalObject) -> JSValue {
 }
 
 impl FFI {
-    pub fn open(global: &JSGlobalObject, name_str: ZigString, object_value: JSValue) -> JSValue {
+    pub fn open(
+        global: &JSGlobalObject,
+        name_str: UnsafeStringView,
+        object_value: JSValue,
+    ) -> JSValue {
         if !bun_core::Environment::ENABLE_TINYCC {
             let _ = global.throw(format_args!(
                 "bun:ffi dlopen() is not available in this build (TinyCC is disabled)"
@@ -1601,17 +1611,17 @@ impl FFI {
             }
             match &mut function.step {
                 Step::Failed { msg, .. } => {
-                    let res = ZigString::init(msg).to_error_instance(global);
+                    let res = UnsafeStringView::init(msg).to_error_instance(global);
                     dylib.close();
                     return res;
                 }
                 Step::Pending => {
                     dylib.close();
-                    return ZigString::init(b"Failed to compile (nothing happend!)")
+                    return UnsafeStringView::init(b"Failed to compile (nothing happend!)")
                         .to_error_instance(global);
                 }
                 Step::Compiled(compiled) => {
-                    let str = ZigString::init(function_name.as_bytes());
+                    let str = UnsafeStringView::init(function_name.as_bytes());
                     let cb = new_runtime_function(
                         global,
                         &str,
@@ -1697,15 +1707,15 @@ impl FFI {
             }
             match &mut function.step {
                 Step::Failed { msg, .. } => {
-                    let res = ZigString::init(msg).to_error_instance(global);
+                    let res = UnsafeStringView::init(msg).to_error_instance(global);
                     return res;
                 }
                 Step::Pending => {
-                    return ZigString::static_(b"Failed to compile (nothing happend!)")
+                    return UnsafeStringView::static_(b"Failed to compile (nothing happend!)")
                         .to_error_instance(global);
                 }
                 Step::Compiled(compiled) => {
-                    let name = ZigString::init(function_name.as_bytes());
+                    let name = UnsafeStringView::init(function_name.as_bytes());
 
                     let cb = new_runtime_function(
                         global,
@@ -1746,7 +1756,7 @@ pub fn generate_symbol_for_function(
     if let Some(args) = value.get_own(global, &bun_core::String::borrow_utf8(b"args"))? {
         if args.is_empty_or_undefined_or_null() || !args.js_type().is_array() {
             return Ok(Some(
-                ZigString::static_(b"Expected an object with \"args\" as an array")
+                UnsafeStringView::static_(b"Expected an object with \"args\" as an array")
                     .to_error_instance(global),
             ));
         }
@@ -1757,28 +1767,28 @@ pub fn generate_symbol_for_function(
         while let Some(val) = array.next()? {
             if val.is_empty_or_undefined_or_null() {
                 return Ok(Some(
-                    ZigString::static_(b"param must be a string (type name) or number")
+                    UnsafeStringView::static_(b"param must be a string (type name) or number")
                         .to_error_instance(global),
                 ));
             }
 
             if val.is_any_int() {
                 let int = val.to_int32();
-                // Zig: `0...ABIType.max` — reject Buffer (20); only the string-label path accepts it.
+                // Range `0..=ABIType::MAX` rejects Buffer (20); only the string-label path accepts it.
                 if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
                     abi_types.push(t);
                     // PERF(port): was appendAssumeCapacity
                     continue;
                 } else {
                     return Ok(Some(
-                        ZigString::static_(b"invalid ABI type").to_error_instance(global),
+                        UnsafeStringView::static_(b"invalid ABI type").to_error_instance(global),
                     ));
                 }
             }
 
             if !val.js_type().is_string_like() {
                 return Ok(Some(
-                    ZigString::static_(b"param must be a string (type name) or number")
+                    UnsafeStringView::static_(b"param must be a string (type name) or number")
                         .to_error_instance(global),
                 ));
             }
@@ -1807,13 +1817,13 @@ pub fn generate_symbol_for_function(
         if let Some(ret_value) = value.get_truthy(global, "returns")? {
             if ret_value.is_any_int() {
                 let int = ret_value.to_int32();
-                // Zig: `0...ABIType.max` — reject Buffer (20); only the string-label path accepts it.
+                // Range `0..=ABIType::MAX` rejects Buffer (20); only the string-label path accepts it.
                 if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
                     return_type = t;
                     break 'brk;
                 } else {
                     return Ok(Some(
-                        ZigString::static_(b"invalid ABI type").to_error_instance(global),
+                        UnsafeStringView::static_(b"invalid ABI type").to_error_instance(global),
                     ));
                 }
             }
@@ -1833,13 +1843,14 @@ pub fn generate_symbol_for_function(
 
     if return_type == ABIType::NapiEnv {
         return Ok(Some(
-            ZigString::static_(b"Cannot return napi_env to JavaScript").to_error_instance(global),
+            UnsafeStringView::static_(b"Cannot return napi_env to JavaScript")
+                .to_error_instance(global),
         ));
     }
 
     if return_type == ABIType::Buffer {
         return Ok(Some(
-            ZigString::static_(
+            UnsafeStringView::static_(
                 b"Cannot return a buffer to JavaScript (since byteLength and byteOffset are unknown)",
             )
             .to_error_instance(global),
@@ -1848,7 +1859,8 @@ pub fn generate_symbol_for_function(
 
     if function.threadsafe && return_type != ABIType::Void {
         return Ok(Some(
-            ZigString::static_(b"Threadsafe functions must return void").to_error_instance(global),
+            UnsafeStringView::static_(b"Threadsafe functions must return void")
+                .to_error_instance(global),
         ));
     }
 
@@ -1994,7 +2006,6 @@ impl Function {
     }
 
     pub fn ffi_header() -> &'static [u8] {
-        // Port of `Function.ffiHeader` (ffi.zig:1517).
         bun_core::runtime_embed_file!(Src, "runtime/ffi/FFI.h").as_bytes()
     }
 
@@ -2143,7 +2154,7 @@ impl Function {
 
         #[cfg(all(debug_assertions, unix))]
         'debug_write: {
-            // TODO(port): uses std.posix directly in Zig — keep raw libc here for parity
+            // TODO(port): keep raw libc here; this debug write doesn't need a sys wrapper
             // SAFETY: best-effort debug write; failures are swallowed
             unsafe {
                 let fd = libc::open(
@@ -2264,9 +2275,9 @@ impl Function {
         self.step = Step::Compiled(Compiled {
             ptr: symbol.as_ptr().cast::<c_void>(),
             js_function,
-            // SAFETY: opaque-handle storage only (Zig: `?*anyopaque`). Never
-            // dereferenced or written through on the Rust side; stored as
-            // NonNull to avoid laundering &T → *mut T provenance.
+            // SAFETY: opaque-handle storage only. Never dereferenced or
+            // written through on the Rust side; stored as NonNull to avoid
+            // laundering &T → *mut T provenance.
             js_context: Some(NonNull::from(js_context)),
             ffi_callback_function_wrapper: NonNull::new(ffi_wrapper),
         });
@@ -2318,7 +2329,7 @@ impl Function {
             b");\n\
               \n\
               /* ---- Your Wrapper Function ---- */\n\
-              ZIG_REPR_TYPE JSFunctionCall(void* JS_GLOBAL_OBJECT, void* callFrame) {\n",
+              BUN_FFI_REPR_TYPE JSFunctionCall(void* JS_GLOBAL_OBJECT, void* callFrame) {\n",
         )?;
 
         if self.needs_handle_scope() {
@@ -2418,11 +2429,11 @@ impl Function {
         if self.return_type != ABIType::Void {
             write!(
                 writer,
-                "{}.asZigRepr",
+                "{}.asBunFFIRepr",
                 self.return_type.to_js(b"return_value")
             )?;
         } else {
-            writer.write_all(b"ValueUndefined.asZigRepr")?;
+            writer.write_all(b"ValueUndefined.asBunFFIRepr")?;
         }
 
         writer.write_all(b";\n}\n\n")?;
@@ -2493,7 +2504,7 @@ impl Function {
             let mut arg_buf = [0u8; 512];
             write!(
                 writer,
-                " ZIG_REPR_TYPE arguments[{}];\n",
+                " BUN_FFI_REPR_TYPE arguments[{}];\n",
                 self.arg_types.len()
             )?;
 
@@ -2503,7 +2514,7 @@ impl Function {
                 let arg_name = &arg_buf[0..3 + printed];
                 write!(
                     writer,
-                    "arguments[{}] = {}.asZigRepr;\n",
+                    "arguments[{}] = {}.asBunFFIRepr;\n",
                     i,
                     arg.to_js(arg_name)
                 )?;
@@ -2532,7 +2543,7 @@ impl Function {
                 let mut cursor = std::io::Cursor::new(&mut inner_buf_[1..]);
                 write!(
                     &mut cursor,
-                    "FFI_Callback_call((void*)0x{}ULL, 0, (ZIG_REPR_TYPE*)0)",
+                    "FFI_Callback_call((void*)0x{}ULL, 0, (BUN_FFI_REPR_TYPE*)0)",
                     fmt
                 )?;
                 cursor.position() as usize
@@ -2590,8 +2601,8 @@ pub struct Compiled {
     pub ptr: *mut c_void,
     // TODO(port): bare JSValue on heap — rooted via JSFFI.symbolsValue own: property; revisit Strong/JsRef in Phase B
     pub js_function: JSValue,
-    // Zig: `?*anyopaque` — opaque storage, never dereferenced. NonNull avoids
-    // a &T → *mut T cast at the assignment site in compile_callback().
+    // Opaque storage, never dereferenced. NonNull avoids a &T → *mut T cast
+    // at the assignment site in compile_callback().
     pub js_context: Option<NonNull<JSGlobalObject>>,
     pub ffi_callback_function_wrapper: Option<NonNull<c_void>>,
 }
@@ -2644,7 +2655,7 @@ static CREATE_COMPILER_RT_DIR_ONCE: Once = Once::new();
 
 impl CompilerRT {
     fn create_compiler_rt_dir() {
-        // Spec ffi.zig:2340 — `Fs.FileSystem.instance.tmpdir() catch return`.
+        // Open the tmpdir; bail on any failure.
         // `bun_resolver::fs::FileSystem` (the inline canonical surface) doesn't
         // yet expose an inherent `tmpdir()`; reuse the crate-local
         // `FileSystemTmpdirExt` shim already in service for `jsc_hooks`.
@@ -2653,21 +2664,21 @@ impl CompilerRT {
             return;
         };
 
-        // Spec ffi.zig:2341 — `tmpdir.makeOpenPath("bun-cc", .{}) catch return`.
+        // `<tmpdir>/bun-cc`; bail on any failure.
         let Ok(bun_cc) = tmpdir.make_open_path(b"bun-cc", bun_sys::OpenDirOptions::default())
         else {
             return;
         };
-        // `defer bunCC.close()`.
+        // Close on scope exit.
         let bun_cc = scopeguard::guard(bun_cc, |d| d.close());
 
-        // Spec ffi.zig:2344-2350 — `inline for (decls) |d| bunCC.writeFile(d) catch {}`.
+        // Write each compiler-rt source; ignore failures.
         for (name, source) in CompilerRtSources::SOURCES {
             let name_z = ZBox::from_bytes(name.as_bytes());
             let _ = bun_sys::File::write_file(bun_cc.fd(), name_z.as_zstr(), source);
         }
 
-        // Spec ffi.zig:2351-2352 — `getFdPath(bunCC) catch return`, then `dupeZ`.
+        // Resolve the absolute path of the directory and store it.
         let mut path_buf = PathBuffer::uninit();
         let Ok(path) = bun_sys::get_fd_path(bun_cc.fd(), &mut path_buf) else {
             return;
@@ -2714,9 +2725,8 @@ impl CompilerRT {
             }
         }
 
-        // TODO(port): @import("../../jsc/sizes.zig") → bun_jsc::sizes
         let offsets = Offsets::get();
-        // TODO(port): TCC::State::define_symbols_comptime API — Zig used struct literal with int values
+        // TODO(port): TCC::State::define_symbols API should accept a const-time symbol table
         state.define_symbols(&[
             (
                 "Bun_FFI_PointerOffsetToArgumentsList",
@@ -2829,9 +2839,8 @@ static WORKAROUND: MyFunctionSStructWorkAround = MyFunctionSStructWorkAround {
 
 // ─── exports ────────────────────────────────────────────────────────────────
 
-/// `Bun__FFI__cc` — module-level re-export of `FFI::bun_ffi_cc`. Zig declared
-/// `pub const Bun__FFI__cc = FFI.Bun__FFI__cc;` at file scope so the
-/// `js2native` codegen could resolve it as `crate::ffi::ffi_body::bun__ffi__cc`.
+/// `Bun__FFI__cc` — module-level re-export of `FFI::bun_ffi_cc` so the
+/// `js2native` codegen can resolve it as `crate::ffi::ffi_body::bun__ffi__cc`.
 #[allow(non_snake_case)]
 #[inline]
 pub fn bun__ffi__cc(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -2857,5 +2866,3 @@ fn make_napi_env_if_needed<'a>(
     }
     None
 }
-
-// ported from: src/runtime/ffi/ffi.zig

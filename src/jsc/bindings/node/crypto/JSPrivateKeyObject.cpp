@@ -2,7 +2,7 @@
 #include "JSPrivateKeyObjectPrototype.h"
 #include "JSKeyObjectConstructor.h"
 #include "DOMIsoSubspaces.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>

@@ -10,7 +10,7 @@ use crate::server::{StaticRoute, html_bundle::HTMLBundleRoute};
 /// `bun.GenericIndex(u30, RouteBundle)`.
 pub enum RouteBundleMarker {}
 pub type Index = bun_core::GenericIndex<u32, RouteBundleMarker>;
-/// `Index.Optional` — packed sentinel in Zig; `Option` here (non-FFI).
+/// `Index.Optional` — `Option` here (non-FFI; no packed sentinel needed).
 pub type IndexOptional = Option<Index>;
 
 /// `bun.GenericIndex(u32, u8)` — byte offset into `bundled_html_text`.
@@ -34,7 +34,7 @@ pub struct Framework {
     pub evaluate_failure: Option<SerializedFailure>,
 }
 
-/// Zig name alias (`RouteBundle.HTML`) — callers use the all-caps form.
+/// Name alias (`RouteBundle.HTML`) — callers use the all-caps form.
 pub type HTML = Html;
 
 pub struct Html {
@@ -61,7 +61,7 @@ pub enum Data {
 }
 
 impl Data {
-    /// Zig: `data.framework` payload accessor (asserts active tag).
+    /// `Framework` payload accessor (asserts active tag).
     pub fn framework(&self) -> &Framework {
         match self {
             Data::Framework(f) => f,
@@ -74,7 +74,7 @@ impl Data {
             Data::Html(_) => unreachable!("expected .framework"),
         }
     }
-    /// Zig: `data.html` payload accessor (asserts active tag).
+    /// `Html` payload accessor (asserts active tag).
     pub fn html(&self) -> &Html {
         match self {
             Data::Html(h) => h,
@@ -90,10 +90,10 @@ impl Data {
 }
 
 impl RouteBundle {
-    /// `RouteBundle.invalidateClientBundle` (RouteBundle.zig:122).
+    /// `RouteBundle::invalidate_client_bundle`.
     ///
     /// PORT NOTE: takes `&mut SourceMapStore` rather than `&mut DevServer` —
-    /// the Zig body only touches `dev.source_maps`, and the two keystone
+    /// the body only touches `dev.source_maps`, and the two keystone
     /// `DevServer` structs (`dev_server::DevServer` / `dev_server_body::DevServer`)
     /// both expose that field but cannot be named here without a cycle.
     pub fn invalidate_client_bundle(&mut self, source_maps: &mut source_map_store::SourceMapStore) {
@@ -104,7 +104,7 @@ impl RouteBundle {
             // outstanding `&`/`&mut` borrow exists across this call.
             unsafe { StaticRoute::deref_(bundle.as_ptr()) };
         }
-        // Zig: `std.crypto.random.int(u32)` — OS CSPRNG.
+        // OS CSPRNG-backed random u32.
         self.client_script_generation = {
             let mut buf = [0u8; 4];
             bun_core::csprng(&mut buf);
@@ -124,11 +124,10 @@ impl RouteBundle {
 
 pub enum UnresolvedIndex {
     Framework(framework_router::RouteIndex),
-    /// BACKREF (Zig `*HTMLBundle.Route`): `getOrPutRouteBundle` writes
-    /// `dev_server_id` back through this pointer and `.initRef(html)` takes
-    /// its own ref when stored. Carried as a raw mutable pointer (not `&`/
-    /// `&mut`) so the writeback doesn't require a `&const → &mut` cast and
-    /// the borrow doesn't conflict with `&mut DevServer`.
+    /// BACKREF: `getOrPutRouteBundle` writes `dev_server_id` back through this
+    /// pointer and `.initRef(html)` takes its own ref when stored. Carried as a
+    /// raw mutable pointer (not `&`/`&mut`) so the writeback doesn't require a
+    /// `&const → &mut` cast and the borrow doesn't conflict with `&mut DevServer`.
     Html(*mut HTMLBundleRoute),
 }
 
@@ -151,7 +150,7 @@ impl RouteBundle {
         source_map_store::Key(u64::from(self.client_script_generation) << 32)
     }
 
-    /// `RouteBundle.memoryCost` (RouteBundle.zig:137).
+    /// `RouteBundle::memory_cost`.
     pub fn memory_cost(&self) -> usize {
         let mut cost: usize = core::mem::size_of::<RouteBundle>();
         if let Some(bundle) = self.client_bundle.as_deref() {

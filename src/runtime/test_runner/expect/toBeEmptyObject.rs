@@ -40,5 +40,3 @@ pub fn to_be_empty_object(
         format_args!("\n\nReceived: <red>{}<r>\n", received),
     )
 }
-
-// ported from: src/test_runner/expect/toBeEmptyObject.zig

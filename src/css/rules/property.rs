@@ -167,9 +167,8 @@ pub struct PropertyRuleDeclarationParser {
     pub initial_value: Option<&'static [u8]>,
 }
 
-// PORT NOTE: Zig's nested `pub const DeclarationParser = struct { ... }`
-// namespaces are structural duck-typing for RuleBodyParser; in Rust these
-// become trait impls.
+// PORT NOTE: DeclarationParser/AtRuleParser/QualifiedRuleParser/
+// RuleBodyItemParser are trait impls.
 const _: () = {
     use bun_core::strings;
     use css::css_parser::{
@@ -180,8 +179,8 @@ const _: () = {
     impl DeclarationParser for PropertyRuleDeclarationParser {
         type Declaration = ();
 
-        // TODO(port): the Zig defines a ComptimeStringMap over FieldEnum but never uses it
-        // (usage is commented out). Preserved the active if/else-if chain instead.
+        // TODO(port): a string map over field names existed upstream but was unused
+        // (usage commented out). Preserved the active if/else-if chain instead.
         fn parse_value(
             this: &mut Self,
             name: &[u8],
@@ -276,5 +275,3 @@ const _: () = {
         }
     }
 };
-
-// ported from: src/css/rules/property.zig

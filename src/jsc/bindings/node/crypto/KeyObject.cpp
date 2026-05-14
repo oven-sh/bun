@@ -2,7 +2,7 @@
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 #include "helpers.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "CryptoUtil.h"
 #include "ErrorCode.h"
 #include "NodeValidator.h"

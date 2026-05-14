@@ -1,12 +1,12 @@
-//! Prefer using bun.String instead of ZigString in new code.
+//! Prefer using bun.String instead of UnsafeStringView in new code.
 //!
-//! DEDUP NOTE: this module formerly defined a second `#[repr(C)] struct ZigString`
-//! mirror with ~70 inherent methods that duplicated `bun_core::ZigString`. The
+//! DEDUP NOTE: this module formerly defined a second `#[repr(C)] struct UnsafeStringView`
+//! mirror with ~70 inherent methods that duplicated `bun_core::UnsafeStringView`. The
 //! struct definition and all pure (non-JSC) methods now live canonically in
 //! `bun_core`; this file re-exports the type and surfaces the JSC-only
 //! conversions (`to_js`, `to_*_error_instance`, `to_external_value`, …) via the
-//! [`crate::ZigStringJsc`] extension trait. Both crates share the identical
-//! `#[repr(C)] { *const u8, usize }` layout, so the `extern "C"` `ZigString__*`
+//! [`crate::UnsafeStringViewJsc`] extension trait. Both crates share the identical
+//! `#[repr(C)] { *const u8, usize }` layout, so the `extern "C"` `UnsafeStringView__*`
 //! shims remain ABI-valid.
 
 use core::ffi::c_void;
@@ -14,47 +14,47 @@ use core::ffi::c_void;
 use crate::{JSGlobalObject, JSValue};
 use bun_core::String as BunString;
 
-/// `ZigString.as_()` return type — re-exported alongside the struct.
+/// `UnsafeStringView.as_()` return type — re-exported alongside the struct.
 pub use bun_core::ByteString;
-/// Canonical `ZigString` lives in `bun_core`; re-exported here so existing
-/// `bun_jsc::zig_string::ZigString` import paths keep resolving.
-pub use bun_core::ZigString;
-/// `ZigString.githubAction()` return type — re-exported for parity with the
+/// `UnsafeStringView.Slice` re-export for `crate::unsafe_string_view::Slice` callers.
+pub use bun_core::UTF8Slice as Slice;
+/// Canonical `UnsafeStringView` lives in `bun_core`; re-exported here so existing
+/// `bun_jsc::unsafe_string_view::UnsafeStringView` import paths keep resolving.
+pub use bun_core::UnsafeStringView;
+/// `UnsafeStringView.githubAction()` return type — re-exported for parity with the
 /// pre-dedup local `GithubActionFormatter` struct.
-pub use bun_core::ZigStringGithubActionFormatter as GithubActionFormatter;
-/// `ZigString.Slice` re-export for `crate::zig_string::Slice` callers.
-pub use bun_core::ZigStringSlice as Slice;
+pub use bun_core::UnsafeStringViewGithubActionFormatter as GithubActionFormatter;
 
-/// JSC-side conversions on `ZigString` are provided by the [`ZigStringJsc`]
+/// JSC-side conversions on `UnsafeStringView` are provided by the [`UnsafeStringViewJsc`]
 /// extension trait (canonical impl in `crate::lib`). Re-exported here so
-/// callers can `use bun_jsc::zig_string::{ZigString, ZigStringJsc}`.
-pub use crate::ZigStringJsc;
+/// callers can `use bun_jsc::unsafe_string_view::{UnsafeStringView, UnsafeStringViewJsc}`.
+pub use crate::UnsafeStringViewJsc;
 
 // `OpaqueJSString` / `JSStringRef` retained for type-level compatibility with
 // the JSC C API surface; the `to_js_string_ref` constructor wrappers were dead
-// code (no C++ body for `JSStringCreateStatic` in Bun's link image — Zig's
-// `toJSStringRef` is unreachable behind `@hasDecl(bun, "bindgen")`).
+// code (no C++ body for `JSStringCreateStatic` in Bun's link image, so the
+// `toJSStringRef` path is unreachable).
 bun_opaque::opaque_ffi! { pub struct OpaqueJSString; }
 pub type JSStringRef = *mut OpaqueJSString;
 
 unsafe extern "C" {
-    fn ZigString__toExternalU16(
+    fn UnsafeStringView__toExternalU16(
         ptr: *const u16,
         len: usize,
         global: *const JSGlobalObject,
     ) -> JSValue;
 }
 
-/// `ZigString.static(comptime s)` — borrow a static ASCII/Latin-1 literal.
-/// Spec (`ZigString.static`, ZigString.zig:499-506) constructs the string with
-/// the raw literal pointer and NO encoding tag. Callers who need UTF-8
-/// semantics must use `init_utf8` / `from_utf8` explicitly.
+/// `UnsafeStringView::static_` — borrow a static ASCII/Latin-1 literal.
+/// Constructs the string with the raw literal pointer and NO encoding tag.
+/// Callers who need UTF-8 semantics must use `init_utf8` / `from_utf8`
+/// explicitly.
 #[inline]
-pub fn static_(s: &'static [u8]) -> ZigString {
-    ZigString::init(s)
+pub fn static_(s: &'static [u8]) -> UnsafeStringView {
+    UnsafeStringView::init(s)
 }
 
-/// `ZigString.toExternalU16` (ZigString.zig:571) — hand a globally-allocated
+/// `UnsafeStringView::to_external_u16` — hand a globally-allocated
 /// UTF-16 buffer to JSC as an external string. Ownership of `ptr[0..len]`
 /// transfers to JSC on success; on the too-long path the buffer is freed
 /// here, a `STRING_TOO_LONG` error is thrown, and `.zero` is returned.
@@ -68,10 +68,9 @@ pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> 
         // allocator. `mi_free` accepts the raw block pointer regardless of
         // element size.
         unsafe { bun_alloc::mimalloc::mi_free(ptr.cast_mut().cast::<core::ffi::c_void>()) };
-        // TODO(port): Zig used `global.ERR(.STRING_TOO_LONG, msg).throw()`;
-        // the codegen'd `ErrorCode::ERR_STRING_TOO_LONG` builder hasn't landed
-        // yet, so throw a plain RangeError with the same message. Propagation
-        // is swallowed (matches Zig's `catch {}`).
+        // TODO(port): the codegen'd `ErrorCode::ERR_STRING_TOO_LONG` builder
+        // hasn't landed yet, so throw a plain RangeError with the same message.
+        // Propagation is intentionally swallowed.
         let err = global.create_range_error_instance(format_args!(
             "Cannot create a string longer than 2^32-1 characters"
         ));
@@ -80,20 +79,21 @@ pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> 
     }
     // SAFETY: ptr/len describe a globally-allocated UTF-16 buffer; ownership
     // transfers to JSC (freed via the external-string finalizer).
-    unsafe { ZigString__toExternalU16(ptr, len, global) }
+    unsafe { UnsafeStringView__toExternalU16(ptr, len, global) }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c_void) {
+pub extern "C" fn UnsafeStringView__free(raw: *const u8, len: usize, allocator_: *mut c_void) {
     let Some(allocator_) = core::ptr::NonNull::new(allocator_) else {
         return;
     };
-    // TODO(port): Zig dereferenced *std.mem.Allocator from opaque ptr — Rust uses global mimalloc;
-    // verify no callers pass a non-default allocator here.
+    // TODO(port): the original dereferenced an allocator vtable from the opaque
+    // ptr — Rust uses global mimalloc; verify no callers pass a non-default
+    // allocator here.
     let _ = allocator_;
     // SAFETY: raw/len describe a valid slice allocated by the caller-provided allocator.
     let s = unsafe { bun_core::ffi::slice(raw, len) };
-    let ptr = ZigString::init(s).slice().as_ptr();
+    let ptr = UnsafeStringView::init(s).slice().as_ptr();
     #[cfg(debug_assertions)]
     // SAFETY: read-only heap-region probe.
     debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
@@ -103,10 +103,10 @@ pub extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
+pub extern "C" fn UnsafeStringView__freeGlobal(ptr: *const u8, len: usize) {
     // SAFETY: ptr/len describe a valid slice.
     let s = unsafe { bun_core::ffi::slice(ptr, len) };
-    let untagged = ZigString::init(s)
+    let untagged = UnsafeStringView::init(s)
         .slice()
         .as_ptr()
         .cast_mut()
@@ -121,7 +121,7 @@ pub extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
 
 // ──────────────────────────────────────────────────────────────────────────
 // `NullableAllocator`-backed `Slice` struct port — the `#[repr(C)]`-shaped
-// counterpart to the enum-based `bun_core::ZigStringSlice` (re-exported as
+// counterpart to the enum-based `bun_core::UTF8Slice` (re-exported as
 // `super::Slice`). Kept for FFI surfaces that need the raw `{allocator, ptr,
 // len}` layout; the enum form is preferred for pure-Rust callers.
 // ──────────────────────────────────────────────────────────────────────────
@@ -194,5 +194,3 @@ mod _slice_struct {
         }
     }
 } // mod _slice_struct
-
-// ported from: src/jsc/ZigString.zig

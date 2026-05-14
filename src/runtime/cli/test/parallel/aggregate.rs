@@ -222,7 +222,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         return;
     }
 
-    // Stable output order. Zig's `ArrayHashMap.sort` reorders entries in place;
+    // Stable output order. The original `ArrayHashMap.sort` reorders entries in place;
     // PORT NOTE: reshaped — ArrayHashMap has no in-place sort yet, so build a
     // permutation and iterate via `order` everywhere below.
     let mut order: Vec<usize> = (0..by_file.count()).collect();
@@ -234,9 +234,9 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     if opts.reporters.lcov {
         let mut fs = NodeFS::default();
         let _ = fs.mkdir_recursive(&fs_args::Mkdir {
-            path: PathLike::EncodedSlice(bun_core::zig_string::Slice::from_utf8_never_free(
-                &opts.reports_directory,
-            )),
+            path: PathLike::EncodedSlice(
+                bun_core::unsafe_string_view::Slice::from_utf8_never_free(&opts.reports_directory),
+            ),
             always_return_none: true,
             ..Default::default()
         });
@@ -258,7 +258,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 (e,),
             ),
             bun_sys::Result::Ok(f) => {
-                // TODO(port): Zig used a 64KiB-buffered writer adapter; building in Vec then one write_all
+                // TODO(port): the original used a 64KiB-buffered writer adapter; building in Vec then one write_all
                 let mut w: Vec<u8> = Vec::with_capacity(64 * 1024);
                 for &i in &order {
                     let fc = &by_file.values()[i];
@@ -287,7 +287,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                     );
                 }
                 let _ = File::write_all(&f, &w);
-                let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
+                let _ = f.close(); // close error is non-actionable (discarded for parity)
             }
         }
     }
@@ -434,5 +434,3 @@ fn write_range<const COLORS: bool>(w: &mut impl std::io::Write, first: &mut bool
         let _ = write!(w, "{}{}-{}", Output::pretty_fmt::<COLORS>("<red>"), a, b);
     }
 }
-
-// ported from: src/cli/test/parallel/aggregate.zig

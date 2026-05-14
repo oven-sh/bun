@@ -10,7 +10,7 @@ bun_core::declare_scope!(Loop, visible);
 
 // ───────────────────────────── PosixLoop ─────────────────────────────
 
-// TODO(port): Zig has field-level `align(16)` on `internal_loop_data` and
+// TODO(port): the C layout has field-level `align(16)` on `internal_loop_data` and
 // `ready_polls`. Rust cannot align individual fields directly; `#[repr(C, align(16))]`
 // covers the struct head, but `ready_polls` may need explicit padding to match
 // the C layout in usockets. Verify with a static size/offset assertion in Phase B.
@@ -54,11 +54,10 @@ pub type EventType = libc::kevent;
 // TODO:
 #[cfg(windows)]
 pub type EventType = *mut c_void;
-// TODO(port): Zig had `.wasm => @compileError("Unsupported OS")` — no Rust equivalent needed;
-// the missing cfg arm will fail to compile on wasm.
+// wasm is unsupported; the missing cfg arm will fail to compile there.
 
-/// Trait replacing Zig's `comptime Handler: anytype` with `@hasDecl` checks for
-/// optional `pre`/`post`. Implementors override `PRE`/`POST` if they have them.
+/// Trait expressing the duck-typed `Handler` parameter with optional
+/// `pre`/`post`. Implementors override `PRE`/`POST` if they have them.
 pub trait LoopHandler {
     const WAKEUP: unsafe extern "C" fn(*mut Loop);
     const PRE: Option<unsafe extern "C" fn(*mut Loop)> = None;
@@ -246,7 +245,7 @@ impl PosixLoop {
         unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
-    // TODO(port): Zig `nextTick` took a `comptime deferCallback: fn(UserType) void` and
+    // TODO(port): `nextTick` originally took a `deferCallback: fn(UserType) void` and
     // synthesized a per-callsite `extern "C"` trampoline that casts `*anyopaque` → `UserType`.
     // Rust cannot monomorphize an `extern "C"` fn over a fn-pointer const generic on stable.
     // Callers must provide the C-ABI trampoline directly (or via a `next_tick!` macro in Phase B).
@@ -266,7 +265,7 @@ impl PosixLoop {
     // long-lived raw-pointer provenance from `us_create_loop`/`uws_get_loop`. Routing through
     // a `&mut self` reborrow would bound the stored pointer's provenance to this call, and any
     // subsequent `&mut`/`&` to the C-owned singleton would invalidate it under Stacked Borrows,
-    // making the later FFI write in `Handler::remove_*` UB. Mirrors Zig's `this: *PosixLoop`.
+    // making the later FFI write in `Handler::remove_*` UB.
     /// # Safety
     /// `this` must be the live C-allocated loop pointer returned by
     /// `us_create_loop`/`uws_get_loop` (not derived from a `&mut` reborrow).
@@ -323,10 +322,10 @@ impl PosixLoop {
     }
 }
 
-/// Replaces Zig `fn NewHandler(comptime UserType, comptime callback_fn) type`.
+/// Replaces the type-constructing `NewHandler(UserType, callback_fn)` factory.
 /// Stores the loop ref and the C-ABI callback so it can be unregistered later.
 ///
-/// Stores `*mut Loop` (not `&Loop`) to mirror Zig's freely-aliasing `loop: *Loop`
+/// Stores `*mut Loop` (not `&Loop`) to mirror the freely-aliasing `loop: *Loop`
 /// — the loop is C-owned/heap-allocated and the FFI remove calls mutate it, so a
 /// shared `&Loop` would make the `*const → *mut` cast UB when written through.
 pub struct Handler {
@@ -344,7 +343,7 @@ impl Handler {
     }
 
     pub fn remove_pre(&self) {
-        // PORT NOTE: Zig also called `uws_loop_removePostHandler` here (likely a bug
+        // PORT NOTE: this also calls `uws_loop_removePostHandler` here (likely a bug
         // upstream); preserving behavior verbatim.
         // SAFETY: `loop_` is the original C-allocated raw pointer (from
         // `us_create_loop`/`uws_get_loop`) stored by `add_*_handler`, with provenance
@@ -533,7 +532,7 @@ impl WindowsLoop {
     // Takes `this: *mut Self` (not `&mut self`) so the stored `Handler.loop_` inherits the
     // long-lived raw-pointer provenance from `us_create_loop`/`uws_get_loop_with_native`
     // rather than a transient `&mut` reborrow (which Stacked Borrows would invalidate on the
-    // next access to the C-owned singleton). Mirrors Zig's `this: *WindowsLoop`.
+    // next access to the C-owned singleton).
     /// # Safety
     /// `this` must be the live C-allocated loop pointer returned by
     /// `us_create_loop`/`uws_get_loop_with_native` (not derived from a `&mut` reborrow).
@@ -631,5 +630,3 @@ mod c {
 // `us_wakeup_loop` concurrently; routing either through a `&mut self`
 // receiver would create two live `&mut Loop` to the same singleton (UB).
 pub use c::{us_loop_run, us_wakeup_loop};
-
-// ported from: src/uws_sys/Loop.zig

@@ -147,7 +147,7 @@ impl All {
         overflow_behavior: CountdownOverflowBehavior,
         warn: bool,
     ) -> JsResult<u32> {
-        // TODO(port): Zig return type is `u31`; using u32 here, callers must respect the [0, i32::MAX] range.
+        // TODO(port): callers must respect the [0, i32::MAX] range.
         // We don't deal with nesting levels directly
         // but we do set the minimum timeout to be 1ms for repeating timers
         let countdown_double = countdown.to_number(global_this)?;
@@ -295,8 +295,8 @@ impl All {
     }
 
     fn remove_timer_by_id(&mut self, id: i32) -> Option<*mut TimeoutObject> {
-        // PORT NOTE: Zig `fetchSwapRemove` returns the entry; ArrayHashMap
-        // exposes `get_index` + `swap_remove_at`, so combine them.
+        // PORT NOTE: ArrayHashMap exposes `get_index` + `swap_remove_at` rather
+        // than a single fetch-and-swap-remove; combine them.
         let value: *mut EventLoopTimer = if let Some(idx) = self.maps.set_timeout.get_index(&id) {
             self.maps.set_timeout.swap_remove_at(idx).1
         } else if let Some(idx) = self.maps.set_interval.get_index(&id) {
@@ -332,8 +332,8 @@ impl All {
                 // Primitive string only (JSType::String) — boxed `new String(..)`
                 // must fall through to `from_js` below and be a no-op, matching
                 // Node.js array-index semantics.
-                // RAII for Zig's `defer string.deref()` — `to_bun_string` returns
-                // a +1 ref and there are several early `return Ok(())` exits below.
+                // RAII deref — `to_bun_string` returns a +1 ref and there are
+                // several early `return Ok(())` exits below.
                 let string = bun_core::OwnedString::new(timer_id_value.to_bun_string(global_this)?);
                 // Custom parseInt logic. I've done this because Node.js is very strict about string
                 // parameters to this function: they can't have leading whitespace, trailing
@@ -438,13 +438,11 @@ impl All {
 
 // ════════════════════════════════════════════════════════════════════════════
 // Method bodies on canonical sibling types (`mod.rs` definitions).
-// Ported from DateHeaderTimer.zig.
 // ════════════════════════════════════════════════════════════════════════════
 
 // `TimeoutObject::{init, from_js}` and `ImmediateObject::{init, from_js}` now
-// live in `super::{timeout_object, immediate_object}` (canonical ports of
-// `TimeoutObject.zig` / `ImmediateObject.zig`); the inherent `init` constructor
-// and the `JsClass`-derived `from_js` are re-exported via
+// live in `super::{timeout_object, immediate_object}`; the inherent `init`
+// constructor and the `JsClass`-derived `from_js` are re-exported via
 // `super::{TimeoutObject, ImmediateObject}`.
 
 impl DateHeaderTimer {
@@ -502,12 +500,11 @@ pub fn drain_timers_export(vm: *mut VirtualMachine) {
     unsafe { (*all).drain_timers(vm.cast::<()>()) };
 }
 
-// Zig used `jsc.host_fn.wrapN(...)` + `@export` to generate these C-ABI shims.
-// `wrapN` reflects on the Zig fn signature and emits an `extern "C" fn` that
-// forwards through `toJSHostCall` (ExceptionValidationScope + JsResult→JSValue
-// normalization). Rust has no signature reflection; `generate-host-exports.ts`
-// scrapes the `// HOST_EXPORT` markers below and emits the seven thunks into
-// `generated_host_exports.rs`, each routing through `host_fn::host_fn_result`.
+// Rust has no signature reflection to auto-generate C-ABI shims;
+// `generate-host-exports.ts` scrapes the `// HOST_EXPORT` markers below and
+// emits the seven thunks into `generated_host_exports.rs`, each routing through
+// `host_fn::host_fn_result` (ExceptionValidationScope + JsResult→JSValue
+// normalization).
 //
 // C++ callers (`src/jsc/bindings/node/NodeTimers.cpp`, `BunObject.cpp`) declare
 // these in `headers.h` as `(JSGlobalObject*, EncodedJSValue…) -> EncodedJSValue`.
@@ -592,5 +589,3 @@ pub mod internal_bindings {
         Ok(JSValue::js_number(now as f64))
     }
 }
-
-// ported from: src/runtime/timer/Timer.zig

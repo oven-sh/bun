@@ -1,15 +1,13 @@
-//! Port of Zig's `std.HashMapUnmanaged` — open-addressing, linear-probe,
+//! `HashMapUnmanaged` — open-addressing, linear-probe,
 //! tombstone-on-delete, power-of-two capacity, 80% max load. Layout (and
-//! therefore iteration order) must match the Zig spec exactly because callers
-//! snapshot the iteration sequence (e.g. lockfile debug stringify).
+//! therefore iteration order) must match the upstream spec exactly because
+//! callers snapshot the iteration sequence (e.g. lockfile debug stringify).
 //!
-//! Storage differs from Zig's single-allocation `[Header][meta][keys][values]`:
+//! Storage differs from the original single-allocation `[Header][meta][keys][values]`:
 //! `Vec<u8>` for metadata + `Vec<Option<(K, V)>>` for slots. This costs an
 //! `Option` discriminant per slot but keeps the implementation in safe Rust;
 //! slot indices and the metadata state machine are bit-identical so iteration
 //! order matches.
-//!
-//! Spec: vendor/zig/lib/std/hash_map.zig
 
 use core::borrow::Borrow;
 use core::hash::{Hash, Hasher};
@@ -18,7 +16,7 @@ use core::marker::PhantomData;
 use crate::identity_context::{IdentityContext, IdentityHash};
 
 // ─── Metadata byte ─────────────────────────────────────────────────────────
-// Zig: `packed struct { fingerprint: u7, used: u1 }` — LSB-first packing, so
+// `packed struct { fingerprint: u7, used: u1 }` — LSB-first packing, so
 // bit 7 = `used`, bits 0..7 = `fingerprint`.
 const SLOT_FREE: u8 = 0x00; // used=0, fp=0
 const SLOT_TOMBSTONE: u8 = 0x01; // used=0, fp=1
@@ -39,7 +37,7 @@ fn meta_is_tombstone(m: u8) -> bool {
 fn meta_fingerprint(m: u8) -> u8 {
     m & 0x7F
 }
-/// Zig `Metadata.takeFingerprint`: top 7 bits of the 64-bit hash.
+/// `Metadata.takeFingerprint`: top 7 bits of the 64-bit hash.
 #[inline]
 fn take_fingerprint(hash: u64) -> u8 {
     (hash >> (64 - 7)) as u8
@@ -50,19 +48,19 @@ fn meta_fill(fp: u8) -> u8 {
 }
 
 const MINIMAL_CAPACITY: u32 = 8;
-/// Zig `default_max_load_percentage`. All Bun-side `std.HashMap` instantiations
+/// `default_max_load_percentage`. All Bun-side `HashMap` instantiations
 /// use 80; the const-generic load-factor parameter is dropped here.
 const MAX_LOAD_PERCENTAGE: u64 = 80;
 
 #[inline]
 fn capacity_for_size(size: u32) -> u32 {
-    // Zig: `((size * 100) / max_load + 1).ceilPowerOfTwo()`
+    // `((size * 100) / max_load + 1).ceilPowerOfTwo()`
     let new_cap = ((size as u64 * 100) / MAX_LOAD_PERCENTAGE + 1) as u32;
     new_cap.next_power_of_two()
 }
 
 // ─── HashContext ───────────────────────────────────────────────────────────
-// Zig threads a `Context` value with `hash(K) -> u64` / `eql(K, K) -> bool`.
+// The original threads a `Context` value with `hash(K) -> u64` / `eql(K, K) -> bool`.
 // All Bun contexts are zero-sized, so model as a stateless trait keyed on the
 // marker type. `AutoHashContext` covers `std.AutoHashMap`; `IdentityContext<K>`
 // covers the `hash(k) == k` case used for pre-hashed keys.
@@ -80,7 +78,7 @@ pub struct AutoHashContext;
 impl<K: Hash + Eq + ?Sized> HashContext<K> for AutoHashContext {
     #[inline]
     fn ctx_hash(key: &K) -> u64 {
-        // Zig autoHash for unique-repr types is `Wyhash.hash(0, asBytes(&key))`.
+        // `autoHash` for unique-repr types is `Wyhash.hash(0, asBytes(&key))`.
         // Routing through `core::hash::Hash` + wyhash is the closest stable
         // approximation without per-type byte-layout plumbing; exact AutoContext
         // bucket order isn't relied on by any test today.
@@ -133,7 +131,7 @@ impl<K, V, C> HashMap<K, V, C> {
         Self::default()
     }
 
-    /// Zig `count`/std `len`.
+    /// `count`/std `len`.
     #[inline]
     pub fn len(&self) -> usize {
         self.size as usize
@@ -151,13 +149,13 @@ impl<K, V, C> HashMap<K, V, C> {
         self.metadata.len()
     }
 
-    /// Zig `deinit` — release storage.
+    /// `deinit` — release storage.
     #[inline]
     pub fn deinit(&mut self) {
         *self = Self::default();
     }
 
-    /// Zig `clearRetainingCapacity`.
+    /// `clearRetainingCapacity`.
     pub fn clear(&mut self) {
         if self.metadata.is_empty() {
             return;
@@ -172,12 +170,12 @@ impl<K, V, C> HashMap<K, V, C> {
         self.available = ((self.metadata.len() as u64 * MAX_LOAD_PERCENTAGE) / 100) as u32;
     }
 
-    /// Zig `lockPointers` — debug-mode pointer-stability assertion. No-op stub
-    /// kept so the Zig lock/unlock bracketing translates without `#[cfg]` noise
+    /// `lockPointers` — debug-mode pointer-stability assertion. No-op stub
+    /// kept so the lock/unlock bracketing translates without `#[cfg]` noise
     /// at every call site (see `SavedSourceMap`).
     #[inline]
     pub fn lock_pointers(&self) {}
-    /// Zig `unlockPointers` — see [`lock_pointers`].
+    /// `unlockPointers` — see [`lock_pointers`].
     #[inline]
     pub fn unlock_pointers(&self) {}
 
@@ -219,9 +217,9 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         m
     }
 
-    /// Zig `ensureTotalCapacity` — grow so `new_size` elements fit without
+    /// `ensureTotalCapacity` — grow so `new_size` elements fit without
     /// further allocation. `Result` kept for call-site `?` symmetry with the
-    /// Zig OOM-propagating API.
+    /// OOM-propagating API.
     pub fn ensure_total_capacity(&mut self, new_size: usize) -> Result<(), bun_alloc::AllocError> {
         let new_size = new_size as u32;
         if new_size > self.size {
@@ -230,7 +228,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         Ok(())
     }
 
-    /// Zig `ensureUnusedCapacity`.
+    /// `ensureUnusedCapacity`.
     pub fn ensure_unused_capacity(
         &mut self,
         additional: usize,
@@ -289,7 +287,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         *self = map;
     }
 
-    /// Zig `putAssumeCapacityNoClobber` — linear-probe insert assuming key
+    /// `putAssumeCapacityNoClobber` — linear-probe insert assuming key
     /// absent and `available > 0`.
     fn put_assume_capacity_no_clobber(&mut self, key: K, value: V) {
         let cap = self.metadata.len();
@@ -310,7 +308,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         self.size += 1;
     }
 
-    /// Zig `getIndex` — probe for `key`, stop on free, skip tombstones.
+    /// `getIndex` — probe for `key`, stop on free, skip tombstones.
     fn get_index<Q>(&self, key: &Q) -> Option<usize>
     where
         K: Borrow<Q>,
@@ -381,13 +379,13 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         self.get_index(key).is_some()
     }
 
-    /// Zig `contains` — `std::HashMap` spells this `contains_key`.
+    /// `contains` — `std::HashMap` spells this `contains_key`.
     #[inline]
     pub fn contains(&self, key: &K) -> bool {
         self.get_index(key).is_some()
     }
 
-    /// Zig `getOrPutAssumeCapacityAdapted` lifted to grow-on-demand. Returns
+    /// `getOrPutAssumeCapacityAdapted` lifted to grow-on-demand. Returns
     /// the slot index and whether it was already occupied; the slot is left
     /// `None` on miss so the caller can write the (K, V) pair.
     fn get_or_put_slot(&mut self, key: &K) -> (usize, bool) {
@@ -424,8 +422,8 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         (idx, false)
     }
 
-    /// Zig `getOrPut`: single-probe insert-or-lookup. On miss the value slot is
-    /// left "undefined" in Zig; Rust cannot expose uninit through a `&mut V`, so
+    /// `getOrPut`: single-probe insert-or-lookup. On miss the value slot was
+    /// originally left uninitialized; Rust cannot expose uninit through a `&mut V`, so
     /// `V: Default` and the slot is default-initialised — callers overwrite
     /// `*value_ptr` when `!found_existing`.
     pub fn get_or_put(
@@ -446,7 +444,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         })
     }
 
-    /// Zig `getOrPutContext` — alias kept for call-site parity; the context is
+    /// `getOrPutContext` — alias kept for call-site parity; the context is
     /// already bound by the type parameter.
     #[inline]
     pub fn get_or_put_context<Ctx>(
@@ -460,7 +458,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         self.get_or_put(key)
     }
 
-    /// std `insert` / Zig `fetchPut` — returns the previous value if any.
+    /// std `insert` / `fetchPut` — returns the previous value if any.
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         let (idx, found_existing) = self.get_or_put_slot(&key);
         if found_existing {
@@ -472,14 +470,14 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         }
     }
 
-    /// Zig `put`: insert or overwrite.
+    /// `put`: insert or overwrite.
     #[inline]
     pub fn put(&mut self, key: K, value: V) -> Result<(), bun_alloc::AllocError> {
         self.insert(key, value);
         Ok(())
     }
 
-    /// Zig `putNoClobber`: insert asserting the key is new.
+    /// `putNoClobber`: insert asserting the key is new.
     pub fn put_no_clobber(&mut self, key: K, value: V) -> Result<(), bun_alloc::AllocError> {
         let prev = self.insert(key, value);
         debug_assert!(prev.is_none(), "putNoClobber: key already present");
@@ -494,7 +492,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         kv
     }
 
-    /// std `remove` / Zig `fetchRemove` value half.
+    /// std `remove` / `fetchRemove` value half.
     pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
     where
         K: Borrow<Q>,
@@ -515,7 +513,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         self.get_index(key).and_then(|i| self.remove_by_index(i))
     }
 
-    /// Zig `fetchRemove` — remove and return the owned `{key, value}` pair.
+    /// `fetchRemove` — remove and return the owned `{key, value}` pair.
     pub fn fetch_remove(&mut self, key: K) -> Option<crate::hash_map::KV<K, V>> {
         self.remove_entry(&key)
             .map(|(k, v)| crate::hash_map::KV { key: k, value: v })
@@ -721,5 +719,3 @@ impl<'a, K, V, C: HashContext<K>> VacantEntry<'a, K, V, C> {
         &self.key
     }
 }
-
-// ported from: vendor/zig/lib/std/hash_map.zig

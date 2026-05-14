@@ -26,7 +26,7 @@ pub enum SocketKind {
     /// only known at runtime (uWS C++ via per-App vtable, tests).
     Dynamic,
 
-    // ── Bun.connect / Bun.listen (src/runtime/api/bun/socket.zig) ──────────
+    // ── Bun.connect / Bun.listen (src/runtime/socket/) ─────────────────────
     BunSocketTcp,
     BunSocketTls,
     /// Server-accepted socket; ext is the `*Listener` so onCreate can attach
@@ -34,7 +34,7 @@ pub enum SocketKind {
     BunListenerTcp,
     BunListenerTls,
 
-    // ── HTTP client thread (src/http/HTTPContext.zig) ─────────────────────
+    // ── HTTP client thread (src/http/HTTPContext.rs) ──────────────────────
     HttpClient,
     HttpClientTls,
 
@@ -65,10 +65,10 @@ pub enum SocketKind {
 
 impl SocketKind {
     /// Checked conversion from the raw `u8` returned by C (`us_socket_kind`).
-    /// Mirrors Zig's `@enumFromInt`, which traps on out-of-range values in
-    /// safe builds. An invalid discriminant in a `#[repr(u8)]` enum is
-    /// immediate UB in Rust, so this is an exhaustive match — LLVM folds the
-    /// contiguous arms to a single range-check + reinterpret.
+    /// Traps on out-of-range values. An invalid discriminant in a
+    /// `#[repr(u8)]` enum is immediate UB in Rust, so this is an exhaustive
+    /// match — LLVM folds the contiguous arms to a single range-check +
+    /// reinterpret.
     #[inline]
     pub fn from_u8(v: u8) -> Self {
         match v {
@@ -118,9 +118,9 @@ impl SocketKind {
 }
 
 // `unsigned char kind` on us_socket_t — full byte, not the flags bitfield.
-// Zig: `comptime bun.assert(@typeInfo(SocketKind).@"enum".fields.len <= 256)`.
-// In Rust, `#[repr(u8)]` already refuses to compile with >256 variants, so the
-// invariant is enforced by the type system; no explicit assert needed.
+// `#[repr(u8)]` already refuses to compile with >256 variants, so the
+// "fits in one byte" invariant is enforced by the type system; no explicit
+// assert needed.
 
 /// The four kinds whose handlers live in C++ are also referenced from C++
 /// (`packages/bun-uws/src/SocketKinds.h`). Export their ordinals so the C++
@@ -136,5 +136,3 @@ pub static BUN_SOCKET_KIND_UWS_HTTP_TLS: u8 = SocketKind::UwsHttpTls as u8;
 pub static BUN_SOCKET_KIND_UWS_WS: u8 = SocketKind::UwsWs as u8;
 #[unsafe(no_mangle)]
 pub static BUN_SOCKET_KIND_UWS_WS_TLS: u8 = SocketKind::UwsWsTls as u8;
-
-// ported from: src/uws_sys/SocketKind.zig

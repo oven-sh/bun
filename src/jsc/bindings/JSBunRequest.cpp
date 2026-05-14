@@ -4,7 +4,7 @@
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/JSObject.h>
 #include "JSBunRequest.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "AsyncContextFrame.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JSFetchHeaders.h"
@@ -17,7 +17,7 @@
 
 namespace Bun {
 
-extern "C" SYSV_ABI JSC::EncodedJSValue Bun__JSRequest__createForBake(Zig::GlobalObject* globalObject, void* requestPtr)
+extern "C" SYSV_ABI JSC::EncodedJSValue Bun__JSRequest__createForBake(Bun::GlobalObject* globalObject, void* requestPtr)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -96,7 +96,7 @@ JSObject* JSBunRequest::cookies() const
     return m_cookies.get();
 }
 
-extern "C" void* Request__clone(void* internalZigRequestPointer, JSGlobalObject* globalObject);
+extern "C" void* Request__clone(void* internalRequestPointer, JSGlobalObject* globalObject);
 
 JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
 {
@@ -140,7 +140,7 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
     RELEASE_AND_RETURN(throwScope, clone);
 }
 
-extern "C" void Request__setCookiesOnRequestContext(void* internalZigRequestPointer, CookieMap* cookieMap);
+extern "C" void Request__setCookiesOnRequestContext(void* internalRequestPointer, CookieMap* cookieMap);
 
 void JSBunRequest::setCookies(JSObject* cookies)
 {
@@ -291,7 +291,7 @@ JSC_DEFINE_HOST_FUNCTION(jsJSBunRequestClone, (JSC::JSGlobalObject * globalObjec
     return JSValue::encode(clone);
 }
 
-Structure* createJSBunRequestStructure(JSC::VM& vm, Zig::GlobalObject* globalObject)
+Structure* createJSBunRequestStructure(JSC::VM& vm, Bun::GlobalObject* globalObject)
 {
     auto prototypeStructure = JSBunRequestPrototype::createStructure(vm, globalObject, globalObject->JSRequestPrototype());
     auto* prototype = JSBunRequestPrototype::create(vm, globalObject, prototypeStructure);

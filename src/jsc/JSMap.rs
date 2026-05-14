@@ -63,12 +63,12 @@ impl JSMap {
     ///
     /// Returns `None` if the value is not a Map.
     ///
-    /// Returns a raw `NonNull<JSMap>` (mirrors Zig's `?*JSMap`). The pointee is a
+    /// Returns a raw `NonNull<JSMap>`. The pointee is a
     /// GC-heap cell; callers must dereference unsafely at use-site and ensure the
     /// underlying `JSValue` is kept alive across GC.
     pub fn from_js(value: JSValue) -> Option<NonNull<JSMap>> {
-        // PORT NOTE: Zig used `jsTypeLoose() == .JSMap`; the Rust stub surface
-        // exposes `is_cell()` + `js_type()` (which together are equivalent).
+        // PORT NOTE: equivalent to `jsTypeLoose() == .JSMap`; the Rust stub
+        // surface exposes `is_cell()` + `js_type()` (which together are equivalent).
         if value.is_cell() && value.js_type() == crate::JSType::Map {
             // SAFETY: value is a Map cell; its encoded pointer is a valid,
             // non-null *JSMap on the GC heap.
@@ -77,5 +77,3 @@ impl JSMap {
         None
     }
 }
-
-// ported from: src/jsc/JSMap.zig

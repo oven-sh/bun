@@ -168,7 +168,7 @@ pub struct Symbol {
     pub has_been_assigned_to: bool,
 }
 
-// TODO(port): Zig asserts @sizeOf(Symbol) == 88 and @alignOf(Symbol) == @alignOf([]const u8).
+// TODO(port): a `size_of::<Symbol>() == 88` assertion was present originally.
 // Rust default repr reorders fields and Option<NamespaceAlias> niche may differ; verify in
 // Phase B (likely needs #[repr(C)] or manual packing if the size is load-bearing).
 // const _: () = assert!(core::mem::size_of::<Symbol>() == 88);
@@ -207,8 +207,7 @@ pub enum SlotNamespace {
     MangledProp,
 }
 
-// Zig: `pub const CountsArray = std.EnumArray(SlotNamespace, u32);` (nested decl).
-// Inherent associated types are nightly-only; expose as a free alias.
+// Inherent associated types are nightly-only; expose `CountsArray` as a free alias.
 pub type SlotNamespaceCountsArray = enum_map::EnumMap<SlotNamespace, u32>;
 
 impl Symbol {
@@ -253,7 +252,7 @@ impl Symbol {
 
     #[inline]
     pub fn has_link(&self) -> bool {
-        // Zig: `self.link.tag != .invalid`
+        // i.e. `self.link.tag != .invalid`
         self.link.get().is_valid()
     }
 }
@@ -347,8 +346,8 @@ pub enum Kind {
 }
 
 impl Kind {
-    // TODO(port): Zig std.json.stringify protocol — `writer.write(@tagName(self))` writes a
-    // JSON string value (with quotes). Verify the Rust JSON writer trait used.
+    // TODO(port): the JSON writer should write a JSON string value (with
+    // quotes). Verify the Rust JSON writer trait used.
     pub fn json_stringify<W: core::fmt::Write>(
         self,
         writer: &mut W,
@@ -530,9 +529,9 @@ impl Map {
     }
 
     // Returns a raw *mut Symbol because callers (merge/follow/assign_chunk_index/
-    // get_with_link) hold aliasing pointers into the NestedList and/or recurse through
-    // &mut self while holding the pointer. Mirrors Zig's `*const Map -> ?*Symbol`
-    // (interior mutability via Vec's raw `[*]T` ptr field).
+    // get_with_link) hold aliasing pointers into the NestedList and/or recurse
+    // through &mut self while holding the pointer. (Interior mutability via
+    // Vec's raw `[*]T` ptr field.)
     //
     // SOUNDNESS: the *mut is derived directly from `Vec.ptr: NonNull<T>` — a raw
     // pointer field whose provenance is independent of the `&self` borrow used to read
@@ -584,7 +583,6 @@ impl Map {
     }
 
     pub fn init(source_count: usize) -> Map {
-        // Zig: `arena.alloc([]Symbol, sourceCount)` (default_allocator) then NestedList.init.
         // Per PORTING.md §Allocators (non-arena path), use Vec → Vec.
         let mut v: Vec<List> = Vec::with_capacity(source_count);
         v.resize_with(source_count, List::default);
@@ -593,11 +591,11 @@ impl Map {
         }
     }
 
-    // PORT NOTE: Zig aliased the caller's stack `[1]List` slot directly; that's
+    // PORT NOTE: aliasing the caller's stack `[1]List` slot directly is
     // unsound in Rust (would dangle on return). Take ownership of `list` and
     // box it into a one-element NestedList instead.
-    // PERF(port): one extra allocation vs Zig — profile (single
-    // caller is the printer one-shot, cold).
+    // PERF(port): one extra allocation — profile (single caller is the printer
+    // one-shot, cold).
     pub fn init_with_one_list(list: List) -> Map {
         Self::init_list(NestedList::move_from_list(vec![list]))
     }
@@ -658,10 +656,10 @@ impl Map {
 
     /// Equivalent to followSymbols in esbuild.
     ///
-    /// PORT NOTE: Zig's body is naturally recursive (`follow(symbol.link)`).
+    /// PORT NOTE: this is naturally recursive (`follow(symbol.link)`).
     /// Reshaped to an iterative two-phase walk so the per-hop work is just two
     /// raw pointer adds and a load — no call frame, no `Option` unwrap, no
-    /// repeated tag/null guards. Semantics are identical to Zig's: every node
+    /// repeated tag/null guards. Semantics are identical: every node
     /// on the path from `ref_` to the union-find root has its `link` rewritten
     /// to the root (full path compression).
     pub fn follow(&self, ref_: Ref) -> Ref {
@@ -704,10 +702,10 @@ impl Map {
         }
 
         // Phase 2: path compression. Rewrite `link` on the entry node and every
-        // intermediate node to point directly at `root` (matches the Zig
+        // intermediate node to point directly at `root` (matches the
         // recursion's post-order `symbol.link = link` writes). The `!=` gate
-        // mirrors Zig's `if (!symbol.link.eql(link))` to avoid a redundant
-        // store when the chain was already length-1. `link` is `Cell<Ref>`, so
+        // avoids a redundant store when the chain was already length-1. `link`
+        // is `Cell<Ref>`, so
         // writes go through `&Symbol` safely.
         if !link.eql(root) {
             symbol.link.set(root);
@@ -715,8 +713,7 @@ impl Map {
                 let p = lookup(link);
                 let next = p.link.get();
                 // `next.eql(root)` ⇔ `p.link` already points at root —
-                // mirrors Zig's post-order `if (!symbol.link.eql(link))` gate
-                // and saves a redundant store on the last intermediate plus
+                // saves a redundant store on the last intermediate plus
                 // the otherwise-wasted lookup of `root` itself.
                 if next.eql(root) || !next.is_valid() {
                     break;
@@ -736,7 +733,6 @@ impl Symbol {
         Symbol::is_kind_hoisted(self.kind)
     }
 
-    // Zig: pub const isKindFunction = Symbol.Kind.isFunction; (etc.)
     // Rust cannot alias inherent methods; forward explicitly.
     #[inline]
     pub fn is_kind_function(kind: Kind) -> bool {
@@ -755,5 +751,3 @@ impl Symbol {
         kind.is_private()
     }
 }
-
-// ported from: src/js_parser/ast/Symbol.zig

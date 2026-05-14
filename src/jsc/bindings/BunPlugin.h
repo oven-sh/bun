@@ -9,7 +9,7 @@
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPluginClear);
 
-namespace Zig {
+namespace Bun {
 
 using namespace JSC;
 
@@ -101,9 +101,9 @@ public:
 
 class GlobalObject;
 
-} // namespace Zig
+} // namespace Bun
 
 namespace Bun {
-JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier, bool& wasModuleMock);
+JSC::JSValue runVirtualModule(Bun::GlobalObject*, BunString* specifier, bool& wasModuleMock);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

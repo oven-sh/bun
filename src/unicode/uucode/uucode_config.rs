@@ -3,9 +3,9 @@
 //! compute into its lookup tables. See this directory's CLAUDE.md.
 
 use super::config;
-// TODO(port): path reaches into vendored third-party `../uucode_lib/src/x/config.x.zig`.
+// TODO(port): path reaches into the vendored third-party `../uucode_lib/` package.
 // Phase B decides whether `uucode_lib` is its own crate or a module under `bun_unicode`;
-// the `src` segment is the Zig package root and likely collapses.
+// the `src` segment is the upstream package root and likely collapses.
 use crate::uucode_lib::src::x::config_x;
 
 use config_x::grapheme_break_no_control;
@@ -22,5 +22,3 @@ pub const TABLES: &[config::Table] = &[
         ],
     },
 ];
-
-// ported from: src/unicode/uucode/uucode_config.zig

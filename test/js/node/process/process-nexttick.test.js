@@ -2,6 +2,7 @@
 // mess with timers, producing unreliable results. You must manually test this
 // in Node.
 import { expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 const isBun = !!process.versions.bun;
 
 it("process.nextTick", async () => {
@@ -1035,4 +1036,30 @@ it("process.nextTick and AsyncLocalStorage.enterWith don't conflict", async () =
 
   expect(call1).toBe(true);
   expect(call2).toBe(true);
+});
+
+it("lazy process.nextTick initialization near stack limit does not crash", async () => {
+  // The process.nextTick lazy PropertyCallback runs JS which can throw a stack
+  // overflow when first evaluated near the stack limit. That must not trip the
+  // EXCEPTION_ASSERT inside JSObject::get().
+  const src = `
+    let remaining = 30;
+    function f() {
+      try { f(); } catch {}
+      if (remaining-- > 0) {
+        try { new Worker("data:text/javascript,").unref(); } catch {}
+      }
+    }
+    f();
+    console.log("ok");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("ok");
+  expect(proc.signalCode).toBeNull();
 });

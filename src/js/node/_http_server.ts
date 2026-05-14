@@ -602,7 +602,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         socket[kRequest] = http_req;
         // Like Node.js, only treat this as an upgrade when there is an
         // 'upgrade' listener; otherwise the request falls through to the
-        // regular 'request' event.
+        // regular 'request' event (and the response must be bound to the real
+        // socket for `res.socket`, `writeContinue`, `writeEarlyHints`, …).
         const is_upgrade = !!http_req.headers.upgrade && server.listenerCount("upgrade") > 0;
         if (!is_upgrade) {
           if (canUseInternalAssignSocket) {
@@ -623,7 +624,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_res.writeHead(503);
           http_res.end();
           socket.destroy();
-        } else if (is_upgrade && server.listenerCount("upgrade") > 0) {
+        } else if (is_upgrade) {
           // Hand the connection off to the 'upgrade' handler, matching the
           // CONNECT path: enable bidirectional streaming on the socket, tell
           // uWS to stop HTTP-parsing inbound bytes (so they surface through

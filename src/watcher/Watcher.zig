@@ -117,7 +117,12 @@ pub fn writeTraceEvents(this: *Watcher, events: []WatchEvent, changed_files: []?
 
 pub fn start(this: *Watcher) !void {
     bun.assert(this.thread == null);
-    this.thread = try std.Thread.spawn(.{}, threadMain, .{this});
+    const thread = try std.Thread.spawn(.{}, threadMain, .{this});
+    // The thread self-destructs the Watcher and is never joined; detach
+    // now so its stack/handle are released when it exits. `this.thread`
+    // remains set purely as a "has start() been called" flag for deinit().
+    thread.detach();
+    this.thread = thread;
 }
 
 pub fn deinit(this: *Watcher, close_descriptors: bool) void {
@@ -131,7 +136,6 @@ pub fn deinit(this: *Watcher, close_descriptors: bool) void {
         // when the dev server was torn down immediately after creation
         // (e.g. listen failure). See #21017.
         this.mutex.lock();
-        defer this.mutex.unlock();
         this.close_descriptors = close_descriptors;
         this.running = false;
         // Wake the thread out of its blocking wait so it can observe
@@ -139,6 +143,10 @@ pub fn deinit(this: *Watcher, close_descriptors: bool) void {
         // Watcher) leak until the next filesystem event — which may never
         // come if nothing is being watched yet.
         this.platform.wake();
+        this.mutex.unlock();
+        // `this` may be freed by the watcher thread any time after this
+        // point — threadMain takes/releases the mutex as a barrier before
+        // `destroy(this)`, so it cannot proceed until the unlock above.
     } else {
         // start() was never called; no thread can be using `this`.
         this.platform.stop();
@@ -282,6 +290,13 @@ fn threadMain(this: *Watcher) !void {
 
     // Close trace file if open
     WatcherTrace.deinit();
+
+    // Barrier: `deinit()` holds `this.mutex` across its wake() call.
+    // Without this lock/unlock pair the thread could free `this` while
+    // deinit() is still between wake() and its own mutex.unlock(),
+    // leaving that unlock to operate on freed memory.
+    this.mutex.lock();
+    this.mutex.unlock();
 
     const allocator = this.allocator;
     allocator.destroy(this);

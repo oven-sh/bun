@@ -2068,8 +2068,12 @@ pub fn constructBunFile(
     const options = if (arguments.len >= 2) arguments[1] else null;
 
     if (path == .path) {
-        if (strings.hasPrefixComptime(path.path.slice(), "s3://")) {
+        const path_slice = path.path.slice();
+        if (strings.hasPrefixComptime(path_slice, "s3://")) {
             return try S3File.constructInternalJS(globalObject, path.path, options);
+        }
+        if (isHTTPURLPath(path_slice)) {
+            return globalObject.throwInvalidArguments("Bun.file() does not support HTTP URLs. Use fetch() instead.", .{});
         }
     }
     defer path.deinitAndUnprotect();
@@ -2107,6 +2111,11 @@ pub fn constructBunFile(
 
     var ptr = Blob.new(blob);
     return ptr.toJS(globalObject);
+}
+
+fn isHTTPURLPath(path: []const u8) bool {
+    return (path.len >= "http://".len and strings.eqlCaseInsensitiveASCII(path[0.."http://".len], "http://", true)) or
+        (path.len >= "https://".len and strings.eqlCaseInsensitiveASCII(path[0.."https://".len], "https://", true));
 }
 
 pub fn findOrCreateFileFromPath(path_or_fd: *jsc.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject, comptime check_s3: bool) Blob {

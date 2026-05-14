@@ -90,8 +90,8 @@ new!(pub BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: unsigned, "BUN_GC_RUNS_UNTIL_SKI
 /// Disables the GarbageCollectionController's repeating GC timer.
 new!(pub BUN_GC_TIMER_DISABLE: boolean, "BUN_GC_TIMER_DISABLE", { default: false });
 /// GarbageCollectionController fast-mode repeating timer interval in
-/// milliseconds. After 30 non-growing ticks the controller fires a Full GC
-/// and drops to a fixed 30s slow interval.
+/// milliseconds. After 30 non-growing ticks the controller fires up to 2
+/// Full GCs and then drops to a fixed 30s slow interval.
 new!(pub BUN_GC_TIMER_INTERVAL: unsigned, "BUN_GC_TIMER_INTERVAL", {});
 /// TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
 /// so we'll keep it for now.

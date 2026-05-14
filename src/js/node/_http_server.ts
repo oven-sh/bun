@@ -620,16 +620,20 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_res.writeHead(503);
           http_res.end();
           socket.destroy();
-        } else if (is_upgrade) {
+        } else if (is_upgrade && server.listenerCount("upgrade") > 0) {
+          // Hand the connection off to the 'upgrade' handler, matching the
+          // CONNECT path: enable bidirectional streaming on the socket, tell
+          // uWS to stop HTTP-parsing inbound bytes (so they surface through
+          // `ondata`), and stay alive until the socket closes.  Without this,
+          // `socket.write()` was a silent no-op because `handle.ondrain` was
+          // undefined and the response lifecycle tore the socket down before
+          // the peer could read the 101 handshake.  (ws/rsbuild/http-proxy.)
+          socket[kEnableStreaming](true);
+          socketHandle.markAsRawMode();
+          const { promise: upgradePromise, resolve: upgradeResolve } = $newPromiseCapability(Promise);
+          socket.once("close", upgradeResolve);
           server.emit("upgrade", http_req, socket, kEmptyBuffer);
-          if (!socket._httpMessage) {
-            if (canUseInternalAssignSocket) {
-              // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
-              assignSocketInternal(http_res, socket);
-            } else {
-              http_res.assignSocket(socket);
-            }
-          }
+          return upgradePromise;
         } else if (http_req.headers.expect !== undefined) {
           if (http_req.headers.expect === "100-continue") {
             if (server.listenerCount("checkContinue") > 0) {

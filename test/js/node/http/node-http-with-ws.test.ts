@@ -1,9 +1,14 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as options } from "harness";
+import { createHash } from "node:crypto";
+import http from "node:http";
 import https from "https";
-import type { AddressInfo } from "node:net";
+import { connect as netConnect, type AddressInfo } from "node:net";
 import tls from "tls";
 import { WebSocketServer } from "ws";
+
+// RFC 6455 GUID appended to Sec-WebSocket-Key before hashing.
+const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 test.concurrent("WebSocket upgrade should unref poll_ref from response", async () => {
   // Regression test for bug where poll_ref was not unref'd on WebSocket upgrade
@@ -102,4 +107,134 @@ test.concurrent("should not crash when closing sockets after upgrade", async () 
 
   await promise;
   expect().pass();
+});
+
+// Regression test for the rsbuild HMR failure reported in #30661 (duplicate of
+// #9882, #18945, #14522, #26924): `server.on("upgrade", (req, socket) =>
+// socket.write(response))` was a silent no-op because the upgrade socket was
+// not handed off to userland. The 101 handshake never left the server, the
+// browser's WebSocket attempt timed out, and rsbuild surfaced that as an HMR
+// error. Any `ws`-based stack (vite, webpack-dev-server, http-proxy, socket.io)
+// hits the same path.
+test.concurrent("server.on('upgrade') hands the raw socket off to userland", async () => {
+  await using server = http.createServer((_req, res) => {
+    res.writeHead(200);
+    res.end("not upgrade");
+  });
+
+  const serverReceived: Buffer[] = [];
+  const { promise: serverGotData, resolve: resolveServerData } = Promise.withResolvers<void>();
+  const { promise: serverClosed, resolve: resolveServerClosed } = Promise.withResolvers<void>();
+
+  server.on("upgrade", (req, socket) => {
+    const key = req.headers["sec-websocket-key"] as string;
+    const accept = createHash("sha1")
+      .update(key + WS_GUID)
+      .digest("base64");
+    socket.write(
+      "HTTP/1.1 101 Switching Protocols\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+    );
+    socket.on("data", chunk => {
+      serverReceived.push(chunk);
+      resolveServerData();
+    });
+    socket.on("close", () => resolveServerClosed());
+  });
+
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address() as AddressInfo;
+
+  const client = netConnect(port, "127.0.0.1");
+  const handshakeBuf: Buffer[] = [];
+  const { promise: handshakeDone, resolve: resolveHandshake } = Promise.withResolvers<string>();
+  client.on("data", chunk => {
+    handshakeBuf.push(chunk);
+    const joined = Buffer.concat(handshakeBuf).toString("utf8");
+    if (joined.includes("\r\n\r\n")) resolveHandshake(joined);
+  });
+  client.write(
+    "GET /hmr HTTP/1.1\r\n" +
+      `Host: 127.0.0.1:${port}\r\n` +
+      "Upgrade: websocket\r\n" +
+      "Connection: Upgrade\r\n" +
+      "Sec-WebSocket-Version: 13\r\n" +
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+  );
+
+  const handshake = await handshakeDone;
+  expect(handshake).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
+  expect(handshake).toContain("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
+  // Only one HTTP status line — the response lifecycle must not sneak a 200 OK
+  // onto the wire after the handshake.
+  expect(handshake.split("HTTP/1.1").length - 1).toBe(1);
+
+  // Post-upgrade bytes from the client must reach the server's `data` listener
+  // (uWS would otherwise keep parsing the socket as HTTP and drop the payload).
+  client.write(Buffer.from([0x81, 0x83, 0x00, 0x00, 0x00, 0x00, 0x66, 0x6f, 0x6f]));
+  await serverGotData;
+  expect(Buffer.concat(serverReceived)).toEqual(Buffer.from([0x81, 0x83, 0x00, 0x00, 0x00, 0x00, 0x66, 0x6f, 0x6f]));
+
+  client.end();
+  await serverClosed;
+});
+
+test.concurrent("server.on('upgrade') works over TLS (https)", async () => {
+  await using server = https.createServer(options, (_req, res) => {
+    res.writeHead(200);
+    res.end("not upgrade");
+  });
+
+  const serverReceived: Buffer[] = [];
+  const { promise: serverGotData, resolve: resolveServerData } = Promise.withResolvers<void>();
+
+  server.on("upgrade", (req, socket) => {
+    const key = req.headers["sec-websocket-key"] as string;
+    const accept = createHash("sha1")
+      .update(key + WS_GUID)
+      .digest("base64");
+    socket.write(
+      "HTTP/1.1 101 Switching Protocols\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+    );
+    socket.on("data", chunk => {
+      serverReceived.push(chunk);
+      resolveServerData();
+    });
+  });
+
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address() as AddressInfo;
+
+  const client = tls.connect({ port, host: "127.0.0.1", ca: options.cert, rejectUnauthorized: false });
+  const handshakeBuf: Buffer[] = [];
+  const { promise: handshakeDone, resolve: resolveHandshake } = Promise.withResolvers<string>();
+  client.on("data", chunk => {
+    handshakeBuf.push(chunk);
+    const joined = Buffer.concat(handshakeBuf).toString("utf8");
+    if (joined.includes("\r\n\r\n")) resolveHandshake(joined);
+  });
+  await new Promise<void>(r => client.on("secureConnect", r));
+  client.write(
+    "GET /hmr HTTP/1.1\r\n" +
+      `Host: 127.0.0.1:${port}\r\n` +
+      "Upgrade: websocket\r\n" +
+      "Connection: Upgrade\r\n" +
+      "Sec-WebSocket-Version: 13\r\n" +
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+  );
+
+  const handshake = await handshakeDone;
+  expect(handshake).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
+  expect(handshake).toContain("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
+
+  client.write(Buffer.from([0x81, 0x83, 0x00, 0x00, 0x00, 0x00, 0x66, 0x6f, 0x6f]));
+  await serverGotData;
+  expect(Buffer.concat(serverReceived)).toEqual(Buffer.from([0x81, 0x83, 0x00, 0x00, 0x00, 0x00, 0x66, 0x6f, 0x6f]));
+
+  client.end();
 });

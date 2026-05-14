@@ -320,7 +320,6 @@ pub fn runTasks(
                             extract_ctx,
                             callbacks,
                             install_peer,
-                            null,
                         );
 
                         continue;
@@ -636,7 +635,7 @@ pub fn runTasks(
                 const dependency_list = dependency_list_entry.value_ptr.*;
                 dependency_list_entry.value_ptr.* = .{};
 
-                try manager.processDependencyList(dependency_list, Ctx, extract_ctx, callbacks, install_peer, null);
+                try manager.processDependencyList(dependency_list, Ctx, extract_ctx, callbacks, install_peer);
 
                 if (log_level.showProgress()) {
                     if (!has_updated_this_run) {
@@ -767,8 +766,8 @@ pub fn runTasks(
                         }
                     }
 
-                    for (dependency_list.items) |dep| {
-                        switch (dep) {
+                    for (dependency_list.items.items) |dep| {
+                        switch (dep.context) {
                             .dependency, .root_dependency => |id| {
                                 var version = &manager.lockfile.buffers.dependencies.items[id].version;
                                 switch (version.tag) {
@@ -786,11 +785,11 @@ pub fn runTasks(
                                     // will still have the original.
                                     else => {},
                                 }
-                                try manager.processDependencyListItem(dep, &any_root, install_peer, package_id);
+                                try manager.processDependencyListItem(dep.context, &any_root, install_peer, package_id);
                             },
                             else => {
                                 // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
-                                dependency_list_entry.value_ptr.append(manager.allocator, dep) catch unreachable;
+                                dependency_list_entry.value_ptr.append(manager.allocator, null, dep.context) catch unreachable;
                             },
                         }
                     }
@@ -801,7 +800,7 @@ pub fn runTasks(
                     const dependency_list = dependency_list_entry.value_ptr.*;
                     dependency_list_entry.value_ptr.* = .{};
 
-                    try manager.processDependencyList(dependency_list, void, {}, {}, install_peer, null);
+                    try manager.processDependencyList(dependency_list, void, {}, {}, install_peer);
                 }
 
                 manager.setPreinstallState(package_id, manager.lockfile, .done);
@@ -842,8 +841,8 @@ pub fn runTasks(
                             var waiters = removed.value;
                             defer waiters.deinit(manager.allocator);
                             const pkg_resolutions = manager.lockfile.packages.items(.resolution);
-                            for (waiters.items) |waiter| {
-                                const dep_id = switch (waiter) {
+                            for (waiters.items.items) |waiter| {
+                                const dep_id = switch (waiter.context) {
                                     .dependency => |id| id,
                                     else => continue,
                                 };
@@ -940,7 +939,7 @@ pub fn runTasks(
                     const dependency_list = dependency_list_entry.value_ptr.*;
                     dependency_list_entry.value_ptr.* = .{};
 
-                    try manager.processDependencyList(dependency_list, Ctx, extract_ctx, callbacks, install_peer, null);
+                    try manager.processDependencyList(dependency_list, Ctx, extract_ctx, callbacks, install_peer);
                 }
 
                 if (log_level.showProgress()) {
@@ -1031,17 +1030,17 @@ pub fn runTasks(
                         }
                     }
 
-                    for (dependency_list.items) |dep| {
-                        switch (dep) {
+                    for (dependency_list.items.items) |dep| {
+                        switch (dep.context) {
                             .dependency, .root_dependency => |id| {
                                 var repo = &manager.lockfile.buffers.dependencies.items[id].version.value.git;
                                 repo.resolved = pkg.resolution.value.git.resolved;
                                 repo.package_name = pkg.name;
-                                try manager.processDependencyListItem(dep, &any_root, install_peer, package_id);
+                                try manager.processDependencyListItem(dep.context, &any_root, install_peer, package_id);
                             },
                             else => {
                                 // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
-                                dependency_list_entry.value_ptr.append(manager.allocator, dep) catch unreachable;
+                                dependency_list_entry.value_ptr.append(manager.allocator, null, dep.context) catch unreachable;
                             },
                         }
                     }

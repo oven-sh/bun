@@ -381,6 +381,10 @@ pub fn installWithManager(
                             const dependency = manager.lockfile.buffers.dependencies.items[dependency_i];
                             if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
                                 manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;
+                                // TODO: the flat scan here cannot determine the owning package,
+                                // so scoped overrides are not re-evaluated on override-change.
+                                // An owner-aware graph traversal is needed to pass the correct
+                                // parent_package_id instead of null.
                                 manager.enqueueDependencyWithMain(
                                     @truncate(dependency_i),
                                     &dependency,
@@ -535,7 +539,7 @@ pub fn installWithManager(
                     pub fn isDone(closure: *@This()) bool {
                         var this = closure.manager;
                         if (comptime check_peers)
-                            this.processPeerDependencyList() catch |err| {
+                            this.processPeerDependencyList(null) catch |err| {
                                 closure.err = err;
                                 return true;
                             };
@@ -613,7 +617,7 @@ pub fn installWithManager(
         // queue iteratively here — entering the event loop (`waitForPeers`)
         // with zero pending I/O would block forever.
         while (manager.peer_dependencies.readableLength() > 0) {
-            try manager.processPeerDependencyList();
+            try manager.processPeerDependencyList(null);
             manager.drainDependencyList();
         }
 

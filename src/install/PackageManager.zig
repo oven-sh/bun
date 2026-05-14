@@ -1134,7 +1134,28 @@ pub var root_package_json_path: [:0]const u8 = "";
 const default_max_simultaneous_requests_for_bun_install = 64;
 const default_max_simultaneous_requests_for_bun_install_for_proxies = 64;
 
-pub const TaskCallbackList = std.ArrayListUnmanaged(TaskCallbackContext);
+/// A callback item that carries its parent context through the task queue.
+///
+/// Callbacks initially enqueued from `enqueueDependencyWithMain` receive `null`
+/// as `parent_package_id` because dependency resolution with the correct parent
+/// context already occurred in the primary path (`doFlushDependencyQueue`).
+/// Callback re-processing is idempotent for already-resolved dependencies.
+pub const TaskCallbackWithOwner = struct {
+    parent_package_id: ?PackageID,
+    context: TaskCallbackContext,
+};
+
+pub const TaskCallbackList = struct {
+    items: std.ArrayListUnmanaged(TaskCallbackWithOwner) = .{},
+
+    pub fn append(list: *TaskCallbackList, allocator: std.mem.Allocator, parent_package_id: ?PackageID, context: TaskCallbackContext) !void {
+        try list.items.append(allocator, .{ .parent_package_id = parent_package_id, .context = context });
+    }
+
+    pub fn deinit(list: *TaskCallbackList, allocator: std.mem.Allocator) void {
+        list.items.deinit(allocator);
+    }
+};
 const TaskDependencyQueue = std.HashMapUnmanaged(Task.Id, TaskCallbackList, IdentityContext(Task.Id), 80);
 
 const PreallocatedTaskStore = bun.HiveArray(Task, 64).Fallback;

@@ -286,6 +286,7 @@ pub fn processDependencyListItem(
 
 pub fn processPeerDependencyList(
     this: *PackageManager,
+    parent_package_id: ?PackageID,
 ) !void {
     while (this.peer_dependencies.readItem()) |peer_dependency_id| {
         const dependency = this.lockfile.buffers.dependencies.items[peer_dependency_id];
@@ -296,7 +297,7 @@ pub fn processPeerDependencyList(
             &dependency,
             resolution,
             true,
-            null,
+            parent_package_id,
         );
     }
 }
@@ -308,13 +309,12 @@ pub fn processDependencyList(
     ctx: Ctx,
     comptime callbacks: anytype,
     install_peer: bool,
-    parent_package_id: ?PackageID,
 ) !void {
-    if (dep_list.items.len > 0) {
+    if (dep_list.items.items.len > 0) {
         var dependency_list = dep_list;
         var any_root = false;
-        for (dependency_list.items) |item| {
-            try this.processDependencyListItem(item, &any_root, install_peer, parent_package_id);
+        for (dependency_list.items.items) |item| {
+            try this.processDependencyListItem(item.context, &any_root, install_peer, item.parent_package_id);
         }
 
         if (comptime @TypeOf(callbacks) != void and @TypeOf(callbacks.onResolve) != void) {

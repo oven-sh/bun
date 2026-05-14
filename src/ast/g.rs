@@ -103,7 +103,14 @@ impl Class {
                 return false;
             }
 
-            if property.kind == PropertyKind::Normal && f.contains(flags::Property::IsStatic) {
+            // `.AutoAccessor` lowers to a `.Normal` static private field whose
+            // initializer has the same class-definition-time evaluation semantics,
+            // so the initializer check must include it to avoid moving a class
+            // with `static accessor x = sideEffect()` past preceding statements.
+            if (property.kind == PropertyKind::Normal
+                || property.kind == PropertyKind::AutoAccessor)
+                && f.contains(flags::Property::IsStatic)
+            {
                 for val in [property.value, property.initializer].into_iter().flatten() {
                     match val.data {
                         ExprData::EArrow(..) | ExprData::EFunction(..) => {}

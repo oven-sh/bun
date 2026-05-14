@@ -267,6 +267,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect(T::TCloseBrace)?;
 
         let has_any_decorators = has_decorators || class_opts.ts_decorators.len() > 0;
+
+        // JSC doesn't parse `accessor` natively, so any class with auto-accessors must go
+        // through the standard-decorator lowering (WeakMap + getter/setter) regardless of
+        // mode. But mixing auto-accessors with legacy TS decorators would silently reroute
+        // those decorators through the standard-proposal runtime — reject that combination.
+        if has_auto_accessor && !p.options.features.standard_decorators && has_any_decorators {
+            p.log().add_error(
+                Some(p.source),
+                class_keyword.loc,
+                b"Cannot mix the `accessor` keyword with `experimentalDecorators: true` in the same class. Use standard decorators instead.",
+            );
+        }
+
         // `Expr: Copy` — safe arena-slice → owned Vec (one memcpy, no double-drop).
         let ts_decorators = ExprNodeList::from_arena_slice(class_opts.ts_decorators);
         Ok(G::Class {
@@ -278,8 +291,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             body_loc,
             properties: bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut()),
             has_decorators: has_any_decorators,
-            should_lower_standard_decorators: p.options.features.standard_decorators
-                && (has_any_decorators || has_auto_accessor),
+            should_lower_standard_decorators: has_auto_accessor
+                || (p.options.features.standard_decorators && has_any_decorators),
         })
     }
 

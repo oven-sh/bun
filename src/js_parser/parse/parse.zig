@@ -200,6 +200,15 @@ pub fn Parse(
             try p.lexer.expect(.t_close_brace);
 
             const has_any_decorators = has_decorators or class_opts.ts_decorators.len > 0;
+
+            // JSC doesn't parse `accessor` natively, so any class with auto-accessors must go
+            // through the standard-decorator lowering (WeakMap + getter/setter) regardless of
+            // mode. But mixing auto-accessors with legacy TS decorators would silently reroute
+            // those decorators through the standard-proposal runtime — reject that combination.
+            if (has_auto_accessor and !p.options.features.standard_decorators and has_any_decorators) {
+                try p.log.addError(p.source, class_keyword.loc, "Cannot mix the `accessor` keyword with `experimentalDecorators: true` in the same class. Use standard decorators instead.");
+            }
+
             return G.Class{
                 .class_name = name,
                 .extends = extends,
@@ -209,7 +218,7 @@ pub fn Parse(
                 .body_loc = body_loc,
                 .properties = properties.items,
                 .has_decorators = has_any_decorators,
-                .should_lower_standard_decorators = p.options.features.standard_decorators and (has_any_decorators or has_auto_accessor),
+                .should_lower_standard_decorators = has_auto_accessor or (p.options.features.standard_decorators and has_any_decorators),
             };
         }
 

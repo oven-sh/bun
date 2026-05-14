@@ -650,7 +650,13 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         JSC::JSValue stashedRequireMapEntry = JSC::jsUndefined();
         auto* requireMap = globalObject->requireMap();
         auto restoreStash = [&]() {
-            if (stashedVirtualEntry) {
+            // Re-check `hasVirtualModules()` — the map pointer can have been
+            // nulled out between our `take()` and the restore if user JS under
+            // `boundRequire()` called `Bun.plugin.clearAll()` (which deletes
+            // the map and sets the pointer to nullptr). If that happened, the
+            // prior entry is already gone from the user's perspective; we
+            // don't try to resurrect it.
+            if (stashedVirtualEntry && globalObject->onLoadPlugins.hasVirtualModules()) {
                 globalObject->onLoadPlugins.virtualModules->set(specifier, WTF::move(stashedVirtualEntry));
             }
             if (!stashedRequireMapEntry.isUndefined()) {
@@ -731,7 +737,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         // survives — the stash locals are about to go out of scope here.
         // `addModuleMock()` unconditionally `set()`s the new mock on the
         // success path, so this re-insert is a no-op there.
-        if (stashedVirtualEntry) {
+        //
+        // Same `hasVirtualModules()` re-check as `restoreStash()` — user JS
+        // run from `boundRequire()` above may have called
+        // `Bun.plugin.clearAll()` and nulled the map pointer.
+        if (stashedVirtualEntry && globalObject->onLoadPlugins.hasVirtualModules()) {
             globalObject->onLoadPlugins.virtualModules->set(specifier, WTF::move(stashedVirtualEntry));
         }
 

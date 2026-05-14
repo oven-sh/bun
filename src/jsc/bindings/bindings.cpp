@@ -2827,6 +2827,12 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
+void JSC__VM__collectAsyncFull(JSC::VM* vm)
+{
+    JSC::JSLockHolder lock(*vm);
+    vm->heap.collectAsync(JSC::CollectionScope::Full);
+}
+
 extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
 {
     JSC::JSLockHolder locker(vm);

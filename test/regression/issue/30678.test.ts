@@ -26,7 +26,7 @@
 // existing self-accept fallback on the next line.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -139,8 +139,16 @@ test("hmr client does not crash when config.refresh is missing", async () => {
         process.exit(12);
       }
 
-      // Give the async module graph one turn to unwind.
-      await new Promise(r => setTimeout(r, 500));
+      // Wait for either terminal state: main.tsx's body ran to completion
+      // (success: \`window.__authProvider\` is set) or the bootstrap reported
+      // an error (failure: \`errors\` non-empty). Polling for only the
+      // success signal would hang in the pre-fix regressed case where
+      // \`useAuth.tsx\` throws before \`main.tsx\` runs. The module graph is
+      // microtask-only, so this settles within a few ticks.
+      const deadline = Date.now() + 5000;
+      while (!window.__authProvider && errors.length === 0 && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 10));
+      }
 
       const offenders = errors.filter(s => /isLikelyComponentType/.test(s));
       if (offenders.length > 0) {
@@ -194,8 +202,12 @@ test("hmr client does not crash when config.refresh is missing", async () => {
 
     // Run the evaluator under Node — Bun's `happy-dom` `window.eval` is
     // undefined, which would make the test unable to evaluate the bundle.
+    // No Bun fallback: this branch exists only because Node's `window.eval`
+    // actually evaluates.
+    const node = nodeExe();
+    if (!node) throw new Error("node executable not found on PATH");
     await using client = Bun.spawn({
-      cmd: ["node", "client.mjs", `http://localhost:${port}/`],
+      cmd: [node, "client.mjs", `http://localhost:${port}/`],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -203,11 +215,9 @@ test("hmr client does not crash when config.refresh is missing", async () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([client.stdout.text(), client.stderr.text(), client.exited]);
 
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: expect.stringContaining("CLIENT_OK"),
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(stdout).toContain("CLIENT_OK");
+    expect(exitCode).toBe(0);
   } finally {
     server.kill();
     await server.exited;

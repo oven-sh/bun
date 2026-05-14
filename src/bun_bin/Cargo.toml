@@ -25,6 +25,7 @@ libc.workspace = true
 # global allocator, crash handler hooks).
 bun_alloc.workspace = true
 bun_core.workspace = true
+bun_simdutf_sys.workspace = true
 bun_sys.workspace = true
 bun_crash_handler.workspace = true
 bun_mimalloc_sys.workspace = true

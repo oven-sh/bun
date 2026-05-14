@@ -8,4 +8,8 @@
 # tonic gRPC server) with their own out-of-workspace `Cargo.toml`; `build/` is
 # the gitignored ninja output dir (codegen .rs, cargo target dir). None should
 # be reformatted by CI even if a future change makes them reachable.
-ignore = ["vendor", "test", "build"]
+#
+# Patterns use gitignore semantics: a bare name like `test` matches at *any*
+# depth (it would also exclude `src/runtime/cli/test/`). Anchor with a leading
+# `/` to scope each entry to the workspace root only.
+ignore = ["/vendor", "/test", "/build"]

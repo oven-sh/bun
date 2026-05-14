@@ -520,10 +520,21 @@ pub extern "C" fn message_with_type_and_level(
     if let Err(err) = message_with_type_and_level_(ctype, message_type, level, global, vals, len) {
         // A JS exception is now pending. Don't call into JS to forward the
         // stdio write error — the C++ handler's exception scopes would clear
-        // the user's throw. Just drop the recorded write error; the pipe
-        // stays broken, so the next console.* call will hit EPIPE again and
-        // retry the emit with no exception pending.
-        let _ = take_stdio_write_error(vm_console_mut(global), is_stderr);
+        // the user's throw. Just clear the recorded write error WITHOUT
+        // latching `emitted` (not via `take_stdio_write_error`, which would
+        // also set `emitted = true` and consume the once-per-stream slot
+        // without emitting); the pipe stays broken, so the next console.*
+        // call will hit EPIPE again and retry the emit with no exception
+        // pending.
+        {
+            let console = vm_console_mut(global);
+            let backing = if is_stderr {
+                &mut console.error_writer_backing
+            } else {
+                &mut console.writer_backing
+            };
+            let _ = backing.take_err();
+        }
 
         // The exception is already set on the VM (`JsError::Thrown`); for OOM
         // make sure something is pending. Mirrors `host_fn::void_from_js_error`.

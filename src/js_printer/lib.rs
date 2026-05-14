@@ -2870,6 +2870,7 @@ pub mod __gated_printer {
                 //
                 if record.tag == ImportRecordTag::Bun {
                     if record.kind == ImportKind::Dynamic {
+                        self.print_space_before_identifier();
                         self.print(b"Promise.resolve(globalThis.Bun)");
                         if wrap {
                             self.print(b")");
@@ -2877,6 +2878,7 @@ pub mod __gated_printer {
                         return;
                     } else if record.kind == ImportKind::Require || record.kind == ImportKind::Stmt
                     {
+                        self.print_space_before_identifier();
                         self.print(b"globalThis.Bun");
                         if wrap {
                             self.print(b")");

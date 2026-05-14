@@ -2511,3 +2511,42 @@ it("`bun add -g` ignores package.json/package-lock.json above the global dir", a
   // And the stray root's package.json must not have been mutated.
   expect(await file(join(home, "package.json")).text()).toBe(JSON.stringify({ name: "stray-root", version: "1.0.0" }));
 });
+
+// https://github.com/oven-sh/bun/issues/28247
+// Same walk-up problem, different symptom: if a parent directory's
+// package.json defines `workspaces` (plus any `workspace:*` deps), global
+// install used to hop onto it as the workspace root and then fail to
+// resolve those workspace-scoped deps:
+// "error: Workspace dependency \"…\" not found"
+// Global installs shouldn't participate in a parent workspace at all.
+it("`bun add -g` ignores a workspaces package.json above the global dir", async () => {
+  const home = tmpdirSync();
+  // parent package.json declares workspaces + a workspace-protocol dep
+  // that doesn't actually exist on disk — same shape as the reports.
+  await writeFile(
+    join(home, "package.json"),
+    JSON.stringify({
+      name: "stray-root",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+      dependencies: { "@scope/nonexistent": "workspace:*" },
+    }),
+  );
+  await mkdir(join(home, ".bun", "install", "global"), { recursive: true });
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "-g", "--registry=http://127.0.0.1:1/", "chalk"],
+    cwd: home,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: { ...env, BUN_INSTALL: join(home, ".bun") },
+  });
+
+  const err = await stderr.text();
+  expect(err).not.toContain("Workspace dependency");
+  expect(err).not.toContain("workspace:*");
+  expect(err).not.toContain("failed to resolve");
+  await stdout.text();
+  await exited;
+});

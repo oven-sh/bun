@@ -265,7 +265,7 @@ export function applyReplacements(src: string, length: number) {
         // use a property on @lazy as a temporary holder for the expression. only in debug!
         args = `($assert(__intrinsic__isPromise(__intrinsic__lazy.temp=${inner.result.slice(0, -1)}))),__intrinsic__peekPromiseStatus(__intrinsic__lazy.temp) === (__intrinsic__lazy.temp = undefined, ${status}))`;
       } else {
-        args = `(__intrinsic__peekPromiseStatus(${inner.result.slice(0, -1)}) === ${status})`;
+        args = `(__intrinsic__peekPromiseStatus${inner.result} === ${status})`;
       }
       return [slice.slice(0, match.index) + args, inner.rest, true];
     } else if (name === "bindgenFn") {

@@ -108,6 +108,11 @@ members = [
   "src/spawn_sys",
   "src/bunfig",
   "src/bun_bin",
+  "scripts/verify-baseline-static",
+  "packages/bun-native-plugin-rs",
+  "packages/bun-native-plugin-rs/bun-macro",
+  "bench/ffi/src",
+  "test/js/third_party/grpc-js/fixtures/tonic-server",
 ]
 # `vendor/lolhtml/c-api` is consumed as a path dependency of
 # `bun_lolhtml_sys` so its `#[no_mangle]` C API ends up inside
@@ -116,7 +121,15 @@ members = [
 # `[profile]` section is ignored and its heavy dev-dependencies (criterion,
 # html5ever) never enter `Cargo.lock`. The source is fetched into `vendor/`
 # by the build system (`scripts/build/deps/lolhtml.ts`) before cargo runs.
-exclude = ["vendor"]
+#
+# `packages/bun-build-mdx-rs` is also excluded: its `mdxjs` dep transitively
+# pins `swc_common`, which references `serde::__private` — a path that no
+# longer exists in serde 1.0.220+ (internals were split into `serde_core`).
+# The workspace requires serde ≥ 1.0.220 (via `serde_json`/`criterion`/etc.)
+# and `mdxjs` cannot move forward, so the unified lockfile cannot satisfy
+# both. Re-include when `mdxjs`/`swc_common` ship a serde-1.0.220-compatible
+# release.
+exclude = ["vendor", "packages/bun-build-mdx-rs"]
 
 [workspace.package]
 version = "0.0.0"

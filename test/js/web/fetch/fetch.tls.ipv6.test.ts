@@ -81,11 +81,7 @@ it.skipIf(!isIPv6())("fetch with IPv6 literal hostname verifies the certificate"
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // Asserting stdout/stderr before exitCode produces a more useful failure
   // message when the subprocess crashes unexpectedly.
   expect(stdout).toBe("native: Hello World\ncallback hostname: ::1\njs: Hello World\n");

@@ -2132,26 +2132,28 @@ mod posix_impl {
     // every Linux ABI. The Rust port uses `libc::statx`, which the `libc` crate
     // only exposes for glibc/Android (and musl behind the build-time
     // `musl_v1_2_3` cfg the cross-compile build never sets). The `linux_statx`
-    // shim below smooths that over: glibc/android re-export `libc`, musl gets a
-    // hand-rolled struct + raw-`syscall(SYS_statx, …)` wrapper. The kernel ABI
-    // (struct layout, `STATX_*` bits) is identical across libcs.
+    // shim below smooths that over: glibc re-exports `libc`; musl and Android
+    // (bionic only added the `statx()` libc wrapper at API 30, we link against
+    // 28) get a hand-rolled struct + raw-`syscall(SYS_statx, …)` wrapper. The
+    // kernel ABI (struct layout, `STATX_*` bits) is identical across libcs.
     // ──────────────────────────────────────────────────────────────────────
     #[cfg(any(target_os = "linux", target_os = "android"))]
     mod linux_statx {
-        // glibc / Android: libc 0.2.x exposes the full surface directly.
-        #[cfg(not(target_env = "musl"))]
+        // glibc: libc 0.2.x exposes the full surface directly.
+        #[cfg(all(target_os = "linux", not(target_env = "musl")))]
         pub(super) use libc::{
             AT_STATX_SYNC_AS_STAT, STATX_ATIME, STATX_BLOCKS, STATX_BTIME, STATX_CTIME, STATX_GID,
             STATX_INO, STATX_MODE, STATX_MTIME, STATX_NLINK, STATX_SIZE, STATX_TYPE, STATX_UID,
             statx,
         };
 
-        // musl: `libc` gates `statx`/`STATX_*` behind a build-script-detected
-        // `musl_v1_2_3` cfg that cross-compiles can't trigger. Define the
-        // kernel-ABI struct + bits ourselves and dispatch via raw `syscall`,
-        // matching what Zig's `std.os.linux.statx` does on every Linux ABI.
-        #[cfg(target_env = "musl")]
-        mod musl {
+        // musl/Android: `libc` gates `statx`/`STATX_*` behind a build-script
+        // `musl_v1_2_3` cfg that cross-compiles can't trigger, and bionic's
+        // `statx()` wrapper requires API 30. Define the kernel-ABI struct +
+        // bits ourselves and dispatch via raw `syscall`, matching what Zig's
+        // `std.os.linux.statx` does on every Linux ABI.
+        #[cfg(any(target_env = "musl", target_os = "android"))]
+        mod raw {
             #![allow(non_camel_case_types)]
             use core::ffi::{c_char, c_int, c_uint};
 
@@ -2227,8 +2229,8 @@ mod posix_impl {
                 unsafe { libc::syscall(libc::SYS_statx, dirfd, path, flags, mask, buf) as c_int }
             }
         }
-        #[cfg(target_env = "musl")]
-        pub(super) use musl::*;
+        #[cfg(any(target_env = "musl", target_os = "android"))]
+        pub(super) use raw::*;
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use linux_statx as lx;
@@ -3323,7 +3325,15 @@ mod posix_impl {
     pub fn memfd_create(name: &core::ffi::CStr, flags_: MemfdFlags) -> Maybe<Fd> {
         let mut flags: u32 = flags_ as u32;
         loop {
+            // bionic only added the `memfd_create()` libc wrapper at API 30; we
+            // link against API 28. Raw-syscall it (kernel has had it since 3.17).
             // SAFETY: `name` is a valid NUL-terminated C string.
+            #[cfg(target_os = "android")]
+            let rc = unsafe {
+                libc::syscall(libc::SYS_memfd_create, name.as_ptr(), flags) as core::ffi::c_int
+            };
+            // SAFETY: `name` is a valid NUL-terminated C string.
+            #[cfg(target_os = "linux")]
             let rc = unsafe { libc::memfd_create(name.as_ptr(), flags) };
             if rc < 0 {
                 let e = last_errno();

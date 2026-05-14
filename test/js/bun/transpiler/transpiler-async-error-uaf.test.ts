@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
 
 test("async transform() rejection with parse errors does not crash", async () => {
-  // When Bun.Transpiler().transform() runs on the thread pool, parse errors are
-  // recorded using an arena allocator that is destroyed before the promise is
-  // settled on the main thread. Converting those errors to JS previously read
-  // the freed arena memory. Run enough iterations that mimalloc decommits the
-  // arena's pages so the dangling read faults.
+  // When a failing Bun.Transpiler().transform() rejects, Log.to_js builds an
+  // AggregateError by allocating one BuildMessage JS cell per log entry. Those
+  // cells were previously collected in a heap Vec<JSValue>, so the first cell
+  // could be swept while allocating the second, leaving a zapped cell in the
+  // aggregate and tripping the StructureID assertion during GC. Run enough
+  // rejecting transforms that the allocation-triggered GC hits that window.
   let last: unknown;
   const pending: Promise<unknown>[] = [];
   for (let i = 0; i < 500; i++) {

@@ -2118,17 +2118,20 @@ impl LogJsc for bun_ast::Log {
     fn to_js(&self, global: &JSGlobalObject, message: &str) -> JsResult<JSValue> {
         let msgs = &self.msgs;
         // Spec: `@min(msgs.len, errors_stack.len)` — errors_stack is `[256]JSValue`.
-        let count = msgs.len().min(256);
+        // Must be a stack array so the conservative GC scan keeps the freshly
+        // allocated BuildMessage/ResolveMessage cells alive while we allocate
+        // the next one; a heap `Vec<JSValue>` would leave them unrooted.
+        let mut errors_stack = [JSValue::UNDEFINED; 256];
+        let count = msgs.len().min(errors_stack.len());
         match count {
             0 => Ok(JSValue::UNDEFINED),
             1 => msg_to_js(&msgs[0], global),
             _ => {
-                let mut errors_stack: Vec<JSValue> = Vec::with_capacity(count);
-                for msg in &msgs[0..count] {
-                    errors_stack.push(msg_to_js(msg, global)?);
+                for (i, msg) in msgs[0..count].iter().enumerate() {
+                    errors_stack[i] = msg_to_js(msg, global)?;
                 }
                 let out = bun_core::ZigString::init(message.as_bytes());
-                global.create_aggregate_error(&errors_stack, &out)
+                global.create_aggregate_error(&errors_stack[0..count], &out)
             }
         }
     }

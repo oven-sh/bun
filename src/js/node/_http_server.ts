@@ -1678,6 +1678,12 @@ ServerResponse.prototype.destroy = function (_err?: Error) {
   if (this.destroyed) return this;
   const handle = this[kHandle];
   this.destroyed = true;
+  // Mark _closed=true before emitting, so that the later socket-close
+  // path (NodeHTTPServerSocket.emit → callCloseCallback → onServerResponseClose
+  // → emitCloseNT) is gated out by emitCloseNT's `!self._closed` check. Without
+  // this, calling res.destroy() from outside the synchronous request handler
+  // (e.g. from a setTimeout) produces two 'close' events on the response.
+  this._closed = true;
   if (handle) {
     handle.abort();
   }

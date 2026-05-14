@@ -269,10 +269,7 @@ test("navigate({waitUntil:'domcontentloaded'}) on a fast page doesn't enqueue du
     `,
   );
   expect(stderr).toBe("");
-  expect(stdout.trim().split("\n")).toEqual([
-    "url=http://example/two title=mock-title",
-    "loading=false",
-  ]);
+  expect(stdout.trim().split("\n")).toEqual(["url=http://example/two title=mock-title", "loading=false"]);
   expect(exitCode).toBe(0);
 });
 

@@ -1295,8 +1295,8 @@ where
                 cp if cp == '~' as CodePoint => {
                     return self.add_unsupported_syntax_error("~ is not allowed in JSON");
                 }
-                // Note: `?`, `*`, `(` and `)` are deliberately NOT in this list.
-                // The JS lexer in JSON mode tokenizes them (TQuestion/TAsterisk/
+                // `?`, `*`, `(` and `)` deliberately do NOT raise. The JS
+                // lexer in JSON mode tokenizes them (TQuestion/TAsterisk/
                 // TOpenParen/TCloseParen) without erroring, which lets
                 // `JSONLikeParser::parse_expr`'s auto-quote fallback rescue an
                 // unquoted value that starts with one — e.g. a `Bun.build`
@@ -1304,6 +1304,25 @@ where
                 // with `*{...}` (`bake-codegen.ts`'s `OVERLAY_CSS`). Erroring
                 // here aborts `Lexer::init` before `parse_env_json` gets a
                 // chance to auto-quote.
+                //
+                // They get a dedicated arm (not the catch-all) because the spec
+                // arms (lexer.zig `'('`/`')'`/`'?'`/`'*'`) all `step()` past the
+                // char, while the catch-all leaves `code_point` on `contents[0]`.
+                // The auto-quote retry rebuilds the lexer (same state) and then
+                // calls `parse_string_literal_inner::<0>()`, whose leading
+                // `step()` must land on `contents[2]` so `contents[1]` is *not*
+                // inspected by the loop's `\n`/`\r`/`\\`/control arms — exactly
+                // as the spec lexer leaves it. Without the `step()` here,
+                // `"(\nrest"` truncates to `"("` and `"(\z"` triggers a spurious
+                // decode error, where the spec accepts both raw.
+                cp if cp == '?' as CodePoint
+                    || cp == '*' as CodePoint
+                    || cp == '(' as CodePoint
+                    || cp == ')' as CodePoint =>
+                {
+                    self.step();
+                    self.token = T::TSyntaxError;
+                }
                 cp if cp == '%' as CodePoint
                     || cp == '&' as CodePoint
                     || cp == '|' as CodePoint

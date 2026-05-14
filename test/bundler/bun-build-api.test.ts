@@ -74,25 +74,35 @@ describe("Bun.build", () => {
   // (treated as a string literal). The JSON lexer must not error eagerly on the
   // first character — a raw minified CSS string starts with `*{...}`, which
   // src/codegen/bake-codegen.ts passes verbatim as `OVERLAY_CSS`.
-  test("define values are auto-quoted when not valid JSON", async () => {
-    const dir = tempDirWithFiles("bun-build-define-auto-quote", {
-      "entry.ts": `declare const X: string; console.log(X);`,
-    });
-    for (const value of [
-      "*{box-sizing:border-box}.root{all:initial}",
-      "?foo",
-      "(parenthesized)",
-      ")close",
-      "abc{not json}",
-    ]) {
+  describe.each([
+    "*{box-sizing:border-box}.root{all:initial}",
+    "?foo",
+    "(parenthesized)",
+    ")close",
+    "abc{not json}",
+    // Leading-operator chars must `step()` before falling back to auto-quote so
+    // `parse_string_literal`'s leading `step()` lands past index 1 (matching the
+    // reference lexer). Otherwise a LF at index 1 truncates the value to `"("`.
+    "(\nrest",
+    "*\nrest",
+  ])("define value %j is auto-quoted when not valid JSON", value => {
+    test("emits a quoted string literal", async () => {
+      const dir = tempDirWithFiles("bun-build-define-auto-quote", {
+        "entry.ts": `declare const X: string; console.log(X);`,
+      });
       const result = await Bun.build({
         entrypoints: [join(dir, "entry.ts")],
         define: { X: value },
       });
       expect(result.success).toBe(true);
       const out = await result.outputs[0].text();
-      expect(out).toContain(JSON.stringify(value));
-    }
+      // The printer emits the define as a `"..."` string literal, or as a
+      // `` `...` `` template literal when the value contains a literal newline.
+      // Either way the full value — not a truncated prefix — must round-trip.
+      if (!out.includes("`" + value + "`")) {
+        expect(out).toContain(JSON.stringify(value));
+      }
+    });
   });
 
   // https://github.com/oven-sh/bun/issues/12818

@@ -3463,7 +3463,29 @@ pub mod serializer {
             // TODO(port): assert_no_uninitialized_padding once a typed accessor lands.
             let end_pos = stream.pos + bytes.len();
             if end_pos as u64 <= end_at {
-                bytes.copy_from_slice(&stream.buffer[stream.pos..stream.pos + bytes.len()]);
+                let src = &stream.buffer[stream.pos..stream.pos + bytes.len()];
+                if matches!(field, PackageField::Resolution) {
+                    // Validate the tag discriminant on the *raw stream bytes*
+                    // before they are copied into the typed column. `ResolutionTag`
+                    // is a `#[repr(u8)]` enum with non-contiguous discriminants
+                    // (0,1,2,4,8,16,32,64,72,80,100); copying an out-of-range byte
+                    // into `ResolutionType.tag` and then reading it would be
+                    // immediate UB, and a `matches!` over all 11 typed variants is
+                    // provably exhaustive and would be optimized away. Check the
+                    // raw u8 here. Layout: `ResolutionType` is `#[repr(C)]
+                    // { tag: Tag, _padding: [u8; 7], value: ... }`, so the
+                    // discriminant is the first byte of each element.
+                    let stride = mem::size_of::<ResolutionType<SemverIntType>>();
+                    debug_assert!(stride != 0 && src.len() % stride == 0);
+                    for raw in src.chunks_exact(stride) {
+                        if !matches!(raw[0], 0 | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 72 | 80 | 100) {
+                            return Err(bun_core::err!(
+                                "Lockfile validation failed: invalid resolution tag"
+                            ));
+                        }
+                    }
+                }
+                bytes.copy_from_slice(src);
                 stream.pos = end_pos;
                 if matches!(field, PackageField::Meta) {
                     // need to check if any values were created from an older version of bun
@@ -3474,31 +3496,6 @@ pub mod serializer {
                         if meta.needs_update() {
                             *needs_update = true;
                             break;
-                        }
-                    }
-                }
-                if matches!(field, PackageField::Resolution) {
-                    let resolutions: &mut [ResolutionType<SemverIntType>] = unsafe {
-                        sliced.items_mut::<"resolution", ResolutionType<SemverIntType>>()
-                    };
-                    for resolution in resolutions {
-                        if !matches!(
-                            resolution.tag,
-                            ResolutionTag::Uninitialized
-                                | ResolutionTag::Root
-                                | ResolutionTag::Npm
-                                | ResolutionTag::Folder
-                                | ResolutionTag::LocalTarball
-                                | ResolutionTag::Github
-                                | ResolutionTag::Git
-                                | ResolutionTag::Symlink
-                                | ResolutionTag::Workspace
-                                | ResolutionTag::RemoteTarball
-                                | ResolutionTag::SingleFileModule
-                        ) {
-                            return Err(bun_core::err!(
-                                "Lockfile validation failed: invalid resolution tag"
-                            ));
                         }
                     }
                 }

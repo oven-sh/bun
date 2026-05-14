@@ -666,12 +666,22 @@ pub mod random {
                 return Ok(JSValue::UNDEFINED);
             }
 
+            // `vec![0u8; size]` aborts the process on OOM. The 3-arg overload
+            // `randomFill(buf, offset, cb)` defaults `size` to the full
+            // remaining buffer length, which can exceed allocator limits for a
+            // multi-GiB ArrayBuffer — surface that as a JS error instead.
+            let mut scratch = Vec::new();
+            if scratch.try_reserve_exact(size).is_err() {
+                return Err(global.throw_out_of_memory());
+            }
+            scratch.resize(size, 0);
+
             let ctx = JobCtx {
                 value: buf_value,
                 bytes: core::ptr::null_mut(),
                 offset,
                 length: size,
-                scratch: Some(vec![0u8; size]),
+                scratch: Some(scratch),
                 result: (),
             };
             crypto_job_init_and_schedule(global, callback, ctx)?;

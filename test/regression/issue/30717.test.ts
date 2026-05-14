@@ -107,7 +107,10 @@ test.skipIf(isWindows || !cc)(
       console.error("run stderr:", runStderr);
     }
 
-    // Before the fix: `ERR_DLOPEN_FAILED: /$bunfs/root/libhello-XXXX.so: cannot open shared object file`.
+    // Before the fix stderr was `ERR_DLOPEN_FAILED` on the raw
+    // `/$bunfs/root/libhello-<hash>.so` path (libc `dlopen(2)` can't see
+    // the bunfs virtual FS); after the fix the lib is extracted to a real
+    // tmpfile under `RealFS.tmpdirPath()` and loaded cleanly.
     expect(runStderr).not.toContain("ERR_DLOPEN_FAILED");
     expect(runStdout).toContain("loaded: 42");
     expect(runExit).toBe(0);

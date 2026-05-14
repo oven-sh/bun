@@ -405,8 +405,8 @@ impl ArrayBuffer {
 
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> ArrayBuffer {
         ArrayBuffer {
-            len: u32::try_from(bytes.len()).expect("int cast") as usize,
-            byte_len: u32::try_from(bytes.len()).expect("int cast") as usize,
+            len: bytes.len(),
+            byte_len: bytes.len(),
             typed_array_type,
             ptr: bytes.as_mut_ptr(),
             ..Default::default()
@@ -427,8 +427,8 @@ impl ArrayBuffer {
         // this is an FFI hand-off, not a leak.
         let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
         ArrayBuffer {
-            len: u32::try_from(len).expect("int cast") as usize,
-            byte_len: u32::try_from(len).expect("int cast") as usize,
+            len,
+            byte_len: len,
             typed_array_type,
             ptr,
             ..Default::default()

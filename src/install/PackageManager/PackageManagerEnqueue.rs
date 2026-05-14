@@ -794,6 +794,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         dependency::version::Tag::DistTag
         | dependency::version::Tag::Folder
         | dependency::version::Tag::Npm => {
+            // Bound the manifest-cache retry to a single trip. Without this,
+            // a stale-but-cache-control-fresh manifest paired with a missing
+            // resolution can ping-pong between cache-load and resolve forever.
+            let mut did_retry_from_manifests = false;
             'retry_from_manifests_ptr: loop {
                 let mut resolve_result_ = get_or_put_resolved_package(
                     this,
@@ -1148,8 +1152,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         }
 
                                         // Was it recent enough to just load it without the network call?
-                                        if this.options.enable.manifest_cache_control() && !expired
+                                        if this.options.enable.manifest_cache_control()
+                                            && !expired
+                                            && !did_retry_from_manifests
                                         {
+                                            did_retry_from_manifests = true;
                                             let _ = this.network_dedupe_map.remove(&task_id);
                                             continue 'retry_from_manifests_ptr;
                                         }
@@ -2072,11 +2079,13 @@ fn get_or_put_resolved_package_with_find_result(
     // it when *every* candidate is an exact-pinned same-major sibling
     // (`uses-a-dep-1..10`). For deferred peers, suppress the satisfies-
     // fallback so only an exact `eql(find_result)` can bind here; everything
-    // else falls through to the `is_peer && !install_peer` defer below and is
-    // resolved deterministically by phase 2's descending-index scan in
-    // `get_or_put_resolved_package`. `*` is left alone — it expresses no
-    // version preference, and the "peer *" hoisting test depends on it
-    // deduping to whatever sibling pin exists rather than the manifest floor.
+    // else falls through to the `is_peer && !install_peer` defer below.
+    // Phase 2 (`install_peer == true`) then resolves the deferred peer via
+    // the normal `find_best_version` path, with dedup happening in
+    // `Tree::hoist_dependency` where tree-walk order is fixed.
+    // `*` is left alone. It expresses no version preference, and the
+    // "peer *" hoisting test depends on it deduping to whatever sibling pin
+    // exists rather than the manifest floor.
     let suppress_peer_satisfies = behavior.is_peer()
         && !install_peer
         && !(version.tag == dependency::version::Tag::Npm && version.npm().version.is_star());
@@ -2248,110 +2257,13 @@ fn get_or_put_resolved_package(
     success_fn: SuccessFn,
 ) -> Result<Option<ResolvedPackageResult>, bun_core::Error> {
     // TODO(port): narrow error set
-    if install_peer && behavior.is_peer() {
-        if let Some(index) = this.lockfile.package_index.get(&name_hash) {
-            let resolutions = this.lockfile.packages.items_resolution();
-            match index {
-                PackageIndexEntry::Id(existing_id) => {
-                    let existing_id = *existing_id;
-                    if (existing_id as usize) < resolutions.len() {
-                        let existing_resolution = resolutions[existing_id as usize];
-                        if resolution_satisfies_dependency(this, &existing_resolution, version) {
-                            success_fn(this, dependency_id, existing_id);
-                            return Ok(Some(ResolvedPackageResult {
-                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: *this.lockfile.packages.get(existing_id as usize),
-                                ..Default::default()
-                            }));
-                        }
-
-                        let res_tag = resolutions[existing_id as usize].tag;
-                        let ver_tag = version.tag;
-                        if (res_tag == ResolutionTag::Npm
-                            && ver_tag == dependency::version::Tag::Npm)
-                            || (res_tag == ResolutionTag::Git
-                                && ver_tag == dependency::version::Tag::Git)
-                            || (res_tag == ResolutionTag::Github
-                                && ver_tag == dependency::version::Tag::Github)
-                        {
-                            let existing_package = this.lockfile.packages.get(existing_id as usize);
-                            this.log_mut().add_warning_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "incorrect peer dependency \"{}@{}\"",
-                                    existing_package
-                                        .name
-                                        .fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                                    existing_package.resolution.fmt(
-                                        this.lockfile.buffers.string_bytes.as_slice(),
-                                        bun_fmt::PathSep::Auto
-                                    ),
-                                ),
-                            );
-                            success_fn(this, dependency_id, existing_id);
-                            return Ok(Some(ResolvedPackageResult {
-                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: *this.lockfile.packages.get(existing_id as usize),
-                                ..Default::default()
-                            }));
-                        }
-                    }
-                }
-                PackageIndexEntry::Ids(list) => {
-                    for &existing_id in list.iter() {
-                        if (existing_id as usize) < resolutions.len() {
-                            let existing_resolution = resolutions[existing_id as usize];
-                            if resolution_satisfies_dependency(this, &existing_resolution, version)
-                            {
-                                success_fn(this, dependency_id, existing_id);
-                                return Ok(Some(ResolvedPackageResult {
-                                    package: *this.lockfile.packages.get(existing_id as usize),
-                                    ..Default::default()
-                                }));
-                            }
-                        }
-                    }
-
-                    if (list[0] as usize) < resolutions.len() {
-                        let res_tag = resolutions[list[0] as usize].tag;
-                        let ver_tag = version.tag;
-                        if (res_tag == ResolutionTag::Npm
-                            && ver_tag == dependency::version::Tag::Npm)
-                            || (res_tag == ResolutionTag::Git
-                                && ver_tag == dependency::version::Tag::Git)
-                            || (res_tag == ResolutionTag::Github
-                                && ver_tag == dependency::version::Tag::Github)
-                        {
-                            let existing_package_id = list[0];
-                            let existing_package =
-                                this.lockfile.packages.get(existing_package_id as usize);
-                            this.log_mut().add_warning_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "incorrect peer dependency \"{}@{}\"",
-                                    existing_package
-                                        .name
-                                        .fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                                    existing_package.resolution.fmt(
-                                        this.lockfile.buffers.string_bytes.as_slice(),
-                                        bun_fmt::PathSep::Auto
-                                    ),
-                                ),
-                            );
-                            success_fn(this, dependency_id, list[0]);
-                            return Ok(Some(ResolvedPackageResult {
-                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: *this.lockfile.packages.get(existing_package_id as usize),
-                                ..Default::default()
-                            }));
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // The order-dependent peer-dep early-match used to live here. It scanned
+    // `lockfile.package_index` and bound peers to whichever already-resolved
+    // version of the same name appeared first, which made install lockfiles
+    // non-deterministic under varying network/thread-pool completion order.
+    // Peers now flow through the normal `find_best_version` path. Dedup and
+    // the "incorrect peer dependency" warning live in `Tree::hoist_dependency`
+    // where placement is deterministic.
 
     if (resolution as usize) < this.lockfile.packages.len() {
         return Ok(Some(ResolvedPackageResult {
@@ -2797,31 +2709,6 @@ fn get_or_put_resolved_package(
 
         _ => Ok(None),
     }
-}
-
-fn resolution_satisfies_dependency(
-    this: &PackageManager,
-    resolution: &Resolution,
-    dependency: &dependency::Version,
-) -> bool {
-    let buf = this.lockfile.buffers.string_bytes.as_slice();
-    if resolution.tag == ResolutionTag::Npm && dependency.tag == dependency::version::Tag::Npm {
-        return dependency
-            .npm()
-            .version
-            .satisfies(resolution.npm().version, buf, buf);
-    }
-
-    if resolution.tag == ResolutionTag::Git && dependency.tag == dependency::version::Tag::Git {
-        return resolution.git().eql(dependency.git(), buf, buf);
-    }
-
-    if resolution.tag == ResolutionTag::Github && dependency.tag == dependency::version::Tag::Github
-    {
-        return resolution.github().eql(dependency.github(), buf, buf);
-    }
-
-    false
 }
 
 // ──────────────────────────────────────────────────────────────────────────

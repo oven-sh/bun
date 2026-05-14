@@ -1024,6 +1024,10 @@ pub fn transformSync(
         return globalThis.throwValue(try this.transpiler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
     }
 
+    if (parse_result.empty) {
+        return jsc.ZigString.Empty.toJS(globalThis);
+    }
+
     var buffer_writer = this.buffer_writer orelse brk: {
         var writer = JSPrinter.BufferWriter.init(arena.backingAllocator());
 

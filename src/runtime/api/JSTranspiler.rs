@@ -1550,6 +1550,10 @@ impl JSTranspiler {
             return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
         }
 
+        if parse_result.empty {
+            return Ok(JscZigString::EMPTY.to_js(global));
+        }
+
         let mut buffer_writer = self.buffer_writer.replace(None).unwrap_or_else(|| {
             let mut writer = JSPrinter::BufferWriter::init();
             bun_core::handle_oom(writer.buffer.grow_if_needed(code.len()));

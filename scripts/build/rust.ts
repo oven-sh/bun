@@ -752,7 +752,6 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // bootstrap a fresh checkout without pulling the whole `bun-rust` build.
   n.phony("rust-prereqs", [...inputs.vendorStamps, ...inputs.codegenInputs, ...inputs.codegenOrderOnly]);
 
-
   // Minimal env: just what `include!`/`option_env!` and toolchain pinning
   // need. Codegen rustflags (target-cpu, relocation-model, asan, lto, pgo)
   // are irrelevant to type-checking and would pull in `-Zbuild-std` /

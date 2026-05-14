@@ -1,12 +1,13 @@
 //! Instance of the development server. Attaches to an instance of `Bun.serve`,
-//! controlling bundler, routing, and hot module reloading.
+//! controlling bundler, routing, and hot module reloading. All work is held
+//! in-memory, with hardcore data-oriented-design.
 //!
 //! Reprocessing files that did not change is banned; by having perfect
 //! incremental tracking over the project, editing a file's contents (asides
 //! adjusting imports) must always rebundle only that one file.
 //!
-//! All work is held in-memory, using manually managed data-oriented design.
-//! For questions about DevServer, please consult the delusional @paperclover
+//! Theorized and designed over 2 years out of pure love —— paper clover <3
+//! For questions about its core philosophy, email `devserver@paperclover.net`
 
 #![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` mirrors Zig `bun.FeatureFlags.bake_debugging_features`; not yet a declared cargo feature.
 

@@ -120,9 +120,10 @@ impl FilePoll {
     }
 
     pub fn unregister(&mut self, _loop: &mut WindowsLoop) -> bool {
-        // TODO(@paperclover): This cast is extremely suspicious. At best, `fd` is
+        // TODO: This cast is extremely suspicious. At best, `fd` is
         // the wrong type (it should be a uv handle), at worst this code is a
         // crash due to invalid memory access.
+        //
         // Zig does `@ptrFromInt(@as(u64, @bitCast(this.fd)))`; `Fd` is
         // `#[repr(transparent)]` over `u64` on Windows, so the bitcast is just
         // the public backing field.

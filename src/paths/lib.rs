@@ -837,7 +837,7 @@ pub mod fs {
         /// Canonical location. For `file` namespace, usually absolute with native seps.
         pub text: &'a [u8],
         pub namespace: &'a [u8],
-        // TODO(@paperclover): investigate removing or simplifying this property (it's 64 bytes)
+        // TODO: investigate removing or simplifying this property (it's 64 bytes)
         pub name: PathName<'a>,
         pub is_disabled: bool,
         pub is_symlink: bool,

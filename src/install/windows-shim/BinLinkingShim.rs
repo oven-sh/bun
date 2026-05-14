@@ -226,7 +226,7 @@ mod host {
             // TODO(port): narrow error set (Zig inferred empty error set here)
             Ok(Shebang {
                 launcher,
-                // TODO(@paperclover): what if this is invalid utf8?
+                // TODO: what if this is invalid utf8?
                 utf16_len: u32::try_from(simdutf::length::utf16::from::utf8(launcher))
                     .expect("int cast"),
                 is_node_or_bun,

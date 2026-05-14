@@ -69,7 +69,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     debug_assert!(chunks.len() > 0);
 
     {
-        // TODO(@paperclover/bake): instead of running a renamer per chunk, run it per file
+        // TODO: instead of running a renamer per chunk, run it per file
         debug!(" START {} renamers", chunks.len());
         // PORT NOTE: Zig `defer debug(...)` is moved to end-of-scope explicitly below.
         let ctx = GenerateChunkCtx {

@@ -3117,11 +3117,9 @@ mod v8_api {
 mod v8_api {
     use core::ffi::c_void;
     // MSVC name mangling is different than it is on unix.
-    // To make this easier to deal with, I have provided a script to generate the list of functions.
+    // To make this easier to deal with, this script generates the list of functions.
     //
     // dumpbin .\build\CMakeFiles\bun-debug.dir\src\bun.js\bindings\v8\*.cpp.obj /symbols | where-object { $_.Contains(' node::') -or $_.Contains(' v8::') } | foreach-object { (($_ -split "\|")[1] -split " ")[1] } | ForEach-Object { "extern fn @`"${_}`"() *anyopaque;" }
-    //
-    // Bug @paperclover if you get stuck here
     //
     // MSVC-mangled symbol names contain `?@$` and are not valid Rust identifiers, so each entry
     // is exposed under a Rust-safe alias via `#[link_name = "..."]`. The list is purely for DCE

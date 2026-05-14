@@ -4519,7 +4519,7 @@ pub mod __phase_a_body {
 
         #[inline]
         pub fn use_package_manager(&self) -> bool {
-            // TODO(@paperclover): make this configurable. the rationale for disabling
+            // TODO: make this configurable. the rationale for disabling
             // auto-install in standalone mode is that such executable must either:
             //
             // - bundle the dependency itself. dynamic `require`/`import` could be

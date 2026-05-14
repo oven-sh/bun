@@ -8112,9 +8112,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 user_hooks: Default::default(),
             });
 
-            // TODO(paperclover): fix the renamer bug. this bug
-            // theoretically affects all usages of temp refs, but i cannot
-            // find another example of it breaking (like with `using`)
+            // TODO: fix the renamer bug. this bug theoretically affects all
+            // usages of temp refs, but i cannot find another example of it
+            // breaking (like with `using`)
             self.declared_symbols
                 .append(DeclaredSymbol {
                     is_top_level: true,

@@ -426,17 +426,28 @@ unsafe extern "C" {
     fn Bun__ConsoleObject__onStdioWriteError(global: &JSGlobalObject, fd: i32, err: JSValue);
 }
 
-fn maybe_emit_stdio_write_error(
-    global: &JSGlobalObject,
-    fd: i32,
-    backing: &mut Output::QuietWriterAdapter,
-    emitted: &Cell<bool>,
-) {
-    let Some(write_err) = backing.take_err() else {
-        return;
+/// Take and clear the sticky write error from the stream's writer backing
+/// and decide whether it should be surfaced on `process.stdout`/`stderr`.
+/// Returns the raw errno to emit, or `None` if there's nothing to do.
+/// Also latches `*_write_error_emitted` so we only emit once per stream.
+///
+/// All `ConsoleObject` state is read/mutated here and released before the
+/// caller invokes the re-entrant FFI — see `emit_stdio_write_error` for why.
+fn take_stdio_write_error(console: &mut ConsoleObject, is_stderr: bool) -> Option<i32> {
+    let (backing, emitted) = if is_stderr {
+        (
+            &mut console.error_writer_backing,
+            &console.stderr_write_error_emitted,
+        )
+    } else {
+        (
+            &mut console.writer_backing,
+            &console.stdout_write_error_emitted,
+        )
     };
+    let write_err = backing.take_err()?;
     if emitted.get() {
-        return;
+        return None;
     }
     // EAGAIN/EWOULDBLOCK is a transient "would block" condition that can
     // occur if fd 1/2 is non-blocking and the pipe buffer is momentarily
@@ -445,9 +456,26 @@ fn maybe_emit_stdio_write_error(
     // here too — the next console.* call will either succeed (buffer
     // drained) or hit the real EPIPE once the reader actually closes.
     if write_err == bun_sys::E::EAGAIN as i32 {
-        return;
+        return None;
     }
+    // Latch before calling into JS so a re-entrant console.* from inside
+    // the user's 'error' listener (or stream construction) can't recurse.
+    emitted.set(true);
+    Some(write_err)
+}
 
+/// Forward a console write error to `process.stdout`/`stderr` via
+/// `stream.destroy(err)` so user `'error'` listeners fire.
+///
+/// Takes only an `i32` errno — deliberately **no** borrows from
+/// `ConsoleObject`. `Bun__ConsoleObject__onStdioWriteError` runs arbitrary JS
+/// synchronously (lazy `process.stdout` getter, `listenerCount`, `once` which
+/// fires `'newListener'`, `destroy` → `_destroy`), any of which may re-enter
+/// `message_with_type_and_level` and call `vm_console_mut` again. Holding a
+/// `&mut`/`&` into `ConsoleObject` across that boundary would violate
+/// `vm_console_mut`'s documented single-borrow invariant (Stacked Borrows
+/// protector on function-argument references outlives last-use).
+fn emit_stdio_write_error(global: &JSGlobalObject, fd: i32, write_err: i32) {
     // `write_err` is the raw errno from `write()`. Wrap as a
     // `bun_sys::Error` with `syscall = write` so the JS error matches
     // what Node.js would surface from `process.stdout.write()`.
@@ -460,14 +488,9 @@ fn maybe_emit_stdio_write_error(
     let js_err = sys_err.to_js(global);
     if global.has_exception() {
         // Constructing the error instance threw (e.g. OOM in string
-        // allocation). Leave `emitted` unset so a subsequent failed
-        // write can retry.
+        // allocation). `emitted` is already latched; nothing more we can do.
         return;
     }
-    // Mark emitted before calling into JS so a re-entrant console.* from
-    // inside the user's 'error' listener (or stream construction) can't
-    // recurse back here.
-    emitted.set(true);
     // SAFETY: C++ side reads the VM's process object and calls
     // `.destroy(err)` on the appropriate stream; `js_err` is rooted on
     // the stack for the duration of the call.
@@ -500,13 +523,7 @@ pub extern "C" fn message_with_type_and_level(
         // the user's throw. Just drop the recorded write error; the pipe
         // stays broken, so the next console.* call will hit EPIPE again and
         // retry the emit with no exception pending.
-        let console = vm_console_mut(global);
-        let backing = if is_stderr {
-            &mut console.error_writer_backing
-        } else {
-            &mut console.writer_backing
-        };
-        let _ = backing.take_err();
+        let _ = take_stdio_write_error(vm_console_mut(global), is_stderr);
 
         // The exception is already set on the VM (`JsError::Thrown`); for OOM
         // make sure something is pending. Mirrors `host_fn::void_from_js_error`.
@@ -517,19 +534,12 @@ pub extern "C" fn message_with_type_and_level(
         return;
     }
 
-    let console = vm_console_mut(global);
-    let (backing, emitted) = if is_stderr {
-        (
-            &mut console.error_writer_backing,
-            &console.stderr_write_error_emitted,
-        )
-    } else {
-        (
-            &mut console.writer_backing,
-            &console.stdout_write_error_emitted,
-        )
-    };
-    maybe_emit_stdio_write_error(global, if is_stderr { 2 } else { 1 }, backing, emitted);
+    // Extract errno and latch `emitted` with the `&mut ConsoleObject` borrow
+    // scoped to this expression — nothing derived from it is live across the
+    // re-entrant FFI call below (see `emit_stdio_write_error` doc).
+    if let Some(errno) = take_stdio_write_error(vm_console_mut(global), is_stderr) {
+        emit_stdio_write_error(global, if is_stderr { 2 } else { 1 }, errno);
+    }
 }
 
 fn message_with_type_and_level_(

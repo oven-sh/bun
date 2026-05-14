@@ -180,20 +180,22 @@ ${body}
 
 // --- waitUntil: 'domcontentloaded' -----------------------------------------
 
-test.concurrent("navigate({waitUntil:'domcontentloaded'}) settles on Page.lifecycleEvent when load never fires", async () => {
-  // The mock emits frameNavigated + lifecycleEvent(DOMContentLoaded) for
-  // the main frame, and NEVER loadEventFired. Without waitUntil:
-  // 'domcontentloaded', navigate() would hang until the 30s timeout.
-  // With it, the lifecycleEvent handler matches frameId=="F" &&
-  // loaderId=="L" && name=="DOMContentLoaded", chains a document.title
-  // fetch, and resolves.
-  //
-  // The mock ALSO sends a subframe DCL (frameId "SUB") BEFORE the main
-  // frame commits — the frameId gate must drop it. A naive name-only
-  // match would settle on the subframe event.
-  const { stdout, stderr, exitCode } = await run(
-    "dcl-only",
-    `
+test.concurrent(
+  "navigate({waitUntil:'domcontentloaded'}) settles on Page.lifecycleEvent when load never fires",
+  async () => {
+    // The mock emits frameNavigated + lifecycleEvent(DOMContentLoaded) for
+    // the main frame, and NEVER loadEventFired. Without waitUntil:
+    // 'domcontentloaded', navigate() would hang until the 30s timeout.
+    // With it, the lifecycleEvent handler matches frameId=="F" &&
+    // loaderId=="L" && name=="DOMContentLoaded", chains a document.title
+    // fetch, and resolves.
+    //
+    // The mock ALSO sends a subframe DCL (frameId "SUB") BEFORE the main
+    // frame commits — the frameId gate must drop it. A naive name-only
+    // match would settle on the subframe event.
+    const { stdout, stderr, exitCode } = await run(
+      "dcl-only",
+      `
     await view.navigate("http://example/dcl", { waitUntil: "domcontentloaded", timeout: 10_000 });
     // PageTitle chain ran — Runtime.evaluate("document.title") → "mock-title".
     console.log("title=" + view.title);
@@ -201,11 +203,12 @@ test.concurrent("navigate({waitUntil:'domcontentloaded'}) settles on Page.lifecy
     console.log("loading=" + view.loading);
     console.log("url=" + view.url);
     `,
-  );
-  expect(stderr).toBe("");
-  expect(stdout.trim().split("\n")).toEqual(["title=mock-title", "loading=true", "url=http://example/dcl"]);
-  expect(exitCode).toBe(0);
-});
+    );
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n")).toEqual(["title=mock-title", "loading=true", "url=http://example/dcl"]);
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("navigate() default waitUntil:'load' settles on Page.loadEventFired", async () => {
   // Backward compat: no options → waitUntil:'load' → loadEventFired
@@ -243,21 +246,23 @@ test.concurrent("reload({waitUntil:'domcontentloaded'}) settles on lifecycleEven
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("navigate({waitUntil:'domcontentloaded'}) on a fast page doesn't enqueue duplicate title fetches", async () => {
-  // "load" mock emits DCL + load + loadEventFired all before the
-  // first PageTitle response arrives. Without the m_navTitleChained
-  // flag set by chainTitle(), each of the three would enqueue its
-  // own PageTitle — and a duplicate response can settle the NEXT
-  // navigate's promise early. With the flag, only the first trigger
-  // chains; the rest see m_navTitleChained and drop.
-  //
-  // Two back-to-back DCL navigates: if duplicate PageTitle from
-  // nav1 leaked and settled nav2, nav2 would resolve with
-  // view.url == nav1's url (nav2's frameNavigated hadn't arrived
-  // yet at the time of the stale settle).
-  const { stdout, stderr, exitCode } = await run(
-    "load",
-    `
+test.concurrent(
+  "navigate({waitUntil:'domcontentloaded'}) on a fast page doesn't enqueue duplicate title fetches",
+  async () => {
+    // "load" mock emits DCL + load + loadEventFired all before the
+    // first PageTitle response arrives. Without the m_navTitleChained
+    // flag set by chainTitle(), each of the three would enqueue its
+    // own PageTitle — and a duplicate response can settle the NEXT
+    // navigate's promise early. With the flag, only the first trigger
+    // chains; the rest see m_navTitleChained and drop.
+    //
+    // Two back-to-back DCL navigates: if duplicate PageTitle from
+    // nav1 leaked and settled nav2, nav2 would resolve with
+    // view.url == nav1's url (nav2's frameNavigated hadn't arrived
+    // yet at the time of the stale settle).
+    const { stdout, stderr, exitCode } = await run(
+      "load",
+      `
     await view.navigate("http://example/one", { waitUntil: "domcontentloaded" });
     await view.navigate("http://example/two", { waitUntil: "domcontentloaded" });
     // Each navigate committed — url reflects the LAST one. A leaked
@@ -268,27 +273,30 @@ test.concurrent("navigate({waitUntil:'domcontentloaded'}) on a fast page doesn't
     // so m_loading flipped even though we settled on DCL.
     console.log("loading=" + view.loading);
     `,
-  );
-  expect(stderr).toBe("");
-  expect(stdout.trim().split("\n")).toEqual(["url=http://example/two title=mock-title", "loading=false"]);
-  expect(exitCode).toBe(0);
-});
+    );
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n")).toEqual(["url=http://example/two title=mock-title", "loading=false"]);
+    expect(exitCode).toBe(0);
+  },
+);
 
-test.concurrent("stale loadEventFired from a prior 'domcontentloaded' navigate does not settle the next one", async () => {
-  // Regression: navigate(url1, {waitUntil:'domcontentloaded'}) settles
-  // before url1's window `load` fires. A second navigate() can then
-  // start, and url1's trailing lifecycleEvent(load)+loadEventFired
-  // arrive while nav2 is pending. Without the m_loaderId clear in
-  // beginChromeNavigation(), those stale events pass the gate (the
-  // old loaderId is still cached) and chainTitle() settles nav2's
-  // promise before its own document committed.
-  //
-  // The mock's "stale-load" arm emits exactly that: nav1 → DCL only;
-  // nav2 → stale lifecycleEvent(load,L1) + loadEventFired, then
-  // nothing for nav2. With the fix, nav2 stays pending.
-  const { stdout, stderr, exitCode } = await run(
-    "stale-load",
-    `
+test.concurrent(
+  "stale loadEventFired from a prior 'domcontentloaded' navigate does not settle the next one",
+  async () => {
+    // Regression: navigate(url1, {waitUntil:'domcontentloaded'}) settles
+    // before url1's window `load` fires. A second navigate() can then
+    // start, and url1's trailing lifecycleEvent(load)+loadEventFired
+    // arrive while nav2 is pending. Without the m_loaderId clear in
+    // beginChromeNavigation(), those stale events pass the gate (the
+    // old loaderId is still cached) and chainTitle() settles nav2's
+    // promise before its own document committed.
+    //
+    // The mock's "stale-load" arm emits exactly that: nav1 → DCL only;
+    // nav2 → stale lifecycleEvent(load,L1) + loadEventFired, then
+    // nothing for nav2. With the fix, nav2 stays pending.
+    const { stdout, stderr, exitCode } = await run(
+      "stale-load",
+      `
     await view.navigate("http://example/one", { waitUntil: "domcontentloaded" });
     // nav1 settled on DCL; its load hasn't fired. nav2 starts and
     // clears m_loaderId. The mock then sends nav1's trailing load
@@ -306,11 +314,12 @@ test.concurrent("stale loadEventFired from a prior 'domcontentloaded' navigate d
     // check (m_loaderId empty). Close the view to reject nav2 so the
     // process exits; the test only cares it was still pending.
     `,
-  );
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("nav2=pending url=http://example/one loading=true");
-  expect(exitCode).toBe(0);
-});
+    );
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("nav2=pending url=http://example/one loading=true");
+    expect(exitCode).toBe(0);
+  },
+);
 
 // --- timeout ---------------------------------------------------------------
 

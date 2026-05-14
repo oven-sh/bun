@@ -1965,7 +1965,7 @@ impl PendingMatcher {
 
         promise_value.then(
             global_this,
-            Box::into_raw(pending),
+            bun_core::heap::into_raw(pending),
             Bun__Expect__PendingMatcher__onResolve,
             Bun__Expect__PendingMatcher__onReject,
         );
@@ -1979,11 +1979,11 @@ impl PendingMatcher {
         if ctx.is_empty_or_undefined_or_null() {
             return Ok(JSValue::UNDEFINED);
         }
-        // SAFETY: `ctx` was produced by `Box::into_raw` in `create()` and is
+        // SAFETY: `ctx` was produced by `heap::into_raw` in `create()` and is
         // consumed exactly once here (onResolve and onReject are mutually
         // exclusive for a given promise settlement).
         let mut this =
-            unsafe { Box::from_raw(ctx.as_ptr_address() as *mut PendingMatcher) };
+            unsafe { bun_core::heap::take(ctx.as_ptr_address() as *mut PendingMatcher) };
         this.settle(global_this);
         // `Box` drop releases all `Strong` refs and the srcloc string.
         Ok(JSValue::UNDEFINED)

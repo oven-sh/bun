@@ -197,6 +197,13 @@ BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     WTF::String str = value.toWTFString(globalObject);
     if (str.isNull()) [[unlikely]] {
+        // Callers treat Dead as "exception pending". In rare cases (rope
+        // resolution OOM edge paths) toWTFString can yield a null String
+        // without setting vm.exception(); throw OOM so the invariant holds.
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (!scope.exception())
+            throwOutOfMemoryError(globalObject, scope);
         return { BunStringTag::Dead };
     }
     if (str.length() == 0) [[unlikely]] {

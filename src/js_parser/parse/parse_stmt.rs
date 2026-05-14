@@ -1656,13 +1656,41 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if Self::IS_TYPESCRIPT_ENABLED {
                 if let Some(ts_stmt) = js_lexer::TypescriptStmtKeyword::from_bytes(name) {
-                    // Hand the cold TS-keyword statement forms (`type`/`interface`/`namespace`/
-                    // `module`/`abstract`/`global`/`declare`) to an out-of-line helper so the
-                    // common `SExpr` fall-through keeps a small stack frame.
-                    if let Some(stmt) =
-                        Self::parse_stmt_fallthrough_ts_keyword(p, opts, loc, ts_stmt)?
+                    // The ambient `interface`/`declare` forms are only valid when the
+                    // expression we just parsed is the bare identifier itself. If a
+                    // suffix (call/member/index/assign) was consumed, `declare()` /
+                    // `declare.foo()` / etc. must stay as a regular expression
+                    // statement — not be mis-interpreted as an ambient declaration
+                    // that swallows the following statement. `type`/`namespace`/
+                    // `module`/`abstract`/`global` don't care because they have
+                    // their own token-lookahead guards that already reject suffix
+                    // cases (the lexer is at a non-identifier token after a call).
+                    //
+                    // Decorators are only valid on classes though, so
+                    // `@dec declare();` / `@dec declare.foo();` must still error
+                    // instead of silently dropping the decorator — `t_at` admitted
+                    // `declare` expecting `@dec declare class Foo {}`.
+                    let expr_is_bare_identifier = matches!(&expr.data, js_ast::ExprData::EIdentifier(_));
+                    let suffix_gate = match ts_stmt {
+                        js_lexer::TypescriptStmtKeyword::TsStmtInterface
+                        | js_lexer::TypescriptStmtKeyword::TsStmtDeclare => expr_is_bare_identifier,
+                        _ => true,
+                    };
+                    if !suffix_gate
+                        && matches!(ts_stmt, js_lexer::TypescriptStmtKeyword::TsStmtDeclare)
+                        && opts.ts_decorators.is_some()
                     {
-                        return Ok(stmt);
+                        p.lexer.expected(T::TClass)?;
+                    }
+                    if suffix_gate {
+                        // Hand the cold TS-keyword statement forms (`type`/`interface`/`namespace`/
+                        // `module`/`abstract`/`global`/`declare`) to an out-of-line helper so the
+                        // common `SExpr` fall-through keeps a small stack frame.
+                        if let Some(stmt) =
+                            Self::parse_stmt_fallthrough_ts_keyword(p, opts, loc, ts_stmt)?
+                        {
+                            return Ok(stmt);
+                        }
                     }
                 }
             }
@@ -1718,13 +1746,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_lexer::TypescriptStmtKeyword::TsStmtInterface => {
                 // "interface Foo {}"
-                let mut stmt_opts = ParseStatementOptions {
-                    is_module_scope: opts.is_module_scope,
-                    ..Default::default()
-                };
+                //
+                // Only treat this as an ambient interface if we actually parsed just
+                // the bare identifier "interface" (checked by the caller). If
+                // `parse_expr_or_let_stmt` consumed a suffix (`interface()`,
+                // `interface.x`, etc.) this branch is skipped and we fall through to
+                // emit a normal expression statement. Also require no newline before
+                // the next token and that the next token is an identifier (the name
+                // we're about to skip over).
+                if !p.lexer.has_newline_before && p.lexer.token == T::TIdentifier {
+                    let mut stmt_opts = ParseStatementOptions {
+                        is_module_scope: opts.is_module_scope,
+                        ..Default::default()
+                    };
 
-                p.skip_type_script_interface_stmt(&mut stmt_opts)?;
-                return Ok(Some(p.s(S::TypeScript {}, loc)));
+                    p.skip_type_script_interface_stmt(&mut stmt_opts)?;
+                    return Ok(Some(p.s(S::TypeScript {}, loc)));
+                }
             }
             js_lexer::TypescriptStmtKeyword::TsStmtAbstract => {
                 if p.lexer.token == T::TClass || opts.ts_decorators.is_some() {
@@ -1744,17 +1782,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             js_lexer::TypescriptStmtKeyword::TsStmtDeclare => {
-                opts.lexical_decl = LexicalDecl::AllowAll;
-                opts.is_typescript_declare = true;
-
-                // "@decorator declare class Foo {}"
-                // "@decorator declare abstract class Foo {}"
+                // Decorators only apply to classes. "@dec declare" was already
+                // admitted by `t_at` because it might be "@dec declare class".
+                // Reject here if what follows isn't a class/abstract — regardless
+                // of whether `declare` survived as a bare identifier or was
+                // swallowed by a call/member/assignment suffix (the caller already
+                // gates the non-decorator path on bare-identifier + no-newline).
                 if opts.ts_decorators.is_some()
                     && p.lexer.token != T::TClass
                     && !p.lexer.is_contextual_keyword(b"abstract")
                 {
                     p.lexer.expected(T::TClass)?;
                 }
+
+                // Only treat this as an ambient "declare" modifier if we actually
+                // parsed just the bare identifier "declare" with no suffix (the
+                // caller gates on `expr.data == .e_identifier`). `declare()`,
+                // `declare.foo()`, `declare[0]`, `declare = 42`, etc. all fall
+                // through to the normal expression statement path. Also require no
+                // newline before the next token: ASI splits `declare\nfoo()` into
+                // two statements so the `foo()` that follows is not part of an
+                // ambient declaration.
+                if p.lexer.has_newline_before {
+                    return Ok(None);
+                }
+
+                opts.lexical_decl = LexicalDecl::AllowAll;
+                opts.is_typescript_declare = true;
 
                 // "declare global { ... }"
                 if p.lexer.is_contextual_keyword(b"global") {

@@ -437,6 +437,16 @@ class PooledMySQLConnection {
     }
     return true;
   }
+  /// Bypasses `retry()`'s auth-code gate and forces a fresh handshake on
+  /// this slot. Only meaningful when `connectionInfo.password` is a
+  /// function — the re-evaluation is what lets a rotated IAM token / Vault
+  /// lease actually take effect on a slot whose previous handshake failed
+  /// with a non-retryable auth error.
+  forceRetry(): boolean {
+    if (this.adapter.closed) return false;
+    this.#doRetry();
+    return true;
+  }
 }
 
 class MySQLAdapter
@@ -903,25 +913,21 @@ class MySQLAdapter
       let storedError: Error | null = null;
 
       if (this.poolStarted) {
-        // we already started the pool
-        // lets check if some connection is available to retry
+        // We already started the pool. Enqueue the waiter BEFORE any call
+        // that could invoke `onClose` synchronously (e.g. `retry()` →
+        // `#startConnection` → `createConnection` if `password()` throws),
+        // otherwise `release()` would drain the queue before we got into
+        // it and the waiter would hang.
+        const queue = reserved ? this.reservedQueue : this.waitingQueue;
+        queue.push(onConnected);
+
+        // Now check if any existing slot can be retried.
         const pollSize = this.connections.length;
         for (let i = 0; i < pollSize; i++) {
           const connection = this.connections[i];
-          // we need a new connection and we have some connections that can retry
           if (connection.state === PooledConnectionState.closed) {
             if (connection.retry()) {
-              // lets wait for connection to be released
-              if (!retry_in_progress) {
-                // avoid adding to the queue twice, we wanna to retry every available pool connection
-                retry_in_progress = true;
-                if (reserved) {
-                  // we are not sure what connection will be available so we dont pre reserve
-                  this.reservedQueue.push(onConnected);
-                } else {
-                  this.waitingQueue.push(onConnected);
-                }
-              }
+              retry_in_progress = true;
             } else {
               // we have some error, lets grab it and fail if unable to start a connection
               storedError = connection.storedError;
@@ -932,37 +938,39 @@ class MySQLAdapter
           }
         }
         if (!all_closed && !retry_in_progress) {
-          // is possible to connect because we have some working connections, or we are just without network for some reason
-          // wait for connection to be released or fail
-          if (reserved) {
-            // we are not sure what connection will be available so we dont pre reserve
-            this.reservedQueue.push(onConnected);
-          } else {
-            this.waitingQueue.push(onConnected);
-          }
-          // Caller is waiting behind in-flight connections. If the pool is
-          // not at max yet, open another connection in parallel rather than
-          // letting everyone pile up behind the first socket.
+          // Some slots are pending or connected — caller will be served
+          // when they finish. If the pool isn't at max yet, open another
+          // connection in parallel rather than letting everyone pile up
+          // behind the first socket.
           this.#tryGrowPool();
         } else if (!retry_in_progress) {
-          // Every existing slot is closed and `retry()` refused all of them.
-          // That's the non-retryable class of errors (bad password, unknown
-          // auth method, TLS failures). Opening another connection with the
-          // SAME `connectionInfo` will hit the identical failure and just
-          // burn a TCP+auth round-trip per waiter, so fail fast — UNLESS
-          // the password is supplied as a function (dynamic credential,
-          // e.g. IAM token), in which case a fresh attempt may genuinely
-          // pick up a new secret.
-          const canDynamicallyAuth = typeof this.connectionInfo.password === "function";
-          const grown = canDynamicallyAuth ? this.#tryGrowPool() : null;
-          if (grown) {
-            if (reserved) {
-              this.reservedQueue.push(onConnected);
-            } else {
-              this.waitingQueue.push(onConnected);
+          // Every existing slot is closed and `retry()` refused all of
+          // them. That's the non-retryable class of errors (bad password,
+          // unknown auth method, TLS failures). Opening another connection
+          // with the SAME `connectionInfo` will hit the identical failure
+          // and just burn a TCP+auth round-trip per waiter — UNLESS the
+          // password is supplied as a function (dynamic credential, e.g.
+          // IAM token), in which case a fresh attempt may genuinely pick
+          // up a new secret.
+          if (typeof this.connectionInfo.password === "function") {
+            // Prefer growing the pool when there's room; otherwise reuse
+            // one of the existing closed slots via `forceRetry()` so the
+            // `max: 1` case (and any already-at-max pool) can still
+            // recover after credentials rotate.
+            if (!this.#tryGrowPool()) {
+              for (let i = 0; i < pollSize; i++) {
+                const c = this.connections[i];
+                if (c.state === PooledConnectionState.closed && c.forceRetry()) {
+                  break;
+                }
+              }
             }
           } else {
-            // impossible to connect or retry
+            // Impossible to retry with the current credentials. Pull the
+            // waiter back out of the queue and fail it directly with the
+            // cached error.
+            const idx = queue.indexOf(onConnected);
+            if (idx !== -1) queue.splice(idx, 1);
             onConnected(storedError ?? this.connectionClosedError(), null);
           }
         }

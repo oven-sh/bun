@@ -59,51 +59,121 @@ describe.each(["postgres", "mysql"] as Adapter[])("%s connection pool grows lazi
 // Uses a minimal fake server that answers the startup message with an
 // AuthenticationRequest carrying an unsupported auth code, which Bun rejects
 // as `ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD`.
-describe("postgres pool fast-fails on non-retryable auth errors (#30632)", () => {
-  test("repeated queries after an auth failure do not open more sockets", async () => {
-    let opened = 0;
-    const server = Bun.listen({
-      hostname: "127.0.0.1",
-      port: 0,
-      socket: {
-        open() {
-          opened++;
-        },
-        data(socket) {
-          // Any client write (the StartupMessage) gets an AuthenticationRequest
-          // with code 9 (SSPI), which Bun treats as an unsupported method.
-          // Format: 'R' (1 byte) + int32 length (4) + int32 auth code (4).
-          const buf = Buffer.alloc(9);
-          buf.write("R", 0);
-          buf.writeInt32BE(8, 1);
-          buf.writeInt32BE(9, 5);
-          socket.write(buf);
-        },
-        close() {},
-        error() {},
+//
+// Returns the listener + a counter of opened sockets. Every client write
+// (the StartupMessage) gets an AuthenticationRequest with auth code 9
+// (SSPI), which Bun treats as an unsupported method.
+// Wire: 'R' (1 byte) + int32 length (4) + int32 auth code (4).
+function makeUnsupportedAuthPgServer() {
+  let opened = 0;
+  const server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open() {
+        opened++;
       },
+      data(socket) {
+        const buf = Buffer.alloc(9);
+        buf.write("R", 0);
+        buf.writeInt32BE(8, 1);
+        buf.writeInt32BE(9, 5);
+        socket.write(buf);
+      },
+      close() {},
+      error() {},
+    },
+  });
+  return {
+    port: server.port,
+    [Symbol.dispose]() {
+      server.stop();
+    },
+    get opened() {
+      return opened;
+    },
+  };
+}
+
+describe("postgres pool fast-fails on non-retryable auth errors (#30632)", () => {
+  test("repeated queries with a static password do not open more sockets after an auth failure", async () => {
+    using server = makeUnsupportedAuthPgServer();
+    await using sql = new SQL({
+      adapter: "postgres",
+      host: "127.0.0.1",
+      port: server.port,
+      username: "x",
+      database: "x",
+      max: 20,
+      connectionTimeout: 1,
     });
 
-    try {
+    // Fire 5 sequential queries. The first one opens a connection, the
+    // auth handshake fails, and the remaining 4 should reject immediately
+    // with the cached auth error — no extra sockets.
+    for (let i = 0; i < 5; i++) {
+      await sql`SELECT ${i}`.catch(() => {});
+    }
+    expect(server.opened).toBe(1);
+  });
+
+  test("function password retries auth on each new query (rotatable credentials)", async () => {
+    // When `password` is a function, Bun re-invokes it every time it opens
+    // a new TCP connection, so a rotated IAM token / Vault lease can take
+    // effect. Verify that after an initial auth failure, subsequent
+    // queries actually try again — even at `max: 1` where there's no room
+    // to grow the pool, which forces reuse of the existing closed slot.
+    using server = makeUnsupportedAuthPgServer();
+    await using sql = new SQL({
+      adapter: "postgres",
+      host: "127.0.0.1",
+      port: server.port,
+      username: "x",
+      database: "x",
+      max: 1,
+      connectionTimeout: 1,
+      password: () => "rotating-token",
+    });
+
+    for (let i = 0; i < 3; i++) {
+      await sql`SELECT ${i}`.catch(() => {});
+    }
+    // 3 attempts, each dialing fresh TCP on the same slot.
+    expect(server.opened).toBe(3);
+  });
+
+  test(
+    "synchronous `password()` throw does not hang subsequent queries",
+    async () => {
+      // `createConnection` in postgres.ts catches a thrown `password()`
+      // and invokes `onClose` synchronously, so `release()` drains the
+      // queue on the same tick `connect()` enqueues onto it. If we push
+      // AFTER triggering the retry path, the waiter is lost and the query
+      // hangs forever. Guard against that: both queries must resolve with
+      // the thrown error. (The `bun:test` per-test timeout fails the test
+      // if anything hangs, which is the failure mode we're guarding.)
       await using sql = new SQL({
         adapter: "postgres",
         host: "127.0.0.1",
-        port: server.port,
+        port: 1,
         username: "x",
         database: "x",
-        max: 20,
-        connectionTimeout: 1,
+        max: 1,
+        password: () => {
+          throw new Error("boom");
+        },
       });
 
-      // Fire 5 sequential queries. The first one opens a connection, the
-      // auth handshake fails, and the remaining 4 should reject immediately
-      // with the cached auth error — no extra sockets.
-      for (let i = 0; i < 5; i++) {
-        await sql`SELECT ${i}`.catch(() => {});
+      for (let i = 0; i < 2; i++) {
+        let err: any;
+        try {
+          await sql`SELECT ${i}`;
+        } catch (e) {
+          err = e;
+        }
+        expect(err?.message).toBe("boom");
       }
-      expect(opened).toBe(1);
-    } finally {
-      server.stop();
-    }
-  });
+    },
+    5000,
+  );
 });

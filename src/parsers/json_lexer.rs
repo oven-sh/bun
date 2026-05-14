@@ -1295,19 +1295,24 @@ where
                 cp if cp == '~' as CodePoint => {
                     return self.add_unsupported_syntax_error("~ is not allowed in JSON");
                 }
-                cp if cp == '?' as CodePoint
-                    || cp == '%' as CodePoint
+                // Note: `?`, `*`, `(` and `)` are deliberately NOT in this list.
+                // The JS lexer in JSON mode tokenizes them (TQuestion/TAsterisk/
+                // TOpenParen/TCloseParen) without erroring, which lets
+                // `JSONLikeParser::parse_expr`'s auto-quote fallback rescue an
+                // unquoted value that starts with one — e.g. a `Bun.build`
+                // `define:` whose value is a raw minified CSS string starting
+                // with `*{...}` (`bake-codegen.ts`'s `OVERLAY_CSS`). Erroring
+                // here aborts `Lexer::init` before `parse_env_json` gets a
+                // chance to auto-quote.
+                cp if cp == '%' as CodePoint
                     || cp == '&' as CodePoint
                     || cp == '|' as CodePoint
                     || cp == '^' as CodePoint
                     || cp == '+' as CodePoint
-                    || cp == '*' as CodePoint
                     || cp == '=' as CodePoint
                     || cp == '<' as CodePoint
                     || cp == '>' as CodePoint
                     || cp == '!' as CodePoint
-                    || cp == '(' as CodePoint
-                    || cp == ')' as CodePoint
                     || cp == '`' as CodePoint =>
                 {
                     return self.add_unsupported_syntax_error("Operators are not allowed in JSON");

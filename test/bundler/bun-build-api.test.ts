@@ -70,6 +70,31 @@ describe("Bun.build", () => {
     throw new Error("should have thrown");
   });
 
+  // A `define:` value that isn't valid JSON or a JS identifier is auto-quoted
+  // (treated as a string literal). The JSON lexer must not error eagerly on the
+  // first character — a raw minified CSS string starts with `*{...}`, which
+  // src/codegen/bake-codegen.ts passes verbatim as `OVERLAY_CSS`.
+  test("define values are auto-quoted when not valid JSON", async () => {
+    const dir = tempDirWithFiles("bun-build-define-auto-quote", {
+      "entry.ts": `declare const X: string; console.log(X);`,
+    });
+    for (const value of [
+      "*{box-sizing:border-box}.root{all:initial}",
+      "?foo",
+      "(parenthesized)",
+      ")close",
+      "abc{not json}",
+    ]) {
+      const result = await Bun.build({
+        entrypoints: [join(dir, "entry.ts")],
+        define: { X: value },
+      });
+      expect(result.success).toBe(true);
+      const out = await result.outputs[0].text();
+      expect(out).toContain(JSON.stringify(value));
+    }
+  });
+
   // https://github.com/oven-sh/bun/issues/12818
   test("sourcemap + build error crash case", async () => {
     const dir = tempDirWithFiles("build", {

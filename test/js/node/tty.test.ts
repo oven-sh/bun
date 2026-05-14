@@ -1,6 +1,18 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
+import os from "node:os";
 import { WriteStream } from "node:tty";
+
+// ConPTY on Windows 10 1809 / Server 2019 (build 17763) is the original v1
+// implementation. It does not reliably propagate raw single-byte input to
+// the child after the console mode has been bounced between cooked and raw
+// — the child's stdin tty can error and its event loop drain under that
+// sequence. The cancel-cooked-read test below exercises exactly that path,
+// so skip it on pre-19041 (20H1) Windows where ConPTY got its first major
+// input-handling overhaul. The libuv fix itself still ships for those
+// builds; only the ConPTY-backed regression harness cannot observe it.
+const windowsBuild = isWindows ? Number(os.release().split(".")[2] ?? 0) : 0;
+const isConPTYv1 = isWindows && windowsBuild > 0 && windowsBuild < 19041;
 
 describe("ReadStream.prototype.setRawMode", () => {
   // Regression: on Windows, the `fd === 0` branch returned early on success
@@ -97,24 +109,38 @@ describe("ReadStream.prototype.setRawMode", () => {
   // On POSIX there is no reader thread and no line-read work item; termios
   // mode changes take effect immediately on the same fd, so the sequence is
   // a no-op there. The test still runs on POSIX to lock the behaviour in.
-  test("setRawMode(true) cancels a pending cooked read after a prior synchronous false/true bounce", async () => {
-    let output = "";
-    const decoder = new TextDecoder();
-    const ready = Promise.withResolvers<void>();
-    const gotKey = Promise.withResolvers<void>();
-    const eof = Promise.withResolvers<void>();
+  //
+  // Skipped on ConPTY v1 (Windows Server 2019 / 1809) — see isConPTYv1 above.
+  test.skipIf(isConPTYv1)(
+    "setRawMode(true) cancels a pending cooked read after a prior synchronous false/true bounce",
+    async () => {
+      let output = "";
+      const decoder = new TextDecoder();
+      const ready = Promise.withResolvers<void>();
+      const gotKey = Promise.withResolvers<void>();
+      const eof = Promise.withResolvers<void>();
 
-    const proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+      const proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
           const tick = () => new Promise(r => setImmediate(r));
           let armed = false;
+          // Keepalive: an stdin-reader error after the mode bounce must not
+          // drain the event loop before the diagnostics below reach the
+          // parent. The interval never fires; it is purely a ref'd handle.
+          const keepalive = setInterval(() => {}, 1 << 30);
+          process.stdin.on("error", e => process.stdout.write("STDIN_ERR " + String(e) + " "));
+          process.on("uncaughtException", e => {
+            process.stdout.write("UNCAUGHT " + String(e) + " ");
+            process.exit(1);
+          });
           process.stdin.setRawMode(true);
           process.stdin.on("data", d => {
             if (!armed) return; // ignore noise (FOCUS_EVENT echoes etc.) before READY
             process.stdout.write("KEY " + JSON.stringify([...d]));
+            clearInterval(keepalive);
             process.exit(0);
           });
           (async () => {
@@ -142,64 +168,65 @@ describe("ReadStream.prototype.setRawMode", () => {
             process.stdout.write("READY");
           })();
         `,
-      ],
-      env: bunEnv,
-      terminal: {
-        // Wide enough that ConPTY does not hard-wrap the KEY line.
-        cols: 200,
-        rows: 24,
-        data(_t, chunk: Uint8Array) {
-          output += decoder.decode(chunk, { stream: true });
-          if (output.includes("READY")) ready.resolve();
-          if (/KEY \[[^\]]*\]/.test(Bun.stripANSI(output))) gotKey.resolve();
+        ],
+        env: bunEnv,
+        terminal: {
+          // Wide enough that ConPTY does not hard-wrap the KEY line.
+          cols: 200,
+          rows: 24,
+          data(_t, chunk: Uint8Array) {
+            output += decoder.decode(chunk, { stream: true });
+            if (output.includes("READY")) ready.resolve();
+            if (/KEY \[[^\]]*\]/.test(Bun.stripANSI(output))) gotKey.resolve();
+          },
+          exit() {
+            eof.resolve();
+          },
         },
-        exit() {
-          eof.resolve();
-        },
-      },
-    });
+      });
 
-    // Wait until the child has re-armed raw mode after the double bounce.
-    await Promise.race([ready.promise, eof.promise]);
+      // Wait until the child has re-armed raw mode after the double bounce.
+      await Promise.race([ready.promise, eof.promise]);
 
-    // Send a single keystroke — no Enter. Before the fix this was swallowed
-    // by the uncancelled cooked ReadConsoleW (consumed and then dropped by
-    // uv_process_tty_read_line_req because CANCELLATION_PENDING was set).
-    proc.terminal!.write("x");
+      // Send a single keystroke — no Enter. Before the fix this was swallowed
+      // by the uncancelled cooked ReadConsoleW (consumed and then dropped by
+      // uv_process_tty_read_line_req because CANCELLATION_PENDING was set).
+      proc.terminal!.write("x");
 
-    // Sentinel so the failure mode is a clean assertion rather than a hang:
-    // give the 'x' a generous number of loop turns to propagate through
-    // ConPTY and the child's raw read, then send a second keystroke. If the
-    // first one was lost (the bug), the raw read has since been re-armed by
-    // the line-req completion and the child receives the sentinel instead —
-    // failing the toContain('x') assertion with useful output.
-    for (let i = 0; i < 50; i++) {
-      if (/KEY \[[^\]]*\]/.test(Bun.stripANSI(output))) break;
-      await new Promise(r => setImmediate(r));
-    }
-    if (!/KEY \[[^\]]*\]/.test(Bun.stripANSI(output))) {
-      proc.terminal!.write("z");
-    }
+      // Sentinel so the failure mode is a clean assertion rather than a hang:
+      // give the 'x' a generous number of loop turns to propagate through
+      // ConPTY and the child's raw read, then send a second keystroke. If the
+      // first one was lost (the bug), the raw read has since been re-armed by
+      // the line-req completion and the child receives the sentinel instead —
+      // failing the toContain('x') assertion with useful output.
+      for (let i = 0; i < 50; i++) {
+        if (/KEY \[[^\]]*\]/.test(Bun.stripANSI(output))) break;
+        await new Promise(r => setImmediate(r));
+      }
+      if (!/KEY \[[^\]]*\]/.test(Bun.stripANSI(output))) {
+        proc.terminal!.write("z");
+      }
 
-    await Promise.race([gotKey.promise, eof.promise]);
-    proc.kill();
-    await proc.exited;
-    proc.terminal?.close();
-    output += decoder.decode();
+      await Promise.race([gotKey.promise, eof.promise]);
+      proc.kill();
+      await proc.exited;
+      proc.terminal?.close();
+      output += decoder.decode();
 
-    const stripped = Bun.stripANSI(output).replace(/[\r\n]/g, "");
-    const match = stripped.match(/KEY (\[[^\]]*\])/);
-    if (!match) {
-      throw new Error("child never received a keystroke in raw mode; terminal output was: " + JSON.stringify(output));
-    }
-    // The essential property is that the child's data handler fired for the
-    // first bare keystroke after re-entering raw mode — i.e. it was not
-    // swallowed by a stuck cooked ReadConsoleW. ConPTY may tack VT bytes
-    // around the payload and POSIX PTYs may translate, so just assert 'x'
-    // is present somewhere in the first chunk the child received.
-    const bytes = JSON.parse(match[1]);
-    expect(bytes).toContain("x".charCodeAt(0));
-  });
+      const stripped = Bun.stripANSI(output).replace(/[\r\n]/g, "");
+      const match = stripped.match(/KEY (\[[^\]]*\])/);
+      if (!match) {
+        throw new Error("child never received a keystroke in raw mode; terminal output was: " + JSON.stringify(output));
+      }
+      // The essential property is that the child's data handler fired for the
+      // first bare keystroke after re-entering raw mode — i.e. it was not
+      // swallowed by a stuck cooked ReadConsoleW. ConPTY may tack VT bytes
+      // around the payload and POSIX PTYs may translate, so just assert 'x'
+      // is present somewhere in the first chunk the child received.
+      const bytes = JSON.parse(match[1]);
+      expect(bytes).toContain("x".charCodeAt(0));
+    },
+  );
 });
 
 describe("WriteStream.prototype.getColorDepth", () => {

@@ -2680,10 +2680,7 @@ function getOwnNonIndexProperties(a, filter = ONLY_ENUMERABLE) {
 function getPromiseDetails(promise) {
   const state = $peekPromiseStatus(promise);
   if (state !== 0) {
-    return [
-      state === 2 ? kRejected : kFulfilled,
-      $peekPromiseSettledValue(promise),
-    ];
+    return [state === 2 ? kRejected : kFulfilled, $peekPromiseSettledValue(promise)];
   }
   return [kPending, undefined];
 }

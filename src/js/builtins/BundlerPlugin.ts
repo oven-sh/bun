@@ -255,7 +255,7 @@ export function runSetupFunction(
 
     const ret = callback();
     if ($isPromise(ret)) {
-      if (($peekPromiseStatus(ret)) != 1) {
+      if ($peekPromiseStatus(ret) != 1) {
         self.promises ??= [];
         self.promises.push(ret);
       }
@@ -413,11 +413,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
           // pluginData
         });
 
-        while (
-          result &&
-          $isPromise(result) &&
-          ($peekPromiseStatus(result)) === 1
-        ) {
+        while (result && $isPromise(result) && $peekPromiseStatus(result) === 1) {
           result = $peekPromiseSettledValue(result);
         }
 
@@ -480,11 +476,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
     return null;
   })(specifier, inputNamespace, importer, kind);
 
-  while (
-    promiseResult &&
-    $isPromise(promiseResult) &&
-    ($peekPromiseStatus(promiseResult)) === 1
-  ) {
+  while (promiseResult && $isPromise(promiseResult) && $peekPromiseStatus(promiseResult) === 1) {
     promiseResult = $peekPromiseSettledValue(promiseResult);
   }
 
@@ -529,11 +521,7 @@ export function runOnLoadPlugins(
           side: isServerSide ? "server" : "client",
         });
 
-        while (
-          result &&
-          $isPromise(result) &&
-          ($peekPromiseStatus(result)) === 1
-        ) {
+        while (result && $isPromise(result) && $peekPromiseStatus(result) === 1) {
           result = $peekPromiseSettledValue(result);
         }
 
@@ -580,11 +568,7 @@ export function runOnLoadPlugins(
     return null;
   })(internalID, path, namespace, isServerSide, loaderName, generateDefer);
 
-  while (
-    promiseResult &&
-    $isPromise(promiseResult) &&
-    ($peekPromiseStatus(promiseResult)) === 1
-  ) {
+  while (promiseResult && $isPromise(promiseResult) && $peekPromiseStatus(promiseResult) === 1) {
     promiseResult = $peekPromiseSettledValue(promiseResult);
   }
 

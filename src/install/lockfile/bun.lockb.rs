@@ -442,22 +442,10 @@ pub fn load(
                     lockfile
                         .workspace_versions
                         .ensure_total_capacity(workspace_versions_list.len())?;
-                    // SAFETY: capacity reserved above; both columns are fully
-                    // overwritten by `copy_from_slice` before `re_index` reads them.
-                    unsafe {
-                        lockfile
-                            .workspace_versions
-                            .set_entries_len(workspace_versions_list.len());
-                    }
-                    lockfile
-                        .workspace_versions
-                        .keys_mut()
-                        .copy_from_slice(&workspace_package_name_hashes);
-                    lockfile
-                        .workspace_versions
-                        .values_mut()
-                        .copy_from_slice(&workspace_versions_list);
-                    lockfile.workspace_versions.re_index()?;
+                    lockfile.workspace_versions.fill_from_columns(
+                        workspace_package_name_hashes,
+                        workspace_versions_list,
+                    )?;
                 }
 
                 {
@@ -471,23 +459,9 @@ pub fn load(
                     lockfile
                         .workspace_paths
                         .ensure_total_capacity(workspace_paths_strings.len())?;
-
-                    // SAFETY: capacity reserved above; both columns are fully
-                    // overwritten by `copy_from_slice` before `re_index` reads them.
-                    unsafe {
-                        lockfile
-                            .workspace_paths
-                            .set_entries_len(workspace_paths_strings.len());
-                    }
                     lockfile
                         .workspace_paths
-                        .keys_mut()
-                        .copy_from_slice(&workspace_paths_hashes);
-                    lockfile
-                        .workspace_paths
-                        .values_mut()
-                        .copy_from_slice(&workspace_paths_strings);
-                    lockfile.workspace_paths.re_index()?;
+                        .fill_from_columns(workspace_paths_hashes, workspace_paths_strings)?;
                 }
             } else {
                 stream.pos -= 8;
@@ -506,16 +480,9 @@ pub fn load(
 
                 lockfile.trusted_dependencies = Some(Default::default());
                 let td = lockfile.trusted_dependencies.as_mut().unwrap();
-                td.ensure_total_capacity(trusted_dependencies_hashes.len())?;
-
-                // SAFETY: capacity reserved above; keys are fully overwritten
-                // by `copy_from_slice` before `re_index` reads them; value type
-                // is `()` so its column needs no init.
-                unsafe {
-                    td.set_entries_len(trusted_dependencies_hashes.len());
-                }
-                td.keys_mut().copy_from_slice(&trusted_dependencies_hashes);
-                td.re_index()?;
+                let n = trusted_dependencies_hashes.len();
+                td.ensure_total_capacity(n)?;
+                td.fill_from_columns(trusted_dependencies_hashes, core::iter::repeat_n((), n))?;
             } else if next_num == HAS_EMPTY_TRUSTED_DEPENDENCIES_TAG {
                 // trusted dependencies exists in package.json but is an empty array.
                 lockfile.trusted_dependencies = Some(Default::default());

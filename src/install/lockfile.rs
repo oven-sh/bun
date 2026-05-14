@@ -1152,54 +1152,23 @@ impl Lockfile {
 
                 workspace_paths_builder.allocate()?;
 
-                // SAFETY: capacity reserved by `ensure_total_capacity` above; every
-                // slot in `0..old.count()` is overwritten by the copy/zip loops below
-                // before `re_index()` reads them. Mirrors Zig `entries.len = n`.
-                unsafe {
-                    new.workspace_paths
-                        .set_entries_len(old.workspace_paths.count())
-                };
-
-                debug_assert_eq!(
-                    old.workspace_paths.values().len(),
-                    new.workspace_paths.values().len()
-                );
-                for (src, dest) in old
-                    .workspace_paths
-                    .values()
-                    .iter()
-                    .zip(new.workspace_paths.values_mut().iter_mut())
-                {
-                    *dest =
-                        workspace_paths_builder.append::<SemverString>(src.slice(old_string_buf));
-                }
-                new.workspace_paths
-                    .keys_mut()
-                    .copy_from_slice(old.workspace_paths.keys());
+                new.workspace_paths.fill_from_columns(
+                    old.workspace_paths.keys().iter().copied(),
+                    old.workspace_paths.values().iter().map(|src| {
+                        workspace_paths_builder.append::<SemverString>(src.slice(old_string_buf))
+                    }),
+                )?;
 
                 new.workspace_versions
                     .ensure_total_capacity(old.workspace_versions.count())?;
-                // SAFETY: capacity reserved immediately above; every slot is filled by
-                // the zip loop below before `re_index()`. Mirrors Zig `entries.len = n`.
-                unsafe {
-                    new.workspace_versions
-                        .set_entries_len(old.workspace_versions.count())
-                };
-                for (src, dest) in versions
-                    .iter()
-                    .zip(new.workspace_versions.values_mut().iter_mut())
-                {
-                    *dest = src.append(old_string_buf, &mut workspace_paths_builder);
-                }
-
-                new.workspace_versions
-                    .keys_mut()
-                    .copy_from_slice(old.workspace_versions.keys());
+                new.workspace_versions.fill_from_columns(
+                    old.workspace_versions.keys().iter().copied(),
+                    versions
+                        .iter()
+                        .map(|src| src.append(old_string_buf, &mut workspace_paths_builder)),
+                )?;
 
                 workspace_paths_builder.clamp();
-
-                new.workspace_versions.re_index()?;
-                new.workspace_paths.re_index()?;
             }
         }
 

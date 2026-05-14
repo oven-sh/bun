@@ -206,40 +206,24 @@ pub struct Entry<'a, K, V> {
     pub value_ptr: &'a mut V,
 }
 
-/// Insertion-order iterator yielding `Entry`. Resettable (Zig callers do
-/// `it.reset()` to rewind; here `index = 0`).
-pub struct Iter<'a, K, V> {
-    keys: *mut K,
-    values: *mut V,
-    len: usize,
-    index: usize,
-    _marker: PhantomData<&'a mut [(K, V)]>,
-}
-
-impl<'a, K, V> Iter<'a, K, V> {
-    #[inline]
-    pub fn reset(&mut self) {
-        self.index = 0;
-    }
-}
+/// Insertion-order iterator yielding `Entry`. The two backing columns are
+/// distinct `Vec`s, so a safe `Zip<IterMut, IterMut>` already yields the
+/// disjoint `(&mut K, &mut V)` pair Zig's `*K`/`*V` expressed.
+pub struct Iter<'a, K, V>(
+    core::iter::Zip<core::slice::IterMut<'a, K>, core::slice::IterMut<'a, V>>,
+);
 
 impl<'a, K, V> Iterator for Iter<'a, K, V> {
     type Item = Entry<'a, K, V>;
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.len {
-            return None;
-        }
-        let i = self.index;
-        self.index += 1;
-        // SAFETY: `keys`/`values` point at `len`-element Vec backing arrays
-        // borrowed mutably for `'a`; each index is yielded at most once so the
-        // returned `&mut`s are disjoint.
-        unsafe {
-            Some(Entry {
-                key_ptr: &mut *self.keys.add(i),
-                value_ptr: &mut *self.values.add(i),
-            })
-        }
+        self.0
+            .next()
+            .map(|(key_ptr, value_ptr)| Entry { key_ptr, value_ptr })
+    }
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
     }
 }
 
@@ -506,31 +490,6 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         Ok(())
     }
 
-    /// Zig: `map.entries.len = n` after `ensureTotalCapacity(n)` — bulk-resize
-    /// the backing columns so callers can `keys_mut().copy_from_slice(...)` /
-    /// `values_mut().copy_from_slice(...)` and then `re_index()`. Mirrors the
-    /// pattern in `lockfile/bun.lockb.zig`'s `Serializer.load`.
-    ///
-    /// # Safety
-    /// `n` must not exceed reserved capacity, and every element in
-    /// `old_len..n` of each column must be fully written before any read
-    /// (including `re_index`, which reads `keys`). For `Copy` POD keys/values
-    /// (the only callers today) the intermediate uninit window is sound as
-    /// long as it is filled immediately.
-    pub unsafe fn set_entries_len(&mut self, n: usize) {
-        debug_assert!(n <= self.keys.capacity());
-        debug_assert!(n <= self.values.capacity());
-        debug_assert!(n <= self.hashes.capacity());
-        // SAFETY: caller contract above; matches Zig `.entries.len = n`.
-        unsafe {
-            self.keys.set_len(n);
-            self.values.set_len(n);
-            self.hashes.set_len(n);
-        }
-        // Caller is about to overwrite keys/values then `re_index()`.
-        self.drop_index();
-    }
-
     /// Zig `ensureTotalCapacityContext`: same as `ensure_total_capacity` but
     /// takes an explicit `ctx` for the stored key type. This port maintains no
     /// separate index header (lookup scans the cached `hashes` vec), so the
@@ -670,13 +629,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     }
 
     pub fn iterator(&mut self) -> Iter<'_, K, V> {
-        Iter {
-            keys: self.keys.as_mut_ptr(),
-            values: self.values.as_mut_ptr(),
-            len: self.keys.len(),
-            index: 0,
-            _marker: PhantomData,
-        }
+        Iter(self.keys.iter_mut().zip(self.values.iter_mut()))
     }
 
     pub fn clear_retaining_capacity(&mut self) {
@@ -722,20 +675,19 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     #[inline]
     fn find_hash<F: Fn(&K, usize) -> bool>(&self, h: u32, eq: F) -> Option<usize> {
         if let Some(index) = self.index.as_deref() {
-            let hashes = self.hashes.as_ptr();
-            let keys = self.keys.as_ptr();
+            let hashes = &self.hashes[..];
+            let keys = &self.keys[..];
             return index
                 .find(spread_hash(h), |&i| {
-                    let i = i as usize;
-                    // SAFETY: bounds-check elision on the hot probe path.
                     // Every `i` stored in `self.index` satisfies
                     // `i < self.hashes.len() == self.keys.len()` — it was
                     // inserted by `push_entry`/`rebuild_index` with that
                     // bound, and every path that shrinks or permutes those
                     // vecs either patches the index in place
                     // (`index_swap_remove`/`index_remove_tail`) or calls
-                    // `drop_index()` first.
-                    unsafe { *hashes.add(i) == h && eq(&*keys.add(i), i) }
+                    // `drop_index()` first — so this bounds check never fires.
+                    let i = i as usize;
+                    hashes[i] == h && eq(&keys[i], i)
                 })
                 .map(|&i| i as usize);
         }
@@ -786,7 +738,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     }
 
     /// Invalidate the accelerator. Called by operations that permute entry
-    /// indices wholesale (`sort`, `re_index`, bulk `set_entries_len`); paired
+    /// indices wholesale (`sort`, `re_index`, bulk `fill_from_columns`); paired
     /// with an immediate `rebuild_index()` when the map is past the threshold
     /// so subsequent lookups never silently fall back to O(n) linear scan.
     /// Point removals (`pop`/`swap_remove`) instead patch the index in place
@@ -881,22 +833,15 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     }
 
     fn gop_at(&mut self, index: usize, found_existing: bool) -> GetOrPutResult<'_, K, V> {
-        // SAFETY: `keys` and `values` are distinct allocations; producing one
-        // `&mut` into each is sound even though both derive from `&mut self`.
-        // `index < self.keys.len() == self.values.len()` — every caller
-        // (`get_or_put*`/`put_index`) passes the index just returned by
-        // `push_entry` or `find_hash`.
-        let (key_ptr, value_ptr) = unsafe {
-            (
-                &mut *self.keys.as_mut_ptr().add(index),
-                &mut *self.values.as_mut_ptr().add(index),
-            )
-        };
+        // `keys` and `values` are distinct struct fields; borrowck permits one
+        // `&mut` into each simultaneously. Every caller (`get_or_put*`/
+        // `put_index`) passes the index just returned by `push_entry` or
+        // `find_hash`, so `index < len`.
         GetOrPutResult {
             found_existing,
             index,
-            key_ptr,
-            value_ptr,
+            key_ptr: &mut self.keys[index],
+            value_ptr: &mut self.values[index],
         }
     }
 
@@ -997,6 +942,39 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
             self.hashes[i] = self.ctx.hash(k);
         }
         self.drop_index();
+        if self.keys.len() > INDEX_THRESHOLD {
+            self.rebuild_index();
+        }
+        Ok(())
+    }
+
+    /// Bulk-load the map from parallel key/value iterators, replacing any
+    /// existing contents. Safe replacement for the Zig `entries.len = n;
+    /// keys.copy_from_slice(...); values.copy_from_slice(...); re_index()`
+    /// idiom (`lockfile/bun.lockb.zig`'s `Serializer.load`): instead of
+    /// exposing an uninitialised window via `Vec::set_len`, the columns are
+    /// filled by `extend` and the hash column / index are derived from the
+    /// final keys. Panics if the two iterators yield different lengths.
+    pub fn fill_from_columns(
+        &mut self,
+        keys: impl IntoIterator<Item = K>,
+        values: impl IntoIterator<Item = V>,
+    ) -> Result<(), AllocError> {
+        self.keys.clear();
+        self.values.clear();
+        self.hashes.clear();
+        self.drop_index();
+        self.keys.extend(keys);
+        self.values.extend(values);
+        assert_eq!(
+            self.keys.len(),
+            self.values.len(),
+            "fill_from_columns: key/value iterator length mismatch",
+        );
+        self.hashes.reserve(self.keys.len());
+        for k in &self.keys {
+            self.hashes.push(self.ctx.hash(k));
+        }
         if self.keys.len() > INDEX_THRESHOLD {
             self.rebuild_index();
         }
@@ -1574,8 +1552,7 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
     #[inline]
     pub const fn borrowed(s: &'static [u8]) -> Self {
         // `&[u8]`'s pointer is always non-null (dangling for `len == 0`).
-        // SAFETY: `as_ptr()` on a slice reference is never null.
-        let ptr = unsafe { core::ptr::NonNull::new_unchecked(s.as_ptr() as *mut u8) };
+        let ptr = core::ptr::NonNull::from_ref(s).cast::<u8>();
         Self {
             ptr,
             len_tag: s.len(),
@@ -1597,8 +1574,8 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
         // is the same instance. `into_raw_with_allocator` because on current
         // nightly `Box::into_raw` is restricted to `Box<T, Global>`.
         let (raw, _alloc) = Box::into_raw_with_allocator(b);
-        // SAFETY: `Box::into_raw_with_allocator` never returns null.
-        let ptr = unsafe { core::ptr::NonNull::new_unchecked(raw.cast::<u8>()) };
+        // `Box::into_raw_with_allocator` never returns null.
+        let ptr = core::ptr::NonNull::new(raw.cast::<u8>()).unwrap();
         Self {
             ptr,
             len_tag: len | SHMK_OWNED_BIT,

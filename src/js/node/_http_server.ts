@@ -632,7 +632,11 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           socketHandle.markAsRawMode();
           const { promise: upgradePromise, resolve: upgradeResolve } = $newPromiseCapability(Promise);
           socket.once("close", upgradeResolve);
-          server.emit("upgrade", http_req, socket, kEmptyBuffer);
+          // Forward pipelined bytes that arrived in the same TCP segment as the
+          // Upgrade headers — Node passes them as the 3rd arg so `ws.handleUpgrade`
+          // can feed them into the new WebSocket stream as `head`.
+          const head = connectHead ? connectHead : kEmptyBuffer;
+          server.emit("upgrade", http_req, socket, head);
           return upgradePromise;
         } else if (http_req.headers.expect !== undefined) {
           if (http_req.headers.expect === "100-continue") {

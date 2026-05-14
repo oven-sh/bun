@@ -272,7 +272,7 @@ it("chrome: cdp() guards — before navigate and params validation", async () =>
     expect(p).toBeInstanceOf(Promise);
     await expect(p).rejects.toMatchObject({
       code: "ERR_INVALID_STATE",
-      message: expect.stringMatching(/session.*navigate/i),
+      message: expect.stringMatching(/^Invalid state: .*session.*navigate/i),
     });
     // params validation: non-object still sync-throws before any I/O —
     // programmer error, not a state error.

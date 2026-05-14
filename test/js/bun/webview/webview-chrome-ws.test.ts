@@ -124,7 +124,9 @@ test("cdp() rejects (not sync-throws) with ERR_INVALID_STATE before first naviga
           await p.then(
             () => { throw new Error("cdp() resolved; expected rejection"); },
             err => {
-              if (err?.code !== "ERR_INVALID_STATE" || !/session.*navigate/i.test(err?.message))
+              // Bun::ERR::INVALID_STATE (the sync-throw helper this replaced)
+              // prepends "Invalid state: " — keep message parity.
+              if (err?.code !== "ERR_INVALID_STATE" || !/^Invalid state: .*session.*navigate/i.test(err?.message))
                 throw new Error("wrong rejection: " + err?.code + " " + err?.message);
             },
           );

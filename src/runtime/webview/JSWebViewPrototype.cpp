@@ -375,7 +375,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncCdp, (JSGlobalObject * globalObject, 
     // below stay synchronous (programmer error, no I/O happened yet).
     if (thisObject->m_sessionId.isEmpty()) {
         auto* err = createError(globalObject, ErrorCode::ERR_INVALID_STATE,
-            "WebView.cdp(): no session - await navigate() first"_s);
+            "Invalid state: WebView.cdp(): no session - await navigate() first"_s);
         RELEASE_AND_RETURN(scope,
             JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, err)));
     }

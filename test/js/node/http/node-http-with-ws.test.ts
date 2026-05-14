@@ -181,6 +181,45 @@ test.concurrent("server.on('upgrade') hands the raw socket off to userland", asy
   await serverClosed;
 });
 
+// Bytes the client sends in the same TCP segment as the Upgrade request
+// headers (e.g. the first WebSocket frame piggy-backed onto the handshake
+// write) must reach the upgrade listener as the 3rd `head` argument, matching
+// Node — `ws.handleUpgrade` feeds `head` into the new WebSocket stream so
+// these bytes aren't lost.
+test.concurrent("server.on('upgrade') passes pipelined head bytes to the listener", async () => {
+  await using server = http.createServer();
+
+  const { promise: upgradeFired, resolve: resolveUpgrade } = Promise.withResolvers<Buffer>();
+  server.on("upgrade", (_req, socket, head) => {
+    resolveUpgrade(Buffer.from(head));
+    socket.destroy();
+  });
+
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address() as AddressInfo;
+
+  // Pipeline a WebSocket frame right after the header terminator so the
+  // request parser hands the trailing bytes to the upgrade event.
+  const pipelined = Buffer.from([0x81, 0x83, 0xaa, 0xbb, 0xcc, 0xdd, 0x66, 0x6f, 0x6f]);
+  const client = netConnect(port, "127.0.0.1");
+  client.write(
+    Buffer.concat([
+      Buffer.from(
+        "GET /hmr HTTP/1.1\r\n" +
+          `Host: 127.0.0.1:${port}\r\n` +
+          "Upgrade: websocket\r\n" +
+          "Connection: Upgrade\r\n" +
+          "Sec-WebSocket-Version: 13\r\n" +
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+      ),
+      pipelined,
+    ]),
+  );
+
+  const head = await upgradeFired;
+  expect(head).toEqual(pipelined);
+});
+
 test.concurrent("server.on('upgrade') works over TLS (https)", async () => {
   await using server = https.createServer(options, (_req, res) => {
     res.writeHead(200);

@@ -553,7 +553,7 @@ declare module "bun" {
     countAnsiEscapeCodes?: boolean;
 
     /**
-     * When it's ambiugous and `true`, count emoji as 1 characters wide. If `false`, emoji are counted as 2 character wide.
+     * When it's ambiguous and `true`, count emoji as 1 characters wide. If `false`, emoji are counted as 2 character wide.
      *
      * @default true
      */

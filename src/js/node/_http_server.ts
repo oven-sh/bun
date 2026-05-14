@@ -601,7 +601,13 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         socket[kRequest] = http_req;
         const is_upgrade = http_req.headers.upgrade;
-        if (!is_upgrade) {
+        // An Upgrade header only steers us off the request/response path when
+        // someone is actually listening for 'upgrade'. Otherwise Node surfaces
+        // the message as a normal 'request' event, and we need the response to
+        // be bound to the real socket (for `res.socket`, `writeContinue`,
+        // `writeEarlyHints`, the 'socket' event, timeout wiring, …).
+        const handleAsUpgrade = is_upgrade && server.listenerCount("upgrade") > 0;
+        if (!handleAsUpgrade) {
           if (canUseInternalAssignSocket) {
             // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
             assignSocketInternal(http_res, socket);
@@ -620,7 +626,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_res.writeHead(503);
           http_res.end();
           socket.destroy();
-        } else if (is_upgrade && server.listenerCount("upgrade") > 0) {
+        } else if (handleAsUpgrade) {
           // Hand the connection off to the 'upgrade' handler, matching the
           // CONNECT path: enable bidirectional streaming on the socket, tell
           // uWS to stop HTTP-parsing inbound bytes (so they surface through

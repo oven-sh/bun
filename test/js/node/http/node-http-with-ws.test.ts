@@ -220,6 +220,49 @@ test.concurrent("server.on('upgrade') passes pipelined head bytes to the listene
   expect(head).toEqual(pipelined);
 });
 
+// Node surfaces an Upgrade request as a regular `'request'` event when the
+// server has no `'upgrade'` listener. In that fall-through path `res.socket`
+// must be bound to the real `NodeHTTPServerSocket` — otherwise it gets a
+// lazy `FakeSocket` whose `remoteAddress` is wrong, the `'socket'` event
+// never fires on the response, and `writeContinue()` / `writeEarlyHints()`
+// silently drop bytes.
+test.concurrent(
+  "Upgrade with no 'upgrade' listener falls through to 'request' with the real socket",
+  async () => {
+    const { promise: requestFired, resolve: resolveRequest } = Promise.withResolvers<{
+      resSocketSameAsReqSocket: boolean;
+      hasRemoteAddress: boolean;
+    }>();
+
+    await using server = http.createServer((req, res) => {
+      resolveRequest({
+        resSocketSameAsReqSocket: res.socket === req.socket,
+        hasRemoteAddress: typeof res.socket?.remoteAddress === "string",
+      });
+      res.writeHead(200);
+      res.end("ok");
+    });
+    // Deliberately no `server.on("upgrade", ...)`.
+
+    await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address() as AddressInfo;
+
+    const client = netConnect(port, "127.0.0.1");
+    client.write(
+      "GET / HTTP/1.1\r\n" +
+        `Host: 127.0.0.1:${port}\r\n` +
+        "Upgrade: h2c\r\n" +
+        "Connection: Upgrade, HTTP2-Settings\r\n" +
+        "HTTP2-Settings: AAMAAABkAAQAAP__\r\n\r\n",
+    );
+    client.on("data", () => {});
+
+    const result = await requestFired;
+    expect(result).toEqual({ resSocketSameAsReqSocket: true, hasRemoteAddress: true });
+    client.end();
+  },
+);
+
 test.concurrent("server.on('upgrade') works over TLS (https)", async () => {
   await using server = https.createServer(options, (_req, res) => {
     res.writeHead(200);

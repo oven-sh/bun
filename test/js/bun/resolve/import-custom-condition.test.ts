@@ -167,3 +167,22 @@ it("custom condition when don't match condition should resolves to default", asy
 
   expect(exitCode).toBe(1);
 });
+
+// https://github.com/oven-sh/bun/issues/30619
+it("many custom conditions resolve correctly", async () => {
+  for (const n of [4, 5, 6, 8, 12, 20]) {
+    const flags = [];
+    for (let i = 1; i < n; i++) flags.push(`--conditions=c${i}`);
+    flags.push("--conditions=first");
+    const { exitCode, stdout, stderr } = Bun.spawnSync({
+      cmd: [bunExe(), ...flags, `${dir}/test.js`],
+      env: bunEnv,
+      cwd: import.meta.dir,
+    });
+    expect({ n, exitCode, stdout: stdout.toString("utf8"), stderr: stderr.toString("utf8") }).toMatchObject({
+      n,
+      exitCode: 0,
+      stdout: "1\n",
+    });
+  }
+});

@@ -1418,6 +1418,34 @@ registry = "${mockRegistryUrl}"`,
       expect(lockfile).not.toContain("regular-package@3.0.0");
     });
 
+    test("bunfig bare-number string is seconds (matches unquoted form)", async () => {
+      using dir = tempDir("bunfig-ms-bare", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = "${5 * SECONDS_PER_DAY}"
+registry = "${mockRegistryUrl}"`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // "432000" as a string should be 5 days (seconds), same as unquoted 432000
+      expect(lockfile).toContain("regular-package@2.1.0");
+      expect(lockfile).not.toContain("regular-package@3.0.0");
+    });
+
     test("bunfig rejects invalid duration string", async () => {
       using dir = tempDir("bunfig-ms-invalid", {
         "package.json": JSON.stringify({

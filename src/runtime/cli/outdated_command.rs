@@ -108,12 +108,13 @@ impl OutdatedCommand {
         let lockfile: &mut bun_install::lockfile::Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
         // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
         let log = unsafe { &mut *log_ptr };
-        match lockfile.load_from_cwd::<true>(
+        let load_result = lockfile.load_from_cwd::<true>(
             // SAFETY: see PORT NOTE above — `load_from_cwd` accesses `manager`
             // fields disjoint from `lockfile` (Zig invariant).
             Some(unsafe { &mut *pm_ptr }),
             log,
-        ) {
+        );
+        match &load_result {
             LoadResult::NotFound => {
                 if not_silent {
                     Output::err_generic("missing lockfile, nothing outdated", ());
@@ -157,6 +158,11 @@ impl OutdatedCommand {
                 // is the same storage and no reassignment is needed.
             }
         }
+
+        // SAFETY: `load_result` borrows the lockfile, which is disjoint from
+        // `manager.options` that `apply_config_version_defaults` mutates.
+        _ = unsafe { &mut *pm_ptr }.apply_config_version_defaults(&load_result);
+        drop(load_result);
 
         if Output::enable_ansi_colors_stdout() {
             Self::outdated_dispatch::<true>(original_cwd, manager)

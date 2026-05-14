@@ -178,10 +178,6 @@ pub const feature_flag = struct {
     pub const BUN_FEATURE_FLAG_DISABLE_DNS_CACHE = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX", .{});
-    /// Opt in to the `bun install` configVersion 2 defaults (currently: a
-    /// 2-day default `minimumReleaseAge` for new projects) before they ship
-    /// in Bun 1.4. Becomes a no-op once `breaking_changes_1_4` is flipped.
-    pub const BUN_FEATURE_FLAG_INSTALL_CONFIG_V2 = newFeatureFlag("BUN_FEATURE_FLAG_INSTALL_CONFIG_V2", .{});
     /// Disable streaming tarball extraction in `bun install`. When disabled,
     /// the whole .tgz is buffered in memory before being decompressed and
     /// extracted. Useful for bisecting streaming-specific bugs.

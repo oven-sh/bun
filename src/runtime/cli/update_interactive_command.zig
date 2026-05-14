@@ -357,8 +357,6 @@ pub const UpdateInteractiveCommand = struct {
             .ok => |ok| ok.lockfile,
         };
 
-        _ = manager.applyConfigVersionDefaults(&load_lockfile_result);
-
         const workspace_pkg_ids = if (manager.options.filter_patterns.len > 0) blk: {
             const filters = manager.options.filter_patterns;
             break :blk findMatchingWorkspaces(

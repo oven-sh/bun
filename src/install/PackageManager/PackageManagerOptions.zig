@@ -90,10 +90,6 @@ os: Npm.OperatingSystem = Npm.OperatingSystem.current,
 
 config_version: ?bun.ConfigVersion = null,
 
-/// Default minimum release age applied to projects with configVersion >= 2
-/// when the user has not explicitly configured `minimumReleaseAge`.
-pub const default_minimum_release_age_ms: f64 = 2 * std.time.ms_per_day;
-
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",

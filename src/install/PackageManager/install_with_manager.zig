@@ -31,8 +31,8 @@ pub fn installWithManager(
 
     try manager.updateLockfileIfNeeded(load_result);
 
-    const changed_config_version = manager.applyConfigVersionDefaults(&load_result);
-    const config_version = manager.options.config_version.?;
+    const config_version, const changed_config_version = load_result.chooseConfigVersion();
+    manager.options.config_version = config_version;
 
     var root = Lockfile.Package{};
     var needs_new_lockfile = load_result != .ok or
@@ -831,7 +831,7 @@ pub fn installWithManager(
             .auto => {
                 switch (config_version) {
                     .v0 => continue :linker .hoisted,
-                    .v1, .v2 => {
+                    .v1 => {
                         if (!load_result.migratedFromNpm() and manager.lockfile.workspace_paths.count() > 0) {
                             continue :linker .isolated;
                         }

@@ -270,48 +270,6 @@ pub fn clearCachedItemsDependingOnLockfileBuffer(this: *PackageManager) void {
     this.root_package_id.id = null;
 }
 
-/// Derive `options.config_version` from a lockfile load result and apply any
-/// defaults that are gated on that version. Returns whether the configVersion
-/// changed from what was saved in the lockfile (and therefore the lockfile
-/// should be re-saved).
-///
-/// Must be called after `Options.load()` and after the lockfile has been
-/// loaded, but before any package resolution.
-pub fn applyConfigVersionDefaults(this: *PackageManager, load_result: *const Lockfile.LoadResult) bool {
-    var config_version, const changed_config_version = load_result.chooseConfigVersion();
-
-    // Until `breaking_changes_1_4` flips `ConfigVersion.current` to `.v2`, the
-    // `BUN_FEATURE_FLAG_INSTALL_CONFIG_V2` environment variable opts fresh
-    // projects into the new defaults for testing. This mirrors what 1.4 will
-    // do: only the `.not_found` / `.err` cases (which currently pick
-    // `.current`) are affected; existing and migrated lockfiles keep their
-    // chosen version.
-    if (comptime !bun.FeatureFlags.breaking_changes_1_4) {
-        if (load_result.* != .ok and bun.feature_flag.BUN_FEATURE_FLAG_INSTALL_CONFIG_V2.get()) {
-            config_version = .v2;
-        }
-    }
-
-    this.options.config_version = config_version;
-
-    switch (config_version) {
-        .v0, .v1 => {},
-        .v2 => {
-            if (this.options.minimum_release_age_ms == null) {
-                this.options.minimum_release_age_ms = Options.default_minimum_release_age_ms;
-            }
-        },
-    }
-
-    // `0` explicitly disables the filter. Normalize to `null` so callers that
-    // check `!= null` don't needlessly request extended manifests.
-    if (this.options.minimum_release_age_ms) |ms| {
-        if (ms == 0) this.options.minimum_release_age_ms = null;
-    }
-
-    return changed_config_version;
-}
-
 pub fn crash(this: *PackageManager) noreturn {
     if (this.options.log_level != .silent) {
         this.log.print(Output.errorWriter()) catch {};

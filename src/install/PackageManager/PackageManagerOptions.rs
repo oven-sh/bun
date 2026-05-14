@@ -278,6 +278,10 @@ impl LogLevel {
 pub use crate::config_version::ConfigVersion;
 pub use bun_install_types::NodeLinker::NodeLinker;
 
+/// Default minimum release age applied to projects with configVersion >= 2
+/// when the user has not explicitly configured `minimumReleaseAge`.
+pub const DEFAULT_MINIMUM_RELEASE_AGE_MS: f64 = 2.0 * bun_core::time::MS_PER_DAY as f64;
+
 #[derive(Default, Copy, Clone)]
 pub struct Update {
     pub development: bool,

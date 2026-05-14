@@ -785,25 +785,13 @@ pub const Bunfig = struct {
                         switch (min_age.data) {
                             .e_number => |seconds| {
                                 if (seconds.value < 0) {
-                                    try this.addError(min_age.loc, "Expected a non-negative number of seconds for minimumReleaseAge (0 disables)");
+                                    try this.addError(min_age.loc, "Expected positive number of seconds for minimumReleaseAge");
                                     return;
                                 }
                                 install.minimum_release_age_ms = seconds.value * std.time.ms_per_s;
                             },
-                            .e_string => |str| {
-                                const text = try str.string(allocator);
-                                const ms = bun.fmt.parseMs(text) orelse {
-                                    try this.addError(min_age.loc, "Expected a duration like \"2d\" or \"1 week\" for minimumReleaseAge");
-                                    return;
-                                };
-                                if (ms < 0) {
-                                    try this.addError(min_age.loc, "Expected a non-negative duration for minimumReleaseAge (0 disables)");
-                                    return;
-                                }
-                                install.minimum_release_age_ms = ms;
-                            },
                             else => {
-                                try this.addError(min_age.loc, "Expected a number of seconds or a duration string for minimumReleaseAge");
+                                try this.addError(min_age.loc, "Expected number of seconds for minimumReleaseAge");
                             },
                         }
                     }

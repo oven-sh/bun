@@ -50,7 +50,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install") catch unreachable,
     clap.parseParam("--lockfile-only                       Generate a lockfile without installing dependencies") catch unreachable,
     clap.parseParam("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")") catch unreachable,
-    clap.parseParam("--minimum-release-age <STR>           Skip package versions published within this period (e.g. \"2d\", \"1 week\", or a number of seconds)") catch unreachable,
+    clap.parseParam("--minimum-release-age <NUM>           Only install packages published at least N seconds ago (security feature)") catch unreachable,
     clap.parseParam("--cpu <STR>...                        Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)") catch unreachable,
     clap.parseParam("--os <STR>...                         Override operating system for optional dependencies (e.g., linux, darwin, * for all)") catch unreachable,
     clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
@@ -836,21 +836,16 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         cli.save_text_lockfile = true;
     }
 
-    if (args.option("--minimum-release-age")) |min_age| {
-        const ms: f64 = if (std.fmt.parseFloat(f64, min_age)) |secs|
-            // A bare number with no unit is interpreted as seconds for
-            // backwards compatibility with earlier releases.
-            secs * std.time.ms_per_s
-        else |_|
-            bun.fmt.parseMs(min_age) orelse {
-                Output.errGeneric("Expected --minimum-release-age to be a non-negative number of seconds or a duration like \"2d\": {s}", .{min_age});
-                Global.crash();
-            };
-        if (ms < 0) {
-            Output.errGeneric("Expected --minimum-release-age to be a non-negative number of seconds or a duration like \"2d\": {s}", .{min_age});
+    if (args.option("--minimum-release-age")) |min_age_secs| {
+        const secs = std.fmt.parseFloat(f64, min_age_secs) catch {
+            Output.errGeneric("Expected --minimum-release-age to be a positive number: {s}", .{min_age_secs});
+            Global.crash();
+        };
+        if (secs < 0) {
+            Output.errGeneric("Expected --minimum-release-age to be a positive number: {s}", .{min_age_secs});
             Global.crash();
         }
-        cli.minimum_release_age_ms = ms;
+        cli.minimum_release_age_ms = secs * std.time.ms_per_s;
     }
 
     const omit_values = args.options("--omit");

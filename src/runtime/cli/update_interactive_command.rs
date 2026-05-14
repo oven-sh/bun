@@ -490,8 +490,10 @@ impl UpdateInteractiveCommand {
         // before borrowing `&mut manager.lockfile`.
         let not_silent = manager.options.log_level != LogLevel::Silent;
         let ctx_log_ptr: *mut bun_ast::Log = ctx.log;
+        let pm_ptr: *mut PackageManager = manager;
 
-        match manager.load_lockfile_from_cwd::<true>() {
+        let load_result = manager.load_lockfile_from_cwd::<true>();
+        match &load_result {
             LoadResult::NotFound => {
                 if not_silent {
                     Output::err_generic("missing lockfile, nothing outdated", ());
@@ -522,7 +524,10 @@ impl UpdateInteractiveCommand {
                     // for every subcommand and is non-null for the command's
                     // lifetime.
                     if unsafe { (*ctx_log_ptr).has_errors() } {
-                        manager
+                        // SAFETY: `load_result` borrows `manager.lockfile`;
+                        // `log_mut()` dereferences the disjoint `manager.log`
+                        // raw pointer.
+                        unsafe { &*pm_ptr }
                             .log_mut()
                             .print(std::ptr::from_mut(Output::error_writer()))?;
                     }
@@ -535,6 +540,12 @@ impl UpdateInteractiveCommand {
                 // `manager.lockfile` (Box) in place, so no reassignment.
             }
         }
+
+        // SAFETY: `load_result` borrows `manager.lockfile` (separate `Box`
+        // allocation); `apply_config_version_defaults` only touches
+        // `manager.options`, which is disjoint.
+        _ = unsafe { &mut *pm_ptr }.apply_config_version_defaults(&load_result);
+        drop(load_result);
 
         let workspace_pkg_ids: Vec<PackageID> = if !manager.options.filter_patterns.is_empty() {
             let filters = manager.options.filter_patterns;

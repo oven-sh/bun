@@ -670,3 +670,39 @@ describe("Bun.serve unix socket validation", () => {
     }
   });
 });
+
+describe("app.bundlerOptions validation", () => {
+  test("minify as non-boolean, non-object throws", () => {
+    expect(() =>
+      // @ts-expect-error
+      serve({ app: { bundlerOptions: { ssr: { minify: 1225 } } } }),
+    ).toThrow("Expected minify to be a boolean or an object");
+    expect(() =>
+      // @ts-expect-error
+      serve({ app: { bundlerOptions: { client: { minify: "yes" } } } }),
+    ).toThrow("Expected minify to be a boolean or an object");
+  });
+
+  test("minify as false does not crash", () => {
+    expect(() =>
+      // @ts-expect-error
+      serve({ app: { bundlerOptions: { server: { minify: false } } } }),
+    ).not.toThrow("reached unreachable code");
+  });
+
+  test("server/client/ssr as non-object throws", () => {
+    for (const key of ["server", "client", "ssr"]) {
+      expect(() =>
+        // @ts-expect-error
+        serve({ app: { bundlerOptions: { [key]: 123 } } }),
+      ).toThrow("Expected bundler options to be an object");
+    }
+  });
+
+  test("bundlerOptions as non-object throws", () => {
+    expect(() =>
+      // @ts-expect-error
+      serve({ app: { bundlerOptions: 123 } }),
+    ).toThrow("'app.bundlerOptions' must be an object");
+  });
+});

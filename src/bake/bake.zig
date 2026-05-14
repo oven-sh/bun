@@ -68,6 +68,9 @@ pub const UserOptions = struct {
         }
 
         if (try config.getOptional(global, "bundlerOptions", JSValue)) |js_options| {
+            if (!js_options.isObject()) {
+                return global.throwInvalidArguments("'" ++ api_name ++ ".bundlerOptions' must be an object", .{});
+            }
             if (try js_options.getOptional(global, "server", JSValue)) |server_options| {
                 bundler_options.server = try BuildConfigSubset.fromJS(global, server_options);
             }
@@ -205,6 +208,10 @@ const BuildConfigSubset = struct {
     pub fn fromJS(global: *jsc.JSGlobalObject, js_options: JSValue) bun.JSError!BuildConfigSubset {
         var options = BuildConfigSubset{};
 
+        if (!js_options.isObject()) {
+            return global.throwInvalidArguments("Expected bundler options to be an object", .{});
+        }
+
         if (try js_options.getOptional(global, "sourcemap", JSValue)) |val| brk: {
             if (try bun.schema.api.SourceMapMode.fromJS(global, val)) |sourcemap| {
                 options.source_map = sourcemap;
@@ -214,22 +221,24 @@ const BuildConfigSubset = struct {
             return bun.jsc.Node.validators.throwErrInvalidArgType(global, "sourcemap", .{}, "\"inline\" | \"external\" | \"linked\"", val);
         }
 
-        if (try js_options.getOptional(global, "minify", JSValue)) |minify_options| brk: {
-            if (minify_options.isBoolean() and minify_options.asBoolean()) {
-                options.minify_syntax = minify_options.asBoolean();
-                options.minify_identifiers = minify_options.asBoolean();
-                options.minify_whitespace = minify_options.asBoolean();
-                break :brk;
-            }
-
-            if (try minify_options.getBooleanLoose(global, "whitespace")) |value| {
-                options.minify_whitespace = value;
-            }
-            if (try minify_options.getBooleanLoose(global, "syntax")) |value| {
+        if (try js_options.getOptional(global, "minify", JSValue)) |minify_options| {
+            if (minify_options.isBoolean()) {
+                const value = minify_options.asBoolean();
                 options.minify_syntax = value;
-            }
-            if (try minify_options.getBooleanLoose(global, "identifiers")) |value| {
                 options.minify_identifiers = value;
+                options.minify_whitespace = value;
+            } else if (minify_options.isObject()) {
+                if (try minify_options.getBooleanLoose(global, "whitespace")) |value| {
+                    options.minify_whitespace = value;
+                }
+                if (try minify_options.getBooleanLoose(global, "syntax")) |value| {
+                    options.minify_syntax = value;
+                }
+                if (try minify_options.getBooleanLoose(global, "identifiers")) |value| {
+                    options.minify_identifiers = value;
+                }
+            } else {
+                return global.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
             }
         }
 

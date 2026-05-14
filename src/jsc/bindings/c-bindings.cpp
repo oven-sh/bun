@@ -41,10 +41,10 @@ extern "C" void bun_warn_avx_missing(const char* url)
 }
 #endif
 
-// Called from Zig's main() before Output.Source is initialized and before
-// Windows has converted its environment block to UTF-8, so this goes
-// through the C runtime's stderr/getenv directly. See
-// abortForUnsupportedSimdutf in src/main.zig for the caller.
+// Called from main() before Output is initialized and before Windows has
+// converted its environment block to UTF-8, so this goes through the C
+// runtime's stderr/getenv directly. See abort_for_unsupported_simdutf in
+// src/bun_bin/lib.rs for the caller.
 extern "C" [[noreturn]] void bun_abort_missing_simd(const char* requirement, const char* hint)
 {
     fprintf(stderr, "error: this CPU is missing %s support, which Bun requires for UTF-8 processing.\n%s", requirement, hint);

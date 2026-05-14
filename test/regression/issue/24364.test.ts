@@ -5,11 +5,7 @@ import { join } from "node:path";
 
 test("react-tailwind template passes tsc --noEmit", async () => {
   // Read template files from source
-  // `src/cli` is a committed symlink → `runtime/cli`; Windows git agents
-  // (no SeCreateSymbolicLinkPrivilege / core.symlinks=false) write a
-  // 12-byte text file instead of a directory link, so go to the canonical
-  // path directly.
-  const templateDir = join(import.meta.dir, "../../../src/runtime/cli/init/react-tailwind");
+  const templateDir = join(import.meta.dir, "../../../src/cli/init/react-tailwind");
   const buildTs = readFileSync(join(templateDir, "build.ts"), "utf8");
   const tsconfigJson = readFileSync(join(templateDir, "tsconfig.json"), "utf8");
 

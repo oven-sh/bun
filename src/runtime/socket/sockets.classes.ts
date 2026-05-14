@@ -250,8 +250,6 @@ export default [
   generate(false),
   define({
     name: "Listener",
-    // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
-    sharedThis: true,
     noConstructor: true,
     JSType: "0b11101110",
     proto: {
@@ -313,7 +311,6 @@ export default [
     JSType: "0b11101110",
     finalize: true,
     construct: true,
-    sharedThis: true,
     values: ["on_data", "on_drain", "on_error"],
     proto: {
       send: {

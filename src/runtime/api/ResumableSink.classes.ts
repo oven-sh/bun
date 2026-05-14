@@ -3,8 +3,6 @@ import { define } from "../../codegen/class-definitions";
 function generate(name) {
   return define({
     name: name,
-    // R-2 Phase 3 opt-out: ResumableSink host-fns still take `&mut self`.
-    sharedThis: false,
     construct: true,
     finalize: true,
     configurable: false,

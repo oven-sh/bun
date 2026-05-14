@@ -16,7 +16,6 @@ using namespace WTF;
 class CredentialFramework {
 public:
     void* handle;
-    bool loaded;
 
     // Function pointers
     BOOL(WINAPI* CredWriteW)(PCREDENTIALW Credential, DWORD Flags);
@@ -26,13 +25,12 @@ public:
 
     CredentialFramework()
         : handle(nullptr)
-        , loaded(false)
     {
     }
 
     bool load()
     {
-        if (loaded) return true;
+        if (handle) return true;
 
         // Load advapi32.dll which contains the Credential Manager API
         handle = LoadLibraryW(L"advapi32.dll");
@@ -45,8 +43,7 @@ public:
         CredDeleteW = (BOOL(WINAPI*)(LPCWSTR, DWORD, DWORD))GetProcAddress((HMODULE)handle, "CredDeleteW");
         CredFree = (VOID(WINAPI*)(PVOID))GetProcAddress((HMODULE)handle, "CredFree");
 
-        loaded = CredWriteW && CredReadW && CredDeleteW && CredFree;
-        return loaded;
+        return CredWriteW && CredReadW && CredDeleteW && CredFree;
     }
 };
 
@@ -60,7 +57,7 @@ static CredentialFramework* credentialFramework()
             // Framework failed to load, but object is still constructed
         }
     });
-    return framework->loaded ? &framework.get() : nullptr;
+    return framework->handle ? &framework.get() : nullptr;
 }
 
 // Convert CString to Windows wide string
@@ -111,12 +108,6 @@ static String getWindowsErrorMessage(DWORD errorCode)
 
     String errorMessage;
     if (errorBuffer) {
-        // FormatMessageW appends a trailing CRLF; strip it so the JS-level
-        // error.message stays single-line (matches Darwin/Linux backends).
-        size_t len = wcslen(errorBuffer);
-        while (len > 0 && (errorBuffer[len - 1] == L'\r' || errorBuffer[len - 1] == L'\n')) {
-            errorBuffer[--len] = L'\0';
-        }
         errorMessage = wideCharToString(errorBuffer);
         LocalFree(errorBuffer);
     }
@@ -212,13 +203,11 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CS
         return std::nullopt;
     }
 
-    // Convert credential blob to CString for thread safety.
-    // CredReadW succeeded, so the credential exists — always return a value (possibly empty)
-    // so callers can distinguish "exists with empty value" from "not found" (std::nullopt).
-    std::optional<WTF::Vector<uint8_t>> result = WTF::Vector<uint8_t>();
+    // Convert credential blob to CString for thread safety
+    std::optional<WTF::Vector<uint8_t>> result;
     if (cred->CredentialBlob && cred->CredentialBlobSize > 0) {
-        result->append(std::span<const uint8_t>(
-            reinterpret_cast<const uint8_t*>(cred->CredentialBlob),
+        result = WTF::Vector<uint8_t>(std::span<const char>(
+            reinterpret_cast<const char*>(cred->CredentialBlob),
             cred->CredentialBlobSize));
     }
 

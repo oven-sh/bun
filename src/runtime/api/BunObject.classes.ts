@@ -43,8 +43,6 @@ export default [
   }),
   define({
     name: "Subprocess",
-    // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
-    sharedThis: true,
     construct: true,
     noConstructor: true,
     finalize: true,

@@ -33,8 +33,9 @@ import {
   uploadArtifacts,
 } from "./build/ci.ts";
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
-import { configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
+import { configure, type ConfigureResult } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
+import { getProfile } from "./build/profiles.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
 
@@ -84,15 +85,11 @@ async function main(): Promise<void> {
     await maybeBypassProxyForCratesIo();
   }
 
-  // Resolve ConfigureInput: either from --config-file (ninja's generator rule
+  // Resolve PartialConfig: either from --config-file (ninja's generator rule
   // replaying a previous configure) or from --profile + overrides (normal use).
-  // We pass the *unresolved* {profile, overrides} pair through — configure()
-  // expands the profile itself and persists the unresolved form, so editing
-  // profiles.ts propagates to existing build dirs on the next regen instead
-  // of being frozen at first-configure time.
-  const input: ConfigureInput = args.configFile
+  const partial: PartialConfig = args.configFile
     ? loadConfigFile(args.configFile)
-    : { profile: args.profile, overrides: args.overrides };
+    : { ...getProfile(args.profile), ...args.overrides };
 
   const ninjaArgv = (cfg: { buildDir: string }) => ["-C", cfg.buildDir, ...args.ninjaArgs, ...args.ninjaTargets];
   const ninjaEnv = (env: Record<string, string>) => ({ ...process.env, ...env });
@@ -100,10 +97,10 @@ async function main(): Promise<void> {
   if (isCI) {
     // CI: machine/env dump + collapsible groups + annotation-on-failure.
     printEnvironment();
-    const result = (await startGroup("Configure", () => configure(input))) as ConfigureResult;
+    const result = (await startGroup("Configure", () => configure(partial))) as ConfigureResult;
     if (args.configureOnly) return;
 
-    // link-only: download cpp-only + rust-only artifacts before ninja.
+    // link-only: download cpp-only + zig-only artifacts before ninja.
     if (result.cfg.buildkite && result.cfg.mode === "link-only") {
       await startGroup("Download artifacts", () => downloadArtifacts(result.cfg));
     }
@@ -112,10 +109,10 @@ async function main(): Promise<void> {
       spawnWithAnnotations("ninja", ninjaArgv(result.cfg), { label: "ninja", env: ninjaEnv(result.env) }),
     );
 
-    // cpp-only/rust-only: upload build outputs for downstream link-only.
+    // cpp-only/zig-only: upload build outputs for downstream link-only.
     // link-only: package + upload zips for downstream test steps.
     if (result.cfg.buildkite) {
-      if (result.cfg.mode === "cpp-only" || result.cfg.mode === "rust-only") {
+      if (result.cfg.mode === "cpp-only" || result.cfg.mode === "zig-only") {
         await startGroup("Upload artifacts", () => uploadArtifacts(result.cfg, result.output));
       }
       if (result.cfg.mode === "link-only") {
@@ -124,7 +121,7 @@ async function main(): Promise<void> {
     }
   } else {
     // Local: configure, then spawn ninja.
-    const result = await configure(input);
+    const result = await configure(partial);
 
     // Quiet one-liner when configure was a no-op — the full banner only
     // prints when build.ninja changed. Timing matters: a regression here
@@ -161,9 +158,9 @@ async function main(): Promise<void> {
       return;
     }
     // FD 3 sideband — only when interactive. stream.ts (wrapping deps +
-    // cargo) writes live output there, bypassing ninja's per-job buffering.
+    // zig) writes live output there, bypassing ninja's per-job buffering.
     // A human watching a terminal wants to see cmake configure spew and
-    // cargo build progress in real time. A log file (CI) doesn't —
+    // zig progress in real time. A log file (CI) doesn't —
     // that live output is noise (hundreds of `-- Looking for header.h`
     // lines from cmake). When FD 3 isn't set up, stream.ts falls back to
     // stdout which ninja buffers per-job: deps stay quiet until they
@@ -183,9 +180,6 @@ async function main(): Promise<void> {
     const ninja = spawnSync("ninja", ninjaArgv(result.cfg), {
       stdio,
       env: ninjaEnv(result.env),
-      // cargo's compile output (now part of the ninja graph via emitRust) can
-      // be tens of MB on a cold build; the default 1 MB maxBuffer ENOBUFSes.
-      maxBuffer: 1024 * 1024 * 1024,
     });
     if (ninja.error) {
       process.stderr.write(`Failed to exec ninja: ${ninja.error.message}\nIs ninja in your PATH?\n`);
@@ -277,26 +271,13 @@ async function maybeBypassProxyForCratesIo(): Promise<void> {
   process.env.no_proxy = merged;
 }
 
-/**
- * Load a ConfigureInput from JSON (for ninja's generator rule replay).
- *
- * Current format: `{ profile?: string, overrides?: PartialConfig }`.
- * Legacy format (pre profile-name persistence): a flat PartialConfig — if we
- * see neither `profile` nor `overrides` keys, wrap the whole object as
- * overrides so old build dirs still regen.
- */
-function loadConfigFile(path: string): ConfigureInput {
-  let raw: Record<string, unknown>;
+/** Load a PartialConfig from JSON (for ninja's generator rule replay). */
+function loadConfigFile(path: string): PartialConfig {
   try {
-    raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    return JSON.parse(readFileSync(path, "utf8")) as PartialConfig;
   } catch (cause) {
     throw new BuildError(`Failed to load config file: ${path}`, { cause });
   }
-  if ("profile" in raw || "overrides" in raw) {
-    return raw as ConfigureInput;
-  }
-  // Legacy flat PartialConfig.
-  return { overrides: raw as PartialConfig };
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -359,6 +340,7 @@ function parseArgs(argv: string[]): CliArgs {
   const boolFields = new Set([
     "lto",
     "asan",
+    "zigAsan",
     "assertions",
     "logs",
     "baseline",
@@ -386,6 +368,7 @@ function parseArgs(argv: string[]): CliArgs {
     "cacheDir",
     "nodejsVersion",
     "nodejsAbiVersion",
+    "zigCommit",
     "webkitVersion",
     "pgoGenerate",
     "pgoUse",
@@ -520,6 +503,6 @@ Examples:
   bun scripts/build.ts --profile=release --lto=off
   bun scripts/build.ts test foo.test.ts
   bun scripts/build.ts --profile=debug-local run script.ts
-  bun scripts/build.ts --target=bun-rust
+  bun scripts/build.ts --target=bun-zig
   bun scripts/build.ts --configure-only
 `;

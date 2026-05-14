@@ -368,19 +368,15 @@ function getLinkBunAgent(platform, options) {
   }
 
   return getEc2Agent(platform, options, {
-    // Full LTO with libbun_rust.a as bitcode peaks >31 GiB on aarch64; xlarge OOMs.
+    // Full LTO with bun-zig.o as bitcode peaks >31 GiB on aarch64; xlarge OOMs.
     instanceType: arch === "aarch64" ? "r8g.2xlarge" : "r7i.2xlarge",
   });
 }
 
 /**
- * Linux box that cross-compiles libbun_rust.a for every linux/freebsd
- * target. The image must have rustup + the pinned `rust-toolchain.toml`
- * nightly preinstalled (with the `rust-src` component and every target
- * triple in `rustup target add` form — bootstrap.sh handles this).
  * @returns {Platform}
  */
-function getRustPlatform() {
+function getZigPlatform() {
   return {
     os: "linux",
     arch: "aarch64",
@@ -395,36 +391,21 @@ function getRustPlatform() {
  * @param {PipelineOptions} options
  * @returns {Agent}
  */
-function getRustAgent(platform, options) {
+function getZigAgent(platform, options) {
   const { os, arch } = platform;
 
-  // Windows: cargo's `*-pc-windows-msvc` target needs the MSVC SDK
-  // (link.exe is not invoked for a staticlib, but `cc`-crate build
-  // scripts and rustc's own `lib.exe` archiver need it). Runs natively
-  // on a Windows agent — `cargo-xwin` would let this share the linux
-  // box but isn't wired into the image yet.
+  // Windows builds Zig natively on Azure
   if (os === "windows") {
     return getEc2Agent(platform, options, {
       instanceType: getAzureVmSize(os, arch),
     });
   }
 
-  // Darwin: rustc cross-compiles fine but the dep graph's `cc` build
-  // scripts need an osxcross SDK + cctools `ar`. Runs natively on a
-  // mac agent until osxcross is in the linux image.
-  if (os === "darwin") {
-    return {
-      queue: `build-${os}`,
-      os,
-      arch,
-    };
-  }
-
-  // Linux (gnu/musl/android) and FreeBSD: cross-compile from one Linux
-  // aarch64 box. cargo build is wide (1 codegen unit per crate × ~80
-  // crates), so size for cores. ASAN doubles the IR — bigger box.
-  return getEc2Agent(getRustPlatform(), options, {
-    instanceType: platform.profile === "asan" ? "r8g.4xlarge" : "r8g.2xlarge",
+  // Everything else cross-compiles from Linux aarch64. ASAN gets a wider
+  // box: it builds with cg=CI_ASAN_CODEGEN_THREADS (8) so it can use the
+  // parallel backend; release stays at cg=1 (full IPO) so 2 vCPU suffice.
+  return getEc2Agent(getZigPlatform(), options, {
+    instanceType: platform.profile === "asan" ? "r8g.2xlarge" : "r8g.large",
   });
 }
 
@@ -505,7 +486,7 @@ function getTestAgent(platform, options) {
  *
  * @param {Target} target
  * @param {PipelineOptions} options
- * @param {"cpp-only" | "rust-only" | "link-only"} mode
+ * @param {"cpp-only" | "zig-only" | "link-only"} mode
  * @returns {string}
  */
 function getBuildArgs(target, options, mode) {
@@ -514,12 +495,11 @@ function getBuildArgs(target, options, mode) {
 
   const args = [`--profile=ci-${mode}`];
 
-  // rust-only cross-compiles (linux host → linux/freebsd targets); os/arch/abi
-  // must all be explicit — host detection (detectLinuxAbi checks
-  // /etc/alpine-release) would report the build box's abi (Alpine→musl), not
-  // the target's. darwin/windows rust-only run natively (see getRustAgent), so
-  // host detection is correct there. cpp-only/link-only: native build.
-  if (mode === "rust-only" && os !== "darwin" && os !== "windows") {
+  // zig-only cross-compiles (linux host → all targets); os/arch/abi must
+  // all be explicit — host detection (detectLinuxAbi checks /etc/alpine-release)
+  // would report the build box's abi (Alpine→musl), not the target's.
+  // cpp-only/link-only: native build, host detection is correct.
+  if (mode === "zig-only") {
     args.push(`--os=${os}`, `--arch=${arch}`);
     if (os === "linux") args.push(`--abi=${abi ?? "gnu"}`);
   } else if (abi === "musl") {
@@ -547,7 +527,7 @@ function getBuildArgs(target, options, mode) {
 /**
  * @param {Target} target
  * @param {PipelineOptions} options
- * @param {"cpp-only" | "rust-only" | "link-only"} mode
+ * @param {"cpp-only" | "zig-only" | "link-only"} mode
  * @returns {string}
  */
 function getBuildCommand(target, options, mode) {
@@ -591,17 +571,16 @@ function getBuildCppStep(platform, options) {
  * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getBuildRustStep(platform, options) {
+function getBuildZigStep(platform, options) {
   return {
-    key: `${getTargetKey(platform)}-build-rust`,
+    key: `${getTargetKey(platform)}-build-zig`,
     retry: getRetry(),
-    label: `${getTargetLabel(platform)} - build-rust`,
-    agents: getRustAgent(platform, options),
+    label: `${getTargetLabel(platform)} - build-zig`,
+    agents: getZigAgent(platform, options),
     cancel_on_build_failing: isMergeQueue(),
-    // cargo cross-compiles via --os/--arch (mapped to `--target <triple>`
-    // in build args). The agent image has the pinned nightly + `rustup
-    // target add` for every triple preinstalled.
-    command: getBuildCommand(platform, options, "rust-only"),
+    // zig cross-compiles via --os/--arch in build args. No separate
+    // toolchain file — zig handles cross-compilation natively.
+    command: getBuildCommand(platform, options, "zig-only"),
     timeout_in_minutes: 35,
   };
 }
@@ -615,7 +594,7 @@ function getLinkBunStep(platform, options) {
   return {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
-    depends_on: [`${getTargetKey(platform)}-build-cpp`, `${getTargetKey(platform)}-build-rust`],
+    depends_on: [`${getTargetKey(platform)}-build-cpp`, `${getTargetKey(platform)}-build-zig`],
     agents: getLinkBunAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
@@ -625,7 +604,7 @@ function getLinkBunStep(platform, options) {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
     },
     // link-only downloads artifacts from the sibling build-cpp and
-    // build-rust steps (derived from BUILDKITE_STEP_KEY) before ninja runs.
+    // build-zig steps (derived from BUILDKITE_STEP_KEY) before ninja runs.
     command: getBuildCommand(platform, options, "link-only"),
   };
 }
@@ -1399,15 +1378,15 @@ async function getPipeline(options = {}) {
     steps.push(
       ...relevantBuildPlatforms.map(target => {
         const imageKey = getImageKey(target);
-        const rustImageKey = getImageKey(getRustPlatform());
-        const dependsOn = imagePlatforms.has(rustImageKey) ? [`${rustImageKey}-build-image`] : [];
+        const zigImageKey = getImageKey(getZigPlatform());
+        const dependsOn = imagePlatforms.has(zigImageKey) ? [`${zigImageKey}-build-image`] : [];
         if (imagePlatforms.has(imageKey)) {
           dependsOn.push(`${imageKey}-build-image`);
         }
 
         const steps = [];
         steps.push(getBuildCppStep(target, options));
-        steps.push(getBuildRustStep(target, options));
+        steps.push(getBuildZigStep(target, options));
         steps.push(getLinkBunStep(target, options));
 
         if (needsBaselineVerification(target)) {

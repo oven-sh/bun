@@ -54,7 +54,6 @@
 /.cache
 /.webkit-cache
 /build-*/
-/test/build/
 /bun-webkit
 /kcov-out
 /test-report.json
@@ -186,10 +185,6 @@ codegen-for-zig-team.tar.gz
 
 # Generated files
 
-# Written at configure time from the discovered toolchain by
-# scripts/build/cargo-config.ts — see scripts/build/CLAUDE.md.
-.cargo/config.toml
-
 .buildkite/ci.yml
 *.sock
 scratch*.{js,ts,tsx,cjs,mjs}
@@ -200,6 +195,3 @@ scripts/lldb-inline
 
 test/integration/bun-types/fixture/bun.lock
 .claude/scheduled_tasks.lock
-src/runtime/bake/generated.ts
-/target/
-*.heapsnapshot

@@ -235,8 +235,7 @@ class Debugger {
     if (protocol === "ws:" || protocol === "wss:" || protocol === "ws+tcp:") {
       const server = Bun.serve({
         hostname,
-        // empty port from new URL("ws://host/") -> let the OS pick a free port instead of falling back to Bun.serve's default 3000
-        port: port || 0,
+        port,
         fetch: this.#fetch.bind(this),
         websocket: this.#websocket,
       });

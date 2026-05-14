@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { allDeps } from "./deps/index.ts";
 
 const cwd = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-// Machine-shared cache (ccache/cargo/tarballs/webkit). Matches resolveConfig()'s
+// Machine-shared cache (ccache/zig/tarballs/webkit). Matches resolveConfig()'s
 // non-CI default. `clean` is a dev-machine tool so we don't branch on CI here.
 const sharedCacheDir = resolve(process.env.BUN_INSTALL || resolve(homedir(), ".bun"), "build-cache");
 
@@ -31,12 +31,12 @@ presets:
   release          build/release/
   debug-local      build/debug-local/
   release-local    build/release-local/
-  rust             cargo target dirs across all profiles + ~/.bun/build-cache/cargo
+  zig              zig caches + bun-zig*.o across all profiles, .zig-cache, zig-out
   cpp              C++ obj/ + pch/ across all profiles
-  cache            machine-shared build cache (~/.bun/build-cache: ccache, cargo,
+  cache            machine-shared build cache (~/.bun/build-cache: ccache, zig,
                    tarballs, prebuilt webkit) — affects ALL checkouts
-  deep             build/, target/, vendor/* (except manually managed deps
-                   like WebKit)
+  deep             build/, .zig-cache, zig-out, vendor/* (except manually
+                   managed deps like WebKit)
 
 flags:
   --dry-run        list what would be removed without deleting
@@ -66,12 +66,16 @@ const presets: Record<string, () => string[]> = {
   "debug-local": profile("debug-local"),
   "release-local": profile("release-local"),
 
-  rust: () => [
-    ...buildProfiles().map(p => resolve(p, "rust-target")),
-    resolve(sharedCacheDir, "cargo"),
-    // `cargo check`/`cargo clippy` run from the repo root with no
-    // --target-dir, so they write to the workspace-default `target/`.
-    resolve(cwd, "target"),
+  zig: () => [
+    ...buildProfiles().flatMap(p => [
+      resolve(p, "cache", "zig"),
+      // Single-object (cg=1) and shard (cg>1) outputs both match.
+      ...(existsSync(p) ? readdirSync(p) : []).filter(f => /^bun-zig(\.\d+)?\.o$/.test(f)).map(f => resolve(p, f)),
+    ]),
+    resolve(sharedCacheDir, "zig"),
+    resolve(cwd, "build", "debug", "zig-check-cache"),
+    resolve(cwd, ".zig-cache"),
+    resolve(cwd, "zig-out"),
   ],
 
   cpp: () => buildProfiles().flatMap(p => [resolve(p, "obj"), resolve(p, "pch")]),
@@ -80,7 +84,9 @@ const presets: Record<string, () => string[]> = {
 
   deep: () => [
     resolve(cwd, "build"),
-    resolve(cwd, "target"),
+    resolve(cwd, "vendor", "zig"),
+    resolve(cwd, ".zig-cache"),
+    resolve(cwd, "zig-out"),
     ...allDeps.filter(d => !userManagedDeps.has(d.name)).map(d => resolve(cwd, "vendor", d.name)),
   ],
 };

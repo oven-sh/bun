@@ -405,40 +405,6 @@ namespace InternalModuleRegistryConstants {
   );
 }
 
-// This is a generated enum for zig code (exports.zig)
-writeIfNotChanged(
-  path.join(CODEGEN_DIR, "ResolvedSourceTag.zig"),
-  `// zig fmt: off
-pub const ResolvedSourceTag = enum(u32) {
-    javascript = 0,
-    package_json_type_module = 1,
-    package_json_type_commonjs = 2,
-    wasm = 3,
-    object = 4,
-    file = 5,
-    esm = 6,
-    json_for_object_loader = 7,
-    /// Generate an object with "default" set to all the exports, including a "default" property
-    exports_object = 8,
-    /// Generate a module that only exports default the input JSValue
-    export_default_object = 9,
-    /// Signal upwards that the matching value in 'require.extensions' should be used.
-    common_js_custom_extension = 10,
-
-    // Built in modules are loaded through InternalModuleRegistry by numerical ID.
-    // In this enum are represented as \`(1 << 9) & id\`
-${moduleList
-  .slice(0, nativeStartIndex)
-  .map((id, n) => `    @"${idToPublicSpecifierOrEnumName(id)}" = ${(1 << 9) | n},`)
-  .join("\n")}
-    // Native modules come after the JS modules
-${Object.entries(nativeModuleEnumToId)
-  .map(([id, n], i) => `    @"${moduleList[nativeStartIndex + i]}" = ${(1 << 9) | (n + nativeStartIndex)},`)
-  .join("\n")}
-};
-`,
-);
-
 // This is a generated enum for c++ code (headers-handwritten.h)
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "SyntheticModuleType.h"),

@@ -21,7 +21,6 @@
  *   - bindgenv2 emits Generated<Type>.h per type (list-outputs skips .h)
  *   - generate-node-errors.ts emits ErrorCode.d.ts (not declared)
  *   - bundle-modules.ts emits eval/ subdir, BunBuiltinNames+extras.h, etc.
- *   - cppbind.ts emits cpp.source-links
  *
  * It WORKS because:
  *   1. The declared .cpp outputs guarantee the step runs before compile
@@ -285,7 +284,6 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   emitGeneratedClasses(ctx);
   emitHostExports(ctx);
   emitCppBind(ctx);
-  emitCiInfo(ctx);
   emitJsModules(ctx);
   emitBakeCodegen(ctx);
   emitBindgenV2(ctx);
@@ -564,11 +562,7 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
     resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.h"),
   ];
 
-  const outputs = [
-    resolve(cfg.codegenDir, "ErrorCode+List.h"),
-    resolve(cfg.codegenDir, "ErrorCode+Data.h"),
-    resolve(cfg.codegenDir, "ErrorCode.zig"),
-  ];
+  const outputs = [resolve(cfg.codegenDir, "ErrorCode+List.h"), resolve(cfg.codegenDir, "ErrorCode+Data.h")];
 
   n.build({
     outputs,
@@ -577,7 +571,7 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: "ErrorCode.{zig,h}",
+      desc: "ErrorCode.h",
       args: shJoin(cfg, ["run", script, cfg.codegenDir]),
     },
   });
@@ -597,7 +591,6 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "ZigGeneratedClasses+DOMClientIsoSubspaces.h"),
     resolve(cfg.codegenDir, "ZigGeneratedClasses+DOMIsoSubspaces.h"),
     resolve(cfg.codegenDir, "ZigGeneratedClasses+lazyStructureImpl.h"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses.zig"),
     resolve(cfg.codegenDir, "ZigGeneratedClasses.lut.txt"),
     // Rust sibling: include!()'d by src/runtime/generated_classes.rs. Must be
     // a declared output so the cargo edge (which lists this in rustInputs)
@@ -613,7 +606,7 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: "ZigGeneratedClasses.{zig,cpp,h}",
+      desc: "ZigGeneratedClasses.{cpp,h}",
       args: shJoin(cfg, ["run", script, ...sources.zigGeneratedClasses, cfg.codegenDir]),
     },
   });
@@ -665,7 +658,6 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
 function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "cppbind.ts");
 
-  const output = resolve(cfg.codegenDir, "cpp.zig");
   const outputRs = resolve(cfg.codegenDir, "cpp.rs");
 
   // Write the .cpp file list for cppbind to scan. Build system owns the
@@ -683,7 +675,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   writeIfChanged(cxxSourcesFile, cxxSourcesLines.join("\n") + "\n");
 
   n.build({
-    outputs: [output, outputRs],
+    outputs: [outputRs],
     rule: "codegen",
     inputs: [script],
     // cppbind scans ALL .cpp files for [[ZIG_EXPORT]] annotations. Every
@@ -703,39 +695,16 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: "cpp.{zig,rs} (cppbind)",
+      desc: "cpp.rs (cppbind)",
       // cppbind.ts takes: <srcdir> <codegendir> <cxx-sources>. No `run` —
       // direct script invocation (`${BUN_EXECUTABLE} ${script} ...`).
       args: shJoin(cfg, [script, resolve(cfg.cwd, "src"), cfg.codegenDir, cxxSourcesFile]),
     },
   });
 
-  o.all.push(output, outputRs);
+  o.all.push(outputRs);
   // bun_jsc `include!`s cpp.rs — the cargo edge must order after this.
-  o.rustInputs.push(output, outputRs);
-}
-
-function emitCiInfo({ n, cfg, o, dirStamp }: Ctx): void {
-  const script = resolve(cfg.cwd, "src", "codegen", "ci_info.ts");
-  const output = resolve(cfg.codegenDir, "ci_info.zig");
-
-  // CMake lists JavaScriptCodegenSources as deps here, but ci_info.ts doesn't
-  // read any of those files — it's a pure static data generator. The CMake
-  // dep list is wrong (copy-paste from bundle-modules). We use just the script.
-  n.build({
-    outputs: [output],
-    rule: "codegen",
-    inputs: [script],
-    orderOnlyInputs: [dirStamp],
-    vars: {
-      cwd: cfg.cwd,
-      desc: "ci_info.zig",
-      args: shJoin(cfg, [script, output]),
-    },
-  });
-
-  o.all.push(output);
-  o.rustInputs.push(output);
+  o.rustInputs.push(outputRs);
 }
 
 function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
@@ -752,7 +721,6 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "InternalModuleRegistry+enum.h"),
     resolve(cfg.codegenDir, "InternalModuleRegistry+numberOfModules.h"),
     resolve(cfg.codegenDir, "NativeModuleImpl.h"),
-    resolve(cfg.codegenDir, "ResolvedSourceTag.zig"),
     resolve(cfg.codegenDir, "SyntheticModuleType.h"),
     resolve(cfg.codegenDir, "GeneratedJS2Native.h"),
     // include!()'d by src/runtime/generated_js2native.rs. Must be a declared

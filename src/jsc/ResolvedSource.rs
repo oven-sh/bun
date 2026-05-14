@@ -3,7 +3,6 @@ use core::ffi::c_void;
 use bun_core::String as BunString;
 
 use crate::JSValue;
-// `@import("ResolvedSourceTag")` is a build-system module (codegen → ResolvedSourceTag.zig).
 // The Rust mirror lives inline in `crate::resolved_source_tag` so it can be kept in
 // lock-step with the C `uint32_t tag` field in src/jsc/bindings/headers-handwritten.h.
 pub use crate::resolved_source_tag::ResolvedSourceTag as Tag;

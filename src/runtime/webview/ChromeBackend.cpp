@@ -726,8 +726,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         if (entry.method == Method::TargetCreateTarget && error.empty()) {
             auto tid = jsonString(jsonField(result, { "targetId", 8 }));
             if (!tid.empty())
-                send(0, Command(nextId(), "Target.closeTarget"_s)
-                            .str("targetId"_s, WTF::String::fromUTF8(tid)));
+                send(0, Command(nextId(), "Target.closeTarget"_s).str("targetId"_s, WTF::String::fromUTF8(tid)));
         }
         return;
     }

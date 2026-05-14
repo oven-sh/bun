@@ -6,6 +6,7 @@
 #include "helpers.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/text/WTFString.h>
+#include <bun-uws/src/App.h>
 
 extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
@@ -28,6 +29,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBytesWritten);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketClose);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketMarkAsRawMode);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterRemoteAddress);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterLocalAddress);
@@ -56,6 +58,7 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketClose, 0 } },
     { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketWrite, 2 } },
     { "end"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketEnd, 0 } },
+    { "markAsRawMode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketMarkAsRawMode, 0 } },
     { "secureEstablished"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterIsSecureEstablished, noOpSetter } },
 };
 
@@ -109,6 +112,33 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
     auto bufferedSize = thisObject->streamBuffer.bufferedSize();
     if (bufferedSize == 0) {
         return us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+    }
+    return JSValue::encode(JSC::jsUndefined());
+}
+
+// Mark this socket's HTTP response context as a raw/tunnel connection (like CONNECT).
+// After this runs, uWS will stop parsing inbound bytes as HTTP and will surface
+// them to the JS-side `ondata` hook through `onSocketData`, matching the CONNECT
+// path — required for `server.on("upgrade")` handlers that take over the socket
+// (e.g. `ws.handleUpgrade` in rsbuild/vite/webpack-dev-server).
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketMarkAsRawMode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
+    if (!thisObject) [[unlikely]] {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    if (thisObject->isClosed() || thisObject->upgraded) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    // The layout of HttpResponseData is independent of SSL for the `isConnectRequest`
+    // field offset, but we pick the right template instantiation anyway.
+    if (thisObject->is_ssl) {
+        auto* data = reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(thisObject->socket));
+        if (data) data->isConnectRequest = true;
+    } else {
+        auto* data = reinterpret_cast<uWS::HttpResponseData<false>*>(us_socket_ext(thisObject->socket));
+        if (data) data->isConnectRequest = true;
     }
     return JSValue::encode(JSC::jsUndefined());
 }

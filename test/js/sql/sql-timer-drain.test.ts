@@ -19,8 +19,21 @@ import net from "net";
 // Minimal Postgres protocol bytes we need to hand-roll.
 // Startup-phase handshake (no SSL): AuthenticationOk + ReadyForQuery(idle).
 const HANDSHAKE = Buffer.from([
-  0x52, 0, 0, 0, 8, 0, 0, 0, 0, // AuthenticationOk
-  0x5a, 0, 0, 0, 5, 0x49, // ReadyForQuery 'I' (idle)
+  0x52,
+  0,
+  0,
+  0,
+  8,
+  0,
+  0,
+  0,
+  0, // AuthenticationOk
+  0x5a,
+  0,
+  0,
+  0,
+  5,
+  0x49, // ReadyForQuery 'I' (idle)
 ]);
 
 // A single-column/single-row response for `SELECT 42 as x`, followed by
@@ -31,14 +44,22 @@ function buildQueryResponse(): Buffer {
   const name = Buffer.from("x\0");
   const rowDescBody = Buffer.alloc(2 + name.length + 4 + 2 + 4 + 2 + 4 + 2);
   let o = 0;
-  rowDescBody.writeInt16BE(1, o); o += 2;
-  name.copy(rowDescBody, o); o += name.length;
-  rowDescBody.writeInt32BE(0, o); o += 4; // table OID
-  rowDescBody.writeInt16BE(0, o); o += 2; // col attr
-  rowDescBody.writeInt32BE(23, o); o += 4; // typeOID int4
-  rowDescBody.writeInt16BE(4, o); o += 2; // type size
-  rowDescBody.writeInt32BE(-1, o); o += 4; // typeMod
-  rowDescBody.writeInt16BE(0, o); o += 2; // format = text
+  rowDescBody.writeInt16BE(1, o);
+  o += 2;
+  name.copy(rowDescBody, o);
+  o += name.length;
+  rowDescBody.writeInt32BE(0, o);
+  o += 4; // table OID
+  rowDescBody.writeInt16BE(0, o);
+  o += 2; // col attr
+  rowDescBody.writeInt32BE(23, o);
+  o += 4; // typeOID int4
+  rowDescBody.writeInt16BE(4, o);
+  o += 2; // type size
+  rowDescBody.writeInt32BE(-1, o);
+  o += 4; // typeMod
+  rowDescBody.writeInt16BE(0, o);
+  o += 2; // format = text
   const rowDesc = Buffer.alloc(5 + rowDescBody.length);
   rowDesc[0] = 0x54; // 'T'
   rowDesc.writeInt32BE(4 + rowDescBody.length, 1);
@@ -75,10 +96,7 @@ const QUERY_RESPONSE = buildQueryResponse();
  * subsequent data (client query) waits `queryDelayMs` then sends a minimal
  * result. `onClose` lets the test observe the socket close.
  */
-function startMockServer(
-  queryDelayMs: number,
-  onClose?: () => void,
-): Promise<{ port: number; stop: () => void }> {
+function startMockServer(queryDelayMs: number, onClose?: () => void): Promise<{ port: number; stop: () => void }> {
   return new Promise(resolve => {
     const timers = new Set<Timer>();
     const server = net.createServer(socket => {

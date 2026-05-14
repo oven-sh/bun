@@ -438,6 +438,15 @@ fn maybe_emit_stdio_write_error(
     if emitted.get() {
         return;
     }
+    // EAGAIN/EWOULDBLOCK is a transient "would block" condition that can
+    // occur if fd 1/2 is non-blocking and the pipe buffer is momentarily
+    // full before the reader closes. Node.js's stream layer retries these
+    // internally and never surfaces them as 'error' events, so skip them
+    // here too — the next console.* call will either succeed (buffer
+    // drained) or hit the real EPIPE once the reader actually closes.
+    if write_err == bun_sys::E::EAGAIN as i32 {
+        return;
+    }
 
     // `write_err` is the raw errno from `write()`. Wrap as a
     // `bun_sys::Error` with `syscall = write` so the JS error matches

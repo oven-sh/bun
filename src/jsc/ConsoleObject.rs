@@ -107,6 +107,13 @@ pub struct ConsoleObject {
     error_writer_backing: Output::QuietWriterAdapter,
     writer_backing: Output::QuietWriterAdapter,
 
+    /// Set once we've surfaced a write error (e.g. EPIPE) from `console.*`
+    /// onto `process.stdout`/`process.stderr`. We only do this once per
+    /// stream to avoid queuing an unbounded number of `destroy()` calls
+    /// from a tight sync loop.
+    stdout_write_error_emitted: Cell<bool>,
+    stderr_write_error_emitted: Cell<bool>,
+
     pub default_indent: u16,
 
     counts: Counter,
@@ -152,6 +159,8 @@ impl ConsoleObject {
             stdout_buffer: [0; 4096],
             error_writer_backing: Output::QuietWriterAdapter::uninit(),
             writer_backing: Output::QuietWriterAdapter::uninit(),
+            stdout_write_error_emitted: Cell::new(false),
+            stderr_write_error_emitted: Cell::new(false),
             default_indent: 0,
             counts: Counter::default(),
             _pin: core::marker::PhantomPinned,
@@ -187,6 +196,8 @@ impl ConsoleObject {
             stdout_buffer: [0; 4096],
             error_writer_backing: Output::QuietWriterAdapter::uninit(),
             writer_backing: Output::QuietWriterAdapter::uninit(),
+            stdout_write_error_emitted: Cell::new(false),
+            stderr_write_error_emitted: Cell::new(false),
             default_indent: 0,
             counts: Counter::default(),
             _pin: core::marker::PhantomPinned,
@@ -411,6 +422,49 @@ impl Drop for FlushOnDrop<'_> {
     }
 }
 
+unsafe extern "C" {
+    fn Bun__ConsoleObject__onStdioWriteError(global: &JSGlobalObject, fd: i32, err: JSValue);
+}
+
+fn maybe_emit_stdio_write_error(
+    global: &JSGlobalObject,
+    fd: i32,
+    backing: &mut Output::QuietWriterAdapter,
+    emitted: &Cell<bool>,
+) {
+    let Some(write_err) = backing.take_err() else {
+        return;
+    };
+    if emitted.get() {
+        return;
+    }
+
+    // `write_err` is the raw errno from `write()`. Wrap as a
+    // `bun_sys::Error` with `syscall = write` so the JS error matches
+    // what Node.js would surface from `process.stdout.write()`.
+    let sys_err = bun_sys::Error {
+        errno: write_err as _,
+        syscall: bun_sys::Tag::write,
+        ..Default::default()
+    };
+    use crate::SysErrorJsc as _;
+    let js_err = sys_err.to_js(global);
+    if global.has_exception() {
+        // Constructing the error instance threw (e.g. OOM in string
+        // allocation). Leave `emitted` unset so a subsequent failed
+        // write can retry.
+        return;
+    }
+    // Mark emitted before calling into JS so a re-entrant console.* from
+    // inside the user's 'error' listener (or stream construction) can't
+    // recurse back here.
+    emitted.set(true);
+    // SAFETY: C++ side reads the VM's process object and calls
+    // `.destroy(err)` on the appropriate stream; `js_err` is rooted on
+    // the stack for the duration of the call.
+    unsafe { Bun__ConsoleObject__onStdioWriteError(global, fd, js_err) };
+}
+
 /// <https://console.spec.whatwg.org/#formatter>
 #[crate::host_call]
 pub extern "C" fn message_with_type_and_level(
@@ -421,14 +475,52 @@ pub extern "C" fn message_with_type_and_level(
     vals: *const JSValue,
     len: usize,
 ) {
+    // Node.js routes console.log/console.error through process.stdout.write()
+    // / process.stderr.write(), so a write failure (EPIPE when piped to `head`,
+    // etc.) surfaces as an 'error' event on the corresponding stream. Bun's
+    // console.* writes directly to the fd and swallows errors, so detect them
+    // here and forward to the stream so user 'error' listeners fire instead of
+    // the process hanging forever. See https://github.com/oven-sh/bun/issues/7251.
+    let is_stderr = level == MessageLevel::Warning
+        || level == MessageLevel::Error
+        || message_type == MessageType::Assert;
+
     if let Err(err) = message_with_type_and_level_(ctype, message_type, level, global, vals, len) {
+        // A JS exception is now pending. Don't call into JS to forward the
+        // stdio write error — the C++ handler's exception scopes would clear
+        // the user's throw. Just drop the recorded write error; the pipe
+        // stays broken, so the next console.* call will hit EPIPE again and
+        // retry the emit with no exception pending.
+        let console = vm_console_mut(global);
+        let backing = if is_stderr {
+            &mut console.error_writer_backing
+        } else {
+            &mut console.writer_backing
+        };
+        let _ = backing.take_err();
+
         // The exception is already set on the VM (`JsError::Thrown`); for OOM
         // make sure something is pending. Mirrors `host_fn::void_from_js_error`.
         if matches!(err, jsc::JsError::OutOfMemory) {
             global.throw_out_of_memory_value();
         }
         debug_assert!(global.has_exception());
+        return;
     }
+
+    let console = vm_console_mut(global);
+    let (backing, emitted) = if is_stderr {
+        (
+            &mut console.error_writer_backing,
+            &console.stderr_write_error_emitted,
+        )
+    } else {
+        (
+            &mut console.writer_backing,
+            &console.stdout_write_error_emitted,
+        )
+    };
+    maybe_emit_stdio_write_error(global, if is_stderr { 2 } else { 1 }, backing, emitted);
 }
 
 fn message_with_type_and_level_(

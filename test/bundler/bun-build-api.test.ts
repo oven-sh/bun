@@ -134,6 +134,18 @@ describe("Bun.build", () => {
     ).toThrow();
   });
 
+  test("many conditions does not crash", async () => {
+    const dir = tempDirWithFiles("bun-build-api-conditions", {
+      "entry.js": "export const x = 1;",
+    });
+    const build = await Bun.build({
+      entrypoints: [join(dir, "entry.js")],
+      conditions: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"],
+    });
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(1);
+  });
+
   test("returns errors properly", async () => {
     Bun.gc(true);
     const build = await buildNoThrow({

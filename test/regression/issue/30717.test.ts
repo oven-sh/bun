@@ -96,11 +96,7 @@ test.skipIf(isWindows || !cc)(
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [runStdout, runStderr, runExit] = await Promise.all([
-      run.stdout.text(),
-      run.stderr.text(),
-      run.exited,
-    ]);
+    const [runStdout, runStderr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
     // Helpful diagnostic if it fails.
     if (runExit !== 0) {
       console.error("run stdout:", runStdout);

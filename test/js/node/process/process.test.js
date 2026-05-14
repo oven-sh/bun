@@ -1181,26 +1181,35 @@ it("process.versions", () => {
   expect(process.versions.modules).toEqual("137");
 });
 
-// On Windows, env var names are case-insensitive but the JS Proxy that wraps
-// `process.env` keys its underlying object on canonical-uppercase names. The
-// proxy-related vars (HTTP_PROXY/HTTPS_PROXY/NO_PROXY) get a CustomAccessor at
-// the canonical name; that accessor must stay enumerable when the OS env block
-// carries a non-canonical casing, or `{...process.env}` (and any spawn env
-// merge that spreads it) silently drops the var.
-it.skipIf(!isWindows)("proxy env vars survive {...process.env} regardless of OS env-block casing", () => {
+// On Windows, env var names are case-insensitive. The proxy-related vars
+// (HTTP_PROXY/HTTPS_PROXY/NO_PROXY) get a CustomAccessor at their canonical
+// uppercase name; that accessor must stay enumerable when the OS env block
+// carries a non-canonical casing (e.g. `Http_Proxy`), or the var is silently
+// dropped from {...process.env}. The spread preserves the *original* key case
+// from the OS env block (JS objects are case-sensitive), so consumers must
+// scan case-insensitively — but the var must at least survive enumeration.
+it.skipIf(!isWindows)("proxy env vars survive process.env enumeration regardless of OS env-block casing", () => {
   const variants = ["Http_Proxy", "HTTP_proxy", "http_Proxy", "HTTPS_Proxy", "No_Proxy"];
   for (const variant of variants) {
     const canonical = variant.toUpperCase();
+    // Drop pre-existing forms of this proxy var from bunEnv so the test
+    // exercises only the explicitly-set non-canonical casing.
+    const env = { ...bunEnv, [variant]: "http://proxy.example" };
+    for (const k of Object.keys(env)) {
+      if (k !== variant && k.toUpperCase() === canonical) delete env[k];
+    }
     const child = spawnSync({
       cmd: [
         bunExe(),
         "-e",
-        `const o = {...process.env}; console.log(JSON.stringify({direct: process.env.${canonical}, spread: o.${canonical}}));`,
+        `const o = {...process.env};
+         const found = Object.keys(o).find(k => k.toUpperCase() === ${JSON.stringify(canonical)});
+         console.log(JSON.stringify({direct: process.env.${canonical}, enumerated: found ? o[found] : undefined}));`,
       ],
-      env: { ...bunEnv, [variant]: "http://proxy.example" },
+      env,
     });
-    const { direct, spread } = JSON.parse(child.stdout.toString().trim());
+    const { direct, enumerated } = JSON.parse(child.stdout.toString().trim());
     expect(direct).toBe("http://proxy.example");
-    expect(spread).toBe("http://proxy.example");
+    expect(enumerated).toBe("http://proxy.example");
   }
 });

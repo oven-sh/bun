@@ -1674,9 +1674,11 @@ fn NewPrinter(
                 switch (record.tag) {
                     .bun => {
                         if (record.kind == .dynamic) {
+                            p.printSpaceBeforeIdentifier();
                             p.print("Promise.resolve(globalThis.Bun)");
                             return;
                         } else if (record.kind == .require or record.kind == .stmt) {
+                            p.printSpaceBeforeIdentifier();
                             p.print("globalThis.Bun");
                             return;
                         }

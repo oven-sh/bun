@@ -252,7 +252,7 @@ pub fn enable() {
             return;
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // PR_SET_PDEATHSIG: kernel sends SIGKILL when the thread that forked
             // us exits. Persists across exec; cleared on fork (Bun's own children
@@ -428,11 +428,11 @@ pub fn kill_descendants() {
 /// siblings (both have ppid==us). Returns the slice written; empty on
 /// non-Linux or enumeration failure.
 pub fn snapshot_children(out: &mut [libc::pid_t]) -> &[libc::pid_t] {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         return &out[..0];
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let self_pid = getpid();
         let n = list_child_pids(self_pid, out).unwrap_or(0);
@@ -453,11 +453,11 @@ pub fn snapshot_children(out: &mut [libc::pid_t]) -> &[libc::pid_t] {
 /// also land here and be killed — `--no-orphans` is opt-in aggressive cleanup
 /// and would kill it at process-exit via `kill_descendants()` anyway.
 pub fn kill_subreaper_adoptees(siblings: &[libc::pid_t]) {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         let _ = siblings;
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let self_pid = getpid();
         let mut buf: [libc::pid_t; 4096] = [0; 4096];
@@ -587,7 +587,7 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
             return libc::pid_t::try_from(info.pbi_ppid).expect("int cast");
         }
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut path_buf = [0u8; 64];
         let Ok(path) = bun_core::fmt::buf_print_z(&mut path_buf, format_args!("/proc/{}/stat", pid)) else {
@@ -612,7 +612,7 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
         };
         return bun_core::fmt::parse_decimal::<libc::pid_t>(ppid_str).unwrap_or(0);
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
     {
         let _ = pid;
         0
@@ -642,11 +642,11 @@ fn list_child_pids(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize
         }
         return Some((usize::try_from(rc).expect("int cast")).min(out.len()));
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         return list_child_pids_linux(parent, out);
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
     {
         let _ = (parent, out);
         None
@@ -657,7 +657,7 @@ fn list_child_pids(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize
 /// `parent`. Each file is a space-separated list of child pids whose
 /// `getppid()` is `parent` and which were created by that specific thread.
 /// Requires CONFIG_PROC_CHILDREN (enabled on every distro kernel that matters).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize> {
     use std::io::Write;
 

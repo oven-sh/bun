@@ -1266,7 +1266,7 @@ macro_rules! err {
     // `err!(from e)` — convert a strum::IntoStaticStr enum error to bun_core::Error.
     (from $e:expr) => { $crate::Error::intern(<&'static str>::from(&$e)) };
     (@__cached $name:expr) => {{
-        #[cfg_attr(target_os = "linux", unsafe(link_section = ".bun_err"))]
+        #[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".bun_err"))]
         static __E: ::core::sync::atomic::AtomicU16 = ::core::sync::atomic::AtomicU16::new(0);
         let __v = __E.load(::core::sync::atomic::Ordering::Relaxed);
         if __v != 0 {

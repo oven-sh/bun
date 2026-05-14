@@ -257,7 +257,7 @@ fn os_monotonic_ns() -> u64 {
             tv_sec: 0,
             tv_nsec: 0,
         };
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // CLOCK_MONOTONIC, not _RAW: guaranteed vDSO (no syscall). _RAW only
             // joined the vDSO in 5.3.
@@ -273,7 +273,7 @@ fn os_monotonic_ns() -> u64 {
                 let _ = libc::clock_gettime(libc::CLOCK_MONOTONIC_RAW, &mut spec);
             }
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
             // SAFETY: spec is a valid out-pointer.
             unsafe {

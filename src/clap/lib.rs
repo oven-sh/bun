@@ -98,7 +98,7 @@ macro_rules! comptime_table {
     ($params:expr) => {
         $crate::comptime_table!(
             @build
-            { #[cfg_attr(target_os = "linux", unsafe(link_section = ".rodata.startup"))] }
+            { #[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".rodata.startup"))] }
             $params
         )
     };

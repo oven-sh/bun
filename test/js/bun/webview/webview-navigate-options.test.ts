@@ -242,6 +242,40 @@ test("reload({waitUntil:'domcontentloaded'}) settles on lifecycleEvent", async (
   expect(exitCode).toBe(0);
 });
 
+test("navigate({waitUntil:'domcontentloaded'}) on a fast page doesn't enqueue duplicate title fetches", async () => {
+  // "load" mock emits DCL + load + loadEventFired all before the
+  // first PageTitle response arrives. Without the m_loaderId clear
+  // in chainTitle(), each of the three passes the gate and enqueues
+  // its own PageTitle — and a duplicate response can settle the
+  // NEXT navigate's promise early. With the clear, only the first
+  // trigger chains; the rest hit m_loaderId.isEmpty() and drop.
+  //
+  // Two back-to-back DCL navigates: if duplicate PageTitle from
+  // nav1 leaked and settled nav2, nav2 would resolve with
+  // view.url == nav1's url (nav2's frameNavigated hadn't arrived
+  // yet at the time of the stale settle).
+  const { stdout, stderr, exitCode } = await run(
+    "load",
+    `
+    await view.navigate("http://example/one", { waitUntil: "domcontentloaded" });
+    await view.navigate("http://example/two", { waitUntil: "domcontentloaded" });
+    // Each navigate committed — url reflects the LAST one. A leaked
+    // duplicate PageTitle from /one would have settled /two with
+    // url still /one.
+    console.log("url=" + view.url + " title=" + view.title);
+    // loadEventFired fired for /two (mock emits it in "load" mode)
+    // so m_loading flipped even though we settled on DCL.
+    console.log("loading=" + view.loading);
+    `,
+  );
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n")).toEqual([
+    "url=http://example/two title=mock-title",
+    "loading=false",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 test("stale loadEventFired from a prior 'domcontentloaded' navigate does not settle the next one", async () => {
   // Regression: navigate(url1, {waitUntil:'domcontentloaded'}) settles
   // before url1's window `load` fires. A second navigate() can then

@@ -379,8 +379,9 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     // (bad URL), the next op's checkSlot sees the slot cleared and proceeds;
     // the rejection is unobserved unless the user explicitly awaits the
     // first navigate via view.onNavigated or a second navigate that picks
-    // up the pending state. Same semantics as `view.navigate(url)` right
-    // after construction — just one line shorter.
+    // up the pending state. timeoutMs=0: the promise is dropped, so a
+    // timeout rejection would surface as unhandledrejection on a slow
+    // page — same rationale as the Chrome path above.
     if (!initialUrl.isEmpty()) view->navigate(globalObject, initialUrl, NavWaitUntil::Load, 0);
     return JSValue::encode(view);
 #endif

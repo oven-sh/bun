@@ -223,7 +223,10 @@ void JSWebView::armNavTimeout(JSGlobalObject* g, uint32_t timeoutMs)
         [global, vid, gen, backend, timeoutMs]() {
             JSWebView* v = viewByIdForBackend(backend, vid);
             if (!v || v->m_navGeneration != gen || !v->m_pendingNavigate) return;
-            v->m_loading = false;
+            // m_loading left untouched — it tracks the REAL load state
+            // (flipped by Page.loadEventFired / NavDone). A timeout is
+            // the user giving up on the wait, not the browser
+            // finishing the load.
             settleSlot(global, v, v->m_pendingNavigate, false,
                 createError(global, makeString("Navigation timeout of "_s, timeoutMs, "ms exceeded"_s)));
         });

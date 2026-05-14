@@ -1109,7 +1109,17 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     // one reply. One extra roundtrip (~1ms), but the user-visible
     // guarantee (`await view.navigate(); view.title` works) is worth
     // it. PageTitle's response handler is the settle point.
+    //
+    // Clears m_loaderId: on a fast page, lifecycleEvent(DCL),
+    // lifecycleEvent(load) and loadEventFired can all arrive before
+    // the first PageTitle response — each would otherwise pass the
+    // gate and enqueue a duplicate PageTitle whose LATER response
+    // could settle a subsequent navigate()'s promise. Once the chain
+    // is started for THIS navigation, further triggers for the same
+    // document hit the empty-m_loaderId gate and drop. The next
+    // navigation's frameNavigated repopulates it.
     auto chainTitle = [&]() {
+        view->m_loaderId = WTF::String();
         uint32_t tid = nextId();
         m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId });
         send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));

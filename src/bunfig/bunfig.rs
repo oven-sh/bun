@@ -19,6 +19,9 @@ use bun_parsers::toml::TOML;
 
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
+
+use bun_paths::PathBuffer;
+use bun_paths::resolve_path::{self, platform};
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptions};
 use bun_options_types::global_cache::GlobalCache;
@@ -250,34 +253,96 @@ impl<'a> Parser<'a> {
     }
 
     fn load_preload(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
+        // Merge rather than replace so a secondary load_config call (e.g.
+        // the RunCommand fallback in run_command) doesn't clobber preloads
+        // from CLI flags or an earlier bunfig lookup. Bunfig entries go
+        // first so the ordering is [bunfig, cli] no matter which pass fires.
+        let existing = core::mem::take(&mut self.ctx.preloads);
         match &expr.data {
             ExprData::EArray(array) => {
                 let items = array.items.slice();
-                let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
+                let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(items.len() + existing.len());
                 for item in items {
                     self.expect_string(item)?;
                     if let ExprData::EString(s) = &item.data {
                         if s.len() > 0 {
-                            // PERF(port): was appendAssumeCapacity
-                            preloads.push(estring_to_owned(s, self.bump));
+                            let raw = estring_to_owned(s, self.bump);
+                            preloads.push(self.resolve_preload_path(raw));
                         }
                     }
                 }
+                preloads.extend(existing);
                 self.ctx.preloads = preloads;
             }
             ExprData::EString(s) => {
                 if s.len() > 0 {
-                    let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(1);
-                    preloads.push(estring_to_owned(s, self.bump));
+                    let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(1 + existing.len());
+                    let raw = estring_to_owned(s, self.bump);
+                    preloads.push(self.resolve_preload_path(raw));
+                    preloads.extend(existing);
                     self.ctx.preloads = preloads;
+                } else {
+                    self.ctx.preloads = existing;
                 }
             }
-            ExprData::ENull(_) => {}
+            ExprData::ENull(_) => {
+                self.ctx.preloads = existing;
+            }
             _ => {
+                self.ctx.preloads = existing;
                 self.add_error(expr.loc, b"Expected preload to be an array")?;
             }
         }
         Ok(())
+    }
+
+    /// Resolve a preload entry so it works regardless of the command's
+    /// current working directory. Relative paths are resolved against the
+    /// directory containing the bunfig.toml; package specifiers and
+    /// already-absolute paths are passed through unchanged.
+    fn resolve_preload_path(&self, entry: Box<[u8]>) -> Box<[u8]> {
+        if entry.is_empty() {
+            return entry;
+        }
+        if <platform::Auto as resolve_path::PlatformT>::P.is_absolute(&entry) {
+            return entry;
+        }
+        if bun_paths::is_package_path(&entry) {
+            return entry;
+        }
+        self.resolve_bunfig_relative(entry)
+    }
+
+    /// Resolve a filesystem path from the bunfig to an absolute path using
+    /// the directory containing the bunfig.toml. Unlike resolve_preload_path,
+    /// bare names (e.g. "coverage") are treated as relative directories
+    /// rather than package specifiers. Absolute paths pass through.
+    fn resolve_bunfig_path(&self, entry: Box<[u8]>) -> Box<[u8]> {
+        if entry.is_empty() {
+            return entry;
+        }
+        if <platform::Auto as resolve_path::PlatformT>::P.is_absolute(&entry) {
+            return entry;
+        }
+        self.resolve_bunfig_relative(entry)
+    }
+
+    fn resolve_bunfig_relative(&self, entry: Box<[u8]>) -> Box<[u8]> {
+        let bunfig_dir = resolve_path::dirname::<platform::Auto>(self.source.path.text);
+        // Skip the join when the dirname isn't itself an absolute path
+        // (e.g. Windows dirname("C:\\bunfig.toml") == "C:", which would
+        // trip the isAbsoluteWindows assert in join_abs_string_buf).
+        if bunfig_dir.is_empty()
+            || !<platform::Auto as resolve_path::PlatformT>::P.is_absolute(bunfig_dir)
+        {
+            return entry;
+        }
+        let mut buf = PathBuffer::uninit();
+        let parts: [&[u8]; 2] = [bunfig_dir, &entry];
+        let joined = resolve_path::join_abs_string_buf::<platform::Auto>(
+            bunfig_dir, &mut *buf, &parts,
+        );
+        Box::<[u8]>::from(joined)
     }
 
     fn load_env_config(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
@@ -420,7 +485,9 @@ impl<'a> Parser<'a> {
         if cmd == CommandTag::TestCommand {
             if let Some(test_) = json.get(b"test") {
                 if let Some(root) = test_.get(b"root") {
-                    self.ctx.debug.test_directory = root.as_string(self.bump).unwrap_or(b"").into();
+                    self.expect_string(&root)?;
+                    let raw: Box<[u8]> = root.as_string(self.bump).unwrap_or(b"").into();
+                    self.ctx.debug.test_directory = self.resolve_bunfig_path(raw);
                 }
 
                 if let Some(expr) = test_.get(b"preload") {
@@ -452,8 +519,9 @@ impl<'a> Parser<'a> {
                         if let ExprData::EString(s) = &junit_expr.data {
                             if s.len() > 0 {
                                 self.ctx.test_options.reporters.junit = true;
+                                let raw = estring_to_owned(s, self.bump);
                                 self.ctx.test_options.reporter_outfile =
-                                    Some(estring_to_owned(s, self.bump));
+                                    Some(self.resolve_bunfig_path(raw));
                             }
                         }
                     }
@@ -487,13 +555,15 @@ impl<'a> Parser<'a> {
 
                 if let Some(expr) = test_.get(b"coverageDir") {
                     self.expect_string(&expr)?;
-                    self.ctx.test_options.coverage.reports_directory = estring_to_owned(
+                    let raw = estring_to_owned(
                         expr.data
                             .e_string()
                             .expect("infallible: variant checked")
                             .get(),
                         self.bump,
                     );
+                    self.ctx.test_options.coverage.reports_directory =
+                        self.resolve_bunfig_path(raw);
                 }
 
                 if let Some(expr) = test_.get(b"coverageThreshold") {
@@ -863,13 +933,14 @@ impl<'a> Parser<'a> {
             {
                 if let Some(dir) = _bun.get(b"outdir") {
                     self.expect_string(&dir)?;
-                    self.ctx.args.output_dir = Some(estring_to_owned(
+                    let raw = estring_to_owned(
                         dir.data
                             .e_string()
                             .expect("infallible: variant checked")
                             .get(),
                         self.bump,
-                    ));
+                    );
+                    self.ctx.args.output_dir = Some(self.resolve_bunfig_path(raw));
                 }
             }
 

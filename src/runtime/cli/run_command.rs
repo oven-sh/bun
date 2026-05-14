@@ -911,12 +911,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         loader: Option<Loader>,
     ) -> Result<(), bun_core::Error> {
         if !ctx.debug.loaded_bunfig {
-            arguments::load_config_path(
-                CommandTag::RunCommand,
-                true,
-                bun_core::zstr!("bunfig.toml"),
-                ctx,
-            )?;
+            arguments::load_config(CommandTag::RunCommand, None, ctx)?;
         }
 
         // The shell does not need to initialize JSC (saves 1-3ms).
@@ -1137,13 +1132,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // Load bunfig.toml unless disabled by compile flags. Config loading
         // with execArgv is handled earlier in `Command::start` via `init()`.
+        // load_config checks disable_autoload_bunfig internally via
+        // StandaloneModuleGraph::get(), so the compile flag is still honoured.
         if !ctx.debug.loaded_bunfig && !graph.flags.contains(GraphFlags::DISABLE_AUTOLOAD_BUNFIG) {
-            arguments::load_config_path(
-                CommandTag::RunCommand,
-                true,
-                bun_core::zstr!("bunfig.toml"),
-                ctx,
-            )?;
+            arguments::load_config(CommandTag::RunCommand, None, ctx)?;
         }
 
         // PORT NOTE: layering — `Options::graph` is the resolver's trait object
@@ -2371,14 +2363,10 @@ impl RunCommand {
         }
 
         if !ctx.debug.loaded_bunfig {
-            // `Arguments::load_config_path` — loads global bunfig (if the
-            // command opts in via `read_global_config`) then `bunfig.toml`.
-            let _ = arguments::load_config_path(
-                CommandTag::RunCommand,
-                true,
-                bun_core::zstr!("bunfig.toml"),
-                ctx,
-            );
+            // load_config does the bunfig.toml ancestor walk from cwd,
+            // letting `bun run` from a workspace subdir pick up the
+            // project-root bunfig.toml.
+            let _ = arguments::load_config(CommandTag::RunCommand, None, ctx);
         }
 
         // ── try fast run (file exists & not a dir → boot VM) ────────────────

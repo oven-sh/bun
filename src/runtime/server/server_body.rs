@@ -3143,7 +3143,7 @@ where
                     !self.h3_request_pool.is_null(),
                     "H3 request dispatched but h3_request_pool was never allocated (listen() H3 path not taken)"
                 );
-                let slot = (*self.h3_request_pool).claim();
+                let mut slot = (*self.h3_request_pool).claim();
                 Ctx::create_in(
                     slot.addr().as_ptr().cast(),
                     self_ptr,
@@ -3155,7 +3155,7 @@ where
                 // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
                 slot.assume_init().as_ptr().cast()
             } else {
-                let slot = (*self.request_pool).claim();
+                let mut slot = (*self.request_pool).claim();
                 Ctx::create_in(
                     slot.addr().as_ptr().cast(),
                     self_ptr,
@@ -3412,18 +3412,18 @@ where
         this.pending_requests += 1;
         req.set_yield(false);
         // SAFETY: pointer is non-null and owns a fresh pool slot.
-        let ctx_slot = unsafe { (*this.request_pool).get() };
+        let mut slot = unsafe { (*this.request_pool).claim() };
         let should_deinit_context = core::cell::Cell::new(false);
         <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
-            ctx_slot,
+            slot.addr().as_ptr(),
             self_ptr,
             req,
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
             None,
         );
-        // SAFETY: ctx_slot was just initialized by create_in.
-        let ctx = unsafe { &mut *ctx_slot };
+        // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
+        let ctx = unsafe { &mut *slot.assume_init().as_ptr() };
 
         let body_hive = crate::webcore::body::hive_alloc(this.vm().as_mut(), BodyValue::Null);
         // SAFETY: hive_alloc returns a freshly-initialized hive slot; live until

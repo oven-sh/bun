@@ -216,7 +216,7 @@ pub fn set_break_point_on_first_line() -> bool {
 
 pub struct RuntimeTranspilerStore {
     pub generation_number: AtomicU32,
-    pub store: TranspilerJobStore,
+    pub store: Box<TranspilerJobStore>,
     pub enabled: bool,
     pub queue: Queue,
 }
@@ -227,7 +227,7 @@ impl Default for RuntimeTranspilerStore {
     fn default() -> Self {
         Self {
             generation_number: AtomicU32::new(0),
-            store: TranspilerJobStore::init(),
+            store: TranspilerJobStore::new_boxed(),
             enabled: true,
             queue: Queue::new(),
         }
@@ -266,10 +266,7 @@ impl RuntimeTranspilerStore {
         // valid in-bounds field place without forming an intermediate reference.
         unsafe {
             addr_of_mut!((*out).generation_number).write(AtomicU32::new(0));
-            // `store.hive.buffer: [MaybeUninit<TranspilerJob>; 64]` —
-            // intentionally left untouched (uninit is a valid value).
-            addr_of_mut!((*out).store.hive.used)
-                .write(bun_collections::hive_array::HiveBitSet::init_empty());
+            addr_of_mut!((*out).store).write(TranspilerJobStore::new_boxed());
             addr_of_mut!((*out).enabled).write(true);
             addr_of_mut!((*out).queue).write(Queue::new());
         }

@@ -1707,8 +1707,15 @@ pub fn drain_dependency_list(this: &mut PackageManager) {
     let _ = schedule_tasks(this);
 }
 
-pub fn get_network_task(this: &mut PackageManager) -> *mut NetworkTask {
-    this.preallocated_network_tasks.get()
+pub fn get_network_task(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    package_manager: *mut PackageManager,
+    apply_patch_task: Option<Box<PatchTask>>,
+) -> *mut NetworkTask {
+    this.preallocated_network_tasks
+        .get_init(NetworkTask::new(task_id, package_manager, apply_patch_task))
+        .as_ptr()
 }
 
 pub fn alloc_github_url(this: &PackageManager, repository: &Repository) -> Vec<u8> {
@@ -1811,19 +1818,11 @@ pub fn generate_network_task_for_tarball<'a>(
     // back-pointer (TODO(port): lifetime — BACKREF).
     let this_backref: *mut PackageManager = this;
 
-    // Take the pool slot as a raw pointer so borrowck releases `this` for the
-    // streaming-setup tail. Reborrowed `&mut` per-statement below.
-    let net_ptr: *mut NetworkTask = get_network_task(this);
     // Zig: `network_task.* = .{ .task_id, .callback = undefined, .allocator,
     // .package_manager, .apply_patch_task }` — full struct overwrite that resets
-    // every other field (`retried`, `response`, `streaming_committed`,
-    // `tarball_stream`, `streaming_extract_task`, `next`, `url_buf`,
-    // `signal_store`) to its struct default. The slot may be uninitialized
-    // (`HiveArrayFallback::get()` heap fallback) or stale (reused hive slot).
-    // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
-    // other alias exists until we return it.
-    unsafe { NetworkTask::write_init(net_ptr, task_id, this_backref, apply_patch_task) };
-    // SAFETY: `write_init` populated every field with a drop-safe value;
+    // every other field to its struct default.
+    let net_ptr: *mut NetworkTask = get_network_task(this, task_id, this_backref, apply_patch_task);
+    // SAFETY: `get_network_task` returns a fully-initialized pool slot;
     // `unsafe_http_client` is `MaybeUninit` and overwritten by `for_tarball`.
     let network_task = unsafe { &mut *net_ptr };
 
@@ -1928,8 +1927,13 @@ impl PackageManager {
         is_network_task_required(self, task_id)
     }
     #[inline]
-    pub fn get_network_task(&mut self) -> *mut NetworkTask {
-        get_network_task(self)
+    pub fn get_network_task(
+        &mut self,
+        task_id: Task::Id,
+        package_manager: *mut PackageManager,
+        apply_patch_task: Option<Box<PatchTask>>,
+    ) -> *mut NetworkTask {
+        get_network_task(self, task_id, package_manager, apply_patch_task)
     }
     #[inline]
     pub fn alloc_github_url(&self, repository: &Repository) -> Vec<u8> {

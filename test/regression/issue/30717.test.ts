@@ -57,8 +57,10 @@ test.skipIf(isWindows || !cc)(
     });
     const [ccStderr, ccExit] = await Promise.all([ccProc.stderr.text(), ccProc.exited]);
     expect(ccStderr).toBe("");
-    expect(ccExit).toBe(0);
     expect(existsSync(libPath)).toBe(true);
+    // CLAUDE.md: assert exit code last so stderr/output diffs are the first
+    // failure the reader sees.
+    expect(ccExit).toBe(0);
 
     // `bun build --compile` — bundles the .so into the standalone binary.
     const outBin = join(dirPath, isWindows ? "repro.exe" : "repro");
@@ -78,8 +80,8 @@ test.skipIf(isWindows || !cc)(
       console.error("build stdout:", buildStdout);
       console.error("build stderr:", buildStderr);
     }
-    expect(buildExit).toBe(0);
     expect(existsSync(outBin)).toBe(true);
+    expect(buildExit).toBe(0);
 
     // Delete the on-disk library so the compiled binary must use the
     // embedded copy — otherwise a passing test might just be hitting the

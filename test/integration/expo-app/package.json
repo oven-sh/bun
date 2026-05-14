@@ -16,7 +16,7 @@
     "@gorhom/bottom-sheet": "4.6.4",
     "@hookform/resolvers": "3.9.0",
     "@tanstack/react-query": "5.55.4",
-    "axios": "1.7.7",
+    "axios": "1.15.2",
     "date-fns": "3.6.0",
     "expo": "51.0.32",
     "expo-checkbox": "3.0.0",

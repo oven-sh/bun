@@ -1,7 +1,7 @@
 {
   "name": "grpc-js",
   "dependencies": {
-    "@grpc/grpc-js": "1.9.9",
+    "@grpc/grpc-js": "1.14.3",
     "@grpc/proto-loader": "0.7.10"
   }
 }

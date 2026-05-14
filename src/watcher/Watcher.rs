@@ -224,12 +224,16 @@ impl Watcher {
     }
 
     pub fn start(&mut self) -> Result<(), bun_core::Error> {
-        debug_assert!(!self.watchloop_handle.load());
+        debug_assert!(self.thread.is_none());
         // TODO(port): thread spawn — Watcher must be Send across the spawned
         // thread boundary; Zig passed *Watcher. Using raw ptr + manual safety.
         let this = std::ptr::from_mut::<Watcher>(self) as usize;
         // SAFETY: Watcher outlives the thread; shutdown() coordinates teardown
         // via `running`/`close_descriptors` and the thread frees the Box.
+        // The thread self-destructs the Watcher and is never joined; the
+        // `JoinHandle` in `self.thread` is kept purely as a "has start()
+        // been called" flag for shutdown() — dropping it without joining
+        // detaches the thread.
         self.thread = Some(std::thread::spawn(move || unsafe {
             // TODO(port): narrow error set
             let _ = Watcher::thread_main(this as *mut Watcher);
@@ -247,19 +251,39 @@ impl Watcher {
     pub fn shutdown(this: *mut Self, close_descriptors: bool) {
         // SAFETY: caller passes the unique heap pointer returned from init()
         let me = unsafe { &mut *this };
-        if me.watchloop_handle.load() {
+        if me.thread.is_some() {
+            // A watcher thread has been spawned. It may not have begun
+            // running yet (on Windows especially, `watchloop_handle` can
+            // still be false here), so we must not free `this`
+            // synchronously — the thread owns cleanup once spawned.
+            // Previously this branch keyed off `watchloop_handle`, which
+            // is written by the spawned thread; that raced with `start()`
+            // and caused a use-after-free in `thread_main` when the dev
+            // server was torn down immediately after creation (e.g.
+            // listen failure). See #21017.
             me.mutex.lock();
             me.close_descriptors.store(close_descriptors);
             me.running.store(false);
+            // Wake the thread out of its blocking wait so it can observe
+            // `running == false` and exit. Without this, the thread (and
+            // this Watcher) leak until the next filesystem event — which
+            // may never come if nothing is being watched yet.
+            me.platform.wake();
             me.mutex.unlock();
+            // `this` may be freed by the watcher thread any time after
+            // this point — thread_main takes/releases the mutex as a
+            // barrier before `heap::take(this)`, so it cannot proceed
+            // until the unlock above.
         } else {
+            // start() was never called; no thread can be using `this`.
+            me.platform.stop();
             if close_descriptors && me.running.load() {
                 let fds = me.watchlist.items_fd();
                 for &fd in fds {
                     let _ = bun_sys::close(fd);
                 }
             }
-            // watchlist freed by Drop on Box
+            // watchlist / watch_events freed by Drop on Box
             // SAFETY: this was heap-allocated by caller of init()
             drop(unsafe { bun_core::heap::take(this) });
         }
@@ -295,13 +319,19 @@ impl Watcher {
             match me.watch_loop() {
                 Err(err) => {
                     me.watchloop_handle.store(false);
-                    me.platform.stop();
                     if me.running.load() {
                         (me.on_error)(me.ctx, err);
                     }
                 }
                 Ok(()) => {}
             }
+
+            // Release platform resources (inotify fd, kqueue fd, IOCP
+            // handle). This must run on both the `Err` and `Ok` arms:
+            // `shutdown()`'s wake path exits via `Ok` on Linux/macOS, and
+            // skipping stop() there would trade the former thread leak
+            // for an fd leak.
+            me.platform.stop();
 
             // deinit and close descriptors if needed
             if me.close_descriptors.load() {
@@ -310,7 +340,15 @@ impl Watcher {
                     let _ = bun_sys::close(fd);
                 }
             }
-            // watchlist freed by Drop below
+            // watchlist / watch_events freed by Drop below
+
+            // Barrier: `shutdown()` holds `self.mutex` across its wake()
+            // call. Without this lock/unlock pair the thread could free
+            // `this` while shutdown() is still between wake() and its
+            // own mutex.unlock(), leaving that unlock to operate on
+            // freed memory.
+            me.mutex.lock();
+            me.mutex.unlock();
         }
 
         // Close trace file if open

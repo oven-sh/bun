@@ -393,6 +393,24 @@ impl WindowsWatcher {
             w::CloseHandle(self.iocp);
         }
     }
+
+    /// On Linux/macOS `wake()` unblocks the watcher thread so it can observe
+    /// `Watcher.running == false`, run its cleanup, and exit. On Windows that
+    /// cleanup path is not yet safe: `next()` always has a pending
+    /// `ReadDirectoryChangesW` armed on `self.watcher.overlapped`, and running
+    /// `stop()` followed by dropping `self` races the kernel writing the
+    /// cancellation status into that (now-freed) OVERLAPPED. Posting a
+    /// zero-byte completion here reliably aborted the process with exit code 3
+    /// on Windows CI (`test/bake/serve-plugins-dev-server.test.ts`).
+    ///
+    /// For now this is a no-op, which restores the pre-existing Windows
+    /// behaviour: the thread stays parked in `GetQueuedCompletionStatus` until
+    /// process exit. The original #21017 use-after-free is fixed independently
+    /// by `Watcher::shutdown` keying off `thread.is_some()`, so the parked
+    /// thread is never handed a freed `*mut Watcher`.
+    pub fn wake(&self) {
+        // no-op on Windows — see above.
+    }
 }
 
 #[repr(u32)]

@@ -35,7 +35,10 @@ import path from "node:path";
 // reproduction of the mismatch that made the user's stack trace possible.
 // Happy-dom supplies window+document and Node's `window.eval` actually
 // evaluates (Bun's does not), so the bundle runs there.
-test("hmr client does not crash when config.refresh is missing", async () => {
+// 30 s: the 5 s default is too tight for the full "spawn Bun dev server →
+// bundle the React+happy-dom-driven fixture → spawn Node to eval it" loop
+// under ASAN. It runs in ~2 s on a release build.
+test("hmr client does not crash when config.refresh is missing", { timeout: 30_000 }, async () => {
   using dir = tempDir("issue-30678", {
     "index.html": `<!DOCTYPE html>
 <html>
@@ -174,8 +177,9 @@ test("hmr client does not crash when config.refresh is missing", async () => {
     await fs.symlink(bunTestNodeModules, path.join(String(dir), "node_modules"), "junction").catch(() => {});
   }
 
-  // Start the dev server.
-  const server = Bun.spawn({
+  // Start the dev server. `await using` guarantees cleanup even if the
+  // test body throws past the `finally` (e.g. outer timeout).
+  await using server = Bun.spawn({
     cmd: [bunExe(), "server.ts"],
     cwd: String(dir),
     env: bunEnv,
@@ -220,6 +224,5 @@ test("hmr client does not crash when config.refresh is missing", async () => {
     expect(exitCode).toBe(0);
   } finally {
     server.kill();
-    await server.exited;
   }
 });

@@ -736,38 +736,40 @@ it("should trigger error when aborted even if connection failed, and the signal 
 // happy-eyeballs path must not throw a ReferenceError before the socket
 // is opened.
 describe("net.connect({ localPort }) with multiple lookup addresses #30697", () => {
-  it.each([
+  describe.each([
     { label: "IPv4 first", addresses: [{ address: "127.0.0.1", family: 4 }, { address: "::1", family: 6 }] },
     { label: "IPv6 first", addresses: [{ address: "::1", family: 6 }, { address: "127.0.0.1", family: 4 }] },
-  ])("does not throw ReferenceError ($label)", async ({ addresses }) => {
-    const { promise: listening, resolve: onListen, reject: onListenError } = Promise.withResolvers<Server>();
-    const server = createServer();
-    server.once("error", onListenError);
-    // Listen on 127.0.0.1 only; an IPv6-first attempt fails fast and
-    // happy-eyeballs falls through to the IPv4 address.
-    server.listen(0, "127.0.0.1", () => onListen(server));
-    await using _server = await listening;
-    const { port } = server.address() as { port: number };
+  ])("$label", ({ addresses }) => {
+    it("does not throw ReferenceError", async () => {
+      const { promise: listening, resolve: onListen, reject: onListenError } = Promise.withResolvers<Server>();
+      const server = createServer();
+      server.once("error", onListenError);
+      // Listen on 127.0.0.1 only; an IPv6-first attempt fails fast and
+      // happy-eyeballs falls through to the IPv4 address.
+      server.listen(0, "127.0.0.1", () => onListen(server));
+      await using _server = await listening;
+      const { port } = server.address() as { port: number };
 
-    const { promise: connected, resolve: onConnect, reject: onError } = Promise.withResolvers<void>();
-    const client = new Socket();
-    client.on("error", onError);
-    client.on("connect", () => onConnect());
+      const { promise: connected, resolve: onConnect, reject: onError } = Promise.withResolvers<void>();
+      const client = new Socket();
+      client.on("error", onError);
+      client.on("connect", () => onConnect());
 
-    client.connect({
-      port,
-      host: "localhost",
-      // Non-zero localPort is required to enter the branch that used to
-      // crash; the bind itself is not enforced today so any value works.
-      localPort: 1,
-      lookup: (_hostname, _opts, cb) => cb(null, addresses),
-    } as any);
+      client.connect({
+        port,
+        host: "localhost",
+        // Non-zero localPort is required to enter the branch that used to
+        // crash; the bind itself is not enforced today so any value works.
+        localPort: 1,
+        lookup: (_hostname, _opts, cb) => cb(null, addresses),
+      } as any);
 
-    try {
-      await connected;
-    } finally {
-      client.destroy();
-    }
+      try {
+        await connected;
+      } finally {
+        client.destroy();
+      }
+    });
   });
 });
 

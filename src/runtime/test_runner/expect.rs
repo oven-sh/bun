@@ -476,7 +476,6 @@ impl Expect {
             self.counted_expect_call.get(),
             self.flags.get(),
         )?;
-        super::expect::js::result_value_set_cached(this_value, global_this, deferred);
         Ok(Some(deferred))
     }
 

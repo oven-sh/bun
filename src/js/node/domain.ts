@@ -10,8 +10,8 @@
 // - Async callbacks scheduled via `setTimeout`/`setInterval`/`setImmediate`
 //   inside a domain are bound to the active domain at schedule time, so
 //   exceptions thrown from those callbacks are also routed to the domain.
-// - When a domain is active and an uncaught exception fires, the domain's
-//   `'error'` handler is invoked before Bun's default uncaught-exception path.
+// - `d.bind(fn)` / `d.intercept(fn)` wrap a function so the domain is entered
+//   for the duration of the call and synchronous throws are emitted on it.
 
 const ObjectDefineProperty = Object.defineProperty;
 
@@ -20,7 +20,7 @@ let EventEmitter;
 // The stack of entered domains. Top of stack = currently-active domain.
 const stack: any[] = [];
 
-// Whether we've installed the timer shims / uncaughtException listener.
+// Whether we've installed the timer shims.
 let installed = false;
 
 // Save the originals so the shims can delegate to them without going through
@@ -35,6 +35,25 @@ function currentDomain() {
 
 function syncProcessDomain() {
   (process as any).domain = currentDomain();
+}
+
+// Decorate the thrown value with Node's documented `domain` / `domainThrown`
+// properties. Must never throw — e.g. the thrown value may be frozen, sealed,
+// a proxy with a trapping setter, or non-extensible. Any decoration failure is
+// swallowed so that the original error still reaches `emit('error', …)`.
+function decorateThrownError(e, d, thrown) {
+  if ((typeof e === "object" && e !== null) || typeof e === "function") {
+    try {
+      ObjectDefineProperty(e, "domain", {
+        __proto__: null,
+        configurable: true,
+        enumerable: false,
+        value: d,
+        writable: true,
+      });
+      e.domainThrown = thrown;
+    } catch {}
+  }
 }
 
 // Wrap `cb` so that when it runs, the given `domain` is entered for the
@@ -79,15 +98,13 @@ function installOnce() {
   globalThis.setInterval = wrapTimerApi(origSetInterval);
   globalThis.setImmediate = wrapTimerApi(origSetImmediate);
 
-  // If an exception escapes to `uncaughtException` while a domain is active,
-  // route it through the active domain. Prepend so we run before any
-  // user-registered handler.
-  process.prependListener("uncaughtException", err => {
-    const d = currentDomain();
-    if (d !== null) {
-      d._emitError(err);
-    }
-  });
+  // Intentionally NO `process.on('uncaughtException', …)` listener: in Bun,
+  // registering one signals to the native uncaught-exception handler that the
+  // error has been handled (see `Bun__handleUncaughtException`), which would
+  // silently swallow every error thrown outside any domain once `domain` has
+  // been required anywhere in the process. All schedule-time paths
+  // (`bind`, `intercept`, `run`, and the timer wrappers above) already catch
+  // and route errors themselves, so no fallback hook is needed.
 }
 
 var domain: any = {};
@@ -106,16 +123,7 @@ domain.createDomain = domain.create = function () {
 
   function emitError(e) {
     e ||= $ERR_UNHANDLED_ERROR();
-    if (typeof e === "object" && e !== null) {
-      ObjectDefineProperty(e, "domain", {
-        __proto__: null,
-        configurable: true,
-        enumerable: false,
-        value: d,
-        writable: true,
-      });
-      e.domainThrown = true;
-    }
+    decorateThrownError(e, d, true);
     // Pop adjacent copies of this domain so that the error handler runs
     // outside the domain it belongs to (matches Node).
     while (currentDomain() === d) {
@@ -125,18 +133,35 @@ domain.createDomain = domain.create = function () {
   }
   d._emitError = emitError;
 
+  // `d.add(emitter)`: errors emitted by `emitter` are routed to this domain.
+  // Node tags the error with `domainEmitter = emitter` and `domainThrown = false`
+  // on this path to distinguish emitted vs. thrown errors.
   d.add = function (emitter) {
-    emitter.on("error", emitError);
+    emitter.on("error", function (e) {
+      if ((typeof e === "object" && e !== null) || typeof e === "function") {
+        try {
+          e.domainEmitter = emitter;
+        } catch {}
+      }
+      decorateThrownError(e, d, false);
+      while (currentDomain() === d) d.exit();
+      d.emit("error", e);
+    });
   };
   d.remove = function (emitter) {
     emitter.removeListener("error", emitError);
   };
   d.bind = function (fn) {
     return function () {
+      d.enter();
+      let emitted = false;
       try {
         return fn.$apply(this, arguments);
       } catch (err) {
+        emitted = true;
         emitError(err);
+      } finally {
+        if (!emitted) d.exit();
       }
     };
   };
@@ -144,13 +169,18 @@ domain.createDomain = domain.create = function () {
     return function (err) {
       if (err) {
         emitError(err);
-      } else {
-        const args = Array.prototype.slice.$call(arguments, 1);
-        try {
-          fn.$apply(this, args);
-        } catch (caught) {
-          emitError(caught);
-        }
+        return;
+      }
+      const args = Array.prototype.slice.$call(arguments, 1);
+      d.enter();
+      let emitted = false;
+      try {
+        return fn.$apply(this, args);
+      } catch (caught) {
+        emitted = true;
+        emitError(caught);
+      } finally {
+        if (!emitted) d.exit();
       }
     };
   };

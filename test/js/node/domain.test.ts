@@ -4,7 +4,7 @@ import { bunEnv, bunExe } from "harness";
 // https://github.com/oven-sh/bun/issues/30672
 // Exceptions thrown inside `setTimeout` callbacks scheduled while a
 // domain is active should be routed to the domain's `'error'` handler.
-test("domain catches setTimeout callback throws", async () => {
+test.concurrent("domain catches setTimeout callback throws", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -36,7 +36,7 @@ test("domain catches setTimeout callback throws", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("domain catches setImmediate callback throws", async () => {
+test.concurrent("domain catches setImmediate callback throws", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -65,7 +65,7 @@ test("domain catches setImmediate callback throws", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("domain catches setInterval callback throws", async () => {
+test.concurrent("domain catches setInterval callback throws", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -99,7 +99,7 @@ test("domain catches setInterval callback throws", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("domain.run synchronous throw is caught", async () => {
+test.concurrent("domain.run synchronous throw is caught", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -127,7 +127,7 @@ test("domain.run synchronous throw is caught", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("domain maintains correct active domain across nested run()", async () => {
+test.concurrent("domain maintains correct active domain across nested run()", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -167,7 +167,7 @@ test("domain maintains correct active domain across nested run()", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("domain.bind wraps a function to route throws through the domain", async () => {
+test.concurrent("domain.bind wraps a function to route throws through the domain", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -194,7 +194,7 @@ test("domain.bind wraps a function to route throws through the domain", async ()
   expect(exitCode).toBe(0);
 });
 
-test("process.domain reflects the currently-active domain", async () => {
+test.concurrent("process.domain reflects the currently-active domain", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -219,4 +219,32 @@ test("process.domain reflects the currently-active domain", async () => {
   expect(stderr).toBe("");
   expect(stdout).toBe("before: null\nduring: true\nafter: null\n");
   expect(exitCode).toBe(0);
+});
+
+// Regression guard: an earlier draft of this fix attached a
+// `process.on("uncaughtException")` listener from `domain`. Because Bun treats
+// any such listener as "the error was handled", it caused every uncaught
+// exception — including ones thrown completely outside any domain — to be
+// silently swallowed once `domain` had been required anywhere in the process.
+// Requiring `domain` must not change the default crash behavior for code that
+// runs outside a domain.
+test.concurrent("requiring domain does not suppress unrelated uncaught exceptions", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      require("domain").create();
+      setTimeout(() => { throw new Error("should crash"); }, 1);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("should crash");
+  expect(exitCode).not.toBe(0);
 });

@@ -1,21 +1,24 @@
-// JSCommonJSExtensions::m_registeredFunctions is a
-// WTF::Vector<WriteBarrier<Unknown>> visited by visitChildrenImpl on parallel
-// GC mark threads. All mutators (JSCommonJSExtensions__appendFunction /
-// __setFunction / __swapRemove) and the visitor must hold cellLock() so a
-// concurrent Vector reallocation cannot free the backing buffer while a mark
-// thread is mid-scan, and WriteBarrier::set() must pass the extensions object
-// (not the global object) as the owner cell so eden collections re-scan the
-// correct cell.
+// Concurrent-GC smoke test for Module._extensions / require.extensions.
 //
-// As with JSCommonJSModule::m_children (see module-children-concurrent-gc),
-// the race is not reliably observable as a crash in the default build because
-// the prebuilt debug WebKit uses bmalloc, so freed Vector buffers are neither
-// ASAN-poisoned nor scribbled. This test is kept as a regression guard for
-// the locking and the WriteBarrier owner — it churns Module._extensions under
-// collectContinuously so the JSCommonJSExtensions cell is repeatedly visited
-// on concurrent mark threads while the mutator registers/replaces/deletes
-// handlers, and asserts the program still runs to completion with correct
-// output.
+// Assigning, defining, and deleting handlers on Module._extensions routes
+// through JSCommonJSExtensions::put / defineOwnProperty / deleteProperty,
+// which store the handler via jsc.Strong in Zig (NodeModuleModule.zig
+// onRequireExtensionModify) and mutate own-property storage on the
+// JSCommonJSExtensions cell. This test churns those paths under
+// BUN_JSC_collectContinuously=1 so the cell is repeatedly visited on
+// concurrent mark threads (exercising JSCommonJSExtensions::visitChildrenImpl,
+// which takes cellLock() before scanning m_registeredFunctions) while the
+// mutator registers/replaces/deletes handlers with fresh closures each
+// iteration, and asserts the program runs to completion with correct output.
+//
+// Note: m_registeredFunctions itself is currently always empty — the three
+// JSCommonJSExtensions__{append,set,swapRemove}Function helpers have had no
+// Zig callers since #19231 switched CustomLoader.custom to jsc.Strong — so
+// this test cannot observe a regression in the cellLock() or WriteBarrier
+// owner fixes for those helpers. It is kept as a concurrent-GC regression
+// guard for the Module._extensions code paths that are live today, and for
+// visitChildrenImpl's locking should m_registeredFunctions ever be
+// repopulated.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -24,7 +27,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 // identical across platforms; skip there (same rationale as
 // module-children-concurrent-gc.test.ts / issue 29519).
 test.skipIf(isWindows)(
-  "JSCommonJSExtensions m_registeredFunctions mutation under concurrent GC",
+  "JSCommonJSExtensions put/defineOwnProperty/deleteProperty under concurrent GC",
   async () => {
     const files: Record<string, string> = {
       "a.abc": `module.exports = "abc-default";\n`,

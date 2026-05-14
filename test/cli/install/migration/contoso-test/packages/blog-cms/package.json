@@ -17,7 +17,7 @@
   "dependencies": {
     "@strapi/plugin-graphql": "^4.9.1",
     "@strapi/plugin-i18n": "^4.5.6",
-    "@strapi/plugin-users-permissions": "^4.5.6",
+    "@strapi/plugin-users-permissions": "^5.46.0",
     "@strapi/strapi": "^4.5.6",
     "lodash.set": "^4.3.2",
     "pg": "^8.8.0",

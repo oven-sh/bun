@@ -21,7 +21,7 @@
   "dependencies": {
     "@fastify/autoload": "^5.0.0",
     "@fastify/sensible": "^5.0.0",
-    "fastify": "^4.0.0",
+    "fastify": "^5.8.5",
     "fastify-cli": "^5.7.0",
     "fastify-plugin": "^4.0.0",
     "fastify-raw-body": "^4.2.0",

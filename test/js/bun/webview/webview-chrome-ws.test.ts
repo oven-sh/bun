@@ -93,6 +93,57 @@ const it = remote ? test : test.todo;
 
 const html = (h: string) => "data:text/html," + encodeURIComponent(h);
 
+// cdp() before the first navigate → no sessionId → ERR_INVALID_STATE.
+// Must REJECT, not sync-throw: this state is reached when Chrome dies
+// before the Target.createTarget → attachToTarget chain completes, and
+// recovery code commonly does `void v.cdp(...).catch(()=>{})`. A sync
+// throw escapes that .catch() and replaces the real navigate() error with
+// the misleading "await navigate() first" message.
+//
+// Runs unconditionally (plain `test`, not `it`) and in a subprocess: an
+// explicit ws:// URL makes the constructor succeed without a Chrome
+// binary (WebSocket handshake is async; the guard fires before any I/O),
+// and the subprocess keeps the bogus URL out of this file's Transport
+// singleton so the remote-Chrome `it` tests above still connect cleanly.
+test("cdp() rejects (not sync-throws) with ERR_INVALID_STATE before first navigate", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const view = new Bun.WebView({
+          backend: { type: "chrome", url: "ws://127.0.0.1:1/devtools/browser/x" },
+          width: 100,
+          height: 100,
+        });
+        try {
+          // A sync throw here escapes the enclosing try and exits non-zero
+          // — that is the regression this test guards.
+          const p = view.cdp("Page.enable");
+          if (!(p instanceof Promise)) throw new Error("cdp() did not return a Promise: " + p);
+          await p.then(
+            () => { throw new Error("cdp() resolved; expected rejection"); },
+            err => {
+              if (err?.code !== "ERR_INVALID_STATE" || !/session.*navigate/i.test(err?.message))
+                throw new Error("wrong rejection: " + err?.code + " " + err?.message);
+            },
+          );
+          console.log("OK");
+        } finally {
+          view.close();
+        }
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr.trim()).toBe("");
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});
+
 it("connect via full ws:// URL", async () => {
   // Direct connect, no discovery. Commands queue in Transport's
   // m_wsPending until the handshake completes; navigate() resolves after.

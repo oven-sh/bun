@@ -199,10 +199,9 @@ test("maxLifetime does not kill an in-flight query (#30646)", async () => {
 
 test("maxLifetime closes an idle connection so the pool can reconnect (#30646)", async () => {
   // After the first query completes the connection is idle. The max_lifetime
-  // reschedule loop terminates, `disconnect()` runs, and the server sees the
-  // socket close.
-  let socketCloses = 0;
-  const { port, stop } = await startMockServer(0, () => socketCloses++);
+  // timer fires, `disconnect()` runs, and the server sees the socket close.
+  const { promise: closedOnServer, resolve: onServerClose } = Promise.withResolvers<void>();
+  const { port, stop } = await startMockServer(0, onServerClose);
   try {
     const sql = new SQL({
       url: `postgres://u@127.0.0.1:${port}/db?sslmode=disable`,
@@ -215,12 +214,8 @@ test("maxLifetime closes an idle connection so the pool can reconnect (#30646)",
     const result = await sql`SELECT 42 as x`;
     expect(result[0].x).toBe(42);
 
-    // Wait up to 3s for the server to see the socket close.
-    const deadline = Date.now() + 3000;
-    while (socketCloses === 0 && Date.now() < deadline) {
-      await Bun.sleep(50);
-    }
-    expect(socketCloses).toBeGreaterThanOrEqual(1);
+    // Deterministic wait — the test's 30s budget bounds the flake risk.
+    await closedOnServer;
 
     await sql.close({ timeout: 0 }).catch(() => {});
   } finally {

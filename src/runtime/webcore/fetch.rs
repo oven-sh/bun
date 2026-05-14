@@ -1728,6 +1728,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
+            // The sendfile path above moves `opened_fd` into `SendFile` (which
+            // owns its lifecycle and breaks out of `'prepare_body`). On this
+            // read-file path we are the sole owner of the fresh fd: `read_file`
+            // is handed it as an `Fd` and never takes ownership. Wrap it in an
+            // RAII guard so any future early return between here and the read
+            // can't leak it.
+            let opened_fd = scopeguard::guard(opened_fd, |fd| fd.close());
+
             // TODO: make this async + lazy
             let blob_offset = body.any_blob().blob().offset.get();
             let blob_size = body.any_blob().blob().size.get();
@@ -1739,15 +1747,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
             let mut rf_args = node::fs::args::ReadFile::default();
             rf_args.encoding = Encoding::Buffer;
-            rf_args.path = PathOrFileDescriptor::Fd(opened_fd);
+            rf_args.path = PathOrFileDescriptor::Fd(*opened_fd);
             rf_args.offset = blob_offset;
             rf_args.max_size = Some(blob_size);
             let res = node_fs.read_file(&rf_args, node::fs::Flavor::Sync);
 
-            // `opened_fd` is always freshly created here (dup'd from a user FD or
-            // opened from a path), and `read_file` is given it as an `Fd` so it
-            // does not take ownership; close it unconditionally.
-            opened_fd.close();
+            // Eagerly close before constructing the (potentially large) JS
+            // result. Dropping the guard runs the close exactly once.
+            drop(opened_fd);
 
             match res {
                 Err(err) => {

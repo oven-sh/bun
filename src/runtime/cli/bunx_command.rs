@@ -924,17 +924,39 @@ impl BunxCommand {
                     // this way running `bunx hello` will update hello automatically to the latest version
                     if strings::has_prefix(out, bunx_cache_dir) {
                         // The bunx cache lives under the world-writable temp dir at a
-                        // predictable path. Refuse to execute a cached binary that is a
-                        // symlink or not owned by the current user (another local user
-                        // could have pre-created the path); fall through to a fresh
-                        // install instead.
+                        // predictable path. Refuse to execute a cached binary that
+                        // wasn't created by the current user (another local user could
+                        // have pre-created the path); fall through to a fresh install
+                        // instead.
+                        //
+                        // Bun's bin linker creates `.bin/<name>` entries as *symlinks*
+                        // on Unix (`Linker::create_symlink`), so a regular-file-only
+                        // check would mark every legitimate cache hit as untrusted and
+                        // reinstall on every invocation. Accept either a symlink or a
+                        // regular file owned by the current uid; for symlinks, also
+                        // follow once and require the target to be a uid-owned regular
+                        // file so an attacker-planted, uid-matching link can't redirect
+                        // execution outside the cache.
                         #[cfg(unix)]
                         {
+                            let lstat_ok = |st: &bun_sys::Stat| {
+                                let kind = st.st_mode & libc::S_IFMT;
+                                st.st_uid == uid
+                                    && (kind == libc::S_IFREG || kind == libc::S_IFLNK)
+                            };
+                            let stat_ok = |st: &bun_sys::Stat| {
+                                st.st_uid == uid
+                                    && (st.st_mode & libc::S_IFMT) == libc::S_IFREG
+                            };
                             let trustworthy = match bun_sys::lstat(destination) {
-                                Ok(st) => {
-                                    st.st_uid == uid && (st.st_mode & libc::S_IFMT) == libc::S_IFREG
+                                Ok(st) if lstat_ok(&st) => {
+                                    if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
+                                        matches!(bun_sys::stat(destination), Ok(target) if stat_ok(&target))
+                                    } else {
+                                        true
+                                    }
                                 }
-                                Err(_) => false,
+                                _ => false,
                             };
                             if !trustworthy {
                                 bun_output::scoped_log!(

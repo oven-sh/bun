@@ -1320,7 +1320,10 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn send_close_with_body(&mut self, code: u16, body: Option<&mut [u8; 125]>, body_len: usize) {
-        let body_len = body_len.min(125);
+        // RFC 6455 §5.5: control-frame payloads are capped at 125 bytes total,
+        // and a close-frame payload starts with the 2-byte status code, so the
+        // reason text is limited to 123 bytes.
+        let body_len = body_len.min(123);
         log!("Sending close with code {}", code);
         if !self.has_tcp() {
             self.dispatch_abrupt_close(ErrorCode::Ended);
@@ -1666,7 +1669,8 @@ impl<const SSL: bool> WebSocket<SSL> {
                     cursor.set_position((pos + result.written as usize) as u64);
                 }
                 let wrote_len = cursor.position() as usize;
-                if wrote_len > 125 {
+                // 125-byte close-frame payload budget minus the 2-byte status code.
+                if wrote_len > 123 {
                     break 'inner;
                 }
                 // SAFETY: close_reason_buf has 128 bytes; reinterpret first 125 as fixed array

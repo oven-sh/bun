@@ -938,7 +938,13 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 }
                 let cfg_nn = cfg.and_then(|p| NonNull::new(p.cast_mut()));
                 for pc in &mut self.pending_h2_connects {
-                    if pc.matches(hostname, port, cfg_nn) {
+                    // Same strictness guard as the active-session loop above: a
+                    // strict caller must not coalesce onto an in-flight connect
+                    // that was initiated with reject_unauthorized=false, since
+                    // the resulting session won't have validated the peer.
+                    if pc.matches(hostname, port, cfg_nn)
+                        && (!client.flags.reject_unauthorized || pc.reject_unauthorized)
+                    {
                         // client outlives the pending connect (resolved before
                         // its terminal callback fires).
                         pc.waiters.push(client.as_erased_ptr());
@@ -1063,6 +1069,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     hostname: Box::<[u8]>::from(hostname),
                     port,
                     ssl_config: cfg,
+                    reject_unauthorized: client.flags.reject_unauthorized,
                     ..Default::default()
                 });
                 // `client.pending_h2 = pc` stores a *borrowed* backref into the

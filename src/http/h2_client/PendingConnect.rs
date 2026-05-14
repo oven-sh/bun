@@ -17,6 +17,12 @@ pub struct PendingConnect {
     pub port: u16,
     // TODO(port): lifetime — compared by pointer identity only, never derefed/freed here
     pub ssl_config: Option<NonNull<SSLConfig>>,
+    /// Whether the client that initiated this in-flight TLS connect requested
+    /// `rejectUnauthorized`. The eventual `ClientSession` records this as
+    /// `established_with_reject_unauthorized`; mirroring it here lets the
+    /// coalescing path apply the same strictness guard *before* the session
+    /// exists, so a strict caller never waits on a connect started by a lax one.
+    pub reject_unauthorized: bool,
     // BACKREF: waiters are borrowed HTTP clients owned elsewhere; lifetime-erased.
     pub waiters: Vec<NonNull<HTTPClient<'static>>>,
 }
@@ -27,6 +33,7 @@ impl Default for PendingConnect {
             hostname: Box::default(),
             port: 0,
             ssl_config: None,
+            reject_unauthorized: false,
             waiters: Vec::new(),
         }
     }

@@ -781,8 +781,13 @@ static HAS_SET_UMASK: AtomicBool = AtomicBool::new(false);
 
 impl<'a> Linker<'a> {
     pub fn ensure_umask() {
-        if !HAS_SET_UMASK.load(Ordering::Acquire) {
-            HAS_SET_UMASK.store(true, Ordering::Release);
+        // Single-winner gate: only the thread that flips false->true performs
+        // the temporary umask(0)/umask(prev) probe. A bare load+store would let
+        // two threads interleave the probe and leave the process umask wrong.
+        if HAS_SET_UMASK
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
             let prev = sys::umask(0);
             sys::umask(prev);
             UMASK.store(prev as u32, Ordering::Release);
@@ -1669,6 +1674,12 @@ impl<'a> Linker<'a> {
                     if normalized_name.is_empty() {
                         return;
                     }
+                    if normalized_name.len()
+                        >= self.abs_dest_buf.len().saturating_sub(dest_off)
+                    {
+                        self.err = Some(bun_core::err!("NameTooLong"));
+                        return;
+                    }
 
                     self.abs_dest_buf[dest_off..dest_off + normalized_name.len()]
                         .copy_from_slice(normalized_name);
@@ -1691,6 +1702,12 @@ impl<'a> Linker<'a> {
                         if normalized_bin_dest.is_empty() {
                             i += 2;
                             continue;
+                        }
+                        if normalized_bin_dest.len()
+                            >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
+                        {
+                            self.err = Some(bun_core::err!("NameTooLong"));
+                            return;
                         }
 
                         dest_off = abs_dest_dir_end;

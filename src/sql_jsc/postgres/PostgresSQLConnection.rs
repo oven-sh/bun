@@ -376,7 +376,21 @@ impl PostgresSQLConnection {
 
     fn get_timeout_interval(&self) -> u32 {
         match self.status.get() {
-            Status::Connected => self.idle_timeout_interval_ms,
+            Status::Connected => {
+                // The idle timer is only relevant when the connection is actually idle.
+                // If there are queued or in-flight requests, we must not arm the idle
+                // timer — otherwise we'd race against healthy queries and kill them
+                // when the timer fires (see #30646, #25405).
+                if self.requests.get().readable_length() > 0
+                    || !self
+                        .flags
+                        .get()
+                        .contains(ConnectionFlags::IS_READY_FOR_QUERY)
+                {
+                    return 0;
+                }
+                self.idle_timeout_interval_ms
+            }
             Status::Failed => 0,
             _ => self.connection_timeout_ms,
         }
@@ -537,12 +551,26 @@ impl PostgresSQLConnection {
 
         use bun_core::fmt::{ConnTimeoutKind::*, fmt_conn_timeout};
         let (code, kind, ms, sfx): (&[u8], _, _, _) = match self.status.get() {
-            Status::Connected => (
-                b"ERR_POSTGRES_IDLE_TIMEOUT",
-                Idle,
-                self.idle_timeout_interval_ms,
-                "",
-            ),
+            Status::Connected => {
+                // Only fire the idle-timeout failure when the connection is genuinely
+                // idle. If a request slipped into the queue between the timer being
+                // armed and firing, reschedule rather than killing a healthy query.
+                if self.requests.get().readable_length() > 0
+                    || !self
+                        .flags
+                        .get()
+                        .contains(ConnectionFlags::IS_READY_FOR_QUERY)
+                {
+                    self.reset_connection_timeout();
+                    return;
+                }
+                (
+                    b"ERR_POSTGRES_IDLE_TIMEOUT",
+                    Idle,
+                    self.idle_timeout_interval_ms,
+                    "",
+                )
+            }
             Status::SentStartupMessage => (
                 b"ERR_POSTGRES_CONNECTION_TIMEOUT",
                 Connection,
@@ -566,18 +594,28 @@ impl PostgresSQLConnection {
         if self.status.get() == Status::Failed {
             return;
         }
-        use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
-        self.fail_fmt(
-            b"ERR_POSTGRES_LIFETIME_TIMEOUT",
-            format_args!(
-                "{}",
-                fmt_conn_timeout(
-                    ConnTimeoutKind::MaxLifetime,
-                    self.max_lifetime_interval_ms,
-                    ""
-                )
-            ),
-        );
+
+        // Only retire the connection once it's idle. If queries are queued or
+        // in-flight, reschedule the timer so we close between queries rather
+        // than killing healthy ones with ERR_POSTGRES_LIFETIME_TIMEOUT (#30646).
+        if self.status.get() == Status::Connected
+            && self.requests.get().readable_length() == 0
+            && self
+                .flags
+                .get()
+                .contains(ConnectionFlags::IS_READY_FOR_QUERY)
+        {
+            self.disconnect();
+            return;
+        }
+
+        self.max_lifetime_timer.with_mut(|t| {
+            t.next = bun_core::Timespec::ms_from_now(
+                bun_core::TimespecMockMode::AllowMockedTime,
+                1000,
+            );
+            self.vm_mut().timer().insert(t);
+        });
     }
 
     fn start(&self) {

@@ -224,11 +224,12 @@ test("navigate() default waitUntil:'load' settles on Page.loadEventFired", async
 });
 
 test("reload({waitUntil:'domcontentloaded'}) settles on lifecycleEvent", async () => {
-  // reload() shares the Navigate slot and the same lifecycle path.
-  // First navigate with 'load' (mock emits loadEventFired), then
-  // reload with 'domcontentloaded' against a dcl-only behavior — we
-  // switch the mock mid-script by emitting the reload as Page.reload
-  // which the mock handles identically to Page.navigate.
+  // reload() shares the Navigate slot and the same lifecycle path as
+  // navigate(). "dcl-only" never emits loadEventFired, so both the
+  // initial navigate and the reload must settle via
+  // Page.lifecycleEvent(DOMContentLoaded). The mock handles
+  // Page.reload identically to Page.navigate (same event sequence,
+  // fresh loaderId).
   const { stdout, stderr, exitCode } = await run(
     "dcl-only",
     `
@@ -297,7 +298,9 @@ test("stale loadEventFired from a prior 'domcontentloaded' navigate does not set
     nav2.then(() => settled = "resolved", e => settled = "rejected:" + e.message);
     await Bun.sleep(300);
     // url should still be nav1's — nav2 never committed in the mock.
-    console.log("nav2=" + settled + " url=" + view.url);
+    // loading should still be TRUE — nav2 set it and nav1's stale
+    // loadEventFired (m_loaderId empty) must not clear it.
+    console.log("nav2=" + settled + " url=" + view.url + " loading=" + view.loading);
     // And with waitUntil:'domcontentloaded' on nav2 the stale
     // lifecycleEvent(load, L1) must ALSO be rejected by the loaderId
     // check (m_loaderId empty). Close the view to reject nav2 so the
@@ -305,16 +308,16 @@ test("stale loadEventFired from a prior 'domcontentloaded' navigate does not set
     `,
   );
   expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("nav2=pending url=http://example/one");
+  expect(stdout.trim()).toBe("nav2=pending url=http://example/one loading=true");
   expect(exitCode).toBe(0);
 });
 
 // --- timeout ---------------------------------------------------------------
 
 test("navigate({timeout}) rejects when no lifecycle event arrives", async () => {
-  // "silent" mock: Page.navigate reply + frameNavigated, then nothing.
-  // Actually the "silent" arm skips frameNavigated too — navigate()
-  // has only the parent-side dispatchAfter timer to save it.
+  // "silent" mock: Page.navigate reply + frameNavigated, but no
+  // DCL/load/loadEventFired — navigate() has only the parent-side
+  // dispatchAfter timer to save it.
   const { stdout, stderr, exitCode } = await run(
     "silent",
     `

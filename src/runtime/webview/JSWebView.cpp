@@ -244,6 +244,7 @@ static inline void beginChromeNavigation(JSWebView* v, NavWaitUntil waitUntil)
     v->m_navWaitUntil = waitUntil;
     ++v->m_navGeneration;
     v->m_loaderId = WTF::String();
+    v->m_navTitleChained = false;
 }
 
 JSPromise* JSWebView::navigate(JSGlobalObject* g, const WTF::String& url, NavWaitUntil waitUntil, uint32_t timeoutMs)
@@ -372,6 +373,12 @@ JSPromise* JSWebView::reload(JSGlobalObject* g, NavWaitUntil waitUntil, uint32_t
     if (m_backend == WebViewBackend::Chrome) {
         beginChromeNavigation(this, waitUntil);
         auto* p = CDP::Ops::reload(g, this);
+        // reload() always commits a navigation (no boundary no-op
+        // like goBack/goForward), so m_loading should reflect that.
+        // goBack/goForward don't set it here because the
+        // PageGetNavigationHistory response might resolve undefined
+        // (at boundary) without ever navigating.
+        if (m_pendingNavigate) m_loading = true;
         armNavTimeout(g, timeoutMs);
         return p;
     }

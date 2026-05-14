@@ -1110,16 +1110,18 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     // guarantee (`await view.navigate(); view.title` works) is worth
     // it. PageTitle's response handler is the settle point.
     //
-    // Clears m_loaderId: on a fast page, lifecycleEvent(DCL),
+    // Sets m_navTitleChained: on a fast page, lifecycleEvent(DCL),
     // lifecycleEvent(load) and loadEventFired can all arrive before
-    // the first PageTitle response — each would otherwise pass the
-    // gate and enqueue a duplicate PageTitle whose LATER response
-    // could settle a subsequent navigate()'s promise. Once the chain
-    // is started for THIS navigation, further triggers for the same
-    // document hit the empty-m_loaderId gate and drop. The next
-    // navigation's frameNavigated repopulates it.
+    // the first PageTitle response — each would otherwise enqueue a
+    // duplicate PageTitle whose LATER response could settle a
+    // subsequent navigate()'s promise. After the first call, further
+    // triggers for the same document see the flag and drop. Cleared
+    // by beginChromeNavigation() for the next navigation. m_loaderId
+    // is left populated so loadEventFired can still tell THIS
+    // document's event from a stale one (m_loaderId empty = a new
+    // navigation started and hasn't committed yet).
     auto chainTitle = [&]() {
-        view->m_loaderId = WTF::String();
+        view->m_navTitleChained = true;
         uint32_t tid = nextId();
         m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId });
         send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
@@ -1183,27 +1185,28 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         auto lUtf = view->m_loaderId.utf8();
         if (frameId.size() != fUtf.length() || memcmp(frameId.data(), fUtf.data(), frameId.size()) != 0) return;
         if (loaderId.size() != lUtf.length() || memcmp(loaderId.data(), lUtf.data(), loaderId.size()) != 0) return;
-        chainTitle();
+        if (!view->m_navTitleChained) chainTitle();
         return;
     }
 
     // Page.loadEventFired — window `load` fired on the main frame. This
-    // is the settle path for waitUntil:'load' (default). m_loading
-    // always flips here regardless of waitUntil — it tracks the REAL
-    // load state, not the user's chosen milestone.
+    // is the settle path for waitUntil:'load' (default).
     //
-    // chainTitle() is gated on m_loaderId: beginChromeNavigation()
-    // clears it and frameNavigated repopulates it. A stale
-    // loadEventFired for the PREVIOUS document (possible after a
-    // 'domcontentloaded' navigate settled and a new one started)
-    // arrives with m_loaderId empty → skip; otherwise PageTitle would
-    // settle the NEW navigate's promise with the OLD page's title
-    // before it committed. m_pendingNavigate must also be set so an
-    // idle loadEventFired (uninitiated window.location) doesn't enqueue
-    // a PageTitle that could race a later navigate() the same way.
+    // Stale detection: beginChromeNavigation() clears m_loaderId; this
+    // document's frameNavigated repopulates it. m_loaderId empty =
+    // a NEW navigation started and hasn't committed yet, so this
+    // loadEventFired is for the PREVIOUS document — don't clear
+    // m_loading (the new nav set it true) and don't chainTitle().
+    //
+    // m_navTitleChained dedupes: a fast page's lifecycleEvent(DCL)
+    // already chained the title fetch; a second PageTitle could
+    // settle a LATER navigate. m_pendingNavigate must also be set so
+    // an idle loadEventFired (uninitiated window.location) doesn't
+    // enqueue a PageTitle that races a later navigate().
     if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
+        if (view->m_loaderId.isEmpty()) return; // stale — prior document
         view->m_loading = false;
-        if (view->m_pendingNavigate && !view->m_loaderId.isEmpty()) chainTitle();
+        if (view->m_pendingNavigate && !view->m_navTitleChained) chainTitle();
         return;
     }
 

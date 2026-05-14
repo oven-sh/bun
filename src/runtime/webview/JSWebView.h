@@ -114,8 +114,17 @@ public:
     // updates both (parentId absent = main frame); Page.lifecycleEvent
     // only settles when its frameId/loaderId match — subframe events and
     // the about:blank replay from setLifecycleEventsEnabled don't match.
+    // m_loaderId is cleared by beginChromeNavigation() (so a PRIOR
+    // document's trailing lifecycle/loadEventFired can be identified as
+    // stale) and repopulated by the next frameNavigated.
     WTF::String m_frameId;
     WTF::String m_loaderId;
+    // Set once chainTitle() has enqueued the PageTitle fetch for THIS
+    // navigation. Further lifecycle/loadEventFired triggers for the
+    // same document drop instead of enqueuing duplicate PageTitle
+    // requests (whose responses could settle a LATER navigate). Cleared
+    // by beginChromeNavigation().
+    bool m_navTitleChained = false;
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.

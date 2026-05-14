@@ -1,5 +1,5 @@
 //! Runtime plugin host (JS-side `Bun.plugin()` resolve hooks). Moved from
-//! `bundler/transpiler.zig` so `bundler/` is free of `JSValue`/`JSGlobalObject`.
+//! `bundler/transpiler.rust` so `bundler/` is free of `JSValue`/`JSGlobalObject`.
 
 pub const MacroJSCtx = jsc.JSValue;
 pub const default_macro_js_value = jsc.JSValue.zero;

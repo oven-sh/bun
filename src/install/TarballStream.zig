@@ -627,10 +627,10 @@ fn openOutputFile(
             .result => |fd| fd,
             .err => |e| switch (e.errno) {
                 @intFromEnum(bun.sys.E.PERM), @intFromEnum(bun.sys.E.NOENT) => brk: {
-                    dest_fd.makePath(u16, bun.Dirname.dirname(u16, path_slice) orelse return bun.errnoToZigErr(e.errno)) catch {};
+                    dest_fd.makePath(u16, bun.Dirname.dirname(u16, path_slice) orelse return bun.errnoToRustErr(e.errno)) catch {};
                     break :brk try bun.sys.openatWindows(dest_fd, path, flags, 0).unwrap();
                 },
-                else => return bun.errnoToZigErr(e.errno),
+                else => return bun.errnoToRustErr(e.errno),
             },
         };
     }
@@ -638,10 +638,10 @@ fn openOutputFile(
         .result => |fd| fd,
         .err => |e| switch (e.getErrno()) {
             .ACCES, .NOENT => brk: {
-                dest_fd.makePath(u8, std.fs.path.dirname(path_slice) orelse return bun.errnoToZigErr(e.errno)) catch {};
+                dest_fd.makePath(u8, std.fs.path.dirname(path_slice) orelse return bun.errnoToRustErr(e.errno)) catch {};
                 break :brk try bun.sys.openat(dest_fd, path, flags, mode).unwrap();
             },
-            else => return bun.errnoToZigErr(e.errno),
+            else => return bun.errnoToRustErr(e.errno),
         },
     };
 }
@@ -765,7 +765,7 @@ fn writeDataBlock(this: *TarballStream, fd: bun.FD, block: lib.Archive.Block) !v
 
     switch (file.writeAll(data)) {
         .result => this.entry_actual_offset += @intCast(data.len),
-        .err => |e| return bun.errnoToZigErr(e.errno),
+        .err => |e| return bun.errnoToRustErr(e.errno),
     }
 }
 
@@ -922,9 +922,9 @@ pub fn resetForRetry(this: *TarballStream) void {
 }
 
 const std = @import("std");
-const Integrity = @import("./integrity.zig").Integrity;
+const Integrity = @import("./integrity.rust").Integrity;
 
-const install = @import("./install.zig");
+const install = @import("./install.rust");
 const NetworkTask = install.NetworkTask;
 const PackageManager = install.PackageManager;
 const Task = install.Task;

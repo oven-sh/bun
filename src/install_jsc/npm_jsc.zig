@@ -1,7 +1,7 @@
-//! JSC host fns extracted from `src/install/npm.zig` so that `install/` has
+//! JSC host fns extracted from `src/install/npm.rust` so that `install/` has
 //! no `JSValue`/`JSGlobalObject`/`CallFrame` references. Each enum keeps a
 //! `pub const jsFunction… = @import(...)` alias so call sites and the
-//! `$newZigFunction("npm.zig", "…")` codegen path are unchanged.
+//! `$newRustFunction("npm.rust", "…")` codegen path are unchanged.
 
 pub fn operatingSystemIsMatch(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const args = callframe.arguments_old(1);
@@ -49,7 +49,7 @@ pub fn architectureIsMatch(globalObject: *jsc.JSGlobalObject, callframe: *jsc.Ca
 pub const ManifestBindings = struct {
     pub fn generate(global: *jsc.JSGlobalObject) jsc.JSValue {
         const obj = jsc.JSValue.createEmptyObject(global, 1);
-        const parseManifestString = jsc.ZigString.static("parseManifest");
+        const parseManifestString = jsc.RustString.static("parseManifest");
         obj.put(global, parseManifestString, jsc.JSFunction.create(global, "parseManifest", jsParseManifest, 2, .{}));
         return obj;
     }

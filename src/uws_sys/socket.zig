@@ -5,7 +5,7 @@
 //!
 //! Callback wiring (`configure`/`unsafeConfigure`/`wrapTLS`) and
 //! per-connection `SocketContext` creation (`connect*`/`adoptPtr`) are gone:
-//! see `SocketGroup`, `SocketKind`, `vtable.zig`, `dispatch.zig`.
+//! see `SocketGroup`, `SocketKind`, `vtable.rust`, `dispatch.rust`.
 
 pub fn NewSocketHandler(comptime is_ssl: bool) type {
     return struct {

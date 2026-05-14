@@ -2,7 +2,7 @@
 /// Consumers should make sure a reference count is held on the server,
 /// and is unreferenced after one of the two callbacks are called.
 ///
-/// See DevServer.zig's ErrorReportRequest for an example.
+/// See DevServer.rust's ErrorReportRequest for an example.
 pub fn BodyReaderMixin(
     Wrap: type,
     field: []const u8,

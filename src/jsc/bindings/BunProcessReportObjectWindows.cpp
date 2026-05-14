@@ -3,7 +3,7 @@
 #if OS(WINDOWS)
 
 #include "BunProcess.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "FormatStackTraceForJS.h"
 #include "headers.h" // For Bun__Process__createExecArgv and other exports
 #include "JavaScriptCore/JSCJSValue.h"
@@ -38,7 +38,7 @@ using namespace JSC;
 // External functions
 extern "C" EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*);
 
-JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Process* process)
+JSValue constructReportObjectWindows(VM& vm, Rust::GlobalObject* globalObject, Process* process)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 

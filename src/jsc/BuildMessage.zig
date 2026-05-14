@@ -32,7 +32,7 @@ pub const BuildMessage = struct {
         const text = std.fmt.allocPrint(default_allocator, "BuildMessage: {s}", .{this.msg.data.text}) catch {
             return globalThis.throwOutOfMemoryValue();
         };
-        var str = ZigString.init(text);
+        var str = RustString.init(text);
         str.setOutputEncoding();
         if (str.isUTF8()) {
             const out = str.toJS(globalThis);
@@ -79,7 +79,7 @@ pub const BuildMessage = struct {
                 return jsc.JSValue.jsNull();
             }
 
-            const str = try args[0].getZigString(globalThis);
+            const str = try args[0].getRustString(globalThis);
             if (str.eqlComptime("default") or str.eqlComptime("string")) {
                 return this.toStringFn(globalThis);
             }
@@ -94,10 +94,10 @@ pub const BuildMessage = struct {
         _: *jsc.CallFrame,
     ) bun.JSError!jsc.JSValue {
         var object = jsc.JSValue.createEmptyObject(globalThis, 4);
-        object.put(globalThis, ZigString.static("name"), try bun.String.static("BuildMessage").toJS(globalThis));
-        object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));
-        object.put(globalThis, ZigString.static("message"), this.getMessage(globalThis));
-        object.put(globalThis, ZigString.static("level"), this.getLevel(globalThis));
+        object.put(globalThis, RustString.static("name"), try bun.String.static("BuildMessage").toJS(globalThis));
+        object.put(globalThis, RustString.static("position"), this.getPosition(globalThis));
+        object.put(globalThis, RustString.static("message"), this.getMessage(globalThis));
+        object.put(globalThis, RustString.static("level"), this.getLevel(globalThis));
         return object;
     }
 
@@ -107,37 +107,37 @@ pub const BuildMessage = struct {
 
         object.put(
             globalThis,
-            ZigString.static("lineText"),
-            ZigString.init(location.line_text orelse "").toJS(globalThis),
+            RustString.static("lineText"),
+            RustString.init(location.line_text orelse "").toJS(globalThis),
         );
         object.put(
             globalThis,
-            ZigString.static("file"),
-            ZigString.init(location.file).toJS(globalThis),
+            RustString.static("file"),
+            RustString.init(location.file).toJS(globalThis),
         );
         object.put(
             globalThis,
-            ZigString.static("namespace"),
-            ZigString.init(location.namespace).toJS(globalThis),
+            RustString.static("namespace"),
+            RustString.init(location.namespace).toJS(globalThis),
         );
         object.put(
             globalThis,
-            ZigString.static("line"),
+            RustString.static("line"),
             JSValue.jsNumber(location.line),
         );
         object.put(
             globalThis,
-            ZigString.static("column"),
+            RustString.static("column"),
             JSValue.jsNumber(location.column),
         );
         object.put(
             globalThis,
-            ZigString.static("length"),
+            RustString.static("length"),
             JSValue.jsNumber(location.length),
         );
         object.put(
             globalThis,
-            ZigString.static("offset"),
+            RustString.static("offset"),
             JSValue.jsNumber(location.offset),
         );
 
@@ -172,14 +172,14 @@ pub const BuildMessage = struct {
         this: *BuildMessage,
         globalThis: *jsc.JSGlobalObject,
     ) jsc.JSValue {
-        return ZigString.init(this.msg.data.text).toJS(globalThis);
+        return RustString.init(this.msg.data.text).toJS(globalThis);
     }
 
     pub fn getLevel(
         this: *BuildMessage,
         globalThis: *jsc.JSGlobalObject,
     ) jsc.JSValue {
-        return ZigString.init(this.msg.kind.string()).toJS(globalThis);
+        return RustString.init(this.msg.kind.string()).toJS(globalThis);
     }
 
     pub fn finalize(this: *BuildMessage) void {
@@ -191,7 +191,7 @@ pub const BuildMessage = struct {
 const string = []const u8;
 
 const std = @import("std");
-const Resolver = @import("../resolver/resolver.zig").Resolver;
+const Resolver = @import("../resolver/resolver.rust").Resolver;
 
 const bun = @import("bun");
 const default_allocator = bun.default_allocator;
@@ -200,4 +200,4 @@ const logger = bun.logger;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

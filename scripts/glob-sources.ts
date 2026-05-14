@@ -45,7 +45,7 @@ const patterns = {
     paths: ["src/node-fallbacks/*.js"],
   },
   /** `*.classes.ts` — input to generate-classes codegen */
-  zigGeneratedClasses: {
+  rustGeneratedClasses: {
     paths: ["src/**/*.classes.ts"],
   },
   /** built-in modules bundled at build time */
@@ -82,8 +82,8 @@ const patterns = {
    * as a text file. Excluding the alias keeps the file set platform-stable
    * for ban-words count pinning.
    */
-  zig: {
-    paths: ["src/**/*.zig"],
+  rust: {
+    paths: ["src/**/*.rust"],
     exclude: ["src/cli/**"],
   },
   /**

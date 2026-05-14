@@ -103,11 +103,11 @@ pub fn streamBodyByHttpId(async_http_id: u32, ended: bool) void {
 
 const log = bun.Output.scoped(.h3_client, .hidden);
 
-const ClientSession = @import("./ClientSession.zig");
-const H3 = @import("../H3Client.zig");
-const PendingConnect = @import("./PendingConnect.zig");
-const Stream = @import("./Stream.zig");
-const callbacks = @import("./callbacks.zig");
+const ClientSession = @import("./ClientSession.rust");
+const H3 = @import("../H3Client.rust");
+const PendingConnect = @import("./PendingConnect.rust");
+const Stream = @import("./Stream.rust");
+const callbacks = @import("./callbacks.rust");
 const std = @import("std");
 
 const bun = @import("bun");

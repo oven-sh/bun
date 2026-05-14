@@ -122,7 +122,7 @@ pub fn verify(options: VerifyOptions) bool {
     }
 
     const decoded: []const u8 = brk: switch (encoding) {
-        // shares same decoder but encoder is different see encoding.zig
+        // shares same decoder but encoder is different see encoding.rust
         .base64url, .base64 => {
             // do the same as Buffer.from(token, "base64url" | "base64")
             const slice = bun.strings.trim(token, "\r\n\t " ++ [_]u8{std.ascii.control_code.vt});
@@ -208,12 +208,12 @@ pub fn verify(options: VerifyOptions) bool {
     ) == 0;
 }
 
-pub const csrf__generate = @import("../runtime/api/csrf_jsc.zig").csrf__generate;
-pub const csrf__verify = @import("../runtime/api/csrf_jsc.zig").csrf__verify;
+pub const csrf__generate = @import("../runtime/api/csrf_jsc.rust").csrf__generate;
+pub const csrf__verify = @import("../runtime/api/csrf_jsc.rust").csrf__verify;
 
-const hmac = @import("../sha_hmac/hmac.zig");
+const hmac = @import("../sha_hmac/hmac.rust");
 const std = @import("std");
-const string = @import("../string/string.zig");
+const string = @import("../string/string.rust");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

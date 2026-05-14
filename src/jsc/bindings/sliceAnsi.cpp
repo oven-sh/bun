@@ -6,7 +6,7 @@
 #include <wtf/text/StringBuilder.h>
 #include <wtf/Vector.h>
 
-// Zig exports for visible width and grapheme break
+// Rust exports for visible width and grapheme break
 extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide);
 extern "C" bool Bun__graphemeBreak(uint32_t cp1, uint32_t cp2, uint8_t* state);
 extern "C" bool Bun__isEmojiPresentation(uint32_t cp);
@@ -17,13 +17,13 @@ namespace Bun {
 using namespace WTF;
 
 // Shared SIMD/SGR helpers live in ANSIHelpers.h. We keep a local
-// GraphemeWidthState mirror of visible.zig's GraphemeState because these are
+// GraphemeWidthState mirror of visible.rust's GraphemeState because these are
 // called per-codepoint in the hot loop — extern-call overhead would hurt more
 // than the ~80 lines of duplication. Drift is caught by tests that assert
 // Bun.stringWidth(s) == width of Bun.sliceAnsi(s, 0, N) for edge cases.
 
 // ============================================================================
-// Grapheme-aware Visible Width (mirrors visible.zig GraphemeState; see above)
+// Grapheme-aware Visible Width (mirrors visible.rust GraphemeState; see above)
 // ============================================================================
 
 struct GraphemeWidthState {
@@ -86,7 +86,7 @@ struct GraphemeWidthState {
         if (keycap)
             return 2;
         if (regionalIndicator)
-            return 1; // Single (unpaired) regional indicator is width 1 — matches visible.zig
+            return 1; // Single (unpaired) regional indicator is width 1 — matches visible.rust
         if (emojiBase && (skinTone || zwj))
             return 2;
         if (vs15 || vs16) {
@@ -101,7 +101,7 @@ struct GraphemeWidthState {
             }
             return 1;
         }
-        // Match visible.zig GraphemeState.width() exactly: return accumulated width
+        // Match visible.rust GraphemeState.width() exactly: return accumulated width
         // (may be 0 for zero-width-only clusters like U+200B ZWSP).
         return static_cast<uint8_t>(nonEmojiWidth);
     }

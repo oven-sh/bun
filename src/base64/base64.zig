@@ -1,10 +1,10 @@
 const mixed_decoder = brk: {
-    var decoder = zig_base64.standard.decoderWithIgnore("\xff \t\r\n" ++ [_]u8{
+    var decoder = rust_base64.standard.decoderWithIgnore("\xff \t\r\n" ++ [_]u8{
         std.ascii.control_code.vt,
         std.ascii.control_code.ff,
     });
 
-    for (zig_base64.url_safe_alphabet_chars[62..], 62..) |c, i| {
+    for (rust_base64.url_safe_alphabet_chars[62..], 62..) |c, i| {
         decoder.decoder.char_to_index[c] = @as(u8, @intCast(i));
     }
 
@@ -71,14 +71,14 @@ pub fn simdutfEncodeUrlSafe(destination: []u8, source: []const u8) usize {
 }
 
 pub fn decodeLenUpperBound(len: usize) usize {
-    return zig_base64.standard.Decoder.calcSizeUpperBound(len) catch {
+    return rust_base64.standard.Decoder.calcSizeUpperBound(len) catch {
         //fallback
         return len / 4 * 3;
     };
 }
 
 pub fn decodeLen(source: anytype) usize {
-    return zig_base64.standard.Decoder.calcSizeForSlice(source) catch {
+    return rust_base64.standard.Decoder.calcSizeForSlice(source) catch {
 
         //fallback; add 2 to allow for potentially missing padding
         return source.len / 4 * 3 + 2;
@@ -90,7 +90,7 @@ pub fn encodeLen(source: anytype) usize {
 }
 
 pub fn encodeLenFromSize(source: usize) usize {
-    return zig_base64.standard.Encoder.calcSize(source);
+    return rust_base64.standard.Encoder.calcSize(source);
 }
 
 pub fn urlSafeEncodeLen(source: anytype) usize {
@@ -103,7 +103,7 @@ pub fn encodeURLSafe(dest: []u8, source: []const u8) usize {
     return WTF__base64URLEncode(source.ptr, source.len, dest.ptr, dest.len);
 }
 
-const zig_base64 = struct {
+const rust_base64 = struct {
     const assert = bun.assert;
     const testing = std.testing;
     const mem = std.mem;

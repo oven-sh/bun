@@ -88,7 +88,7 @@ describe("udpSocket()", () => {
 
   // The Strong ref on the JS wrapper used to be left in place when udpSocket()
   // threw before the underlying uws socket was created (invalid options, bind
-  // failure), pinning the wrapper forever and leaking the Zig struct.
+  // failure), pinning the wrapper forever and leaking the Rust struct.
   describe("does not leak UDPSocket wrapper when creation fails", () => {
     async function countUDPSocketsAfterGC(max: number) {
       // Conservative stack scanning may keep the most-recently-created

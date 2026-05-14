@@ -70,7 +70,7 @@ pub fn lockOrAssert(self: *Self) void {
 pub const enabled = bun.Environment.ci_assert;
 
 const bun = @import("bun");
-const invalid_thread_id = @import("./thread_id.zig").invalid;
+const invalid_thread_id = @import("./thread_id.rust").invalid;
 const StoredTrace = bun.crash_handler.StoredTrace;
 const traces_enabled = bun.Environment.isDebug;
 

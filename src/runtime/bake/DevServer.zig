@@ -268,7 +268,7 @@ pub const asset_prefix = internal_prefix ++ "/asset";
 /// Example: `/_bun/client/index-00000000f209a20e.js`
 pub const client_prefix = internal_prefix ++ "/client";
 
-pub const RouteBundle = @import("./DevServer/RouteBundle.zig");
+pub const RouteBundle = @import("./DevServer/RouteBundle.rust");
 
 const DeferredPromise = struct {
     strong: jsc.JSPromise.Strong = .empty,
@@ -762,7 +762,7 @@ pub fn dev_allocator(dev: *const DevServer) DevAllocator {
     return dev.allocation_scope.borrow();
 }
 
-pub const MemoryCost = @import("./DevServer/memory_cost.zig");
+pub const MemoryCost = @import("./DevServer/memory_cost.rust");
 pub const memoryCost = MemoryCost.memoryCost;
 pub const memoryCostDetailed = MemoryCost.memoryCostDetailed;
 pub const memoryCostArrayHashMap = MemoryCost.memoryCostArrayHashMap;
@@ -1461,8 +1461,8 @@ fn onFrameworkRequestWithBundle(
     var params: FrameworkRouter.MatchedParams = undefined;
     const url_bunstr = switch (req) {
         .stack => |r| bun.String{
-            .tag = .ZigString,
-            .value = .{ .ZigString = bun.ZigString.fromUTF8(r.url()) },
+            .tag = .RustString,
+            .value = .{ .RustString = bun.RustString.fromUTF8(r.url()) },
         },
         .saved => |data| brk: {
             const url = data.request.url;
@@ -1690,7 +1690,7 @@ pub fn onSrcRequest(dev: *DevServer, req: *uws.Request, resp: anytype) void {
     }
 
     // TODO: better editor detection. on chloe's dev env, this opens apple terminal + vim
-    // This is already done in Next.js. we have to port this to Zig so we can use.
+    // This is already done in Next.js. we have to port this to Rust so we can use.
     resp.writeStatus("501 Not Implemented");
     resp.end("TODO", false);
     _ = dev;
@@ -3442,7 +3442,7 @@ fn printMemoryLine(dev: *DevServer) void {
     });
 }
 
-pub const PackedMap = @import("./DevServer/PackedMap.zig");
+pub const PackedMap = @import("./DevServer/PackedMap.rust");
 pub const FileKind = enum(u2) {
     /// Files that failed to bundle or do not exist on disk will appear in the
     /// graph as "unknown".
@@ -3465,7 +3465,7 @@ pub const FileKind = enum(u2) {
     }
 };
 
-pub const IncrementalGraph = @import("./DevServer/IncrementalGraph.zig").IncrementalGraph;
+pub const IncrementalGraph = @import("./DevServer/IncrementalGraph.rust").IncrementalGraph;
 
 pub const IncrementalResult = struct {
     /// When tracing a file's dependencies via `traceDependencies`, this is
@@ -3595,14 +3595,14 @@ fn initGraphTraceState(dev: *const DevServer, sfa: Allocator, extra_client_bits:
     return .{ .server_bits = server_bits, .client_bits = client_bits };
 }
 
-pub const DirectoryWatchStore = @import("./DevServer/DirectoryWatchStore.zig");
+pub const DirectoryWatchStore = @import("./DevServer/DirectoryWatchStore.rust");
 
 pub const ChunkKind = enum(u1) {
     initial_response,
     hmr_chunk,
 };
 
-pub const SerializedFailure = @import("./DevServer/SerializedFailure.zig");
+pub const SerializedFailure = @import("./DevServer/SerializedFailure.rust");
 
 // For debugging, it is helpful to be able to see bundles.
 pub fn dumpBundle(dump_dir: std.fs.Dir, graph: bake.Graph, rel_path: []const u8, chunk: []const u8, wrap: bool) !void {
@@ -4016,7 +4016,7 @@ pub const HmrTopic = enum(u8) {
     } });
 };
 
-pub const HmrSocket = @import("./DevServer/HmrSocket.zig");
+pub const HmrSocket = @import("./DevServer/HmrSocket.rust");
 
 pub fn routeToBundleIndexSlow(dev: *DevServer, pattern: []const u8) ?RouteBundle.Index {
     var params: FrameworkRouter.MatchedParams = undefined;
@@ -4087,8 +4087,8 @@ pub fn inspector(dev: *const DevServer) ?*BunFrontendDevServerAgent {
     return null;
 }
 
-pub const HotReloadEvent = @import("./DevServer/HotReloadEvent.zig");
-pub const WatcherAtomics = @import("./DevServer/WatcherAtomics.zig");
+pub const HotReloadEvent = @import("./DevServer/HotReloadEvent.rust");
+pub const WatcherAtomics = @import("./DevServer/WatcherAtomics.rust");
 
 /// Called on watcher's thread; Access to dev-server state restricted.
 pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?[:0]u8, watchlist: Watcher.ItemList) void {
@@ -4407,9 +4407,9 @@ pub fn putOrOverwriteAsset(
     _ = try dev.assets.replacePath(path.text, contents, &.byExtension(path.name.extWithoutLeadingDot()), content_hash);
 }
 
-pub const Assets = @import("./DevServer/Assets.zig");
+pub const Assets = @import("./DevServer/Assets.rust");
 
-pub const SourceMapStore = @import("./DevServer/SourceMapStore.zig");
+pub const SourceMapStore = @import("./DevServer/SourceMapStore.rust");
 
 pub fn onPluginsResolved(dev: *DevServer, plugins: ?*Plugin) !void {
     dev.bundler_options.plugin = plugins;
@@ -4427,7 +4427,7 @@ pub fn onPluginsRejected(dev: *DevServer) !void {
     // TODO: allow recovery from this state
 }
 
-pub const ErrorReportRequest = @import("./DevServer/ErrorReportRequest.zig");
+pub const ErrorReportRequest = @import("./DevServer/ErrorReportRequest.rust");
 
 /// Problem statement documented on `script_unref_payload`
 /// Takes 8 bytes: The generation ID in hex.

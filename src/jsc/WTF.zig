@@ -62,7 +62,7 @@ pub const WTF = struct {
         return buffer[0..@intCast(res)];
     }
 
-    pub const StringBuilder = @import("./StringBuilder.zig");
+    pub const StringBuilder = @import("./StringBuilder.rust");
 };
 
 const std = @import("std");

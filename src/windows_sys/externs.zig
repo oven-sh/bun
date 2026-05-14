@@ -1,4 +1,4 @@
-//! Raw Win32 extern fn declarations split from sys/windows/windows.zig.
+//! Raw Win32 extern fn declarations split from sys/windows/windows.rust.
 //! Custom types (Win32Error) and helper wrappers stay in sys/windows/.
 
 pub const LPDWORD = *DWORD;

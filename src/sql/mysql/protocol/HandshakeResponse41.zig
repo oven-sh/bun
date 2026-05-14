@@ -99,11 +99,11 @@ pub const write = writeWrap(HandshakeResponse41, writeInternal).write;
 
 const debug = bun.Output.scoped(.MySQLConnection, .hidden);
 
-const Capabilities = @import("../Capabilities.zig");
+const Capabilities = @import("../Capabilities.rust");
 const bun = @import("bun");
-const CharacterSet = @import("./CharacterSet.zig").CharacterSet;
-const Data = @import("../../shared/Data.zig").Data;
-const encodeLengthInt = @import("./EncodeInt.zig").encodeLengthInt;
+const CharacterSet = @import("./CharacterSet.rust").CharacterSet;
+const Data = @import("../../shared/Data.rust").Data;
+const encodeLengthInt = @import("./EncodeInt.rust").encodeLengthInt;
 
-const NewWriter = @import("./NewWriter.zig").NewWriter;
-const writeWrap = @import("./NewWriter.zig").writeWrap;
+const NewWriter = @import("./NewWriter.rust").NewWriter;
+const writeWrap = @import("./NewWriter.rust").writeWrap;

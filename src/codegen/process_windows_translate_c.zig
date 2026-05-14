@@ -34,7 +34,7 @@ pub fn main() !void {
 
     var i: usize = 0;
     while (mem.indexOfPos(u8, in, i, "pub const ")) |pub_i| {
-        var tokenizer = std.zig.Tokenizer.init(in);
+        var tokenizer = std.rust.Tokenizer.init(in);
         tokenizer.index = pub_i + "pub const ".len;
         const symbol_name_token = tokenizer.next();
         assert(symbol_name_token.tag == .identifier);

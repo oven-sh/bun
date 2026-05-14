@@ -45,7 +45,7 @@ for (let order of [
 }
 
 // When the specifier contains non-ASCII characters (so toUTF8() must allocate a
-// fresh buffer on the Zig side), the query string returned to C++ must not point
+// fresh buffer on the Rust side), the query string returned to C++ must not point
 // into that freed buffer. With ASAN this is a heap-use-after-free; without it the
 // resolved key comes back corrupted.
 test("query string with non-ASCII specifier (dynamic import)", async () => {

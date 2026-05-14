@@ -551,8 +551,8 @@ fn persistBarrelExport(dev: *bun.bake.DevServer, barrel_path: []const u8, alias:
 }
 
 const std = @import("std");
-const BundleV2 = @import("./bundle_v2.zig").BundleV2;
-const ParseTask = @import("./ParseTask.zig").ParseTask;
+const BundleV2 = @import("./bundle_v2.rust").BundleV2;
+const ParseTask = @import("./ParseTask.rust").ParseTask;
 
 const bun = @import("bun");
 const ImportRecord = bun.ImportRecord;

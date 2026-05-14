@@ -62,7 +62,7 @@ pub fn trace(comptime name: [:0]const u8) Ctx {
     comptime {
         if (!@hasField(PerfEvent, name)) {
             @compileError(std.fmt.comptimePrint(
-                \\"{s}" is missing from generated_perf_trace_events.zig
+                \\"{s}" is missing from generated_perf_trace_events.rust
                 \\
                 \\Please run this command in your terminal and commit the result:
                 \\
@@ -156,4 +156,4 @@ pub const Linux = struct {
 
 const bun = @import("bun");
 const std = @import("std");
-const PerfEvent = @import("./generated_perf_trace_events.zig").PerfEvent;
+const PerfEvent = @import("./generated_perf_trace_events.rust").PerfEvent;

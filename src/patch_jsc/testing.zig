@@ -37,7 +37,7 @@ pub const TestingAPIs = struct {
         };
     }
     const ApplyArgs = struct {
-        patchfile_txt: jsc.ZigString.Slice,
+        patchfile_txt: jsc.RustString.Slice,
         patchfile: PatchFile,
         dirfd: bun.FD,
 

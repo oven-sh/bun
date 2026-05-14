@@ -144,7 +144,7 @@ pub fn freeWithoutSize(ptr: ?*anyopaque) void {
     mimalloc.mi_free(ptr);
 }
 
-const Environment = @import("../bun_core/env.zig");
+const Environment = @import("../bun_core/env.rust");
 const std = @import("std");
 
 const bun = @import("bun");

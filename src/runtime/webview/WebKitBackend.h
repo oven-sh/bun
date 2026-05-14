@@ -19,7 +19,7 @@
 
 struct us_socket_t;
 
-namespace Zig {
+namespace Rust {
 class GlobalObject;
 }
 
@@ -38,10 +38,10 @@ enum class VirtualKey : uint8_t;
 namespace WK {
 
 // One per process. Lazy-spawned on first WebView construction via
-// Bun__WebViewHost__ensure (Zig side, reuses bun.spawn.Process).
+// Bun__WebViewHost__ensure (Rust side, reuses bun.spawn.Process).
 struct HostClient {
     us_socket_t* sock = nullptr;
-    Zig::GlobalObject* global = nullptr;
+    Rust::GlobalObject* global = nullptr;
     bool dead = false;
 
     uint32_t nextViewId = 1;
@@ -51,7 +51,7 @@ struct HostClient {
     WTF::Vector<uint8_t> txQueue;
     bool sockRefd = false;
 
-    bool ensureSpawned(Zig::GlobalObject*, bool stdoutInherit, bool stderrInherit);
+    bool ensureSpawned(Rust::GlobalObject*, bool stdoutInherit, bool stderrInherit);
     void writeFrame(WebViewProto::Op, uint32_t viewId, const uint8_t* payload, uint32_t len);
     void handleReply(const WebViewProto::Frame&, WebViewProto::Reader);
     void rejectAllAndMarkDead(const WTF::String& reason);

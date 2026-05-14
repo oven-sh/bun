@@ -100,8 +100,8 @@ pub const AnyPromise = union(enum) {
 
 const bun = @import("bun");
 const std = @import("std");
-const JSInternalPromise = @import("./JSInternalPromise.zig").JSInternalPromise;
-const JSPromise = @import("./JSPromise.zig").JSPromise;
+const JSInternalPromise = @import("./JSInternalPromise.rust").JSInternalPromise;
+const JSPromise = @import("./JSPromise.rust").JSPromise;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

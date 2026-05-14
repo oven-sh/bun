@@ -423,6 +423,6 @@ const bun = @import("bun");
 const std = @import("std");
 const AllocError = std.mem.Allocator.Error;
 
-const meta = @import("./meta.zig");
+const meta = @import("./meta.rust");
 const AddConst = meta.AddConst;
 const PointerInfo = meta.PointerInfo;

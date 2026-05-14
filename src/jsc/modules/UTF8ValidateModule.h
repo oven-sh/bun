@@ -2,7 +2,7 @@
 using namespace JSC;
 using namespace WebCore;
 
-namespace Zig {
+namespace Rust {
 inline void
 generateNativeModule_UTF8Validate(JSC::JSGlobalObject* globalObject,
     JSC::Identifier moduleKey,
@@ -18,4 +18,4 @@ generateNativeModule_UTF8Validate(JSC::JSGlobalObject* globalObject,
         jsBufferConstructorFunction_isUtf8));
 }
 
-} // namespace Zig
+} // namespace Rust

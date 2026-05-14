@@ -75,7 +75,7 @@ pub fn Channel(comptime Owner: type, comptime owner_field: []const u8) type {
         /// socketpair end. Windows: the inherited named-pipe end (worker side).
         pub fn adopt(self: *Self, vm: *jsc.VirtualMachine, fd: bun.FD) bool {
             if (Environment.isWindows) {
-                // ipc=true matches ipc.zig windowsConfigureClient. With ipc=true
+                // ipc=true matches ipc.rust windowsConfigureClient. With ipc=true
                 // libuv wraps reads/writes in its own framing; both ends use it
                 // so the wrapping is transparent and our payload bytes pass
                 // through unchanged. With ipc=false the parent end (created by
@@ -115,7 +115,7 @@ pub fn Channel(comptime Owner: type, comptime owner_field: []const u8) type {
         /// `.ipc` extra-fd parent end, or the worker's just-opened pipe).
         /// Starts reading. On failure the caller still owns `pipe`.
         ///
-        /// Unlike ipc.zig's windowsConfigureServer/Client we keep the pipe
+        /// Unlike ipc.rust's windowsConfigureServer/Client we keep the pipe
         /// ref'd: the worker (and the coordinator before workers register
         /// process exit handles) has nothing else keeping `uv_loop_alive()`
         /// true, so unref'ing here makes autoTick() take the tickWithoutIdle
@@ -337,7 +337,7 @@ pub fn Channel(comptime Owner: type, comptime owner_field: []const u8) type {
 
 const uv = if (Environment.isWindows) bun.windows.libuv else struct {};
 
-const Frame = @import("./Frame.zig");
+const Frame = @import("./Frame.rust");
 const std = @import("std");
 
 const bun = @import("bun");

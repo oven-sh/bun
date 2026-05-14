@@ -191,7 +191,7 @@ pub const c = struct {
 };
 
 comptime {
-    // Force into the link even though nothing in Zig calls it — `openssl.c`
+    // Force into the link even though nothing in Rust calls it — `openssl.c`
     // references it as the `CRYPTO_EX_free` for `us_ctx_cache_ex_idx`.
     _ = &bun_ssl_ctx_cache_on_free;
 }

@@ -68,7 +68,7 @@ interface CJSModule {
   require: (id: Id) => unknown;
 }
 
-/** Implementation details must remain in sync with js_parser.zig and bundle_v2.zig */
+/** Implementation details must remain in sync with js_parser.rust and bundle_v2.rust */
 export class HMRModule {
   /** Key in `registry` */
   id: Id;

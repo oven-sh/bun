@@ -65,7 +65,7 @@ pub const BlobOrStringOrBuffer = union(enum) {
                 // rather than referencing the store which isn't thread-safe
                 const blob_data = blob.sharedView();
                 const owned_data = allocator.dupe(u8, blob_data) catch return error.OutOfMemory;
-                return .{ .string_or_buffer = .{ .encoded_slice = jsc.ZigString.Slice.init(allocator, owned_data) } };
+                return .{ .string_or_buffer = .{ .encoded_slice = jsc.RustString.Slice.init(allocator, owned_data) } };
             }
 
             if (blob.store) |store| {
@@ -141,10 +141,10 @@ pub const BlobOrStringOrBuffer = union(enum) {
 pub const StringOrBuffer = union(enum) {
     string: bun.SliceWithUnderlyingString,
     threadsafe_string: bun.SliceWithUnderlyingString,
-    encoded_slice: jsc.ZigString.Slice,
+    encoded_slice: jsc.RustString.Slice,
     buffer: Buffer,
 
-    pub const empty = StringOrBuffer{ .encoded_slice = jsc.ZigString.Slice.empty };
+    pub const empty = StringOrBuffer{ .encoded_slice = jsc.RustString.Slice.empty };
 
     pub fn toThreadSafe(this: *@This()) void {
         switch (this.*) {
@@ -317,7 +317,7 @@ pub const StringOrBuffer = union(enum) {
             const out = str.encode(encoding);
             defer global.vm().reportExtraMemory(out.len);
 
-            return .{ .encoded_slice = jsc.ZigString.Slice.init(bun.default_allocator, out) };
+            return .{ .encoded_slice = jsc.RustString.Slice.init(bun.default_allocator, out) };
         }
 
         return null;
@@ -422,13 +422,13 @@ pub const Encoding = enum(u8) {
             .base64 => {
                 var buf: [std.base64.standard.Encoder.calcSize(size)]u8 = undefined;
                 const len = bun.base64.encode(&buf, input);
-                return jsc.ZigString.init(buf[0..len]).toJS(globalObject);
+                return jsc.RustString.init(buf[0..len]).toJS(globalObject);
             },
             .base64url => {
                 var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(size)]u8 = undefined;
                 const encoded = std.base64.url_safe_no_pad.Encoder.encode(&buf, input);
 
-                return jsc.ZigString.init(buf[0..encoded.len]).toJS(globalObject);
+                return jsc.RustString.init(buf[0..encoded.len]).toJS(globalObject);
             },
             .hex => {
                 var buf: [size * 4]u8 = undefined;
@@ -439,7 +439,7 @@ pub const Encoding = enum(u8) {
                 ) catch |err| switch (err) {
                     error.NoSpaceLeft => unreachable,
                 };
-                const result = jsc.ZigString.init(out).toJS(globalObject);
+                const result = jsc.RustString.init(out).toJS(globalObject);
                 return result;
             },
             .buffer => {
@@ -469,7 +469,7 @@ pub const Encoding = enum(u8) {
                 var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(max_size * 4)]u8 = undefined;
                 const encoded = std.base64.url_safe_no_pad.Encoder.encode(&buf, input);
 
-                return jsc.ZigString.init(buf[0..encoded.len]).toJS(globalObject);
+                return jsc.RustString.init(buf[0..encoded.len]).toJS(globalObject);
             },
             .hex => {
                 var buf: [max_size * 4]u8 = undefined;
@@ -480,7 +480,7 @@ pub const Encoding = enum(u8) {
                 ) catch |err| switch (err) {
                     error.NoSpaceLeft => unreachable,
                 };
-                const result = jsc.ZigString.init(out).toJS(globalObject);
+                const result = jsc.RustString.init(out).toJS(globalObject);
                 return result;
             },
             .buffer => {
@@ -534,7 +534,7 @@ pub const PathLike = union(enum) {
     buffer: Buffer,
     slice_with_underlying_string: bun.SliceWithUnderlyingString,
     threadsafe_string: bun.SliceWithUnderlyingString,
-    encoded_slice: jsc.ZigString.Slice,
+    encoded_slice: jsc.RustString.Slice,
 
     pub fn estimatedSize(this: *const PathLike) usize {
         return switch (this.*) {
@@ -778,11 +778,11 @@ pub const PathLike = union(enum) {
 };
 
 pub const Valid = struct {
-    pub fn pathSlice(zig_str: jsc.ZigString.Slice, ctx: *jsc.JSGlobalObject) bun.JSError!void {
-        switch (zig_str.len) {
+    pub fn pathSlice(rust_str: jsc.RustString.Slice, ctx: *jsc.JSGlobalObject) bun.JSError!void {
+        switch (rust_str.len) {
             0...bun.MAX_PATH_BYTES => return,
             else => {
-                var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).withPath(zig_str.slice()).toSystemError();
+                var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).withPath(rust_str.slice()).toSystemError();
                 system_error.syscall = bun.String.dead;
                 return ctx.throwValue(system_error.toErrorInstance(ctx));
             },
@@ -802,8 +802,8 @@ pub const Valid = struct {
         comptime unreachable;
     }
 
-    pub fn pathString(zig_str: jsc.ZigString, ctx: *jsc.JSGlobalObject) bun.JSError!void {
-        return pathStringLength(zig_str.len, ctx);
+    pub fn pathString(rust_str: jsc.RustString, ctx: *jsc.JSGlobalObject) bun.JSError!void {
+        return pathStringLength(rust_str.len, ctx);
     }
 
     pub fn pathBuffer(buffer: Buffer, ctx: *jsc.JSGlobalObject) bun.JSError!void {
@@ -883,9 +883,9 @@ pub fn modeFromJS(ctx: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?Mod
         // the example), specifies permissions for the group. The right-most
         // digit (5 in the example), specifies the permissions for others.
 
-        var zig_str = jsc.ZigString.Empty;
-        try value.toZigString(&zig_str, ctx);
-        var slice = zig_str.slice();
+        var rust_str = jsc.RustString.Empty;
+        try value.toRustString(&rust_str, ctx);
+        var slice = rust_str.slice();
         if (strings.hasPrefix(slice, "0o")) {
             slice = slice[2..];
         }
@@ -1072,7 +1072,7 @@ pub const FileSystemFlags = enum(c_int) {
 
         const jsType = val.jsType();
         if (jsType.isStringLike()) {
-            const str = try val.getZigString(ctx);
+            const str = try val.getRustString(ctx);
             if (str.isEmpty()) {
                 return ctx.throwInvalidArguments("Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{});
             }
@@ -1100,7 +1100,7 @@ pub const FileSystemFlags = enum(c_int) {
                     },
                 }
 
-                break :brk map.getWithEql(str, jsc.ZigString.eqlComptime) orelse break :brk null;
+                break :brk map.getWithEql(str, jsc.RustString.eqlComptime) orelse break :brk null;
             } orelse {
                 return ctx.throwInvalidArguments("Invalid flag '{f}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
             };
@@ -1235,7 +1235,7 @@ pub const PathOrBlob = union(enum) {
 const string = []const u8;
 
 const std = @import("std");
-const URL = @import("../../url/url.zig").URL;
+const URL = @import("../../url/url.rust").URL;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

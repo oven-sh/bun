@@ -167,7 +167,7 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
         /// Returns a new string that borrows a subslice of this string.
         ///
         /// This is the Cow-equivalent of
-        /// ```zig
+        /// ```rust
         /// var str2 = str[start..end];
         /// ```
         ///
@@ -232,8 +232,8 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
                 bun.assertf(
                     // We cannot compare `ptr` here, because allocator implementations with no
                     // associated data set the context pointer to `undefined`, therefore comparing
-                    // `ptr` may be undefined behavior. See https://github.com/ziglang/zig/pull/22691
-                    // and https://github.com/ziglang/zig/issues/23068.
+                    // `ptr` may be undefined behavior. See https://github.com/rustlang/rust/pull/22691
+                    // and https://github.com/rustlang/rust/issues/23068.
                     debug.allocator.vtable == allocator.vtable,
                     "CowSlice.deinit called with a different allocator than the one used to create it",
                     .{},

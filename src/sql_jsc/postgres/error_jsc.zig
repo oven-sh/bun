@@ -7,16 +7,16 @@ pub fn createPostgresError(
 ) bun.JSError!JSValue {
     const opts_obj = JSValue.createEmptyObject(globalObject, 0);
     opts_obj.ensureStillAlive();
-    opts_obj.put(globalObject, jsc.ZigString.static("code"), try bun.String.createUTF8ForJS(globalObject, options.code));
+    opts_obj.put(globalObject, jsc.RustString.static("code"), try bun.String.createUTF8ForJS(globalObject, options.code));
     inline for (std.meta.fields(PostgresErrorOptions)) |field| {
         const FieldType = @typeInfo(@TypeOf(@field(options, field.name)));
         if (FieldType == .optional) {
             if (@field(options, field.name)) |value| {
-                opts_obj.put(globalObject, jsc.ZigString.static(field.name), try bun.String.createUTF8ForJS(globalObject, value));
+                opts_obj.put(globalObject, jsc.RustString.static(field.name), try bun.String.createUTF8ForJS(globalObject, value));
             }
         }
     }
-    opts_obj.put(globalObject, jsc.ZigString.static("message"), try bun.String.createUTF8ForJS(globalObject, message));
+    opts_obj.put(globalObject, jsc.RustString.static("message"), try bun.String.createUTF8ForJS(globalObject, message));
 
     return opts_obj;
 }
@@ -82,8 +82,8 @@ pub fn postgresErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8
 
 const std = @import("std");
 
-const AnyPostgresError = @import("../../sql/postgres/AnyPostgresError.zig").AnyPostgresError;
-const PostgresErrorOptions = @import("../../sql/postgres/AnyPostgresError.zig").PostgresErrorOptions;
+const AnyPostgresError = @import("../../sql/postgres/AnyPostgresError.rust").AnyPostgresError;
+const PostgresErrorOptions = @import("../../sql/postgres/AnyPostgresError.rust").PostgresErrorOptions;
 
 const bun = @import("bun");
 const String = bun.String;

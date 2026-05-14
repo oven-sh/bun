@@ -200,7 +200,7 @@ pub const Route = struct {
             .err => |log| {
                 if (bun.Environment.enable_logs)
                     debug("onRequest: {s} - err", .{req.url()});
-                _ = log; // TODO: use the code from DevServer.zig to render the error
+                _ = log; // TODO: use the code from DevServer.rust to render the error
                 resp.endWithoutBody(true);
             },
             .html => |html| {
@@ -470,7 +470,7 @@ pub const Route = struct {
                 },
                 .err => |log| {
                     if (this.server.?.config().isDevelopment()) {
-                        _ = log; // TODO: use the code from DevServer.zig to render the error
+                        _ = log; // TODO: use the code from DevServer.rust to render the error
                     } else {
                         // To protect privacy, do not show errors to end users in production.
                         // TODO: Show a generic error page.
@@ -521,7 +521,7 @@ pub const Route = struct {
 
 const debug = bun.Output.scoped(.HTMLBundle, .hidden);
 
-const StaticRoute = @import("./StaticRoute.zig");
+const StaticRoute = @import("./StaticRoute.rust");
 const std = @import("std");
 
 const bun = @import("bun");

@@ -924,7 +924,7 @@ pub const pure_global_identifier_map = bun.ComptimeStringMap(PureGlobalIdentifie
 
 const string = []const u8;
 
-const defines = @import("./defines.zig");
+const defines = @import("./defines.rust");
 const std = @import("std");
 
 const bun = @import("bun");

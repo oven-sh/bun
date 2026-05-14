@@ -492,8 +492,8 @@ pub fn defineValues(this: *const CompileTarget) []const []const u8 {
     }
 }
 
-pub const fromJS = @import("../bundler_jsc/options_jsc.zig").compileTargetFromJS;
-pub const fromSlice = @import("../bundler_jsc/options_jsc.zig").compileTargetFromSlice;
+pub const fromJS = @import("../bundler_jsc/options_jsc.rust").compileTargetFromJS;
+pub const fromSlice = @import("../bundler_jsc/options_jsc.rust").compileTargetFromSlice;
 
 const std = @import("std");
 

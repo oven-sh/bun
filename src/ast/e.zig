@@ -68,7 +68,7 @@ pub const Array = struct {
         return out;
     }
 
-    pub const toJS = @import("../../js_parser_jsc/expr_jsc.zig").arrayToJS;
+    pub const toJS = @import("../../js_parser_jsc/expr_jsc.rust").arrayToJS;
 
     /// Assumes each item in the array is a string
     pub fn alphabetizeStrings(this: *Array) void {
@@ -137,7 +137,7 @@ pub const Binary = struct {
 
 pub const Boolean = struct {
     value: bool,
-    pub const toJS = @import("../../js_parser_jsc/expr_jsc.zig").boolToJS;
+    pub const toJS = @import("../../js_parser_jsc/expr_jsc.rust").boolToJS;
 };
 pub const Super = struct {};
 pub const Null = struct {};
@@ -175,7 +175,7 @@ pub const Special = union(enum) {
     hot_data,
     /// `import.meta.hot.accept` when HMR is enabled. Truthy.
     hot_accept,
-    /// Converted from `hot_accept` in P.zig's handleImportMetaHotAcceptCall
+    /// Converted from `hot_accept` in P.rust's handleImportMetaHotAcceptCall
     /// when passed strings. Printed as `hmr.acceptSpecifiers`
     hot_accept_visited,
     /// Prints the resolved specifier string for an import record.
@@ -493,7 +493,7 @@ pub const Number = struct {
         return try writer.write(self.value);
     }
 
-    pub const toJS = @import("../../js_parser_jsc/expr_jsc.zig").numberToJS;
+    pub const toJS = @import("../../js_parser_jsc/expr_jsc.rust").numberToJS;
 };
 
 pub const BigInt = struct {
@@ -505,7 +505,7 @@ pub const BigInt = struct {
         return try writer.write(self.value);
     }
 
-    pub const toJS = @import("../../js_parser_jsc/expr_jsc.zig").bigIntToJS;
+    pub const toJS = @import("../../js_parser_jsc/expr_jsc.rust").bigIntToJS;
 };
 
 pub const Object = struct {
@@ -537,7 +537,7 @@ pub const Object = struct {
         return if (asProperty(self, key)) |query| query.expr else @as(?Expr, null);
     }
 
-    pub const toJS = @import("../../js_parser_jsc/expr_jsc.zig").objectToJS;
+    pub const toJS = @import("../../js_parser_jsc/expr_jsc.rust").objectToJS;
 
     pub fn put(self: *Object, allocator: std.mem.Allocator, key: string, expr: Expr) !void {
         if (asProperty(self, key)) |query| {
@@ -1140,13 +1140,13 @@ pub const String = struct {
         }
     }
 
-    pub const toJS = @import("../../js_parser_jsc/expr_jsc.zig").stringToJS;
+    pub const toJS = @import("../../js_parser_jsc/expr_jsc.rust").stringToJS;
 
-    pub fn toZigString(s: *String, allocator: std.mem.Allocator) jsc.ZigString {
+    pub fn toRustString(s: *String, allocator: std.mem.Allocator) jsc.RustString {
         if (s.isUTF8()) {
-            return jsc.ZigString.fromUTF8(s.slice(allocator));
+            return jsc.RustString.fromUTF8(s.slice(allocator));
         } else {
-            return jsc.ZigString.initUTF16(s.slice16());
+            return jsc.RustString.initUTF16(s.slice16());
         }
     }
 
@@ -1415,7 +1415,7 @@ pub const Import = struct {
     }
 
     pub fn importRecordLoader(import: *const Import) ?bun.options.Loader {
-        // This logic is duplicated in js_printer.zig fn parsePath()
+        // This logic is duplicated in js_printer.rust fn parsePath()
         const obj = import.options.data.as(.e_object) orelse
             return null;
         const with = obj.get("with") orelse obj.get("assert") orelse

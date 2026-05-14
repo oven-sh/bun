@@ -74,7 +74,7 @@ default_verbose_fetch: ?bun.http.HTTPVerboseLevel = null,
 /// It exists in the VirtualMachine struct so that we don't accidentally
 /// make a stack copy of it only use it through source_mappings.
 ///
-/// This proposal could let us safely move it back https://github.com/ziglang/zig/issues/7769
+/// This proposal could let us safely move it back https://github.com/rustlang/rust/issues/7769
 saved_source_map_table: SavedSourceMap.HashTable = undefined,
 source_mappings: SavedSourceMap = undefined,
 
@@ -237,10 +237,10 @@ pub fn getDevServerAsyncLocalStorage(this: *VirtualMachine) !?jsc.JSValue {
     return jsvalue;
 }
 
-pub const ProcessAutoKiller = @import("./ProcessAutoKiller.zig");
+pub const ProcessAutoKiller = @import("./ProcessAutoKiller.rust");
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
-pub const OnException = fn (*ZigException) void;
+pub const OnException = fn (*RustException) void;
 
 pub fn allowAddons(this: *VirtualMachine) callconv(.c) bool {
     return if (this.transpiler.options.transform_options.allow_addons) |allow_addons| allow_addons else true;
@@ -955,7 +955,7 @@ pub fn onExit(this: *VirtualMachine) void {
     }
 }
 
-extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
+extern fn Rust__GlobalObject__destructOnExit(*JSGlobalObject) void;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
     bun.assert(this.isShuttingDown());
@@ -975,11 +975,11 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
         // Embedded per-VM socket groups must drain while JSC is still alive
         // (closeAll() fires on_close → JS). After JSC teardown,
         // RareData.deinit() only deinit()s the groups (asserts empty).
-        // Mirrors web_worker.zig — without this, every still-open Bun.connect
+        // Mirrors web_worker.rust — without this, every still-open Bun.connect
         // / postgres / etc. socket is an LSAN leak under
         // BUN_DESTRUCT_VM_ON_EXIT.
         if (this.rare_data) |rare| rare.closeAllSocketGroups(this);
-        Zig__GlobalObject__destructOnExit(this.global);
+        Rust__GlobalObject__destructOnExit(this.global);
         // lastChanceToFinalize() above runs Listener/Server finalize → their
         // own embedded group.closeAll() → sockets land in loop.closed_head.
         // The pre-JSC drain in closeAllSocketGroups() can't see those (the
@@ -2003,7 +2003,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
 
     if (query_string) |query| {
         // `result.query_string` is a slice into `specifier_utf8`, which is freed by
-        // `defer specifier_utf8.deinit()` before callers (C++ or Zig) read the out-param.
+        // `defer specifier_utf8.deinit()` before callers (C++ or Rust) read the out-param.
         // Clone into an owned bun.String so it survives this function returning.
         query.* = if (result.query_string.len > 0)
             bun.String.cloneUTF8(result.query_string)
@@ -2094,7 +2094,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 err,
                 globalThis.createAggregateError(
                     errors,
-                    &ZigString.init(
+                    &RustString.init(
                         std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{f}\"", .{
                             errors.len,
                             specifier,
@@ -2197,7 +2197,7 @@ pub fn clearEntryPoint(this: *VirtualMachine) bun.JSError!void {
         return;
     }
 
-    var str = ZigString.init(main_file_name);
+    var str = RustString.init(main_file_name);
     try this.global.deleteModuleRegistryEntry(&str);
 }
 
@@ -2499,7 +2499,7 @@ pub fn removeListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FD) 
 }
 
 /// `bun test --isolate`: tear down per-file OS resources, bump the generation
-/// so stale callbacks self-cancel, then create a fresh `ZigGlobalObject` on
+/// so stale callbacks self-cancel, then create a fresh `RustGlobalObject` on
 /// the same `JSC::VM` and point `this.global` at it. The old global is
 /// gcUnprotect'd; its module graph becomes collectable on the next GC.
 pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
@@ -2583,10 +2583,10 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     if (this.ipc) |ipc| if (ipc == .initialized) {
         ipc.initialized.globalThis = new_global;
     };
-    // NapiEnv cleanup hooks registered via napi_internal_register_cleanup_zig
+    // NapiEnv cleanup hooks registered via napi_internal_register_cleanup_rust
     // captured the old global in CleanupHook.globalThis; the C++ side has
     // already retargeted env->m_globalObject to the new global, so only the
-    // Zig-side bookkeeping pointer is stale. Nothing currently reads it
+    // Rust-side bookkeeping pointer is stale. Nothing currently reads it
     // (execute() only calls func(ctx) and there's no per-entry removal
     // path), but repoint it anyway so the field doesn't dangle at a freed
     // GC cell.
@@ -2623,7 +2623,7 @@ pub fn loadMacroEntryPoint(this: *VirtualMachine, entry_path: string, function_n
 
 /// A subtlelty of JavaScriptCore:
 /// JavaScriptCore has many release asserts that check an API lock is currently held
-/// We cannot hold it from Zig code because it relies on C++ ARIA to automatically release the lock
+/// We cannot hold it from Rust code because it relies on C++ ARIA to automatically release the lock
 /// and it is not safe to copy the lock itself
 /// So we have to wrap entry points to & from JavaScript with an API lock that calls out to C++
 pub fn runWithAPILock(this: *VirtualMachine, comptime Context: type, ctx: *Context, comptime function: fn (ctx: *Context) void) void {
@@ -2653,13 +2653,13 @@ pub fn printErrorLikeObjectToConsole(this: *VirtualMachine, value: JSValue) void
     this.runErrorHandler(value, null);
 }
 
-// When the Error-like object is one of our own, it's best to rely on the object directly instead of serializing it to a ZigException.
+// When the Error-like object is one of our own, it's best to rely on the object directly instead of serializing it to a RustException.
 // This is for:
 // - BuildMessage
 // - ResolveMessage
 // If there were multiple errors, it could be contained in an AggregateError.
 // In that case, this function becomes recursive.
-// In all other cases, we will convert it to a ZigException.
+// In all other cases, we will convert it to a RustException.
 pub fn printErrorlikeObject(
     this: *VirtualMachine,
     value: JSValue,
@@ -2676,20 +2676,20 @@ pub fn printErrorlikeObject(
     defer {
         if (was_internal) {
             if (exception) |exception_| {
-                var holder = ZigException.Holder.init();
-                var zig_exception: *ZigException = holder.zigException();
+                var holder = RustException.Holder.init();
+                var rust_exception: *RustException = holder.rustException();
                 holder.deinit(this);
-                exception_.getStackTrace(this.global, &zig_exception.stack);
-                if (zig_exception.stack.frames_len > 0) {
+                exception_.getStackTrace(this.global, &rust_exception.stack);
+                if (rust_exception.stack.frames_len > 0) {
                     if (allow_ansi_color) {
-                        printStackTrace(Writer, writer, zig_exception.stack, true) catch {};
+                        printStackTrace(Writer, writer, rust_exception.stack, true) catch {};
                     } else {
-                        printStackTrace(Writer, writer, zig_exception.stack, false) catch {};
+                        printStackTrace(Writer, writer, rust_exception.stack, false) catch {};
                     }
                 }
 
                 if (exception_list) |list| {
-                    zig_exception.addToErrorList(list, this.transpiler.fs.top_level_dir, &this.origin) catch {};
+                    rust_exception.addToErrorList(list, this.transpiler.fs.top_level_dir, &this.origin) catch {};
                 }
             }
         }
@@ -2810,7 +2810,7 @@ pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *Except
     return .js_undefined;
 }
 
-pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTrace, comptime allow_ansi_colors: bool) !void {
+pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: RustStackTrace, comptime allow_ansi_colors: bool) !void {
     const stack = trace.frames();
     if (stack.len > 0) {
         var vm = VirtualMachine.get();
@@ -2895,13 +2895,13 @@ pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTra
     }
 }
 
-pub export fn Bun__remapStackFramePositions(vm: *jsc.VirtualMachine, frames: [*]jsc.ZigStackFrame, frames_count: usize) void {
+pub export fn Bun__remapStackFramePositions(vm: *jsc.VirtualMachine, frames: [*]jsc.RustStackFrame, frames_count: usize) void {
     // **Warning** this method can be called in the heap collector thread!!
     // https://github.com/oven-sh/bun/issues/17087
     vm.remapStackFramePositions(frames, frames_count);
 }
 
-pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]jsc.ZigStackFrame, frames_count: usize) void {
+pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]jsc.RustStackFrame, frames_count: usize) void {
     if (frames_count == 0) return;
 
     // **Warning** this method can be called in the heap collector thread!!
@@ -3006,7 +3006,7 @@ pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]jsc.ZigStackFr
     sm.last_ism = if (cached == .ism) cached.ism else null;
 }
 
-fn remapOneFrameSlow(this: *VirtualMachine, frame: *jsc.ZigStackFrame, path: []const u8) void {
+fn remapOneFrameSlow(this: *VirtualMachine, frame: *jsc.RustStackFrame, path: []const u8) void {
     if (this.resolveSourceMapping(
         path,
         frame.position.line,
@@ -3026,16 +3026,16 @@ fn remapOneFrameSlow(this: *VirtualMachine, frame: *jsc.ZigStackFrame, path: []c
     frame.remapped = true;
 }
 
-pub fn remapZigException(
+pub fn remapRustException(
     this: *VirtualMachine,
-    exception: *ZigException,
+    exception: *RustException,
     error_instance: JSValue,
     exception_list: ?*ExceptionList,
     must_reset_parser_arena_later: *bool,
-    source_code_slice: *?ZigString.Slice,
+    source_code_slice: *?RustString.Slice,
     allow_source_code_preview: bool,
 ) void {
-    error_instance.toZigException(this.global, exception);
+    error_instance.toRustException(this.global, exception);
     var enable_source_code_preview = allow_source_code_preview and
         !(bun.feature_flag.BUN_DISABLE_SOURCE_CODE_PREVIEW.get() or
             bun.feature_flag.BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW.get());
@@ -3063,7 +3063,7 @@ pub fn remapZigException(
         .{"processTicksAndRejections"},
     });
 
-    var frames: []jsc.ZigStackFrame = exception.stack.frames_ptr[0..exception.stack.frames_len];
+    var frames: []jsc.RustStackFrame = exception.stack.frames_ptr[0..exception.stack.frames_len];
     if (this.hide_bun_stackframes) {
         var start_index: ?usize = null;
         for (frames, 0..) |frame, i| {
@@ -3175,7 +3175,7 @@ pub fn remapZigException(
 
         const code = code: {
             if (!enable_source_code_preview) {
-                break :code ZigString.Slice.empty;
+                break :code RustString.Slice.empty;
             }
 
             if (!top.remapped and lookup.source_map != null and lookup.source_map.?.isExternal()) {
@@ -3186,7 +3186,7 @@ pub fn remapZigException(
 
             if (top_frame_is_builtin) {
                 // Avoid printing "export default 'native'"
-                break :code ZigString.Slice.empty;
+                break :code RustString.Slice.empty;
             }
             var log = logger.Log.init(bun.default_allocator);
             defer log.deinit();
@@ -3213,11 +3213,11 @@ pub fn remapZigException(
         if (strings.getLinesInText(
             code.slice(),
             @intCast(last_line),
-            ZigException.Holder.source_lines_count,
+            RustException.Holder.source_lines_count,
         )) |lines_buf| {
             var lines = lines_buf.slice();
-            var source_lines = exception.stack.source_lines_ptr[0..ZigException.Holder.source_lines_count];
-            var source_line_numbers = exception.stack.source_lines_numbers[0..ZigException.Holder.source_lines_count];
+            var source_lines = exception.stack.source_lines_ptr[0..RustException.Holder.source_lines_count];
+            var source_line_numbers = exception.stack.source_lines_numbers[0..RustException.Holder.source_lines_count];
             @memset(source_lines, String.empty);
             @memset(source_line_numbers, 0);
 
@@ -3262,9 +3262,9 @@ pub fn remapZigException(
     }
 }
 
-pub fn printExternallyRemappedZigException(
+pub fn printExternallyRemappedRustException(
     this: *VirtualMachine,
-    zig_exception: *ZigException,
+    rust_exception: *RustException,
     formatter: ?*ConsoleObject.Formatter,
     comptime Writer: type,
     writer: Writer,
@@ -3274,8 +3274,8 @@ pub fn printExternallyRemappedZigException(
     var default_formatter: ConsoleObject.Formatter = .{ .globalThis = this.global };
     defer default_formatter.deinit();
     try this.printErrorInstance(
-        .zig_exception,
-        zig_exception,
+        .rust_exception,
+        rust_exception,
         null,
         formatter orelse &default_formatter,
         Writer,
@@ -3287,10 +3287,10 @@ pub fn printExternallyRemappedZigException(
 
 fn printErrorInstance(
     this: *VirtualMachine,
-    comptime mode: enum { js, zig_exception },
+    comptime mode: enum { js, rust_exception },
     error_instance: switch (mode) {
         .js => JSValue,
-        .zig_exception => *ZigException,
+        .rust_exception => *RustException,
     },
     exception_list: ?*ExceptionList,
     formatter: *ConsoleObject.Formatter,
@@ -3299,19 +3299,19 @@ fn printErrorInstance(
     comptime allow_ansi_color: bool,
     comptime allow_side_effects: bool,
 ) !void {
-    var exception_holder = if (mode == .js) ZigException.Holder.init();
-    var exception = if (mode == .js) exception_holder.zigException() else error_instance;
+    var exception_holder = if (mode == .js) RustException.Holder.init();
+    var exception = if (mode == .js) exception_holder.rustException() else error_instance;
     defer if (mode == .js) exception_holder.deinit(this);
     defer if (mode == .js) error_instance.ensureStillAlive();
 
-    // The ZigException structure stores substrings of the source code, in
+    // The RustException structure stores substrings of the source code, in
     // which we need the lifetime of this data to outlive the inner call to
-    // remapZigException, but still get freed.
-    var source_code_slice: ?ZigString.Slice = null;
+    // remapRustException, but still get freed.
+    var source_code_slice: ?RustString.Slice = null;
     defer if (source_code_slice) |slice| slice.deinit();
 
     if (mode == .js) {
-        this.remapZigException(
+        this.remapRustException(
             exception,
             error_instance,
             exception_list,
@@ -3736,7 +3736,7 @@ fn printErrorNameAndMessage(
 
 // In Github Actions, emit an annotation that renders the error and location.
 // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message
-pub noinline fn printGithubAnnotation(exception: *ZigException) void {
+pub noinline fn printGithubAnnotation(exception: *RustException) void {
     @branchHint(.cold);
     const name = exception.name;
     const message = exception.message;
@@ -3802,7 +3802,7 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
         }
 
         if (cursor > 0) {
-            const body = ZigString.initUTF8(msg[cursor..]);
+            const body = RustString.initUTF8(msg[cursor..]);
             writer.print("{f}", .{body.githubAction()}) catch {};
         }
     } else {
@@ -3916,7 +3916,7 @@ pub const IPCInstance = struct {
     data: IPC.SendQueue,
     has_disconnect_called: bool = false,
 
-    const node_cluster_binding = @import("../runtime/node/node_cluster_binding.zig");
+    const node_cluster_binding = @import("../runtime/node/node_cluster_binding.rust");
 
     pub fn ipc(this: *IPCInstance) ?*IPC.SendQueue {
         return &this.data;
@@ -4097,22 +4097,22 @@ pub const ExitHandler = struct {
 
 const string = []const u8;
 
-const Config = @import("./config.zig");
-const Counters = @import("./Counters.zig");
-const Fs = @import("../resolver/fs.zig");
-const IPC = @import("./ipc.zig");
-const Resolver = @import("../resolver/resolver.zig");
-const Runtime = @import("../js_parser/runtime.zig");
-const node_module_module = @import("./NodeModuleModule.zig");
+const Config = @import("./config.rust");
+const Counters = @import("./Counters.rust");
+const Fs = @import("../resolver/fs.rust");
+const IPC = @import("./ipc.rust");
+const Resolver = @import("../resolver/resolver.rust");
+const Runtime = @import("../js_parser/runtime.rust");
+const node_module_module = @import("./NodeModuleModule.rust");
 const std = @import("std");
-const PackageManager = @import("../install/install.zig").PackageManager;
-const URL = @import("../url/url.zig").URL;
+const PackageManager = @import("../install/install.rust").PackageManager;
+const URL = @import("../url/url.rust").URL;
 const Allocator = std.mem.Allocator;
 
-const CPUProfiler = @import("./BunCPUProfiler.zig");
+const CPUProfiler = @import("./BunCPUProfiler.rust");
 const CPUProfilerConfig = CPUProfiler.CPUProfilerConfig;
 
-const HeapProfiler = @import("./BunHeapProfiler.zig");
+const HeapProfiler = @import("./BunHeapProfiler.rust");
 const HeapProfilerConfig = HeapProfiler.HeapProfilerConfig;
 
 const bun = @import("bun");
@@ -4153,9 +4153,9 @@ const Node = jsc.Node;
 const ResolvedSource = jsc.ResolvedSource;
 const SavedSourceMap = jsc.SavedSourceMap;
 const VM = jsc.VM;
-const ZigException = jsc.ZigException;
-const ZigStackTrace = jsc.ZigStackTrace;
-const ZigString = jsc.ZigString;
+const RustException = jsc.RustException;
+const RustStackTrace = jsc.RustStackTrace;
+const RustString = jsc.RustString;
 const Bun = jsc.API.Bun;
 
 const ModuleLoader = jsc.ModuleLoader;

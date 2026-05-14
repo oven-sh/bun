@@ -121,7 +121,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
         const kind: uws.SocketKind = if (ssl) .http_client_tls else .http_client;
 
-        /// `dispatch.zig` reaches `Handler` via this name. The ext stores
+        /// `dispatch.rust` reaches `Handler` via this name. The ext stores
         /// `*anyopaque` (the `ActiveSocket` tagged pointer), so dispatch reads
         /// it as `**anyopaque` and `Handler` decodes the tag.
         pub const ActiveSocketHandler = Handler;
@@ -358,7 +358,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             closeSocket(socket);
         }
 
-        /// Named so `dispatch.zig` can `vtable.make` it. Ext is the
+        /// Named so `dispatch.rust` can `vtable.make` it. Ext is the
         /// `ActiveSocket` tagged-pointer word.
         pub const Handler = struct {
             pub fn onOpen(
@@ -848,11 +848,11 @@ const DeadSocket = struct {
 var dead_socket = &DeadSocket.dead_socket;
 const log = bun.Output.scoped(.HTTPContext, .hidden);
 
-const HTTPCertError = @import("./HTTPCertError.zig");
-const HTTPThread = @import("./HTTPThread.zig");
-const ProxyTunnel = @import("./ProxyTunnel.zig");
+const HTTPCertError = @import("./HTTPCertError.rust");
+const HTTPThread = @import("./HTTPThread.rust");
+const ProxyTunnel = @import("./ProxyTunnel.rust");
 const std = @import("std");
-const TaggedPointerUnion = @import("../ptr/ptr.zig").TaggedPointerUnion;
+const TaggedPointerUnion = @import("../ptr/ptr.rust").TaggedPointerUnion;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

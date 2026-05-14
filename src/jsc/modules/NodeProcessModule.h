@@ -1,10 +1,10 @@
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "_NativeModule.h"
 #include <JavaScriptCore/CustomGetterSetter.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include "BunProcess.h"
 
-namespace Zig {
+namespace Rust {
 
 DEFINE_NATIVE_MODULE(NodeProcess)
 {
@@ -44,4 +44,4 @@ DEFINE_NATIVE_MODULE(NodeProcess)
     }
 }
 
-} // namespace Zig
+} // namespace Rust

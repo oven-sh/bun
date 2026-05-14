@@ -47,7 +47,7 @@ pub fn getEncoding(
     this: *TextDecoder,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return ZigString.init(EncodingLabel.getLabel(this.encoding)).toJS(globalThis);
+    return RustString.init(EncodingLabel.getLabel(this.encoding)).toJS(globalThis);
 }
 const Vector16 = std.meta.Vector(16, u16);
 const max_16_ascii: Vector16 = @splat(@as(u16, 127));
@@ -195,12 +195,12 @@ pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *jsc.JSGlobalObje
 }
 
 fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice: []const u8, comptime flush: bool) bun.JSError!JSValue {
-    const TextCodec = @import("../../jsc/TextCodec.zig").TextCodec;
+    const TextCodec = @import("../../jsc/TextCodec.rust").TextCodec;
 
     switch (this.encoding) {
         EncodingLabel.latin1 => {
             if (strings.isAllASCII(buffer_slice)) {
-                return ZigString.init(buffer_slice).toJS(globalThis);
+                return RustString.init(buffer_slice).toJS(globalThis);
             }
 
             // It's unintuitive that we encode Latin1 as UTF16 even though the engine natively supports Latin1 strings...
@@ -211,7 +211,7 @@ fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice
             const bytes = try bun.default_allocator.alloc(u16, out_length);
 
             const out = strings.copyCP1252IntoUTF16(bytes, buffer_slice);
-            return ZigString.toExternalU16(bytes.ptr, out.written, globalThis);
+            return RustString.toExternalU16(bytes.ptr, out.written, globalThis);
         },
         EncodingLabel.@"UTF-8" => {
             const input, const deinit = input: {
@@ -255,13 +255,13 @@ fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice
                         this.buffered.len = leftover_len;
                     }
                 }
-                return ZigString.toExternalU16(decoded.ptr, decoded.len, globalThis);
+                return RustString.toExternalU16(decoded.ptr, decoded.len, globalThis);
             }
 
             bun.debugAssert(input.len == 0 or !deinit);
 
             // Experiment: using mimalloc directly is slightly slower
-            return ZigString.init(input).toJS(globalThis);
+            return RustString.init(input).toJS(globalThis);
         },
 
         inline .@"UTF-16LE", .@"UTF-16BE" => |utf16_encoding| {
@@ -280,12 +280,12 @@ fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice
 
             if (decoded.items.len == 0) {
                 decoded.deinit(bun.default_allocator);
-                return ZigString.Empty.toJS(globalThis);
+                return RustString.Empty.toJS(globalThis);
             }
 
             // Transfer ownership of the backing allocation to JSC; freed via
             // free_global_string -> mi_free when the string is collected.
-            return ZigString.toExternalU16(decoded.items.ptr, decoded.items.len, globalThis);
+            return RustString.toExternalU16(decoded.items.ptr, decoded.items.len, globalThis);
         },
 
         // Handle all other encodings using WebKit's TextCodec
@@ -296,7 +296,7 @@ fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice
             // Note: In production, we might want to cache these per-encoding
             const codec = TextCodec.create(encoding_name) orelse {
                 // Fallback to empty string if codec creation fails
-                return ZigString.init("").toJS(globalThis);
+                return RustString.init("").toJS(globalThis);
             };
             defer codec.deinit();
 
@@ -372,5 +372,5 @@ const ArrayBuffer = jsc.ArrayBuffer;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSUint8Array = jsc.JSUint8Array;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 const EncodingLabel = jsc.WebCore.EncodingLabel;

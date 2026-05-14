@@ -289,7 +289,7 @@ pub fn Valkey(comptime ssl: bool) type {
 
 // ── Bun.spawn IPC / process.send() ──────────────────────────────────────────
 // Ext is `*IPC.SendQueue` for both child-side `process.send` and parent-side
-// `Bun.spawn({ipc})`. Handlers live in `ipc.zig` as free functions, not
+// `Bun.spawn({ipc})`. Handlers live in `ipc.rust` as free functions, not
 // methods on SendQueue, so we adapt manually instead of via PtrHandler.
 pub const SpawnIPC = struct {
     const H = IPC.IPCHandlers.PosixSocket;
@@ -316,11 +316,11 @@ pub const SpawnIPC = struct {
     }
 };
 
-const IPC = @import("../../jsc/ipc.zig");
-const js_valkey = @import("../valkey_jsc/js_valkey.zig");
-const mysql = @import("../../sql_jsc/mysql.zig");
-const websocket_client = @import("../../http_jsc/websocket_client.zig");
-const websocket_upgrade_client = @import("../../http_jsc/websocket_client/WebSocketUpgradeClient.zig");
+const IPC = @import("../../jsc/ipc.rust");
+const js_valkey = @import("../valkey_jsc/js_valkey.rust");
+const mysql = @import("../../sql_jsc/mysql.rust");
+const websocket_client = @import("../../http_jsc/websocket_client.rust");
+const websocket_upgrade_client = @import("../../http_jsc/websocket_client/WebSocketUpgradeClient.rust");
 
 const bun = @import("bun");
 const api = bun.jsc.API;

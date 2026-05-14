@@ -30,7 +30,7 @@ pub const allow_assert = isDebug or isTest or std.builtin.OptimizeMode.ReleaseSa
 pub const ci_assert = isDebug or isTest or enable_asan or (std.builtin.OptimizeMode.ReleaseSafe == builtin.mode and is_canary);
 pub const show_crash_trace = isDebug or isTest or enable_asan;
 /// All calls to `@export` should be gated behind this check, so that code
-/// generators that compile Zig code know not to reference and compile a ton of
+/// generators that compile Rust code know not to reference and compile a ton of
 /// unused code.
 pub const export_cpp_apis = if (build_options.override_no_export_cpp_apis) false else (builtin.output_mode == .Obj or isTest);
 
@@ -41,12 +41,12 @@ pub const enableAllocScopes = isDebug or enable_asan;
 pub const build_options = @import("build_options");
 
 /// Set if compiling with `-Dno_llvm`
-/// All places this is used is working around a Zig bug.
-pub const zig_self_hosted_backend = build_options.zig_self_hosted_backend;
+/// All places this is used is working around a Rust bug.
+pub const rust_self_hosted_backend = build_options.rust_self_hosted_backend;
 
 pub const reported_nodejs_version = build_options.reported_nodejs_version;
 pub const baseline = build_options.baseline;
-pub const enableSIMD: bool = !baseline and !zig_self_hosted_backend;
+pub const enableSIMD: bool = !baseline and !rust_self_hosted_backend;
 pub const git_sha = build_options.sha;
 pub const git_sha_short = if (build_options.sha.len > 0) build_options.sha[0..9] else "";
 pub const git_sha_shorter = if (build_options.sha.len > 0) build_options.sha[0..6] else "";

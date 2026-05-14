@@ -1,7 +1,7 @@
 #include "root.h"
 
 #include "BunClientData.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/EnumerationMode.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -55,9 +55,9 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
 #if OS(WINDOWS)
     if (object->type() == JSC::ProxyObjectType) [[unlikely]] {
         // Check if we're actually iterating through the JSEnvironmentVariableMap's proxy.
-        auto* zigGlobal = defaultGlobalObject(globalObject);
-        if (zigGlobal->m_processEnvObject.isInitialized()) {
-            if (object == zigGlobal->m_processEnvObject.get(zigGlobal)) {
+        auto* rustGlobal = defaultGlobalObject(globalObject);
+        if (rustGlobal->m_processEnvObject.isInitialized()) {
+            if (object == rustGlobal->m_processEnvObject.get(rustGlobal)) {
                 object->methodTable()->getOwnPropertyNames(
                     object,
                     globalObject,

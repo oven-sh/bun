@@ -8,7 +8,7 @@
 // root.h is guaranteed to be the first thing parsed (the PCH wrapper
 // force-includes it). If they lived in root.h itself, a TU whose first
 // explicit include is BunClientData.h would re-enter root.h mid-parse and
-// reach ZigGlobalObject.h before WebCore::clientData() is declared. The PCH
+// reach RustGlobalObject.h before WebCore::clientData() is declared. The PCH
 // path is fine; --unifiedSources=false would not be.
 
 #include "root.h"
@@ -17,4 +17,4 @@
 // (-ftime-trace). Editing either already triggers a near-full rebuild via
 // depfiles, so precompiling them costs nothing extra incrementally.
 #include "BunClientData.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"

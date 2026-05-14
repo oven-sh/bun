@@ -13,7 +13,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include "KeyObject.h"
 
-namespace Zig {
+namespace Rust {
 class GlobalObject;
 }
 

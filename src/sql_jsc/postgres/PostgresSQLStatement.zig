@@ -162,16 +162,16 @@ pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *jsc
 
 const debug = bun.Output.scoped(.Postgres, .visible);
 
-const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
-const Signature = @import("./Signature.zig");
-const protocol = @import("../../sql/postgres/PostgresProtocol.zig");
+const PostgresCachedStructure = @import("../shared/CachedStructure.rust");
+const Signature = @import("./Signature.rust");
+const protocol = @import("../../sql/postgres/PostgresProtocol.rust");
 const std = @import("std");
-const DataCell = @import("./DataCell.zig").SQLDataCell;
+const DataCell = @import("./DataCell.rust").SQLDataCell;
 
-const AnyPostgresError = @import("../../sql/postgres/AnyPostgresError.zig").AnyPostgresError;
-const postgresErrorToJS = @import("../../sql/postgres/AnyPostgresError.zig").postgresErrorToJS;
+const AnyPostgresError = @import("../../sql/postgres/AnyPostgresError.rust").AnyPostgresError;
+const postgresErrorToJS = @import("../../sql/postgres/AnyPostgresError.rust").postgresErrorToJS;
 
-const types = @import("../../sql/postgres/PostgresTypes.zig");
+const types = @import("../../sql/postgres/PostgresTypes.rust");
 const int4 = types.int4;
 
 const bun = @import("bun");

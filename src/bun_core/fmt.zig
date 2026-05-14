@@ -544,7 +544,7 @@ pub const HostFormatter = struct {
 };
 
 /// Format a string to an ECMAScript identifier.
-/// Unlike the string_mutable.zig version, this always allocate/copy
+/// Unlike the string_mutable.rust version, this always allocate/copy
 pub fn fmtIdentifier(name: string) FormatValidIdentifier {
     return FormatValidIdentifier{ .name = name };
 }
@@ -1729,7 +1729,7 @@ fn escapePowershellImpl(str: []const u8, writer: *std.Io.Writer) !void {
     try writer.writeAll(remain);
 }
 
-// js_bindings (fmtString for highlighter.test.ts) lives in src/jsc/fmt_jsc.zig
+// js_bindings (fmtString for highlighter.test.ts) lives in src/jsc/fmt_jsc.rust
 // alongside fmt_jsc.bind.ts; bun_core/ stays JSC-free.
 
 // Equivalent to ERR_OUT_OF_RANGE from

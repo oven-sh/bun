@@ -10,5 +10,5 @@ pub fn deinit(this: *const CertificateInfo, allocator: std.mem.Allocator) void {
     allocator.free(this.hostname);
 }
 
-const HTTPCertError = @import("./HTTPCertError.zig");
+const HTTPCertError = @import("./HTTPCertError.rust");
 const std = @import("std");

@@ -14,7 +14,7 @@ export const bool = new (class extends Type {
   get bindgenType() {
     return `bindgen.BindgenBool`;
   }
-  zigType(style?: CodeStyle) {
+  rustType(style?: CodeStyle) {
     return "bool";
   }
   toCpp(value: boolean): string {
@@ -30,8 +30,8 @@ export const LooseBool = new (class extends Type {
   get bindgenType() {
     return bool.bindgenType;
   }
-  zigType(style?: CodeStyle) {
-    return bool.zigType(style);
+  rustType(style?: CodeStyle) {
+    return bool.rustType(style);
   }
   toCpp(value: boolean): string {
     return bool.toCpp(value);
@@ -57,7 +57,7 @@ function makeUnsignedType(width: number): IntegerType {
     get bindgenType() {
       return `bindgen.BindgenU${width}`;
     }
-    zigType(style?: CodeStyle) {
+    rustType(style?: CodeStyle) {
       return `u${width}`;
     }
     get cppType() {
@@ -88,7 +88,7 @@ function makeSignedType(width: number): IntegerType {
     get bindgenType() {
       return `bindgen.BindgenI${width}`;
     }
-    zigType(style?: CodeStyle) {
+    rustType(style?: CodeStyle) {
       return `i${width}`;
     }
     get cppType() {
@@ -130,8 +130,8 @@ function makeLooseIntegerType(strict: IntegerType): LooseIntegerType {
     get bindgenType() {
       return strict.bindgenType;
     }
-    zigType(style?: CodeStyle) {
-      return strict.zigType(style);
+    rustType(style?: CodeStyle) {
+      return strict.rustType(style);
     }
     toCpp(value: number | bigint): string {
       return strict.toCpp(value);
@@ -179,7 +179,7 @@ export const f64 = new (class extends Type {
   get bindgenType() {
     return `bindgen.BindgenF64`;
   }
-  zigType(style?: CodeStyle) {
+  rustType(style?: CodeStyle) {
     return `f64`;
   }
   toCpp(value: number): string {
@@ -203,8 +203,8 @@ export const FiniteF64 = new (class extends Type {
   get bindgenType() {
     return f64.bindgenType;
   }
-  zigType(style?: CodeStyle) {
-    return f64.zigType(style);
+  rustType(style?: CodeStyle) {
+    return f64.rustType(style);
   }
   toCpp(value: number): string {
     assert(typeof value === "number");
@@ -220,8 +220,8 @@ export const LooseF64 = new (class extends Type {
   get bindgenType() {
     return f64.bindgenType;
   }
-  zigType(style?: CodeStyle) {
-    return f64.zigType(style);
+  rustType(style?: CodeStyle) {
+    return f64.rustType(style);
   }
   toCpp(value: number): string {
     return f64.toCpp(value);

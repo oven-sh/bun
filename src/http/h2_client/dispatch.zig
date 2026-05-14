@@ -570,12 +570,12 @@ pub fn errorCodeFor(err: anyerror) wire.ErrorCode {
 
 const log = bun.Output.scoped(.h2_client, .hidden);
 
-const ClientSession = @import("./ClientSession.zig");
-const Stream = @import("./Stream.zig");
+const ClientSession = @import("./ClientSession.rust");
+const Stream = @import("./Stream.rust");
 const std = @import("std");
-const wire = @import("../H2FrameParser.zig");
+const wire = @import("../H2FrameParser.rust");
 
-const H2 = @import("../H2Client.zig");
+const H2 = @import("../H2Client.rust");
 const local_max_header_list_size = H2.local_max_header_list_size;
 const write_buffer_control_limit = H2.write_buffer_control_limit;
 

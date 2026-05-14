@@ -387,15 +387,15 @@ pub const toJS = js.toJS;
 
 const debug = bun.Output.scoped(.MySQLQuery, .visible);
 
-const AnyMySQLError = @import("../../sql/mysql/protocol/AnyMySQLError.zig");
-const MySQLConnection = @import("./JSMySQLConnection.zig");
-const MySQLQuery = @import("./MySQLQuery.zig");
-const MySQLQueryResult = @import("../../sql/mysql/MySQLQueryResult.zig");
-const MySQLStatement = @import("./MySQLStatement.zig");
+const AnyMySQLError = @import("../../sql/mysql/protocol/AnyMySQLError.rust");
+const MySQLConnection = @import("./JSMySQLConnection.rust");
+const MySQLQuery = @import("./MySQLQuery.rust");
+const MySQLQueryResult = @import("../../sql/mysql/MySQLQueryResult.rust");
+const MySQLStatement = @import("./MySQLStatement.rust");
 const bun = @import("bun");
 const std = @import("std");
-const CommandTag = @import("../../sql/postgres/CommandTag.zig").CommandTag;
-const SQLQueryResultMode = @import("../../sql/shared/SQLQueryResultMode.zig").SQLQueryResultMode;
+const CommandTag = @import("../../sql/postgres/CommandTag.rust").CommandTag;
+const SQLQueryResultMode = @import("../../sql/shared/SQLQueryResultMode.rust").SQLQueryResultMode;
 
 const jsc = bun.jsc;
 const JSRef = jsc.JSRef;

@@ -85,7 +85,7 @@ pub fn deinit(this: *SASL) void {
     this.status = .init;
 }
 
-const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
+const PostgresSQLConnection = @import("./PostgresSQLConnection.rust");
 const std = @import("std");
 
 const bun = @import("bun");

@@ -146,7 +146,7 @@ pub const ReadFile = struct {
 
     pub fn onIOError(this: *ReadFile, err: bun.sys.Error) void {
         bloblog("ReadFile.onIOError", .{});
-        this.errno = bun.errnoToZigErr(err.errno);
+        this.errno = bun.errnoToRustErr(err.errno);
         this.system_error = err.toSystemError();
         this.task = .{ .callback = &doReadLoopTask };
         // On macOS, we use one-shot mode, so:
@@ -216,7 +216,7 @@ pub const ReadFile = struct {
                             return true;
                         },
                         else => {
-                            this.errno = bun.errnoToZigErr(err.errno);
+                            this.errno = bun.errnoToRustErr(err.errno);
                             this.system_error = err.toSystemError();
                             if (this.system_error.?.path.isEmpty()) {
                                 this.system_error.?.path = if (this.file_store.pathlike == .path)
@@ -316,7 +316,7 @@ pub const ReadFile = struct {
         const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
             .result => |result| result,
             .err => |err| {
-                this.errno = bun.errnoToZigErr(err.errno);
+                this.errno = bun.errnoToRustErr(err.errno);
                 this.system_error = err.toSystemError();
                 return;
             },
@@ -619,7 +619,7 @@ pub const ReadFileUV = struct {
         this.req.data = this;
 
         if (libuv.uv_fs_fstat(this.loop, &this.req, opened_fd.uv(), &onFileInitialStat).errEnum()) |errno| {
-            this.errno = bun.errnoToZigErr(errno);
+            this.errno = bun.errnoToRustErr(errno);
             this.system_error = bun.sys.Error.fromCode(errno, .fstat).toSystemError();
             this.onFinish();
             return;
@@ -633,7 +633,7 @@ pub const ReadFileUV = struct {
         var this: *ReadFileUV = @ptrCast(@alignCast(req.data));
 
         if (req.result.errEnum()) |errno| {
-            this.errno = bun.errnoToZigErr(errno);
+            this.errno = bun.errnoToRustErr(errno);
             this.system_error = bun.sys.Error.fromCode(errno, .fstat).toSystemError();
             this.onFinish();
             return;
@@ -690,7 +690,7 @@ pub const ReadFileUV = struct {
         }
         // Out of memory we can't read more than 4GB at a time (ULONG) on Windows
         if (this.size > @as(usize, std.math.maxInt(bun.windows.ULONG))) {
-            this.errno = bun.errnoToZigErr(bun.sys.E.NOMEM);
+            this.errno = bun.errnoToRustErr(bun.sys.E.NOMEM);
             this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
             this.onFinish();
             return;
@@ -749,7 +749,7 @@ pub const ReadFileUV = struct {
             );
             this.req.data = this;
             if (res.errEnum()) |errno| {
-                this.errno = bun.errnoToZigErr(errno);
+                this.errno = bun.errnoToRustErr(errno);
                 this.system_error = bun.sys.Error.fromCode(errno, .read).toSystemError();
                 this.onFinish();
             }
@@ -776,7 +776,7 @@ pub const ReadFileUV = struct {
         const result = req.result;
 
         if (result.errEnum()) |errno| {
-            this.errno = bun.errnoToZigErr(errno);
+            this.errno = bun.errnoToRustErr(errno);
             this.system_error = bun.sys.Error.fromCode(errno, .read).toSystemError();
             this.onFinish();
             return;

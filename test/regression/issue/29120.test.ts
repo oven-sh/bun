@@ -1,6 +1,6 @@
 // `bun build --compile --target=bun-darwin-arm64` must produce a mach-o binary
 // whose `LC_CODE_SIGNATURE.datasize` matches the actual signature blob bun's
-// in-process `MachoSigner` writes. Previously, `writeSection` in `src/macho.zig`
+// in-process `MachoSigner` writes. Previously, `writeSection` in `src/macho.rust`
 // grew the LINKEDIT segment by just `num_new_pages * HASH_SIZE`, but `MachoSigner`
 // computes its SuperBlob size from the page count up to the (shifted) signature
 // offset — which differs from the template's original signature layout. The
@@ -8,7 +8,7 @@
 // rejects with "code object is not signed at all" and kills the process.
 //
 // This test runs only on darwin-arm64 hosts, where the current bun binary
-// IS the cross-compile template (isDefault() in src/compile_target.zig), so
+// IS the cross-compile template (isDefault() in src/compile_target.rust), so
 // the real MachoSigner path executes without any network. On every other
 // host the template must be downloaded from npm for the canary version
 // under test, and whether that download 404s, fetches-from-cache, or
@@ -80,7 +80,7 @@ function readCodeSignature(buf: Buffer): CodeSig | null {
 
 // Two bundle sizes:
 //  - "tiny"  fits inside the template's 16 KiB __BUN slot → size_diff == 0 in
-//    macho.zig (the linkedit/datasize resize must not be gated on size_diff)
+//    macho.rust (the linkedit/datasize resize must not be gated on size_diff)
 //  - "large" exceeds 16 KiB → size_diff > 0, exercises the offset-shift path
 const bundles = {
   tiny: `console.log("hi from cross-compiled bun");`,

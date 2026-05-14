@@ -235,12 +235,12 @@ JSC_DEFINE_HOST_FUNCTION(constructHmac, (JSC::JSGlobalObject * globalObject, JSC
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSC::Structure* structure = zigGlobalObject->m_JSHmacClassStructure.get(zigGlobalObject);
+    auto* rustGlobalObject = defaultGlobalObject(globalObject);
+    JSC::Structure* structure = rustGlobalObject->m_JSHmacClassStructure.get(rustGlobalObject);
 
     // Handle new target
     JSC::JSValue newTarget = callFrame->newTarget();
-    if (zigGlobalObject->m_JSHmacClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
+    if (rustGlobalObject->m_JSHmacClassStructure.constructor(rustGlobalObject) != newTarget) [[unlikely]] {
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Hmac cannot be invoked without 'new'"_s);
             return {};

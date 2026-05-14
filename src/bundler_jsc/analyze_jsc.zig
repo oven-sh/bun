@@ -1,8 +1,8 @@
-//! JSC bridge for analyze_transpiled_module.zig — converts the parsed
+//! JSC bridge for analyze_transpiled_module.rust — converts the parsed
 //! `ModuleInfoDeserialized` into a `JSC::JSModuleRecord`. Aliased back so the
 //! `export fn` symbol names are still discoverable from C++.
 
-export fn zig__renderDiff(expected_ptr: [*:0]const u8, expected_len: usize, received_ptr: [*:0]const u8, received_len: usize, globalThis: *bun.jsc.JSGlobalObject) void {
+export fn rust__renderDiff(expected_ptr: [*:0]const u8, expected_len: usize, received_ptr: [*:0]const u8, received_len: usize, globalThis: *bun.jsc.JSGlobalObject) void {
     const formatter = DiffFormatter{
         .received_string = received_ptr[0..received_len],
         .expected_string = expected_ptr[0..expected_len],
@@ -11,7 +11,7 @@ export fn zig__renderDiff(expected_ptr: [*:0]const u8, expected_len: usize, rece
     bun.Output.errorWriter().print("DIFF:\n{any}\n", .{formatter}) catch {};
 }
 
-export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
+export fn rust__ModuleInfoDeserialized__toJSModuleRecord(
     globalObject: *bun.jsc.JSGlobalObject,
     vm: *bun.jsc.VM,
     module_key: *const IdentifierArray,
@@ -141,8 +141,8 @@ const JSModuleRecord = opaque {
 };
 
 const bun = @import("bun");
-const DiffFormatter = @import("../runtime/test_runner/diff_format.zig").DiffFormatter;
+const DiffFormatter = @import("../runtime/test_runner/diff_format.rust").DiffFormatter;
 
-const analyze = @import("../bundler/analyze_transpiled_module.zig");
+const analyze = @import("../bundler/analyze_transpiled_module.rust");
 const ModuleInfoDeserialized = analyze.ModuleInfoDeserialized;
 const StringID = analyze.StringID;

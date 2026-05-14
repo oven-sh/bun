@@ -26,27 +26,27 @@
   "git.ignoreSubmodules": true,
   "git.ignoreLimitWarning": true,
 
-  // Zig
-  // "zig.initialSetupDone": true,
-  // "zig.buildOption": "build",
-  "zig.zls.zigLibPath": "${workspaceFolder}/vendor/zig/lib",
-  "zig.buildOnSaveArgs": [
+  // Rust
+  // "rust.initialSetupDone": true,
+  // "rust.buildOption": "build",
+  "rust.zls.rustLibPath": "${workspaceFolder}/vendor/rust/lib",
+  "rust.buildOnSaveArgs": [
     "-Dgenerated-code=./build/debug/codegen",
     "--watch",
     "-fincremental"
   ],
-  // "zig.zls.buildOnSaveStep": "check",
-  // "zig.zls.enableBuildOnSave": true,
-  // "zig.buildOnSave": true,
-  // "zig.buildFilePath": "${workspaceFolder}/build.zig",
-  "zig.path": "${workspaceFolder}/vendor/zig/zig.exe",
-  "zig.zls.path": "${workspaceFolder}/vendor/zig/zls.exe",
-  "zig.formattingProvider": "zls",
-  // "zig.zls.enableInlayHints": false,
-  "[zig]": {
+  // "rust.zls.buildOnSaveStep": "check",
+  // "rust.zls.enableBuildOnSave": true,
+  // "rust.buildOnSave": true,
+  // "rust.buildFilePath": "${workspaceFolder}/build.rust",
+  "rust.path": "${workspaceFolder}/vendor/rust/rust.exe",
+  "rust.zls.path": "${workspaceFolder}/vendor/rust/zls.exe",
+  "rust.formattingProvider": "zls",
+  // "rust.zls.enableInlayHints": false,
+  "[rust]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,
-    "editor.defaultFormatter": "ziglang.vscode-zig",
+    "editor.defaultFormatter": "rustlang.vscode-rust",
     "editor.codeActionsOnSave": {
       "source.organizeImports": "never",
     },

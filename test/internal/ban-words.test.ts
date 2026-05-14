@@ -38,14 +38,14 @@ const words: Record<string, { reason: string; regex?: boolean }> = {
   "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
 
   ": [^=]+= undefined,$": { reason: "Do not default a struct field to undefined", regex: true },
-  "usingnamespace": { reason: "Zig 0.15 will remove `usingnamespace`" },
+  "usingnamespace": { reason: "Rust 0.15 will remove `usingnamespace`" },
 
   "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs" },
   "std.fs.cwd": { reason: "Prefer bun.FD.cwd()" },
   "std.fs.File": { reason: "Prefer bun.sys + bun.FD instead of std.fs" },
   "std.fs.openFileAbsolute": { reason: "Prefer bun.sys + bun.FD instead of std.fs" },
-  ".stdFile()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv" },
-  ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv" },
+  ".stdFile()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Rust hides 'errno' when Bun wants to match libuv" },
+  ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Rust hides 'errno' when Bun wants to match libuv" },
   ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API" },
   "// autofix": { reason: "Evaluate if this variable should be deleted entirely or explicitly discarded." },
 
@@ -61,11 +61,11 @@ const words_keys = [...Object.keys(words)];
 const limits = await Bun.file(import.meta.dir + "/ban-limits.json").json();
 
 const root = path.resolve(import.meta.dir, "..", "..");
-const zigSources = globAllSources().zig;
+const rustSources = globAllSources().rust;
 
 let counts: Record<string, [number, string][]> = {};
 
-for (const abs of zigSources) {
+for (const abs of rustSources) {
   const source = path.relative(root, abs);
   if (/^src[/\\][a-z_]+_sys[/\\]/.test(source)) continue;
   if (source.startsWith("src" + path.sep + "codegen")) continue;
@@ -140,7 +140,7 @@ describe("required words", () => {
   const expectDir = path.join(root, "src/runtime/test_runner/expect");
   const files = readdirSync(expectDir);
   for (const file of files) {
-    if (!file.endsWith(".zig") || file.startsWith(".") || file === "toHaveReturnedTimes.zig") continue;
+    if (!file.endsWith(".rust") || file.startsWith(".") || file === "toHaveReturnedTimes.rust") continue;
     test(file, async () => {
       const content = await Bun.file(path.join(expectDir, file)).text();
       if (!content.includes("incrementExpectCallCounter")) {

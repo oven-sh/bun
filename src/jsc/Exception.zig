@@ -1,9 +1,9 @@
 /// Opaque representation of a JavaScript exception
 pub const Exception = opaque {
-    extern fn JSC__Exception__getStackTrace(this: *Exception, global: *JSGlobalObject, stack: *ZigStackTrace) void;
+    extern fn JSC__Exception__getStackTrace(this: *Exception, global: *JSGlobalObject, stack: *RustStackTrace) void;
     extern fn JSC__Exception__asJSValue(this: *Exception) JSValue;
 
-    pub fn getStackTrace(this: *Exception, global: *JSGlobalObject, stack: *ZigStackTrace) void {
+    pub fn getStackTrace(this: *Exception, global: *JSGlobalObject, stack: *RustStackTrace) void {
         JSC__Exception__getStackTrace(this, global, stack);
     }
 
@@ -13,7 +13,7 @@ pub const Exception = opaque {
 };
 
 const bun = @import("bun");
-const ZigStackTrace = @import("./ZigStackTrace.zig").ZigStackTrace;
+const RustStackTrace = @import("./RustStackTrace.rust").RustStackTrace;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

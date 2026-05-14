@@ -91,9 +91,9 @@ pub const decode = decoderWrap(ColumnDefinition41, decodeInternal).decode;
 const debug = bun.Output.scoped(.ColumnDefinition41, .hidden);
 
 const bun = @import("bun");
-const types = @import("../MySQLTypes.zig");
-const ColumnIdentifier = @import("../../shared/ColumnIdentifier.zig").ColumnIdentifier;
-const Data = @import("../../shared/Data.zig").Data;
+const types = @import("../MySQLTypes.rust");
+const ColumnIdentifier = @import("../../shared/ColumnIdentifier.rust").ColumnIdentifier;
+const Data = @import("../../shared/Data.rust").Data;
 
-const NewReader = @import("./NewReader.zig").NewReader;
-const decoderWrap = @import("./NewReader.zig").decoderWrap;
+const NewReader = @import("./NewReader.rust").NewReader;
+const decoderWrap = @import("./NewReader.rust").decoderWrap;

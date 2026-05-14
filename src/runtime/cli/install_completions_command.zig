@@ -79,7 +79,7 @@ pub const InstallCompletionsCommand = struct {
                 comptime bun.strings.literal(u16, bunx_name ++ ".exe\x00"),
             });
             const bunx_cmd = bunx_cmd_with_z[0 .. bunx_cmd_with_z.len - 1 :0];
-            // TODO: fix this zig bug, it is one line change to a few functions.
+            // TODO: fix this rust bug, it is one line change to a few functions.
             // const file = try std.fs.createFileAbsoluteW(bunx_cmd, .{});
             const file = try std.fs.cwd().createFileW(bunx_cmd, .{});
             defer file.close();
@@ -537,11 +537,11 @@ pub const InstallCompletionsCommand = struct {
 
 const string = []const u8;
 
-const ShellCompletions = @import("./shell_completions.zig");
-const fs = @import("../../resolver/fs.zig");
-const resolve_path = @import("../../paths/resolve_path.zig");
+const ShellCompletions = @import("./shell_completions.rust");
+const fs = @import("../../resolver/fs.rust");
+const resolve_path = @import("../../paths/resolve_path.rust");
 const std = @import("std");
-const which = @import("../../which/which.zig").which;
+const which = @import("../../which/which.rust").which;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

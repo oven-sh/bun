@@ -14,7 +14,7 @@ const has_config_version_tag: u64 = @bitCast(@as([8]u8, "cNfGvRsN".*));
 pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std.array_list.Managed(u8), total_size: *usize, end_pos: *usize) !void {
 
     // we clone packages with the z_allocator to make sure bytes are zeroed.
-    // TODO: investigate if we still need this now that we have `padding_checker.zig`
+    // TODO: investigate if we still need this now that we have `padding_checker.rust`
     var old_packages_list = this.packages;
     this.packages = try this.packages.clone(z_allocator);
     old_packages_list.deinit(this.allocator);

@@ -2,7 +2,7 @@
 //! full grapheme cluster calculation of the expected width in cells of a
 //! monospaced font. It is not part of the Unicode standard.
 //!
-//! See `src/x/config_x/wcwidth.zig` for the logic determining the width of a
+//! See `src/x/config_x/wcwidth.rust` for the logic determining the width of a
 //! single code point standing alone, as well as a number of notes describing
 //! the choices the implementation makes.
 //!
@@ -13,7 +13,7 @@
 //!   individual clusters.
 //!
 //! * Grapheme clusters with a single code point simply return
-//!   `wcwidth_standalone`. See `src/x/config_x/wcwidth.zig` for all the
+//!   `wcwidth_standalone`. See `src/x/config_x/wcwidth.rust` for all the
 //!   considerations determining this value.
 //!
 //! * The general calculation of the width of a grapheme cluster is the sum of
@@ -47,7 +47,7 @@
 //!
 //!   Rather than treat CJK contexts differently, we always choose East Asian
 //!   Width (UAX #11) Ambiguous width (A) as width 1. See
-//!   `src/x/config_x/wcwidth.zig` for more info.
+//!   `src/x/config_x/wcwidth.rust` for more info.
 //!
 
 // This calculates the width of just a single grapheme, advancing the iterator.
@@ -405,7 +405,7 @@ test "IteratorNoControl nextCodePoint/peekCodePoint" {
     try std.testing.expect(it.nextCodePoint() == null);
 }
 
-// This is a copy of `computeGraphemeBreak` from `src/grapheme.zig` but with
+// This is a copy of `computeGraphemeBreak` from `src/grapheme.rust` but with
 // the rules for `control`, `cr`, and `lf` ignored, since
 // `grapheme_break_no_control` maps them to `other` as these are assumed to
 // have been been handled prior or stripped from the input.
@@ -649,7 +649,7 @@ fn isExtendedPictographic(gb: types_x.GraphemeBreakNoControl) bool {
 }
 
 fn testGraphemeBreakNoControl(getActualIsBreak: fn (cp1: u21, cp2: u21, state: *uucode.grapheme.BreakState) bool) !void {
-    const Ucd = @import("../build/Ucd.zig");
+    const Ucd = @import("../build/Ucd.rust");
 
     const trim = Ucd.trim;
     const parseCp = Ucd.parseCp;
@@ -782,5 +782,5 @@ test "GraphemeBreakTest.txt - x.isBreakNoControl" {
 }
 
 const std = @import("std");
-const types_x = @import("./types.x.zig");
-const uucode = @import("../root.zig");
+const types_x = @import("./types.x.rust");
+const uucode = @import("../root.rust");

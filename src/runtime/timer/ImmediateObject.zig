@@ -93,7 +93,7 @@ pub fn dispose(self: *Self, globalThis: *JSGlobalObject, _: *jsc.CallFrame) bun.
     return .js_undefined;
 }
 
-const Debugger = @import("../../jsc/Debugger.zig");
+const Debugger = @import("../../jsc/Debugger.rust");
 const bun = @import("bun");
 
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;

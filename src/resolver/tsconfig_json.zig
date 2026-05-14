@@ -351,7 +351,7 @@ pub const TSConfigJSON = struct {
                                             // Invalid patterns are filtered out above, so count <= array.len.
                                             // Shrink the allocation so the slice stored in the map is exactly
                                             // what was allocated — callers that later free these values (the
-                                            // extends-merge in resolver.zig) pass the stored slice to
+                                            // extends-merge in resolver.rust) pass the stored slice to
                                             // Allocator.free, which requires the original length.
                                             if (count < values.len) {
                                                 values = allocator.realloc(values, count) catch values;
@@ -509,8 +509,8 @@ pub const TSConfigJSON = struct {
 
 const string = []const u8;
 
-const cache = @import("../bundler/cache.zig");
-const options = @import("../bundler/options.zig");
+const cache = @import("../bundler/cache.rust");
+const options = @import("../bundler/options.rust");
 const std = @import("std");
 
 const bun = @import("bun");

@@ -14,10 +14,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 UUCODE_DIR="$BUN_ROOT/src/unicode/uucode_lib"
-ZIG="$BUN_ROOT/vendor/zig/zig"
+RUST="$BUN_ROOT/vendor/rust/rust"
 
-if [ ! -x "$ZIG" ]; then
-    echo "error: zig not found at $ZIG"
+if [ ! -x "$RUST" ]; then
+    echo "error: rust not found at $RUST"
     echo "       run scripts/bootstrap.sh first"
     exit 1
 fi
@@ -54,12 +54,12 @@ if [ $# -ge 1 ]; then
         exit 1
     fi
 else
-    # Default: use the zig global cache if available
-    CACHED=$(find "$HOME/.cache/zig/p" -maxdepth 1 -name "uucode-*" -type d 2>/dev/null | sort -V | tail -1)
+    # Default: use the rust global cache if available
+    CACHED=$(find "$HOME/.cache/rust/p" -maxdepth 1 -name "uucode-*" -type d 2>/dev/null | sort -V | tail -1)
     if [ -n "$CACHED" ]; then
         update_from_dir "$CACHED"
     else
-        echo "error: no uucode source specified and none found in zig cache"
+        echo "error: no uucode source specified and none found in rust cache"
         echo ""
         echo "usage: $0 <path-to-uucode-dir-or-url>"
         exit 1
@@ -69,14 +69,14 @@ fi
 echo ""
 echo "Regenerating grapheme tables..."
 cd "$BUN_ROOT"
-"$ZIG" build generate-grapheme-tables
+"$RUST" build generate-grapheme-tables
 
 echo ""
 echo "Done. Updated files:"
 echo "  src/unicode/uucode_lib/         (vendored library)"
-echo "  src/string/immutable/grapheme_tables.zig (regenerated)"
+echo "  src/string/immutable/grapheme_tables.rust (regenerated)"
 echo ""
 echo "Next steps:"
 echo "  1. bun bd test test/js/bun/util/stringWidth.test.ts"
-echo "  2. git add src/unicode/uucode_lib src/string/immutable/grapheme_tables.zig"
+echo "  2. git add src/unicode/uucode_lib src/string/immutable/grapheme_tables.rust"
 echo "  3. git commit -m 'Update uucode to <version>'"

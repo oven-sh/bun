@@ -37,7 +37,7 @@ pub export fn Bun__WebViewHost__kill() void {
 /// so instance-already-exists → -1 means "you already have the fd, this is
 /// a bug" not "spawn failed". We deliberately don't store the fd — usockets
 /// owns it; re-returning a fd usockets may have already closed would be a
-/// use-after-close. Zig only owns process lifetime (watch + kill).
+/// use-after-close. Rust only owns process lifetime (watch + kill).
 pub export fn Bun__WebViewHost__ensure(global: *jsc.JSGlobalObject, stdoutInherit: bool, stderrInherit: bool) i32 {
     if (comptime !bun.Environment.isMac) return -1;
     if (instance != null) return -1; // C++ already holds the fd
@@ -83,7 +83,7 @@ fn spawn(vm: *jsc.VirtualMachine, stdoutInherit: bool, stderrInherit: bool) !bun
 
     // Child sees fd 3 (first extra_fd → 3+0). The env var is the only
     // signal; no argv changes so `ps` shows a normal `bun` invocation.
-    // Same pattern as NODE_CHANNEL_FD in js_bun_spawn_bindings.zig.
+    // Same pattern as NODE_CHANNEL_FD in js_bun_spawn_bindings.rust.
     var env: std.ArrayListUnmanaged(?[*:0]const u8) = .{};
     const base = try vm.transpiler.env.map.createNullDelimitedEnvMap(alloc);
     try env.ensureTotalCapacity(alloc, base.len + 2);
@@ -133,7 +133,7 @@ fn spawn(vm: *jsc.VirtualMachine, stdoutInherit: bool, stderrInherit: bool) !bun
     }
     instance = self;
     // fd handed to C++ which adopts it into usockets. Not stored here —
-    // usockets owns the socket; Zig only owns process lifetime.
+    // usockets owns the socket; Rust only owns process lifetime.
     return fds[0];
 }
 

@@ -9,7 +9,7 @@ pub fn toFetchHeaders(this: *Headers, global: *bun.jsc.JSGlobalObject) bun.JSErr
         global,
         this.entries.items(.name).ptr,
         this.entries.items(.value).ptr,
-        &bun.ZigString.fromBytes(this.buf.items),
+        &bun.RustString.fromBytes(this.buf.items),
         @truncate(this.entries.len),
     ) orelse return error.JSError;
     return headers;
@@ -18,26 +18,26 @@ pub fn toFetchHeaders(this: *Headers, global: *bun.jsc.JSGlobalObject) bun.JSErr
 pub const H2TestingAPIs = struct {
     pub fn liveCounts(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const obj = jsc.JSValue.createEmptyObject(globalThis, 2);
-        obj.put(globalThis, jsc.ZigString.static("sessions"), .jsNumber(H2Client.live_sessions.load(.monotonic)));
-        obj.put(globalThis, jsc.ZigString.static("streams"), .jsNumber(H2Client.live_streams.load(.monotonic)));
+        obj.put(globalThis, jsc.RustString.static("sessions"), .jsNumber(H2Client.live_sessions.load(.monotonic)));
+        obj.put(globalThis, jsc.RustString.static("streams"), .jsNumber(H2Client.live_streams.load(.monotonic)));
         return obj;
     }
 };
 
 pub const H3TestingAPIs = struct {
     /// Named distinctly from H2's `liveCounts` because generate-js2native.ts
-    /// mangles `[^A-Za-z]` to `_`, so `H2Client.zig` and `H3Client.zig` produce
+    /// mangles `[^A-Za-z]` to `_`, so `H2Client.rust` and `H3Client.rust` produce
     /// the same path prefix and the function name has to differ.
     pub fn quicLiveCounts(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const obj = jsc.JSValue.createEmptyObject(globalThis, 2);
-        obj.put(globalThis, jsc.ZigString.static("sessions"), .jsNumber(H3Client.live_sessions.load(.monotonic)));
-        obj.put(globalThis, jsc.ZigString.static("streams"), .jsNumber(H3Client.live_streams.load(.monotonic)));
+        obj.put(globalThis, jsc.RustString.static("sessions"), .jsNumber(H3Client.live_sessions.load(.monotonic)));
+        obj.put(globalThis, jsc.RustString.static("streams"), .jsNumber(H3Client.live_streams.load(.monotonic)));
         return obj;
     }
 };
 
-const H2Client = @import("../http/H2Client.zig");
-const H3Client = @import("../http/H3Client.zig");
+const H2Client = @import("../http/H2Client.rust");
+const H3Client = @import("../http/H3Client.rust");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

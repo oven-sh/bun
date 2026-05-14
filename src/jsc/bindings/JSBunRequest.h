@@ -2,7 +2,7 @@
 
 #include "JSCookieMap.h"
 #include "root.h"
-#include "ZigGeneratedClasses.h"
+#include "RustGeneratedClasses.h"
 
 namespace Bun {
 using namespace JSC;
@@ -46,6 +46,6 @@ private:
     mutable JSC::WriteBarrier<JSC::JSObject> m_cookies;
 };
 
-JSC::Structure* createJSBunRequestStructure(JSC::VM&, Zig::GlobalObject*);
+JSC::Structure* createJSBunRequestStructure(JSC::VM&, Rust::GlobalObject*);
 
 } // namespace Bun

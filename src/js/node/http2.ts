@@ -70,8 +70,8 @@ const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const DatePrototypeToUTCString = Date.prototype.toUTCString;
 const DatePrototypeGetMilliseconds = Date.prototype.getMilliseconds;
 
-const H2FrameParser = $zig("h2_frame_parser.zig", "H2FrameParserConstructor");
-const _nativeAssertSettings = $newZigFunction("h2_frame_parser.zig", "jsAssertSettings", 1);
+const H2FrameParser = $rust("h2_frame_parser.rust", "H2FrameParserConstructor");
+const _nativeAssertSettings = $newRustFunction("h2_frame_parser.rust", "jsAssertSettings", 1);
 const { upgradeRawSocketToH2 } = require("node:_http2_upgrade");
 
 const kSettingNames = {

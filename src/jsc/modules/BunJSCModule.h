@@ -44,7 +44,7 @@
 #endif
 
 #include "JSDOMConvertBase.h"
-#include "ZigSourceProvider.h"
+#include "RustSourceProvider.h"
 #include "mimalloc.h"
 extern "C" char* mi_stats_get_json(size_t, char*);
 extern "C" char* mi_heap_dump_json(bool include_blocks, bool hash_addresses);
@@ -411,7 +411,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
 
     VM& vm = globalObject->vm();
     JSC::JSObject* object = JSC::constructEmptyObject(
-        vm, uncheckedDowncast<Zig::GlobalObject>(globalObject)->memoryFootprintStructure());
+        vm, uncheckedDowncast<Rust::GlobalObject>(globalObject)->memoryFootprintStructure());
 
     object->putDirectOffset(vm, 0, jsNumber(current_rss));
     object->putDirectOffset(vm, 1, jsNumber(peak_rss));
@@ -891,7 +891,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
     RETURN_IF_EXCEPTION(throwScope, {});
     bool ignoreSourceMap = callFrame->argument(1).toBoolean(globalObject);
 
-    auto sourceID = Zig::sourceIDForSourceURL(fileName);
+    auto sourceID = Rust::sourceIDForSourceURL(fileName);
     if (!sourceID) {
         throwException(globalObject, throwScope,
             createError(globalObject, "No source for file"_s));
@@ -997,7 +997,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
 @end
 */
 
-namespace Zig {
+namespace Rust {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
     INIT_NATIVE_MODULE(36);
@@ -1044,4 +1044,4 @@ DEFINE_NATIVE_MODULE(BunJSC)
     RETURN_NATIVE_MODULE();
 }
 
-} // namespace Zig
+} // namespace Rust

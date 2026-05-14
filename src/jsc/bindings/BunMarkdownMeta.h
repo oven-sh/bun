@@ -2,7 +2,7 @@
 #include "root.h"
 #include "headers.h"
 #include "JavaScriptCore/JSObjectInlines.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 using namespace JSC;
 

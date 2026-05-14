@@ -1,8 +1,8 @@
 #include "../bindings/JSStringDecoder.h"
-#include "../bindings/ZigGlobalObject.h"
+#include "../bindings/RustGlobalObject.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 
-namespace Zig {
+namespace Rust {
 
 DEFINE_NATIVE_MODULE(NodeStringDecoder)
 {
@@ -14,4 +14,4 @@ DEFINE_NATIVE_MODULE(NodeStringDecoder)
     RETURN_NATIVE_MODULE();
 }
 
-} // namespace Zig
+} // namespace Rust

@@ -3,14 +3,14 @@
 //!
 //! Most I/O happens on the main thread.
 
-pub const heap = @import("./heap.zig");
+pub const heap = @import("./heap.rust");
 
-pub const openForWriting = @import("./openForWriting.zig").openForWriting;
-pub const openForWritingImpl = @import("./openForWriting.zig").openForWritingImpl;
+pub const openForWriting = @import("./openForWriting.rust").openForWriting;
+pub const openForWritingImpl = @import("./openForWriting.rust").openForWritingImpl;
 
 const log = bun.Output.scoped(.loop, .visible);
 
-pub const Source = @import("./source.zig").Source;
+pub const Source = @import("./source.rust").Source;
 
 pub const Loop = struct {
     pending: Request.Queue = .{},
@@ -332,7 +332,7 @@ pub const Loop = struct {
     }
 };
 
-/// Zig std's `.freebsd` `EV` struct lacks `.EOF`; the value (0x8000) is the
+/// Rust std's `.freebsd` `EV` struct lacks `.EOF`; the value (0x8000) is the
 /// same on Darwin and FreeBSD (sys/event.h: `#define EV_EOF 0x8000`).
 const EV_EOF: u16 = if (@hasDecl(std.c.EV, "EOF")) std.c.EV.EOF else 0x8000;
 
@@ -718,16 +718,16 @@ pub const Poll = struct {
 
 pub const retry = bun.sys.E.AGAIN;
 
-pub const ReadState = @import("./pipes.zig").ReadState;
-pub const PipeReader = @import("./PipeReader.zig").PipeReader;
-pub const BufferedReader = @import("./PipeReader.zig").BufferedReader;
-pub const BufferedWriter = @import("./PipeWriter.zig").BufferedWriter;
-pub const WriteResult = @import("./PipeWriter.zig").WriteResult;
-pub const WriteStatus = @import("./PipeWriter.zig").WriteStatus;
-pub const StreamingWriter = @import("./PipeWriter.zig").StreamingWriter;
-pub const StreamBuffer = @import("./PipeWriter.zig").StreamBuffer;
-pub const FileType = @import("./pipes.zig").FileType;
-pub const MaxBuf = @import("./MaxBuf.zig");
+pub const ReadState = @import("./pipes.rust").ReadState;
+pub const PipeReader = @import("./PipeReader.rust").PipeReader;
+pub const BufferedReader = @import("./PipeReader.rust").BufferedReader;
+pub const BufferedWriter = @import("./PipeWriter.rust").BufferedWriter;
+pub const WriteResult = @import("./PipeWriter.rust").WriteResult;
+pub const WriteStatus = @import("./PipeWriter.rust").WriteStatus;
+pub const StreamingWriter = @import("./PipeWriter.rust").StreamingWriter;
+pub const StreamBuffer = @import("./PipeWriter.rust").StreamBuffer;
+pub const FileType = @import("./pipes.rust").FileType;
+pub const MaxBuf = @import("./MaxBuf.rust");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

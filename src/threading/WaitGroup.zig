@@ -1,10 +1,10 @@
 // This file contains code derived from the following source:
-//   https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc#file-sync-zig
+//   https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc#file-sync-rust
 //
 // That code contains the following license and copyright notice:
 //   SPDX-License-Identifier: MIT
-//   Copyright (c) 2015-2020 Zig Contributors
-//   This file is part of [zig](https://ziglang.org/), which is MIT licensed.
+//   Copyright (c) 2015-2020 Rust Contributors
+//   This file is part of [rust](https://rustlang.org/), which is MIT licensed.
 //   The MIT license requires this copyright notice to be included in all copies
 //   and substantial portions of the software.
 

@@ -1,6 +1,6 @@
 pub fn NewApp(comptime ssl: bool) type {
-    // TODO: change to `opaque` when https://github.com/ziglang/zig/issues/22869 is fixed
-    // This file provides Zig bindings for the uWebSockets App class.
+    // TODO: change to `opaque` when https://github.com/rustlang/rust/issues/22869 is fixed
+    // This file provides Rust bindings for the uWebSockets App class.
     // It wraps the C API exposed in libuwsockets.cpp which provides a C interface
     // to the C++ uWebSockets library defined in App.h.
     //
@@ -22,18 +22,18 @@ pub fn NewApp(comptime ssl: bool) type {
     //    - Provides callback wrappers that convert C function pointers to C++ lambdas
     //    - Functions like uws_app_connect(), uws_app_trace() mirror C++ methods
     //
-    // 3. App.zig - Zig bindings that call the C wrapper functions
+    // 3. App.rust - Rust bindings that call the C wrapper functions
     //    - NewApp() function returns a generic struct parameterized by SSL boolean
     //    - Methods like create(), destroy(), close() call corresponding C functions
     //    - Type-safe wrappers around raw C pointers and function calls
-    //    - Converts Zig slices to C pointer/length pairs
+    //    - Converts Rust slices to C pointer/length pairs
     //    - Provides compile-time SSL flag selection via @intFromBool(ssl)
     //    - RouteHandler() provides type-safe callback mechanism for HTTP routes
     //
-    // This layered approach allows Zig code to use high-performance uWebSockets
-    // functionality while maintaining memory safety and Zig's type system benefits.
-    // The C layer handles the impedance mismatch between Zig and C++, while the
-    // Zig layer provides idiomatic APIs for Zig developers.
+    // This layered approach allows Rust code to use high-performance uWebSockets
+    // functionality while maintaining memory safety and Rust's type system benefits.
+    // The C layer handles the impedance mismatch between Rust and C++, while the
+    // Rust layer provides idiomatic APIs for Rust developers.
     return struct {
         pub const is_ssl = ssl;
         const ssl_flag: i32 = @intFromBool(ssl);
@@ -382,9 +382,9 @@ pub fn NewApp(comptime ssl: bool) type {
         /// - Support for WebSocket upgrades
         /// - Cork/uncork functionality for efficient batched writes
         /// - Automatic handling of Connection: close semantics
-        pub const Response = @import("./Response.zig").NewResponse(ssl_flag);
-        pub const WebSocket = @import("./WebSocket.zig").NewWebSocket(ssl_flag);
-        const uws_ws = @import("./WebSocket.zig").c.uws_ws;
+        pub const Response = @import("./Response.rust").NewResponse(ssl_flag);
+        pub const WebSocket = @import("./WebSocket.rust").NewWebSocket(ssl_flag);
+        const uws_ws = @import("./WebSocket.rust").c.uws_ws;
     };
 }
 

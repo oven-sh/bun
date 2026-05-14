@@ -112,7 +112,7 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
         defer thisValue.ensureStillAlive();
 
         const flags = jsc.JSValue.createEmptyObject(globalThis, 1);
-        flags.put(globalThis, jsc.ZigString.static("truncated"), .jsBoolean(truncated));
+        flags.put(globalThis, jsc.RustString.static("truncated"), .jsBoolean(truncated));
 
         _ = callback.call(globalThis, thisValue, &.{
             thisValue,
@@ -736,7 +736,7 @@ pub const UDPSocket = struct {
             const slice: []const u8 = brk: {
                 if (val.asArrayBuffer(globalThis)) |arrayBuffer| {
                     // `byteSlice()` returns `&.{}` for a detached view; its
-                    // `.ptr` is Zig's zero-length sentinel which the kernel
+                    // `.ptr` is Rust's zero-length sentinel which the kernel
                     // rejects with EFAULT even though `iov_len == 0`. Hand
                     // sendmmsg a valid static address instead.
                     if (arrayBuffer.isDetached()) break :brk empty;
@@ -803,7 +803,7 @@ pub const UDPSocket = struct {
         };
 
         const payload_arg = arguments.ptr[0];
-        var payload_str = jsc.ZigString.Slice.empty;
+        var payload_str = jsc.RustString.Slice.empty;
         defer payload_str.deinit();
         const payload = brk: {
             if (payload_arg.asArrayBuffer(globalThis)) |array_buffer| {
@@ -1076,7 +1076,7 @@ pub const UDPSocket = struct {
 };
 
 const std = @import("std");
-const uws = @import("../../uws/uws.zig");
+const uws = @import("../../uws/uws.rust");
 
 const bun = @import("bun");
 const Async = bun.Async;

@@ -136,7 +136,7 @@ const handlers = {
     const reader = new DataViewReader(view, 1);
 
     // The code genearting each list is annotated with equivalent "List n"
-    // comments in DevServer.zig's finalizeBundle function.
+    // comments in DevServer.rust's finalizeBundle function.
 
     // List 1
     const serverSideRoutesUpdated = new Set();

@@ -1,5 +1,5 @@
 #include "root.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "AsyncContextFrame.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 
@@ -23,7 +23,7 @@ AsyncContextFrame* AsyncContextFrame::create(JSGlobalObject* global, JSValue cal
 {
     auto& vm = global->vm();
     ASSERT(callback.isCallable());
-    auto* structure = uncheckedDowncast<Zig::GlobalObject>(global)->AsyncContextFrameStructure();
+    auto* structure = uncheckedDowncast<Rust::GlobalObject>(global)->AsyncContextFrameStructure();
     AsyncContextFrame* asyncContextData = new (NotNull, allocateCell<AsyncContextFrame>(vm)) AsyncContextFrame(vm, structure, callback, context);
     asyncContextData->finishCreation(vm);
     return asyncContextData;
@@ -52,7 +52,7 @@ JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject
     auto& vm = JSC::getVM(globalObject);
     return AsyncContextFrame::create(
         vm,
-        uncheckedDowncast<Zig::GlobalObject>(globalObject)->AsyncContextFrameStructure(),
+        uncheckedDowncast<Rust::GlobalObject>(globalObject)->AsyncContextFrameStructure(),
         callback,
         context);
 }

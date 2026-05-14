@@ -1,12 +1,12 @@
 #include "JSDOMGlobalObject.h"
 #include <JavaScriptCore/JSCast.h>
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 namespace WebCore {
 
-Zig::GlobalObject* toJSDOMGlobalObject(ScriptExecutionContext& ctx, DOMWrapperWorld& world)
+Rust::GlobalObject* toJSDOMGlobalObject(ScriptExecutionContext& ctx, DOMWrapperWorld& world)
 {
-    return uncheckedDowncast<Zig::GlobalObject>(ctx.jsGlobalObject());
+    return uncheckedDowncast<Rust::GlobalObject>(ctx.jsGlobalObject());
 }
 
 // static JSDOMGlobalObject& callerGlobalObject(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame* callFrame, bool skipFirstFrame, bool lookUpFromVMEntryScope)

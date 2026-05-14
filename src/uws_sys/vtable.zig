@@ -1,4 +1,4 @@
-//! Comptime `us_socket_vtable_t` generator. Given a Zig handler type and the
+//! Comptime `us_socket_vtable_t` generator. Given a Rust handler type and the
 //! ext payload type, emits a single static-const `VTable` whose entries are
 //! `callconv(.c)` trampolines that recover the typed ext from the raw socket
 //! and forward.
@@ -46,7 +46,7 @@ pub fn make(comptime H: type) *const VTable {
     }).vt;
 }
 
-/// The trampolines themselves, exposed so `dispatch.zig` can direct-call them
+/// The trampolines themselves, exposed so `dispatch.rust` can direct-call them
 /// per-kind without going through the vtable pointer at all.
 pub fn Trampolines(comptime H: type) type {
     // `Ext` is optional. Handlers that work entirely from `*us_socket_t` (e.g.

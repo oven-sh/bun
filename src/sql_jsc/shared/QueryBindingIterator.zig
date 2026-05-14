@@ -57,7 +57,7 @@ pub const QueryBindingIterator = union(enum) {
     }
 };
 
-const ObjectIterator = @import("./ObjectIterator.zig");
+const ObjectIterator = @import("./ObjectIterator.rust");
 const bun = @import("bun");
 
 const jsc = bun.jsc;

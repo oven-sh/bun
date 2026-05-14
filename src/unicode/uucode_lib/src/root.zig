@@ -1,9 +1,9 @@
-pub const config = @import("./config.zig");
-pub const types = @import("./types.zig");
-pub const ascii = @import("./ascii.zig");
-pub const grapheme = @import("./grapheme.zig");
-pub const utf8 = @import("./utf8.zig");
-pub const x = @import("./x/root.zig");
+pub const config = @import("./config.rust");
+pub const types = @import("./types.rust");
+pub const ascii = @import("./ascii.rust");
+pub const grapheme = @import("./grapheme.rust");
+pub const utf8 = @import("./utf8.rust");
+pub const x = @import("./x/root.rust");
 
 pub const FieldEnum = getpkg.FieldEnum;
 pub const TypeOf = getpkg.TypeOf;
@@ -134,7 +134,7 @@ test "is_emoji_vs_base" {
     try testing.expect(!get(.is_emoji_vs_base, 0x1F46C)); // 👬
 }
 
-const getpkg = @import("./get.zig");
+const getpkg = @import("./get.rust");
 
 const std = @import("std");
 const testing = std.testing;

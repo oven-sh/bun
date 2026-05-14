@@ -80,7 +80,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
     };
 
     if (res.status_code >= 400) {
-        try @import("../../install/npm.zig").responseError(allocator, &req, &res, .{ name, version }, &response_buf, false);
+        try @import("../../install/npm.rust").responseError(allocator, &req, &res, .{ name, version }, &response_buf, false);
     }
 
     var log = logger.Log.init(allocator);
@@ -95,7 +95,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
     }
 
     // Parse the existing JSON response into a PackageManifest using the now-public parse function
-    const parsed_manifest = @import("../../install/npm.zig").PackageManifest.parse(
+    const parsed_manifest = @import("../../install/npm.rust").PackageManifest.parse(
         allocator,
         scope,
         &log,
@@ -129,7 +129,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
                 if (parsed_manifest.findByDistTag(version)) |result| {
                     break :brk2 result.version;
                 } else {
-                    // Parse as semver query and find best version - exactly like outdated_command.zig line 325
+                    // Parse as semver query and find best version - exactly like outdated_command.rust line 325
                     const sliced_literal = Semver.SlicedString.init(version, version);
                     const query = try Semver.Query.parse(allocator, version, sliced_literal);
                     defer query.deinit();
@@ -395,9 +395,9 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
 const string = []const u8;
 
 const std = @import("std");
-const PackageManager = @import("../../install/install.zig").PackageManager;
-const PackageManifest = @import("../../install/npm.zig").PackageManifest;
-const URL = @import("../../url/url.zig").URL;
+const PackageManager = @import("../../install/install.rust").PackageManager;
+const PackageManifest = @import("../../install/npm.rust").PackageManifest;
+const URL = @import("../../url/url.rust").URL;
 
 const bun = @import("bun");
 const Global = bun.Global;

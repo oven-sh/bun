@@ -2,7 +2,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     const object = JSValue.createEmptyObject(globalThis, 1);
     object.put(
         globalThis,
-        ZigString.static("parse"),
+        RustString.static("parse"),
         jsc.JSFunction.create(
             globalThis,
             "parse",
@@ -76,4 +76,4 @@ const TOML = bun.interchange.toml.TOML;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

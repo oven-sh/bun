@@ -18,10 +18,10 @@ pub fn toJS(this: NoticeResponse, globalObject: *jsc.JSGlobalObject) JSValue {
         _ = b.append("\n");
     }
 
-    return jsc.ZigString.init(b.allocatedSlice()[0..b.len]).toJS(globalObject);
+    return jsc.RustString.init(b.allocatedSlice()[0..b.len]).toJS(globalObject);
 }
 
-const NoticeResponse = @import("../../../sql/postgres/protocol/NoticeResponse.zig");
+const NoticeResponse = @import("../../../sql/postgres/protocol/NoticeResponse.rust");
 const bun = @import("bun");
 
 const jsc = bun.jsc;

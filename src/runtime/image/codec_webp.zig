@@ -1,5 +1,5 @@
 //! libwebp decode/encode for `Bun.Image`.
-//! Dispatch lives in codecs.zig; this file is the codec body.
+//! Dispatch lives in codecs.rust; this file is the codec body.
 
 pub extern fn WebPGetInfo(data: [*]const u8, len: usize, w: *c_int, h: *c_int) c_int;
 extern fn WebPDecodeRGBA(data: [*]const u8, len: usize, w: *c_int, h: *c_int) ?[*]u8;
@@ -164,5 +164,5 @@ pub fn encode(rgba: []const u8, w: u32, h: u32, quality: u8, lossless: bool, icc
 }
 
 const bun = @import("bun");
-const codecs = @import("./codecs.zig");
+const codecs = @import("./codecs.rust");
 const std = @import("std");

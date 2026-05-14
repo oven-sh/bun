@@ -569,7 +569,7 @@ test.skipIf(!isSupported)("bun run --no-orphans <script>: clean exit reaps desce
 // Linux-only — needs /proc/<pid>/stat for state polling and login-TTY
 // acquisition via O_NOCTTY-less open. The macOS path (EVFILT_SIGNAL+SIGCHLD →
 // wait4 WUNTRACED → same `JobControl.onChildStopped`) is structurally
-// identical and is type-checked by `zig build check-macos`.
+// identical and is type-checked by `rust build check-macos`.
 test.skipIf(!isLinux)("bun run --no-orphans on TTY: Ctrl-Z stop bridges to bun, fg resumes script", async () => {
   // openpty + ptsname so a setsid wrapper can reopen the slave as its
   // controlling terminal — Bun.spawn can't acquire a ctty for us.

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // server.reload({ websocket: { close() {} } }) — i.e. a websocket config
-// without `open` or `message` — is silently discarded by onReloadFromZig.
+// without `open` or `message` — is silently discarded by onReloadFromRust.
 // WebSocketServerContext.onCreate has already JSC::gcProtect'd every handler
 // by that point, so discarding without a matching unprotect permanently
 // roots the callbacks (and anything their closures capture).
@@ -22,7 +22,7 @@ test("server.reload() with websocket config lacking open/message does not leak p
 
     const ITERS = 200;
     for (let i = 0; i < ITERS; i++) {
-      // Only close/drain/ping/pong — no open/message. onReloadFromZig drops
+      // Only close/drain/ping/pong — no open/message. onReloadFromRust drops
       // this config; previously the protect() from onCreate was never undone.
       server.reload({
         fetch() { return new Response("ok"); },

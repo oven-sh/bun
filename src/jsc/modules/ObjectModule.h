@@ -1,9 +1,9 @@
 #pragma once
 
-#include "../bindings/ZigGlobalObject.h"
+#include "../bindings/RustGlobalObject.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 
-namespace Zig {
+namespace Rust {
 JSC::SyntheticSourceProvider::SyntheticSourceGenerator
 generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
     JSC::JSObject* object);
@@ -20,4 +20,4 @@ JSC::SyntheticSourceProvider::SyntheticSourceGenerator
 generateJSValueExportDefaultObjectSourceCode(JSC::JSGlobalObject* globalObject,
     JSC::JSValue value);
 
-} // namespace Zig
+} // namespace Rust

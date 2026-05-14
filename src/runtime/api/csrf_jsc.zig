@@ -9,7 +9,7 @@ pub fn csrf__generate(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
 
     // We should have at least one argument (secret)
     const args = callframe.arguments();
-    var secret: ?jsc.ZigString.Slice = null;
+    var secret: ?jsc.RustString.Slice = null;
     if (args.len >= 1) {
         const jsSecret = args[0];
         // Extract the secret (required)
@@ -107,7 +107,7 @@ pub fn csrf__verify(globalObject: *jsc.JSGlobalObject, call_frame: *jsc.CallFram
     defer token.deinit();
 
     // Default values
-    var secret: ?jsc.ZigString.Slice = null;
+    var secret: ?jsc.RustString.Slice = null;
     defer if (secret) |s| s.deinit();
     var max_age: u64 = csrf.DEFAULT_EXPIRATION_MS;
     var encoding: csrf.TokenFormat = .base64url;
@@ -119,7 +119,7 @@ pub fn csrf__verify(globalObject: *jsc.JSGlobalObject, call_frame: *jsc.CallFram
         const options_value = args[1];
 
         // Extract the secret (required)
-        if (try options_value.getOptional(globalObject, "secret", jsc.ZigString.Slice)) |secretSlice| {
+        if (try options_value.getOptional(globalObject, "secret", jsc.RustString.Slice)) |secretSlice| {
             if (secretSlice.len == 0) {
                 return globalObject.throwInvalidArguments("Secret must be a non-empty string", .{});
             }
@@ -168,7 +168,7 @@ pub fn csrf__verify(globalObject: *jsc.JSGlobalObject, call_frame: *jsc.CallFram
     return jsc.JSValue.jsBoolean(is_valid);
 }
 
-const csrf = @import("../../csrf/csrf.zig");
+const csrf = @import("../../csrf/csrf.rust");
 const std = @import("std");
 
 const bun = @import("bun");

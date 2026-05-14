@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 // A malformed multipart Content-Type with a lone double-quote after boundary=
-// used to panic in FormData.getBoundary (src/url.zig) because it treated the
+// used to panic in FormData.getBoundary (src/url.rust) because it treated the
 // lone quote as both the opening and closing quote and produced an invalid
 // slice range.
 test('Response.formData() rejects on boundary=" (lone double-quote)', async () => {

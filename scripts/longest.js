@@ -72,8 +72,8 @@ function main() {
   const args = process.argv.slice(2);
 
   if (args.length === 0) {
-    console.error("Usage: bun longest.js <zig-file>");
-    console.error("Example: bun longest.js src/walker_skippable.zig");
+    console.error("Usage: bun longest.js <rust-file>");
+    console.error("Example: bun longest.js src/walker_skippable.rust");
     process.exit(1);
   }
 
@@ -84,8 +84,8 @@ function main() {
     process.exit(1);
   }
 
-  if (!filePath.endsWith(".zig")) {
-    console.error("Please provide a .zig file");
+  if (!filePath.endsWith(".rust")) {
+    console.error("Please provide a .rust file");
     process.exit(1);
   }
 

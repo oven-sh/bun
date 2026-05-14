@@ -1,6 +1,6 @@
 //! One TCP+TLS connection running the HTTP/2 protocol for `fetch()`. Owns the
 //! socket, the connection-scoped HPACK tables, and a map of active `Stream`s.
-//! See `src/http/H2Client.zig` for the module-level overview.
+//! See `src/http/H2Client.rust` for the module-level overview.
 
 const ClientSession = @This();
 
@@ -667,7 +667,7 @@ fn deliverStream(this: *ClientSession, stream: *Stream) bool {
         };
         // handleResponseMetadata set is_redirect_pending. The doRedirect
         // contract assumes the caller already detached the stream
-        // (http.zig:1062). Detach + RST here unconditionally so the
+        // (http.rust:1062). Detach + RST here unconditionally so the
         // header_progress path below can never re-enter doRedirect via
         // progressUpdate while the old Stream still points at this
         // client — that path would attach a second Stream to the same
@@ -694,7 +694,7 @@ fn deliverStream(this: *ClientSession, stream: *Stream) bool {
             return this.finishStream(stream, client);
         }
         client.cloneMetadata();
-        // Mirror the h1 path (http.zig handleOnDataHeaders): deliver headers
+        // Mirror the h1 path (http.rust handleOnDataHeaders): deliver headers
         // to JS now so `await fetch()` resolves and `getReader()` can enable
         // response_body_streaming. Without this, a content-length response
         // buffers the entire body before the Response promise settles.
@@ -794,14 +794,14 @@ fn applyHeaders(_: *ClientSession, stream: *Stream, client: *HTTPClient) !Header
     return if (should_continue == .finished) .finished else .has_body;
 }
 
-const Stream = @import("./Stream.zig");
-const dispatch = @import("./dispatch.zig");
-const encode = @import("./encode.zig");
-const lshpack = @import("../lshpack.zig");
+const Stream = @import("./Stream.rust");
+const dispatch = @import("./dispatch.rust");
+const encode = @import("./encode.rust");
+const lshpack = @import("../lshpack.rust");
 const std = @import("std");
-const wire = @import("../H2FrameParser.zig");
+const wire = @import("../H2FrameParser.rust");
 
-const H2 = @import("../H2Client.zig");
+const H2 = @import("../H2Client.rust");
 const local_initial_window_size = H2.local_initial_window_size;
 
 const bun = @import("bun");

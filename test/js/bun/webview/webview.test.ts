@@ -913,7 +913,7 @@ it("close() rejects pending promises", async () => {
 it("WebView.closeAll() kills the host subprocess and pending promises reject", async () => {
   // Subprocess-isolated — closeAll() SIGKILLs the one shared WKWebView host,
   // which would break subsequent tests. ensureSpawned respawns on the next
-  // WebView construction, but only after EVFILT_PROC has cleared the Zig
+  // WebView construction, but only after EVFILT_PROC has cleared the Rust
   // instance global — race prone in-process.
   await using proc = Bun.spawn({
     cmd: [

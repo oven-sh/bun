@@ -43,7 +43,7 @@ function readInterp(buf: Buffer): string | null {
 
 // Read up to the first 4 KiB of a file (enough for PT_INTERP, which always
 // lives in the first ELF page). The bun binary is ~1.3 GB in debug builds,
-// so `readFileSync` on it would be wasteful; mirror what the Zig helper does.
+// so `readFileSync` on it would be wasteful; mirror what the Rust helper does.
 function readHead(path: string, bytes = 4096): Buffer {
   const fd = openSync(path, "r");
   try {
@@ -55,7 +55,7 @@ function readHead(path: string, bytes = 4096): Buffer {
   }
 }
 
-// Mirror of `hostUsesNixStoreInterpreter()` in src/elf.zig. After #29290 the
+// Mirror of `hostUsesNixStoreInterpreter()` in src/elf.rust. After #29290 the
 // normalization is skipped on Nix/Guix hosts — this assertion only holds on
 // non-Nix hosts. (The #29290 test covers the NixOS-host branch.)
 function hostLooksNix(): boolean {

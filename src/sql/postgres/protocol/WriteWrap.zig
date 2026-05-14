@@ -7,6 +7,6 @@ pub fn WriteWrap(comptime Container: type, comptime writeFn: anytype) type {
     };
 }
 
-const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
+const AnyPostgresError = @import("../AnyPostgresError.rust").AnyPostgresError;
 
-const NewWriter = @import("./NewWriter.zig").NewWriter;
+const NewWriter = @import("./NewWriter.rust").NewWriter;

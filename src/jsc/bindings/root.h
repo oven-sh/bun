@@ -99,7 +99,7 @@
 #endif
 
 // can be nothrow | zero_is_throw | check_slow
-#define ZIG_EXPORT(...)
-#define ZIG_NONNULL
+#define RUST_EXPORT(...)
+#define RUST_NONNULL
 
 #endif

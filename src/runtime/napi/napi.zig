@@ -78,10 +78,10 @@ fn envIsNull() napi_status {
 
 /// This is nullable because native modules may pass null pointers for the NAPI environment, which
 /// is an error that our NAPI functions need to handle (by returning napi_invalid_arg). To specify
-/// a Zig API that uses a never-null napi_env, use `*NapiEnv`.
+/// a Rust API that uses a never-null napi_env, use `*NapiEnv`.
 pub const napi_env = ?*NapiEnv;
 
-/// Contents are not used by any Zig code
+/// Contents are not used by any Rust code
 pub const Ref = opaque {};
 
 pub const napi_ref = *Ref;
@@ -1344,7 +1344,7 @@ pub extern fn napi_remove_env_cleanup_hook(env: napi_env, function: ?*const fn (
 extern fn napi_internal_cleanup_env_cpp(env: napi_env) callconv(.c) void;
 extern fn napi_internal_check_gc(env: napi_env) callconv(.c) void;
 
-pub export fn napi_internal_register_cleanup_zig(env_: napi_env) void {
+pub export fn napi_internal_register_cleanup_rust(env_: napi_env) void {
     const env = env_.?;
     env.toJS().bunVM().rareData().pushCleanupHook(env.toJS(), env, struct {
         fn callback(data: ?*anyopaque) callconv(.c) void {
@@ -2491,7 +2491,7 @@ pub fn fixDeadCodeElimination() void {
         std.mem.doNotOptimizeAway(&@field(posix_platform_specific_v8_apis, decl.name));
     }
 
-    std.mem.doNotOptimizeAway(&@import("../node/buffer.zig").BufferVectorized.fill);
+    std.mem.doNotOptimizeAway(&@import("../node/buffer.rust").BufferVectorized.fill);
 }
 
 pub const NapiFinalizerTask = struct {
@@ -2544,8 +2544,8 @@ pub const NapiFinalizerTask = struct {
 
 const std = @import("std");
 
-const WorkPool = @import("../../threading/work_pool.zig").WorkPool;
-const WorkPoolTask = @import("../../threading/work_pool.zig").Task;
+const WorkPool = @import("../../threading/work_pool.rust").WorkPool;
+const WorkPoolTask = @import("../../threading/work_pool.rust").Task;
 
 const bun = @import("bun");
 const Async = bun.Async;

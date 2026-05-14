@@ -467,7 +467,7 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.array_list.Managed(u8), offset_
                     const Int = u64;
                     const size = @sizeOf(Int);
 
-                    // zig or LLVM doesn't do @ctz nicely with SIMD
+                    // rust or LLVM doesn't do @ctz nicely with SIMD
                     if (comptime ascii_vector_size >= 8) {
                         {
                             const bytes = @as(Int, @bitCast(latin1[0..size].*));
@@ -710,7 +710,7 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, latin1_: []const u8, comptim
                 if (@reduce(.Max, vec) > 127) {
                     if (comptime stop) return .{ .written = std.math.maxInt(u32), .read = std.math.maxInt(u32) };
 
-                    // zig or LLVM doesn't do @ctz nicely with SIMD
+                    // rust or LLVM doesn't do @ctz nicely with SIMD
                     if (comptime ascii_vector_size >= 8) {
                         const Int = u64;
                         const size = @sizeOf(Int);
@@ -902,7 +902,7 @@ pub fn copyU8IntoU16(output_: []u16, input_: []const u8) callconv(bun.callconv_i
     const input = input_;
     if (comptime Environment.allow_assert) assert(input.len <= output.len);
 
-    // https://zig.godbolt.org/z/9rTn1orcY
+    // https://rust.godbolt.org/z/9rTn1orcY
 
     var input_ptr = input.ptr;
     var output_ptr = output.ptr;
@@ -941,7 +941,7 @@ pub fn copyLatin1IntoASCII(dest: []u8, src: []const u8) void {
 
     if (to.len >= 16 and bun.Environment.enableSIMD) {
         const vector_size = 16;
-        // https://zig.godbolt.org/z/qezsY8T3W
+        // https://rust.godbolt.org/z/qezsY8T3W
         const remain_in_u64 = remain[0 .. remain.len - (remain.len % vector_size)];
         const to_in_u64 = to[0 .. to.len - (to.len % vector_size)];
         var remain_as_u64 = std.mem.bytesAsSlice(u64, remain_in_u64);
@@ -1043,7 +1043,7 @@ pub const BOM = enum {
         }
     }
 
-    /// This is required for fs.zig's `use_shared_buffer` flag. we cannot free that pointer.
+    /// This is required for fs.rust's `use_shared_buffer` flag. we cannot free that pointer.
     /// The returned slice will always point to the base of the input.
     ///
     /// Requires an arraylist in case it must be grown.
@@ -1206,7 +1206,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
     return null;
 }
 
-pub const TestingAPIs = @import("../../jsc/bun_string_jsc.zig").UnicodeTestingAPIs;
+pub const TestingAPIs = @import("../../jsc/bun_string_jsc.rust").UnicodeTestingAPIs;
 
 // this one does the thing it's named after
 pub fn toUTF16AllocForReal(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool, comptime sentinel: bool) !if (sentinel) [:0]u16 else []u16 {

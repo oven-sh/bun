@@ -76,7 +76,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWasmStreamingCompiler;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSWebView;
 
-#include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
+#include "RustGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMException;

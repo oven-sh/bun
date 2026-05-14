@@ -5394,4 +5394,4 @@ pub const Feature = enum {
     }
 };
 
-const Browsers = @import("./targets.zig").Browsers;
+const Browsers = @import("./targets.rust").Browsers;

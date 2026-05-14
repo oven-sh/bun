@@ -48,7 +48,7 @@ pub const enabled = bun.Environment.enable_asan;
 
 comptime {
     if (enabled) {
-        // Defined here (in bun-zig.o, a direct link input) rather than in C: in CI's
+        // Defined here (in bun-rust.o, a direct link input) rather than in C: in CI's
         // split build the C objects are archived into libbun.a, and clang places the
         // ASAN runtime — which already weak-defines __asan_default_options — before
         // user inputs, so an archive member that only provides this symbol is never

@@ -64,7 +64,7 @@ pub const Scripts = struct {
         "postprepare",
     };
 
-    const RunCommand = @import("../runtime/cli/run_command.zig").RunCommand;
+    const RunCommand = @import("../runtime/cli/run_command.rust").RunCommand;
 
     preinstall: Entries = .{},
     install: Entries = .{},
@@ -1209,8 +1209,8 @@ pub const Printer = struct {
         }
     }
 
-    pub const Tree = @import("./lockfile/printer/tree_printer.zig");
-    pub const Yarn = @import("./lockfile/printer/Yarn.zig");
+    pub const Tree = @import("./lockfile/printer/tree_printer.rust");
+    pub const Yarn = @import("./lockfile/printer/Yarn.rust");
 };
 
 pub fn verifyData(this: *const Lockfile) !void {
@@ -1745,14 +1745,14 @@ pub const DependencyIDList = std.ArrayListUnmanaged(DependencyID);
 pub const StringBuffer = std.ArrayListUnmanaged(u8);
 pub const ExternalStringBuffer = std.ArrayListUnmanaged(ExternalString);
 
-pub const jsonStringify = @import("./lockfile/lockfile_json_stringify_for_debugging.zig").jsonStringify;
-pub const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
-pub const Buffers = @import("./lockfile/Buffers.zig");
-pub const Serializer = @import("./lockfile/bun.lockb.zig");
-pub const CatalogMap = @import("./lockfile/CatalogMap.zig");
-pub const OverrideMap = @import("./lockfile/OverrideMap.zig");
-pub const Package = @import("./lockfile/Package.zig").Package(u64);
-pub const Tree = @import("./lockfile/Tree.zig");
+pub const jsonStringify = @import("./lockfile/lockfile_json_stringify_for_debugging.rust").jsonStringify;
+pub const assertNoUninitializedPadding = @import("./padding_checker.rust").assertNoUninitializedPadding;
+pub const Buffers = @import("./lockfile/Buffers.rust");
+pub const Serializer = @import("./lockfile/bun.lockb.rust");
+pub const CatalogMap = @import("./lockfile/CatalogMap.rust");
+pub const OverrideMap = @import("./lockfile/OverrideMap.rust");
+pub const Package = @import("./lockfile/Package.rust").Package(u64);
+pub const Tree = @import("./lockfile/Tree.rust");
 
 pub fn deinit(this: *Lockfile) void {
     this.buffers.deinit(this.allocator);
@@ -2110,7 +2110,7 @@ pub const default_trusted_dependencies = brk: {
 
     for (default_trusted_dependencies_list) |dep| {
         if (map.len == max_default_trusted_dependencies) {
-            @compileError("default-trusted-dependencies.txt is too large, please increase 'max_default_trusted_dependencies' in lockfile.zig");
+            @compileError("default-trusted-dependencies.txt is too large, please increase 'max_default_trusted_dependencies' in lockfile.rust");
         }
 
         const entry = map.getOrPutAssumeCapacity(dep);
@@ -2161,23 +2161,23 @@ pub const StringPool = String.Builder.StringPool;
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const Dependency = @import("./dependency.zig");
-const DotEnv = @import("../dotenv/env_loader.zig");
-const Npm = @import("./npm.zig");
-const Path = @import("../paths/resolve_path.zig");
-const TextLockfile = @import("./lockfile/bun.lock.zig");
-const migration = @import("./migration.zig");
+const Dependency = @import("./dependency.rust");
+const DotEnv = @import("../dotenv/env_loader.rust");
+const Npm = @import("./npm.rust");
+const Path = @import("../paths/resolve_path.rust");
+const TextLockfile = @import("./lockfile/bun.lock.rust");
+const migration = @import("./migration.rust");
 const std = @import("std");
-const Crypto = @import("../sha_hmac/sha.zig").Hashers;
-const Resolution = @import("./resolution.zig").Resolution;
-const StaticHashMap = @import("../collections/StaticHashMap.zig").StaticHashMap;
-const which = @import("../which/which.zig").which;
+const Crypto = @import("../sha_hmac/sha.rust").Hashers;
+const Resolution = @import("./resolution.rust").Resolution;
+const StaticHashMap = @import("../collections/StaticHashMap.rust").StaticHashMap;
+const which = @import("../which/which.rust").which;
 const Allocator = std.mem.Allocator;
 
-const ArrayIdentityContext = @import("../collections/identity_context.zig").ArrayIdentityContext;
-const IdentityContext = @import("../collections/identity_context.zig").IdentityContext;
+const ArrayIdentityContext = @import("../collections/identity_context.rust").ArrayIdentityContext;
+const IdentityContext = @import("../collections/identity_context.rust").IdentityContext;
 
-const Fs = @import("../resolver/fs.zig");
+const Fs = @import("../resolver/fs.rust");
 const FileSystem = Fs.FileSystem;
 
 const bun = @import("bun");

@@ -413,8 +413,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
         }
     }
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    Structure* structure = zigGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(zigGlobalObject);
+    auto* rustGlobalObject = defaultGlobalObject(globalObject);
+    Structure* structure = rustGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(rustGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSNodePerformanceHooksHistogram* histogram = JSNodePerformanceHooksHistogram::create(vm, structure, globalObject, lowest, highest, figures);
@@ -423,7 +423,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
     return JSValue::encode(histogram);
 }
 
-// Extern declarations for Timer.zig
+// Extern declarations for Timer.rust
 extern "C" void Timer_enableEventLoopDelayMonitoring(void* vm, JSC::EncodedJSValue histogram, int32_t resolution);
 extern "C" void Timer_disableEventLoopDelayMonitoring(void* vm);
 
@@ -445,8 +445,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_monitorEventLoopDelay, (JSGlobalObject * glo
     }
 
     // Create histogram with range for event loop delays (1ns to 1 hour)
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    Structure* structure = zigGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(zigGlobalObject);
+    auto* rustGlobalObject = defaultGlobalObject(globalObject);
+    Structure* structure = rustGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(rustGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSNodePerformanceHooksHistogram* histogram = JSNodePerformanceHooksHistogram::create(
@@ -486,7 +486,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_enableEventLoopDelay, (JSGlobalObject * glob
     // Reset histogram data on enable
     histogram->reset();
 
-    // Enable the event loop delay monitor in Timer.zig
+    // Enable the event loop delay monitor in Timer.rust
     Timer_enableEventLoopDelayMonitoring(bunVM(globalObject), JSValue::encode(histogram), resolution);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
@@ -511,13 +511,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_disableEventLoopDelay, (JSGlobalObject * glo
         return JSValue::encode(jsUndefined());
     }
 
-    // Call into Zig to disable monitoring
+    // Call into Rust to disable monitoring
     Timer_disableEventLoopDelayMonitoring(bunVM(globalObject));
 
     return JSValue::encode(jsUndefined());
 }
 
-// Extern function for Zig to record delays
+// Extern function for Rust to record delays
 extern "C" void JSNodePerformanceHooksHistogram_recordDelay(JSC::EncodedJSValue histogram, int64_t delay_ns)
 {
     if (!histogram || delay_ns <= 0) return;

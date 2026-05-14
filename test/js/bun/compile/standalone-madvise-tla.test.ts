@@ -1,6 +1,6 @@
 // PR #29320: hintSourcePagesDontNeed() must be reached even when the
 // entrypoint has top-level await. loadEntryPoint() returns a promise without
-// blocking, so the call site at bun.js.zig:466 is hit synchronously before the
+// blocking, so the call site at bun.js.rust:466 is hit synchronously before the
 // main event loop spins — TLA resolution happens later in that loop.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";

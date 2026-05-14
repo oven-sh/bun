@@ -9,7 +9,7 @@
 
 using namespace JSC;
 
-namespace Zig {
+namespace Rust {
 
 class CallSitePrototype final : public JSC::JSNonFinalObject {
 public:

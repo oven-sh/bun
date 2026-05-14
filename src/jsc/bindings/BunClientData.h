@@ -26,13 +26,13 @@ class DOMWrapperWorld;
 #include <wtf/StdLibExtras.h>
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
-namespace Zig {
+namespace Rust {
 class GlobalObject;
 }
 
 namespace WebCore {
 using namespace JSC;
-using namespace Zig;
+using namespace Rust;
 
 enum class UseCustomHeapCellType { Yes,
     No };
@@ -124,7 +124,7 @@ public:
 
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to
-    // avoid pulling ZigSourceProvider.h into this header; the cache class
+    // avoid pulling RustSourceProvider.h into this header; the cache class
     // downcasts on lookup. Values hold strong refs by design: this map is the
     // only owner once the previous global is GC'd, so a weak map would empty
     // after every swap.

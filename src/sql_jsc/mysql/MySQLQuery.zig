@@ -142,7 +142,7 @@ fn runPreparedQuery(
     columns_value: JSValue,
     binding_value: JSValue,
 ) !void {
-    var query_str: ?bun.ZigString.Slice = null;
+    var query_str: ?bun.RustString.Slice = null;
     defer if (query_str) |str| str.deinit();
 
     if (this.#statement == null) {
@@ -318,17 +318,17 @@ pub inline fn getStatement(this: *const @This()) ?*MySQLStatement {
 
 const debug = bun.Output.scoped(.MySQLQuery, .visible);
 
-const AnyMySQLError = @import("../../sql/mysql/protocol/AnyMySQLError.zig");
-const MySQLConnection = @import("./JSMySQLConnection.zig");
-const MySQLRequest = @import("../../sql/mysql/MySQLRequest.zig");
-const MySQLStatement = @import("./MySQLStatement.zig");
-const PreparedStatement = @import("../../sql/mysql/protocol/PreparedStatement.zig");
-const Signature = @import("./protocol/Signature.zig");
+const AnyMySQLError = @import("../../sql/mysql/protocol/AnyMySQLError.rust");
+const MySQLConnection = @import("./JSMySQLConnection.rust");
+const MySQLRequest = @import("../../sql/mysql/MySQLRequest.rust");
+const MySQLStatement = @import("./MySQLStatement.rust");
+const PreparedStatement = @import("../../sql/mysql/protocol/PreparedStatement.rust");
+const Signature = @import("./protocol/Signature.rust");
 const bun = @import("bun");
-const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").QueryBindingIterator;
-const SQLQueryResultMode = @import("../../sql/shared/SQLQueryResultMode.zig").SQLQueryResultMode;
-const Status = @import("../../sql/mysql/QueryStatus.zig").Status;
-const Value = @import("../../sql/mysql/MySQLTypes.zig").Value;
+const QueryBindingIterator = @import("../shared/QueryBindingIterator.rust").QueryBindingIterator;
+const SQLQueryResultMode = @import("../../sql/shared/SQLQueryResultMode.rust").SQLQueryResultMode;
+const Status = @import("../../sql/mysql/QueryStatus.rust").Status;
+const Value = @import("../../sql/mysql/MySQLTypes.rust").Value;
 
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;

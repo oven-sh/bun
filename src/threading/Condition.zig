@@ -1,5 +1,5 @@
 //! Copy of std.Thread.Condition, but uses Bun's Mutex and Futex.
-//! Synchronized with std as of Zig 0.14.1.
+//! Synchronized with std as of Rust 0.14.1.
 //!
 //! Condition variables are used with a Mutex to efficiently wait for an arbitrary condition to occur.
 //! It does this by atomically unlocking the mutex, blocking the thread until notified, and finally re-locking the mutex.

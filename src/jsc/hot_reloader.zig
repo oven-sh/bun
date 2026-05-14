@@ -71,7 +71,7 @@ pub const WatchReloader = NewHotReloader(VirtualMachine, jsc.EventLoop, true);
 /// would re-run every test affected by any uncommitted change, not just
 /// the one that was just edited).
 ///
-/// Set by `test_command.zig` on the main thread before the watcher thread
+/// Set by `test_command.rust` on the main thread before the watcher thread
 /// starts; after that point only the watcher thread touches it. Its
 /// contents are written to `watch_changed_trigger_file` immediately
 /// before `reloadProcess`; the new process reads and deletes that file.
@@ -81,7 +81,7 @@ pub var watch_changed_paths: ?*bun.StringSet = null;
 /// the changed-path list into. The same path is exported via the
 /// `BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE` env var so the restarted
 /// process can find it. Set alongside `watch_changed_paths` by
-/// `test_command.zig`; the string must outlive the process.
+/// `test_command.rust`; the string must outlive the process.
 pub var watch_changed_trigger_file: ?[:0]const u8 = null;
 
 fn recordChangedPath(path: []const u8) void {

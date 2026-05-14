@@ -363,7 +363,7 @@ pub fn GlobWalker_(
         /// BunString is used so that we can call BunString.toJSArray()
         /// on the result of `.keys()` to give the result back to JS
         ///
-        /// The only type of string impl we use is ZigString since
+        /// The only type of string impl we use is RustString since
         /// all matched paths are UTF-8 (DirIterator converts them on
         /// windows) and allocated on the arnea
         ///
@@ -375,7 +375,7 @@ pub fn GlobWalker_(
         /// Use `.keys()` to get the matched paths
         const MatchedMap = std.ArrayHashMapUnmanaged(BunString, void, struct {
             pub fn hash(_: @This(), this: BunString) u32 {
-                bun.assert(this.tag == .ZigString);
+                bun.assert(this.tag == .RustString);
                 const slice = this.byteSlice();
                 if (comptime sentinel) {
                     const slicez = slice[0 .. slice.len - 1 :0];
@@ -1834,8 +1834,8 @@ pub fn matchWildcardLiteral(literal: []const u8, path: []const u8) bool {
     return std.mem.eql(u8, literal, path);
 }
 
-const DirIterator = @import("../runtime/node/dir_iterator.zig");
-const ResolvePath = @import("../paths/resolve_path.zig");
+const DirIterator = @import("../runtime/node/dir_iterator.rust");
+const ResolvePath = @import("../paths/resolve_path.rust");
 
 const bun = @import("bun");
 const BunString = bun.String;
@@ -1843,7 +1843,7 @@ const CodepointIterator = bun.strings.UnsignedCodepointIterator;
 const isAllAscii = bun.strings.isAllASCII;
 
 const jsc = bun.jsc;
-const ZigString = bun.jsc.ZigString;
+const RustString = bun.jsc.RustString;
 
 const Cursor = CodepointIterator.Cursor;
 const Codepoint = CodepointIterator.Cursor.CodePointType;

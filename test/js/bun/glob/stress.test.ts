@@ -26,7 +26,7 @@ test("Glob.scan stress test", async () => {
     Array(1000)
       .fill(null)
       .map(() =>
-        Array.fromAsync(new Glob("src/**/*.zig").scan({ cwd })).then(results => {
+        Array.fromAsync(new Glob("src/**/*.rust").scan({ cwd })).then(results => {
           const set = new Set(results);
           return set.size == paths.length && paths.every(path => set.has(path));
         }),
@@ -36,7 +36,7 @@ test("Glob.scan stress test", async () => {
 
 test("Glob.match stress test", () => {
   for (let i = 0; i < 10000; i++) {
-    if (!new Glob("src/**/*.zig").match("src/cli/package_manager_command.zig")) {
+    if (!new Glob("src/**/*.rust").match("src/cli/package_manager_command.rust")) {
       throw new Error("test failed on run " + i);
     }
   }

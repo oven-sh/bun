@@ -33,6 +33,6 @@ pub const HTTPRequestBody = union(enum) {
     }
 };
 
-const SendFile = @import("./SendFile.zig");
-const ThreadSafeStreamBuffer = @import("./ThreadSafeStreamBuffer.zig");
+const SendFile = @import("./SendFile.rust");
+const ThreadSafeStreamBuffer = @import("./ThreadSafeStreamBuffer.rust");
 const std = @import("std");

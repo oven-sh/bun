@@ -590,7 +590,7 @@ class ExtendedExtendedDOMGlobal extends ExtendedDOMGlobal {
 }
 
 const response = new Response();
-class ExtendedZigGeneratedClass extends Response {
+class ExtendedRustGeneratedClass extends Response {
   constructor(body) {
     super(body);
   }
@@ -604,7 +604,7 @@ class ExtendedZigGeneratedClass extends Response {
   }
 }
 
-class ExtendedExtendedZigGeneratedClass extends ExtendedZigGeneratedClass {
+class ExtendedExtendedRustGeneratedClass extends ExtendedRustGeneratedClass {
   constructor(body) {
     super(body);
   }
@@ -614,8 +614,8 @@ class ExtendedExtendedZigGeneratedClass extends ExtendedZigGeneratedClass {
   }
 }
 
-const resp = new ExtendedZigGeneratedClass("empty");
-const resp2 = new ExtendedExtendedZigGeneratedClass("empty");
+const resp = new ExtendedRustGeneratedClass("empty");
+const resp2 = new ExtendedExtendedRustGeneratedClass("empty");
 
 const url = new ExtendedDOMGlobal("https://example.com/path?foo=bar&baz=qux");
 const url2 = new ExtendedExtendedDOMGlobal("https://example.com/path?foo=bar&baz=qux");
@@ -651,20 +651,20 @@ if (!resp2.ok) {
   throw new Error("expected ok");
 }
 
-if (!(resp instanceof ExtendedZigGeneratedClass)) {
-  throw new Error("expected ExtendedZigGeneratedClass");
+if (!(resp instanceof ExtendedRustGeneratedClass)) {
+  throw new Error("expected ExtendedRustGeneratedClass");
 }
 
 if (!(resp instanceof Response)) {
   throw new Error("expected Response");
 }
 
-if (!(resp2 instanceof ExtendedExtendedZigGeneratedClass)) {
-  throw new Error("expected ExtendedExtendedZigGeneratedClass");
+if (!(resp2 instanceof ExtendedExtendedRustGeneratedClass)) {
+  throw new Error("expected ExtendedExtendedRustGeneratedClass");
 }
 
-if (!(resp2 instanceof ExtendedZigGeneratedClass)) {
-  throw new Error("expected ExtendedZigGeneratedClass");
+if (!(resp2 instanceof ExtendedRustGeneratedClass)) {
+  throw new Error("expected ExtendedRustGeneratedClass");
 }
 
 if (!(resp2 instanceof Response)) {

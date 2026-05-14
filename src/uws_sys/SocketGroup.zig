@@ -1,9 +1,9 @@
-//! Zig mirror of `struct us_socket_group_t`. Embedded by value in its owner
+//! Rust mirror of `struct us_socket_group_t`. Embedded by value in its owner
 //! (Listener, VirtualMachine, uWS App, HTTPThread) — never heap-allocated on
 //! its own. The loop links it lazily on first socket and unlinks on last, so
 //! unused kinds cost nothing.
 //!
-//! `extern struct` so field order/padding match the C definition exactly — Zig
+//! `extern struct` so field order/padding match the C definition exactly — Rust
 //! is free to reorder non-extern struct fields, and this is read/written
 //! directly by C (loop.c walks `head_sockets`/`iterator`, context.c flips
 //! `linked`).

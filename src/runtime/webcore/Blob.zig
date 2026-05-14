@@ -8,10 +8,10 @@ const Blob = @This();
 
 const debug = Output.scoped(.Blob, .visible);
 
-pub const Store = @import("./blob/Store.zig");
-pub const read_file = @import("./blob/read_file.zig");
-pub const write_file = @import("./blob/write_file.zig");
-pub const copy_file = @import("./blob/copy_file.zig");
+pub const Store = @import("./blob/Store.rust");
+pub const read_file = @import("./blob/read_file.rust");
+pub const write_file = @import("./blob/write_file.rust");
+pub const copy_file = @import("./blob/copy_file.rust");
 
 pub fn new(blob: Blob) *Blob {
     const result = bun.new(Blob, blob);
@@ -77,7 +77,7 @@ pub const ClosingState = enum(u8) {
 };
 
 pub fn getFormDataEncoding(this: *Blob) ?*bun.FormData.AsyncFormData {
-    var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
+    var content_type_slice: RustString.Slice = this.getContentType() orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
     return bun.handleOom(bun.FormData.AsyncFormData.init(bun.default_allocator, encoding));
@@ -184,7 +184,7 @@ pub fn NewInternalReadFileHandler(comptime Context: type, comptime Function: any
 /// or in-memory — and deliver them to `Handler.onReadBytes(ctx, result)` on the
 /// JS thread without ever materialising a JSValue. `.ok` bytes are
 /// `bun.default_allocator`-OWNED by the callback. The point is to give callers
-/// the same store-agnostic dispatch as `.bytes()` while staying in Zig land,
+/// the same store-agnostic dispatch as `.bytes()` while staying in Rust land,
 /// so e.g. `Bun.Image` can read a `Bun.file`/`Bun.s3` source straight into its
 /// `.owned` buffer with no JS-heap copy in between.
 ///
@@ -223,7 +223,7 @@ pub fn readBytesToHandler(this: *Blob, comptime Handler: type, ctx: *Handler, gl
             fn cb(result: S3.S3DownloadResult, opaque_self: *anyopaque) bun.JSTerminated!void {
                 const t: *@This() = @ptrCast(@alignCast(opaque_self));
                 switch (result) {
-                    // `body` is owned by us (simple_request.zig:20); take the
+                    // `body` is owned by us (simple_request.rust:20); take the
                     // ArrayList's items as-is.
                     .success => |response| t.done(.{ .ok = response.body.list.items }),
                     // S3Error has its own JS-error builder; flatten to a
@@ -273,7 +273,7 @@ pub const ReadBytesResult = union(enum) {
 
 /// `Bun.file("…").image(opts?)` ≡ `new Bun.Image(this, opts?)`. Lives here so
 /// the proto entry covers Blob/BunFile/S3File in one place; the actual
-/// construction is `Image.fromBlobJS` so Blob.zig doesn't grow image
+/// construction is `Image.fromBlobJS` so Blob.rust doesn't grow image
 /// knowledge.
 pub fn doImage(_: *Blob, global: *JSGlobalObject, cf: *jsc.CallFrame) bun.JSError!JSValue {
     return Image.fromBlobJS(global, cf.this(), cf.argument(0));
@@ -303,7 +303,7 @@ const FormDataContext = struct {
     failed: bool = false,
     globalThis: *jsc.JSGlobalObject,
 
-    pub fn onEntry(this: *FormDataContext, name: ZigString, entry: jsc.DOMFormData.FormDataEntry) void {
+    pub fn onEntry(this: *FormDataContext, name: RustString, entry: jsc.DOMFormData.FormDataEntry) void {
         if (this.failed) return;
         var globalThis = this.globalThis;
 
@@ -385,9 +385,9 @@ const FormDataContext = struct {
 
 pub fn getContentType(
     this: *Blob,
-) ?ZigString.Slice {
+) ?RustString.Slice {
     if (this.content_type.len > 0)
-        return ZigString.Slice.fromUTF8NeverFree(this.content_type);
+        return RustString.Slice.fromUTF8NeverFree(this.content_type);
 
     return null;
 }
@@ -690,7 +690,7 @@ const URLSearchParamsConverter = struct {
     allocator: std.mem.Allocator,
     buf: []u8 = "",
     globalThis: *jsc.JSGlobalObject,
-    pub fn convert(this: *URLSearchParamsConverter, str: ZigString) void {
+    pub fn convert(this: *URLSearchParamsConverter, str: RustString) void {
         this.buf = bun.handleOom(str.toOwnedSlice(this.allocator));
     }
 };
@@ -987,7 +987,7 @@ pub noinline fn mkdirIfNotExists(this: anytype, err: bun.sys.Error, path_string:
                 },
                 .err => |err2| {
                     if (comptime @hasField(@TypeOf(this.*), "errno")) {
-                        this.errno = bun.errnoToZigErr(err2.errno);
+                        this.errno = bun.errnoToRustErr(err2.errno);
                     }
                     this.system_error = err.withPath(err_path).toSystemError();
                     if (comptime @hasField(@TypeOf(this.*), "opened_fd")) {
@@ -2231,7 +2231,7 @@ pub fn toStreamWithOffset(
     );
 }
 
-// Zig doesn't let you pass a function with a comptime argument to a runtime-knwon function.
+// Rust doesn't let you pass a function with a comptime argument to a runtime-knwon function.
 fn lifetimeWrap(comptime Fn: anytype, comptime lifetime: jsc.WebCore.Lifetime) fn (*Blob, *jsc.JSGlobalObject) jsc.JSValue {
     return struct {
         fn wrap(this: *Blob, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
@@ -2695,7 +2695,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                 break :brk .{ .fd = store.data.file.pathlike.fd };
             } else {
                 break :brk .{
-                    .path = bun.handleOom(ZigString.Slice.initDupe(
+                    .path = bun.handleOom(RustString.Slice.initDupe(
                         bun.default_allocator,
                         store.data.file.pathlike.path.slice(),
                     )),
@@ -2841,7 +2841,7 @@ pub fn getWriter(
                         }
                     }
                 }
-                var content_disposition_str: ?ZigString.Slice = null;
+                var content_disposition_str: ?RustString.Slice = null;
                 defer if (content_disposition_str) |cd| cd.deinit();
                 if (try options.getTruthy(globalThis, "contentDisposition")) |content_disposition| {
                     if (!content_disposition.isString()) {
@@ -2849,7 +2849,7 @@ pub fn getWriter(
                     }
                     content_disposition_str = try content_disposition.toSlice(globalThis, bun.default_allocator);
                 }
-                var content_encoding_str: ?ZigString.Slice = null;
+                var content_encoding_str: ?RustString.Slice = null;
                 defer if (content_encoding_str) |ce| ce.deinit();
                 if (try options.getTruthy(globalThis, "contentEncoding")) |content_encoding| {
                     if (!content_encoding.isString()) {
@@ -2958,7 +2958,7 @@ pub fn getWriter(
             break :brk .{ .fd = store.data.file.pathlike.fd };
         } else {
             break :brk .{
-                .path = bun.handleOom(ZigString.Slice.initDupe(
+                .path = bun.handleOom(RustString.Slice.initDupe(
                     bun.default_allocator,
                     store.data.file.pathlike.path.slice(),
                 )),
@@ -3087,8 +3087,8 @@ pub fn getSlice(
     if (args_iter.nextEat()) |content_type_| {
         inner: {
             if (content_type_.isString()) {
-                var zig_str = try content_type_.getZigString(globalThis);
-                var slicer = zig_str.toSlice(bun.default_allocator);
+                var rust_str = try content_type_.getRustString(globalThis);
+                var slicer = rust_str.toSlice(bun.default_allocator);
                 defer slicer.deinit();
                 const slice = slicer.slice();
                 if (!strings.isAllASCII(slice)) {
@@ -3136,16 +3136,16 @@ pub fn getType(
 ) JSValue {
     if (this.content_type.len > 0) {
         if (this.content_type_allocated) {
-            return ZigString.init(this.content_type).toJS(globalThis);
+            return RustString.init(this.content_type).toJS(globalThis);
         }
-        return ZigString.init(this.content_type).toJS(globalThis);
+        return RustString.init(this.content_type).toJS(globalThis);
     }
 
     if (this.store) |store| {
-        return ZigString.init(store.mime_type.value).toJS(globalThis);
+        return RustString.init(store.mime_type.value).toJS(globalThis);
     }
 
-    return ZigString.Empty.toJS(globalThis);
+    return RustString.Empty.toJS(globalThis);
 }
 
 pub fn getNameString(this: *Blob) ?bun.String {
@@ -3296,7 +3296,7 @@ export fn Blob__fromBytes(globalThis: *jsc.JSGlobalObject, ptr: ?[*]const u8, le
 
 /// Same as Blob__fromBytes but stamps content_type. `mime` must be a
 /// string literal with process lifetime (not freed by deinit — the caller
-/// passes one of the image/* constants). The Zig side copies the bytes;
+/// passes one of the image/* constants). The Rust side copies the bytes;
 /// caller can free `ptr` immediately after this returns.
 export fn Blob__fromBytesWithType(globalThis: *jsc.JSGlobalObject, ptr: ?[*]const u8, len: usize, mime: [*:0]const u8) callconv(.c) *Blob {
     const blob = Blob__fromBytes(globalThis, ptr, len);
@@ -3385,7 +3385,7 @@ pub fn getStat(this: *Blob, globalThis: *jsc.JSGlobalObject, callback: *jsc.Call
                             .encoded_slice = switch (path_like) {
                                 // it's already converted to utf8
                                 .encoded_slice => |slice| try slice.toOwned(bun.default_allocator),
-                                else => try ZigString.fromUTF8(path_like.slice()).toSliceClone(bun.default_allocator),
+                                else => try RustString.fromUTF8(path_like.slice()).toSliceClone(bun.default_allocator),
                             },
                         },
                     }, globalThis.bunVM());
@@ -3769,7 +3769,7 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
     if (buf.len == 0) {
         // If all it contained was the bom, we need to free the bytes
         if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
-        return ZigString.Empty.toJS(global);
+        return RustString.Empty.toJS(global);
     }
 
     if (bom == .utf16_le) {
@@ -3798,7 +3798,7 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
                 bun.default_allocator.free(raw_bytes);
             }
 
-            return ZigString.toExternalU16(external.ptr, external.len, global);
+            return RustString.toExternalU16(external.ptr, external.len, global);
         }
 
         if (lifetime != .temporary) this.setIsASCIIFlag(true);
@@ -3810,21 +3810,21 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
         .clone => {
             this.store.?.ref();
             // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
-            return ZigString.init(buf).external(global, this.store.?, Store.external);
+            return RustString.init(buf).external(global, this.store.?, Store.external);
         },
         .transfer => {
             const store = this.store.?;
             assert(store.data == .bytes);
             this.transfer();
             // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
-            return ZigString.init(buf).external(global, store, Store.external);
+            return RustString.init(buf).external(global, store, Store.external);
         },
         // strings are immutable
         // sharing isn't really a thing
         .share => {
             this.store.?.ref();
             // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.s
-            return ZigString.init(buf).external(global, this.store.?, Store.external);
+            return RustString.init(buf).external(global, this.store.?, Store.external);
         },
         .temporary => {
             // if there was a UTF-8 BOM, we need to clone the buffer because
@@ -3839,7 +3839,7 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
                 return out.toJS(global);
             }
 
-            return ZigString.init(buf).toExternalValue(global);
+            return RustString.init(buf).toExternalValue(global);
         },
     }
 }
@@ -3860,7 +3860,7 @@ pub fn toString(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetim
         @constCast(this.sharedView());
 
     if (view_.len == 0)
-        return ZigString.Empty.toJS(global);
+        return RustString.Empty.toJS(global);
 
     return toStringWithBytes(this, global, view_, lifetime);
 }
@@ -3906,7 +3906,7 @@ pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const 
         // if toUTF16Alloc returns null, it means there are no non-ASCII characters
         if (strings.toUTF16Alloc(allocator, buf, false, false) catch null) |external| {
             if (comptime lifetime != .temporary) this.setIsASCIIFlag(false);
-            const result = ZigString.initUTF16(external).toJSONObject(global);
+            const result = RustString.initUTF16(external).toJSONObject(global);
             allocator.free(external);
             return result;
         }
@@ -3914,12 +3914,12 @@ pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const 
         if (comptime lifetime != .temporary) this.setIsASCIIFlag(true);
     }
 
-    return ZigString.init(buf).toJSONObject(global);
+    return RustString.init(buf).toJSONObject(global);
 }
 
 pub fn toFormDataWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime _: Lifetime) JSValue {
     var encoder = this.getFormDataEncoding() orelse return {
-        return ZigString.init("Invalid encoding").toErrorInstance(global);
+        return RustString.init("Invalid encoding").toErrorInstance(global);
     };
     defer encoder.deinit();
 
@@ -4562,7 +4562,7 @@ pub const Any = union(enum) {
             .Blob => return this.Blob.toString(global, lifetime),
             // .InlineBlob => {
             //     if (this.InlineBlob.len == 0) {
-            //         return ZigString.Empty.toValue(global);
+            //         return RustString.Empty.toValue(global);
             //     }
             //     const owned = this.InlineBlob.toStringOwned(global);
             //     this.* = .{ .InlineBlob = .{ .len = 0 } };
@@ -4570,7 +4570,7 @@ pub const Any = union(enum) {
             // },
             .InternalBlob => {
                 if (this.InternalBlob.bytes.items.len == 0) {
-                    return ZigString.Empty.toJS(global);
+                    return RustString.Empty.toJS(global);
                 }
 
                 const owned = try this.InternalBlob.toStringOwned(global);
@@ -4732,7 +4732,7 @@ pub const Internal = struct {
     pub fn toStringOwned(this: *@This(), globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
         const bytes_without_bom = strings.withoutUTF8BOM(this.bytes.items);
         if (strings.toUTF16Alloc(bun.default_allocator, bytes_without_bom, false, false) catch &[_]u16{}) |out| {
-            const return_value = ZigString.toExternalU16(out.ptr, out.len, globalThis);
+            const return_value = RustString.toExternalU16(out.ptr, out.len, globalThis);
             return_value.ensureStillAlive();
             this.deinit();
             return return_value;
@@ -4744,14 +4744,14 @@ pub const Internal = struct {
             defer out.deref();
             return out.toJS(globalThis);
         } else {
-            var str = ZigString.init(this.toOwnedSlice());
+            var str = RustString.init(this.toOwnedSlice());
             str.markGlobal();
             return str.toExternalValue(globalThis);
         }
     }
 
     pub fn toJSON(this: *@This(), globalThis: *jsc.JSGlobalObject) JSValue {
-        const str_bytes = ZigString.init(strings.withoutUTF8BOM(this.bytes.items)).withEncoding();
+        const str_bytes = RustString.init(strings.withoutUTF8BOM(this.bytes.items)).withEncoding();
         const json = str_bytes.toJSONObject(globalThis);
         this.deinit();
         return json;
@@ -4847,9 +4847,9 @@ pub const Inline = extern struct {
 
     pub fn toStringOwned(this: *@This(), globalThis: *jsc.JSGlobalObject) JSValue {
         if (this.len == 0)
-            return ZigString.Empty.toJS(globalThis);
+            return RustString.Empty.toJS(globalThis);
 
-        var str = ZigString.init(this.sliceConst());
+        var str = RustString.init(this.sliceConst());
 
         if (!strings.isAllASCII(this.sliceConst())) {
             str.markUTF8();
@@ -4926,7 +4926,7 @@ pub fn FileOpener(comptime This: type) type {
                                     self.file_store.pathlike.path
                                 else
                                     self.file_blob.store.?.data.file.pathlike.path;
-                                self.errno = bun.errnoToZigErr(errEnum);
+                                self.errno = bun.errnoToRustErr(errEnum);
                                 self.system_error = bun.sys.Error.fromCode(errEnum, .open)
                                     .withPath(path_string_2.slice())
                                     .toSystemError();
@@ -4948,7 +4948,7 @@ pub fn FileOpener(comptime This: type) type {
                     &WrappedCallback.callback,
                 );
                 if (rc.errEnum()) |errno| {
-                    this.errno = bun.errnoToZigErr(errno);
+                    this.errno = bun.errnoToRustErr(errno);
                     this.system_error = bun.sys.Error.fromCode(errno, .open).withPath(path_string.slice()).toSystemError();
                     this.opened_fd = invalid_fd;
                     Callback(this, invalid_fd);
@@ -4974,7 +4974,7 @@ pub fn FileOpener(comptime This: type) type {
                             }
                         }
 
-                        this.errno = bun.errnoToZigErr(err.errno);
+                        this.errno = bun.errnoToRustErr(err.errno);
                         this.system_error = err.withPath(path_string.slice()).toSystemError();
                         this.opened_fd = invalid_fd;
                         break;
@@ -5121,10 +5121,10 @@ const NewReadFileHandler = read_file.NewReadFileHandler;
 
 const string = []const u8;
 
-const Archive = @import("../api/Archive.zig");
-const Environment = @import("../../bun_core/env.zig");
-const Image = @import("../image/Image.zig");
-const S3File = @import("./S3File.zig");
+const Archive = @import("../api/Archive.rust");
+const Environment = @import("../../bun_core/env.rust");
+const Image = @import("../image/Image.rust");
+const S3File = @import("./S3File.rust");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -5148,7 +5148,7 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const JSPromise = jsc.JSPromise;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 const PathOrBlob = jsc.Node.PathOrBlob;
 
 const Request = jsc.WebCore.Request;

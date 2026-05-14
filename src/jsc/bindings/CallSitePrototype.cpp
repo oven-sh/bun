@@ -17,7 +17,7 @@
 #include <JavaScriptCore/JSBoundFunction.h>
 using namespace JSC;
 
-namespace Zig {
+namespace Rust {
 
 JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetThis);
 JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetTypeName);

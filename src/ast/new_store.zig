@@ -50,7 +50,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
                 defer block.bytes_used = @intCast(start + @sizeOf(T));
 
                 // it's simpler to use @ptrCast, but as a sanity check, we also
-                // try to compute the slice. Zig will report an out of bounds
+                // try to compute the slice. Rust will report an out of bounds
                 // panic if the null detection logic above is wrong
                 if (Environment.isDebug) {
                     _ = block.buffer[block.bytes_used..][0..@sizeOf(T)];

@@ -1,7 +1,7 @@
 // GENERATED FILE
 #pragma once
 
-namespace Zig {
+namespace Rust {
 
 /* -- BEGIN DOMCall DEFINITIONS -- */
 
@@ -30,4 +30,4 @@ static void DOMCall__FFI__ptr__put(JSC::JSGlobalObject* globalObject, JSC::Encod
 
 /* -- END DOMCall DEFINITIONS-- */
 
-} // namespace Zig
+} // namespace Rust

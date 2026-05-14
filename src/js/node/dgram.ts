@@ -397,7 +397,7 @@ function _connect(port, address, callback) {
   state.handle.lookup(address, afterDns);
 }
 
-const connectFn = $newZigFunction("udp_socket.zig", "UDPSocket.jsConnect", 2);
+const connectFn = $newRustFunction("udp_socket.rust", "UDPSocket.jsConnect", 2);
 
 function doConnect(ex, self, ip, address, port, callback) {
   const state = self[kStateSymbol];
@@ -427,7 +427,7 @@ function doConnect(ex, self, ip, address, port, callback) {
   process.nextTick(() => self.emit("connect"));
 }
 
-const disconnectFn = $newZigFunction("udp_socket.zig", "UDPSocket.jsDisconnect", 0);
+const disconnectFn = $newRustFunction("udp_socket.rust", "UDPSocket.jsDisconnect", 0);
 
 Socket.prototype.disconnect = function () {
   const state = this[kStateSymbol];

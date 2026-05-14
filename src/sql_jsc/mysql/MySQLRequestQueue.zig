@@ -219,8 +219,8 @@ const Queue = bun.LinearFifo(*JSMySQLQuery, .Dynamic);
 
 const debug = bun.Output.scoped(.MySQLRequestQueue, .visible);
 
-const JSMySQLQuery = @import("./JSMySQLQuery.zig");
-const MySQLConnection = @import("./JSMySQLConnection.zig");
+const JSMySQLQuery = @import("./JSMySQLQuery.rust");
+const MySQLConnection = @import("./JSMySQLConnection.rust");
 const bun = @import("bun");
 
 const jsc = bun.jsc;

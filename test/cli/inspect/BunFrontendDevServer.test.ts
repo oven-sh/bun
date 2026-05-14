@@ -530,7 +530,7 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
     const consoleLogPromise = session.waitForEvent("BunFrontendDevServer.consoleLog");
 
     // Send a console log message from the client
-    // 'l' is the message type for console.log (see ConsoleLogKind enum in DevServer.zig)
+    // 'l' is the message type for console.log (see ConsoleLogKind enum in DevServer.rust)
     ws.send("ll" + "Hello from client test");
 
     // Verify we received the consoleLog event

@@ -271,7 +271,7 @@ pub const FieldType = enum(u8) {
     MYSQL_TYPE_GEOMETRY = 0xff,
     _,
 
-    pub const fromJS = @import("../../sql_jsc/mysql/MySQLValue.zig").fieldTypeFromJS;
+    pub const fromJS = @import("../../sql_jsc/mysql/MySQLValue.rust").fieldTypeFromJS;
 
     pub fn isBinaryFormatSupported(this: FieldType) bool {
         return switch (this) {
@@ -291,7 +291,7 @@ pub const FieldType = enum(u8) {
     }
 };
 
-pub const Value = @import("../../sql_jsc/mysql/MySQLValue.zig").Value;
+pub const Value = @import("../../sql_jsc/mysql/MySQLValue.rust").Value;
 
 pub const MySQLInt8 = int1;
 pub const MySQLInt16 = int2;

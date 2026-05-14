@@ -230,9 +230,9 @@ struct us_loop_t *us_timer_loop(struct us_timer_t *t);
  * into the loop only while non-empty (zero loop overhead for unused kinds).
  *
  * Event dispatch is by socket->kind: loop.c hands raw bytes to us_dispatch_*
- * (defined in Zig/C++), which switches on kind into the right handler with the
+ * (defined in Rust/C++), which switches on kind into the right handler with the
  * ext already typed. The vtable on the group is for the few kinds whose
- * handlers must remain indirect (uWS C++); Zig kinds compile to direct calls
+ * handlers must remain indirect (uWS C++); Rust kinds compile to direct calls
  * and never read it.
  *
  * TLS is per-socket (`s->ssl`), not per-group. SSL_CTX is owned externally
@@ -283,7 +283,7 @@ struct us_socket_group_t {
 };
 
 /* Initialise an embedded group. Does NOT link into the loop — that happens
- * lazily on first socket add. Idempotent. vtable/ext may be NULL (Zig kinds
+ * lazily on first socket add. Idempotent. vtable/ext may be NULL (Rust kinds
  * use neither). */
 void us_socket_group_init(us_socket_group_r group, us_loop_r loop,
     const struct us_socket_vtable_t *vtable, void *ext) __attribute__((nonnull(1, 2)));

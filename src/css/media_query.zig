@@ -1,4 +1,4 @@
-pub const css = @import("./css_parser.zig");
+pub const css = @import("./css_parser.rust");
 pub const Error = css.Error;
 
 const Length = css.css_values.length.Length;

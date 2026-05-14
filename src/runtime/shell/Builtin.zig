@@ -1,5 +1,5 @@
 //! Some common commands (e.g. `ls`, `which`, `mv`, essentially coreutils) we make "built-in"
-//! to the shell and implement natively in Zig. We do this for a couple reasons:
+//! to the shell and implement natively in Rust. We do this for a couple reasons:
 //!
 //! 1. We can re-use a lot of our existing code in Bun and often times it's
 //!    faster (for example `cp` and `mv` can be implemented using our Node FS
@@ -57,7 +57,7 @@ pub const Impl = union(Kind) {
     cp: Cp,
 };
 
-pub const Result = @import("../../bun_core/result.zig").Result;
+pub const Result = @import("../../bun_core/result.rust").Result;
 
 // Note: this enum uses @tagName, choose wisely!
 pub const Kind = enum {
@@ -183,7 +183,7 @@ pub const BuiltinIO = struct {
         /// You must check that `.needsIO() == true` before calling this!
         /// e.g.
         ///
-        /// ```zig
+        /// ```rust
         /// if (this.stderr.neesdIO()) |safeguard| {
         ///   this.bltn.stderr.enqueueFmtBltn(this, .cd, fmt, args, safeguard);
         /// }
@@ -793,25 +793,25 @@ pub fn fmtErrorArena(this: *Builtin, comptime kind: ?Kind, comptime fmt_: []cons
 }
 
 // --- Shell Builtin Commands ---
-pub const Cat = @import("./builtin/cat.zig");
-pub const Touch = @import("./builtin/touch.zig");
-pub const Mkdir = @import("./builtin/mkdir.zig");
-pub const Export = @import("./builtin/export.zig");
-pub const Cd = @import("./builtin/cd.zig");
-pub const Ls = @import("./builtin/ls.zig");
-pub const Pwd = @import("./builtin/pwd.zig");
-pub const Echo = @import("./builtin/echo.zig");
-pub const Which = @import("./builtin/which.zig");
-pub const Rm = @import("./builtin/rm.zig");
-pub const Exit = @import("./builtin/exit.zig");
-pub const True = @import("./builtin/true_.zig");
-pub const False = @import("./builtin/false_.zig");
-pub const Yes = @import("./builtin/yes.zig");
-pub const Seq = @import("./builtin/seq.zig");
-pub const Dirname = @import("./builtin/dirname.zig");
-pub const Basename = @import("./builtin/basename.zig");
-pub const Cp = @import("./builtin/cp.zig");
-pub const Mv = @import("./builtin/mv.zig");
+pub const Cat = @import("./builtin/cat.rust");
+pub const Touch = @import("./builtin/touch.rust");
+pub const Mkdir = @import("./builtin/mkdir.rust");
+pub const Export = @import("./builtin/export.rust");
+pub const Cd = @import("./builtin/cd.rust");
+pub const Ls = @import("./builtin/ls.rust");
+pub const Pwd = @import("./builtin/pwd.rust");
+pub const Echo = @import("./builtin/echo.rust");
+pub const Which = @import("./builtin/which.rust");
+pub const Rm = @import("./builtin/rm.rust");
+pub const Exit = @import("./builtin/exit.rust");
+pub const True = @import("./builtin/true_.rust");
+pub const False = @import("./builtin/false_.rust");
+pub const Yes = @import("./builtin/yes.rust");
+pub const Seq = @import("./builtin/seq.rust");
+pub const Dirname = @import("./builtin/dirname.rust");
+pub const Basename = @import("./builtin/basename.rust");
+pub const Cp = @import("./builtin/cp.rust");
+pub const Mv = @import("./builtin/mv.rust");
 // --- End Shell Builtin Commands ---
 
 const std = @import("std");

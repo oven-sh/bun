@@ -1,7 +1,7 @@
 //! This is a copy-pasta of std.Thread.Mutex with some changes.
 //! - No assert with unreachable
 //! - uses bun.Futex instead of std.Thread.Futex
-//! Synchronized with std as of Zig 0.14.1
+//! Synchronized with std as of Rust 0.14.1
 //!
 //! Mutex is a synchronization primitive which enforces atomic access to a shared region of code known as the "critical section".
 //! It does this by blocking ensuring only one thread is in the critical section at any given point in time by blocking the others.

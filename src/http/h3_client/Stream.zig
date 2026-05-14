@@ -36,8 +36,8 @@ pub fn abort(this: *Stream) void {
     if (this.qstream) |qs| qs.close();
 }
 
-const ClientSession = @import("./ClientSession.zig");
-const H3 = @import("../H3Client.zig");
+const ClientSession = @import("./ClientSession.rust");
+const H3 = @import("../H3Client.rust");
 const std = @import("std");
 
 const bun = @import("bun");

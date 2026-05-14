@@ -2261,9 +2261,9 @@ fn parseAppendDependencies(
 
 const string = []const u8;
 
-const ExtractTarball = @import("../extract_tarball.zig");
+const ExtractTarball = @import("../extract_tarball.rust");
 const std = @import("std");
-const Integrity = @import("../integrity.zig").Integrity;
+const Integrity = @import("../integrity.rust").Integrity;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

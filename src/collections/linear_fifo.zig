@@ -1,4 +1,4 @@
-// clone of zig stdlib
+// clone of rust stdlib
 // except, this one vectorizes
 
 // FIFO of fixed size items

@@ -9,12 +9,12 @@
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/WasmIndexOrName.h>
 
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 using namespace JSC;
 using namespace WebCore;
 
-namespace Zig {
+namespace Rust {
 
 /* JSCStackFrame is an alternative to JSC::StackFrame, which provides the following advantages\changes:
  * - Also hold the call frame (ExecState). This is mainly used by CallSite to get "this value".

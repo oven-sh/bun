@@ -1,6 +1,6 @@
 #include "root.h"
 
-namespace Zig {
+namespace Rust {
 class GlobalObject;
 }
 
@@ -10,6 +10,6 @@ class JSValue;
 
 namespace Bun {
 
-JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
+JSC::JSValue createEnvironmentVariablesMap(Rust::GlobalObject* globalObject);
 
 }

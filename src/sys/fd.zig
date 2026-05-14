@@ -56,7 +56,7 @@ pub const FD = packed struct(backing_int) {
             @compileError(std.fmt.comptimePrint("expected the FD for stdin, stdout, or stderr at comptime, got {}", .{value}));
         return if (is_posix)
             switch (value) {
-                // workaround for https://github.com/ziglang/zig/issues/23307
+                // workaround for https://github.com/rustlang/rust/issues/23307
                 // we can construct these values as decls, but not as a function's return value
                 0 => comptime_stdin,
                 1 => comptime_stdout,
@@ -313,10 +313,10 @@ pub const FD = packed struct(backing_int) {
         return result;
     }
 
-    pub const fromJS = @import("../sys_jsc/fd_jsc.zig").fromJS;
-    pub const fromJSValidated = @import("../sys_jsc/fd_jsc.zig").fromJSValidated;
-    pub const toJS = @import("../sys_jsc/fd_jsc.zig").toJS;
-    pub const toJSWithoutMakingLibUVOwned = @import("../sys_jsc/fd_jsc.zig").toJSWithoutMakingLibUVOwned;
+    pub const fromJS = @import("../sys_jsc/fd_jsc.rust").fromJS;
+    pub const fromJSValidated = @import("../sys_jsc/fd_jsc.rust").fromJSValidated;
+    pub const toJS = @import("../sys_jsc/fd_jsc.rust").toJS;
+    pub const toJSWithoutMakingLibUVOwned = @import("../sys_jsc/fd_jsc.rust").toJSWithoutMakingLibUVOwned;
 
     pub const Stdio = enum(u8) {
         std_in = 0,
@@ -414,7 +414,7 @@ pub const FD = packed struct(backing_int) {
                     // instead of gracefully handling invalid file descriptors.
                     // It is assumed that debug builds are ran on systems that
                     // support the standard library functions (since they would
-                    // likely have run the Zig compiler, and it's not the end of
+                    // likely have run the Rust compiler, and it's not the end of
                     // the world if this fails.
                     const path = std.os.getFdPath(fd_native, &path_buf) catch |err| switch (err) {
                         error.FileNotFound => {
@@ -502,7 +502,7 @@ pub const FD = packed struct(backing_int) {
 
     // The following functions are from bun.sys but with the 'f' prefix dropped
     // where it is relevant. These functions all take FD as the first argument,
-    // so that makes them Zig methods, even when declared in a separate file.
+    // so that makes them Rust methods, even when declared in a separate file.
     pub const chmod = bun.sys.fchmod;
     pub const chmodat = bun.sys.fchmodat;
     pub const chown = bun.sys.fchown;
@@ -681,7 +681,7 @@ pub var windows_cached_stdin: FD = undefined;
 pub var windows_cached_stdout: FD = undefined;
 pub var windows_cached_stderr: FD = undefined;
 
-// workaround for https://github.com/ziglang/zig/issues/23307
+// workaround for https://github.com/rustlang/rust/issues/23307
 // we can construct these values as decls, but not as a function's return value
 const comptime_stdin: FD = if (os != .windows)
     .{ .kind = .system, .value = .{ .as_system = 0 } }

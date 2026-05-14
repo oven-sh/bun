@@ -2,7 +2,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     const object = JSValue.createEmptyObject(globalThis, 2);
     object.put(
         globalThis,
-        ZigString.static("parse"),
+        RustString.static("parse"),
         jsc.JSFunction.create(
             globalThis,
             "parse",
@@ -13,7 +13,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     );
     object.put(
         globalThis,
-        ZigString.static("stringify"),
+        RustString.static("stringify"),
         jsc.JSFunction.create(
             globalThis,
             "stringify",
@@ -807,7 +807,7 @@ const Stringifier = struct {
 
     /// Returns true when `str` would be parsed back as a number by `YAML.parse`.
     ///
-    /// This mirrors the rules in `src/interchange/yaml.zig`'s `tryResolveNumber`:
+    /// This mirrors the rules in `src/interchange/yaml.rust`'s `tryResolveNumber`:
     /// - Optional leading sign, optionally followed by `.inf`/`.Inf`/`.INF` for signed infinity.
     /// - Otherwise a numeric mantissa: digits/`.`/`e`/`E`/hex letters, plus additional `+`/`-`
     ///   (the parser accepts any number of `+` after the leading sign as long as no `x` was
@@ -1070,5 +1070,5 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const MarkedArgumentBuffer = jsc.MarkedArgumentBuffer;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 const wtf = bun.jsc.wtf;

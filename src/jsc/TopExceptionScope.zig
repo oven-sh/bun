@@ -3,10 +3,10 @@ const size = if (Environment.allow_assert or Environment.enable_asan) 56 else 8;
 const alignment = 8;
 
 /// Binding for JSC::TopExceptionScope. This should be used rarely, only at translation boundaries between
-/// JSC's exception checking and Zig's. Make sure not to move it after creation. Use this if you are
+/// JSC's exception checking and Rust's. Make sure not to move it after creation. Use this if you are
 /// making an external call that has no other way to indicate an exception.
 ///
-/// ```zig
+/// ```rust
 /// // Declare a TopExceptionScope surrounding the call that may throw an exception
 /// var scope: TopExceptionScope = undefined;
 /// scope.init(global, @src());
@@ -15,7 +15,7 @@ const alignment = 8;
 /// const value: i32 = external_call(vm, foo, bar, baz);
 /// // Calling returnIfException() suffices to prove that we checked for an exception.
 /// // This function's caller does not need to use a TopExceptionScope or ThrowScope
-/// // because it can use Zig error unions.
+/// // because it can use Rust error unions.
 /// try scope.returnIfException();
 /// return value;
 /// ```
@@ -132,7 +132,7 @@ pub const TopExceptionScope = struct {
 /// exceptions and you only need a TopExceptionScope to prove that you are checking exceptions correctly.
 /// Gated by `Environment.ci_assert`.
 ///
-/// ```zig
+/// ```rust
 /// var scope: ExceptionValidationScope = undefined;
 /// // these do nothing when ci_assert == false
 /// scope.init(global, @src());

@@ -160,11 +160,11 @@ pub const PromisePair = struct {
     }
 };
 
-const protocol = @import("../../valkey/valkey_protocol.zig");
+const protocol = @import("../../valkey/valkey_protocol.rust");
 const std = @import("std");
 
 const bun = @import("bun");
 const JSError = bun.JSError;
 const jsc = bun.jsc;
 const node = bun.api.node;
-const Slice = jsc.ZigString.Slice;
+const Slice = jsc.RustString.Slice;

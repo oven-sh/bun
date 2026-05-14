@@ -6,7 +6,7 @@ pub fn VersionType(comptime IntType: type) type {
         major: IntType = 0,
         minor: IntType = 0,
         patch: IntType = 0,
-        _tag_padding: [if (IntType == u32) 4 else 0]u8 = .{0} ** if (IntType == u32) 4 else 0, // [see padding_checker.zig]
+        _tag_padding: [if (IntType == u32) 4 else 0]u8 = .{0} ** if (IntType == u32) 4 else 0, // [see padding_checker.rust]
         tag: Tag = .{},
 
         const This = @This();

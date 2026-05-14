@@ -237,7 +237,7 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
                 bun.debugAssert(rem.buf.len == 0);
 
                 const str = bun.String.fromBytes(bunTest.collection.filter_buffer.items);
-                groupLog.log("matches_filter \"{f}\"", .{std.zig.fmtString(bunTest.collection.filter_buffer.items)});
+                groupLog.log("matches_filter \"{f}\"", .{std.rust.fmtString(bunTest.collection.filter_buffer.items)});
                 matches_filter = filter_regex.matches(str);
             };
 
@@ -458,7 +458,7 @@ pub fn createUnbound(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue,
 
     const value = scope_functions.toJS(globalThis);
     value.ensureStillAlive();
-    // Write into the C++ m_each WriteBarrier so GC visits it. The Zig `each` field
+    // Write into the C++ m_each WriteBarrier so GC visits it. The Rust `each` field
     // lives in unmanaged memory that JSC never scans; without this the array can be
     // collected between `.each(arr)` and the trailing `("name", cb)` call.
     if (each != .zero) js.eachSetCached(value, globalThis, each);

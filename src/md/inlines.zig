@@ -731,17 +731,17 @@ pub fn findHtmlTag(self: *const Parser, content: []const u8, start: usize) ?usiz
 }
 
 const bun = @import("bun");
-const helpers = @import("./helpers.zig");
+const helpers = @import("./helpers.rust");
 const std = @import("std");
 
-const autolinks_mod = @import("./autolinks.zig");
+const autolinks_mod = @import("./autolinks.rust");
 const findPermissiveAutolink = autolinks_mod.findPermissiveAutolink;
 const isEmphBoundaryResolved = autolinks_mod.isEmphBoundaryResolved;
 
-const parser_mod = @import("./parser.zig");
+const parser_mod = @import("./parser.rust");
 const Parser = parser_mod.Parser;
 
-const types = @import("./types.zig");
+const types = @import("./types.rust");
 const Attribute = types.Attribute;
 const OFF = types.OFF;
 const SpanType = types.SpanType;

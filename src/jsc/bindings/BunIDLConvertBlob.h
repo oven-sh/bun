@@ -2,7 +2,7 @@
 #include "BunIDLTypes.h"
 #include "BunIDLConvertBase.h"
 #include "blob.h"
-#include "ZigGeneratedClasses.h"
+#include "RustGeneratedClasses.h"
 
 namespace Bun {
 struct IDLBlobRef : IDLBunInterface<WebCore::BlobImpl, WebCore::BlobImplRefDerefTraits> {};

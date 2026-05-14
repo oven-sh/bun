@@ -1,5 +1,5 @@
 #include "JSCommonJSExtensions.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "BunProcess.h"
 #include "ModuleLoader.h"
 #include "JSCommonJSModule.h"
@@ -88,7 +88,7 @@ void JSCommonJSExtensions::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    Zig::GlobalObject* global = defaultGlobalObject(globalObject());
+    Rust::GlobalObject* global = defaultGlobalObject(globalObject());
     JSC::JSFunction* fnLoadJS = JSC::JSFunction::create(
         vm,
         global,
@@ -136,16 +136,16 @@ void JSCommonJSExtensions::finishCreation(JSC::VM& vm)
 }
 
 extern "C" void NodeModuleModule__onRequireExtensionModify(
-    Zig::GlobalObject* globalObject,
+    Rust::GlobalObject* globalObject,
     const BunString* key,
     BunLoaderType loader,
     JSC::JSValue value);
 
 extern "C" void NodeModuleModule__onRequireExtensionModifyNonFunction(
-    Zig::GlobalObject* globalObject,
+    Rust::GlobalObject* globalObject,
     const BunString* key);
 
-void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, JSC::JSValue value)
+void onAssign(Rust::GlobalObject* globalObject, JSC::PropertyName propertyName, JSC::JSValue value)
 {
     if (propertyName.isSymbol()) return;
     auto* name = propertyName.publicName();
@@ -201,7 +201,7 @@ bool JSCommonJSExtensions::deleteProperty(JSC::JSCell* cell, JSC::JSGlobalObject
     return deleted;
 }
 
-extern "C" uint32_t JSCommonJSExtensions__appendFunction(Zig::GlobalObject* globalObject, JSC::JSValue value)
+extern "C" uint32_t JSCommonJSExtensions__appendFunction(Rust::GlobalObject* globalObject, JSC::JSValue value)
 {
     JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
     extensions->m_registeredFunctions.append(JSC::WriteBarrier<Unknown>());
@@ -209,13 +209,13 @@ extern "C" uint32_t JSCommonJSExtensions__appendFunction(Zig::GlobalObject* glob
     return extensions->m_registeredFunctions.size() - 1;
 }
 
-extern "C" void JSCommonJSExtensions__setFunction(Zig::GlobalObject* globalObject, uint32_t index, JSC::JSValue value)
+extern "C" void JSCommonJSExtensions__setFunction(Rust::GlobalObject* globalObject, uint32_t index, JSC::JSValue value)
 {
     JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
     extensions->m_registeredFunctions[index].set(globalObject->vm(), globalObject, value);
 }
 
-extern "C" uint32_t JSCommonJSExtensions__swapRemove(Zig::GlobalObject* globalObject, uint32_t index)
+extern "C" uint32_t JSCommonJSExtensions__swapRemove(Rust::GlobalObject* globalObject, uint32_t index)
 {
     JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
     ASSERT(extensions->m_registeredFunctions.size() > 0);
@@ -243,7 +243,7 @@ extern "C" uint32_t JSCommonJSExtensions__swapRemove(Zig::GlobalObject* globalOb
 JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, BunLoaderType loaderType)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    Zig::GlobalObject* global = defaultGlobalObject(globalObject);
+    Rust::GlobalObject* global = defaultGlobalObject(globalObject);
     JSC::JSObject* modValue = callFrame->argument(0).getObject();
     if (!modValue) {
         throwTypeError(globalObject, scope, "Module._extensions['.js'] must be called with a CommonJS module object"_s);

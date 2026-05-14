@@ -24,7 +24,7 @@ struct Http3Response {
         Http3ResponseData *d = getHttpResponseData();
         if (d->state & Http3ResponseData::HTTP_STATUS_CALLED) return this;
         d->state |= Http3ResponseData::HTTP_STATUS_CALLED;
-        /* Zig hands us "200 OK"; HTTP/3 wants only the 3-digit code. */
+        /* Rust hands us "200 OK"; HTTP/3 wants only the 3-digit code. */
         std::string_view code = status.size() >= 3 ? status.substr(0, 3) : std::string_view{"200"};
         appendHeader(d, ":status", code);
         return this;

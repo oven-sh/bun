@@ -3,7 +3,7 @@
 #include "headers.h"
 
 #include "ImportMetaObject.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -53,7 +53,7 @@
 #include "isBuiltinModule.h"
 #include "WebCoreJSBuiltins.h"
 
-namespace Zig {
+namespace Rust {
 using namespace JSC;
 using namespace WebCore;
 
@@ -73,9 +73,9 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
         JSC::JSValue moduleName = callFrame->argument(0);
 
         auto doIt = [&](const WTF::String& fromStr) -> JSC::EncodedJSValue {
-            Zig::GlobalObject* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-            if (zigGlobalObject->onLoadPlugins.hasVirtualModules()) {
-                if (auto result = zigGlobalObject->onLoadPlugins.resolveVirtualModule(fromStr, String())) {
+            Rust::GlobalObject* rustGlobalObject = uncheckedDowncast<Rust::GlobalObject>(globalObject);
+            if (rustGlobalObject->onLoadPlugins.hasVirtualModules()) {
+                if (auto result = rustGlobalObject->onLoadPlugins.resolveVirtualModule(fromStr, String())) {
                     if (fromStr == result.value())
                         return JSC::JSValue::encode(moduleName);
 
@@ -143,13 +143,13 @@ ImportMetaObject* ImportMetaObject::create(JSC::VM& vm, JSC::JSGlobalObject* glo
 ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, const WTF::String& url)
 {
     VM& vm = globalObject->vm();
-    Zig::GlobalObject* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    Rust::GlobalObject* rustGlobalObject = uncheckedDowncast<Rust::GlobalObject>(globalObject);
     bool isBake = url.startsWith("bake:"_s);
 
     // Get the appropriate structure
     Structure* structure = isBake
-        ? zigGlobalObject->ImportMetaBakeObjectStructure()
-        : zigGlobalObject->ImportMetaObjectStructure();
+        ? rustGlobalObject->ImportMetaBakeObjectStructure()
+        : rustGlobalObject->ImportMetaObjectStructure();
 
     return create(vm, globalObject, structure, url);
 }
@@ -194,7 +194,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireResolve, (JSC::JSGlobalObject * global
 
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto* globalObject = uncheckedDowncast<Rust::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
@@ -292,7 +292,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto* globalObject = dynamicDowncast<Rust::GlobalObject>(lexicalGlobalObject);
 
     JSC::JSValue moduleName = callFrame->argument(0);
     JSValue from = callFrame->argument(1);
@@ -422,7 +422,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto* globalObject = uncheckedDowncast<Rust::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
@@ -589,7 +589,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsImportMetaObjectSetter_require, (JSGlobalObject * jsG
 
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_env, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject);
+    auto* globalObject = uncheckedDowncast<Rust::GlobalObject>(jsGlobalObject);
     return JSValue::encode(globalObject->m_processEnvObject.getInitializedOnMainThread(globalObject));
 }
 

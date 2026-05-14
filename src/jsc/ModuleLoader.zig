@@ -1,9 +1,9 @@
 const ModuleLoader = @This();
 
-pub const node_fallbacks = @import("../resolver/node_fallbacks.zig");
-pub const AsyncModule = @import("./AsyncModule.zig").AsyncModule;
-pub const RuntimeTranspilerStore = @import("./RuntimeTranspilerStore.zig").RuntimeTranspilerStore;
-pub const HardcodedModule = @import("../resolve_builtins/HardcodedModule.zig").HardcodedModule;
+pub const node_fallbacks = @import("../resolver/node_fallbacks.rust");
+pub const AsyncModule = @import("./AsyncModule.rust").AsyncModule;
+pub const RuntimeTranspilerStore = @import("./RuntimeTranspilerStore.rust").RuntimeTranspilerStore;
+pub const HardcodedModule = @import("../resolve_builtins/HardcodedModule.rust").HardcodedModule;
 
 transpile_source_code_arena: ?*bun.ArenaAllocator = null,
 eval_source: ?*logger.Source = null,
@@ -55,7 +55,7 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, input
 
         .{
             .data = .{
-                .encoded_slice = ZigString.Slice.fromUTF8NeverFree(file.contents),
+                .encoded_slice = RustString.Slice.fromUTF8NeverFree(file.contents),
             },
             .dirfd = tmpdir,
             .file = .{ .fd = tmpfile.fd },
@@ -627,8 +627,8 @@ pub fn transpileSourceCode(
 
         //     return ResolvedSource{
         //         .allocator = if (jsc_vm.has_loaded) &jsc_vm.allocator else null,
-        //         .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, source.contents) catch unreachable),
-        //         .specifier = ZigString.init(specifier),
+        //         .source_code = RustString.init(jsc_vm.allocator.dupe(u8, source.contents) catch unreachable),
+        //         .specifier = RustString.init(specifier),
         //         .source_url = input_specifier.createIfDifferent(path.text),
         //         .tag = ResolvedSource.Tag.wasm,
         //     };
@@ -644,7 +644,7 @@ pub fn transpileSourceCode(
                         const globalValue = decoded.encode();
                         globalValue.put(
                             globalThis,
-                            ZigString.static("wasmSourceBytes"),
+                            RustString.static("wasmSourceBytes"),
                             try jsc.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
                         );
                     }
@@ -1235,7 +1235,7 @@ export fn Bun__transpileVirtualModule(
     globalObject: *JSGlobalObject,
     specifier_ptr: *const bun.String,
     referrer_ptr: *const bun.String,
-    source_code: *ZigString,
+    source_code: *RustString,
     loader_: api.Loader,
     ret: *jsc.ErrorableResolvedSource,
 ) bool {
@@ -1350,23 +1350,23 @@ const debug = Output.scoped(.ModuleLoader, .hidden);
 
 const string = []const u8;
 
-const Fs = @import("../resolver/fs.zig");
-const Runtime = @import("../js_parser/runtime.zig");
-const analyze_transpiled_module = @import("../bundler/analyze_transpiled_module.zig");
-const ast = @import("../options_types/import_record.zig");
-const node_module_module = @import("./NodeModuleModule.zig");
+const Fs = @import("../resolver/fs.rust");
+const Runtime = @import("../js_parser/runtime.rust");
+const analyze_transpiled_module = @import("../bundler/analyze_transpiled_module.rust");
+const ast = @import("../options_types/import_record.rust");
+const node_module_module = @import("./NodeModuleModule.rust");
 const std = @import("std");
 const panic = std.debug.panic;
 
-const options = @import("../bundler/options.zig");
+const options = @import("../bundler/options.rust");
 const ModuleType = options.ModuleType;
 
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
+const MacroRemap = @import("../resolver/package_json.rust").MacroMap;
+const PackageJSON = @import("../resolver/package_json.rust").PackageJSON;
 
-const dumpSource = @import("./RuntimeTranspilerStore.zig").dumpSource;
-const dumpSourceString = @import("./RuntimeTranspilerStore.zig").dumpSourceString;
-const setBreakPointOnFirstLine = @import("./RuntimeTranspilerStore.zig").setBreakPointOnFirstLine;
+const dumpSource = @import("./RuntimeTranspilerStore.rust").dumpSource;
+const dumpSourceString = @import("./RuntimeTranspilerStore.rust").dumpSourceString;
+const setBreakPointOnFirstLine = @import("./RuntimeTranspilerStore.rust").setBreakPointOnFirstLine;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -1388,7 +1388,7 @@ const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
 const ResolvedSource = bun.jsc.ResolvedSource;
 const VirtualMachine = bun.jsc.VirtualMachine;
-const ZigString = bun.jsc.ZigString;
+const RustString = bun.jsc.RustString;
 const Bun = jsc.API.Bun;
 
 const ParseResult = bun.transpiler.ParseResult;

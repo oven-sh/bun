@@ -17,7 +17,7 @@
 //! is non-trivial. This module encapsulates those details and presents an
 //! easy-to-use API for the parser.
 
-pub const css = @import("../css_parser.zig");
+pub const css = @import("../css_parser.rust");
 
 pub const Printer = css.Printer;
 pub const PrintErr = css.PrintErr;

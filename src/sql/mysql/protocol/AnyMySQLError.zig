@@ -39,4 +39,4 @@ pub const Error = error{
     InvalidState,
 };
 
-pub const mysqlErrorToJS = @import("../../../sql_jsc/mysql/protocol/any_mysql_error_jsc.zig").mysqlErrorToJS;
+pub const mysqlErrorToJS = @import("../../../sql_jsc/mysql/protocol/any_mysql_error_jsc.rust").mysqlErrorToJS;

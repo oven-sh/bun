@@ -5,7 +5,7 @@ pub fn Errorable(comptime Type: type) type {
 
         pub const Result = extern union {
             value: Type,
-            err: ZigErrorType,
+            err: RustErrorType,
         };
 
         pub fn unwrap(errorable: @This()) !Type {
@@ -39,5 +39,5 @@ pub fn Errorable(comptime Type: type) type {
 }
 
 const bun = @import("bun");
-const ErrorCode = @import("./ErrorCode.zig").ErrorCode;
-const ZigErrorType = @import("./ZigErrorType.zig").ZigErrorType;
+const ErrorCode = @import("./ErrorCode.rust").ErrorCode;
+const RustErrorType = @import("./RustErrorType.rust").RustErrorType;

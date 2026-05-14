@@ -71,8 +71,8 @@ pub fn escapeRegExpForPackageNameMatching(input: []const u8, writer: *std.Io.Wri
     try writer.writeAll(remain);
 }
 
-pub const jsEscapeRegExp = @import("../jsc/bun_string_jsc.zig").jsEscapeRegExp;
-pub const jsEscapeRegExpForPackageNameMatching = @import("../jsc/bun_string_jsc.zig").jsEscapeRegExpForPackageNameMatching;
+pub const jsEscapeRegExp = @import("../jsc/bun_string_jsc.rust").jsEscapeRegExp;
+pub const jsEscapeRegExpForPackageNameMatching = @import("../jsc/bun_string_jsc.rust").jsEscapeRegExpForPackageNameMatching;
 
 const std = @import("std");
 

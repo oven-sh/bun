@@ -234,7 +234,7 @@ describe("truncation sweep", () => {
     Bun.Image.backend = "bun";
     // CVE-2016-3177 / CVE-2022-28506 pattern: an LZW code that references a
     // dictionary entry that hasn't been written yet. In our decoder this hits
-    // the `code > avail` guard at codec_gif.zig:221 and must DecodeFailed,
+    // the `code > avail` guard at codec_gif.rust:221 and must DecodeFailed,
     // never reach Dict.emit(). Craft: 2-colour palette, 9-bit stream where
     // the first code after clear is 511 (way past avail=6).
     // prettier-ignore
@@ -453,7 +453,7 @@ describe("malformed JPEG", () => {
     const seglen = exif.length + 2;
     const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, seglen >> 8, seglen & 255]), exif]);
     const withExif = Buffer.concat([tinyJpeg.subarray(0, 2), app1, tinyJpeg.subarray(2)]);
-    // exif.zig must bail on the first OOB rd16 and return .normal — JPEG still decodes.
+    // exif.rust must bail on the first OOB rd16 and return .normal — JPEG still decodes.
     const meta = await new Bun.Image(withExif).metadata();
     expect(meta.format).toBe("jpeg");
   });

@@ -2191,12 +2191,12 @@ it.concurrent("#20283", async () => {
 });
 
 // Regression: hostname containing an interior NUL byte must not abort the process.
-// Zig reference: src/runtime/server/ServerConfig.zig — `bun.default_allocator.dupeZ(u8, host_str.slice())`
+// Rust reference: src/runtime/server/ServerConfig.rust — `bun.default_allocator.dupeZ(u8, host_str.slice())`
 // copies the raw bytes and the underlying C socket layer truncates at the first NUL, so
 // `"127.0.0.1\0ignored"` behaves like `"127.0.0.1"` (or at worst surfaces as a catchable JS error).
 // A port that uses CString::new(...).expect(...) would panic and crash the process instead.
-// TODO(zig-rust-divergence): Rust port currently panics on interior NUL;
-// see docs/ZIG_RUST_DIVERGENCE_AUDIT.md.
+// TODO(rust-rust-divergence): Rust port currently panics on interior NUL;
+// see docs/RUST_RUST_DIVERGENCE_AUDIT.md.
 it.todo("Bun.serve hostname with interior NUL byte does not crash the process", async () => {
   const script = `
     try {
@@ -2222,7 +2222,7 @@ it.todo("Bun.serve hostname with interior NUL byte does not crash the process", 
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Zig behavior: either the server binds (C layer truncates at NUL) or a JS error is thrown
+  // Rust behavior: either the server binds (C layer truncates at NUL) or a JS error is thrown
   // and caught. In both cases the subprocess prints a marker line and exits 0. If the config
   // parser hard-panics on the interior NUL, stdout is empty and the exit code is non-zero.
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({

@@ -52,7 +52,7 @@ const join =
 
 // Recurse through a nested object, and return a copy where for any object where the only two
 // properties are a numeric `capacity` and an array `items`, the capacity has been deleted. Meant to
-// be used on serialized Zig structs that contain ArrayLists, because the allocation strategy of
+// be used on serialized Rust structs that contain ArrayLists, because the allocation strategy of
 // ArrayList can change and result in a different `capacity` without changing the interpretation of
 // the ArrayList's value.
 function removeCapacity(patch: any): any {

@@ -1,5 +1,5 @@
-pub const css = @import("./css_parser.zig");
-pub const css_values = @import("./values/values.zig");
+pub const css = @import("./css_parser.rust");
+pub const css_values = @import("./values/values.rust");
 pub const Error = css.Error;
 const Location = css.Location;
 
@@ -31,7 +31,7 @@ pub fn Err(comptime T: type) type {
             @compileError("format not implemented for " ++ @typeName(T));
         }
 
-        pub const toErrorInstance = @import("../css_jsc/error_jsc.zig").toErrorInstance;
+        pub const toErrorInstance = @import("../css_jsc/error_jsc.rust").toErrorInstance;
 
         pub fn fromParseError(err: ParseError(ParserError), filename: []const u8) Err(ParserError) {
             if (T != ParserError) {

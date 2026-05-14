@@ -4,7 +4,7 @@
 
 #include "root.h"
 #include "JSWebView.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/InternalFunction.h>
@@ -101,7 +101,7 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    auto* rustGlobalObject = defaultGlobalObject(globalObject);
 
     uint32_t width = 800, height = 600;
     WTF::String persistDir;
@@ -330,9 +330,9 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     if (height == 0 || height > 16384)
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "height"_s, 1, 16384, jsNumber(height));
 
-    Structure* structure = zigGlobalObject->m_JSWebViewClassStructure.get(zigGlobalObject);
+    Structure* structure = rustGlobalObject->m_JSWebViewClassStructure.get(rustGlobalObject);
     JSValue newTarget = callFrame->newTarget();
-    if (zigGlobalObject->m_JSWebViewClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
+    if (rustGlobalObject->m_JSWebViewClassStructure.constructor(rustGlobalObject) != newTarget) [[unlikely]] {
         auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
         structure = InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(),

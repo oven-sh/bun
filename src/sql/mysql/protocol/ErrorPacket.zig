@@ -14,7 +14,7 @@ pub const MySQLErrorOptions = struct {
     sqlState: ?[5]u8 = null,
 };
 
-pub const createMySQLError = @import("../../../sql_jsc/mysql/protocol/error_packet_jsc.zig").createMySQLError;
+pub const createMySQLError = @import("../../../sql_jsc/mysql/protocol/error_packet_jsc.rust").createMySQLError;
 
 pub fn decodeInternal(this: *ErrorPacket, comptime Context: type, reader: NewReader(Context)) !void {
     this.header = try reader.int(u8);
@@ -42,9 +42,9 @@ pub fn decodeInternal(this: *ErrorPacket, comptime Context: type, reader: NewRea
 
 pub const decode = decoderWrap(ErrorPacket, decodeInternal).decode;
 
-pub const toJS = @import("../../../sql_jsc/mysql/protocol/error_packet_jsc.zig").toJS;
+pub const toJS = @import("../../../sql_jsc/mysql/protocol/error_packet_jsc.rust").toJS;
 
-const Data = @import("../../shared/Data.zig").Data;
+const Data = @import("../../shared/Data.rust").Data;
 
-const NewReader = @import("./NewReader.zig").NewReader;
-const decoderWrap = @import("./NewReader.zig").decoderWrap;
+const NewReader = @import("./NewReader.rust").NewReader;
+const decoderWrap = @import("./NewReader.rust").decoderWrap;

@@ -1,10 +1,10 @@
 // This file contains the underlying implementation for sync & async functions
 // for interacting with the filesystem from JavaScript.
 // The top-level functions assume the arguments are already validated
-pub const constants = @import("./node_fs_constant.zig");
-pub const Binding = @import("./node_fs_binding.zig").Binding;
-pub const Watcher = @import("./node_fs_watcher.zig").FSWatcher;
-pub const StatWatcher = @import("./node_fs_stat_watcher.zig").StatWatcher;
+pub const constants = @import("./node_fs_constant.rust");
+pub const Binding = @import("./node_fs_binding.rust").Binding;
+pub const Watcher = @import("./node_fs_watcher.rust").FSWatcher;
+pub const StatWatcher = @import("./node_fs_stat_watcher.rust").StatWatcher;
 
 pub const default_permission = if (Environment.isPosix)
     Syscall.S.IRUSR |
@@ -2870,7 +2870,7 @@ pub const Arguments = struct {
             // String objects not allowed (typeof new String("hi") === "object")
             // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
             const allow_string_object = false;
-            // the pattern in node_fs.zig is to call toThreadSafe after Arguments.*.fromJS
+            // the pattern in node_fs.rust is to call toThreadSafe after Arguments.*.fromJS
             const is_async = false;
             const data = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, data_value, encoding, is_async, allow_string_object) orelse {
                 return ctx.ERR(.INVALID_ARG_TYPE, "The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
@@ -3236,7 +3236,7 @@ const Return = struct {
     pub const Link = void;
     pub const Lstat = StatOrNotFound;
     pub const Mkdir = StringOrUndefined;
-    pub const Mkdtemp = jsc.ZigString;
+    pub const Mkdtemp = jsc.RustString;
     pub const Open = FD;
     pub const WriteFile = void;
     pub const Readv = Read;
@@ -3252,8 +3252,8 @@ const Return = struct {
         bytes_read: u52,
         buffer_val: jsc.JSValue = jsc.JSValue.zero,
         const fields = .{
-            .bytesRead = jsc.ZigString.init("bytesRead"),
-            .buffer = jsc.ZigString.init("buffer"),
+            .bytesRead = jsc.RustString.init("bytesRead"),
+            .buffer = jsc.RustString.init("buffer"),
         };
         pub fn toJS(this: *const ReadPromise, ctx: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             defer if (!this.buffer_val.isEmptyOrUndefinedOrNull())
@@ -3273,8 +3273,8 @@ const Return = struct {
         buffer: StringOrBuffer,
         buffer_val: jsc.JSValue = jsc.JSValue.zero,
         const fields = .{
-            .bytesWritten = jsc.ZigString.init("bytesWritten"),
-            .buffer = jsc.ZigString.init("buffer"),
+            .bytesWritten = jsc.RustString.init("bytesWritten"),
+            .buffer = jsc.RustString.init("buffer"),
         };
 
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
@@ -3297,7 +3297,7 @@ const Return = struct {
     pub const Write = struct {
         bytes_written: u52,
         const fields = .{
-            .bytesWritten = jsc.ZigString.init("bytesWritten"),
+            .bytesWritten = jsc.RustString.init("bytesWritten"),
         };
 
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
@@ -4275,12 +4275,12 @@ pub const NodeFS = struct {
                     .path = prefix_buf[0 .. len + 6],
                 } };
             }
-            return .initResult(bun.handleOom(jsc.ZigString.dupeForJS(bun.sliceTo(req.path, 0), bun.default_allocator)));
+            return .initResult(bun.handleOom(jsc.RustString.dupeForJS(bun.sliceTo(req.path, 0), bun.default_allocator)));
         }
 
         const rc = c.mkdtemp(prefix_buf);
         if (rc) |ptr| {
-            return .initResult(bun.handleOom(jsc.ZigString.dupeForJS(bun.sliceTo(ptr, 0), bun.default_allocator)));
+            return .initResult(bun.handleOom(jsc.RustString.dupeForJS(bun.sliceTo(ptr, 0), bun.default_allocator)));
         }
 
         // c.getErrno(rc) returns SUCCESS if rc is -1 so we call std.c._errno() directly
@@ -5728,7 +5728,7 @@ pub const NodeFS = struct {
 
     pub fn rmdir(this: *NodeFS, args: Arguments.RmDir, _: Flavor) Maybe(Return.Rmdir) {
         if (args.recursive) {
-            zigDeleteTree(std.fs.cwd(), args.path.slice(), .directory) catch |err| {
+            rustDeleteTree(std.fs.cwd(), args.path.slice(), .directory) catch |err| {
                 var errno: bun.sys.E = switch (@as(anyerror, err)) {
                     error.AccessDenied => .PERM,
                     error.FileTooBig => .FBIG,
@@ -5784,7 +5784,7 @@ pub const NodeFS = struct {
 
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if (args.recursive) {
-            zigDeleteTree(std.fs.cwd(), args.path.slice(), .file) catch |err| {
+            rustDeleteTree(std.fs.cwd(), args.path.slice(), .file) catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
                 const errno: E = switch (@as(anyerror, err)) {
                     // error.InvalidHandle => .BADF,
@@ -6928,8 +6928,8 @@ comptime {
 
 /// Copied from std.fs.Dir.deleteTree. This function returns `FileNotFound` instead of ignoring it, which
 /// is required to match the behavior of Node.js's `fs.rm` { recursive: true, force: false }.
-pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.File.Kind) !void {
-    var initial_iterable_dir = (try zigDeleteTreeOpenInitialSubpath(self, sub_path, kind_hint)) orelse return;
+pub fn rustDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.File.Kind) !void {
+    var initial_iterable_dir = (try rustDeleteTreeOpenInitialSubpath(self, sub_path, kind_hint)) orelse return;
 
     const StackItem = struct {
         name: []const u8,
@@ -6991,7 +6991,7 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                         });
                         continue :process_stack;
                     } else {
-                        try zigDeleteTreeMinStackSizeWithKindHint(top.iter.dir, entry.name, entry.kind);
+                        try rustDeleteTreeMinStackSizeWithKindHint(top.iter.dir, entry.name, entry.kind);
                         break :handle_entry;
                     }
                 } else {
@@ -7120,7 +7120,7 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
     }
 }
 
-fn zigDeleteTreeOpenInitialSubpath(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.File.Kind) !?std.fs.Dir {
+fn rustDeleteTreeOpenInitialSubpath(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.File.Kind) !?std.fs.Dir {
     return iterable_dir: {
         // Treat as a file by default
         var treat_as_dir = kind_hint == .directory;
@@ -7181,9 +7181,9 @@ fn zigDeleteTreeOpenInitialSubpath(self: std.fs.Dir, sub_path: []const u8, kind_
     };
 }
 
-fn zigDeleteTreeMinStackSizeWithKindHint(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.File.Kind) !void {
+fn rustDeleteTreeMinStackSizeWithKindHint(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.File.Kind) !void {
     start_over: while (true) {
-        var dir = (try zigDeleteTreeOpenInitialSubpath(self, sub_path, kind_hint)) orelse return;
+        var dir = (try rustDeleteTreeOpenInitialSubpath(self, sub_path, kind_hint)) orelse return;
         var cleanup_dir_parent: ?std.fs.Dir = null;
         defer if (cleanup_dir_parent) |*d| d.close();
 
@@ -7304,8 +7304,8 @@ const NodeFSFunctionEnum = std.meta.DeclEnum(NodeFS);
 
 const string = []const u8;
 
-const DirIterator = @import("./dir_iterator.zig");
-const FileSystem = @import("../../resolver/fs.zig").FileSystem;
+const DirIterator = @import("./dir_iterator.rust");
+const FileSystem = @import("../../resolver/fs.rust").FileSystem;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

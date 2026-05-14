@@ -219,7 +219,7 @@ pub const StandaloneModuleGraph = struct {
             return this.wtf_string.dupeRef();
         }
 
-        pub const blob = @import("../runtime/api/standalone_graph_jsc.zig").fileBlob;
+        pub const blob = @import("../runtime/api/standalone_graph_jsc.rust").fileBlob;
     };
 
     pub const LazySourceMap = union(enum) {
@@ -270,7 +270,7 @@ pub const StandaloneModuleGraph = struct {
                     });
 
                     stored.external_source_names = file_names;
-                    stored.underlying_provider = .{ .data = @truncate(@intFromPtr(data)), .load_hint = .none, .kind = .zig };
+                    stored.underlying_provider = .{ .data = @truncate(@intFromPtr(data)), .load_hint = .none, .kind = .rust };
                     stored.is_standalone_module_graph = true;
 
                     const parsed = bun.new(SourceMap.ParsedSourceMap, stored);
@@ -1036,7 +1036,7 @@ pub const StandaloneModuleGraph = struct {
         return cloned_executable_fd;
     }
 
-    pub const CompileTarget = @import("../options_types/CompileTarget.zig");
+    pub const CompileTarget = @import("../options_types/CompileTarget.rust");
 
     pub fn download(allocator: std.mem.Allocator, target: *const CompileTarget, env: *bun.DotEnv.Loader) ![:0]const u8 {
         var exe_path_buf: bun.PathBuffer = undefined;

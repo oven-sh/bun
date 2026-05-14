@@ -18,7 +18,7 @@ globalThis.__filename = "/fuzzilli.js";
 // ============================================================================
 
 // Verify we're running under Fuzzilli before starting REPRL loop
-// The Zig code should have already checked, but double-check here
+// The Rust code should have already checked, but double-check here
 try {
   // Try to stat fd 100 to see if it exists
   fs.fstatSync(REPRL_CRFD);

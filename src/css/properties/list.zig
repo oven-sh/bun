@@ -1,4 +1,4 @@
-pub const css = @import("../css_parser.zig");
+pub const css = @import("../css_parser.rust");
 
 const CustomIdent = css.css_values.ident.CustomIdent;
 const CSSString = css.css_values.string.CSSString;

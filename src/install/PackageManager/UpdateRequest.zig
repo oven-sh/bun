@@ -46,7 +46,7 @@ pub fn getResolvedName(this: *const UpdateRequest, lockfile: *const Lockfile) st
         this.version.literal.slice(this.version_buf);
 }
 
-pub const fromJS = @import("../../install_jsc/update_request_jsc.zig").fromJS;
+pub const fromJS = @import("../../install_jsc/update_request_jsc.rust").fromJS;
 
 pub fn parse(
     allocator: std.mem.Allocator,

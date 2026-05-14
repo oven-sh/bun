@@ -19,7 +19,7 @@ export interface DictionaryMember {
   type: Type;
   /** Optional default value to use when this member is missing or undefined. */
   default?: any;
-  /** The name used in generated Zig/C++ code. Defaults to the public JS name. */
+  /** The name used in generated Rust/C++ code. Defaults to the public JS name. */
   internalName?: string;
   /** Alternative JavaScript names for this member. */
   altNames?: string[];
@@ -39,7 +39,7 @@ interface DictionaryOptions {
   name: string;
   /** Used in error messages. Defaults to `name`. */
   userFacingName?: string;
-  /** Whether to generate a Zig `fromJS` function. */
+  /** Whether to generate a Rust `fromJS` function. */
   generateConversionFunction?: boolean;
 }
 
@@ -73,7 +73,7 @@ export function dictionary(
     get bindgenType() {
       return `bindgen_generated.internal.${name}`;
     }
-    zigType(style?: CodeStyle) {
+    rustType(style?: CodeStyle) {
       return `bindgen_generated.${name}`;
     }
     get dependencies() {
@@ -257,10 +257,10 @@ export function dictionary(
       `);
     }
 
-    get hasZigSource() {
+    get hasRustSource() {
       return true;
     }
-    get zigSource() {
+    get rustSource() {
       return reindent(`
         pub const ${name} = struct {
           const Self = @This();
@@ -268,7 +268,7 @@ export function dictionary(
           ${joinIndented(
             10,
             fullMembers.map(memberInfo => {
-              return `${memberInfo.internalName}: ${memberInfo.type.zigType("pretty")},`;
+              return `${memberInfo.internalName}: ${memberInfo.type.rustType("pretty")},`;
             }),
           )}
 
@@ -304,9 +304,9 @@ export function dictionary(
 
         pub const Bindgen${name} = struct {
           const Self = @This();
-          pub const ZigType = ${name};
+          pub const RustType = ${name};
           pub const ExternType = Extern${name};
-          pub fn convertFromExtern(extern_value: Self.ExternType) Self.ZigType {
+          pub fn convertFromExtern(extern_value: Self.ExternType) Self.RustType {
             return .{
               ${joinIndented(
                 14,

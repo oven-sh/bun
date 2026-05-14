@@ -196,7 +196,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
     auto flag = callFrame->argument(0);
     bool raw = flag.asBoolean();
 
-    Zig::GlobalObject* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    Rust::GlobalObject* global = uncheckedDowncast<Rust::GlobalObject>(globalObject);
 
     return JSValue::encode(jsNumber(Source__setRawModeStdin(global->uvLoop(), raw)));
 #else
@@ -451,7 +451,7 @@ public:
 #if OS(WINDOWS)
         auto* handle = new UV::TTY();
         memset(handle, 0, sizeof(UV::TTY));
-        int rc = uv_tty_init(uncheckedDowncast<Zig::GlobalObject>(globalObject)->uvLoop(), handle->tty(), fd, 0);
+        int rc = uv_tty_init(uncheckedDowncast<Rust::GlobalObject>(globalObject)->uvLoop(), handle->tty(), fd, 0);
         if (rc < 0) {
             delete handle;
             throwTypeError(globalObject, scope, "Failed to initialize TTY handle"_s);
@@ -492,12 +492,12 @@ private:
 
 const ClassInfo TTYWrapConstructor::s_info = { "TTY"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(TTYWrapConstructor) };
 
-JSValue createBunTTYFunctions(Zig::GlobalObject* globalObject)
+JSValue createBunTTYFunctions(Rust::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto* obj = constructEmptyObject(globalObject);
 
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isatty"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Zig::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isatty"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Rust::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "setRawMode"_s)), JSFunction::create(vm, globalObject, 0, "ttySetMode"_s, jsTTYSetMode, ImplementationVisibility::Public), 0);
 
@@ -511,7 +511,7 @@ JSValue createNodeTTYWrapObject(JSC::JSGlobalObject* globalObject)
     auto& vm = JSC::getVM(globalObject);
     auto* obj = constructEmptyObject(globalObject);
 
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isTTY"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Zig::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isTTY"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Rust::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
 
     TTYWrapPrototype* prototype = TTYWrapPrototype::create(vm, globalObject, TTYWrapPrototype::createStructure(vm, globalObject));
     TTYWrapConstructor* constructor = TTYWrapConstructor::create(vm, globalObject, TTYWrapConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), prototype);

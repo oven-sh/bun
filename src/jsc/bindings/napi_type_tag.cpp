@@ -1,6 +1,6 @@
 #include "napi_type_tag.h"
 
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 namespace Bun {
 

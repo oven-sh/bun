@@ -30,12 +30,12 @@ pub fn writeInternal(
 pub const write = WriteWrap(@This(), writeInternal).write;
 
 const std = @import("std");
-const Data = @import("../../shared/Data.zig").Data;
-const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
-const NewReader = @import("./NewReader.zig").NewReader;
-const NewWriter = @import("./NewWriter.zig").NewWriter;
-const WriteWrap = @import("./WriteWrap.zig").WriteWrap;
+const Data = @import("../../shared/Data.rust").Data;
+const DecoderWrap = @import("./DecoderWrap.rust").DecoderWrap;
+const NewReader = @import("./NewReader.rust").NewReader;
+const NewWriter = @import("./NewWriter.rust").NewWriter;
+const WriteWrap = @import("./WriteWrap.rust").WriteWrap;
 const toBytes = std.mem.toBytes;
 
-const int_types = @import("../types/int_types.zig");
+const int_types = @import("../types/int_types.rust");
 const Int32 = int_types.Int32;

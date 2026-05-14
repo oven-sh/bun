@@ -18,6 +18,6 @@ pub const ErrorCode = enum(ErrorCodeInt) {
 };
 
 comptime {
-    @export(&ErrorCode.ParserError, .{ .name = "Zig_ErrorCodeParserError" });
-    @export(&ErrorCode.JSErrorObject, .{ .name = "Zig_ErrorCodeJSErrorObject" });
+    @export(&ErrorCode.ParserError, .{ .name = "Rust_ErrorCodeParserError" });
+    @export(&ErrorCode.JSErrorObject, .{ .name = "Rust_ErrorCodeJSErrorObject" });
 }

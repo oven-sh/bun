@@ -22,7 +22,7 @@
 #include "JSDOMGlobalObject.h"
 #include <JavaScriptCore/InternalFunction.h>
 
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "ErrorCode.h"
 
 namespace WebCore {

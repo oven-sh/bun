@@ -564,7 +564,7 @@ pub fn write(fd: FD, buf: []const u8) Maybe(usize) {
     return .{ .result = total_written };
 }
 
-pub const Tag = @import("./sys.zig").Tag;
+pub const Tag = @import("./sys.rust").Tag;
 
 const std = @import("std");
 

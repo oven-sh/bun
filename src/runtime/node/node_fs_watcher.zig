@@ -1,5 +1,5 @@
 const log = Output.scoped(.@"fs.watch", .hidden);
-const PathWatcher = if (Environment.isWindows) @import("./win_watcher.zig") else @import("./path_watcher.zig");
+const PathWatcher = if (Environment.isWindows) @import("./win_watcher.rust") else @import("./path_watcher.rust");
 
 // TODO: make this a top-level struct
 pub const FSWatcher = struct {
@@ -517,7 +517,7 @@ pub const FSWatcher = struct {
             if (this.encoding == .buffer)
                 filename = jsc.ArrayBuffer.createBuffer(globalObject, file_name) catch return // TODO: properly propagate exception upwards
             else if (this.encoding == .utf8) {
-                filename = jsc.ZigString.fromUTF8(file_name).toJS(globalObject);
+                filename = jsc.RustString.fromUTF8(file_name).toJS(globalObject);
             } else {
                 // convert to desired encoding
                 filename = Encoder.toString(file_name, globalObject, this.encoding) catch return;
@@ -695,7 +695,7 @@ pub const FSWatcher = struct {
 
 const string = []const u8;
 
-const Path = @import("../../paths/resolve_path.zig");
+const Path = @import("../../paths/resolve_path.rust");
 const std = @import("std");
 
 const bun = @import("bun");

@@ -4,11 +4,11 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "InternalModuleRegistry.h"
 #include "ModuleLoader.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include <JavaScriptCore/JSPromise.h>
 namespace Bun {
 using namespace JSC;
-extern "C" JSPromise* Bun__loadHTMLEntryPoint(Zig::GlobalObject* globalObject)
+extern "C" JSPromise* Bun__loadHTMLEntryPoint(Rust::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

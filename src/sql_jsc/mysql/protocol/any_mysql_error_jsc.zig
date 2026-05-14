@@ -52,8 +52,8 @@ pub fn mysqlErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, e
 }
 
 const bun = @import("bun");
-const Error = @import("../../../sql/mysql/protocol/AnyMySQLError.zig").Error;
-const createMySQLError = @import("./error_packet_jsc.zig").createMySQLError;
+const Error = @import("../../../sql/mysql/protocol/AnyMySQLError.rust").Error;
+const createMySQLError = @import("./error_packet_jsc.rust").createMySQLError;
 
 const JSC = bun.jsc;
 const jsc = bun.jsc;

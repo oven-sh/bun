@@ -1,9 +1,9 @@
 const httplog = Output.scoped(.Server, .visible);
 const ctxLog = Output.scoped(.RequestContext, .visible);
 
-pub const WebSocketServerContext = @import("./WebSocketServerContext.zig");
-pub const HTTPStatusText = @import("./HTTPStatusText.zig");
-pub const HTMLBundle = @import("./HTMLBundle.zig");
+pub const WebSocketServerContext = @import("./WebSocketServerContext.rust");
+pub const HTTPStatusText = @import("./HTTPStatusText.rust");
+pub const HTMLBundle = @import("./HTMLBundle.rust");
 
 pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, status: u16) void {
     if (resp_ptr) |resp| {
@@ -17,10 +17,10 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
 }
 
 // TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
-pub const StaticRoute = @import("./StaticRoute.zig");
-pub const FileRoute = @import("./FileRoute.zig");
-pub const FileResponseStream = @import("./FileResponseStream.zig");
-pub const RangeRequest = @import("./RangeRequest.zig");
+pub const StaticRoute = @import("./StaticRoute.rust");
+pub const FileRoute = @import("./FileRoute.rust");
+pub const FileResponseStream = @import("./FileResponseStream.rust");
+pub const RangeRequest = @import("./RangeRequest.rust");
 
 pub const AnyRoute = union(enum) {
     /// Serve a static file
@@ -138,11 +138,11 @@ pub const AnyRoute = union(enum) {
 
     /// This is the JS representation of an HTMLImportManifest
     ///
-    /// See ./src/bundler/HTMLImportManifest.zig
+    /// See ./src/bundler/HTMLImportManifest.rust
     fn bundledHTMLManifestFromJS(argument: jsc.JSValue, init_ctx: *ServerInitContext) bun.JSError!?AnyRoute {
         if (!argument.isObject()) return null;
 
-        const index = try argument.getOptional(init_ctx.global, "index", ZigString.Slice) orelse return null;
+        const index = try argument.getOptional(init_ctx.global, "index", RustString.Slice) orelse return null;
         defer index.deinit();
 
         const files = try argument.getArray(init_ctx.global, "files") orelse return null;
@@ -273,9 +273,9 @@ pub const AnyRoute = union(enum) {
     }
 };
 
-pub const ServerConfig = @import("./ServerConfig.zig");
-pub const ServerWebSocket = @import("./ServerWebSocket.zig");
-pub const NodeHTTPResponse = @import("./NodeHTTPResponse.zig");
+pub const ServerConfig = @import("./ServerConfig.rust");
+pub const ServerWebSocket = @import("./ServerWebSocket.rust");
+pub const NodeHTTPResponse = @import("./NodeHTTPResponse.rust");
 
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
 const ServePlugins = struct {
@@ -710,7 +710,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             try this.config.appendStaticRoute(path, route, method);
         }
 
-        pub fn publish(this: *ThisServer, globalThis: *jsc.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue) bun.JSError!JSValue {
+        pub fn publish(this: *ThisServer, globalThis: *jsc.JSGlobalObject, topic: RustString, message_value: JSValue, compress_value: ?JSValue) bun.JSError!JSValue {
             if (this.config.websocket == null)
                 return JSValue.jsNumber(0);
 
@@ -727,7 +727,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 return globalThis.throw("publish requires a non-empty topic", .{});
             }
 
-            // https://github.com/ziglang/zig/issues/24563
+            // https://github.com/rustlang/rust/issues/24563
             const compress_js = compress_value orelse .true;
             const compress = compress_js.toBoolean();
 
@@ -781,16 +781,16 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     }
                 }
 
-                var sec_websocket_protocol = ZigString.Empty;
-                var sec_websocket_extensions = ZigString.Empty;
+                var sec_websocket_protocol = RustString.Empty;
+                var sec_websocket_extensions = RustString.Empty;
 
                 // Owned backing storage for the above when they come from options.headers.
-                // fastGet returns a ZigString that borrows from the header map entry's
+                // fastGet returns a RustString that borrows from the header map entry's
                 // StringImpl, which fastRemove then frees — so we must copy the bytes
                 // before removing the entry.
-                var sec_websocket_protocol_owned = ZigString.Slice.empty;
+                var sec_websocket_protocol_owned = RustString.Slice.empty;
                 defer sec_websocket_protocol_owned.deinit();
-                var sec_websocket_extensions_owned = ZigString.Slice.empty;
+                var sec_websocket_extensions_owned = RustString.Slice.empty;
                 defer sec_websocket_extensions_owned.deinit();
 
                 if (optional) |opts| {
@@ -838,7 +838,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             if (fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
                                 // Clone before fastRemove frees the backing StringImpl.
                                 sec_websocket_protocol_owned = bun.handleOom(protocol.toSliceClone(bun.default_allocator));
-                                sec_websocket_protocol = sec_websocket_protocol_owned.toZigString();
+                                sec_websocket_protocol = sec_websocket_protocol_owned.toRustString();
                                 // Remove from headers so it's not written twice (once here and once by upgrade())
                                 fetch_headers_to_use.fastRemove(.SecWebSocketProtocol);
                             }
@@ -846,7 +846,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |extensions| {
                                 // Clone before fastRemove frees the backing StringImpl.
                                 sec_websocket_extensions_owned = bun.handleOom(extensions.toSliceClone(bun.default_allocator));
-                                sec_websocket_extensions = sec_websocket_extensions_owned.toZigString();
+                                sec_websocket_extensions = sec_websocket_extensions_owned.toRustString();
                                 // Remove from headers so it's not written twice (once here and once by upgrade())
                                 fetch_headers_to_use.fastRemove(.SecWebSocketExtensions);
                             }
@@ -888,15 +888,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             upgrader.ref();
             defer upgrader.deref();
 
-            var sec_websocket_key_str = ZigString.Empty;
+            var sec_websocket_key_str = RustString.Empty;
 
-            var sec_websocket_protocol = ZigString.Empty;
+            var sec_websocket_protocol = RustString.Empty;
 
-            var sec_websocket_extensions = ZigString.Empty;
+            var sec_websocket_extensions = RustString.Empty;
 
             // Owned backing storage for sec_websocket_key/protocol/extensions.
             //
-            // fastGet on request.headers returns a ZigString that borrows from the header map
+            // fastGet on request.headers returns a RustString that borrows from the header map
             // entry's StringImpl. Before we use these values we call opts.data / opts.headers
             // getters, which run arbitrary user JS — that JS can mutate request.headers
             // (set/delete Sec-WebSocket-*), freeing the StringImpl out from under the borrowed
@@ -906,38 +906,38 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // The options.headers path reuses the protocol/extensions slots (and frees the
             // previous clone first) since fastRemove there would likewise free the backing
             // StringImpl.
-            var sec_websocket_key_owned = ZigString.Slice.empty;
+            var sec_websocket_key_owned = RustString.Slice.empty;
             defer sec_websocket_key_owned.deinit();
-            var sec_websocket_protocol_owned = ZigString.Slice.empty;
+            var sec_websocket_protocol_owned = RustString.Slice.empty;
             defer sec_websocket_protocol_owned.deinit();
-            var sec_websocket_extensions_owned = ZigString.Slice.empty;
+            var sec_websocket_extensions_owned = RustString.Slice.empty;
             defer sec_websocket_extensions_owned.deinit();
 
             if (request.getFetchHeaders()) |head| {
                 if (head.fastGet(.SecWebSocketKey)) |key| {
                     sec_websocket_key_owned = bun.handleOom(key.toSliceClone(bun.default_allocator));
-                    sec_websocket_key_str = sec_websocket_key_owned.toZigString();
+                    sec_websocket_key_str = sec_websocket_key_owned.toRustString();
                 }
                 if (head.fastGet(.SecWebSocketProtocol)) |protocol| {
                     sec_websocket_protocol_owned = bun.handleOom(protocol.toSliceClone(bun.default_allocator));
-                    sec_websocket_protocol = sec_websocket_protocol_owned.toZigString();
+                    sec_websocket_protocol = sec_websocket_protocol_owned.toRustString();
                 }
                 if (head.fastGet(.SecWebSocketExtensions)) |extensions| {
                     sec_websocket_extensions_owned = bun.handleOom(extensions.toSliceClone(bun.default_allocator));
-                    sec_websocket_extensions = sec_websocket_extensions_owned.toZigString();
+                    sec_websocket_extensions = sec_websocket_extensions_owned.toRustString();
                 }
             }
 
             if (upgrader.req) |req| {
                 if (sec_websocket_key_str.len == 0) {
-                    sec_websocket_key_str = ZigString.init(req.header("sec-websocket-key") orelse "");
+                    sec_websocket_key_str = RustString.init(req.header("sec-websocket-key") orelse "");
                 }
                 if (sec_websocket_protocol.len == 0) {
-                    sec_websocket_protocol = ZigString.init(req.header("sec-websocket-protocol") orelse "");
+                    sec_websocket_protocol = RustString.init(req.header("sec-websocket-protocol") orelse "");
                 }
 
                 if (sec_websocket_extensions.len == 0) {
-                    sec_websocket_extensions = ZigString.init(req.header("sec-websocket-extensions") orelse "");
+                    sec_websocket_extensions = RustString.init(req.header("sec-websocket-extensions") orelse "");
                 }
             }
 
@@ -1012,7 +1012,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             // Clone before fastRemove frees the backing StringImpl.
                             sec_websocket_protocol_owned.deinit();
                             sec_websocket_protocol_owned = bun.handleOom(protocol.toSliceClone(bun.default_allocator));
-                            sec_websocket_protocol = sec_websocket_protocol_owned.toZigString();
+                            sec_websocket_protocol = sec_websocket_protocol_owned.toRustString();
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use.?.fastRemove(.SecWebSocketProtocol);
                         }
@@ -1021,7 +1021,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             // Clone before fastRemove frees the backing StringImpl.
                             sec_websocket_extensions_owned.deinit();
                             sec_websocket_extensions_owned = bun.handleOom(extensions.toSliceClone(bun.default_allocator));
-                            sec_websocket_extensions = sec_websocket_extensions_owned.toZigString();
+                            sec_websocket_extensions = sec_websocket_extensions_owned.toRustString();
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use.?.fastRemove(.SecWebSocketExtensions);
                         }
@@ -1106,7 +1106,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return .true;
         }
 
-        pub fn onReloadFromZig(this: *ThisServer, new_config: *ServerConfig, globalThis: *jsc.JSGlobalObject) void {
+        pub fn onReloadFromRust(this: *ThisServer, new_config: *ServerConfig, globalThis: *jsc.JSGlobalObject) void {
             httplog("onReload", .{});
 
             this.app.?.clearRoutes();
@@ -1233,7 +1233,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 return error.JSError;
             }
 
-            this.onReloadFromZig(&new_config, globalThis);
+            this.onReloadFromRust(&new_config, globalThis);
 
             return this.js_value.tryGet() orelse .js_undefined;
         }
@@ -1242,13 +1242,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             jsc.markBinding(@src());
 
             if (this.config.onRequest == .zero) {
-                return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init("fetch() requires the server to have a fetch handler").toErrorInstance(ctx));
+                return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, RustString.init("fetch() requires the server to have a fetch handler").toErrorInstance(ctx));
             }
 
             const arguments = callframe.arguments_old(2).slice();
             if (arguments.len == 0) {
                 const fetch_error = WebCore.Fetch.fetch_error_no_args;
-                return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init(fetch_error).toErrorInstance(ctx));
+                return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, RustString.init(fetch_error).toErrorInstance(ctx));
             }
 
             var headers: ?*WebCore.FetchHeaders = null;
@@ -1263,13 +1263,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // TODO: set User-Agent header
             // TODO: unify with fetch() implementation.
             if (first_arg.isString()) {
-                const url_zig_str = try arguments[0].toSlice(ctx, bun.default_allocator);
-                defer url_zig_str.deinit();
-                const temp_url_str = url_zig_str.slice();
+                const url_rust_str = try arguments[0].toSlice(ctx, bun.default_allocator);
+                defer url_rust_str.deinit();
+                const temp_url_str = url_rust_str.slice();
 
                 if (temp_url_str.len == 0) {
                     const fetch_error = jsc.WebCore.Fetch.fetch_error_blank_url;
-                    return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init(fetch_error).toErrorInstance(ctx));
+                    return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, RustString.init(fetch_error).toErrorInstance(ctx));
                 }
 
                 var url = URL.parse(temp_url_str);
@@ -1304,7 +1304,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         if (Blob.get(ctx, body__, true, false)) |new_blob| {
                             body = .{ .Blob = new_blob };
                         } else |_| {
-                            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init("fetch() received invalid body").toErrorInstance(ctx));
+                            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, RustString.init("fetch() received invalid body").toErrorInstance(ctx));
                         }
                     }
                 }
@@ -1343,7 +1343,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             if (response_value.isEmptyOrUndefinedOrNull()) {
-                return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init("fetch() returned an empty value").toErrorInstance(ctx));
+                return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, RustString.init("fetch() returned an empty value").toErrorInstance(ctx));
             }
 
             if (response_value.asAnyPromise() != null) {
@@ -2759,13 +2759,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     old_user_routes.deinit(bun.default_allocator);
                 }
                 this.user_routes = std.ArrayListUnmanaged(UserRoute).initCapacity(bun.default_allocator, user_routes_to_build_list.items.len) catch @panic("OOM");
-                const paths_zig = bun.default_allocator.alloc(ZigString, user_routes_to_build_list.items.len) catch @panic("OOM");
-                defer bun.default_allocator.free(paths_zig);
+                const paths_rust = bun.default_allocator.alloc(RustString, user_routes_to_build_list.items.len) catch @panic("OOM");
+                defer bun.default_allocator.free(paths_rust);
                 const callbacks_js = bun.default_allocator.alloc(jsc.JSValue, user_routes_to_build_list.items.len) catch @panic("OOM");
                 defer bun.default_allocator.free(callbacks_js);
 
-                for (user_routes_to_build_list.items, paths_zig, callbacks_js, 0..) |*builder, *p_zig, *cb_js, i| {
-                    p_zig.* = ZigString.init(builder.route.path);
+                for (user_routes_to_build_list.items, paths_rust, callbacks_js, 0..) |*builder, *p_rust, *cb_js, i| {
+                    p_rust.* = RustString.init(builder.route.path);
                     cb_js.* = builder.callback.get().?;
                     this.user_routes.appendAssumeCapacity(.{
                         .id = @truncate(i),
@@ -2774,7 +2774,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     });
                     builder.route = .{}; // Mark as moved
                 }
-                route_list_value = Bun__ServerRouteList__create(this.globalThis, callbacks_js.ptr, paths_zig.ptr, user_routes_to_build_list.items.len);
+                route_list_value = Bun__ServerRouteList__create(this.globalThis, callbacks_js.ptr, paths_rust.ptr, user_routes_to_build_list.items.len);
                 for (user_routes_to_build_list.items) |*builder| builder.deinit();
                 user_routes_to_build_list.deinit(bun.default_allocator);
             }
@@ -3257,8 +3257,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
     };
 }
 
-pub const AnyRequestContext = @import("./AnyRequestContext.zig");
-pub const NewRequestContext = @import("./RequestContext.zig").NewRequestContext;
+pub const AnyRequestContext = @import("./AnyRequestContext.rust");
+pub const NewRequestContext = @import("./RequestContext.rust").NewRequestContext;
 
 pub const SavedRequest = struct {
     js_request: jsc.Strong.Optional,
@@ -3789,7 +3789,7 @@ extern "c" fn Bun__ServerRouteList__callRouteH3(
 extern "c" fn Bun__ServerRouteList__create(
     globalObject: *jsc.JSGlobalObject,
     callbacks: [*]jsc.JSValue,
-    paths: [*]ZigString,
+    paths: [*]RustString,
     pathsLength: usize,
 ) jsc.JSValue;
 
@@ -3809,13 +3809,13 @@ extern fn NodeHTTP_setUsingCustomExpectHandler(bool, *anyopaque, bool) void;
 
 const string = []const u8;
 
-const Sys = @import("../../sys/sys.zig");
-const options = @import("../../bundler/options.zig");
+const Sys = @import("../../sys/sys.rust");
+const options = @import("../../bundler/options.rust");
 const std = @import("std");
-const URL = @import("../../url/url.zig").URL;
+const URL = @import("../../url/url.rust").URL;
 const Allocator = std.mem.Allocator;
 
-const Runtime = @import("../../js_parser/runtime.zig");
+const Runtime = @import("../../js_parser/runtime.rust");
 const Fallback = Runtime.Fallback;
 
 const bun = @import("bun");
@@ -3844,7 +3844,7 @@ const JSValue = bun.jsc.JSValue;
 const Node = bun.jsc.Node;
 const VM = bun.jsc.VM;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = bun.jsc.ZigString;
+const RustString = bun.jsc.RustString;
 const host_fn = jsc.host_fn;
 
 const WebCore = bun.jsc.WebCore;

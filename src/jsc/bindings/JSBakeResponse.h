@@ -2,7 +2,7 @@
 
 #include "JSCookieMap.h"
 #include "root.h"
-#include "ZigGeneratedClasses.h"
+#include "RustGeneratedClasses.h"
 #include "WebCoreJSBuiltins.h"
 
 namespace Bun {
@@ -22,7 +22,7 @@ public:
     DECLARE_VISIT_CHILDREN;
     DECLARE_INFO;
 
-    static JSBakeResponse* create(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+    static JSBakeResponse* create(JSC::VM& vm, Rust::GlobalObject* globalObject, JSC::Structure* structure, void* ctx);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
     JSBakeResponseKind kind() const { return m_kind; }

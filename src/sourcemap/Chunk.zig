@@ -386,7 +386,7 @@ pub const Builder = NewBuilder(VLQSourceMap);
 
 const std = @import("std");
 
-const SourceMap = @import("./sourcemap.zig");
+const SourceMap = @import("./sourcemap.rust");
 const InternalSourceMap = SourceMap.InternalSourceMap;
 const LineOffsetTable = SourceMap.LineOffsetTable;
 const SourceMapState = SourceMap.SourceMapState;

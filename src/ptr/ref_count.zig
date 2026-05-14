@@ -106,7 +106,7 @@ pub fn RefCount(T: type, field_name: []const u8, destructor: anytype, options: O
                 if (debug_stack_trace) {
                     bun.crash_handler.dumpCurrentStackTrace(@returnAddress(), .{
                         .frame_count = 2,
-                        .skip_file_patterns = &.{"ptr/ref_count.zig"},
+                        .skip_file_patterns = &.{"ptr/ref_count.rust"},
                     });
                 }
             }
@@ -132,7 +132,7 @@ pub fn RefCount(T: type, field_name: []const u8, destructor: anytype, options: O
                 if (debug_stack_trace) {
                     bun.crash_handler.dumpCurrentStackTrace(@returnAddress(), .{
                         .frame_count = 2,
-                        .skip_file_patterns = &.{"ptr/ref_count.zig"},
+                        .skip_file_patterns = &.{"ptr/ref_count.rust"},
                     });
                 }
             }

@@ -280,7 +280,7 @@ pub const Runtime = struct {
             hasher.update(std.mem.asBytes(&bools));
 
             // Hash --feature flags. These directly affect transpiled output via
-            // feature("NAME") replacement in visitExpr.zig. When empty, we add
+            // feature("NAME") replacement in visitExpr.rust. When empty, we add
             // nothing to the hash so existing cache entries remain valid.
             // Keys are sorted in initBundlerFeatureFlags so flag order on the CLI doesn't matter.
             for (this.bundler_feature_flags.keys()) |flag| {

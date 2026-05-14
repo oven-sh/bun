@@ -2,14 +2,14 @@
 //! combines `Bun.build` and `Bun.serve`, providing a hot-reloading development
 //! server, server components, and other integrations. Instead of taking the
 //! role as a framework, Bake is tool for frameworks to build on top of.
-pub const production = @import("./production.zig");
-pub const DevServer = @import("./DevServer.zig");
-pub const FrameworkRouter = @import("./FrameworkRouter.zig");
+pub const production = @import("./production.rust");
+pub const DevServer = @import("./DevServer.rust");
+pub const FrameworkRouter = @import("./FrameworkRouter.rust");
 
 /// export default { app: ... };
 pub const api_name = "app";
 
-/// Zig version of the TS definition 'Bake.Options' in 'bake.d.ts'
+/// Rust version of the TS definition 'Bake.Options' in 'bake.d.ts'
 pub const UserOptions = struct {
     /// This arena contains some miscellaneous allocations at startup
     arena: std.heap.ArenaAllocator,
@@ -89,7 +89,7 @@ pub const UserOptions = struct {
             alloc,
         );
 
-        const root = if (try config.getOptional(global, "root", ZigString.Slice)) |slice|
+        const root = if (try config.getOptional(global, "root", RustString.Slice)) |slice|
             allocations.track(slice)
         else
             bun.getcwdAlloc(alloc) catch |err| switch (err) {
@@ -117,11 +117,11 @@ pub const UserOptions = struct {
 
 /// Each string stores its allocator since some may hold reference counts to JSC
 pub const StringRefList = struct {
-    strings: std.ArrayListUnmanaged(ZigString.Slice),
+    strings: std.ArrayListUnmanaged(RustString.Slice),
 
     pub const empty: StringRefList = .{ .strings = .{} };
 
-    pub fn track(al: *StringRefList, str: ZigString.Slice) []const u8 {
+    pub fn track(al: *StringRefList, str: RustString.Slice) []const u8 {
         bun.handleOom(al.strings.append(bun.default_allocator, str));
         return str.slice();
     }
@@ -156,7 +156,7 @@ pub const SplitBundlerOptions = struct {
                 return global.throwInvalidArguments("Expected plugin to be an object", .{});
             }
 
-            if (try plugin_config.getOptional(global, "name", ZigString.Slice)) |slice| {
+            if (try plugin_config.getOptional(global, "name", RustString.Slice)) |slice| {
                 defer slice.deinit();
                 if (slice.len == 0) {
                     return global.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
@@ -508,14 +508,14 @@ pub const Framework = struct {
                     return global.throwInvalidArguments("'framework.serverComponents.separateSSRGraph' must be a boolean", .{});
                 },
                 .server_runtime_import = refs.track(
-                    try sc.getOptional(global, "serverRuntimeImportSource", ZigString.Slice) orelse {
+                    try sc.getOptional(global, "serverRuntimeImportSource", RustString.Slice) orelse {
                         return global.throwInvalidArguments("Missing 'framework.serverComponents.serverRuntimeImportSource'", .{});
                     },
                 ),
                 .server_register_client_reference = if (try sc.getOptional(
                     global,
                     "serverRegisterClientReferenceExport",
-                    ZigString.Slice,
+                    RustString.Slice,
                 )) |slice|
                     refs.track(slice)
                 else
@@ -1004,5 +1004,5 @@ const Environment = bun.Environment;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 const Plugin = jsc.API.JSBundler.Plugin;

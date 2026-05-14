@@ -7,7 +7,7 @@
 //!
 //!   ┌─ PARENT THREAD ───────────────────────────────────────────────────────┐
 //!   │  JSWorker (GC'd JSCell) ──Ref──► WebCore::Worker (ThreadSafeRefCounted)│
-//!   │                                    └─ impl_ ──owns──► Zig WebWorker    │
+//!   │                                    └─ impl_ ──owns──► Rust WebWorker    │
 //!   └───────────────────────────────────────────────────────┬───────────────┘
 //!                                                            │
 //!   ┌─ WORKER THREAD ───────────────────────────────────────┴───────────────┐
@@ -682,7 +682,7 @@ fn spin(this: *WebWorker) void {
 ///                                  null and skips wakeup() instead of touching
 ///                                  memory freed in step 5.
 ///   2. `vm.onExit()`             — user 'exit' handlers run; needs the JSC VM.
-///   3. `teardownJSCVM()`         — collectNow + vm.deref×2; can re-enter Zig
+///   3. `teardownJSCVM()`         — collectNow + vm.deref×2; can re-enter Rust
 ///                                  via finalizers, so must precede step 5.
 ///   4. `dispatchExit()`          — posts close task → parent releases
 ///                                  parent_poll_ref + thread-held Worker ref.
@@ -969,7 +969,7 @@ comptime {
 }
 
 const std = @import("std");
-const WTFStringImpl = @import("../string/string.zig").WTFStringImpl;
+const WTFStringImpl = @import("../string/string.rust").WTFStringImpl;
 
 const bun = @import("bun");
 const Async = bun.Async;

@@ -65,14 +65,14 @@ error
   );
 });
 
-// Regression: Zig's `bun.String.format` (string.zig:508 → ZigString.zig:609 →
-// fmt.zig `formatUTF16Type` → unicode.zig `copyUTF16IntoUTF8`) emits the WTF-8
+// Regression: Rust's `bun.String.format` (string.rust:508 → RustString.rust:609 →
+// fmt.rust `formatUTF16Type` → unicode.rust `copyUTF16IntoUTF8`) emits the WTF-8
 // bytes for an unpaired surrogate as the replacement char EF BF BD and writes
 // them byte-safely. The Rust `Display for bun.String` (bun_core/string/mod.rs)
 // instead does `core::str::from_utf8_unchecked` on the result of
 // `to_utf8_without_ref()` — if that ever yields a non-UTF-8 byte (e.g. raw
-// WTF-8 ED A0 80 from `toUTF8Alloc`, see immutable.zig:2312), formatting is UB.
-// This pins the Zig-observable contract: an uncaught Error whose message AND a
+// WTF-8 ED A0 80 from `toUTF8Alloc`, see immutable.rust:2312), formatting is UB.
+// This pins the Rust-observable contract: an uncaught Error whose message AND a
 // stack-frame function name both contain a lone surrogate must (a) not crash
 // the printer and (b) render each lone surrogate as exactly U+FFFD (EF BF BD).
 test("native error printer handles lone surrogates in message and stack frame name as U+FFFD", async () => {
@@ -81,8 +81,8 @@ test("native error printer handles lone surrogates in message and stack frame na
   // path formatting around it.
   const fixture = String.raw`
     function thrower() { throw new Error("MSG_PRE\uD800MSG_POST"); }
-    // Force the native ZigStackFrame NameFormatter path: give the frame a
-    // function_name containing a lone high surrogate. (src/jsc/ZigStackFrame.zig
+    // Force the native RustStackFrame NameFormatter path: give the frame a
+    // function_name containing a lone high surrogate. (src/jsc/RustStackFrame.rust
     // NameFormatter.format -> "{f}" on bun.String)
     Object.defineProperty(thrower, "name", { value: "FN_PRE\uD800FN_POST" });
     thrower();
@@ -105,12 +105,12 @@ test("native error printer handles lone surrogates in message and stack frame na
   // the Rust Display path fed non-UTF-8 bytes through from_utf8_unchecked.
   const WTF8_D800 = Buffer.from([0xed, 0xa0, 0x80]);
 
-  // Zig spec: message line is printed via `printErrorNameAndMessage`
-  // (VirtualMachine.zig) using `{f}` on the bun.String, yielding EF BF BD.
+  // Rust spec: message line is printed via `printErrorNameAndMessage`
+  // (VirtualMachine.rust) using `{f}` on the bun.String, yielding EF BF BD.
   const wantMsg = Buffer.concat([Buffer.from("MSG_PRE"), FFFD, Buffer.from("MSG_POST")]);
   expect(stderrBuf.indexOf(wantMsg)).toBeGreaterThanOrEqual(0);
 
-  // Zig spec: stack frame name is printed via NameFormatter `{f}` on the
+  // Rust spec: stack frame name is printed via NameFormatter `{f}` on the
   // bun.String, yielding EF BF BD.
   const wantFn = Buffer.concat([Buffer.from("FN_PRE"), FFFD, Buffer.from("FN_POST")]);
   expect(stderrBuf.indexOf(wantFn)).toBeGreaterThanOrEqual(0);

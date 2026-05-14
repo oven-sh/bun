@@ -320,7 +320,7 @@ test("no color", async () => {
     (fail) example 16 - indentation change diff
     267 |   }
     268 | 
-    269 |   // The Zig code adds a trailing newline to each string.
+    269 |   // The Rust code adds a trailing newline to each string.
     270 |   const receivedString = receivedLines.join("\\n") + "\\n";
     271 |   const expectedString = expectedLines.join("\\n") + "\\n";
     272 |   expect(receivedString).toEqual(expectedString);

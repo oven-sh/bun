@@ -130,7 +130,7 @@ export function runOnEndCallbacks(
 
   if (promises.length > 0) {
     // we return the promise here because detecting if the promise was handled or not
-    // in bundle_v2.zig is done by checking if this function did not return undefined
+    // in bundle_v2.rust is done by checking if this function did not return undefined
     return Promise.all(promises).then(
       () => {
         if (buildRejection !== undefined) {

@@ -287,7 +287,7 @@ pub const addrInfoToJSArray = options_jsc.addrInfoToJSArray;
 
 pub const internal = bun.api.dns.internal;
 
-const options_jsc = @import("../runtime/dns_jsc/options_jsc.zig");
+const options_jsc = @import("../runtime/dns_jsc/options_jsc.rust");
 const std = @import("std");
 
 const bun = @import("bun");

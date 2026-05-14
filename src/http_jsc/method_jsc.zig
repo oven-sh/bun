@@ -4,7 +4,7 @@ extern "c" fn Bun__HTTPMethod__toJS(method: Method, globalObject: *jsc.JSGlobalO
 
 pub const toJS = Bun__HTTPMethod__toJS;
 
-const Method = @import("../http_types/Method.zig").Method;
+const Method = @import("../http_types/Method.rust").Method;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

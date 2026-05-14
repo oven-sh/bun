@@ -16,7 +16,7 @@ class SourceProvider;
 #include <JavaScriptCore/SourceProvider.h>
 #include <JavaScriptCore/Structure.h>
 
-namespace Zig {
+namespace Rust {
 
 class GlobalObject;
 
@@ -37,7 +37,7 @@ class SourceProvider final : public JSC::SourceProvider {
 
 public:
     static Ref<SourceProvider> create(
-        Zig::GlobalObject*,
+        Rust::GlobalObject*,
         ResolvedSource& resolvedSource,
         JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Module,
         bool isBuiltIn = false);
@@ -79,4 +79,4 @@ private:
     unsigned m_hash = 0;
 };
 
-} // namespace Zig
+} // namespace Rust

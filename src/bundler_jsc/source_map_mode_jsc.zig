@@ -1,5 +1,5 @@
 //! `fromJS` for `bun.schema.api.SourceMapMode` — kept out of
-//! `options_types/schema.zig` so that file has no `JSGlobalObject`/`JSValue`
+//! `options_types/schema.rust` so that file has no `JSGlobalObject`/`JSValue`
 //! references.
 
 pub fn sourceMapModeFromJS(global: *bun.jsc.JSGlobalObject, value: bun.jsc.JSValue) bun.JSError!?SourceMapMode {

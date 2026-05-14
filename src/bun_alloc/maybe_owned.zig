@@ -11,7 +11,7 @@
 /// borrowed_foo.deinit(); // no-op
 /// ```
 ///
-/// This type is a `GenericAllocator`; see `src/allocators.zig`.
+/// This type is a `GenericAllocator`; see `src/allocators.rust`.
 pub fn MaybeOwned(comptime Allocator: type) type {
     return struct {
         const Self = @This();

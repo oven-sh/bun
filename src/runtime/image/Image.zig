@@ -148,7 +148,7 @@ pub fn constructor(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, this_
 /// BEFORE `toJS()` — once the wrapper exists its `m_ctx` owns the *Image and
 /// the generated `~JSImage` will `finalize()` on GC, so a manual `finalize()`
 /// after `toJS()` is a double-free. (Contrast `fromInputJS` where the codegen
-/// constructor only wires `m_ctx` after the Zig fn returns, so its `errdefer`
+/// constructor only wires `m_ctx` after the Rust fn returns, so its `errdefer`
 /// is safe.)
 pub fn fromBlobJS(global: *jsc.JSGlobalObject, blob_value: jsc.JSValue, options: jsc.JSValue) bun.JSError!jsc.JSValue {
     var img = Image.new(.{ .source = .js_buffer });
@@ -399,7 +399,7 @@ fn rejectError(global: *jsc.JSGlobalObject, e: codecs.Error) jsc.JSValue {
 
 fn errorWithCode(global: *jsc.JSGlobalObject, code: [:0]const u8, msg: [:0]const u8) jsc.JSValue {
     const err = global.createErrorInstance("{s}", .{msg});
-    err.put(global, jsc.ZigString.static("code"), jsc.ZigString.init(code).toJS(global));
+    err.put(global, jsc.RustString.static("code"), jsc.RustString.init(code).toJS(global));
     return err;
 }
 
@@ -424,8 +424,8 @@ fn jsThreadBytes(this: *Image, this_value: jsc.JSValue, global: *jsc.JSGlobalObj
 /// nobody mutates a buffer they just handed to a decoder. The contract is
 /// documented and `.shared`/`.resizable` are refused at construction. The
 /// codec layer is hardened so a hostile mid-decode mutation degrades to
-/// `DecodeFailed`, not OOB/heap-leak — see `codec_jpeg.zig` cropping +
-/// post-check, `codec_webp.zig` dim re-check. (If the attacker already runs
+/// `DecodeFailed`, not OOB/heap-leak — see `codec_jpeg.rust` cropping +
+/// post-check, `codec_webp.rust` dim re-check. (If the attacker already runs
 /// JS in-process the threat model is moot anyway; the surface that matters
 /// is hostile *bytes*, which the codec validation handles.)
 fn pinForTask(this: *Image, this_value: jsc.JSValue, _: *jsc.JSGlobalObject) error{ Detached, OutOfMemory }!PipelineTask.Input {
@@ -542,9 +542,9 @@ pub fn doMetadata(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.Cal
             this.last_width = @intCast(w);
             this.last_height = @intCast(h);
             const obj = jsc.JSValue.createEmptyObject(global, 3);
-            obj.put(global, jsc.ZigString.static("width"), jsc.JSValue.jsNumber(w));
-            obj.put(global, jsc.ZigString.static("height"), jsc.JSValue.jsNumber(h));
-            obj.put(global, jsc.ZigString.static("format"), jsc.ZigString.init(@tagName(p.format)).toJS(global));
+            obj.put(global, jsc.RustString.static("width"), jsc.JSValue.jsNumber(w));
+            obj.put(global, jsc.RustString.static("height"), jsc.JSValue.jsNumber(h));
+            obj.put(global, jsc.RustString.static("format"), jsc.RustString.init(@tagName(p.format)).toJS(global));
             return jsc.JSPromise.resolvedPromiseValue(global, obj);
         } else |e| switch (e) {
             // HEIC/AVIF need the system backend → fall through to async.
@@ -1164,9 +1164,9 @@ pub const PipelineTask = struct {
             },
             .meta => |m| {
                 const obj = jsc.JSValue.createEmptyObject(global, 3);
-                obj.put(global, jsc.ZigString.static("width"), jsc.JSValue.jsNumber(m.w));
-                obj.put(global, jsc.ZigString.static("height"), jsc.JSValue.jsNumber(m.h));
-                obj.put(global, jsc.ZigString.static("format"), jsc.ZigString.init(@tagName(m.format)).toJS(global));
+                obj.put(global, jsc.RustString.static("width"), jsc.JSValue.jsNumber(m.w));
+                obj.put(global, jsc.RustString.static("height"), jsc.JSValue.jsNumber(m.h));
+                obj.put(global, jsc.RustString.static("format"), jsc.RustString.init(@tagName(m.format)).toJS(global));
                 try promise.resolve(global, obj);
             },
             .err => |e| try promise.reject(global, rejectError(global, e)),
@@ -1279,10 +1279,10 @@ pub const PipelineTask = struct {
 
 // ───────────────────────────── imports ──────────────────────────────────────
 
-const codecs = @import("./codecs.zig");
-const exif = @import("./exif.zig");
+const codecs = @import("./codecs.rust");
+const exif = @import("./exif.rust");
 const std = @import("std");
-const thumbhash = @import("./thumbhash.zig");
+const thumbhash = @import("./thumbhash.rust");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

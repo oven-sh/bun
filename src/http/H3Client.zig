@@ -12,14 +12,14 @@
 //!   - `ClientSession`  — one QUIC connection (pooled per origin)
 //!   - `ClientContext`  — process-global lsquic engine + session registry
 //!   - `encode`         — request header/body framing onto a quic.Stream
-//!   - `callbacks`      — lsquic → Zig glue (on_hsk_done / on_stream_* / …)
+//!   - `callbacks`      — lsquic → Rust glue (on_hsk_done / on_stream_* / …)
 //!   - `PendingConnect` — DNS-pending connect resolution
 
-pub const Stream = @import("./h3_client/Stream.zig");
-pub const ClientSession = @import("./h3_client/ClientSession.zig");
-pub const ClientContext = @import("./h3_client/ClientContext.zig");
-pub const PendingConnect = @import("./h3_client/PendingConnect.zig");
-pub const AltSvc = @import("./h3_client/AltSvc.zig");
+pub const Stream = @import("./h3_client/Stream.rust");
+pub const ClientSession = @import("./h3_client/ClientSession.rust");
+pub const ClientContext = @import("./h3_client/ClientContext.rust");
+pub const PendingConnect = @import("./h3_client/PendingConnect.rust");
+pub const AltSvc = @import("./h3_client/AltSvc.rust");
 
 /// Live-object counters for the leak test in fetch-http3-client.test.ts.
 /// Incremented at allocation, decremented in deinit. Read from the JS thread
@@ -27,7 +27,7 @@ pub const AltSvc = @import("./h3_client/AltSvc.zig");
 pub var live_sessions = std.atomic.Value(u32).init(0);
 pub var live_streams = std.atomic.Value(u32).init(0);
 
-pub const TestingAPIs = @import("../http_jsc/headers_jsc.zig").H3TestingAPIs;
+pub const TestingAPIs = @import("../http_jsc/headers_jsc.rust").H3TestingAPIs;
 
 const bun = @import("bun");
 const std = @import("std");

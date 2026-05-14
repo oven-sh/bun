@@ -85,7 +85,7 @@ fn taskCallback(
     });
 
     // `wrapper_ref` is used to hold the HMR api ref (see comment in
-    // `src/ast/Ast.zig`)
+    // `src/ast/Ast.rust`)
     bundled_ast.wrapper_ref = ab.hmr_api_ref;
 
     return .{
@@ -217,10 +217,10 @@ pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
 
-const options = @import("./options.zig");
+const options = @import("./options.rust");
 const std = @import("std");
 
-const Logger = @import("../logger/logger.zig");
+const Logger = @import("../logger/logger.rust");
 const Loc = Logger.Loc;
 
 const bun = @import("bun");

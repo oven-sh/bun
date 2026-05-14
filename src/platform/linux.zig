@@ -83,7 +83,7 @@ export fn sys_epoll_pwait2(epfd: i32, events: ?[*]std.os.linux.epoll_event, maxe
             @intFromPtr(sigmask),
             // This is the correct value. glibc claims to pass `sizeof sigset_t` for this argument,
             // which would be 128, but they actually pass 8 which is what the kernel expects.
-            // https://github.com/ziglang/zig/issues/12715
+            // https://github.com/rustlang/rust/issues/12715
             8,
         ),
     );

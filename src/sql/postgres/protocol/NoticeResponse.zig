@@ -19,10 +19,10 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 }
 pub const decode = DecoderWrap(NoticeResponse, decodeInternal).decode;
 
-pub const toJS = @import("../../../sql_jsc/postgres/protocol/notice_response_jsc.zig").toJS;
+pub const toJS = @import("../../../sql_jsc/postgres/protocol/notice_response_jsc.rust").toJS;
 
 const bun = @import("bun");
 const std = @import("std");
-const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
-const FieldMessage = @import("./FieldMessage.zig").FieldMessage;
-const NewReader = @import("./NewReader.zig").NewReader;
+const DecoderWrap = @import("./DecoderWrap.rust").DecoderWrap;
+const FieldMessage = @import("./FieldMessage.rust").FieldMessage;
+const NewReader = @import("./NewReader.rust").NewReader;

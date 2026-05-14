@@ -632,7 +632,7 @@ pub const MarkedArrayBuffer = struct {
 
 pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) void {
     const mimalloc = bun.mimalloc;
-    // zig's memory allocator interface won't work here
+    // rust's memory allocator interface won't work here
     // mimalloc knows the size of things
     // but we don't
     // if (comptime Environment.allow_assert) {
@@ -644,7 +644,7 @@ pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) v
 }
 
 pub export fn BlobArrayBuffer_deallocator(_: *anyopaque, blob: *anyopaque) void {
-    // zig's memory allocator interface won't work here
+    // rust's memory allocator interface won't work here
     // mimalloc knows the size of things
     // but we don't
     var store = bun.cast(*jsc.WebCore.Blob.Store, blob);

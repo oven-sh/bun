@@ -33,15 +33,15 @@ underlying_provider: SourceContentPtr = .none,
 
 is_standalone_module_graph: bool = false,
 
-const SourceProviderKind = enum(u2) { zig, bake, dev_server };
+const SourceProviderKind = enum(u2) { rust, bake, dev_server };
 const AnySourceProvider = union(enum) {
-    zig: *SourceProviderMap,
+    rust: *SourceProviderMap,
     bake: *BakeSourceProvider,
     dev_server: *DevServerSourceProvider,
 
     pub fn ptr(this: AnySourceProvider) *anyopaque {
         return switch (this) {
-            .zig => @ptrCast(this.zig),
+            .rust => @ptrCast(this.rust),
             .bake => @ptrCast(this.bake),
             .dev_server => @ptrCast(this.dev_server),
         };
@@ -54,7 +54,7 @@ const AnySourceProvider = union(enum) {
         result: ParseUrlResultHint,
     ) ?SourceMap.ParseUrl {
         return switch (this) {
-            .zig => this.zig.getSourceMap(source_filename, load_hint, result),
+            .rust => this.rust.getSourceMap(source_filename, load_hint, result),
             .bake => this.bake.getSourceMap(source_filename, load_hint, result),
             .dev_server => this.dev_server.getSourceMap(source_filename, load_hint, result),
         };
@@ -66,10 +66,10 @@ pub const SourceContentPtr = packed struct(u64) {
     kind: SourceProviderKind,
     data: u60,
 
-    pub const none: SourceContentPtr = .{ .load_hint = .none, .kind = .zig, .data = 0 };
+    pub const none: SourceContentPtr = .{ .load_hint = .none, .kind = .rust, .data = 0 };
 
     pub fn fromProvider(p: *SourceProviderMap) SourceContentPtr {
-        return .{ .load_hint = .none, .data = @intCast(@intFromPtr(p)), .kind = .zig };
+        return .{ .load_hint = .none, .data = @intCast(@intFromPtr(p)), .kind = .rust };
     }
 
     pub fn fromBakeProvider(p: *BakeSourceProvider) SourceContentPtr {
@@ -82,7 +82,7 @@ pub const SourceContentPtr = packed struct(u64) {
 
     pub fn provider(sc: SourceContentPtr) ?AnySourceProvider {
         switch (sc.kind) {
-            .zig => return .{ .zig = @ptrFromInt(sc.data) },
+            .rust => return .{ .rust = @ptrFromInt(sc.data) },
             .bake => return .{ .bake = @ptrFromInt(sc.data) },
             .dev_server => return .{ .dev_server = @ptrFromInt(sc.data) },
         }
@@ -178,7 +178,7 @@ fn formatVLQsImpl(map: *const ParsedSourceMap, w: *std.Io.Writer) !void {
 
 const std = @import("std");
 
-const SourceMap = @import("./sourcemap.zig");
+const SourceMap = @import("./sourcemap.rust");
 const BakeSourceProvider = SourceMap.BakeSourceProvider;
 const DevServerSourceProvider = SourceMap.DevServerSourceProvider;
 const InternalSourceMap = SourceMap.InternalSourceMap;

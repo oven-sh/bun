@@ -2,7 +2,7 @@
 //
 // This file contains the core Valkey client implementation with protocol handling
 
-pub const ValkeyContext = @import("./ValkeyContext.zig");
+pub const ValkeyContext = @import("./ValkeyContext.rust");
 
 /// Connection flags to track Valkey client state
 pub const ConnectionFlags = struct {
@@ -45,7 +45,7 @@ pub fn isActive(this: *const Status) bool {
     };
 }
 
-pub const Command = @import("./ValkeyCommand.zig");
+pub const Command = @import("./ValkeyCommand.rust");
 
 /// Valkey protocol types (standalone, TLS, Unix socket)
 pub const Protocol = enum {
@@ -1217,8 +1217,8 @@ pub const ValkeyClient = struct {
 // Auto-pipelining
 const debug = bun.Output.scoped(.Redis, .visible);
 
-const ValkeyCommand = @import("./ValkeyCommand.zig");
-const protocol = @import("../../valkey/valkey_protocol.zig");
+const ValkeyCommand = @import("./ValkeyCommand.rust");
+const protocol = @import("../../valkey/valkey_protocol.rust");
 const std = @import("std");
 
 const bun = @import("bun");

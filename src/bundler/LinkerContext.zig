@@ -2,9 +2,9 @@ pub const LinkerContext = struct {
     pub const debug = Output.scoped(.LinkerCtx, .visible);
     pub const CompileResult = bundler.CompileResult;
 
-    pub const OutputFileListBuilder = @import("./linker_context/OutputFileListBuilder.zig");
-    pub const StaticRouteVisitor = @import("./linker_context/StaticRouteVisitor.zig");
-    pub const MetafileBuilder = @import("./linker_context/MetafileBuilder.zig");
+    pub const OutputFileListBuilder = @import("./linker_context/OutputFileListBuilder.rust");
+    pub const StaticRouteVisitor = @import("./linker_context/StaticRouteVisitor.rust");
+    pub const MetafileBuilder = @import("./linker_context/MetafileBuilder.rust");
 
     parse_graph: *Graph = undefined,
     graph: LinkerGraph = undefined,
@@ -452,12 +452,12 @@ pub const LinkerContext = struct {
         this.parse_graph.heap.helpCatchMemoryIssues();
     }
 
-    pub const computeChunks = @import("./linker_context/computeChunks.zig").computeChunks;
+    pub const computeChunks = @import("./linker_context/computeChunks.rust").computeChunks;
 
-    pub const findAllImportedPartsInJSOrder = @import("./linker_context/findAllImportedPartsInJSOrder.zig").findAllImportedPartsInJSOrder;
-    pub const findImportedPartsInJSOrder = @import("./linker_context/findAllImportedPartsInJSOrder.zig").findImportedPartsInJSOrder;
-    pub const findImportedFilesInCSSOrder = @import("./linker_context/findImportedFilesInCSSOrder.zig").findImportedFilesInCSSOrder;
-    pub const findImportedCSSFilesInJSOrder = @import("./linker_context/findImportedCSSFilesInJSOrder.zig").findImportedCSSFilesInJSOrder;
+    pub const findAllImportedPartsInJSOrder = @import("./linker_context/findAllImportedPartsInJSOrder.rust").findAllImportedPartsInJSOrder;
+    pub const findImportedPartsInJSOrder = @import("./linker_context/findAllImportedPartsInJSOrder.rust").findImportedPartsInJSOrder;
+    pub const findImportedFilesInCSSOrder = @import("./linker_context/findImportedFilesInCSSOrder.rust").findImportedFilesInCSSOrder;
+    pub const findImportedCSSFilesInJSOrder = @import("./linker_context/findImportedCSSFilesInJSOrder.rust").findImportedCSSFilesInJSOrder;
 
     pub fn generateNamedExportInFile(this: *LinkerContext, source_index: Index.Int, module_ref: Ref, name: []const u8, alias: []const u8) bun.OOM!struct { Ref, u32 } {
         const ref = this.graph.generateNewSymbol(source_index, .other, name);
@@ -488,10 +488,10 @@ pub const LinkerContext = struct {
         return .{ ref, part_index };
     }
 
-    pub const generateCodeForLazyExport = @import("./linker_context/generateCodeForLazyExport.zig").generateCodeForLazyExport;
-    pub const scanImportsAndExports = @import("./linker_context/scanImportsAndExports.zig").scanImportsAndExports;
-    pub const doStep5 = @import("./linker_context/doStep5.zig").doStep5;
-    pub const createExportsForFile = @import("./linker_context/doStep5.zig").createExportsForFile;
+    pub const generateCodeForLazyExport = @import("./linker_context/generateCodeForLazyExport.rust").generateCodeForLazyExport;
+    pub const scanImportsAndExports = @import("./linker_context/scanImportsAndExports.rust").scanImportsAndExports;
+    pub const doStep5 = @import("./linker_context/doStep5.rust").doStep5;
+    pub const createExportsForFile = @import("./linker_context/doStep5.rust").createExportsForFile;
 
     pub fn scanCSSImports(
         this: *LinkerContext,
@@ -637,7 +637,7 @@ pub const LinkerContext = struct {
         pub const Map = std.AutoArrayHashMap(Ref, void);
     };
 
-    pub const computeCrossChunkDependencies = @import("./linker_context/computeCrossChunkDependencies.zig").computeCrossChunkDependencies;
+    pub const computeCrossChunkDependencies = @import("./linker_context/computeCrossChunkDependencies.rust").computeCrossChunkDependencies;
 
     pub const GenerateChunkCtx = struct {
         c: *LinkerContext,
@@ -645,9 +645,9 @@ pub const LinkerContext = struct {
         chunk: *Chunk,
     };
 
-    pub const postProcessJSChunk = @import("./linker_context/postProcessJSChunk.zig").postProcessJSChunk;
-    pub const postProcessCSSChunk = @import("./linker_context/postProcessCSSChunk.zig").postProcessCSSChunk;
-    pub const postProcessHTMLChunk = @import("./linker_context/postProcessHTMLChunk.zig").postProcessHTMLChunk;
+    pub const postProcessJSChunk = @import("./linker_context/postProcessJSChunk.rust").postProcessJSChunk;
+    pub const postProcessCSSChunk = @import("./linker_context/postProcessCSSChunk.rust").postProcessCSSChunk;
+    pub const postProcessHTMLChunk = @import("./linker_context/postProcessHTMLChunk.rust").postProcessHTMLChunk;
     pub fn generateChunk(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
         const worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
@@ -658,7 +658,7 @@ pub const LinkerContext = struct {
         }
     }
 
-    pub const renameSymbolsInChunk = @import("./linker_context/renameSymbolsInChunk.zig").renameSymbolsInChunk;
+    pub const renameSymbolsInChunk = @import("./linker_context/renameSymbolsInChunk.rust").renameSymbolsInChunk;
 
     pub fn generateJSRenamer(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
         var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
@@ -679,13 +679,13 @@ pub const LinkerContext = struct {
         ) catch @panic("TODO: handle error");
     }
 
-    pub const generateChunksInParallel = @import("./linker_context/generateChunksInParallel.zig").generateChunksInParallel;
-    pub const generateCompileResultForJSChunk = @import("./linker_context/generateCompileResultForJSChunk.zig").generateCompileResultForJSChunk;
-    pub const generateCompileResultForCssChunk = @import("./linker_context/generateCompileResultForCssChunk.zig").generateCompileResultForCssChunk;
-    pub const generateCompileResultForHtmlChunk = @import("./linker_context/generateCompileResultForHtmlChunk.zig").generateCompileResultForHtmlChunk;
+    pub const generateChunksInParallel = @import("./linker_context/generateChunksInParallel.rust").generateChunksInParallel;
+    pub const generateCompileResultForJSChunk = @import("./linker_context/generateCompileResultForJSChunk.rust").generateCompileResultForJSChunk;
+    pub const generateCompileResultForCssChunk = @import("./linker_context/generateCompileResultForCssChunk.rust").generateCompileResultForCssChunk;
+    pub const generateCompileResultForHtmlChunk = @import("./linker_context/generateCompileResultForHtmlChunk.rust").generateCompileResultForHtmlChunk;
 
-    pub const prepareCssAstsForChunk = @import("./linker_context/prepareCssAstsForChunk.zig").prepareCssAstsForChunk;
-    pub const PrepareCssAstTask = @import("./linker_context/prepareCssAstsForChunk.zig").PrepareCssAstTask;
+    pub const prepareCssAstsForChunk = @import("./linker_context/prepareCssAstsForChunk.rust").prepareCssAstsForChunk;
+    pub const PrepareCssAstTask = @import("./linker_context/prepareCssAstsForChunk.rust").PrepareCssAstTask;
 
     pub fn generateSourceMapForChunk(
         c: *LinkerContext,
@@ -1292,14 +1292,14 @@ pub const LinkerContext = struct {
         return true;
     }
 
-    pub const convertStmtsForChunk = @import("./linker_context/convertStmtsForChunk.zig").convertStmtsForChunk;
-    pub const convertStmtsForChunkForDevServer = @import("./linker_context/convertStmtsForChunkForDevServer.zig").convertStmtsForChunkForDevServer;
+    pub const convertStmtsForChunk = @import("./linker_context/convertStmtsForChunk.rust").convertStmtsForChunk;
+    pub const convertStmtsForChunkForDevServer = @import("./linker_context/convertStmtsForChunkForDevServer.rust").convertStmtsForChunkForDevServer;
 
     pub fn runtimeFunction(c: *LinkerContext, name: []const u8) Ref {
         return c.graph.runtimeFunction(name);
     }
 
-    pub const generateCodeForFileInChunkJS = @import("./linker_context/generateCodeForFileInChunkJS.zig").generateCodeForFileInChunkJS;
+    pub const generateCodeForFileInChunkJS = @import("./linker_context/generateCodeForFileInChunkJS.rust").generateCodeForFileInChunkJS;
 
     pub fn printCodeForFileInChunkJS(
         c: *LinkerContext,
@@ -1543,7 +1543,7 @@ pub const LinkerContext = struct {
         hash.write(std.mem.asBytes(&chunk.isolated_hash));
     }
 
-    pub const writeOutputFilesToDisk = @import("./linker_context/writeOutputFilesToDisk.zig").writeOutputFilesToDisk;
+    pub const writeOutputFilesToDisk = @import("./linker_context/writeOutputFilesToDisk.rust").writeOutputFilesToDisk;
 
     // Sort cross-chunk exports by chunk name for determinism
     pub fn sortedCrossChunkExportItems(
@@ -2699,7 +2699,7 @@ pub const LinkerContext = struct {
 
 pub const Ref = bun.ast.Ref;
 pub const ThreadPoolLib = bun.ThreadPool;
-pub const Fs = @import("../resolver/fs.zig");
+pub const Fs = @import("../resolver/fs.rust");
 
 pub const Index = bun.ast.Index;
 const debugTreeShake = Output.scoped(.TreeShake, .hidden);
@@ -2710,20 +2710,20 @@ pub const ParseTask = bun.bundle_v2.ParseTask;
 
 const string = []const u8;
 
-const NodeFallbackModules = @import("../resolver/node_fallbacks.zig");
-const js_printer = @import("../js_printer/js_printer.zig");
-const lex = @import("../js_parser/lexer.zig");
-const linker = @import("./linker.zig");
-const runtime = @import("../js_parser/runtime.zig");
+const NodeFallbackModules = @import("../resolver/node_fallbacks.rust");
+const js_printer = @import("../js_printer/js_printer.rust");
+const lex = @import("../js_parser/lexer.rust");
+const linker = @import("./linker.rust");
+const runtime = @import("../js_parser/runtime.rust");
 const std = @import("std");
 
-const Logger = @import("../logger/logger.zig");
+const Logger = @import("../logger/logger.rust");
 const Loc = Logger.Loc;
 
-const _resolver = @import("../resolver/resolver.zig");
+const _resolver = @import("../resolver/resolver.rust");
 const Resolver = _resolver.Resolver;
 
-const options = @import("./options.zig");
+const options = @import("./options.rust");
 const Loader = options.Loader;
 
 const bun = @import("bun");

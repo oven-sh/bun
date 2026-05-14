@@ -1,6 +1,6 @@
 // close()/terminate() during CONNECTING must transition to CLOSED, fire
 // error + close events, and release the pending-activity ref so the
-// WebSocket can be garbage-collected. Previously the Zig upgrade client
+// WebSocket can be garbage-collected. Previously the Rust upgrade client
 // was cancelled without any completion callback reaching C++, leaving
 // the socket stuck in CLOSING with hasPendingActivity() permanently true
 // — never GC'd, close event never fired, process never exited.

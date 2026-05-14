@@ -1,6 +1,6 @@
 // @link "../deps/libarchive.a"
 
-pub const lib = @import("../libarchive_sys/bindings.zig");
+pub const lib = @import("../libarchive_sys/bindings.rust");
 const Archive = lib.Archive;
 pub const Seek = enum(c_int) {
     set = std.posix.SEEK_SET,
@@ -524,10 +524,10 @@ pub const Archiver = struct {
                                         @intFromEnum(bun.sys.E.PERM),
                                         @intFromEnum(bun.sys.E.NOENT),
                                         => brk: {
-                                            bun.MakePath.makePath(u16, dir, bun.Dirname.dirname(u16, path_slice) orelse return bun.errnoToZigErr(e.errno)) catch {};
+                                            bun.MakePath.makePath(u16, dir, bun.Dirname.dirname(u16, path_slice) orelse return bun.errnoToRustErr(e.errno)) catch {};
                                             break :brk try bun.sys.openatWindows(.fromNative(dir_fd), path, flags, 0).unwrap();
                                         },
-                                        else => return bun.errnoToZigErr(e.errno),
+                                        else => return bun.errnoToRustErr(e.errno),
                                     },
                                 }
                             else

@@ -159,7 +159,7 @@ pub fn deref(self: AnyRequestContext) void {
     }.f, .{});
 }
 
-pub const AdditionalOnAbortCallback = @import("./RequestContext.zig").AdditionalOnAbortCallback;
+pub const AdditionalOnAbortCallback = @import("./RequestContext.rust").AdditionalOnAbortCallback;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

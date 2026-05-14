@@ -44,7 +44,7 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
     var needs_redirect = false;
 
     if (strings.containsChar(decoded_pathname, '%')) {
-        // https://github.com/ziglang/zig/issues/14148
+        // https://github.com/rustlang/rust/issues/14148
         var possibly_encoded_pathname: []u8 = switch (decoded_pathname.len) {
             0...1024 => &temp_path_buf,
             else => &big_temp_path_buf,
@@ -144,7 +144,7 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
 const string = []const u8;
 
 const std = @import("std");
-const PercentEncoding = @import("../url/url.zig").PercentEncoding;
+const PercentEncoding = @import("../url/url.rust").PercentEncoding;
 
 const bun = @import("bun");
 const strings = bun.strings;

@@ -1,6 +1,6 @@
 #include "ObjectModule.h"
 
-namespace Zig {
+namespace Rust {
 JSC::SyntheticSourceProvider::SyntheticSourceGenerator
 generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
     JSC::JSObject* object)
@@ -106,4 +106,4 @@ generateJSValueExportDefaultObjectSourceCode(JSC::JSGlobalObject* globalObject,
             gcUnprotectNullTolerant(value.asCell());
     };
 }
-} // namespace Zig
+} // namespace Rust

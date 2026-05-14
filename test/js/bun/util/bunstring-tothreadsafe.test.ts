@@ -18,7 +18,7 @@ test("BunString__toThreadSafe does not leak a ref on the original StringImpl", (
   }
 });
 
-// Exercise the real callers (Bun.file / async fs.write) whose Zig-side
+// Exercise the real callers (Bun.file / async fs.write) whose Rust-side
 // SliceWithUnderlyingString.toThreadSafe wrappers were updated alongside the
 // C++ fix. With ASAN this would crash on a double-deref if the two sides ever
 // disagree on who owns the old StringImpl.

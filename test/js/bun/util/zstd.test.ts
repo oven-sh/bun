@@ -11,7 +11,7 @@ describe("Zstandard compression", async () => {
     {
       name: "large",
       data: Buffer.from(
-        (await Bun.file(path.join(__dirname, "..", "..", "..", "..", "src", "js_parser", "parser.zig")).text()).repeat(
+        (await Bun.file(path.join(__dirname, "..", "..", "..", "..", "src", "js_parser", "parser.rust")).text()).repeat(
           5,
         ),
       ),
@@ -112,9 +112,9 @@ describe("Zstandard compression", async () => {
               "scripts": {
                 "build": "bun run build:debug",
                 "watch":
-                  "zig build check --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib",
+                  "rust build check --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/rust-check-cache --rust-lib-dir vendor/rust/lib",
                 "watch-windows":
-                  "zig build check-windows --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib",
+                  "rust build check-windows --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/rust-check-cache --rust-lib-dir vendor/rust/lib",
                 "agent":
                   "(bun run --silent build:debug &> /tmp/bun.debug.build.log || (cat /tmp/bun.debug.build.log && rm -rf /tmp/bun.debug.build.log && exit 1)) && rm -f /tmp/bun.debug.build.log && ./build/debug/bun-debug",
                 "build:debug": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -B build/debug",
@@ -132,7 +132,7 @@ describe("Zstandard compression", async () => {
                 "build:logs":
                   "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_LOGS=ON -B build/release-logs",
                 "build:safe":
-                  "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DZIG_OPTIMIZE=ReleaseSafe -B build/release-safe",
+                  "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DRUST_OPTIMIZE=ReleaseSafe -B build/release-safe",
                 "build:smol": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=MinSizeRel -B build/release-smol",
                 "build:local":
                   "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -DWEBKIT_LOCAL=ON -B build/debug-local",
@@ -140,8 +140,8 @@ describe("Zstandard compression", async () => {
                   "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DWEBKIT_LOCAL=ON -B build/release-local",
                 "build:release:with_logs":
                   "cmake . -DCMAKE_BUILD_TYPE=Release -DENABLE_LOGS=true -GNinja -Bbuild-release && ninja -Cbuild-release",
-                "build:debug-zig-release":
-                  "cmake . -DCMAKE_BUILD_TYPE=Release -DZIG_OPTIMIZE=Debug -GNinja -Bbuild-debug-zig-release && ninja -Cbuild-debug-zig-release",
+                "build:debug-rust-release":
+                  "cmake . -DCMAKE_BUILD_TYPE=Release -DRUST_OPTIMIZE=Debug -GNinja -Bbuild-debug-rust-release && ninja -Cbuild-debug-rust-release",
                 "run:linux":
                   'docker run --rm  -v "$PWD:/root/bun/" -w /root/bun ghcr.io/oven-sh/bun-development-docker-image',
                 "css-properties": "bun run src/css/properties/generate_properties.ts",
@@ -150,23 +150,23 @@ describe("Zstandard compression", async () => {
                 "typecheck": "tsc --noEmit && cd test && bun run typecheck",
                 "fmt": "bun run prettier",
                 "fmt:cpp": "bun run clang-format",
-                "fmt:zig": "bun run zig-format",
+                "fmt:rust": "bun run rust-format",
                 "lint": "bunx oxlint --config=oxlint.json --format=github src/js",
                 "lint:fix": "oxlint --config oxlint.json --fix",
                 "test": "node scripts/runner.node.mjs --exec-path ./build/debug/bun-debug",
                 "test:release": "node scripts/runner.node.mjs --exec-path ./build/release/bun",
                 "banned": "bun test test/internal/ban-words.test.ts",
                 "glob-sources": "bun scripts/glob-sources.mjs",
-                "zig": "vendor/zig/zig.exe",
-                "zig:test": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -DBUN_TEST=ON -B build/debug",
-                "zig:test:release":
+                "rust": "vendor/rust/rust.exe",
+                "rust:test": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -DBUN_TEST=ON -B build/debug",
+                "rust:test:release":
                   "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DBUNTEST=ON -B build/release",
-                "zig:test:ci":
-                  "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DBUN_TEST=ON -DZIG_OPTIMIZE=ReleaseSafe -DCMAKE_VERBOSE_MAKEFILE=ON -DCI=true -B build/release-ci --verbose --fresh",
-                "zig:fmt": "bun run zig-format",
-                "zig:check": "bun run zig build check --summary new",
-                "zig:check-all": "bun run zig build check-all --summary new",
-                "zig:check-windows": "bun run zig build check-windows --summary new",
+                "rust:test:ci":
+                  "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DBUN_TEST=ON -DRUST_OPTIMIZE=ReleaseSafe -DCMAKE_VERBOSE_MAKEFILE=ON -DCI=true -B build/release-ci --verbose --fresh",
+                "rust:fmt": "bun run rust-format",
+                "rust:check": "bun run rust build check --summary new",
+                "rust:check-all": "bun run rust build check-all --summary new",
+                "rust:check-windows": "bun run rust build check-windows --summary new",
                 "analysis":
                   "bun ./scripts/build.mjs -DCMAKE_BUILD_TYPE=Debug -DENABLE_ANALYSIS=ON -DENABLE_CCACHE=OFF -B build/analysis",
                 "analysis:no-llvm": "bun run analysis -DENABLE_LLVM=OFF",
@@ -176,13 +176,13 @@ describe("Zstandard compression", async () => {
                 "clang-tidy": "bun run analysis --target clang-tidy",
                 "clang-tidy:check": "bun run analysis --target clang-tidy-check",
                 "clang-tidy:diff": "bun run analysis --target clang-tidy-diff",
-                "zig-format": "bun run analysis:no-llvm --target zig-format",
-                "zig-format:check": "bun run analysis:no-llvm --target zig-format-check",
+                "rust-format": "bun run analysis:no-llvm --target rust-format",
+                "rust-format:check": "bun run analysis:no-llvm --target rust-format-check",
                 "prettier":
                   "bunx prettier@latest --plugin=prettier-plugin-organize-imports --config .prettierrc --write scripts packages src docs 'test/**/*.{test,spec}.{ts,tsx,js,jsx,mts,mjs,cjs,cts}' '!test/**/*fixture*.*'",
                 "node:test": "node ./scripts/runner.node.mjs --quiet --exec-path=$npm_execpath --node-tests ",
-                "clean:zig":
-                  "rm -rf build/debug/cache/zig build/debug/CMakeCache.txt 'build/debug/*.o' .zig-cache zig-out || true",
+                "clean:rust":
+                  "rm -rf build/debug/cache/rust build/debug/CMakeCache.txt 'build/debug/*.o' .rust-cache rust-out || true",
               },
             },
             null,

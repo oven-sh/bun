@@ -2340,7 +2340,7 @@ pub const sync = struct {
         // Snapshot pre-existing direct children so the disarm defer can tell
         // subreaper-adopted orphans (ppid==us) apart from `Bun.spawn` siblings
         // (also ppid==us). Typically empty — `bun run`/`bunx` have no JS VM —
-        // but spawnSync can run inside a live VM (ffi.zig xcrun probe).
+        // but spawnSync can run inside a live VM (ffi.rust xcrun probe).
         var siblings_buf: [64]std.c.pid_t = undefined;
         const siblings = if (Environment.isLinux and no_orphans)
             bun.ParentDeathWatchdog.snapshotChildren(&siblings_buf)
@@ -2427,7 +2427,7 @@ pub const sync = struct {
             jc.restore();
             // pgroup → tracked uniqueids (macOS). Do NOT call the
             // getpid()-rooted `killDescendants()` here — `spawnSync` can be
-            // reached from inside a live VM (ffi.zig xcrun probe, etc.) and
+            // reached from inside a live VM (ffi.rust xcrun probe, etc.) and
             // that would SIGKILL the user's unrelated `Bun.spawn` children.
             // The full-tree walk runs from `onProcessExit` when the whole
             // process is actually exiting.
@@ -2928,12 +2928,12 @@ pub const sync = struct {
 };
 
 const std = @import("std");
-const MultiRunProcessHandle = @import("../../cli/multi_run.zig").ProcessHandle;
-const ProcessHandle = @import("../../cli/filter_run.zig").ProcessHandle;
-const TestWorkerHandle = @import("../../cli/test/ParallelRunner.zig").Worker;
+const MultiRunProcessHandle = @import("../../cli/multi_run.rust").ProcessHandle;
+const ProcessHandle = @import("../../cli/filter_run.rust").ProcessHandle;
+const TestWorkerHandle = @import("../../cli/test/ParallelRunner.rust").Worker;
 
-const CronRegisterJob = @import("../cron.zig").CronRegisterJob;
-const CronRemoveJob = @import("../cron.zig").CronRemoveJob;
+const CronRegisterJob = @import("../cron.rust").CronRegisterJob;
+const CronRemoveJob = @import("../cron.rust").CronRemoveJob;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -8,7 +8,7 @@
 //! which is a HUGE dx win for developers.
 //!
 //! The approach implemented is a `.bunx` file which sits right next to the renamed
-//! launcher exe. We read that (see BinLinkingShim.zig for the creation of this file)
+//! launcher exe. We read that (see BinLinkingShim.rust for the creation of this file)
 //! and then we call NtCreateProcess to spawn the correct child process.
 //!
 //! Every attempt possible to make this file as minimal as possible has been made.
@@ -19,7 +19,7 @@
 //! Notes about NTDLL and Windows Internals:
 //! - https://www.geoffchappell.com/studies/windows/win32/ntdll/index.htm
 //! - http://undocumented.ntinternals.net/index.html
-//! - https://github.com/ziglang/zig/issues/1840#issuecomment-558486115
+//! - https://github.com/rustlang/rust/issues/1840#issuecomment-558486115
 //!
 //! An earlier approach to this problem involved using extended attributes, but I found
 //! this to be extremely hard to get a working implementation. It takes more system calls
@@ -626,7 +626,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
                 debug("args_len_bytes: {}", .{shebang_metadata.args_len_bytes});
             }
 
-            // magic number related to how BinLinkingShim.zig writes the metadata
+            // magic number related to how BinLinkingShim.rust writes the metadata
             // i'm sorry, i don't have a good explanation for why this number is this number. it just is.
             const validation_length_offset = 14;
 
@@ -903,7 +903,7 @@ pub const FromBunRunContext = struct {
     environment: ?[*]const u16,
 };
 
-/// This is called from run_command.zig in bun.exe which allows us to skip the CreateProcessW
+/// This is called from run_command.rust in bun.exe which allows us to skip the CreateProcessW
 /// call to create bun_shim_impl.exe. Instead we invoke the logic it has from an open file handle.
 ///
 /// This saves ~5-12ms depending on the machine.
@@ -964,7 +964,7 @@ pub inline fn main() noreturn {
 
 const builtin = @import("builtin");
 const std = @import("std");
-const Flags = @import("./BinLinkingShim.zig").Flags;
+const Flags = @import("./BinLinkingShim.rust").Flags;
 const assert = std.debug.assert;
 const w = std.os.windows;
 

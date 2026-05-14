@@ -49,9 +49,9 @@ struct WorkerOptions;
 
 /// Parent-side handle for a Web or Node worker thread.
 ///
-/// Lifetime / ownership (see also the header comment in web_worker.zig):
+/// Lifetime / ownership (see also the header comment in web_worker.rust):
 ///
-///   JSWorker (GC'd JSCell)  ──Ref──►  Worker  ──owns──►  Zig WebWorker
+///   JSWorker (GC'd JSCell)  ──Ref──►  Worker  ──owns──►  Rust WebWorker
 ///     parent thread                   ThreadSafeRefCounted   default_allocator
 ///
 /// Refs held on this object:
@@ -62,7 +62,7 @@ struct WorkerOptions;
 ///                            worker thread (EventListenerMap is single-threaded)
 ///   - transient Ref{*this} captured by posted tasks
 ///
-/// impl_ (Zig WebWorker*) is owned by this object and freed in ~Worker(), so
+/// impl_ (Rust WebWorker*) is owned by this object and freed in ~Worker(), so
 /// terminate()/ref()/unref() can never see a dangling pointer while JS holds
 /// the wrapper.
 ///
@@ -86,7 +86,7 @@ struct WorkerOptions;
 /// accepts and silently drops the message, matching browser/Node semantics.
 ///
 /// m_terminateRequested is orthogonal: set once by terminate(), gates
-/// dispatchEvent()/setKeepAlive(), and is mirrored into the Zig side via
+/// dispatchEvent()/setKeepAlive(), and is mirrored into the Rust side via
 /// WebWorker__notifyNeedTermination so the worker loop can observe it.
 class Worker final : public ThreadSafeRefCounted<Worker>, public EventTargetWithInlineData, private ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED(Worker);
@@ -127,10 +127,10 @@ public:
     WorkerOptions& options() { return m_options; }
 
     // -- Worker-thread entry points (each posts to m_parentContextId) --------
-    void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
-    void fireEarlyMessages(Zig::GlobalObject* workerGlobalObject);
+    void dispatchOnline(Rust::GlobalObject* workerGlobalObject);
+    void fireEarlyMessages(Rust::GlobalObject* workerGlobalObject);
     void dispatchErrorWithMessage(WTF::String message);
-    bool dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value);
+    bool dispatchErrorWithValue(Rust::GlobalObject* workerGlobalObject, JSValue value);
     bool dispatchExit(int32_t exitCode);
 
     // Post a task to the parent's ScriptExecutionContext by stable identifier.
@@ -185,13 +185,13 @@ private:
     // once the worker VM is up).
     const ScriptExecutionContextIdentifier m_clientIdentifier;
 
-    // Owned Zig WebWorker*. Written once in create(), read only on the parent
+    // Owned Rust WebWorker*. Written once in create(), read only on the parent
     // thread (terminate/setKeepAlive) or in the close task (also parent thread).
     // Freed in ~Worker(). Never null once create() returns successfully.
     void* impl_ { nullptr };
 };
 
-JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
+JSValue createNodeWorkerThreadsBinding(Rust::GlobalObject* globalObject);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionPostMessage);
 

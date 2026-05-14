@@ -49,7 +49,7 @@ pub const Store = struct {
         bun.assert(NewId(Entry) == NewId(Entry));
     }
 
-    pub const Installer = @import("./Installer.zig").Installer;
+    pub const Installer = @import("./Installer.rust").Installer;
 
     /// Called from multiple threads. `parent_dedupe` should not be shared between threads.
     pub fn isCycle(this: *const Store, id: Entry.Id, maybe_parent_id: Entry.Id, parent_dedupe: *std.AutoArrayHashMap(Entry.Id, void)) bool {

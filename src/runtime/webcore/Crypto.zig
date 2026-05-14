@@ -200,7 +200,7 @@ pub fn Bun__randomUUIDv5_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallF
 
             break :brk result;
         } else if (name_value.asArrayBuffer(globalThis)) |array_buffer| {
-            break :brk jsc.ZigString.Slice.fromUTF8NeverFree(array_buffer.byteSlice());
+            break :brk jsc.RustString.Slice.fromUTF8NeverFree(array_buffer.byteSlice());
         } else {
             return globalThis.ERR(.INVALID_ARG_TYPE, "The \"name\" argument must be of type string or BufferSource", .{}).throw();
         }
@@ -279,9 +279,9 @@ pub export fn CryptoObject__create(globalThis: *jsc.JSGlobalObject) jsc.JSValue 
 
 const std = @import("std");
 
-const UUID = @import("../../jsc/uuid.zig");
-const UUID5 = @import("../../jsc/uuid.zig").UUID5;
-const UUID7 = @import("../../jsc/uuid.zig").UUID7;
+const UUID = @import("../../jsc/uuid.rust");
+const UUID5 = @import("../../jsc/uuid.rust").UUID5;
+const UUID7 = @import("../../jsc/uuid.rust").UUID7;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

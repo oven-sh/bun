@@ -38,9 +38,9 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
-#include "ZigGeneratedClasses.h"
+#include "RustGeneratedClasses.h"
 #include "JavaScriptCore/BuiltinNames.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "WebCoreJSBuiltins.h"
 
 namespace WebCore {
@@ -96,7 +96,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncText, (JSGlobalObject * global
         return {};
     }
 
-    return ZigGlobalObject__readableStreamToText(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
+    return RustGlobalObject__readableStreamToText(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncBytes, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -109,7 +109,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncBytes, (JSGlobalObject * globa
         return {};
     }
 
-    return ZigGlobalObject__readableStreamToBytes(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
+    return RustGlobalObject__readableStreamToBytes(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncJSON, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -122,7 +122,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncJSON, (JSGlobalObject * global
         return {};
     }
 
-    return ZigGlobalObject__readableStreamToJSON(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
+    return RustGlobalObject__readableStreamToJSON(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncBlob, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -135,7 +135,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncBlob, (JSGlobalObject * global
         return {};
     }
 
-    return ZigGlobalObject__readableStreamToBlob(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
+    return RustGlobalObject__readableStreamToBlob(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
 }
 using JSReadableStreamDOMConstructor = JSDOMBuiltinConstructor<JSReadableStream>;
 

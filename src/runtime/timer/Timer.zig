@@ -621,11 +621,11 @@ pub const All = struct {
     }
 };
 
-pub const EventLoopTimer = @import("../../event_loop/EventLoopTimer.zig");
+pub const EventLoopTimer = @import("../../event_loop/EventLoopTimer.rust");
 
-pub const TimeoutObject = @import("./TimeoutObject.zig");
-pub const ImmediateObject = @import("./ImmediateObject.zig");
-pub const TimerObjectInternals = @import("./TimerObjectInternals.zig");
+pub const TimeoutObject = @import("./TimeoutObject.rust");
+pub const ImmediateObject = @import("./ImmediateObject.rust");
+pub const TimerObjectInternals = @import("./TimerObjectInternals.rust");
 
 pub const Kind = enum(u2) {
     setTimeout = 0,
@@ -659,11 +659,11 @@ pub const ID = extern struct {
 };
 
 /// A timer created by WTF code and invoked by Bun's event loop
-pub const WTFTimer = @import("./WTFTimer.zig");
+pub const WTFTimer = @import("./WTFTimer.rust");
 
-pub const DateHeaderTimer = @import("./DateHeaderTimer.zig");
+pub const DateHeaderTimer = @import("./DateHeaderTimer.rust");
 
-pub const EventLoopDelayMonitor = @import("./EventLoopDelayMonitor.zig");
+pub const EventLoopDelayMonitor = @import("./EventLoopDelayMonitor.rust");
 
 pub const internal_bindings = struct {
     /// Node.js has some tests that check whether timers fire at the right time. They check this

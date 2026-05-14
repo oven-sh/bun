@@ -297,7 +297,7 @@ pub const CallFrame = opaque {
 
 const bun = @import("bun");
 const std = @import("std");
-const VM = @import("./VM.zig").VM;
+const VM = @import("./VM.rust").VM;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

@@ -591,9 +591,9 @@ pub const LifecycleScriptSubprocess = struct {
 
 const string = []const u8;
 
-const Lockfile = @import("./lockfile.zig");
+const Lockfile = @import("./lockfile.rust");
 const std = @import("std");
-const PackageManager = @import("./install.zig").PackageManager;
+const PackageManager = @import("./install.rust").PackageManager;
 const Timer = std.time.Timer;
 
 const bun = @import("bun");

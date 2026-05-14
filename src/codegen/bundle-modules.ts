@@ -15,7 +15,7 @@ import path from "path";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
-import { getJS2NativeCPP, getJS2NativeRust, getJS2NativeZig } from "./generate-js2native";
+import { getJS2NativeCPP, getJS2NativeRust, getJS2NativeRust } from "./generate-js2native";
 import { cap, declareASCIILiteral, writeIfNotChanged } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
@@ -405,10 +405,10 @@ namespace InternalModuleRegistryConstants {
   );
 }
 
-// This is a generated enum for zig code (exports.zig)
+// This is a generated enum for rust code (exports.rust)
 writeIfNotChanged(
-  path.join(CODEGEN_DIR, "ResolvedSourceTag.zig"),
-  `// zig fmt: off
+  path.join(CODEGEN_DIR, "ResolvedSourceTag.rust"),
+  `// rust fmt: off
 pub const ResolvedSourceTag = enum(u32) {
     javascript = 0,
     package_json_type_module = 1,
@@ -480,9 +480,9 @@ writeIfNotChanged(
 
 writeIfNotChanged(path.join(CODEGEN_DIR, "GeneratedJS2Native.h"), getJS2NativeCPP());
 
-// zig will complain if this file is outside of the module
-const js2nativeZigPath = path.join(import.meta.dir, "../jsc/bindings/GeneratedJS2Native.zig");
-writeIfNotChanged(js2nativeZigPath, getJS2NativeZig(js2nativeZigPath));
+// rust will complain if this file is outside of the module
+const js2nativeRustPath = path.join(import.meta.dir, "../jsc/bindings/GeneratedJS2Native.rust");
+writeIfNotChanged(js2nativeRustPath, getJS2NativeRust(js2nativeRustPath));
 
 // Rust sibling: include!()'d by src/runtime/generated_js2native.rs
 writeIfNotChanged(path.join(CODEGEN_DIR, "generated_js2native.rs"), getJS2NativeRust());

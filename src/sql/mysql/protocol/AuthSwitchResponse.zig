@@ -12,7 +12,7 @@ pub fn writeInternal(this: *const AuthSwitchResponse, comptime Context: type, wr
 
 pub const write = writeWrap(AuthSwitchResponse, writeInternal).write;
 
-const Data = @import("../../shared/Data.zig").Data;
+const Data = @import("../../shared/Data.rust").Data;
 
-const NewWriter = @import("./NewWriter.zig").NewWriter;
-const writeWrap = @import("./NewWriter.zig").writeWrap;
+const NewWriter = @import("./NewWriter.rust").NewWriter;
+const writeWrap = @import("./NewWriter.rust").writeWrap;

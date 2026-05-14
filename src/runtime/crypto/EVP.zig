@@ -196,7 +196,7 @@ pub fn byNameAndEngine(engine: *BoringSSL.ENGINE, name: []const u8) ?EVP {
     return null;
 }
 
-pub fn byName(name: ZigString, global: *jsc.JSGlobalObject) ?EVP {
+pub fn byName(name: RustString, global: *jsc.JSGlobalObject) ?EVP {
     var name_str = name.toSlice(global.allocator());
     defer name_str.deinit();
     return byNameAndEngine(global.bunVM().rareData().boringEngine(), name_str.slice());
@@ -208,7 +208,7 @@ pub fn deinit(this: *EVP) void {
 }
 
 pub const Digest = [BoringSSL.EVP_MAX_MD_SIZE]u8;
-pub const PBKDF2 = @import("./PBKDF2.zig");
+pub const PBKDF2 = @import("./PBKDF2.rust");
 pub const pbkdf2 = PBKDF2.pbkdf2;
 
 const std = @import("std");
@@ -219,4 +219,4 @@ const BoringSSL = bun.BoringSSL.c;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

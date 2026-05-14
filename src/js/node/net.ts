@@ -41,19 +41,19 @@ const MathMax = Math.max;
 const { UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
 const isWindows = process.platform === "win32";
 
-const getDefaultAutoSelectFamily = $zig("node_net_binding.zig", "getDefaultAutoSelectFamily");
-const setDefaultAutoSelectFamily = $zig("node_net_binding.zig", "setDefaultAutoSelectFamily");
-const getDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
-const setDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
-const SocketAddress = $zig("node_net_binding.zig", "SocketAddress");
-const BlockList = $zig("node_net_binding.zig", "BlockList");
-const newDetachedSocket = $newZigFunction("node_net_binding.zig", "newDetachedSocket", 1);
-const doConnect = $newZigFunction("node_net_binding.zig", "doConnect", 2);
+const getDefaultAutoSelectFamily = $rust("node_net_binding.rust", "getDefaultAutoSelectFamily");
+const setDefaultAutoSelectFamily = $rust("node_net_binding.rust", "setDefaultAutoSelectFamily");
+const getDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rust", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const setDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rust", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const SocketAddress = $rust("node_net_binding.rust", "SocketAddress");
+const BlockList = $rust("node_net_binding.rust", "BlockList");
+const newDetachedSocket = $newRustFunction("node_net_binding.rust", "newDetachedSocket", 1);
+const doConnect = $newRustFunction("node_net_binding.rust", "doConnect", 2);
 
-const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
-const upgradeDuplexToTLS = $newZigFunction("runtime/socket/socket.zig", "jsUpgradeDuplexToTLS", 2);
-const isNamedPipeSocket = $newZigFunction("runtime/socket/socket.zig", "jsIsNamedPipeSocket", 1);
-const getBufferedAmount = $newZigFunction("runtime/socket/socket.zig", "jsGetBufferedAmount", 1);
+const addServerName = $newRustFunction("Listener.rust", "jsAddServerName", 3);
+const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rust", "jsUpgradeDuplexToTLS", 2);
+const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rust", "jsIsNamedPipeSocket", 1);
+const getBufferedAmount = $newRustFunction("runtime/socket/socket.rust", "jsGetBufferedAmount", 1);
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -2409,7 +2409,7 @@ Server.prototype[kRealListen] = function (
 
   if (contexts) {
     for (const [name, context] of contexts) {
-      // tls.ts stores the InternalSecureContext wrapper; the Zig side wants
+      // tls.ts stores the InternalSecureContext wrapper; the Rust side wants
       // the native SSL_CTX wrapper at `.context`.
       addServerName(this._handle, name, context.context ?? context);
     }

@@ -40,7 +40,7 @@ pub const BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS = New(kind.unsigned, "BUN_CONFIG_D
 /// Idle timeout for HTTP client sockets (fetch / `bun install`), in seconds.
 /// The timer is armed when the socket opens and re-armed on every read/write;
 /// if it fires the request fails with `error.Timeout`. Covers the TLS
-/// handshake through the response body. 0 disables. See `src/http/http.zig`.
+/// handshake through the response body. 0 disables. See `src/http/http.rust`.
 pub const BUN_CONFIG_HTTP_IDLE_TIMEOUT = New(kind.unsigned, "BUN_CONFIG_HTTP_IDLE_TIMEOUT", .{ .default = 300 });
 pub const BUN_CRASH_REPORT_URL = New(kind.string, "BUN_CRASH_REPORT_URL", .{});
 pub const BUN_DEBUG = New(kind.string, "BUN_DEBUG", .{});
@@ -59,7 +59,7 @@ pub const BUN_ENABLE_CRASH_REPORTING = New(kind.boolean, "BUN_ENABLE_CRASH_REPOR
 /// Opt-in: when truthy, Bun watches its original parent pid and exits as soon
 /// as that process dies (even if the parent was SIGKILLed and couldn't forward
 /// a signal), and on its own clean exit recursively SIGKILLs every descendant
-/// so nothing it spawned outlives it. See `src/ParentDeathWatchdog.zig`.
+/// so nothing it spawned outlives it. See `src/ParentDeathWatchdog.rust`.
 pub const BUN_FEATURE_FLAG_NO_ORPHANS = New(kind.boolean, "BUN_FEATURE_FLAG_NO_ORPHANS", .{ .default = false });
 pub const BUN_FEATURE_FLAG_DUMP_CODE = New(kind.string, "BUN_FEATURE_FLAG_DUMP_CODE", .{});
 /// TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
@@ -123,8 +123,8 @@ pub const JENKINS_URL = New(kind.string, "JENKINS_URL", .{});
 pub const MI_VERBOSE = New(kind.boolean, "MI_VERBOSE", .{ .default = false });
 pub const NO_COLOR = New(kind.boolean, "NO_COLOR", .{ .default = false });
 pub const NODE_CHANNEL_FD = New(kind.string, "NODE_CHANNEL_FD", .{});
-/// Set by HostProcess.zig when spawning the WebView host subprocess. The
-/// child's cli.zig checks this before anything else and hands off to C++
+/// Set by HostProcess.rust when spawning the WebView host subprocess. The
+/// child's cli.rust checks this before anything else and hands off to C++
 /// Bun__WebView__hostMain. Never returns — no JSC, no VM.
 pub const BUN_INTERNAL_WEBVIEW_HOST = New(kind.string, "BUN_INTERNAL_WEBVIEW_HOST", .{});
 pub const NODE_PRESERVE_SYMLINKS_MAIN = New(kind.boolean, "NODE_PRESERVE_SYMLINKS_MAIN", .{ .default = false });
@@ -136,7 +136,7 @@ pub const RUNNER_DEBUG = New(kind.boolean, "RUNNER_DEBUG", .{ .default = false }
 pub const SDKROOT = PlatformSpecificNew(kind.string, "SDKROOT", null, .{});
 pub const SHELL = PlatformSpecificNew(kind.string, "SHELL", null, .{});
 /// C:\Windows, for example.
-/// Note: Do not use this variable directly -- use os.zig's implementation instead.
+/// Note: Do not use this variable directly -- use os.rust's implementation instead.
 pub const SYSTEMROOT = PlatformSpecificNew(kind.string, null, "SYSTEMROOT", .{});
 pub const TEMP = PlatformSpecificNew(kind.string, "TEMP", "TEMP", .{});
 pub const TERM = New(kind.string, "TERM", .{});
@@ -148,7 +148,7 @@ pub const TODIUM = New(kind.string, "TODIUM", .{});
 pub const USER = PlatformSpecificNew(kind.string, "USER", "USERNAME", .{});
 pub const WANTS_LOUD = New(kind.boolean, "WANTS_LOUD", .{ .default = false });
 /// The same as system_root.
-/// Note: Do not use this variable directly -- use os.zig's implementation instead.
+/// Note: Do not use this variable directly -- use os.rust's implementation instead.
 /// TODO(markovejnovic): Perhaps we could add support for aliases in the library, so you could
 ///                      specify both WINDIR and SYSTEMROOT and the loader would check both?
 pub const WINDIR = PlatformSpecificNew(kind.string, null, "WINDIR", .{});

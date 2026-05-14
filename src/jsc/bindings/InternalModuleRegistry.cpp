@@ -1,5 +1,5 @@
 #include "InternalModuleRegistry.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include <JavaScriptCore/BuiltinUtils.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/LazyProperty.h>
@@ -182,7 +182,7 @@ JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JS
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto id = callframe->argument(0).toUInt32(lexicalGlobalObject);
 
-    auto registry = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject)->internalModuleRegistry();
+    auto registry = uncheckedDowncast<Rust::GlobalObject>(lexicalGlobalObject)->internalModuleRegistry();
     auto mod = registry->createInternalModuleById(lexicalGlobalObject, vm, static_cast<Field>(id));
     RETURN_IF_EXCEPTION(throwScope, {});
     registry->internalField(static_cast<Field>(id)).set(vm, registry, mod);

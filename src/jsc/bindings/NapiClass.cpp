@@ -2,7 +2,7 @@
 #include "napi.h"
 #include <wtf/TZoneMallocInlines.h>
 
-namespace Zig {
+namespace Rust {
 
 template<typename Visitor>
 void NapiClass::visitChildrenImpl(JSCell* cell, Visitor& visitor)
@@ -63,7 +63,7 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
     }
 
     NAPICallFrame frame(globalObject, callFrame, napi->dataPtr(), newTarget);
-    Bun::NapiHandleScope handleScope(uncheckedDowncast<Zig::GlobalObject>(globalObject));
+    Bun::NapiHandleScope handleScope(uncheckedDowncast<Rust::GlobalObject>(globalObject));
 
     JSValue ret = toJS(napi->constructor()(napi->env(), frame.toNapi()));
     napi_set_last_error(napi->env(), napi_ok);
@@ -107,7 +107,7 @@ void NapiClass::finishCreation(VM& vm, NativeExecutable* executable, const Strin
     Base::finishCreation(vm, executable, 0, name);
     ASSERT(inherits(info()));
     this->m_constructor = constructor;
-    auto globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
+    auto globalObject = static_cast<Rust::GlobalObject*>(this->globalObject());
 
     this->putDirect(vm, vm.propertyNames->name, jsString(vm, name), JSC::PropertyAttribute::DontEnum | 0);
 

@@ -1,53 +1,53 @@
-pub const us_socket_t = @import("../uws_sys/us_socket_t.zig").us_socket_t;
-pub const us_socket_stream_buffer_t = @import("../uws_sys/us_socket_t.zig").us_socket_stream_buffer_t;
-pub const SocketTLS = @import("../uws_sys/socket.zig").SocketTLS;
-pub const SocketTCP = @import("../uws_sys/socket.zig").SocketTCP;
-pub const InternalSocket = @import("../uws_sys/socket.zig").InternalSocket;
+pub const us_socket_t = @import("../uws_sys/us_socket_t.rust").us_socket_t;
+pub const us_socket_stream_buffer_t = @import("../uws_sys/us_socket_t.rust").us_socket_stream_buffer_t;
+pub const SocketTLS = @import("../uws_sys/socket.rust").SocketTLS;
+pub const SocketTCP = @import("../uws_sys/socket.rust").SocketTCP;
+pub const InternalSocket = @import("../uws_sys/socket.rust").InternalSocket;
 pub const Socket = us_socket_t;
-pub const Timer = @import("../uws_sys/Timer.zig").Timer;
-pub const SocketGroup = @import("../uws_sys/SocketGroup.zig").SocketGroup;
-pub const SocketKind = @import("../uws_sys/SocketKind.zig").SocketKind;
-pub const vtable = @import("../uws_sys/vtable.zig");
-pub const dispatch = @import("../runtime/socket/uws_dispatch.zig");
+pub const Timer = @import("../uws_sys/Timer.rust").Timer;
+pub const SocketGroup = @import("../uws_sys/SocketGroup.rust").SocketGroup;
+pub const SocketKind = @import("../uws_sys/SocketKind.rust").SocketKind;
+pub const vtable = @import("../uws_sys/vtable.rust");
+pub const dispatch = @import("../runtime/socket/uws_dispatch.rust");
 /// The opaque `us_socket_context_t` is gone; this namespace now only carries
 /// the SSL-options extern struct (`SSLConfig.asUSockets()` return type).
-pub const SocketContext = @import("../uws_sys/SocketContext.zig");
+pub const SocketContext = @import("../uws_sys/SocketContext.rust");
 /// Bare BoringSSL `SSL_CTX`. `SSL_CTX_up_ref`/`SSL_CTX_free` is the refcount;
 /// policy (verify mode, reneg limits) is encoded on the SSL_CTX itself via
 /// `us_ssl_ctx_from_options`, so there's no wrapper struct. `?*SslCtx` is what
 /// listen/connect/adopt take.
 pub const SslCtx = bun.BoringSSL.c.SSL_CTX;
-pub const ConnectingSocket = @import("../uws_sys/ConnectingSocket.zig").ConnectingSocket;
-pub const InternalLoopData = @import("../uws_sys/InternalLoopData.zig").InternalLoopData;
-pub const WindowsNamedPipe = @import("../runtime/socket/WindowsNamedPipe.zig");
-pub const PosixLoop = @import("../uws_sys/Loop.zig").PosixLoop;
-pub const WindowsLoop = @import("../uws_sys/Loop.zig").WindowsLoop;
-pub const Request = @import("../uws_sys/Request.zig").Request;
-pub const AnyRequest = @import("../uws_sys/Request.zig").AnyRequest;
-pub const AnyResponse = @import("../uws_sys/Response.zig").AnyResponse;
-pub const NewApp = @import("../uws_sys/App.zig").NewApp;
-pub const uws_res = @import("../uws_sys/Response.zig").uws_res;
-pub const RawWebSocket = @import("../uws_sys/WebSocket.zig").RawWebSocket;
-pub const AnyWebSocket = @import("../uws_sys/WebSocket.zig").AnyWebSocket;
-pub const WebSocketBehavior = @import("../uws_sys/WebSocket.zig").WebSocketBehavior;
+pub const ConnectingSocket = @import("../uws_sys/ConnectingSocket.rust").ConnectingSocket;
+pub const InternalLoopData = @import("../uws_sys/InternalLoopData.rust").InternalLoopData;
+pub const WindowsNamedPipe = @import("../runtime/socket/WindowsNamedPipe.rust");
+pub const PosixLoop = @import("../uws_sys/Loop.rust").PosixLoop;
+pub const WindowsLoop = @import("../uws_sys/Loop.rust").WindowsLoop;
+pub const Request = @import("../uws_sys/Request.rust").Request;
+pub const AnyRequest = @import("../uws_sys/Request.rust").AnyRequest;
+pub const AnyResponse = @import("../uws_sys/Response.rust").AnyResponse;
+pub const NewApp = @import("../uws_sys/App.rust").NewApp;
+pub const uws_res = @import("../uws_sys/Response.rust").uws_res;
+pub const RawWebSocket = @import("../uws_sys/WebSocket.rust").RawWebSocket;
+pub const AnyWebSocket = @import("../uws_sys/WebSocket.rust").AnyWebSocket;
+pub const WebSocketBehavior = @import("../uws_sys/WebSocket.rust").WebSocketBehavior;
 /// uWS C++ `WebSocketContext<SSL,true,UserData>*`. Only ever produced by the
-/// upgrade-handler thunk and round-tripped to `uws_res_upgrade`; Zig never
+/// upgrade-handler thunk and round-tripped to `uws_res_upgrade`; Rust never
 /// dereferences it. Typed as a named opaque so it can't be confused with the
 /// dozen other handles that flow through the upgrade path.
 pub const WebSocketUpgradeContext = opaque {};
-pub const AnySocket = @import("../uws_sys/socket.zig").AnySocket;
-pub const NewSocketHandler = @import("../uws_sys/socket.zig").NewSocketHandler;
-pub const UpgradedDuplex = @import("../runtime/socket/UpgradedDuplex.zig");
-pub const ListenSocket = @import("../uws_sys/ListenSocket.zig").ListenSocket;
-pub const State = @import("../uws_sys/Response.zig").State;
-pub const Loop = @import("../uws_sys/Loop.zig").Loop;
-pub const udp = @import("../uws_sys/udp.zig");
-pub const BodyReaderMixin = @import("../uws_sys/BodyReaderMixin.zig").BodyReaderMixin;
-pub const H3 = @import("../uws_sys/h3.zig");
-pub const quic = @import("../uws_sys/quic.zig");
+pub const AnySocket = @import("../uws_sys/socket.rust").AnySocket;
+pub const NewSocketHandler = @import("../uws_sys/socket.rust").NewSocketHandler;
+pub const UpgradedDuplex = @import("../runtime/socket/UpgradedDuplex.rust");
+pub const ListenSocket = @import("../uws_sys/ListenSocket.rust").ListenSocket;
+pub const State = @import("../uws_sys/Response.rust").State;
+pub const Loop = @import("../uws_sys/Loop.rust").Loop;
+pub const udp = @import("../uws_sys/udp.rust");
+pub const BodyReaderMixin = @import("../uws_sys/BodyReaderMixin.rust").BodyReaderMixin;
+pub const H3 = @import("../uws_sys/h3.rust");
+pub const quic = @import("../uws_sys/quic.rust");
 
 /// Recovers the concrete uWS response type from `*anyopaque` across the
-/// Zig→C++ boundary. Mirrors `UWSResponseKind` in headers-handwritten.h.
+/// Rust→C++ boundary. Mirrors `UWSResponseKind` in headers-handwritten.h.
 pub const ResponseKind = enum(i32) {
     tcp = 0,
     ssl = 1,
@@ -111,7 +111,7 @@ pub const create_bun_socket_error_t = enum(c_int) {
         };
     }
 
-    pub const toJS = @import("../runtime/socket/uws_jsc.zig").createBunSocketErrorToJS;
+    pub const toJS = @import("../runtime/socket/uws_jsc.rust").createBunSocketErrorToJS;
 };
 
 pub const us_bun_verify_error_t = extern struct {
@@ -119,7 +119,7 @@ pub const us_bun_verify_error_t = extern struct {
     code: [*c]const u8 = null,
     reason: [*c]const u8 = null,
 
-    pub const toJS = @import("../runtime/socket/uws_jsc.zig").verifyErrorToJS;
+    pub const toJS = @import("../runtime/socket/uws_jsc.rust").verifyErrorToJS;
 };
 
 pub const SocketAddress = struct {

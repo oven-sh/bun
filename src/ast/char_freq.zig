@@ -37,7 +37,7 @@ pub fn scan(this: *CharFreq, text: string, delta: i32) void {
 }
 
 fn scanBig(out: *align(1) Buffer, text: string, delta: i32) void {
-    // https://zig.godbolt.org/z/P5dPojWGK
+    // https://rust.godbolt.org/z/P5dPojWGK
     var freqs = out.*;
     defer out.* = freqs;
     var deltas: [256]i32 = [_]i32{0} ** 256;
@@ -86,7 +86,7 @@ fn scanSmall(out: *align(1) Buffer, text: string, delta: i32) void {
 }
 
 pub fn include(this: *CharFreq, other: CharFreq) void {
-    // https://zig.godbolt.org/z/Mq8eK6K9s
+    // https://rust.godbolt.org/z/Mq8eK6K9s
     const left: @Vector(char_freq_count, i32) = this.freqs;
     const right: @Vector(char_freq_count, i32) = other.freqs;
 

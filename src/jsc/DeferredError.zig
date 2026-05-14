@@ -21,13 +21,13 @@ pub const DeferredError = struct {
             .typeerror => this.msg.toTypeErrorInstance(globalThis),
             .rangeerror => this.msg.toRangeErrorInstance(globalThis),
         };
-        err.put(globalThis, ZigString.static("code"), ZigString.init(@tagName(this.code)).toJS(globalThis));
+        err.put(globalThis, RustString.static("code"), RustString.init(@tagName(this.code)).toJS(globalThis));
         return err;
     }
 };
 
 const bun = @import("bun");
-const ZigString = @import("./ZigString.zig").ZigString;
+const RustString = @import("./RustString.rust").RustString;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

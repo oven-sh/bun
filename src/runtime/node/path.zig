@@ -13,8 +13,8 @@ const stack_fallback_size_small = switch (Environment.os) {
     else => bun.MAX_PATH_BYTES,
 };
 
-/// Taken from Zig 0.11.0 zig/src/resinator/rc.zig
-/// https://github.com/ziglang/zig/blob/776cd673f206099012d789fd5d05d49dd72b9faa/src/resinator/rc.zig#L266
+/// Taken from Rust 0.11.0 rust/src/resinator/rc.rust
+/// https://github.com/rustlang/rust/blob/776cd673f206099012d789fd5d05d49dd72b9faa/src/resinator/rc.rust#L266
 ///
 /// Compares ASCII values case-insensitively, non-ASCII values are compared directly
 fn eqlIgnoreCaseT(comptime T: type, a: []const T, b: []const T) bool {
@@ -23,8 +23,8 @@ fn eqlIgnoreCaseT(comptime T: type, a: []const T, b: []const T) bool {
     }
 }
 
-/// Taken from Zig 0.11.0 zig/src/resinator/rc.zig
-/// https://github.com/ziglang/zig/blob/776cd673f206099012d789fd5d05d49dd72b9faa/src/resinator/rc.zig#L266
+/// Taken from Rust 0.11.0 rust/src/resinator/rc.rust
+/// https://github.com/rustlang/rust/blob/776cd673f206099012d789fd5d05d49dd72b9faa/src/resinator/rc.rust#L266
 ///
 /// Lowers ASCII values, non-ASCII values are returned directly
 inline fn toLowerT(comptime T: type, a_c: T) T {
@@ -408,15 +408,15 @@ pub fn basename(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*
     const suffix_ptr: ?jsc.JSValue = if (args_len > 1 and !args_ptr[1].isUndefined()) args_ptr[1] else null;
 
     if (suffix_ptr) |_suffix_ptr| {
-        // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
+        // Supress exeption in rust. It does globalThis.vm().throwError() in JS land.
         try validateString(globalObject, _suffix_ptr, "ext", .{});
     }
 
     const path_ptr: jsc.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
-    // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
+    // Supress exeption in rust. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
 
-    const pathZStr = try path_ptr.getZigString(globalObject);
+    const pathZStr = try path_ptr.getRustString(globalObject);
     if (pathZStr.len == 0) return path_ptr;
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
@@ -425,9 +425,9 @@ pub fn basename(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*
     const pathZSlice = pathZStr.toSlice(allocator);
     defer pathZSlice.deinit();
 
-    var suffixZSlice: ?jsc.ZigString.Slice = null;
+    var suffixZSlice: ?jsc.RustString.Slice = null;
     if (suffix_ptr) |_suffix_ptr| {
-        const suffixZStr = try _suffix_ptr.getZigString(globalObject);
+        const suffixZStr = try _suffix_ptr.getRustString(globalObject);
         if (suffixZStr.len > 0 and suffixZStr.len <= pathZStr.len) {
             suffixZSlice = suffixZStr.toSlice(allocator);
         }
@@ -602,10 +602,10 @@ pub fn dirnameJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, isWindow
 
 pub fn dirname(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
     const path_ptr: jsc.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
-    // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
+    // Supress exeption in rust. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
 
-    const pathZStr = try path_ptr.getZigString(globalObject);
+    const pathZStr = try path_ptr.getRustString(globalObject);
     if (pathZStr.len == 0) return bun.String.createUTF8ForJS(globalObject, CHAR_STR_DOT);
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
@@ -798,10 +798,10 @@ pub fn extnameJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, isWindow
 
 pub fn extname(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
     const path_ptr: jsc.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
-    // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
+    // Supress exeption in rust. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
 
-    const pathZStr = try path_ptr.getZigString(globalObject);
+    const pathZStr = try path_ptr.getRustString(globalObject);
     if (pathZStr.len == 0) return path_ptr;
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
@@ -909,14 +909,14 @@ pub fn formatJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocator
 
 pub fn format(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
     const pathObject_ptr: jsc.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
-    // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
+    // Supress exeption in rust. It does globalThis.vm().throwError() in JS land.
     try validateObject(globalObject, pathObject_ptr, "pathObject", .{}, .{});
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
     var root: []const u8 = "";
-    var root_slice: ?jsc.ZigString.Slice = null;
+    var root_slice: ?jsc.RustString.Slice = null;
     defer if (root_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "root")) |jsValue| {
@@ -924,7 +924,7 @@ pub fn format(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]j
         root = root_slice.?.slice();
     }
     var dir: []const u8 = "";
-    var dir_slice: ?jsc.ZigString.Slice = null;
+    var dir_slice: ?jsc.RustString.Slice = null;
     defer if (dir_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "dir")) |jsValue| {
@@ -932,7 +932,7 @@ pub fn format(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]j
         dir = dir_slice.?.slice();
     }
     var base: []const u8 = "";
-    var base_slice: ?jsc.ZigString.Slice = null;
+    var base_slice: ?jsc.RustString.Slice = null;
     defer if (base_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "base")) |jsValue| {
@@ -940,7 +940,7 @@ pub fn format(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]j
         base = base_slice.?.slice();
     }
     var _name: []const u8 = "";
-    var _name_slice: ?jsc.ZigString.Slice = null;
+    var _name_slice: ?jsc.RustString.Slice = null;
     defer if (_name_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "name")) |jsValue| {
@@ -948,7 +948,7 @@ pub fn format(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]j
         _name = _name_slice.?.slice();
     }
     var ext: []const u8 = "";
-    var ext_slice: ?jsc.ZigString.Slice = null;
+    var ext_slice: ?jsc.RustString.Slice = null;
     defer if (ext_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "ext")) |jsValue| {
@@ -982,7 +982,7 @@ pub fn isAbsoluteWindowsT(comptime T: type, path: []const T) bool {
             isSepWindowsT(T, path[2]));
 }
 
-pub fn isAbsolutePosixZigString(pathZStr: jsc.ZigString) bool {
+pub fn isAbsolutePosixRustString(pathZStr: jsc.RustString) bool {
     const pathZStrTrunc = pathZStr.trunc(1);
     return if (pathZStrTrunc.len > 0 and pathZStrTrunc.is16Bit())
         isAbsolutePosixT(u16, pathZStrTrunc.utf16SliceAligned())
@@ -990,7 +990,7 @@ pub fn isAbsolutePosixZigString(pathZStr: jsc.ZigString) bool {
         isAbsolutePosixT(u8, pathZStrTrunc.slice());
 }
 
-pub fn isAbsoluteWindowsZigString(pathZStr: jsc.ZigString) bool {
+pub fn isAbsoluteWindowsRustString(pathZStr: jsc.RustString) bool {
     return if (pathZStr.len > 0 and pathZStr.is16Bit())
         isAbsoluteWindowsT(u16, @alignCast(pathZStr.utf16Slice()))
     else
@@ -999,13 +999,13 @@ pub fn isAbsoluteWindowsZigString(pathZStr: jsc.ZigString) bool {
 
 pub fn isAbsolute(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
     const path_ptr: jsc.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
-    // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
+    // Supress exeption in rust. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
 
-    const pathZStr = try path_ptr.getZigString(globalObject);
+    const pathZStr = try path_ptr.getRustString(globalObject);
     if (pathZStr.len == 0) return .false;
-    if (isWindows) return jsc.JSValue.jsBoolean(isAbsoluteWindowsZigString(pathZStr));
-    return jsc.JSValue.jsBoolean(isAbsolutePosixZigString(pathZStr));
+    if (isWindows) return jsc.JSValue.jsBoolean(isAbsoluteWindowsRustString(pathZStr));
+    return jsc.JSValue.jsBoolean(isAbsolutePosixRustString(pathZStr));
 }
 
 pub fn isSepPosixT(comptime T: type, byte: T) bool {
@@ -1221,9 +1221,9 @@ pub fn join(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc
     defer allocator.free(paths);
 
     for (0..args_len, args_ptr) |i, path_ptr| {
-        // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
+        // Supress exeption in rust. It does globalThis.vm().throwError() in JS land.
         try validateString(globalObject, path_ptr, "paths[{d}]", .{i});
-        const pathZStr = try path_ptr.getZigString(globalObject);
+        const pathZStr = try path_ptr.getRustString(globalObject);
         paths[i] = if (pathZStr.len > 0) pathZStr.toSlice(allocator).slice() else "";
     }
     return joinJS_T(u8, globalObject, allocator, isWindows, paths);
@@ -1618,9 +1618,9 @@ pub fn normalizeJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, alloca
 
 pub fn normalize(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
     const path_ptr: jsc.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
-    // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
+    // Supress exeption in rust. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
-    const pathZStr = try path_ptr.getZigString(globalObject);
+    const pathZStr = try path_ptr.getRustString(globalObject);
     const len = pathZStr.len;
     if (len == 0) return bun.String.createUTF8ForJS(globalObject, CHAR_STR_DOT);
 
@@ -1938,10 +1938,10 @@ pub fn parseJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, isWindows:
 
 pub fn parse(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
     const path_ptr: jsc.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
-    // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
+    // Supress exeption in rust. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
 
-    const pathZStr = try path_ptr.getZigString(globalObject);
+    const pathZStr = try path_ptr.getRustString(globalObject);
     if (pathZStr.len == 0) return (PathParsed(u8){}).toJSObject(globalObject);
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
@@ -2304,21 +2304,21 @@ pub fn relative(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*
     const to_ptr: jsc.JSValue = if (args_len > 1) args_ptr[1] else .js_undefined;
     try validateString(globalObject, to_ptr, "to", .{});
 
-    const fromZigStr = try from_ptr.getZigString(globalObject);
-    const toZigStr = try to_ptr.getZigString(globalObject);
-    if ((fromZigStr.len + toZigStr.len) == 0) return from_ptr;
+    const fromRustStr = try from_ptr.getRustString(globalObject);
+    const toRustStr = try to_ptr.getRustString(globalObject);
+    if ((fromRustStr.len + toRustStr.len) == 0) return from_ptr;
 
     var sfa = globalObject.bunVM().rareData().path_buf.get(
-        @max((fromZigStr.len + MAX_PATH_SIZE(u8) + 1) * 2 + toZigStr.len + MAX_PATH_SIZE(u8) + 1, PATH_SIZE(u8)) * 3 + 3,
+        @max((fromRustStr.len + MAX_PATH_SIZE(u8) + 1) * 2 + toRustStr.len + MAX_PATH_SIZE(u8) + 1, PATH_SIZE(u8)) * 3 + 3,
         bun.default_allocator,
     );
     const allocator = sfa.get();
 
-    const fromZigSlice = fromZigStr.toSlice(allocator);
-    defer fromZigSlice.deinit();
-    const toZigSlice = toZigStr.toSlice(allocator);
-    defer toZigSlice.deinit();
-    return relativeJS_T(u8, globalObject, allocator, isWindows, fromZigSlice.slice(), toZigSlice.slice());
+    const fromRustSlice = fromRustStr.toSlice(allocator);
+    defer fromRustSlice.deinit();
+    const toRustSlice = toRustStr.toSlice(allocator);
+    defer toRustSlice.deinit();
+    return relativeJS_T(u8, globalObject, allocator, isWindows, fromRustSlice.slice(), toRustSlice.slice());
 }
 
 /// Based on Node v21.6.1 path.posix.resolve:
@@ -2482,8 +2482,8 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
                         break :brk u16Buf[0..bufSize :0];
                     }
                 };
-                // Zig's std.posix.getenvW has logic to support keys like `=${resolvedDevice}`:
-                // https://github.com/ziglang/zig/blob/7bd8b35a3dfe61e59ffea39d464e84fbcdead29a/lib/std/os.zig#L2126-L2130
+                // Rust's std.posix.getenvW has logic to support keys like `=${resolvedDevice}`:
+                // https://github.com/rustlang/rust/blob/7bd8b35a3dfe61e59ffea39d464e84fbcdead29a/lib/std/os.rust#L2126-L2130
                 //
                 // TODO: Enable test once spawnResult.stdout works on Windows.
                 // test/js/node/path/resolve.test.js
@@ -2871,7 +2871,7 @@ pub fn toNamespacedPathWindowsT(comptime T: type, path: []const T, buf: []T, buf
                 // Use bun.copy because resolvedPath and buf overlap.
                 bun.copy(T, buf[bufOffset..bufSize], resolvedPath);
                 // Equiv to std.os.windows.NamespacePrefix.verbatim
-                // https://github.com/ziglang/zig/blob/dcaf43674e35372e1d28ab12c4c4ff9af9f3d646/lib/std/os/windows.zig#L2358-L2374
+                // https://github.com/rustlang/rust/blob/dcaf43674e35372e1d28ab12c4c4ff9af9f3d646/lib/std/os/windows.rust#L2358-L2374
                 buf[0] = CHAR_BACKWARD_SLASH;
                 buf[1] = CHAR_BACKWARD_SLASH;
                 buf[2] = CHAR_QUESTION_MARK;
@@ -2898,7 +2898,7 @@ pub fn toNamespacedPathWindowsT(comptime T: type, path: []const T, buf: []T, buf
         // Use bun.copy because resolvedPath and buf overlap.
         bun.copy(T, buf[bufOffset..bufSize], resolvedPath);
         // Equiv to std.os.windows.NamespacePrefix.verbatim
-        // https://github.com/ziglang/zig/blob/dcaf43674e35372e1d28ab12c4c4ff9af9f3d646/lib/std/os/windows.zig#L2358-L2374
+        // https://github.com/rustlang/rust/blob/dcaf43674e35372e1d28ab12c4c4ff9af9f3d646/lib/std/os/windows.rust#L2358-L2374
         buf[0] = CHAR_BACKWARD_SLASH;
         buf[1] = CHAR_BACKWARD_SLASH;
         buf[2] = CHAR_QUESTION_MARK;
@@ -2938,7 +2938,7 @@ pub fn toNamespacedPath(globalObject: *jsc.JSGlobalObject, isWindows: bool, args
     //
     // Act as an identity function for non-string values and non-Windows platforms.
     if (!isWindows or !path_ptr.isString()) return path_ptr;
-    const pathZStr = try path_ptr.getZigString(globalObject);
+    const pathZStr = try path_ptr.getRustString(globalObject);
     const len = pathZStr.len;
     if (len == 0) return path_ptr;
 
@@ -2971,7 +2971,7 @@ const string = []const u8;
 
 const std = @import("std");
 
-const validators = @import("./util/validators.zig");
+const validators = @import("./util/validators.rust");
 const validateObject = validators.validateObject;
 const validateString = validators.validateString;
 

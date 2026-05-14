@@ -733,7 +733,7 @@ const log = Output.scoped(.HTTPThread, .visible);
 
 const stringZ = [:0]const u8;
 
-const ProxyTunnel = @import("./ProxyTunnel.zig");
+const ProxyTunnel = @import("./ProxyTunnel.rust");
 const std = @import("std");
 
 const bun = @import("bun");

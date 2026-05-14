@@ -120,9 +120,9 @@ pub fn NewWriter(comptime Context: type) type {
 
 const bun = @import("bun");
 const std = @import("std");
-const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
+const AnyPostgresError = @import("../AnyPostgresError.rust").AnyPostgresError;
 
-const int_types = @import("../types/int_types.zig");
+const int_types = @import("../types/int_types.rust");
 const Int32 = int_types.Int32;
 const PostgresInt32 = int_types.PostgresInt32;
 const PostgresInt64 = int_types.PostgresInt64;

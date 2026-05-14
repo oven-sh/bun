@@ -86,7 +86,7 @@ pub fn toHaveNthReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callfra
 }
 
 const bun = @import("bun");
-const DiffFormatter = @import("../diff_format.zig").DiffFormatter;
+const DiffFormatter = @import("../diff_format.rust").DiffFormatter;
 
 const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;

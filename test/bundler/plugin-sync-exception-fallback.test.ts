@@ -4,9 +4,9 @@ import { join } from "path";
 
 // Regression: the C++ synchronous-exception fallback in JSBundlerPlugin__matchOnLoad /
 // JSBundlerPlugin__matchOnResolve passed the wrong `which` value to JSBundlerPlugin__addError,
-// so Zig would reinterpret a *Load as a *Resolve (and vice versa). matchOnLoad additionally
+// so Rust would reinterpret a *Load as a *Resolve (and vice versa). matchOnLoad additionally
 // passed plugin.config instead of the JSBundlerPlugin* as the plugin argument, so
-// plugin.globalObject() in Zig dereferenced the wrong pointer.
+// plugin.globalObject() in Rust dereferenced the wrong pointer.
 //
 // The builtin calls the public `.then` on its pending async-IIFE promise, so we can force a
 // synchronous throw there to reach that fallback deterministically. Before the fix:

@@ -1,4 +1,4 @@
-pub const css = @import("../css_parser.zig");
+pub const css = @import("../css_parser.rust");
 const Result = css.Result;
 const VendorPrefix = css.VendorPrefix;
 const Printer = css.Printer;

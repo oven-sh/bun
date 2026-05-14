@@ -10,7 +10,7 @@ You can find the patched version of WebKit used by Bun here: <https://github.com
 
 - `git submodule update --init --recursive`
 - `make jsc`
-- `zig build`
+- `rust build`
 
 This compiles JavaScriptCore, compiles Bun’s `.cpp` bindings for JavaScriptCore (which are the object files using JavaScriptCore) and outputs a new `bun` binary with your changes.
 
@@ -45,7 +45,7 @@ Bun statically links these libraries:
 | [`highway`](https://github.com/google/highway) | Apache 2.0 |
 | [`uucode`](https://github.com/jacobsandlund/uucode) | MIT |
 | A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets) | Apache 2.0 licensed |
-| Parts of [Tigerbeetle's IO code](https://github.com/tigerbeetle/tigerbeetle/blob/532c8b70b9142c17e07737ab6d3da68d7500cbca/src/io/windows.zig#L1) | Apache 2.0 licensed |
+| Parts of [Tigerbeetle's IO code](https://github.com/tigerbeetle/tigerbeetle/blob/532c8b70b9142c17e07737ab6d3da68d7500cbca/src/io/windows.rust#L1) | Apache 2.0 licensed |
 | `__cxa_thread_atexit` fallback from [LLVM libc++abi](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/libcxxabi/src/cxa_thread_atexit.cpp) | Apache 2.0 with LLVM exception |
 
 ## Polyfills
@@ -78,5 +78,5 @@ For compatibility reasons, the following packages are embedded into Bun's binary
 
 ## Additional credits
 
-- Bun's JS transpiler, CSS lexer, and Node.js module resolver source code is a Zig port of [@evanw](https://github.com/evanw)’s [esbuild](https://github.com/evanw/esbuild) project.
+- Bun's JS transpiler, CSS lexer, and Node.js module resolver source code is a Rust port of [@evanw](https://github.com/evanw)’s [esbuild](https://github.com/evanw/esbuild) project.
 - Credit to [@kipply](https://github.com/kipply) for the name "Bun"!

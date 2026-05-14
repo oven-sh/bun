@@ -1,7 +1,7 @@
 #include "JSHTTPParserPrototype.h"
 #include "JSHTTPParser.h"
 #include "JSConnectionsList.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "JSDOMExceptionHandling.h"
 #include <wtf/MathExtras.h>
 

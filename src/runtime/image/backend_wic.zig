@@ -510,5 +510,5 @@ fn dupGlobal(h: *anyopaque, comptime prefix: usize) error{OutOfMemory}!?[]u8 {
 }
 
 const bun = @import("bun");
-const codecs = @import("./codecs.zig");
+const codecs = @import("./codecs.rust");
 const std = @import("std");

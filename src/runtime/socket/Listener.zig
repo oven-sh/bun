@@ -208,7 +208,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
     // `Listener` is mimalloc-allocated, so LSAN can't trace `loop->data.head →
     // this.group → head_sockets → us_socket_t` once the only pointer into the
     // group lives inside a mimalloc page. `process.exit()` from JS makes
-    // `Zig__GlobalObject__destructOnExit` early-return (vm.entryScope set), so
+    // `Rust__GlobalObject__destructOnExit` early-return (vm.entryScope set), so
     // `finalize()`/`deinit()` never run and the accepted sockets' 88-byte
     // `us_create_poll` allocations are reported as leaked. Registering the
     // embedded group as a root region restores the same reachability the old
@@ -268,12 +268,12 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         const err = globalObject.createErrorInstance("Failed to listen at {s}", .{hostname});
         log("Failed to listen {d}", .{errno});
         if (errno != 0) {
-            err.put(globalObject, ZigString.static("syscall"), try bun.String.createUTF8ForJS(globalObject, "listen"));
-            err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
-            err.put(globalObject, ZigString.static("address"), ZigString.initUTF8(hostname).toJS(globalObject));
-            if (port) |p| err.put(globalObject, ZigString.static("port"), .jsNumber(p));
+            err.put(globalObject, RustString.static("syscall"), try bun.String.createUTF8ForJS(globalObject, "listen"));
+            err.put(globalObject, RustString.static("errno"), JSValue.jsNumber(errno));
+            err.put(globalObject, RustString.static("address"), RustString.initUTF8(hostname).toJS(globalObject));
+            if (port) |p| err.put(globalObject, RustString.static("port"), .jsNumber(p));
             if (bun.sys.SystemErrno.init(errno)) |str| {
-                err.put(globalObject, ZigString.static("code"), ZigString.init(@tagName(str)).toJS(globalObject));
+                err.put(globalObject, RustString.static("code"), RustString.init(@tagName(str)).toJS(globalObject));
             }
         }
         return globalObject.throwValue(err);
@@ -331,7 +331,7 @@ pub fn onNamePipeCreated(comptime ssl: bool, listener: *Listener) *NewSocket(ssl
     return this_socket;
 }
 
-/// Called from `dispatch.zig` `BunListener.onOpen` for every accepted socket.
+/// Called from `dispatch.rust` `BunListener.onOpen` for every accepted socket.
 /// Allocates the `NewSocket` wrapper, stashes it in the socket ext, then
 /// re-stamps the kind to `.bun_socket_{tcp,tls}` so subsequent events route
 /// straight to `BunSocket` (the listener arm only fires once per accept).
@@ -509,14 +509,14 @@ pub fn getUnix(this: *Listener, globalObject: *jsc.JSGlobalObject) JSValue {
         return .js_undefined;
     }
 
-    return ZigString.init(this.connection.unix).withEncoding().toJS(globalObject);
+    return RustString.init(this.connection.unix).withEncoding().toJS(globalObject);
 }
 
 pub fn getHostname(this: *Listener, globalObject: *jsc.JSGlobalObject) JSValue {
     if (this.connection != .host) {
         return .js_undefined;
     }
-    return ZigString.init(this.connection.host.host).withEncoding().toJS(globalObject);
+    return RustString.init(this.connection.host.host).withEncoding().toJS(globalObject);
 }
 
 pub fn getPort(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
@@ -897,7 +897,7 @@ pub fn getsockname(this: *Listener, globalThis: *jsc.JSGlobalObject, callFrame: 
     var buf: [64]u8 = [_]u8{0} ** 64;
     var text_buf: [512]u8 = undefined;
     const address_bytes: []const u8 = socket.getLocalAddress(&buf) catch return .js_undefined;
-    const address_zig: std.net.Address = switch (address_bytes.len) {
+    const address_rust: std.net.Address = switch (address_bytes.len) {
         4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
         16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
         else => return .js_undefined,
@@ -907,7 +907,7 @@ pub fn getsockname(this: *Listener, globalThis: *jsc.JSGlobalObject, callFrame: 
         16 => globalThis.commonStrings().IPv6(),
         else => return .js_undefined,
     };
-    const address_js = ZigString.init(bun.fmt.formatIp(address_zig, &text_buf) catch unreachable).toJS(globalThis);
+    const address_js = RustString.init(bun.fmt.formatIp(address_rust, &text_buf) catch unreachable).toJS(globalThis);
     const port_js: JSValue = .jsNumber(socket.getLocalPort());
 
     out.put(globalThis, bun.String.static("family"), family_js);
@@ -1116,5 +1116,5 @@ const WindowsNamedPipeContext = api.socket.WindowsNamedPipeContext;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 const NodePath = jsc.Node.path;

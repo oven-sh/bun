@@ -20,10 +20,10 @@ if (!filePath) {
   process.exit(0);
 }
 
-function formatZigFile() {
+function formatRustFile() {
   try {
-    // Format the Zig file
-    const result = spawnSync("vendor/zig/zig.exe", ["fmt", filePath], {
+    // Format the Rust file
+    const result = spawnSync("vendor/rust/rust.exe", ["fmt", filePath], {
       cwd: process.env.CLAUDE_PROJECT_DIR || process.cwd(),
       encoding: "utf-8",
     });
@@ -34,7 +34,7 @@ function formatZigFile() {
     }
 
     if (result.status !== 0) {
-      console.error(`zig fmt failed for ${filePath}:`);
+      console.error(`rust fmt failed for ${filePath}:`);
       if (result.stderr) {
         console.error(result.stderr);
       }
@@ -56,8 +56,8 @@ function formatTypeScriptFile() {
   } catch (error) {}
 }
 
-if (ext === ".zig") {
-  formatZigFile();
+if (ext === ".rust") {
+  formatRustFile();
 } else if (
   [
     ".cjs",

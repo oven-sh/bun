@@ -1,5 +1,5 @@
-pub const css = @import("./css_parser.zig");
-pub const css_values = @import("./values/values.zig");
+pub const css = @import("./css_parser.rust");
+pub const css_values = @import("./values/values.rust");
 const DashedIdent = css_values.ident.DashedIdent;
 pub const Error = css.Error;
 const Location = css.Location;
@@ -574,7 +574,7 @@ pub const Printer = struct {
 };
 
 const bun = @import("bun");
-const sourcemap = @import("./sourcemap.zig");
+const sourcemap = @import("./sourcemap.rust");
 
 const std = @import("std");
 const ArrayList = std.ArrayListUnmanaged;

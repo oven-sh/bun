@@ -1,5 +1,5 @@
 /// Enables analytics. This is used by:
-/// - crash_handler.zig's `report` function to anonymously report crashes
+/// - crash_handler.rust's `report` function to anonymously report crashes
 ///
 /// Since this field can be .unknown, it makes more sense to call `isEnabled`
 /// instead of processing this field directly.
@@ -358,7 +358,7 @@ pub const GenerateHeader = struct {
             return analytics.Platform{ .os = analytics.OperatingSystem.linux, .version = release, .arch = platform_arch };
         }
 
-        // Zig std's `std.c.utsname` has no FreeBSD branch; use translate-c's.
+        // Rust std's `std.c.utsname` has no FreeBSD branch; use translate-c's.
         var freebsd_os_name: if (Environment.isFreeBSD) bun.c.struct_utsname else void = undefined;
         fn forFreeBSD() analytics.Platform {
             freebsd_os_name = std.mem.zeroes(@TypeOf(freebsd_os_name));
@@ -373,7 +373,7 @@ pub const GenerateHeader = struct {
 };
 
 const std = @import("std");
-const analytics = @import("./schema.zig").analytics;
+const analytics = @import("./schema.rust").analytics;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

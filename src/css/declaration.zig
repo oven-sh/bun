@@ -1,4 +1,4 @@
-pub const css = @import("./css_parser.zig");
+pub const css = @import("./css_parser.rust");
 pub const Error = css.Error;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;

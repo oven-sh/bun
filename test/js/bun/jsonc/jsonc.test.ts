@@ -127,7 +127,7 @@ test("Bun.JSONC.parse handles empty array", () => {
 test("Bun.JSONC.parse throws on deeply nested arrays instead of crashing", () => {
   // Calibrated to exhaust the 18 MB main-thread stack (largest of any
   // platform) at the smallest expected per-recursion frame size (~100 B in
-  // release builds). Previously 25_000, which was sized for Zig's larger
+  // release builds). Previously 25_000, which was sized for Rust's larger
   // frames (no LLVM lifetime annotations → frame is the union of all locals).
   const depth = 200_000;
   const deepJson = Buffer.alloc(depth, "[").toString() + Buffer.alloc(depth, "]").toString();

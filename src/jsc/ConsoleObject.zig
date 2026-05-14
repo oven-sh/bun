@@ -671,17 +671,17 @@ pub const TablePrinter = struct {
 };
 
 pub fn writeTrace(comptime Writer: type, writer: Writer, global: *JSGlobalObject) void {
-    var holder = ZigException.Holder.init();
+    var holder = RustException.Holder.init();
     var vm = VirtualMachine.get();
     defer holder.deinit(vm);
-    const exception = holder.zigException();
+    const exception = holder.rustException();
 
-    var source_code_slice: ?ZigString.Slice = null;
+    var source_code_slice: ?RustString.Slice = null;
     defer if (source_code_slice) |slice| slice.deinit();
 
-    var err = ZigString.init("trace output").toErrorInstance(global);
-    err.toZigException(global, exception);
-    vm.remapZigException(
+    var err = RustString.init("trace output").toErrorInstance(global);
+    err.toRustException(global, exception);
+    vm.remapRustException(
         exception,
         err,
         null,
@@ -1041,12 +1041,12 @@ pub const Formatter = struct {
         this.estimated_line_length +|= len;
     }
 
-    pub const ZigFormatter = struct {
+    pub const RustFormatter = struct {
         formatter: *ConsoleObject.Formatter,
         value: JSValue,
 
         pub const WriteError = error{UhOh};
-        pub fn format(self: ZigFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        pub fn format(self: RustFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             self.formatter.remaining_values = &[_]JSValue{self.value};
             defer {
                 self.formatter.remaining_values = &[_]JSValue{};
@@ -1064,7 +1064,7 @@ pub const Formatter = struct {
 
     // For detecting circular references
     pub const Visited = struct {
-        const ObjectPool = @import("../collections/pool.zig").ObjectPool;
+        const ObjectPool = @import("../collections/pool.rust").ObjectPool;
         pub const Map = std.AutoHashMap(JSValue, void);
         pub const Pool = ObjectPool(
             Map,
@@ -1302,10 +1302,10 @@ pub const Formatter = struct {
             if (js_type.isObject() and js_type != .ProxyObject) {
                 if (try value.getOwnTruthy(globalThis, "$$typeof")) |typeof_symbol| {
                     // React 18 and below
-                    var react_element_legacy = ZigString.init("react.element");
+                    var react_element_legacy = RustString.init("react.element");
                     // For React 19 - https://github.com/oven-sh/bun/issues/17223
-                    var react_element_transitional = ZigString.init("react.transitional.element");
-                    var react_fragment = ZigString.init("react.fragment");
+                    var react_element_transitional = RustString.init("react.transitional.element");
+                    var react_fragment = RustString.init("react.fragment");
 
                     if (try typeof_symbol.isSameValue(.symbolFor(globalThis, &react_element_legacy), globalThis) or
                         try typeof_symbol.isSameValue(.symbolFor(globalThis, &react_element_transitional), globalThis) or
@@ -1738,7 +1738,7 @@ pub const Formatter = struct {
                 };
             }
 
-            pub inline fn writeString(self: *@This(), str: ZigString) void {
+            pub inline fn writeString(self: *@This(), str: RustString) void {
                 self.print("{f}", .{str});
             }
 
@@ -1920,7 +1920,7 @@ pub const Formatter = struct {
             pub fn forEach(
                 globalThis: *JSGlobalObject,
                 ctx_ptr: ?*anyopaque,
-                key: *ZigString,
+                key: *RustString,
                 value: JSValue,
                 is_symbol: bool,
                 is_private_symbol: bool,
@@ -2042,13 +2042,13 @@ pub const Formatter = struct {
         };
     }
 
-    fn getObjectName(globalThis: *jsc.JSGlobalObject, value: JSValue) bun.JSError!?ZigString {
-        var name_str = ZigString.init("");
+    fn getObjectName(globalThis: *jsc.JSGlobalObject, value: JSValue) bun.JSError!?RustString {
+        var name_str = RustString.init("");
         try value.getClassName(globalThis, &name_str);
         if (!name_str.eqlComptime("Object")) {
             return name_str;
         } else if (value.getPrototype(globalThis).eqlValue(JSValue.null)) {
-            return ZigString.static("[Object: null prototype]").*;
+            return RustString.static("[Object: null prototype]").*;
         }
         return null;
     }
@@ -2219,18 +2219,18 @@ pub const Formatter = struct {
                 writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{int});
             },
             .BigInt => {
-                const out_str = (try value.getZigString(this.globalThis)).slice();
+                const out_str = (try value.getRustString(this.globalThis)).slice();
                 this.addForNewLine(out_str.len);
 
                 writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
             },
             .Double => {
                 if (value.isCell()) {
-                    var number_name = ZigString.Empty;
+                    var number_name = RustString.Empty;
                     try value.getClassName(this.globalThis, &number_name);
 
-                    var number_value = ZigString.Empty;
-                    try value.toZigString(&number_value, this.globalThis);
+                    var number_value = RustString.Empty;
+                    try value.toRustString(&number_value, this.globalThis);
 
                     if (!strings.eqlComptime(number_name.slice(), "Number")) {
                         this.addForNewLine(number_name.len + number_value.len + "[Number ():]".len);
@@ -2726,10 +2726,10 @@ pub const Formatter = struct {
             },
             .Boolean => {
                 if (value.isCell()) {
-                    var bool_name = ZigString.Empty;
+                    var bool_name = RustString.Empty;
                     try value.getClassName(this.globalThis, &bool_name);
-                    var bool_value = ZigString.Empty;
-                    try value.toZigString(&bool_value, this.globalThis);
+                    var bool_value = RustString.Empty;
+                    try value.toRustString(&bool_value, this.globalThis);
 
                     if (!strings.eqlComptime(bool_name.slice(), "Boolean")) {
                         this.addForNewLine(bool_value.len + bool_name.len + "[Boolean (): ]".len);
@@ -3080,9 +3080,9 @@ pub const Formatter = struct {
                 writer.writeAll("<");
 
                 var needs_space = false;
-                var tag_name_str = ZigString.init("");
+                var tag_name_str = RustString.init("");
 
-                var tag_name_slice: ZigString.Slice = ZigString.Slice.empty;
+                var tag_name_slice: RustString.Slice = RustString.Slice.empty;
                 var is_tag_kind_primitive = false;
 
                 defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit();
@@ -3094,21 +3094,21 @@ pub const Formatter = struct {
                     });
 
                     if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
-                        try type_value.toZigString(&tag_name_str, this.globalThis);
+                        try type_value.toRustString(&tag_name_str, this.globalThis);
                         is_tag_kind_primitive = true;
                     } else if (_tag.cell.isObject() or type_value.isCallable()) {
                         try type_value.getNameProperty(this.globalThis, &tag_name_str);
                         if (tag_name_str.len == 0) {
-                            tag_name_str = ZigString.init("NoName");
+                            tag_name_str = RustString.init("NoName");
                         }
                     } else {
-                        try type_value.toZigString(&tag_name_str, this.globalThis);
+                        try type_value.toRustString(&tag_name_str, this.globalThis);
                     }
 
                     tag_name_slice = tag_name_str.toSlice(default_allocator);
                     needs_space = true;
                 } else {
-                    tag_name_slice = ZigString.init("unknown").toSlice(default_allocator);
+                    tag_name_slice = RustString.init("unknown").toSlice(default_allocator);
 
                     needs_space = true;
                 }
@@ -3225,7 +3225,7 @@ pub const Formatter = struct {
                                 print_children: {
                                     switch (tag.tag) {
                                         .String => {
-                                            const children_string = try children.getZigString(this.globalThis);
+                                            const children_string = try children.getRustString(this.globalThis);
                                             if (children_string.len == 0) break :print_children;
                                             if (comptime enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", true));
 
@@ -3811,8 +3811,8 @@ comptime {
 const string = []const u8;
 
 const std = @import("std");
-const CLI = @import("../runtime/cli/cli.zig").Command;
-const JestPrettyFormat = @import("../runtime/test_runner/pretty_format.zig").JestPrettyFormat;
+const CLI = @import("../runtime/cli/cli.rust").Command;
+const JestPrettyFormat = @import("../runtime/test_runner/pretty_format.rust").JestPrettyFormat;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -3829,5 +3829,5 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const JSPromise = jsc.JSPromise;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigException = jsc.ZigException;
-const ZigString = jsc.ZigString;
+const RustException = jsc.RustException;
+const RustString = jsc.RustString;

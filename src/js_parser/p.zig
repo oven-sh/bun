@@ -4,7 +4,7 @@ const ParserFeatures = struct {
     scan_only: bool = false,
 };
 
-// workaround for https://github.com/ziglang/zig/issues/10903
+// workaround for https://github.com/rustlang/rust/issues/10903
 pub fn NewParser(
     comptime parser_features: ParserFeatures,
 ) type {
@@ -43,68 +43,68 @@ pub fn NewParser_(
         pub const allow_macros = FeatureFlags.is_macro_enabled;
         const MacroCallCountType = if (allow_macros) u32 else u0;
 
-        const skipTypescript_zig = @import("./skipTypescript.zig").SkipTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
-        pub const skipTypescriptReturnType = skipTypescript_zig.skipTypescriptReturnType;
-        pub const skipTypescriptReturnTypeWithMetadata = skipTypescript_zig.skipTypescriptReturnTypeWithMetadata;
-        pub const skipTypeScriptType = skipTypescript_zig.skipTypeScriptType;
-        pub const skipTypeScriptTypeWithMetadata = skipTypescript_zig.skipTypeScriptTypeWithMetadata;
-        pub const skipTypeScriptBinding = skipTypescript_zig.skipTypeScriptBinding;
-        pub const skipTypescriptFnArgs = skipTypescript_zig.skipTypescriptFnArgs;
-        pub const skipTypeScriptParenOrFnType = skipTypescript_zig.skipTypeScriptParenOrFnType;
-        pub const skipTypeScriptTypeWithOpts = skipTypescript_zig.skipTypeScriptTypeWithOpts;
-        pub const skipTypeScriptObjectType = skipTypescript_zig.skipTypeScriptObjectType;
-        pub const skipTypeScriptTypeParameters = skipTypescript_zig.skipTypeScriptTypeParameters;
-        pub const skipTypeScriptTypeStmt = skipTypescript_zig.skipTypeScriptTypeStmt;
-        pub const skipTypeScriptInterfaceStmt = skipTypescript_zig.skipTypeScriptInterfaceStmt;
-        pub const skipTypeScriptTypeArguments = skipTypescript_zig.skipTypeScriptTypeArguments;
-        pub const trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking = skipTypescript_zig.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking;
-        pub const trySkipTypeScriptTypeArgumentsWithBacktracking = skipTypescript_zig.trySkipTypeScriptTypeArgumentsWithBacktracking;
-        pub const trySkipTypeScriptArrowReturnTypeWithBacktracking = skipTypescript_zig.trySkipTypeScriptArrowReturnTypeWithBacktracking;
-        pub const trySkipTypeScriptArrowArgsWithBacktracking = skipTypescript_zig.trySkipTypeScriptArrowArgsWithBacktracking;
-        pub const trySkipTypeScriptConstraintOfInferTypeWithBacktracking = skipTypescript_zig.trySkipTypeScriptConstraintOfInferTypeWithBacktracking;
+        const skipTypescript_rust = @import("./skipTypescript.rust").SkipTypescript(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        pub const skipTypescriptReturnType = skipTypescript_rust.skipTypescriptReturnType;
+        pub const skipTypescriptReturnTypeWithMetadata = skipTypescript_rust.skipTypescriptReturnTypeWithMetadata;
+        pub const skipTypeScriptType = skipTypescript_rust.skipTypeScriptType;
+        pub const skipTypeScriptTypeWithMetadata = skipTypescript_rust.skipTypeScriptTypeWithMetadata;
+        pub const skipTypeScriptBinding = skipTypescript_rust.skipTypeScriptBinding;
+        pub const skipTypescriptFnArgs = skipTypescript_rust.skipTypescriptFnArgs;
+        pub const skipTypeScriptParenOrFnType = skipTypescript_rust.skipTypeScriptParenOrFnType;
+        pub const skipTypeScriptTypeWithOpts = skipTypescript_rust.skipTypeScriptTypeWithOpts;
+        pub const skipTypeScriptObjectType = skipTypescript_rust.skipTypeScriptObjectType;
+        pub const skipTypeScriptTypeParameters = skipTypescript_rust.skipTypeScriptTypeParameters;
+        pub const skipTypeScriptTypeStmt = skipTypescript_rust.skipTypeScriptTypeStmt;
+        pub const skipTypeScriptInterfaceStmt = skipTypescript_rust.skipTypeScriptInterfaceStmt;
+        pub const skipTypeScriptTypeArguments = skipTypescript_rust.skipTypeScriptTypeArguments;
+        pub const trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking = skipTypescript_rust.trySkipTypeScriptTypeParametersThenOpenParenWithBacktracking;
+        pub const trySkipTypeScriptTypeArgumentsWithBacktracking = skipTypescript_rust.trySkipTypeScriptTypeArgumentsWithBacktracking;
+        pub const trySkipTypeScriptArrowReturnTypeWithBacktracking = skipTypescript_rust.trySkipTypeScriptArrowReturnTypeWithBacktracking;
+        pub const trySkipTypeScriptArrowArgsWithBacktracking = skipTypescript_rust.trySkipTypeScriptArrowArgsWithBacktracking;
+        pub const trySkipTypeScriptConstraintOfInferTypeWithBacktracking = skipTypescript_rust.trySkipTypeScriptConstraintOfInferTypeWithBacktracking;
 
-        const parse_zig = @import("./parse.zig").Parse(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
-        pub const parsePrefix = parse_zig.parsePrefix;
-        pub const parseSuffix = parse_zig.parseSuffix;
-        pub const parseStmt = parse_zig.parseStmt;
-        pub const parseProperty = parse_zig.parseProperty;
-        pub const parseFn = parse_zig.parseFn;
-        pub const parseFnStmt = parse_zig.parseFnStmt;
-        pub const parseFnExpr = parse_zig.parseFnExpr;
-        pub const parseFnBody = parse_zig.parseFnBody;
-        pub const parseArrowBody = parse_zig.parseArrowBody;
-        pub const parseJSXElement = parse_zig.parseJSXElement;
-        pub const parseImportExpr = parse_zig.parseImportExpr;
-        pub const parseImportClause = parse_zig.parseImportClause;
-        pub const parseExportClause = parse_zig.parseExportClause;
-        pub const parseExprOrBindings = parse_zig.parseExprOrBindings;
-        pub const parseExpr = parse_zig.parseExpr;
-        pub const parseExprWithFlags = parse_zig.parseExprWithFlags;
-        pub const parseExprCommon = parse_zig.parseExprCommon;
-        pub const parseYieldExpr = parse_zig.parseYieldExpr;
-        pub const parseClass = parse_zig.parseClass;
-        pub const parseTemplateParts = parse_zig.parseTemplateParts;
-        pub const parseStringLiteral = parse_zig.parseStringLiteral;
-        pub const parseCallArgs = parse_zig.parseCallArgs;
-        pub const parseJSXPropValueIdentifier = parse_zig.parseJSXPropValueIdentifier;
-        pub const parseParenExpr = parse_zig.parseParenExpr;
-        pub const parseLabelName = parse_zig.parseLabelName;
-        pub const parseClassStmt = parse_zig.parseClassStmt;
-        pub const parseClauseAlias = parse_zig.parseClauseAlias;
-        pub const parseExprOrLetStmt = parse_zig.parseExprOrLetStmt;
-        pub const parseBinding = parse_zig.parseBinding;
-        pub const parsePropertyBinding = parse_zig.parsePropertyBinding;
-        pub const parseAndDeclareDecls = parse_zig.parseAndDeclareDecls;
-        pub const parsePath = parse_zig.parsePath;
-        pub const parseStmtsUpTo = parse_zig.parseStmtsUpTo;
-        pub const parseAsyncPrefixExpr = parse_zig.parseAsyncPrefixExpr;
-        pub const parseTypeScriptDecorators = parse_zig.parseTypeScriptDecorators;
-        pub const parseStandardDecorator = parse_zig.parseStandardDecorator;
-        pub const parseTypeScriptNamespaceStmt = parse_zig.parseTypeScriptNamespaceStmt;
-        pub const parseTypeScriptImportEqualsStmt = parse_zig.parseTypeScriptImportEqualsStmt;
-        pub const parseTypescriptEnumStmt = parse_zig.parseTypescriptEnumStmt;
+        const parse_rust = @import("./parse.rust").Parse(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        pub const parsePrefix = parse_rust.parsePrefix;
+        pub const parseSuffix = parse_rust.parseSuffix;
+        pub const parseStmt = parse_rust.parseStmt;
+        pub const parseProperty = parse_rust.parseProperty;
+        pub const parseFn = parse_rust.parseFn;
+        pub const parseFnStmt = parse_rust.parseFnStmt;
+        pub const parseFnExpr = parse_rust.parseFnExpr;
+        pub const parseFnBody = parse_rust.parseFnBody;
+        pub const parseArrowBody = parse_rust.parseArrowBody;
+        pub const parseJSXElement = parse_rust.parseJSXElement;
+        pub const parseImportExpr = parse_rust.parseImportExpr;
+        pub const parseImportClause = parse_rust.parseImportClause;
+        pub const parseExportClause = parse_rust.parseExportClause;
+        pub const parseExprOrBindings = parse_rust.parseExprOrBindings;
+        pub const parseExpr = parse_rust.parseExpr;
+        pub const parseExprWithFlags = parse_rust.parseExprWithFlags;
+        pub const parseExprCommon = parse_rust.parseExprCommon;
+        pub const parseYieldExpr = parse_rust.parseYieldExpr;
+        pub const parseClass = parse_rust.parseClass;
+        pub const parseTemplateParts = parse_rust.parseTemplateParts;
+        pub const parseStringLiteral = parse_rust.parseStringLiteral;
+        pub const parseCallArgs = parse_rust.parseCallArgs;
+        pub const parseJSXPropValueIdentifier = parse_rust.parseJSXPropValueIdentifier;
+        pub const parseParenExpr = parse_rust.parseParenExpr;
+        pub const parseLabelName = parse_rust.parseLabelName;
+        pub const parseClassStmt = parse_rust.parseClassStmt;
+        pub const parseClauseAlias = parse_rust.parseClauseAlias;
+        pub const parseExprOrLetStmt = parse_rust.parseExprOrLetStmt;
+        pub const parseBinding = parse_rust.parseBinding;
+        pub const parsePropertyBinding = parse_rust.parsePropertyBinding;
+        pub const parseAndDeclareDecls = parse_rust.parseAndDeclareDecls;
+        pub const parsePath = parse_rust.parsePath;
+        pub const parseStmtsUpTo = parse_rust.parseStmtsUpTo;
+        pub const parseAsyncPrefixExpr = parse_rust.parseAsyncPrefixExpr;
+        pub const parseTypeScriptDecorators = parse_rust.parseTypeScriptDecorators;
+        pub const parseStandardDecorator = parse_rust.parseStandardDecorator;
+        pub const parseTypeScriptNamespaceStmt = parse_rust.parseTypeScriptNamespaceStmt;
+        pub const parseTypeScriptImportEqualsStmt = parse_rust.parseTypeScriptImportEqualsStmt;
+        pub const parseTypescriptEnumStmt = parse_rust.parseTypescriptEnumStmt;
 
-        const astVisit = @import("./visit.zig").Visit(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        const astVisit = @import("./visit.rust").Visit(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         pub const visitStmtsAndPrependTempRefs = astVisit.visitStmtsAndPrependTempRefs;
         pub const recordDeclaredSymbol = astVisit.recordDeclaredSymbol;
         pub const visitExpr = astVisit.visitExpr;
@@ -124,22 +124,22 @@ pub fn NewParser_(
         pub const visitStmts = astVisit.visitStmts;
         pub const visitAndAppendStmt = astVisit.visitAndAppendStmt;
 
-        pub const BinaryExpressionVisitor = @import("./visitBinaryExpression.zig").CreateBinaryExpressionVisitor(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).BinaryExpressionVisitor;
+        pub const BinaryExpressionVisitor = @import("./visitBinaryExpression.rust").CreateBinaryExpressionVisitor(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).BinaryExpressionVisitor;
 
-        const maybe = @import("./maybe.zig").AstMaybe(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        const maybe = @import("./maybe.rust").AstMaybe(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         pub const maybeRelocateVarsToTopLevel = maybe.maybeRelocateVarsToTopLevel;
         pub const maybeRewritePropertyAccess = maybe.maybeRewritePropertyAccess;
         pub const maybeCommaSpreadError = maybe.maybeCommaSpreadError;
         pub const maybeDefinedHelper = maybe.maybeDefinedHelper;
         pub const checkIfDefinedHelper = maybe.checkIfDefinedHelper;
 
-        const symbols_zig = @import("./symbols.zig").Symbols(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
-        pub const findSymbol = symbols_zig.findSymbol;
-        pub const findSymbolWithRecordUsage = symbols_zig.findSymbolWithRecordUsage;
+        const symbols_rust = @import("./symbols.rust").Symbols(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        pub const findSymbol = symbols_rust.findSymbol;
+        pub const findSymbolWithRecordUsage = symbols_rust.findSymbolWithRecordUsage;
 
-        const lowerDecorators_zig = @import("./lowerDecorators.zig").LowerDecorators(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
-        pub const lowerStandardDecoratorsStmt = lowerDecorators_zig.lowerStandardDecoratorsStmt;
-        pub const lowerStandardDecoratorsExpr = lowerDecorators_zig.lowerStandardDecoratorsExpr;
+        const lowerDecorators_rust = @import("./lowerDecorators.rust").LowerDecorators(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        pub const lowerStandardDecoratorsStmt = lowerDecorators_rust.lowerStandardDecoratorsStmt;
+        pub const lowerStandardDecoratorsExpr = lowerDecorators_rust.lowerStandardDecoratorsExpr;
 
         macro: MacroState = undefined,
         allocator: Allocator,
@@ -2629,7 +2629,7 @@ pub fn NewParser_(
         pub fn convertExprToBindingAndInitializer(noalias p: *P, _expr: *ExprNodeIndex, invalid_log: *LocList, is_spread: bool) ExprBindingTuple {
             var initializer: ?ExprNodeIndex = null;
             var expr = _expr;
-            // zig syntax is sometimes painful
+            // rust syntax is sometimes painful
             switch (expr.*.data) {
                 .e_binary => |bin| {
                     if (bin.op == .bin_assign) {
@@ -5479,7 +5479,7 @@ pub fn NewParser_(
             loc: logger.Loc,
             ref: Ref,
         ) Expr {
-            // There was a Zig stage1 bug here we had to copy `ref` into a local
+            // There was a Rust stage1 bug here we had to copy `ref` into a local
             // const variable or else the result would be wrong
             // I remember that bug in particular took hours, possibly days to uncover.
 
@@ -6861,10 +6861,10 @@ var falseValueExpr = Expr.Data{ .e_boolean = E.Boolean{ .value = false } };
 
 const string = []const u8;
 
-const repl_transforms = @import("./repl_transforms.zig");
+const repl_transforms = @import("./repl_transforms.rust");
 
-const Define = @import("../../bundler/defines.zig").Define;
-const DefineData = @import("../../bundler/defines.zig").DefineData;
+const Define = @import("../../bundler/defines.rust").Define;
+const DefineData = @import("../../bundler/defines.rust").DefineData;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

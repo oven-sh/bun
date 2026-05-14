@@ -1,16 +1,16 @@
 //! JSC bridge for `bun.logger`. Keeps `src/logger/` free of JSC types.
 
 pub fn msgFromJS(allocator: std.mem.Allocator, globalObject: *jsc.JSGlobalObject, file: []const u8, err: jsc.JSValue) bun.JSError!Msg {
-    var zig_exception_holder: jsc.ZigException.Holder = jsc.ZigException.Holder.init();
+    var rust_exception_holder: jsc.RustException.Holder = jsc.RustException.Holder.init();
     if (err.toError()) |value| {
-        value.toZigException(globalObject, zig_exception_holder.zigException());
+        value.toRustException(globalObject, rust_exception_holder.rustException());
     } else {
-        zig_exception_holder.zigException().message = try err.toBunString(globalObject);
+        rust_exception_holder.rustException().message = try err.toBunString(globalObject);
     }
 
     return Msg{
         .data = .{
-            .text = try zig_exception_holder.zigException().message.toOwnedSlice(allocator),
+            .text = try rust_exception_holder.rustException().message.toOwnedSlice(allocator),
             .location = logger.Location{
                 .file = file,
                 .line = 0,
@@ -60,7 +60,7 @@ pub fn logToJS(this: Log, global: *jsc.JSGlobalObject, allocator: std.mem.Alloca
                     .resolve => try bun.api.ResolveMessage.create(global, allocator, msg, ""),
                 };
             }
-            const out = jsc.ZigString.init(message);
+            const out = jsc.RustString.init(message);
             const agg = try global.createAggregateError(errors_stack[0..count], &out);
             return agg;
         },

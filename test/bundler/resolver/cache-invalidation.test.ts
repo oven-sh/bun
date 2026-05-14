@@ -5,7 +5,7 @@ import * as path from "path";
 
 // These tests verify that the resolver properly invalidates cache across multiple
 // Bun.build() calls in the same process when files/directories are deleted and recreated.
-// This tests the fix in src/fs.zig and src/resolver/resolver.zig for generation > 0 behavior.
+// This tests the fix in src/fs.rust and src/resolver/resolver.rust for generation > 0 behavior.
 
 // Note: Not using describe.concurrent because these tests specifically test
 // cache invalidation behavior across multiple Bun.build() calls in the same process,

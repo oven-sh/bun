@@ -121,7 +121,7 @@ pub const SignalCode = enum(u8) {
         return .{ .signal = signal, .enable_ansi_colors = enable_ansi_colors };
     }
 
-    pub const fromJS = @import("../sys_jsc/signal_code_jsc.zig").fromJS;
+    pub const fromJS = @import("../sys_jsc/signal_code_jsc.rust").fromJS;
 };
 
 const std = @import("std");

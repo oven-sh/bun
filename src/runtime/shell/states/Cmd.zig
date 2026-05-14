@@ -2,8 +2,8 @@
 //! bread and butter, the fuel that makes this lil shell scripting language go.
 //!
 //! There are two kinds of commands we are going to run:
-//! - builtins: commands we implement natively in Zig and which run in the
-//!             current Bun process (see `Builtin.zig` and the `builtins` folder)
+//! - builtins: commands we implement natively in Rust and which run in the
+//!             current Bun process (see `Builtin.rust` and the `builtins` folder)
 //!
 //! - subprocesses: commands which run in a new process
 pub const Cmd = @This();

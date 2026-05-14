@@ -12,8 +12,8 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
 
         /// This is deliberately a `var` instead of a `const`.
         ///
-        /// https://github.com/ziglang/zig/issues/22462
-        /// https://github.com/ziglang/zig/issues/21988
+        /// https://github.com/rustlang/rust/issues/22462
+        /// https://github.com/rustlang/rust/issues/21988
         pub var empty: Self = .{
             .buffer = undefined,
             .used = .initEmpty(),

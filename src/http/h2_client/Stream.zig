@@ -104,10 +104,10 @@ pub inline fn remoteClosed(this: *const @This()) bool {
     return this.state == .half_closed_remote or this.state == .closed;
 }
 
-const ClientSession = @import("./ClientSession.zig");
-const H2 = @import("../H2Client.zig");
+const ClientSession = @import("./ClientSession.rust");
+const H2 = @import("../H2Client.rust");
 const std = @import("std");
-const wire = @import("../H2FrameParser.zig");
+const wire = @import("../H2FrameParser.rust");
 
 const bun = @import("bun");
 const HTTPClient = bun.http;

@@ -7,7 +7,7 @@
 //!    performance reasons and also to leverage Bun's existing IO/FS code
 //! 2. We try to use non-blocking IO operations as much as possible so the
 //!    shell does not block the main JS thread
-//! 3. Zig does not have coroutines (yet)
+//! 3. Rust does not have coroutines (yet)
 //!
 //! The idea is that this is a tree-walking interpreter. Except it's not.
 //!
@@ -19,7 +19,7 @@
 //! (an AST node becomes a state-machine node), so we can suspend and resume
 //! execution without blocking the main thread.
 //!
-//! We'll also need to do things in continuation-passing style, see `Yield.zig` for
+//! We'll also need to do things in continuation-passing style, see `Yield.rust` for
 //! more on that.
 //!
 //! Once all these pieces come together, this ends up being a:
@@ -41,7 +41,7 @@
 //! to `bun.default_allocator`.
 //!
 //! Usually every state machine node ends up creating a new allocation scope,
-//! so an `AllocationScope` is stored in the base header struct (see `Base.zig`)
+//! so an `AllocationScope` is stored in the base header struct (see `Base.rust`)
 //! that all state-machine nodes include in their layout.
 //!
 //! You will often see `Base.initWithNewAllocScope` to create a new state machine node
@@ -49,7 +49,7 @@
 //!
 //! Sometimes it is necessary to "leak" an allocation from its scope. For
 //! example, argument expansion happens in an allocation scope inside
-//! `Expansion.zig`.
+//! `Expansion.rust`.
 //!
 //! But the string that is expanded may end up becoming the key/value of an
 //! environment variable, which we internally use the reference counted `EnvStr`
@@ -59,7 +59,7 @@
 //! and let `EnvStr` handle it.
 const string = []const u8;
 pub const Arena = std.heap.ArenaAllocator;
-pub const Braces = @import("../../shell_parser/braces.zig");
+pub const Braces = @import("../../shell_parser/braces.rust");
 pub const Syscall = bun.sys;
 pub const WorkPoolTask = jsc.WorkPoolTask;
 pub const WorkPool = jsc.WorkPool;
@@ -89,7 +89,7 @@ pub const log = bun.Output.scoped(.SHELL, .visible);
 ///
 /// It is used like this:
 ///
-/// ```zig
+/// ```rust
 /// if (this.bltn.stdout.needsIO()) |safeguard| {
 ///     this.bltn.stdout.enqueue(this, chunk, safeguard);
 ///     return .cont;
@@ -202,10 +202,10 @@ pub const CoroutineResult = enum {
     yield,
 };
 
-pub const RefCountedStr = @import("./RefCountedStr.zig");
-pub const EnvStr = @import("./EnvStr.zig").EnvStr;
-pub const EnvMap = @import("./EnvMap.zig");
-pub const ParsedShellScript = @import("./ParsedShellScript.zig");
+pub const RefCountedStr = @import("./RefCountedStr.rust");
+pub const EnvStr = @import("./EnvStr.rust").EnvStr;
+pub const EnvMap = @import("./EnvMap.rust");
+pub const ParsedShellScript = @import("./ParsedShellScript.rust");
 pub const ShellArgs = struct {
     /// This is the arena used to allocate the input shell script's AST nodes,
     /// tokens, and a string pool used to store all strings.
@@ -267,7 +267,7 @@ pub const Interpreter = struct {
     // Necessary for builtin commands.
     keep_alive: bun.Async.KeepAlive = .{},
 
-    vm_args_utf8: std.array_list.Managed(jsc.ZigString.Slice),
+    vm_args_utf8: std.array_list.Managed(jsc.RustString.Slice),
     async_commands_executing: u32 = 0,
 
     globalThis: *jsc.JSGlobalObject,
@@ -347,18 +347,18 @@ pub const Interpreter = struct {
     };
 
     // Here are all the state nodes:
-    pub const State = @import("./states/Base.zig");
-    pub const Script = @import("./states/Script.zig");
-    pub const Stmt = @import("./states/Stmt.zig");
-    pub const Pipeline = @import("./states/Pipeline.zig");
-    pub const Binary = @import("./states/Binary.zig");
-    pub const Subshell = @import("./states/Subshell.zig");
-    pub const Expansion = @import("./states/Expansion.zig");
-    pub const Assigns = @import("./states/Assigns.zig");
-    pub const Async = @import("./states/Async.zig");
-    pub const CondExpr = @import("./states/CondExpr.zig");
-    pub const If = @import("./states/If.zig");
-    pub const Cmd = @import("./states/Cmd.zig");
+    pub const State = @import("./states/Base.rust");
+    pub const Script = @import("./states/Script.rust");
+    pub const Stmt = @import("./states/Stmt.rust");
+    pub const Pipeline = @import("./states/Pipeline.rust");
+    pub const Binary = @import("./states/Binary.rust");
+    pub const Subshell = @import("./states/Subshell.rust");
+    pub const Expansion = @import("./states/Expansion.rust");
+    pub const Assigns = @import("./states/Assigns.rust");
+    pub const Async = @import("./states/Async.rust");
+    pub const CondExpr = @import("./states/CondExpr.rust");
+    pub const If = @import("./states/If.rust");
+    pub const Cmd = @import("./states/Cmd.rust");
 
     pub const InterpreterChildPtr = StatePtrUnion(.{
         Script,
@@ -367,7 +367,7 @@ pub const Interpreter = struct {
     /// During execution, the shell has an "environment" or "context". This
     /// contains important details like environment variables, cwd, etc. Every
     /// state node is given a `*ShellExecEnv` which is stored in its header (see
-    /// `states/Base.zig`).
+    /// `states/Base.rust`).
     ///
     /// Certain state nodes like subshells, pipelines, and cmd substitutions
     /// will duplicate their `*ShellExecEnv` so that they can make modifications
@@ -744,7 +744,7 @@ pub const Interpreter = struct {
         fn toJS(this: ShellErrorCtx, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
                 .syscall => |err| err.toJS(globalThis),
-                .other => |err| bun.jsc.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
+                .other => |err| bun.jsc.RustString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
     };
@@ -758,7 +758,7 @@ pub const Interpreter = struct {
         for (this.vm_args_utf8.items) |arg| {
             size += arg.byteSlice().len;
         }
-        size += this.vm_args_utf8.allocatedSlice().len * @sizeOf(jsc.ZigString.Slice);
+        size += this.vm_args_utf8.allocatedSlice().len * @sizeOf(jsc.RustString.Slice);
         return size;
     }
 
@@ -801,7 +801,7 @@ pub const Interpreter = struct {
         );
 
         defer if (cwd) |*cc| cc.deref();
-        const cwd_string: ?bun.jsc.ZigString.Slice = if (cwd) |c| brk: {
+        const cwd_string: ?bun.jsc.RustString.Slice = if (cwd) |c| brk: {
             break :brk c.toUTF8(bun.default_allocator);
         } else null;
         defer if (cwd_string) |c| c.deinit();
@@ -1023,7 +1023,7 @@ pub const Interpreter = struct {
                 .stderr = .pipe,
             },
 
-            .vm_args_utf8 = std.array_list.Managed(jsc.ZigString.Slice).init(bun.default_allocator),
+            .vm_args_utf8 = std.array_list.Managed(jsc.RustString.Slice).init(bun.default_allocator),
             .__alloc_scope = if (bun.Environment.enableAllocScopes) bun.AllocationScope.init(allocator) else {},
             .globalThis = undefined,
         };
@@ -1430,7 +1430,7 @@ pub const Interpreter = struct {
             if (value.isUndefined()) continue;
             const keyslice = bun.handleOom(key.toOwnedSlice(bun.default_allocator));
 
-            const value_str = value.getZigString(globalThis);
+            const value_str = value.getRustString(globalThis);
             const slice = bun.handleOom(value_str.toOwnedSlice(bun.default_allocator));
             const keyref = EnvStr.initRefCounted(keyslice);
             defer keyref.deref();
@@ -1500,16 +1500,16 @@ pub const Interpreter = struct {
         single: bool = false,
     };
 
-    pub const Builtin = @import("./Builtin.zig");
+    pub const Builtin = @import("./Builtin.rust");
 
     /// TODO: Investigate whether or not this can be removed now that we have
     /// removed recursion
     pub const AsyncDeinitReader = IOReader.AsyncDeinitReader;
 
-    pub const IO = @import("./IO.zig");
-    pub const IOReader = @import("./IOReader.zig");
+    pub const IO = @import("./IO.rust");
+    pub const IOReader = @import("./IOReader.rust");
     pub const IOReaderChildPtr = IOReader.ChildPtr;
-    pub const IOWriter = @import("./IOWriter.zig");
+    pub const IOWriter = @import("./IOWriter.rust");
 
     pub const AsyncDeinitWriter = IOWriter.AsyncDeinitWriter;
 };
@@ -2066,7 +2066,7 @@ pub fn unsupportedFlag(comptime name: []const u8) []const u8 {
 pub const ParseFlagResult = union(enum) { continue_parsing, done, illegal_option: []const u8, unsupported: []const u8, show_usage };
 pub fn FlagParser(comptime Opts: type) type {
     return struct {
-        pub const Result = @import("../../bun_core/result.zig").Result;
+        pub const Result = @import("../../bun_core/result.rust").Result;
 
         pub fn parseFlags(opts: Opts, args: []const [*:0]const u8) Result(?[]const [*:0]const u8, ParseError) {
             var idx: usize = 0;
@@ -2139,7 +2139,7 @@ pub fn unreachableState(context: []const u8, state: []const u8) noreturn {
 }
 
 const builtin = @import("builtin");
-const WTFStringImplStruct = @import("../../string/string.zig").WTFStringImplStruct;
+const WTFStringImplStruct = @import("../../string/string.rust").WTFStringImplStruct;
 
 const bun = @import("bun");
 const ResolvePath = bun.path;

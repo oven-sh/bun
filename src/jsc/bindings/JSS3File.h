@@ -1,6 +1,6 @@
 #pragma once
 
-namespace Zig {
+namespace Rust {
 class GlobalObject;
 }
 

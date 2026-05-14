@@ -1,6 +1,6 @@
 const NodeModulesFolder = Lockfile.Tree.Iterator(.node_modules).Next;
-pub const PackCommand = @import("./pack_command.zig").PackCommand;
-pub const ScanCommand = @import("./scan_command.zig").ScanCommand;
+pub const PackCommand = @import("./pack_command.rust").PackCommand;
+pub const ScanCommand = @import("./scan_command.rust").ScanCommand;
 
 const ByName = struct {
     dependencies: []const Dependency,
@@ -415,7 +415,7 @@ pub const PackageManagerCommand = struct {
                     Global.exit(1);
                 }
             }
-            const load_lockfile = @import("../../install/migration.zig").detectAndLoadOtherLockfile(
+            const load_lockfile = @import("../../install/migration.rust").detectAndLoadOtherLockfile(
                 pm.lockfile,
                 bun.FD.cwd(),
                 pm,
@@ -588,20 +588,20 @@ fn printNodeModulesFolderStructure(
 
 const string = []const u8;
 
-const Dependency = @import("../../install/dependency.zig");
-const Fs = @import("../../resolver/fs.zig");
-const Lockfile = @import("../../install/lockfile.zig");
-const Path = @import("../../paths/resolve_path.zig");
-const PmViewCommand = @import("./pm_view_command.zig");
+const Dependency = @import("../../install/dependency.rust");
+const Fs = @import("../../resolver/fs.rust");
+const Lockfile = @import("../../install/lockfile.rust");
+const Path = @import("../../paths/resolve_path.rust");
+const PmViewCommand = @import("./pm_view_command.rust");
 const std = @import("std");
-const Command = @import("./cli.zig").Command;
-const PmPkgCommand = @import("./pm_pkg_command.zig").PmPkgCommand;
-const PmVersionCommand = @import("./pm_version_command.zig").PmVersionCommand;
-const PmWhyCommand = @import("./pm_why_command.zig").PmWhyCommand;
+const Command = @import("./cli.rust").Command;
+const PmPkgCommand = @import("./pm_pkg_command.rust").PmPkgCommand;
+const PmVersionCommand = @import("./pm_version_command.rust").PmVersionCommand;
+const PmWhyCommand = @import("./pm_why_command.rust").PmWhyCommand;
 
-const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
-const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
-const UntrustedCommand = @import("./pm_trusted_command.zig").UntrustedCommand;
+const DefaultTrustedCommand = @import("./pm_trusted_command.rust").DefaultTrustedCommand;
+const TrustCommand = @import("./pm_trusted_command.rust").TrustCommand;
+const UntrustedCommand = @import("./pm_trusted_command.rust").UntrustedCommand;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

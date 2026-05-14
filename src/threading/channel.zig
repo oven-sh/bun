@@ -1,5 +1,5 @@
 // This file contains code derived from the following source:
-//   https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc#file-sync2-zig
+//   https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc#file-sync2-rust
 
 pub fn Channel(
     comptime T: type,

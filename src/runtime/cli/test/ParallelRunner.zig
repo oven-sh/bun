@@ -14,6 +14,6 @@
 pub const runAsCoordinator = runner.runAsCoordinator;
 pub const runAsWorker = runner.runAsWorker;
 pub const workerEmitTestDone = runner.workerEmitTestDone;
-pub const Worker = @import("./parallel/Worker.zig");
+pub const Worker = @import("./parallel/Worker.rust");
 
-const runner = @import("./parallel/runner.zig");
+const runner = @import("./parallel/runner.rust");

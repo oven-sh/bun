@@ -38,8 +38,8 @@ extern "C" SYSV_ABI EncodedJSValue Bake__createDevServerFrameworkRequestArgsObje
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto& vm = globalObject->vm();
 
-    auto* zig = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    auto* object = JSFinalObject::create(vm, zig->bakeAdditions().m_DevServerFrameworkRequestArgsClassStructure.get(zig));
+    auto* rust = uncheckedDowncast<Rust::GlobalObject>(globalObject);
+    auto* object = JSFinalObject::create(vm, rust->bakeAdditions().m_DevServerFrameworkRequestArgsClassStructure.get(rust));
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
 
     object->putDirectOffset(vm, 0, JSValue::decode(routerTypeMain));
@@ -58,46 +58,46 @@ extern "C" SYSV_ABI EncodedJSValue Bake__createDevServerFrameworkRequestArgsObje
 
 extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getAsyncLocalStorage(JSC::JSGlobalObject* globalObject)
 {
-    auto* zig = static_cast<Zig::GlobalObject*>(globalObject);
-    auto value = zig->bakeAdditions().getAsyncLocalStorage(zig);
+    auto* rust = static_cast<Rust::GlobalObject*>(globalObject);
+    auto value = rust->bakeAdditions().getAsyncLocalStorage(rust);
     return JSValue::encode(value);
 }
 
 extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getEnsureAsyncLocalStorageInstanceJSFunction(JSC::JSGlobalObject* globalObject)
 {
-    auto* zig = static_cast<Zig::GlobalObject*>(globalObject);
-    return JSValue::encode(zig->bakeAdditions().ensureAsyncLocalStorageInstanceJSFunction(globalObject));
+    auto* rust = static_cast<Rust::GlobalObject*>(globalObject);
+    return JSValue::encode(rust->bakeAdditions().ensureAsyncLocalStorageInstanceJSFunction(globalObject));
 }
 
 extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getSSRResponseConstructor(JSC::JSGlobalObject* globalObject)
 {
-    auto* zig = static_cast<Zig::GlobalObject*>(globalObject);
-    return JSValue::encode(zig->bakeAdditions().JSBakeResponseConstructor(globalObject));
+    auto* rust = static_cast<Rust::GlobalObject*>(globalObject);
+    return JSValue::encode(rust->bakeAdditions().JSBakeResponseConstructor(globalObject));
 }
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeGetAsyncLocalStorage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    auto* zig = static_cast<Zig::GlobalObject*>(globalObject);
-    return JSValue::encode(zig->bakeAdditions().getAsyncLocalStorage(zig));
+    auto* rust = static_cast<Rust::GlobalObject*>(globalObject);
+    return JSValue::encode(rust->bakeAdditions().getAsyncLocalStorage(rust));
 }
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeEnsureAsyncLocalStorage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto* zig = static_cast<Zig::GlobalObject*>(globalObject);
+    auto* rust = static_cast<Rust::GlobalObject*>(globalObject);
     if (callframe->argumentCount() < 1) {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_MISSING_ARGS, "bakeEnsureAsyncLocalStorage requires at least one argument"_s);
         return JSValue::encode(jsUndefined());
     }
-    zig->bakeAdditions().ensureAsyncLocalStorageInstance(zig, callframe->argument(0));
+    rust->bakeAdditions().ensureAsyncLocalStorageInstance(rust, callframe->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
 extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getBundleNewRouteJSFunction(JSC::JSGlobalObject* globalObject)
 {
-    auto* zig = static_cast<Zig::GlobalObject*>(globalObject);
-    auto value = zig->bakeAdditions().getBundleNewRouteJSFunction(zig);
+    auto* rust = static_cast<Rust::GlobalObject*>(globalObject);
+    auto value = rust->bakeAdditions().getBundleNewRouteJSFunction(rust);
     return JSValue::encode(value);
 }
 
@@ -136,8 +136,8 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeGetBundleNewRouteJSFunction, (JSC::JSGlob
 
 extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getNewRouteParamsJSFunction(JSC::JSGlobalObject* globalObject)
 {
-    auto* zig = static_cast<Zig::GlobalObject*>(globalObject);
-    auto value = zig->bakeAdditions().getNewRouteParamsJSFunction(zig);
+    auto* rust = static_cast<Rust::GlobalObject*>(globalObject);
+    auto value = rust->bakeAdditions().getNewRouteParamsJSFunction(rust);
     return JSValue::encode(value);
 }
 

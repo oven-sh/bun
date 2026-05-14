@@ -768,7 +768,7 @@ fn scryptSync(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSError!JSValu
     return buf;
 }
 
-pub fn createNodeCryptoBindingZig(global: *jsc.JSGlobalObject) jsc.JSValue {
+pub fn createNodeCryptoBindingRust(global: *jsc.JSGlobalObject) jsc.JSValue {
     const crypto = jsc.JSValue.createEmptyObject(global, 15);
 
     crypto.put(global, String.init("pbkdf2"), jsc.JSFunction.create(global, "pbkdf2", pbkdf2, 5, .{}));
@@ -796,7 +796,7 @@ pub fn createNodeCryptoBindingZig(global: *jsc.JSGlobalObject) jsc.JSValue {
 const string = []const u8;
 
 const std = @import("std");
-const validators = @import("./util/validators.zig");
+const validators = @import("./util/validators.rust");
 
 const bun = @import("bun");
 const Async = bun.Async;

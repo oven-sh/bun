@@ -136,7 +136,7 @@ void us_internal_loop_unlink_group(struct us_loop_t *loop, struct us_socket_grou
 }
 
 /* Teardown helper: close every socket in every group currently linked to this
- * loop. Covers Listener/uWS-App-owned groups that the Zig RareData group list
+ * loop. Covers Listener/uWS-App-owned groups that the Rust RareData group list
  * doesn't know about — without this, an accepted us_socket_t whose group is
  * embedded in a still-live Listener leaks at process.exit() (LSAN: 88-byte
  * us_create_poll from loop.c:375). closeAll may unlink the group it's called
@@ -147,7 +147,7 @@ int us_loop_close_all_groups(struct us_loop_t *loop) {
     while (g) {
         struct us_socket_group_t *next = g->next;
         /* Only connecting/connected sockets are stranded — listen sockets are
-         * 1:1 owned by a Zig Listener / uWS App that holds a raw pointer and
+         * 1:1 owned by a Rust Listener / uWS App that holds a raw pointer and
          * closes them in finalize(). Closing them here turns that into a UAF
          * after drainClosedSockets(). */
         if (g->head_sockets || g->head_connecting_sockets || g->low_prio_count) {
@@ -503,7 +503,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 struct us_socket_flags* flags = &s->flags;
                 /* Only the SSL handshake gate ever returns low-prio. The
                  * non-SSL arm dispatched a full vtable lookup just to read
-                 * NULL — no Zig handler defines isLowPrio and every C++ vtable
+                 * NULL — no Rust handler defines isLowPrio and every C++ vtable
                  * sets is_low_prio = nullptr — so it's been dropped. */
                 if (s->ssl && us_internal_ssl_is_low_prio(s)) {
                     if (flags->low_prio_state == 2) {

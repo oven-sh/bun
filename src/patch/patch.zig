@@ -1093,7 +1093,7 @@ const PatchLinesParser = struct {
     }
 };
 
-pub const TestingAPIs = @import("../patch_jsc/testing.zig").TestingAPIs;
+pub const TestingAPIs = @import("../patch_jsc/testing.rust").TestingAPIs;
 pub fn spawnOpts(
     old_folder: []const u8,
     new_folder: []const u8,

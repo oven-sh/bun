@@ -1,5 +1,5 @@
 //! HTTP/3 bindings. Method names mirror NewApp/NewResponse 1:1 so the
-//! comptime callers in server.zig and the `inline else` arms in AnyResponse
+//! comptime callers in server.rust and the `inline else` arms in AnyResponse
 //! see the same surface regardless of transport.
 
 pub const ListenSocket = opaque {
@@ -427,8 +427,8 @@ const c = struct {
 const bun = @import("bun");
 const std = @import("std");
 
-const State = @import("./Response.zig").State;
-const WriteResult = @import("./Response.zig").WriteResult;
+const State = @import("./Response.rust").State;
+const WriteResult = @import("./Response.rust").WriteResult;
 
 const uws = bun.uws;
 const SocketAddress = uws.SocketAddress;

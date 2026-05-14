@@ -768,7 +768,7 @@ pub const RunCommand = struct {
     }
 
     pub const Filter = enum { script, bin, all, bun_js, all_plus_bun_js, script_and_descriptions, script_exclude };
-    const DirInfo = @import("../../resolver/dir_info.zig");
+    const DirInfo = @import("../../resolver/dir_info.rust");
     pub fn configureEnvForRun(
         ctx: Command.Context,
         this_transpiler: *transpiler.Transpiler,
@@ -836,7 +836,7 @@ pub const RunCommand = struct {
             }
 
             // Always skip default .env files for package.json script runner
-            // (see comment in env_loader.zig:542-548 - the script's own bun instance loads .env)
+            // (see comment in env_loader.rust:542-548 - the script's own bun instance loads .env)
             this_transpiler.runEnvLoader(true) catch {};
         }
 
@@ -1289,7 +1289,7 @@ pub const RunCommand = struct {
         const DoneChannel = bun.threading.Channel(u32, .{ .Static = 256 });
 
         fn onDone(self: *RemoteImageDownload, async_http: *bun.http.AsyncHTTP, _: bun.http.HTTPClientResult) void {
-            // Mirror sendSyncCallback from AsyncHTTP.zig: the worker's
+            // Mirror sendSyncCallback from AsyncHTTP.rust: the worker's
             // ThreadlocalAsyncHTTP is about to be freed, so copy its
             // mutated state back into our owned AsyncHTTP before writing
             // to the channel.
@@ -2037,7 +2037,7 @@ pub const RunCommand = struct {
 };
 
 pub const BunXFastPath = struct {
-    const shim_impl = @import("../../install/windows-shim/bun_shim_impl.zig");
+    const shim_impl = @import("../../install/windows-shim/bun_shim_impl.rust");
     const debug = Output.scoped(.BunXFastPath, .visible);
 
     var direct_launch_buffer: bun.WPathBuffer = undefined;
@@ -2206,14 +2206,14 @@ pub const BunXFastPath = struct {
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const DotEnv = @import("../../dotenv/env_loader.zig");
-const ShellCompletions = @import("./shell_completions.zig");
-const options = @import("../../bundler/options.zig");
-const resolve_path = @import("../../paths/resolve_path.zig");
+const DotEnv = @import("../../dotenv/env_loader.rust");
+const ShellCompletions = @import("./shell_completions.rust");
+const options = @import("../../bundler/options.rust");
+const resolve_path = @import("../../paths/resolve_path.rust");
 const std = @import("std");
-const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
-const which = @import("../../which/which.zig").which;
-const yarn_commands = @import("./list-of-yarn-commands.zig").all_yarn_commands;
+const PackageJSON = @import("../../resolver/package_json.rust").PackageJSON;
+const which = @import("../../which/which.rust").which;
+const yarn_commands = @import("./list-of-yarn-commands.rust").all_yarn_commands;
 const windows = std.os.windows;
 
 const bun = @import("bun");

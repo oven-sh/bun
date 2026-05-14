@@ -1,4 +1,4 @@
-pub const c = @import("../brotli_sys/brotli_c.zig");
+pub const c = @import("../brotli_sys/brotli_c.rust");
 const BrotliDecoder = c.BrotliDecoder;
 const BrotliEncoder = c.BrotliEncoder;
 

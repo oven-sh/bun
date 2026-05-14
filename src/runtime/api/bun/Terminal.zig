@@ -52,7 +52,7 @@ cols: u16,
 rows: u16,
 
 /// Terminal name (e.g., "xterm-256color")
-term_name: jsc.ZigString.Slice,
+term_name: jsc.RustString.Slice,
 
 /// Event loop handle for callbacks
 event_loop_handle: jsc.EventLoopHandle,
@@ -105,7 +105,7 @@ pub const IOReader = bun.io.BufferedReader;
 pub const Options = struct {
     cols: u16 = 80,
     rows: u16 = 24,
-    term_name: jsc.ZigString.Slice = .{},
+    term_name: jsc.RustString.Slice = .{},
     data_callback: ?JSValue = null,
     exit_callback: ?JSValue = null,
     drain_callback: ?JSValue = null,
@@ -127,7 +127,7 @@ pub const Options = struct {
             if (n > 0 and n <= 65535) options.rows = @intCast(n);
         }
 
-        if (try js_options.getOptional(globalObject, "name", jsc.ZigString.Slice)) |slice| {
+        if (try js_options.getOptional(globalObject, "name", jsc.RustString.Slice)) |slice| {
             if (slice.len > max_term_name_len) {
                 slice.deinit();
                 return globalObject.throw("Terminal name too long (max {d} characters)", .{max_term_name_len});
@@ -186,7 +186,7 @@ fn initTerminal(
     const term_name = if (options.term_name.len > 0)
         options.term_name
     else
-        jsc.ZigString.Slice.fromUTF8NeverFree("xterm-256color");
+        jsc.RustString.Slice.fromUTF8NeverFree("xterm-256color");
     // Ownership moves to the struct below; clear so caller's options.deinit()
     // doesn't double-free on the WriterStartFailed/ReaderStartFailed paths.
     options.term_name = .{};
@@ -518,7 +518,7 @@ fn createPtyPosix(cols: u16, rows: u16) CreatePtyError!PtyResult {
             .IMAXBEL = true, // Ring bell on input queue full
             .BRKINT = true, // Signal interrupt on break
         };
-        // IUTF8: present in Linux/macOS/FreeBSD kernels but Zig std's
+        // IUTF8: present in Linux/macOS/FreeBSD kernels but Rust std's
         // tc_iflag_t only exposes the field on Linux/macOS, so probe for it.
         if (comptime @hasField(@TypeOf(t.iflag), "IUTF8")) {
             t.iflag.IUTF8 = true;
@@ -1123,7 +1123,7 @@ fn callExitCallback(this: *Terminal, exit_code: i32, signal: ?bun.SignalCode) vo
 
     const globalThis = this.globalThis;
     const signal_value: JSValue = if (signal) |s|
-        jsc.ZigString.init(s.name() orelse "unknown").toJS(globalThis)
+        jsc.RustString.init(s.name() orelse "unknown").toJS(globalThis)
     else
         JSValue.jsNull();
 

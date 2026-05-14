@@ -1,4 +1,4 @@
-pub const css = @import("../css_parser.zig");
+pub const css = @import("../css_parser.rust");
 
 const SmallList = css.SmallList;
 const Printer = css.Printer;
@@ -1481,6 +1481,6 @@ fn isBorderProperty(property_id: css.PropertyIdTag) bool {
 
 const bun = @import("bun");
 const std = @import("std");
-const BorderImageHandler = @import("./border_image.zig").BorderImageHandler;
-const BorderRadiusHandler = @import("./border_radius.zig").BorderRadiusHandler;
+const BorderImageHandler = @import("./border_image.rust").BorderImageHandler;
+const BorderRadiusHandler = @import("./border_radius.rust").BorderRadiusHandler;
 const Allocator = std.mem.Allocator;

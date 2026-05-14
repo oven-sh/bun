@@ -1,7 +1,7 @@
-// WebView host subprocess entry point. Reached via cli.zig when
+// WebView host subprocess entry point. Reached via cli.rust when
 // BUN_INTERNAL_WEBVIEW_HOST is set. Runs CFRunLoopRun() as the real main
 // loop — CF manages ignoreWakeUps correctly when it owns the loop. No
-// JSC, no VM, no Zig runtime past the env check.
+// JSC, no VM, no Rust runtime past the env check.
 //
 // Parent death → socket read() returns 0 → CFRunLoopStop → process exits.
 
@@ -348,7 +348,7 @@ static void cfCallback(CFFileDescriptorRef, CFOptionFlags flags, void*)
 } // namespace Bun
 
 // ---------------------------------------------------------------------------
-// Entry. cli.zig calls this before anything else when BUN_INTERNAL_WEBVIEW_HOST
+// Entry. cli.rust calls this before anything else when BUN_INTERNAL_WEBVIEW_HOST
 // is set. Never returns.
 // ---------------------------------------------------------------------------
 extern "C" [[noreturn]] void Bun__WebView__hostMain(int fd)

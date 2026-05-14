@@ -8,7 +8,7 @@
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 #include "ErrorStackTrace.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 #include "ModuleLoader.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -20,7 +20,7 @@ namespace Inspector {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorTestReporterAgent);
 
-// Zig bindings implementation
+// Rust bindings implementation
 extern "C" {
 
 void Bun__TestReporterAgentEnable(Inspector::InspectorTestReporterAgent* agent);
@@ -76,7 +76,7 @@ void Bun__TestReporterAgentReportTestStart(Inspector::InspectorTestReporterAgent
 }
 
 enum class BunTestStatus : uint8_t {
-    // this enum is kept in sync with zig Debugger.zig `pub const TestStatus`
+    // this enum is kept in sync with rust Debugger.rust `pub const TestStatus`
     Pass,
     Fail,
     Timeout,
@@ -168,19 +168,19 @@ void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int 
     JSC::SourceID sourceID = 0;
     String sourceURL;
 
-    ZigStackFrame remappedFrame = {};
+    RustStackFrame remappedFrame = {};
 
     auto* globalObject = &m_globalObject;
     auto& vm = JSC::getVM(globalObject);
 
     JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        if (Zig::isImplementationVisibilityPrivate(visitor))
+        if (Rust::isImplementationVisibilityPrivate(visitor))
             return WTF::IterationStatus::Continue;
 
         if (visitor->hasLineAndColumnInfo()) {
             lineColumn = visitor->computeLineAndColumn();
 
-            String sourceURLForFrame = Zig::sourceURL(visitor);
+            String sourceURLForFrame = Rust::sourceURL(visitor);
 
             // Sometimes, the sourceURL is empty.
             // For example, pages in Next.js.

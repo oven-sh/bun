@@ -339,7 +339,7 @@ pub const S3HttpSimpleTask = struct {
         }
     }
 
-    /// this is the callback from the http.zig AsyncHTTP is always called from the HTTPThread
+    /// this is the callback from the http.rust AsyncHTTP is always called from the HTTPThread
     pub fn httpCallback(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) void {
         const is_done = !result.has_more;
         this.result = result;
@@ -447,16 +447,16 @@ pub fn executeSimpleS3Request(
     bun.http.http_thread.schedule(batch);
 }
 
-const ListObjects = @import("./list_objects.zig");
+const ListObjects = @import("./list_objects.rust");
 const std = @import("std");
-const ACL = @import("../../../s3_signing/acl.zig").ACL;
-const StorageClass = @import("../../../s3_signing/storage_class.zig").StorageClass;
+const ACL = @import("../../../s3_signing/acl.rust").ACL;
+const StorageClass = @import("../../../s3_signing/storage_class.rust").StorageClass;
 
-const S3Credentials = @import("../../../s3_signing/credentials.zig").S3Credentials;
-const SignResult = @import("../../../s3_signing/credentials.zig").S3Credentials.SignResult;
+const S3Credentials = @import("../../../s3_signing/credentials.rust").S3Credentials;
+const SignResult = @import("../../../s3_signing/credentials.rust").S3Credentials.SignResult;
 
-const S3Error = @import("../../../s3_signing/error.zig").S3Error;
-const getSignErrorCodeAndMessage = @import("../../../s3_signing/error.zig").getSignErrorCodeAndMessage;
+const S3Error = @import("../../../s3_signing/error.rust").S3Error;
+const getSignErrorCodeAndMessage = @import("../../../s3_signing/error.rust").getSignErrorCodeAndMessage;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

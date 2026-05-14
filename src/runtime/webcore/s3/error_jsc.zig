@@ -1,4 +1,4 @@
-//! JSC bridges for `s3_signing/error.zig`. The pure error-code/message tables
+//! JSC bridges for `s3_signing/error.rust`. The pure error-code/message tables
 //! stay in `s3_signing/`; the `*JSGlobalObject`-taking variants live here.
 
 pub const S3Error = s3_error.S3Error;
@@ -67,7 +67,7 @@ pub fn s3ErrorToJSWithAsyncStack(err: *const S3Error, globalObject: *jsc.JSGloba
     return value;
 }
 
-const s3_error = @import("../../../s3_signing/error.zig");
+const s3_error = @import("../../../s3_signing/error.rust");
 const getSignErrorMessage = s3_error.getSignErrorMessage;
 
 const bun = @import("bun");

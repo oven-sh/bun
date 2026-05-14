@@ -681,7 +681,7 @@ pub const OperatingSystem = enum(u16) {
         return .{ .added = this, .removed = .none };
     }
 
-    pub const jsFunctionOperatingSystemIsMatch = @import("../install_jsc/npm_jsc.zig").operatingSystemIsMatch;
+    pub const jsFunctionOperatingSystemIsMatch = @import("../install_jsc/npm_jsc.rust").operatingSystemIsMatch;
 };
 
 pub const Libc = enum(u8) {
@@ -714,7 +714,7 @@ pub const Libc = enum(u8) {
     // TODO:
     pub const current: Libc = @intFromEnum(glibc);
 
-    pub const jsFunctionLibcIsMatch = @import("../install_jsc/npm_jsc.zig").libcIsMatch;
+    pub const jsFunctionLibcIsMatch = @import("../install_jsc/npm_jsc.rust").libcIsMatch;
 };
 
 /// https://docs.npmjs.com/cli/v8/configuring-npm/package-json#cpu
@@ -776,7 +776,7 @@ pub const Architecture = enum(u16) {
         return .{ .added = this, .removed = .none };
     }
 
-    pub const jsFunctionArchitectureIsMatch = @import("../install_jsc/npm_jsc.zig").architectureIsMatch;
+    pub const jsFunctionArchitectureIsMatch = @import("../install_jsc/npm_jsc.rust").architectureIsMatch;
 };
 
 pub const PackageVersion = extern struct {
@@ -1290,7 +1290,7 @@ pub const PackageManifest = struct {
         }
     };
 
-    pub const bindings = @import("../install_jsc/npm_jsc.zig").ManifestBindings;
+    pub const bindings = @import("../install_jsc/npm_jsc.rust").ManifestBindings;
 
     pub fn str(self: *const PackageManifest, external: *const ExternalString) string {
         return external.slice(self.string_buf);
@@ -2735,21 +2735,21 @@ pub const PackageManifest = struct {
 
 const string = []const u8;
 
-const DotEnv = @import("../dotenv/env_loader.zig");
+const DotEnv = @import("../dotenv/env_loader.rust");
 const std = @import("std");
-const Bin = @import("./bin.zig").Bin;
-const IdentityContext = @import("../collections/identity_context.zig").IdentityContext;
-const Integrity = @import("./integrity.zig").Integrity;
-const ObjectPool = @import("../collections/pool.zig").ObjectPool;
-const URL = @import("../url/url.zig").URL;
+const Bin = @import("./bin.rust").Bin;
+const IdentityContext = @import("../collections/identity_context.rust").IdentityContext;
+const Integrity = @import("./integrity.rust").Integrity;
+const ObjectPool = @import("../collections/pool.rust").ObjectPool;
+const URL = @import("../url/url.rust").URL;
 
-const Aligner = @import("./install.zig").Aligner;
-const ExternalSlice = @import("./install.zig").ExternalSlice;
-const ExternalStringList = @import("./install.zig").ExternalStringList;
-const ExternalStringMap = @import("./install.zig").ExternalStringMap;
-const PackageManager = @import("./install.zig").PackageManager;
-const VersionSlice = @import("./install.zig").VersionSlice;
-const initializeStore = @import("./install.zig").initializeMiniStore;
+const Aligner = @import("./install.rust").Aligner;
+const ExternalSlice = @import("./install.rust").ExternalSlice;
+const ExternalStringList = @import("./install.rust").ExternalStringList;
+const ExternalStringMap = @import("./install.rust").ExternalStringMap;
+const PackageManager = @import("./install.rust").PackageManager;
+const VersionSlice = @import("./install.rust").VersionSlice;
+const initializeStore = @import("./install.rust").initializeMiniStore;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

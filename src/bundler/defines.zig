@@ -412,10 +412,10 @@ pub const Define = struct {
 
 const string = []const u8;
 
-const fs = @import("../resolver/fs.zig");
+const fs = @import("../resolver/fs.rust");
 const std = @import("std");
 
-const table = @import("./defines-table.zig");
+const table = @import("./defines-table.rust");
 const global_no_side_effect_function_calls_safe_for_to_string = table.global_no_side_effect_function_calls_safe_for_to_string;
 const global_no_side_effect_property_accesses = table.global_no_side_effect_property_accesses;
 

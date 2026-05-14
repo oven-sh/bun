@@ -428,7 +428,7 @@ pub const api = struct {
         }
     };
 
-    pub const StackFramePosition = bun.jsc.ZigStackFramePosition;
+    pub const StackFramePosition = bun.jsc.RustStackFramePosition;
 
     pub const SourceLine = struct {
         /// line
@@ -1977,7 +1977,7 @@ pub const api = struct {
 
         _,
 
-        pub const fromJS = @import("../bundler_jsc/source_map_mode_jsc.zig").sourceMapModeFromJS;
+        pub const fromJS = @import("../bundler_jsc/source_map_mode_jsc.rust").sourceMapModeFromJS;
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
             return try writer.write(@tagName(self));

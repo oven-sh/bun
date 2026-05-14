@@ -46,7 +46,7 @@ pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logge
             .err => |err| {
                 switch (err.getErrno()) {
                     .NOENT, .ACCES, .PERM => continue,
-                    else => |errno| return bun.errnoToZigErr(errno),
+                    else => |errno| return bun.errnoToRustErr(errno),
                 }
             },
             .result => |source| source,

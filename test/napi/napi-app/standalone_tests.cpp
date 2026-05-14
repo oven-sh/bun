@@ -419,7 +419,7 @@ static napi_value test_extended_error_messages(const Napi::CallbackInfo &info) {
          error->error_code,
          error->error_message ? error->error_message : "(null)");
 
-  // this function is implemented in zig
+  // this function is implemented in rust
   // error because the value is not an array
   unsigned int len;
   printf("erroneous napi_get_array_length returned code %d\n",

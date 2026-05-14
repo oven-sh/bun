@@ -339,7 +339,7 @@ describe("fetch protocol: http3", () => {
     expect(res.headers.get("x-recv-len")).toBe("1");
   });
 
-  // Regression: src/uws_sys/quic/Header.zig defines `Qpack = enum(u8) { ... _ }`
+  // Regression: src/uws_sys/quic/Header.rust defines `Qpack = enum(u8) { ... _ }`
   // (non-exhaustive — any u8 is a valid value). The Rust port uses an exhaustive
   // `#[repr(u8)] enum`, so the only safety net against discriminant drift / a UB
   // `from_raw` is that every named index must equal its RFC 9204 Appendix A
@@ -348,7 +348,7 @@ describe("fetch protocol: http3", () => {
   // decode. A wrong discriminant makes lsqpack emit the wrong static-table
   // name (or garbage), so the echoed value disappears.
   test("QPACK static-table indexed headers round-trip", async () => {
-    // Every `Class::Indexed` entry in Header.zig's classify map, minus
+    // Every `Class::Indexed` entry in Header.rust's classify map, minus
     // content-length / accept-encoding (build_request rewrites those).
     // Mixed case on a few to exercise the case-insensitive lookup.
     const sent: Record<string, string> = {

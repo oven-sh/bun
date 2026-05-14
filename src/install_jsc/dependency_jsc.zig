@@ -1,5 +1,5 @@
 //! JSC bridges for `bun.install.Dependency`. Aliased back into
-//! `src/install/dependency.zig` so call sites are unchanged.
+//! `src/install/dependency.rust` so call sites are unchanged.
 
 pub fn versionToJS(dep: *const Dependency.Version, buf: []const u8, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     const object = jsc.JSValue.createEmptyObject(globalThis, 0);

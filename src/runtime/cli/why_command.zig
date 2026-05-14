@@ -480,8 +480,8 @@ pub const WhyCommand = struct {
 const string = []const u8;
 
 const std = @import("std");
-const PackageID = @import("../../install/install.zig").PackageID;
-const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
+const PackageID = @import("../../install/install.rust").PackageID;
+const PackageManagerCommand = @import("./package_manager_command.rust").PackageManagerCommand;
 
 const bun = @import("bun");
 const Global = bun.Global;

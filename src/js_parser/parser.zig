@@ -1,6 +1,6 @@
 //! ** IMPORTANT **
 //! ** When making changes to the JavaScript Parser that impact runtime behavior or fix bugs **
-//! ** you must also increment the `expected_version` in RuntimeTranspilerCache.zig **
+//! ** you must also increment the `expected_version` in RuntimeTranspilerCache.rust **
 //! ** IMPORTANT **
 
 pub const ExprListLoc = struct {
@@ -1201,21 +1201,21 @@ pub const ParseBindingOptions = struct {
     is_using_statement: bool = false,
 };
 
-pub const ConvertESMExportsForHmr = @import("./ast/ConvertESMExportsForHmr.zig");
-pub const ImportScanner = @import("./ast/ImportScanner.zig");
-pub const TypeScript = @import("./ast/TypeScript.zig");
-pub const fs = @import("../resolver/fs.zig");
-pub const options = @import("../bundler/options.zig");
-pub const renamer = @import("../js_printer/renamer.zig");
-pub const KnownGlobal = @import("./ast/KnownGlobal.zig").KnownGlobal;
-pub const Parser = @import("./ast/Parser.zig").Parser;
-pub const SideEffects = @import("./ast/SideEffects.zig").SideEffects;
-pub const foldStringAddition = @import("./ast/foldStringAddition.zig").foldStringAddition;
-pub const isPackagePath = @import("../resolver/resolver.zig").isPackagePath;
+pub const ConvertESMExportsForHmr = @import("./ast/ConvertESMExportsForHmr.rust");
+pub const ImportScanner = @import("./ast/ImportScanner.rust");
+pub const TypeScript = @import("./ast/TypeScript.rust");
+pub const fs = @import("../resolver/fs.rust");
+pub const options = @import("../bundler/options.rust");
+pub const renamer = @import("../js_printer/renamer.rust");
+pub const KnownGlobal = @import("./ast/KnownGlobal.rust").KnownGlobal;
+pub const Parser = @import("./ast/Parser.rust").Parser;
+pub const SideEffects = @import("./ast/SideEffects.rust").SideEffects;
+pub const foldStringAddition = @import("./ast/foldStringAddition.rust").foldStringAddition;
+pub const isPackagePath = @import("../resolver/resolver.rust").isPackagePath;
 
-pub const Ref = @import("./ast/base.zig").Ref;
+pub const Ref = @import("./ast/base.rust").Ref;
 
-pub const importRecord = @import("../options_types/import_record.zig");
+pub const importRecord = @import("../options_types/import_record.rust");
 pub const ImportKind = importRecord.ImportKind;
 const ImportRecord = importRecord.ImportRecord;
 
@@ -1223,7 +1223,7 @@ pub const RuntimeFeatures = _runtime.Runtime.Features;
 pub const RuntimeImports = _runtime.Runtime.Imports;
 pub const RuntimeNames = _runtime.Runtime.Names;
 
-pub const NewParser_ = @import("./ast/P.zig").NewParser_;
+pub const NewParser_ = @import("./ast/P.rust").NewParser_;
 
 pub const StringHashMap = bun.StringHashMap;
 pub const js_printer = bun.js_printer;
@@ -1262,13 +1262,13 @@ const List = std.ArrayListUnmanaged;
 const ListManaged = std.array_list.Managed;
 const Allocator = std.mem.Allocator;
 
-const _runtime = @import("./runtime.zig");
-const Define = @import("../bundler/defines.zig").Define;
-const NewParser = @import("./ast/P.zig").NewParser;
-const ObjectPool = @import("../collections/pool.zig").ObjectPool;
+const _runtime = @import("./runtime.rust");
+const Define = @import("../bundler/defines.rust").Define;
+const NewParser = @import("./ast/P.rust").NewParser;
+const ObjectPool = @import("../collections/pool.rust").ObjectPool;
 
-const Index = @import("./ast/base.zig").Index;
-const RefCtx = @import("./ast/base.zig").RefCtx;
+const Index = @import("./ast/base.rust").Index;
+const RefCtx = @import("./ast/base.rust").RefCtx;
 
 const bun = @import("bun");
 const Output = bun.Output;

@@ -225,7 +225,7 @@ pub inline fn bltn(this: *Echo) *Builtin {
 
 const log = bun.Output.scoped(.echo, .hidden);
 
-const interpreter = @import("../interpreter.zig");
+const interpreter = @import("../interpreter.rust");
 const std = @import("std");
 
 const Interpreter = interpreter.Interpreter;

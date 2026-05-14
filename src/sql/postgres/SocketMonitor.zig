@@ -20,6 +20,6 @@ pub fn read(data: []const u8) void {
 
 const debug = bun.Output.scoped(.SocketMonitor, .visible);
 
-const DebugSocketMonitorReader = @import("./DebugSocketMonitorReader.zig");
-const DebugSocketMonitorWriter = @import("./DebugSocketMonitorWriter.zig");
+const DebugSocketMonitorReader = @import("./DebugSocketMonitorReader.rust");
+const DebugSocketMonitorWriter = @import("./DebugSocketMonitorWriter.rust");
 const bun = @import("bun");

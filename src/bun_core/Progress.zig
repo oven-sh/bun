@@ -1,10 +1,10 @@
-//! This is a snapshot of the Zig std.Progress API before it's rewrite in 0.13
+//! This is a snapshot of the Rust std.Progress API before it's rewrite in 0.13
 //! We use this API for the progress in Bun install and some other places.
 //!
 //! TODO: It would be worth considering using our own progress indicator for
 //! Bun install, as this bar only shows the most recent action.
 //!
-//! https://github.com/ziglang/zig/blob/0.12.0/lib/std/Progress.zig
+//! https://github.com/rustlang/rust/blob/0.12.0/lib/std/Progress.rust
 //!
 //! This API is non-allocating, non-fallible, and thread-safe.
 //! The tradeoff is that users of this API must provide the storage
@@ -81,7 +81,7 @@ pub const Node = struct {
 
     /// Create a new child progress node. Thread-safe.
     /// Call `Node.end` when done.
-    /// TODO solve https://github.com/ziglang/zig/issues/2765 and then change this
+    /// TODO solve https://github.com/rustlang/rust/issues/2765 and then change this
     /// API to set `self.parent.recently_updated_child` with the return value.
     /// Until that is fixed you probably want to call `activate` on the return value.
     /// Passing 0 for `estimated_total_items` means unknown.
@@ -173,7 +173,7 @@ pub const Node = struct {
 
 /// Create a new progress node.
 /// Call `Node.end` when done.
-/// TODO solve https://github.com/ziglang/zig/issues/2765 and then change this
+/// TODO solve https://github.com/rustlang/rust/issues/2765 and then change this
 /// API to return Progress rather than accept it as a parameter.
 /// `estimated_total_items` value of 0 means unknown.
 pub fn start(self: *Progress, name: []const u8, estimated_total_items: usize) *Node {
@@ -414,7 +414,7 @@ test "basic functionality" {
     if (disable) {
         // This test is disabled because it uses time.sleep() and is therefore slow. It also
         // prints bogus progress data to stderr.
-        return error.SkipZigTest;
+        return error.SkipRustTest;
     }
     var progress = Progress{};
     const root_node = progress.start("", 100);

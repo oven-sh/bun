@@ -1,11 +1,11 @@
 const string = []const u8;
 
 /// Represents a single frame in a stack trace
-pub const ZigStackFrame = extern struct {
+pub const RustStackFrame = extern struct {
     function_name: String,
     source_url: String,
-    position: ZigStackFramePosition,
-    code_type: ZigStackFrameCode,
+    position: RustStackFramePosition,
+    code_type: RustStackFrameCode,
     is_async: bool,
 
     /// This informs formatters whether to display as a blob URL or not
@@ -14,12 +14,12 @@ pub const ZigStackFrame = extern struct {
     /// -1 means not set.
     jsc_stack_frame_index: i32 = -1,
 
-    pub fn deinit(this: *ZigStackFrame) void {
+    pub fn deinit(this: *RustStackFrame) void {
         this.function_name.deref();
         this.source_url.deref();
     }
 
-    pub fn toAPI(this: *const ZigStackFrame, root_path: string, origin: ?*const ZigURL, allocator: std.mem.Allocator) !api.StackFrame {
+    pub fn toAPI(this: *const RustStackFrame, root_path: string, origin: ?*const RustURL, allocator: std.mem.Allocator) !api.StackFrame {
         var frame: api.StackFrame = comptime std.mem.zeroes(api.StackFrame);
         if (!this.function_name.isEmpty()) {
             var slicer = this.function_name.toUTF8(allocator);
@@ -42,9 +42,9 @@ pub const ZigStackFrame = extern struct {
 
     pub const SourceURLFormatter = struct {
         source_url: bun.String,
-        position: ZigStackFramePosition,
+        position: RustStackFramePosition,
         enable_color: bool,
-        origin: ?*const ZigURL,
+        origin: ?*const RustURL,
         exclude_line_column: bool = false,
         remapped: bool = false,
         root_path: string = "",
@@ -140,7 +140,7 @@ pub const ZigStackFrame = extern struct {
 
     pub const NameFormatter = struct {
         function_name: String,
-        code_type: ZigStackFrameCode,
+        code_type: RustStackFrameCode,
         enable_color: bool,
         is_async: bool,
 
@@ -212,7 +212,7 @@ pub const ZigStackFrame = extern struct {
         }
     };
 
-    pub const Zero: ZigStackFrame = .{
+    pub const Zero: RustStackFrame = .{
         .function_name = .empty,
         .code_type = .None,
         .source_url = .empty,
@@ -221,11 +221,11 @@ pub const ZigStackFrame = extern struct {
         .jsc_stack_frame_index = -1,
     };
 
-    pub fn nameFormatter(this: *const ZigStackFrame, comptime enable_color: bool) NameFormatter {
+    pub fn nameFormatter(this: *const RustStackFrame, comptime enable_color: bool) NameFormatter {
         return NameFormatter{ .function_name = this.function_name, .code_type = this.code_type, .enable_color = enable_color, .is_async = this.is_async };
     }
 
-    pub fn sourceURLFormatter(this: *const ZigStackFrame, root_path: string, origin: ?*const ZigURL, exclude_line_column: bool, comptime enable_color: bool) SourceURLFormatter {
+    pub fn sourceURLFormatter(this: *const RustStackFrame, root_path: string, origin: ?*const RustURL, exclude_line_column: bool, comptime enable_color: bool) SourceURLFormatter {
         return SourceURLFormatter{
             .source_url = this.source_url,
             .exclude_line_column = exclude_line_column,
@@ -239,7 +239,7 @@ pub const ZigStackFrame = extern struct {
 };
 
 const std = @import("std");
-const ZigURL = @import("../url/url.zig").URL;
+const RustURL = @import("../url/url.rust").URL;
 
 const bun = @import("bun");
 const Output = bun.Output;
@@ -248,5 +248,5 @@ const strings = bun.strings;
 const api = bun.schema.api;
 
 const jsc = bun.jsc;
-const ZigStackFrameCode = jsc.ZigStackFrameCode;
-const ZigStackFramePosition = jsc.ZigStackFramePosition;
+const RustStackFrameCode = jsc.RustStackFrameCode;
+const RustStackFramePosition = jsc.RustStackFramePosition;

@@ -1,4 +1,4 @@
-//! If you are adding feature-flags to this file, you are in the wrong spot. Go to env_var.zig
+//! If you are adding feature-flags to this file, you are in the wrong spot. Go to env_var.rust
 //! instead.
 
 /// Enable breaking changes for the next major release of Bun
@@ -142,4 +142,4 @@ pub fn bake() bool {
 pub const bake_debugging_features = env.is_canary or env.isDebug;
 
 const bun = @import("bun");
-const env = @import("./env.zig");
+const env = @import("./env.rust");

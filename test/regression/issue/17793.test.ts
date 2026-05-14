@@ -1,6 +1,6 @@
 // Regression test for https://github.com/oven-sh/bun/issues/17793
 //
-// Bug: In handleResponseMetadata (src/http.zig), the RFC 9112 §6.3 logic
+// Bug: In handleResponseMetadata (src/http.rust), the RFC 9112 §6.3 logic
 // setting content_length=0 for 304 responses was inside `if (!proxy_tunneling)`,
 // so 304 through CONNECT tunnels left content_length=null → continue_streaming → hang.
 //

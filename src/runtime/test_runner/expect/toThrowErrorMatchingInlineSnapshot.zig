@@ -13,13 +13,13 @@ pub fn toThrowErrorMatchingInlineSnapshot(this: *Expect, globalThis: *JSGlobalOb
     }
 
     var has_expected = false;
-    var expected_string: ZigString = ZigString.Empty;
+    var expected_string: RustString = RustString.Empty;
     switch (arguments.len) {
         0 => {},
         1 => {
             if (arguments[0].isString()) {
                 has_expected = true;
-                try arguments[0].toZigString(&expected_string, globalThis);
+                try arguments[0].toRustString(&expected_string, globalThis);
             } else {
                 return this.throw(globalThis, "", "\n\nMatcher error: Expected first argument to be a string\n", .{});
             }
@@ -41,7 +41,7 @@ pub fn toThrowErrorMatchingInlineSnapshot(this: *Expect, globalThis: *JSGlobalOb
 }
 
 const bun = @import("bun");
-const ZigString = bun.ZigString;
+const RustString = bun.RustString;
 const default_allocator = bun.default_allocator;
 
 const jsc = bun.jsc;

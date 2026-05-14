@@ -1,7 +1,7 @@
 // Verifies that `bun install` can extract a tarball while it is still
 // downloading. A local registry drip-feeds the .tgz body in small
 // chunks so the HTTP thread delivers multiple progress callbacks; the
-// streaming extractor (TarballStream.zig + the ARCHIVE_RETRY patches in
+// streaming extractor (TarballStream.rust + the ARCHIVE_RETRY patches in
 // vendor/libarchive) must reassemble them into the same on-disk layout
 // the buffered extractor would produce.
 
@@ -356,7 +356,7 @@ test("buffered extract: damaged-block retry resets header state (upstream semant
   // A 512-byte block that is neither all-zero (would be treated as the
   // end-of-archive marker) nor has a valid checksum: upstream tar emits
   // "Damaged tar archive (bad header checksum)" and returns
-  // ARCHIVE_RETRY, which the Zig extract loop handles as `continue`.
+  // ARCHIVE_RETRY, which the Rust extract loop handles as `continue`.
   const damaged = Buffer.alloc(512, 0);
   damaged.write("junk", 0, "utf8");
   damaged.fill(" ", 148, 156); // checksum field left as spaces → guaranteed mismatch
@@ -383,7 +383,7 @@ test("buffered extract: damaged-block retry resets header state (upstream semant
   const { stderr, exitCode } = await runInstall(String(dir));
 
   // With the broken patch the second 'g' header trips
-  // "Redundant 'g' header" → ARCHIVE_FATAL inside libarchive; the Zig
+  // "Redundant 'g' header" → ARCHIVE_FATAL inside libarchive; the Rust
   // extract loop surfaces that as `error.Fail` → "Fail extracting
   // tarball". With upstream semantics restored the damaged block is
   // skipped, state is fully reset, and the file following the second

@@ -539,7 +539,7 @@ pub fn tick(this: *EventLoop) void {
 /// process exit) without running user JavaScript via the global microtask queue.
 ///
 /// `tickQueueWithCount` unconditionally calls `drainMicrotasksWithGlobal` after
-/// every task (Task.zig), which drains the shared JSC microtask queue and can
+/// every task (Task.rust), which drains the shared JSC microtask queue and can
 /// execute arbitrary user JS. This method sets a flag to suppress that drain.
 pub fn tickTasksOnly(this: *EventLoop) void {
     this.tickConcurrent();
@@ -685,15 +685,15 @@ pub fn getActiveTasks(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.
     const event_loop = vm.event_loop;
 
     const result = jsc.JSValue.createEmptyObject(globalObject, 3);
-    result.put(globalObject, jsc.ZigString.static("activeTasks"), jsc.JSValue.jsNumber(vm.active_tasks));
-    result.put(globalObject, jsc.ZigString.static("concurrentRef"), jsc.JSValue.jsNumber(event_loop.concurrent_ref.load(.seq_cst)));
+    result.put(globalObject, jsc.RustString.static("activeTasks"), jsc.JSValue.jsNumber(vm.active_tasks));
+    result.put(globalObject, jsc.RustString.static("concurrentRef"), jsc.JSValue.jsNumber(event_loop.concurrent_ref.load(.seq_cst)));
 
     // Get num_polls from uws loop (POSIX) or active_handles from libuv (Windows)
     const num_polls: i32 = if (Environment.isWindows)
         @intCast(bun.windows.libuv.Loop.get().active_handles)
     else
         uws.Loop.get().num_polls;
-    result.put(globalObject, jsc.ZigString.static("numPolls"), jsc.JSValue.jsNumber(num_polls));
+    result.put(globalObject, jsc.RustString.static("numPolls"), jsc.JSValue.jsNumber(num_polls));
 
     return result;
 }
@@ -704,37 +704,37 @@ pub fn deinit(this: *EventLoop) void {
     this.next_immediate_tasks.clearAndFree(bun.default_allocator);
 }
 
-pub const AnyEventLoop = @import("../event_loop/AnyEventLoop.zig").AnyEventLoop;
-pub const ConcurrentPromiseTask = @import("./ConcurrentPromiseTask.zig").ConcurrentPromiseTask;
-pub const WorkTask = @import("./WorkTask.zig").WorkTask;
-pub const AnyTask = @import("../event_loop/AnyTask.zig");
-pub const ManagedTask = @import("../event_loop/ManagedTask.zig");
-pub const AnyTaskWithExtraContext = @import("../event_loop/AnyTaskWithExtraContext.zig");
-pub const CppTask = @import("./CppTask.zig").CppTask;
-pub const ConcurrentCppTask = @import("./CppTask.zig").ConcurrentCppTask;
-pub const JSCScheduler = @import("./JSCScheduler.zig");
-pub const Task = @import("./Task.zig").Task;
-pub const ConcurrentTask = @import("../event_loop/ConcurrentTask.zig");
-pub const GarbageCollectionController = @import("./GarbageCollectionController.zig");
-pub const DeferredTaskQueue = @import("../event_loop/DeferredTaskQueue.zig");
+pub const AnyEventLoop = @import("../event_loop/AnyEventLoop.rust").AnyEventLoop;
+pub const ConcurrentPromiseTask = @import("./ConcurrentPromiseTask.rust").ConcurrentPromiseTask;
+pub const WorkTask = @import("./WorkTask.rust").WorkTask;
+pub const AnyTask = @import("../event_loop/AnyTask.rust");
+pub const ManagedTask = @import("../event_loop/ManagedTask.rust");
+pub const AnyTaskWithExtraContext = @import("../event_loop/AnyTaskWithExtraContext.rust");
+pub const CppTask = @import("./CppTask.rust").CppTask;
+pub const ConcurrentCppTask = @import("./CppTask.rust").ConcurrentCppTask;
+pub const JSCScheduler = @import("./JSCScheduler.rust");
+pub const Task = @import("./Task.rust").Task;
+pub const ConcurrentTask = @import("../event_loop/ConcurrentTask.rust");
+pub const GarbageCollectionController = @import("./GarbageCollectionController.rust");
+pub const DeferredTaskQueue = @import("../event_loop/DeferredTaskQueue.rust");
 pub const DeferredRepeatingTask = DeferredTaskQueue.DeferredRepeatingTask;
-pub const PosixSignalHandle = @import("./PosixSignalHandle.zig");
+pub const PosixSignalHandle = @import("./PosixSignalHandle.rust");
 pub const PosixSignalTask = PosixSignalHandle.PosixSignalTask;
-pub const MiniEventLoop = @import("../event_loop/MiniEventLoop.zig");
+pub const MiniEventLoop = @import("../event_loop/MiniEventLoop.rust");
 pub const MiniVM = MiniEventLoop.MiniVM;
 pub const JsVM = MiniEventLoop.JsVM;
 pub const EventLoopKind = MiniEventLoop.EventLoopKind;
 pub const AbstractVM = MiniEventLoop.AbstractVM;
 
-pub const EventLoopHandle = @import("./EventLoopHandle.zig").EventLoopHandle;
-pub const EventLoopTask = @import("./EventLoopHandle.zig").EventLoopTask;
-pub const EventLoopTaskPtr = @import("./EventLoopHandle.zig").EventLoopTaskPtr;
+pub const EventLoopHandle = @import("./EventLoopHandle.rust").EventLoopHandle;
+pub const EventLoopTask = @import("./EventLoopHandle.rust").EventLoopTask;
+pub const EventLoopTaskPtr = @import("./EventLoopHandle.rust").EventLoopTaskPtr;
 
-pub const WorkPool = @import("../threading/work_pool.zig").WorkPool;
-pub const WorkPoolTask = @import("../threading/work_pool.zig").Task;
+pub const WorkPool = @import("../threading/work_pool.rust").WorkPool;
+pub const WorkPoolTask = @import("../threading/work_pool.rust").Task;
 
 const std = @import("std");
-const tickQueueWithCount = @import("./Task.zig").tickQueueWithCount;
+const tickQueueWithCount = @import("./Task.rust").tickQueueWithCount;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -163,12 +163,12 @@ pub const CopyFile = struct {
                     .result => |result_fd| result_fd,
                     .err => |errno| {
                         this.system_error = errno.toSystemError();
-                        return bun.errnoToZigErr(errno.errno);
+                        return bun.errnoToRustErr(errno.errno);
                     },
                 },
                 .err => |errno| {
                     this.system_error = errno.toSystemError();
-                    return bun.errnoToZigErr(errno.errno);
+                    return bun.errnoToRustErr(errno.errno);
                 },
             };
         }
@@ -186,7 +186,7 @@ pub const CopyFile = struct {
                         .result => |result_fd| result_fd,
                         .err => |errno| {
                             this.system_error = errno.toSystemError();
-                            return bun.errnoToZigErr(errno.errno);
+                            return bun.errnoToRustErr(errno.errno);
                         },
                     },
                     .err => |errno| {
@@ -197,7 +197,7 @@ pub const CopyFile = struct {
                                     this.source_fd.close();
                                     this.source_fd = .invalid;
                                 }
-                                return bun.errnoToZigErr(errno.errno);
+                                return bun.errnoToRustErr(errno.errno);
                             },
                             .no => {},
                         }
@@ -208,7 +208,7 @@ pub const CopyFile = struct {
                         }
 
                         this.system_error = errno.withPath(this.destination_file_store.pathlike.path.slice()).toSystemError();
-                        return bun.errnoToZigErr(errno.errno);
+                        return bun.errnoToRustErr(errno.errno);
                     },
                 };
                 break;
@@ -259,7 +259,7 @@ pub const CopyFile = struct {
             switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
                 .err => |err| {
                     this.system_error = err.toSystemError();
-                    return bun.errnoToZigErr(err.errno);
+                    return bun.errnoToRustErr(err.errno);
                 },
                 .result => {
                     _ = linux.ftruncate(dest_fd.cast(), @as(std.posix.off_t, @intCast(total_written)));
@@ -287,7 +287,7 @@ pub const CopyFile = struct {
                     switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
                         .err => |err| {
                             this.system_error = err.toSystemError();
-                            return bun.errnoToZigErr(err.errno);
+                            return bun.errnoToRustErr(err.errno);
                         },
                         .result => {
                             _ = linux.ftruncate(dest_fd.cast(), @as(std.posix.off_t, @intCast(total_written)));
@@ -322,7 +322,7 @@ pub const CopyFile = struct {
                         switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
                             .err => |err| {
                                 this.system_error = err.toSystemError();
-                                return bun.errnoToZigErr(err.errno);
+                                return bun.errnoToRustErr(err.errno);
                             },
                             .result => {
                                 _ = linux.ftruncate(dest_fd.cast(), @as(std.posix.off_t, @intCast(total_written)));
@@ -335,14 +335,14 @@ pub const CopyFile = struct {
                         .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(linux.E.INVAL))),
                         .syscall = TryWith.tag.get(use).?,
                     }).toSystemError();
-                    return bun.errnoToZigErr(linux.E.INVAL);
+                    return bun.errnoToRustErr(linux.E.INVAL);
                 },
                 else => |errno| {
                     this.system_error = (bun.sys.Error{
                         .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(errno))),
                         .syscall = TryWith.tag.get(use).?,
                     }).toSystemError();
-                    return bun.errnoToZigErr(errno);
+                    return bun.errnoToRustErr(errno);
                 },
             }
 
@@ -369,7 +369,7 @@ pub const CopyFile = struct {
                         switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", this.source_fd, this.destination_fd, 0, &total_written)) {
                             .err => |err| {
                                 this.system_error = err.toSystemError();
-                                return bun.errnoToZigErr(err.errno);
+                                return bun.errnoToRustErr(err.errno);
                             },
                             .result => {},
                         }
@@ -377,7 +377,7 @@ pub const CopyFile = struct {
                     else => {
                         this.system_error = errno.toSystemError();
 
-                        return bun.errnoToZigErr(errno.errno);
+                        return bun.errnoToRustErr(errno.errno);
                     },
                 }
             },
@@ -404,7 +404,7 @@ pub const CopyFile = struct {
                         .no => {},
                     }
                     this.system_error = errno.toSystemError();
-                    return bun.errnoToZigErr(errno.errno);
+                    return bun.errnoToRustErr(errno.errno);
                 },
                 .result => {},
             }

@@ -607,24 +607,24 @@ const ParseArgsState = struct {
             };
 
             var obj = JSValue.createEmptyObject(globalThis, num_properties);
-            obj.put(globalThis, ZigString.static("kind"), kind_jsvalue);
+            obj.put(globalThis, RustString.static("kind"), kind_jsvalue);
             switch (token_generic) {
                 .option => |token| {
-                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
-                    obj.put(globalThis, ZigString.static("name"), try token.name.asJSValue(globalThis));
-                    obj.put(globalThis, ZigString.static("rawName"), try token.makeRawNameJSValue(globalThis));
+                    obj.put(globalThis, RustString.static("index"), JSValue.jsNumber(token.index));
+                    obj.put(globalThis, RustString.static("name"), try token.name.asJSValue(globalThis));
+                    obj.put(globalThis, RustString.static("rawName"), try token.makeRawNameJSValue(globalThis));
 
                     // value exists only for string options, otherwise the property exists with "undefined" as value
                     var value = try token.value.asJSValue(globalThis);
-                    obj.put(globalThis, ZigString.static("value"), value);
-                    obj.put(globalThis, ZigString.static("inlineValue"), if (value.isUndefined()) .js_undefined else JSValue.jsBoolean(token.inline_value));
+                    obj.put(globalThis, RustString.static("value"), value);
+                    obj.put(globalThis, RustString.static("inlineValue"), if (value.isUndefined()) .js_undefined else JSValue.jsBoolean(token.inline_value));
                 },
                 .positional => |token| {
-                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
-                    obj.put(globalThis, ZigString.static("value"), try token.value.asJSValue(globalThis));
+                    obj.put(globalThis, RustString.static("index"), JSValue.jsNumber(token.index));
+                    obj.put(globalThis, RustString.static("value"), try token.value.asJSValue(globalThis));
                 },
                 .@"option-terminator" => |token| {
-                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
+                    obj.put(globalThis, RustString.static("index"), JSValue.jsNumber(token.index));
                 },
             }
             try this.tokens.push(globalThis, obj);
@@ -736,19 +736,19 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
 
     var result = JSValue.createEmptyObject(globalThis, if (return_tokens) 3 else 2);
     if (return_tokens) {
-        result.put(globalThis, ZigString.static("tokens"), state.tokens);
+        result.put(globalThis, RustString.static("tokens"), state.tokens);
     }
-    result.put(globalThis, ZigString.static("values"), state.values);
-    result.put(globalThis, ZigString.static("positionals"), state.positionals);
+    result.put(globalThis, RustString.static("values"), state.values);
+    result.put(globalThis, RustString.static("positionals"), state.positionals);
     return result;
 }
 
 const string = []const u8;
 
 const std = @import("std");
-const validators = @import("./validators.zig");
+const validators = @import("./validators.rust");
 
-const utils = @import("./parse_args_utils.zig");
+const utils = @import("./parse_args_utils.rust");
 const OptionDefinition = utils.OptionDefinition;
 const OptionValueType = utils.OptionValueType;
 const classifyToken = utils.classifyToken;
@@ -761,4 +761,4 @@ const String = bun.String;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

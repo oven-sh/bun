@@ -1,10 +1,10 @@
 const debug = bun.Output.scoped(.uws, .visible);
 const max_i32 = std.math.maxInt(i32);
 
-/// Zig bindings for `us_socket_t`.
+/// Rust bindings for `us_socket_t`.
 ///
 /// TLS is per-socket (`s->ssl != NULL` in C); there is no `int ssl` selector.
-/// Dispatch is by `kind()` — see `SocketKind` and `dispatch.zig`.
+/// Dispatch is by `kind()` — see `SocketKind` and `dispatch.rust`.
 ///
 /// Higher-level wrappers (`uws.SocketTCP`/`SocketTLS`) cover named pipes,
 /// upgraded duplexes, and async DNS.
@@ -82,7 +82,7 @@ pub const us_socket_t = opaque {
         if (length < 0) {
             const errno = bun.sys.getErrno(length);
             bun.debugAssert(errno != .SUCCESS);
-            return bun.errnoToZigErr(errno);
+            return bun.errnoToRustErr(errno);
         }
         bun.unsafeAssert(buf.len >= length);
         return buf[0..@intCast(length)];
@@ -95,7 +95,7 @@ pub const us_socket_t = opaque {
         if (length < 0) {
             const errno = bun.sys.getErrno(length);
             bun.debugAssert(errno != .SUCCESS);
-            return bun.errnoToZigErr(errno);
+            return bun.errnoToRustErr(errno);
         }
         bun.unsafeAssert(buf.len >= length);
         return buf[0..@intCast(length)];
@@ -338,7 +338,7 @@ pub const us_socket_stream_buffer_t = extern struct {
 export fn us_socket_free_stream_buffer(buffer: *us_socket_stream_buffer_t) void {
     buffer.deinit();
 }
-// us_socket_buffered_js_write moved to src/runtime/socket/uws_jsc.zig
+// us_socket_buffered_js_write moved to src/runtime/socket/uws_jsc.rust
 
 const std = @import("std");
 

@@ -699,14 +699,14 @@ pub const HtmlRenderer = struct {
 };
 
 const bun = @import("bun");
-const helpers = @import("./helpers.zig");
+const helpers = @import("./helpers.rust");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const root = @import("./root.zig");
+const root = @import("./root.rust");
 const RenderOptions = root.RenderOptions;
 
-const types = @import("./types.zig");
+const types = @import("./types.rust");
 const BlockType = types.BlockType;
 const Renderer = types.Renderer;
 const SpanDetail = types.SpanDetail;

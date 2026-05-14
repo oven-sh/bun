@@ -7,7 +7,7 @@
 #include <uv.h>
 #endif
 
-namespace Zig {
+namespace Rust {
 using namespace WebCore;
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionTty_isatty);
@@ -29,4 +29,4 @@ DEFINE_NATIVE_MODULE(NodeTTY)
     RETURN_NATIVE_MODULE();
 }
 
-} // namespace Zig
+} // namespace Rust

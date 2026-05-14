@@ -3532,7 +3532,7 @@
           "uwebsockets": "string",
           "v8": "string",
           "webkit": "string",
-          "zig": "string",
+          "rust": "string",
           "zlib": "string"
         }
       },
@@ -3674,7 +3674,7 @@
         "uwebsockets": "string",
         "v8": "string",
         "webkit": "string",
-        "zig": "string",
+        "rust": "string",
         "zlib": "string"
       }
     },
@@ -7207,7 +7207,7 @@
           "uwebsockets": "string",
           "v8": "string",
           "webkit": "string",
-          "zig": "string",
+          "rust": "string",
           "zlib": "string"
         }
       },
@@ -7349,7 +7349,7 @@
         "uwebsockets": "string",
         "v8": "string",
         "webkit": "string",
-        "zig": "string",
+        "rust": "string",
         "zlib": "string"
       }
     },

@@ -2198,6 +2198,6 @@ pub const Feature = enum {
     }
 };
 
-const css = @import("./css_parser.zig");
+const css = @import("./css_parser.rust");
 const VendorPrefix = css.VendorPrefix;
 const Browsers = css.targets.Browsers;

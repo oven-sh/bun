@@ -338,7 +338,7 @@ pub const Stdio = union(enum) {
         }
 
         if (value.isString()) {
-            const str = try value.getZigString(globalThis);
+            const str = try value.getRustString(globalThis);
             if (str.eqlComptime("inherit")) {
                 out_stdio.* = Stdio{ .inherit = {} };
             } else if (str.eqlComptime("ignore")) {

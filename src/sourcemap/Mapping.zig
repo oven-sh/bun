@@ -253,7 +253,7 @@ pub const Lookup = struct {
     ///
     /// This data is freed after printed on the assumption that printing
     /// errors to the console are rare (this isnt used for error.stack)
-    pub fn getSourceCode(lookup: Lookup, base_filename: []const u8) ?bun.jsc.ZigString.Slice {
+    pub fn getSourceCode(lookup: Lookup, base_filename: []const u8) ?bun.jsc.RustString.Slice {
         const bytes = bytes: {
             if (lookup.prefetched_source_code) |code| {
                 break :bytes code;
@@ -276,7 +276,7 @@ pub const Lookup = struct {
 
                 const code = serialized.sourceFileContents(@intCast(index));
 
-                return bun.jsc.ZigString.Slice.fromUTF8NeverFree(code orelse return null);
+                return bun.jsc.RustString.Slice.fromUTF8NeverFree(code orelse return null);
             }
 
             if (provider.getSourceMap(
@@ -309,7 +309,7 @@ pub const Lookup = struct {
             }
         };
 
-        return bun.jsc.ZigString.Slice.init(bun.default_allocator, bytes);
+        return bun.jsc.RustString.Slice.init(bun.default_allocator, bytes);
     }
 };
 
@@ -594,7 +594,7 @@ pub fn parse(
 
 const std = @import("std");
 
-const SourceMap = @import("./sourcemap.zig");
+const SourceMap = @import("./sourcemap.rust");
 const LineColumnOffset = SourceMap.LineColumnOffset;
 const ParseResult = SourceMap.ParseResult;
 const ParsedSourceMap = SourceMap.ParsedSourceMap;

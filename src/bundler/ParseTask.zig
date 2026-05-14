@@ -1442,22 +1442,22 @@ pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
 const string = []const u8;
 
-const Fs = @import("../resolver/fs.zig");
-const HTMLScanner = @import("./HTMLScanner.zig");
-const NodeFallbackModules = @import("../resolver/node_fallbacks.zig");
-const linker = @import("./linker.zig");
-const runtime = @import("../js_parser/runtime.zig");
+const Fs = @import("../resolver/fs.rust");
+const HTMLScanner = @import("./HTMLScanner.rust");
+const NodeFallbackModules = @import("../resolver/node_fallbacks.rust");
+const linker = @import("./linker.rust");
+const runtime = @import("../js_parser/runtime.rust");
 const std = @import("std");
-const URL = @import("../url/url.zig").URL;
-const CacheEntry = @import("./cache.zig").Fs.Entry;
+const URL = @import("../url/url.rust").URL;
+const CacheEntry = @import("./cache.rust").Fs.Entry;
 
-const Logger = @import("../logger/logger.zig");
+const Logger = @import("../logger/logger.rust");
 const Loc = Logger.Loc;
 
-const _resolver = @import("../resolver/resolver.zig");
+const _resolver = @import("../resolver/resolver.rust");
 const Resolver = _resolver.Resolver;
 
-const options = @import("./options.zig");
+const options = @import("./options.rust");
 const Loader = options.Loader;
 
 const bun = @import("bun");

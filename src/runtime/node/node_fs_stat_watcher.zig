@@ -558,8 +558,8 @@ pub const StatWatcher = struct {
 
 const string = []const u8;
 
-const Path = @import("../../paths/resolve_path.zig");
-const fs = @import("../../resolver/fs.zig");
+const Path = @import("../../paths/resolve_path.rust");
+const fs = @import("../../resolver/fs.rust");
 const std = @import("std");
 
 const bun = @import("bun");

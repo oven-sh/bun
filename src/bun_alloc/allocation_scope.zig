@@ -275,7 +275,7 @@ const State = struct {
 
 /// An allocation scope that uses a specific kind of parent allocator.
 ///
-/// This type is a `GenericAllocator`; see `src/allocators.zig`.
+/// This type is a `GenericAllocator`; see `src/allocators.rust`.
 pub fn AllocationScopeIn(comptime Allocator: type) type {
     const BorrowedAllocator = bun.allocators.Borrowed(Allocator);
 
@@ -435,7 +435,7 @@ pub fn AllocationScopeIn(comptime Allocator: type) type {
         /// Using this type makes it clear who actually owns the `AllocationScope`, and prevents
         /// `deinit` from being called twice.
         ///
-        /// This type is a `GenericAllocator`; see `src/allocators.zig`.
+        /// This type is a `GenericAllocator`; see `src/allocators.rust`.
         pub const Borrowed = BorrowedScope;
 
         pub fn init(parent_alloc: Allocator) Self {

@@ -1,4 +1,4 @@
-pub const css = @import("../css_parser.zig");
+pub const css = @import("../css_parser.rust");
 pub const Result = css.Result;
 
 const Percentage = css.css_values.percentage.Percentage;
@@ -89,7 +89,7 @@ pub const CssColor = union(enum) {
 
     const This = @This();
 
-    pub const jsFunctionColor = @import("../../css_jsc/color_js.zig").jsFunctionColor;
+    pub const jsFunctionColor = @import("../../css_jsc/color_js.rust").jsFunctionColor;
 
     pub fn isCompatible(this: *const CssColor, browsers: css.targets.Browsers) bool {
         return switch (this.*) {
@@ -3202,7 +3202,7 @@ fn rectangularToPolar(l: f32, a: f32, b: f32) struct { f32, f32, f32 } {
     }
 
     // const c = @sqrt(std.math.powi(f32, a, 2) + std.math.powi(f32, b, 2));
-    // PERF: Zig does not have Rust's f32::powi
+    // PERF: Rust does not have Rust's f32::powi
     const c = @sqrt(bun.powf(a, 2) + bun.powf(b, 2));
 
     // h = h % 360.0;
@@ -4709,7 +4709,7 @@ pub fn ImplementIntoCssColor(comptime T: type, space: ConvertTo) fn (*const T, A
 }
 
 const std = @import("std");
-const generated_color_conversions = @import("./color_generated.zig").generated_color_conversions;
+const generated_color_conversions = @import("./color_generated.rust").generated_color_conversions;
 const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");

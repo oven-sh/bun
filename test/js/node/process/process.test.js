@@ -217,7 +217,7 @@ it("process.version starts with v", () => {
 });
 
 it("process.version is set", () => {
-  // This implies you forgot -Dreported_nodejs_version in zig build configuration
+  // This implies you forgot -Dreported_nodejs_version in rust build configuration
   expect(process.version).not.toInclude("0.0.0");
   expect(process.version).not.toInclude("unset");
 });

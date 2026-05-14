@@ -42,17 +42,17 @@ function cppSourcePath(type: NamedType): string {
   return `${codegenPath}/Generated${type.name}.cpp`;
 }
 
-function zigSourcePath(typeOrNamespace: NamedType | string): string {
+function rustSourcePath(typeOrNamespace: NamedType | string): string {
   let ns: string;
   if (typeof typeOrNamespace === "string") {
     ns = typeOrNamespace;
   } else {
-    ns = toZigNamespace(typeOrNamespace.name);
+    ns = toRustNamespace(typeOrNamespace.name);
   }
-  return `${codegenPath}/bindgen_generated/${ns}.zig`;
+  return `${codegenPath}/bindgen_generated/${ns}.rust`;
 }
 
-function toZigNamespace(name: string): string {
+function toRustNamespace(name: string): string {
   const result = name
     .replace(/([^A-Z_])([A-Z])/g, "$1_$2")
     .replace(/([A-Z])([A-Z][a-z])/g, "$1_$2")
@@ -64,18 +64,18 @@ function toZigNamespace(name: string): string {
 }
 
 function listOutputs(): void {
-  const outputs: string[] = [`${codegenPath}/bindgen_generated.zig`];
+  const outputs: string[] = [`${codegenPath}/bindgen_generated.rust`];
   for (const type of getNamedExports()) {
     if (type.hasCppSource) outputs.push(cppSourcePath(type));
-    if (type.hasZigSource) outputs.push(zigSourcePath(type));
+    if (type.hasRustSource) outputs.push(rustSourcePath(type));
   }
   process.stdout.write(outputs.join(";"));
 }
 
 function generate(): void {
   const names = new Set<string>();
-  const zigRoot: string[] = [];
-  const zigRootInternal: string[] = [];
+  const rustRoot: string[] = [];
+  const rustRootInternal: string[] = [];
 
   const namedExports = getNamedExports();
   {
@@ -100,10 +100,10 @@ function generate(): void {
   }
 
   for (const type of namedExports) {
-    const zigNamespace = toZigNamespace(type.name);
+    const rustNamespace = toRustNamespace(type.name);
     const size = names.size;
     names.add(type.name);
-    names.add(zigNamespace);
+    names.add(rustNamespace);
     if (names.size !== size + 2) {
       console.error(`error: duplicate name: ${type.name}`);
       process.exit(1);
@@ -111,30 +111,30 @@ function generate(): void {
 
     const cppHeader = type.cppHeader;
     const cppSource = type.cppSource;
-    const zigSource = type.zigSource;
+    const rustSource = type.rustSource;
     if (cppHeader) {
       helpers.writeIfNotChanged(cppHeaderPath(type), cppHeader);
     }
     if (cppSource) {
       helpers.writeIfNotChanged(cppSourcePath(type), cppSource);
     }
-    if (zigSource) {
-      zigRoot.push(
-        `pub const ${zigNamespace} = @import("./bindgen_generated/${zigNamespace}.zig");`,
-        `pub const ${type.name} = ${zigNamespace}.${type.name};`,
+    if (rustSource) {
+      rustRoot.push(
+        `pub const ${rustNamespace} = @import("./bindgen_generated/${rustNamespace}.rust");`,
+        `pub const ${type.name} = ${rustNamespace}.${type.name};`,
         "",
       );
-      zigRootInternal.push(`pub const ${type.name} = ${zigNamespace}.Bindgen${type.name};`);
-      helpers.writeIfNotChanged(zigSourcePath(zigNamespace), zigSource);
+      rustRootInternal.push(`pub const ${type.name} = ${rustNamespace}.Bindgen${type.name};`);
+      helpers.writeIfNotChanged(rustSourcePath(rustNamespace), rustSource);
     }
   }
 
   helpers.writeIfNotChanged(
-    `${codegenPath}/bindgen_generated.zig`,
+    `${codegenPath}/bindgen_generated.rust`,
     [
-      ...zigRoot,
+      ...rustRoot,
       `pub const internal = struct {`,
-      ...zigRootInternal.map(s => "    " + s),
+      ...rustRootInternal.map(s => "    " + s),
       `};`,
       "",
     ].join("\n"),

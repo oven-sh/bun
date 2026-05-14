@@ -1,4 +1,4 @@
-pub const css = @import("../css_parser.zig");
+pub const css = @import("../css_parser.rust");
 const CSSString = css.CSSString;
 const CSSStringFns = css.CSSStringFns;
 
@@ -42,7 +42,7 @@ pub const impl = struct {
     };
 };
 
-pub const parser = @import("./parser.zig");
+pub const parser = @import("./parser.rust");
 
 /// Returns whether two selector lists are equivalent, i.e. the same minus any vendor prefix differences.
 pub fn isEquivalent(selectors: []const Selector, other: []const Selector) bool {

@@ -283,5 +283,5 @@ inline fn expandRow(idx: []const u8, out: []u8, pal: *const [256][4]u8) void {
 }
 
 const bun = @import("bun");
-const codecs = @import("./codecs.zig");
+const codecs = @import("./codecs.rust");
 const std = @import("std");

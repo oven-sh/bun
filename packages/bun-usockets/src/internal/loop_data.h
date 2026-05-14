@@ -22,17 +22,17 @@
 
 #if defined(__APPLE__)
 #include <os/lock.h>
-typedef os_unfair_lock zig_mutex_t;
+typedef os_unfair_lock rust_mutex_t;
 #elif defined(__linux__) || defined(__FreeBSD__)
-typedef uint32_t zig_mutex_t;
+typedef uint32_t rust_mutex_t;
 #elif defined(_WIN32)
 // SRWLOCK
-typedef void* zig_mutex_t;
+typedef void* rust_mutex_t;
 #else
 #error "Unsupported platform"
 #endif
 
-// IMPORTANT: When changing this, don't forget to update the zig version in uws.zig as well!
+// IMPORTANT: When changing this, don't forget to update the rust version in uws.rust as well!
 struct us_quic_socket_context_s;
 
 struct us_internal_loop_data_t {
@@ -69,7 +69,7 @@ struct us_internal_loop_data_t {
     int low_prio_budget;
     struct us_connecting_socket_t *dns_ready_head;
     struct us_connecting_socket_t *closed_connecting_head;
-    zig_mutex_t mutex;
+    rust_mutex_t mutex;
     void *parent_ptr;
     char parent_tag;
     /* We do not care if this flips or not, it doesn't matter */

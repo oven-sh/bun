@@ -72,11 +72,11 @@ pub fn decodeInternal(this: *HandshakeV10, comptime Context: type, reader: NewRe
 
 pub const decode = decoderWrap(HandshakeV10, decodeInternal).decode;
 
-const Capabilities = @import("../Capabilities.zig");
+const Capabilities = @import("../Capabilities.rust");
 const bun = @import("bun");
-const CharacterSet = @import("./CharacterSet.zig").CharacterSet;
-const Data = @import("../../shared/Data.zig").Data;
-const StatusFlags = @import("../StatusFlags.zig").StatusFlags;
+const CharacterSet = @import("./CharacterSet.rust").CharacterSet;
+const Data = @import("../../shared/Data.rust").Data;
+const StatusFlags = @import("../StatusFlags.rust").StatusFlags;
 
-const NewReader = @import("./NewReader.zig").NewReader;
-const decoderWrap = @import("./NewReader.zig").decoderWrap;
+const NewReader = @import("./NewReader.rust").NewReader;
+const decoderWrap = @import("./NewReader.rust").decoderWrap;

@@ -166,7 +166,7 @@ const boring = [_]type{
     void,
 };
 
-const zig = [_]type{
+const rust = [_]type{
     std.crypto.hash.Sha1,
     std.crypto.hash.sha2.Sha512,
     std.crypto.hash.sha2.Sha384,

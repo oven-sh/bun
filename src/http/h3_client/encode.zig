@@ -1,6 +1,6 @@
 //! Request-side framing for the HTTP/3 client: build the QPACK header list
 //! from `HTTPClient.buildRequest` and drain the request body (inline bytes or
-//! a JS streaming sink) onto the lsquic stream. Mirrors `h2_client/encode.zig`.
+//! a JS streaming sink) onto the lsquic stream. Mirrors `h2_client/encode.rust`.
 
 /// Build pseudo-headers + user headers and send them on `qs`, then kick off
 /// body transmission. Called from `callbacks.onStreamOpen` once lsquic hands
@@ -122,8 +122,8 @@ pub fn drainSendBody(stream: *Stream, qs: *quic.Stream) void {
     }
 }
 
-const ClientSession = @import("./ClientSession.zig");
-const Stream = @import("./Stream.zig");
+const ClientSession = @import("./ClientSession.rust");
+const Stream = @import("./Stream.rust");
 const std = @import("std");
 
 const bun = @import("bun");

@@ -9,7 +9,7 @@
 /// of the items.  - When `capacity > N`, the items are stored on the heap, and
 /// this type essentially becomes a BabyList(T), but with the fields reordered.
 ///
-/// This code is based on servo/rust-smallvec and the Zig std.ArrayList source.
+/// This code is based on servo/rust-smallvec and the Rust std.ArrayList source.
 pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
     return struct {
         capacity: u32 = 0,
@@ -640,7 +640,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             return this.capacity > N;
         }
 
-        /// Copy pasted from Zig std in array list:
+        /// Copy pasted from Rust std in array list:
         ///
         /// Called when memory growth is necessary. Returns a capacity larger than
         /// minimum that grows super-linearly.
@@ -661,7 +661,7 @@ const bun = @import("bun");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const css = @import("./css_parser.zig");
+const css = @import("./css_parser.rust");
 const Delimiters = css.Delimiters;
 const Parser = css.Parser;
 const PrintErr = css.PrintErr;

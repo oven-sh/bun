@@ -87,7 +87,7 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ParseTask = bun.bundle_v2.ParseTask;
 
-const DeclCollector = @import("./generateCodeForFileInChunkJS.zig").DeclCollector;
+const DeclCollector = @import("./generateCodeForFileInChunkJS.rust").DeclCollector;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

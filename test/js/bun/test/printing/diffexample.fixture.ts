@@ -266,7 +266,7 @@ test("example 17 - very long string", () => {
     expectedLines.push(`line ${i}`);
   }
 
-  // The Zig code adds a trailing newline to each string.
+  // The Rust code adds a trailing newline to each string.
   const receivedString = receivedLines.join("\n") + "\n";
   const expectedString = expectedLines.join("\n") + "\n";
   expect(receivedString).toEqual(expectedString);

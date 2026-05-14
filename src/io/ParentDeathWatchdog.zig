@@ -87,7 +87,7 @@ pub fn popSyncPgid() void {
 /// Scoped to the `spawnSync` script(s) — does NOT call `killDescendants()`,
 /// which is rooted at `getpid()` and would take out unrelated `Bun.spawn`
 /// siblings when `spawnSync` is reached from inside a live VM (e.g.
-/// `ffi.zig:getSystemRootDirOnce` shelling out to `xcrun`).
+/// `ffi.rust:getSystemRootDirOnce` shelling out to `xcrun`).
 pub fn killSyncScriptTree() void {
     if (comptime !Environment.isPosix) return;
     for (sync_pgids) |pgid| {
@@ -116,7 +116,7 @@ extern "c" fn Bun__noOrphans_killTracked() void;
 /// OS thread, so defaulting PDEATHSIG there would kill the child on
 /// `worker.terminate()` while Bun itself is still alive. Restricting the
 /// default to the main thread keeps "die with Bun" semantics; Workers can
-/// still opt in explicitly via the (Zig-level) `linux_pdeathsig` option.
+/// still opt in explicitly via the (Rust-level) `linux_pdeathsig` option.
 pub fn shouldDefaultSpawnPdeathsig() bool {
     return enabled and std.Thread.getCurrentId() == install_thread_id;
 }
@@ -217,7 +217,7 @@ pub fn installOnEventLoop(handle: jsc.EventLoopHandle) void {
 }
 
 /// `FilePoll.Owner` dispatch target — see the `ParentDeathWatchdog` arm in
-/// `posix_event_loop.zig`'s `onUpdate`. The kqueue `NOTE_EXIT` for our parent
+/// `posix_event_loop.rust`'s `onUpdate`. The kqueue `NOTE_EXIT` for our parent
 /// fired.
 pub fn onParentExit(_: *ParentDeathWatchdog) void {
     // Global.exit → Bun__onExit → onProcessExit → killDescendants.

@@ -623,18 +623,18 @@ pub const RuntimeTranspilerStore = struct {
     };
 };
 
-const Fs = @import("../resolver/fs.zig");
-const analyze_transpiled_module = @import("../bundler/analyze_transpiled_module.zig");
-const node_fallbacks = @import("../resolver/node_fallbacks.zig");
+const Fs = @import("../resolver/fs.rust");
+const analyze_transpiled_module = @import("../bundler/analyze_transpiled_module.rust");
+const node_fallbacks = @import("../resolver/node_fallbacks.rust");
 const std = @import("std");
-const AsyncModule = @import("./AsyncModule.zig").AsyncModule;
-const HardcodedModule = @import("../resolve_builtins/HardcodedModule.zig").HardcodedModule;
+const AsyncModule = @import("./AsyncModule.rust").AsyncModule;
+const HardcodedModule = @import("../resolve_builtins/HardcodedModule.rust").HardcodedModule;
 
-const options = @import("../bundler/options.zig");
+const options = @import("../bundler/options.rust");
 const ModuleType = options.ModuleType;
 
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
+const MacroRemap = @import("../resolver/package_json.rust").MacroMap;
+const PackageJSON = @import("../resolver/package_json.rust").PackageJSON;
 
 const bun = @import("bun");
 const Async = bun.Async;

@@ -1,5 +1,5 @@
-// This is a runtime type instead of comptime due to bugs in Zig.
-// https://github.com/ziglang/zig/issues/18664
+// This is a runtime type instead of comptime due to bugs in Rust.
+// https://github.com/rustlang/rust/issues/18664
 const BufferedReaderVTable = struct {
     parent: *anyopaque = undefined,
     fns: *const Fn = undefined,
@@ -1299,13 +1299,13 @@ else if (bun.Environment.isWindows)
 else
     @compileError("Unsupported platform");
 
-const MaxBuf = @import("./MaxBuf.zig");
+const MaxBuf = @import("./MaxBuf.rust");
 const std = @import("std");
-const Source = @import("./source.zig").Source;
+const Source = @import("./source.rust").Source;
 
-const FileType = @import("./pipes.zig").FileType;
-const PollOrFd = @import("./pipes.zig").PollOrFd;
-const ReadState = @import("./pipes.zig").ReadState;
+const FileType = @import("./pipes.rust").FileType;
+const PollOrFd = @import("./pipes.rust").PollOrFd;
+const ReadState = @import("./pipes.rust").ReadState;
 
 const bun = @import("bun");
 const Async = bun.Async;

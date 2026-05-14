@@ -632,7 +632,7 @@ fn hsetImpl(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 
     const second_arg = callframe.argument(1);
 
-    var args = std.array_list.Managed(jsc.ZigString.Slice).init(bun.default_allocator);
+    var args = std.array_list.Managed(jsc.RustString.Slice).init(bun.default_allocator);
     defer {
         for (args.items) |item| item.deinit();
         args.deinit();
@@ -1200,7 +1200,7 @@ pub fn unsubscribe(
         ) catch {
             return globalObject.throw(
                 "Failed to remove handler for channel {f}",
-                .{channel.asString().getZigString(globalObject)},
+                .{channel.asString().getRustString(globalObject)},
             );
         } orelse {
             // Listeners weren't present in the first place, so we can return a
@@ -1586,13 +1586,13 @@ fn fromJS(globalObject: *jsc.JSGlobalObject, value: JSValue) !?JSArgument {
 const bun = @import("bun");
 const std = @import("std");
 
-const JSValkeyClient = @import("./js_valkey.zig").JSValkeyClient;
-const SubscriptionCtx = @import("./js_valkey.zig").SubscriptionCtx;
+const JSValkeyClient = @import("./js_valkey.rust").JSValkeyClient;
+const SubscriptionCtx = @import("./js_valkey.rust").SubscriptionCtx;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
 const JSArgument = jsc.Node.BlobOrStringOrBuffer;
-const Slice = jsc.ZigString.Slice;
+const Slice = jsc.RustString.Slice;
 
 const valkey = bun.valkey;
 const Command = valkey.Command;

@@ -1,5 +1,5 @@
 /// Represents a JavaScript exception with additional information
-pub const ZigException = extern struct {
+pub const RustException = extern struct {
     type: JSErrorCode,
     runtime_type: JSRuntimeType,
 
@@ -14,7 +14,7 @@ pub const ZigException = extern struct {
 
     name: String,
     message: String,
-    stack: ZigStackTrace,
+    stack: RustStackTrace,
 
     exception: ?*anyopaque,
 
@@ -24,13 +24,13 @@ pub const ZigException = extern struct {
 
     browser_url: String = .empty,
 
-    pub extern fn ZigException__collectSourceLines(jsValue: JSValue, global: *JSGlobalObject, exception: *ZigException) void;
+    pub extern fn RustException__collectSourceLines(jsValue: JSValue, global: *JSGlobalObject, exception: *RustException) void;
 
-    pub fn collectSourceLines(this: *ZigException, value: JSValue, global: *JSGlobalObject) void {
-        ZigException__collectSourceLines(value, global, this);
+    pub fn collectSourceLines(this: *RustException, value: JSValue, global: *JSGlobalObject) void {
+        RustException__collectSourceLines(value, global, this);
     }
 
-    pub fn deinit(this: *ZigException) void {
+    pub fn deinit(this: *RustException) void {
         this.syscall.deref();
         this.system_code.deref();
         this.path.deref();
@@ -56,15 +56,15 @@ pub const ZigException = extern struct {
         pub const source_lines_count = 6;
         source_line_numbers: [source_lines_count]i32,
         source_lines: [source_lines_count]String,
-        frames: [frame_count]ZigStackFrame,
+        frames: [frame_count]RustStackFrame,
         loaded: bool,
-        zig_exception: ZigException,
+        rust_exception: RustException,
         need_to_clear_parser_arena_on_deinit: bool = false,
 
         pub const Zero: Holder = Holder{
             .frames = brk: {
-                var _frames: [frame_count]ZigStackFrame = undefined;
-                @memset(&_frames, ZigStackFrame.Zero);
+                var _frames: [frame_count]RustStackFrame = undefined;
+                @memset(&_frames, RustStackFrame.Zero);
                 break :brk _frames;
             },
             .source_line_numbers = brk: {
@@ -78,7 +78,7 @@ pub const ZigException = extern struct {
                 @memset(&lines, String.empty);
                 break :brk lines;
             },
-            .zig_exception = undefined,
+            .rust_exception = undefined,
             .loaded = false,
         };
 
@@ -88,22 +88,22 @@ pub const ZigException = extern struct {
 
         pub fn deinit(this: *Holder, vm: *jsc.VirtualMachine) void {
             if (this.loaded) {
-                this.zig_exception.deinit();
+                this.rust_exception.deinit();
             }
             if (this.need_to_clear_parser_arena_on_deinit) {
                 vm.module_loader.resetArena(vm);
             }
         }
 
-        pub fn zigException(this: *Holder) *ZigException {
+        pub fn rustException(this: *Holder) *RustException {
             if (!this.loaded) {
-                this.zig_exception = ZigException{
+                this.rust_exception = RustException{
                     .type = @as(JSErrorCode, @enumFromInt(255)),
                     .runtime_type = JSRuntimeType.Nothing,
                     .name = String.empty,
                     .message = String.empty,
                     .exception = null,
-                    .stack = ZigStackTrace{
+                    .stack = RustStackTrace{
                         .source_lines_ptr = &this.source_lines,
                         .source_lines_numbers = &this.source_line_numbers,
                         .source_lines_len = source_lines_count,
@@ -116,18 +116,18 @@ pub const ZigException = extern struct {
                 this.loaded = true;
             }
 
-            return &this.zig_exception;
+            return &this.rust_exception;
         }
     };
 
-    extern fn ZigException__fromException(*Exception) ZigException;
-    pub const fromException = ZigException__fromException;
+    extern fn RustException__fromException(*Exception) RustException;
+    pub const fromException = RustException__fromException;
 
     pub fn addToErrorList(
-        this: *ZigException,
+        this: *RustException,
         error_list: *std.array_list.Managed(api.JsException),
         root_path: string,
-        origin: ?*const ZigURL,
+        origin: ?*const RustURL,
     ) !void {
         const name_slice = this.name.toUTF8(bun.default_allocator);
         const message_slice = this.message.toUTF8(bun.default_allocator);
@@ -167,7 +167,7 @@ pub const ZigException = extern struct {
 const string = []const u8;
 
 const std = @import("std");
-const ZigURL = @import("../url/url.zig").URL;
+const RustURL = @import("../url/url.rust").URL;
 
 const bun = @import("bun");
 const String = bun.String;
@@ -179,5 +179,5 @@ const JSErrorCode = jsc.JSErrorCode;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSRuntimeType = jsc.JSRuntimeType;
 const JSValue = jsc.JSValue;
-const ZigStackFrame = jsc.ZigStackFrame;
-const ZigStackTrace = jsc.ZigStackTrace;
+const RustStackFrame = jsc.RustStackFrame;
+const RustStackTrace = jsc.RustStackTrace;

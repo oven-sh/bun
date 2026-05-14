@@ -4,7 +4,7 @@
 ///
 /// `kvs` expects a list literal containing list literals or an array/slice of structs
 /// where `.@"0"` is the `[]const u8` key and `.@"1"` is the associated value of type `V`.
-/// TODO: https://github.com/ziglang/zig/issues/4335
+/// TODO: https://github.com/rustlang/rust/issues/4335
 pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, comptime kvs_list: anytype) type {
     const KV = struct {
         key: []const KeyType,
@@ -191,14 +191,14 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
         }
 
         /// Throws if toString() throws. Typed `anytype` so `collections/` has
-        /// no JSC references; the body lives in `jsc/comptime_string_map_jsc.zig`.
+        /// no JSC references; the body lives in `jsc/comptime_string_map_jsc.rust`.
         pub fn fromJS(globalThis: anytype, input: anytype) bun.JSError!?V {
-            return @import("../jsc/comptime_string_map_jsc.zig").fromJS(@This(), globalThis, input);
+            return @import("../jsc/comptime_string_map_jsc.rust").fromJS(@This(), globalThis, input);
         }
 
         /// Throws if toString() throws.
         pub fn fromJSCaseInsensitive(globalThis: anytype, input: anytype) bun.JSError!?V {
-            return @import("../jsc/comptime_string_map_jsc.zig").fromJSCaseInsensitive(@This(), globalThis, input);
+            return @import("../jsc/comptime_string_map_jsc.rust").fromJSCaseInsensitive(@This(), globalThis, input);
         }
 
         pub fn fromString(str: bun.String) ?V {

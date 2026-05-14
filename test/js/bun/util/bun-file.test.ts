@@ -123,7 +123,7 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
   // (unaligned) pointer" on stderr; in release it silently corrupts the heap.
   const bom = Buffer.from([0xef, 0xbb, 0xbf]);
   const dir = tempDirWithFiles("bun-file-json-bom", {
-    // pure-ASCII body: exercises the direct ZigString path
+    // pure-ASCII body: exercises the direct RustString path
     "ascii.json": Buffer.concat([bom, Buffer.from(JSON.stringify({ a: 1, b: "two" }))]),
     // non-ASCII body: exercises the toUTF16Alloc path
     "utf8.json": Buffer.concat([bom, Buffer.from(JSON.stringify({ s: "wörld" }))]),

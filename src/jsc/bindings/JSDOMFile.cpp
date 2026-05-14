@@ -1,5 +1,5 @@
 #include "root.h"
-#include "ZigGeneratedClasses.h"
+#include "RustGeneratedClasses.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -42,13 +42,13 @@ public:
 
     static JSDOMFile* create(JSC::VM& vm, JSGlobalObject* globalObject)
     {
-        auto* zigGlobal = defaultGlobalObject(globalObject);
-        auto structure = createStructure(vm, globalObject, zigGlobal->functionPrototype());
+        auto* rustGlobal = defaultGlobalObject(globalObject);
+        auto structure = createStructure(vm, globalObject, rustGlobal->functionPrototype());
         auto* object = new (NotNull, JSC::allocateCell<JSDOMFile>(vm)) JSDOMFile(vm, structure);
         object->finishCreation(vm);
 
         // This is not quite right. But we'll fix it if someone files an issue about it.
-        object->putDirect(vm, vm.propertyNames->prototype, zigGlobal->JSBlobPrototype(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+        object->putDirect(vm, vm.propertyNames->prototype, rustGlobal->JSBlobPrototype(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
         return object;
     }
@@ -73,7 +73,7 @@ public:
         if (constructor != newTarget) {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            auto* functionGlobalObject = static_cast<Zig::GlobalObject*>(
+            auto* functionGlobalObject = static_cast<Rust::GlobalObject*>(
                 // ShadowRealm functions belong to a different global object.
                 getFunctionRealm(lexicalGlobalObject, newTarget));
             RETURN_IF_EXCEPTION(scope, {});

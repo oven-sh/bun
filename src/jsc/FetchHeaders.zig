@@ -1,5 +1,5 @@
 pub const FetchHeaders = opaque {
-    extern fn WebCore__FetchHeaders__append(arg0: *FetchHeaders, arg1: *const ZigString, arg2: *const ZigString, arg3: *JSGlobalObject) void;
+    extern fn WebCore__FetchHeaders__append(arg0: *FetchHeaders, arg1: *const RustString, arg2: *const RustString, arg3: *JSGlobalObject) void;
     extern fn WebCore__FetchHeaders__cast_(JSValue0: JSValue, arg1: *VM) ?*FetchHeaders;
     extern fn WebCore__FetchHeaders__clone(arg0: *FetchHeaders, arg1: *JSGlobalObject) JSValue;
     extern fn WebCore__FetchHeaders__cloneThis(arg0: *FetchHeaders, arg1: *JSGlobalObject) *FetchHeaders;
@@ -8,17 +8,17 @@ pub const FetchHeaders = opaque {
     extern fn WebCore__FetchHeaders__createEmpty() *FetchHeaders;
     extern fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: ?*const anyopaque) *FetchHeaders;
     extern fn WebCore__FetchHeaders__createFromUWS(arg1: *anyopaque) *FetchHeaders;
-    extern fn WebCore__FetchHeaders__createValueNotJS(arg0: *JSGlobalObject, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]const ZigString, arg4: u32) ?*FetchHeaders;
-    extern fn WebCore__FetchHeaders__createValue(arg0: *JSGlobalObject, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]const ZigString, arg4: u32) JSValue;
+    extern fn WebCore__FetchHeaders__createValueNotJS(arg0: *JSGlobalObject, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]const RustString, arg4: u32) ?*FetchHeaders;
+    extern fn WebCore__FetchHeaders__createValue(arg0: *JSGlobalObject, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]const RustString, arg4: u32) JSValue;
     extern fn WebCore__FetchHeaders__deref(arg0: *FetchHeaders) void;
-    extern fn WebCore__FetchHeaders__fastGet_(arg0: *FetchHeaders, arg1: u8, arg2: [*c]ZigString) void;
+    extern fn WebCore__FetchHeaders__fastGet_(arg0: *FetchHeaders, arg1: u8, arg2: [*c]RustString) void;
     extern fn WebCore__FetchHeaders__fastHas_(arg0: *FetchHeaders, arg1: u8) bool;
     extern fn WebCore__FetchHeaders__fastRemove_(arg0: *FetchHeaders, arg1: u8) void;
-    extern fn WebCore__FetchHeaders__get_(arg0: *FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]ZigString, arg3: *JSGlobalObject) void;
-    extern fn WebCore__FetchHeaders__has(arg0: *FetchHeaders, arg1: [*c]const ZigString, arg2: *JSGlobalObject) bool;
+    extern fn WebCore__FetchHeaders__get_(arg0: *FetchHeaders, arg1: [*c]const RustString, arg2: [*c]RustString, arg3: *JSGlobalObject) void;
+    extern fn WebCore__FetchHeaders__has(arg0: *FetchHeaders, arg1: [*c]const RustString, arg2: *JSGlobalObject) bool;
     extern fn WebCore__FetchHeaders__isEmpty(arg0: *FetchHeaders) bool;
-    extern fn WebCore__FetchHeaders__put_(arg0: *FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]const ZigString, arg3: *JSGlobalObject) void;
-    extern fn WebCore__FetchHeaders__remove(arg0: *FetchHeaders, arg1: [*c]const ZigString, arg2: *JSGlobalObject) void;
+    extern fn WebCore__FetchHeaders__put_(arg0: *FetchHeaders, arg1: [*c]const RustString, arg2: [*c]const RustString, arg3: *JSGlobalObject) void;
+    extern fn WebCore__FetchHeaders__remove(arg0: *FetchHeaders, arg1: [*c]const RustString, arg2: *JSGlobalObject) void;
     extern fn WebCore__FetchHeaders__toJS(arg0: *FetchHeaders, arg1: *JSGlobalObject) JSValue;
     extern fn WebCore__FetchHeaders__toUWSResponse(arg0: *FetchHeaders, kind: bun.uws.ResponseKind, arg2: ?*anyopaque) void;
     extern fn WebCore__FetchHeaders__createFromH3(arg0: *anyopaque) *FetchHeaders;
@@ -27,7 +27,7 @@ pub const FetchHeaders = opaque {
         global: *JSGlobalObject,
         names: [*c]api.StringPointer,
         values: [*c]api.StringPointer,
-        buf: *const ZigString,
+        buf: *const RustString,
         count_: u32,
     ) JSValue {
         return WebCore__FetchHeaders__createValue(
@@ -65,7 +65,7 @@ pub const FetchHeaders = opaque {
         global: *JSGlobalObject,
         names: [*c]api.StringPointer,
         values: [*c]api.StringPointer,
-        buf: *const ZigString,
+        buf: *const RustString,
         count_: u32,
     ) ?*FetchHeaders {
         return WebCore__FetchHeaders__createValueNotJS(
@@ -81,7 +81,7 @@ pub const FetchHeaders = opaque {
         global: *JSGlobalObject,
         names: [*c]api.StringPointer,
         values: [*c]api.StringPointer,
-        buf: *const ZigString,
+        buf: *const RustString,
         count_: u32,
     ) JSValue {
         return WebCore__FetchHeaders__createValue(
@@ -152,8 +152,8 @@ pub const FetchHeaders = opaque {
 
     pub fn append(
         this: *FetchHeaders,
-        name_: *const ZigString,
-        value: *const ZigString,
+        name_: *const RustString,
+        value: *const RustString,
         global: *JSGlobalObject,
     ) void {
         return WebCore__FetchHeaders__append(
@@ -164,7 +164,7 @@ pub const FetchHeaders = opaque {
         );
     }
 
-    extern fn WebCore__FetchHeaders__put(this: *FetchHeaders, name_: HTTPHeaderName, value: *const ZigString, global: *JSGlobalObject) void;
+    extern fn WebCore__FetchHeaders__put(this: *FetchHeaders, name_: HTTPHeaderName, value: *const RustString, global: *JSGlobalObject) void;
 
     pub fn put(
         this: *FetchHeaders,
@@ -172,13 +172,13 @@ pub const FetchHeaders = opaque {
         value: []const u8,
         global: *JSGlobalObject,
     ) bun.JSError!void {
-        return bun.jsc.fromJSHostCallGeneric(global, @src(), WebCore__FetchHeaders__put, .{ this, name_, &ZigString.init(value), global });
+        return bun.jsc.fromJSHostCallGeneric(global, @src(), WebCore__FetchHeaders__put, .{ this, name_, &RustString.init(value), global });
     }
 
     pub fn get_(
         this: *FetchHeaders,
-        name_: *const ZigString,
-        out: *ZigString,
+        name_: *const RustString,
+        out: *RustString,
         global: *JSGlobalObject,
     ) void {
         WebCore__FetchHeaders__get_(
@@ -194,8 +194,8 @@ pub const FetchHeaders = opaque {
         name_: []const u8,
         global: *JSGlobalObject,
     ) ?[]const u8 {
-        var out = ZigString.Empty;
-        get_(this, &ZigString.init(name_), &out, global);
+        var out = RustString.Empty;
+        get_(this, &RustString.init(name_), &out, global);
         if (out.len > 0) {
             return out.slice();
         }
@@ -205,7 +205,7 @@ pub const FetchHeaders = opaque {
 
     pub fn has(
         this: *FetchHeaders,
-        name_: *const ZigString,
+        name_: *const RustString,
         global: *JSGlobalObject,
     ) bool {
         return WebCore__FetchHeaders__has(
@@ -225,8 +225,8 @@ pub const FetchHeaders = opaque {
     pub fn fastGet(
         this: *FetchHeaders,
         name_: HTTPHeaderName,
-    ) ?ZigString {
-        var str = ZigString.init("");
+    ) ?RustString {
+        var str = RustString.init("");
         fastGet_(this, @intFromEnum(name_), &str);
         if (str.len == 0) {
             return null;
@@ -248,7 +248,7 @@ pub const FetchHeaders = opaque {
     pub fn fastGet_(
         this: *FetchHeaders,
         name_: u8,
-        str: *ZigString,
+        str: *RustString,
     ) void {
         return WebCore__FetchHeaders__fastGet_(
             this,
@@ -373,7 +373,7 @@ pub const FetchHeaders = opaque {
 
     pub fn remove(
         this: *FetchHeaders,
-        name_: *const ZigString,
+        name_: *const RustString,
         global: *JSGlobalObject,
     ) void {
         return WebCore__FetchHeaders__remove(
@@ -451,7 +451,7 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VM = jsc.VM;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 
 const api = bun.schema.api;
 const StringPointer = api.StringPointer;

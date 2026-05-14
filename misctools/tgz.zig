@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const path_handler = @import("../src/resolver/resolve_path.zig");
+const path_handler = @import("../src/resolver/resolve_path.rust");
 const bun = @import("bun");
 const string = []const u8;
 const Output = bun.Output;
@@ -11,8 +11,8 @@ const MutableString = bun.MutableString;
 const stringZ = [:0]const u8;
 const default_allocator = bun.default_allocator;
 
-const Archive = @import("../src/libarchive/libarchive.zig").Archive;
-const Zlib = @import("../src/zlib.zig");
+const Archive = @import("../src/libarchive/libarchive.rust").Archive;
+const Zlib = @import("../src/zlib.rust");
 
 const RecognizedExtensions = std.ComptimeStringMap(void, .{
     .{ ".tgz", void{} },
@@ -22,8 +22,8 @@ const RecognizedExtensions = std.ComptimeStringMap(void, .{
 
 var buf: [32 * 1024 * 1024]u8 = undefined;
 
-// zig build-exe -Doptimize=ReleaseFast --main-pkg-path ../ ./tgz.zig ../src/deps/zlib/libz.a ../src/deps/libarchive.a -lc -liconv
-// zig build-exe -Doptimize=ReleaseFast --main-pkg-path ../ ./tgz.zig ../src/deps/zlib/libz.a ../src/deps/libarchive.a -lc -liconv
+// rust build-exe -Doptimize=ReleaseFast --main-pkg-path ../ ./tgz.rust ../src/deps/zlib/libz.a ../src/deps/libarchive.a -lc -liconv
+// rust build-exe -Doptimize=ReleaseFast --main-pkg-path ../ ./tgz.rust ../src/deps/zlib/libz.a ../src/deps/libarchive.a -lc -liconv
 pub fn main() anyerror!void {
     var stdout_ = std.io.getStdOut();
     var stderr_ = std.io.getStdErr();

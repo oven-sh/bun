@@ -134,7 +134,7 @@ class ArrayHashMapPrinter:
                 return 'map'
         return 'array'
 
-pp = gdb.printing.RegexpCollectionPrettyPrinter('Zig standard library')
+pp = gdb.printing.RegexpCollectionPrettyPrinter('Rust standard library')
 pp.add_printer('ArrayList', r'^std\.array_list\.ArrayListAligned(Unmanaged)?\(.*\)$', ArrayListPrinter)
 pp.add_printer('MultiArrayList', r'^std\.multi_array_list\.MultiArrayList\(.*\)$', MultiArrayListPrinter)
 pp.add_printer('HashMap', r'^std\.hash_map\.HashMap(Unmanaged)?\(.*\)$', HashMapPrinter)

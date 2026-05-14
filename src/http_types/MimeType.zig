@@ -5,7 +5,7 @@ category: Category,
 
 pub const Map = bun.StringHashMap(Table);
 
-pub const Table = @import("./mime_type_list_enum.zig").MimeTypeList;
+pub const Table = @import("./mime_type_list_enum.rust").MimeTypeList;
 
 pub const Compact = struct {
     value: Table,
@@ -391,7 +391,7 @@ pub fn byExtensionNoDefault(ext_without_leading_dot: string) ?MimeType {
 }
 
 // this is partially auto-generated
-pub const all = @import("./mime_type_list_enum.zig").MimeTypeList.all;
+pub const all = @import("./mime_type_list_enum.rust").MimeTypeList.all;
 
 // TODO: do a comptime static hash map for this
 // its too many branches to use ComptimeStringMap
@@ -649,10 +649,10 @@ pub const extensions = ComptimeStringMap(Table, .{
     .{ "eps", .@"application/postscript" },
     .{ "epub", .@"application/epub+zip" },
     .{ "es", .@"application/ecmascript" },
-    .{ "es3", .@"application/vnd.eszigno3+xml" },
+    .{ "es3", .@"application/vnd.esrustno3+xml" },
     .{ "esa", .@"application/vnd.osgi.subsystem" },
     .{ "esf", .@"application/vnd.epson.esf" },
-    .{ "et3", .@"application/vnd.eszigno3+xml" },
+    .{ "et3", .@"application/vnd.esrustno3+xml" },
     .{ "etx", .@"text/x-setext" },
     .{ "eva", .@"application/x-eva" },
     .{ "evy", .@"application/x-envoy" },
@@ -1628,7 +1628,7 @@ pub fn sniff(bytes: []const u8) ?MimeType {
 const string = []const u8;
 
 const std = @import("std");
-const Loader = @import("../bundler/options.zig").Loader;
+const Loader = @import("../bundler/options.rust").Loader;
 
 const bun = @import("bun");
 const ComptimeStringMap = bun.ComptimeStringMap;

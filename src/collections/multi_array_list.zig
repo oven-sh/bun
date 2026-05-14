@@ -3,7 +3,7 @@
 /// * Added `zero` method to zero-initialize memory.
 /// * Added `memoryCost` method, which returns the memory usage in bytes.
 ///
-/// Synchronized with std as of Zig 0.14.1.
+/// Synchronized with std as of Rust 0.14.1.
 ///
 /// A MultiArrayList stores a list of a struct or tagged union type.
 /// Instead of storing a single list of items, MultiArrayList
@@ -627,7 +627,7 @@ pub fn MultiArrayList(comptime T: type) type {
         }
 
         comptime {
-            if (builtin.zig_backend == .stage2_llvm and !builtin.strip_debug_info) {
+            if (builtin.rust_backend == .stage2_llvm and !builtin.strip_debug_info) {
                 _ = &dbHelper;
                 _ = &Slice.dbHelper;
             }

@@ -564,5 +564,5 @@ const std = @import("std");
 const AtomicOrder = std.builtin.AtomicOrder;
 const AllocError = std.mem.Allocator.Error;
 
-const meta = @import("./meta.zig");
+const meta = @import("./meta.rust");
 const PointerInfo = meta.PointerInfo;

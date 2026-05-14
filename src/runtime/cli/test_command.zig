@@ -1160,7 +1160,7 @@ pub const CommandLineReporter = struct {
             _ = fs.mkdirRecursive(
                 .{
                     .path = bun.jsc.Node.PathLike{
-                        .encoded_slice = jsc.ZigString.Slice.fromUTF8NeverFree(opts.reports_directory),
+                        .encoded_slice = jsc.RustString.Slice.fromUTF8NeverFree(opts.reports_directory),
                     },
                     .always_return_none = true,
                 },
@@ -1321,14 +1321,14 @@ pub const CommandLineReporter = struct {
 };
 
 export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callconv(.c) bool {
-    var zig_slice: bun.jsc.ZigString.Slice = .{};
-    defer zig_slice.deinit();
+    var rust_slice: bun.jsc.RustString.Slice = .{};
+    defer rust_slice.deinit();
 
     // In this particular case, we don't actually care about non-ascii latin1 characters.
     // so we skip the ascii check
     const slice = brk: {
-        zig_slice = test_name_str.toUTF8(bun.default_allocator);
-        break :brk zig_slice.slice();
+        rust_slice = test_name_str.toUTF8(bun.default_allocator);
+        break :brk rust_slice.slice();
     };
 
     // always ignore node_modules.
@@ -1360,9 +1360,9 @@ export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callcon
 
 pub const TestCommand = struct {
     pub const name = "test";
-    pub const CodeCoverageOptions = @import("../../options_types/CodeCoverageOptions.zig").CodeCoverageOptions;
-    pub const Reporter = @import("../../options_types/CodeCoverageOptions.zig").Reporter;
-    const Reporters = @import("../../options_types/CodeCoverageOptions.zig").Reporters;
+    pub const CodeCoverageOptions = @import("../../options_types/CodeCoverageOptions.rust").CodeCoverageOptions;
+    pub const Reporter = @import("../../options_types/CodeCoverageOptions.rust").Reporter;
+    const Reporters = @import("../../options_types/CodeCoverageOptions.rust").Reporters;
 
     pub fn exec(ctx: Command.Context) !void {
         Output.is_github_action = Output.isGithubAction();
@@ -1524,7 +1524,7 @@ pub const TestCommand = struct {
         }
 
         if (TZ_NAME.len > 0) {
-            _ = vm.global.setTimeZone(&jsc.ZigString.init(TZ_NAME));
+            _ = vm.global.setTimeZone(&jsc.RustString.init(TZ_NAME));
         }
 
         if (ctx.test_options.test_worker) {
@@ -2124,7 +2124,7 @@ pub const TestCommand = struct {
             // Clear the module cache before re-running (except for the first run)
             if (repeat_index > 0) {
                 try vm.clearEntryPoint();
-                var entry = jsc.ZigString.init(file_path);
+                var entry = jsc.RustString.init(file_path);
                 try vm.global.deleteModuleRegistryEntry(&entry);
                 // Reset per-test snapshot counters so rerun N matches the same
                 // snapshot keys as run 1 instead of looking for "test name 2", etc.
@@ -2139,7 +2139,7 @@ pub const TestCommand = struct {
 
             reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index, reporter);
 
-            bun.jsc.Jest.bun_test.debug.group.log("loadEntryPointForTestRunner(\"{f}\")", .{std.zig.fmtString(file_path)});
+            bun.jsc.Jest.bun_test.debug.group.log("loadEntryPointForTestRunner(\"{f}\")", .{std.rust.fmtString(file_path)});
 
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
@@ -2242,17 +2242,17 @@ pub fn @"export"() void {
 
 const string = []const u8;
 
-const ChangedFilesFilter = @import("./test/ChangedFilesFilter.zig");
-const DotEnv = @import("../../dotenv/env_loader.zig");
-const ParallelRunner = @import("./test/ParallelRunner.zig");
-const Scanner = @import("./test/Scanner.zig");
-const bun_test = @import("../test_runner/bun_test.zig");
-const options = @import("../../bundler/options.zig");
-const resolve_path = @import("../../paths/resolve_path.zig");
+const ChangedFilesFilter = @import("./test/ChangedFilesFilter.rust");
+const DotEnv = @import("../../dotenv/env_loader.rust");
+const ParallelRunner = @import("./test/ParallelRunner.rust");
+const Scanner = @import("./test/Scanner.rust");
+const bun_test = @import("../test_runner/bun_test.rust");
+const options = @import("../../bundler/options.rust");
+const resolve_path = @import("../../paths/resolve_path.rust");
 const std = @import("std");
-const Command = @import("./cli.zig").Command;
-const FileSystem = @import("../../resolver/fs.zig").FileSystem;
-const which = @import("../../which/which.zig").which;
+const Command = @import("./cli.rust").Command;
+const FileSystem = @import("../../resolver/fs.rust").FileSystem;
+const which = @import("../../which/which.rust").which;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

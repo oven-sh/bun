@@ -1547,13 +1547,13 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, manager: *PackageManage
     }
 }
 
-const Dependency = @import("./dependency.zig");
-const Npm = @import("./npm.zig");
-const Bin = @import("./bin.zig").Bin;
-const Integrity = @import("./integrity.zig").Integrity;
-const Resolution = @import("./resolution.zig").Resolution;
+const Dependency = @import("./dependency.rust");
+const Npm = @import("./npm.rust");
+const Bin = @import("./bin.rust").Bin;
+const Integrity = @import("./integrity.rust").Integrity;
+const Resolution = @import("./resolution.rust").Resolution;
 
-const Lockfile = @import("./lockfile.zig");
+const Lockfile = @import("./lockfile.rust");
 const LoadResult = Lockfile.LoadResult;
 
 const bun = @import("bun");

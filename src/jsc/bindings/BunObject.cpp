@@ -2,7 +2,7 @@
 
 #include "JavaScriptCore/HeapProfiler.h"
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JSDOMURL.h"
 #include "helpers.h"
@@ -94,7 +94,7 @@ extern "C" bool has_bun_garbage_collector_flag_enabled;
 
 static JSValue BunObject_lazyPropCb_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject)
 {
-    return uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject())->ArrayBufferSink();
+    return uncheckedDowncast<Rust::GlobalObject>(bunObject->globalObject())->ArrayBufferSink();
 }
 
 static JSValue constructCookieObject(VM& vm, JSObject* bunObject);
@@ -104,7 +104,7 @@ static JSValue constructWebViewObject(VM& vm, JSObject* bunObject);
 
 static JSValue constructEnvObject(VM& vm, JSObject* object)
 {
-    return uncheckedDowncast<Zig::GlobalObject>(object->globalObject())->processEnvObject();
+    return uncheckedDowncast<Rust::GlobalObject>(object->globalObject())->processEnvObject();
 }
 
 static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue, size_t maxLength, bool asUint8Array)
@@ -298,7 +298,7 @@ static JSValue constructBunVersionWithSha(VM& vm, JSObject*)
 
 static JSValue constructIsMainThread(VM&, JSObject* object)
 {
-    return jsBoolean(uncheckedDowncast<Zig::GlobalObject>(object->globalObject())->scriptExecutionContext()->isMainThread());
+    return jsBoolean(uncheckedDowncast<Rust::GlobalObject>(object->globalObject())->scriptExecutionContext()->isMainThread());
 }
 
 static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
@@ -347,7 +347,7 @@ JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
 {
     JSFunction* fetchFn = JSFunction::create(vm, bunObject->globalObject(), 1, "fetch"_s, Bun__fetch, ImplementationVisibility::Public, NoIntrinsic);
 
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
+    auto* globalObject = uncheckedDowncast<Rust::GlobalObject>(bunObject->globalObject());
     fetchFn->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "preconnect"_s), 1, Bun__fetchPreconnect, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
 
@@ -356,7 +356,7 @@ JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
 
 static JSValue constructBunShell(VM& vm, JSObject* bunObject)
 {
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
+    auto* globalObject = uncheckedDowncast<Rust::GlobalObject>(bunObject->globalObject());
     JSFunction* createParsedShellScript = JSFunction::create(vm, bunObject->globalObject(), 2, "createParsedShellScript"_s, BunObject_callback_createParsedShellScript, ImplementationVisibility::Private, NoIntrinsic);
     JSFunction* createShellInterpreterFunction = JSFunction::create(vm, bunObject->globalObject(), 1, "createShellInterpreter"_s, BunObject_callback_createShellInterpreter, ImplementationVisibility::Private, NoIntrinsic);
     JSC::JSFunction* createShellFn = JSC::JSFunction::create(vm, globalObject, shellCreateBunShellTemplateFunctionCodeGenerator(vm), globalObject);
@@ -618,8 +618,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
         errorValue = createSyntaxError(globalObject, "Failed to parse JSONL"_s);
     }
 
-    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    JSObject* resultObj = constructEmptyObject(vm, zigGlobalObject->jsonlParseResultStructure());
+    auto* rustGlobalObject = uncheckedDowncast<Rust::GlobalObject>(globalObject);
+    JSObject* resultObj = constructEmptyObject(vm, rustGlobalObject->jsonlParseResultStructure());
     resultObj->putDirectOffset(vm, 0, array);
     resultObj->putDirectOffset(vm, 1, jsNumber(readBytes));
     resultObj->putDirectOffset(vm, 2, jsBoolean(result.status == JSC::StreamingJSONParseResult::Status::Complete));
@@ -1128,20 +1128,20 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
 // LazyProperty wrappers for stdin/stderr/stdout
 static JSValue BunObject_lazyPropCb_wrap_stdin(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
-    return zigGlobalObject->m_bunStdin.getInitializedOnMainThread(zigGlobalObject);
+    auto* rustGlobalObject = uncheckedDowncast<Rust::GlobalObject>(bunObject->globalObject());
+    return rustGlobalObject->m_bunStdin.getInitializedOnMainThread(rustGlobalObject);
 }
 
 static JSValue BunObject_lazyPropCb_wrap_stderr(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
-    return zigGlobalObject->m_bunStderr.getInitializedOnMainThread(zigGlobalObject);
+    auto* rustGlobalObject = uncheckedDowncast<Rust::GlobalObject>(bunObject->globalObject());
+    return rustGlobalObject->m_bunStderr.getInitializedOnMainThread(rustGlobalObject);
 }
 
 static JSValue BunObject_lazyPropCb_wrap_stdout(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
-    return zigGlobalObject->m_bunStdout.getInitializedOnMainThread(zigGlobalObject);
+    auto* rustGlobalObject = uncheckedDowncast<Rust::GlobalObject>(bunObject->globalObject());
+    return rustGlobalObject->m_bunStdout.getInitializedOnMainThread(rustGlobalObject);
 }
 
 #include "BunObject.lut.h"
@@ -1158,31 +1158,31 @@ const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, &Base::s_info, &bunObjectT
 
 static JSValue constructCookieObject(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
-    return WebCore::JSCookie::getConstructor(vm, zigGlobalObject);
+    auto* rustGlobalObject = uncheckedDowncast<Rust::GlobalObject>(bunObject->globalObject());
+    return WebCore::JSCookie::getConstructor(vm, rustGlobalObject);
 }
 
 static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
-    return WebCore::JSCookieMap::getConstructor(vm, zigGlobalObject);
+    auto* rustGlobalObject = uncheckedDowncast<Rust::GlobalObject>(bunObject->globalObject());
+    return WebCore::JSCookieMap::getConstructor(vm, rustGlobalObject);
 }
 
 static JSValue constructSecretsObject(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
-    return Bun::createSecretsObject(vm, zigGlobalObject);
+    auto* rustGlobalObject = uncheckedDowncast<Rust::GlobalObject>(bunObject->globalObject());
+    return Bun::createSecretsObject(vm, rustGlobalObject);
 }
 
 static JSValue constructWebViewObject(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
-    return zigGlobalObject->m_JSWebViewClassStructure.constructor(zigGlobalObject);
+    auto* rustGlobalObject = uncheckedDowncast<Rust::GlobalObject>(bunObject->globalObject());
+    return rustGlobalObject->m_JSWebViewClassStructure.constructor(rustGlobalObject);
 }
 
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)
 {
-    return JSBunObject::create(vm, uncheckedDowncast<Zig::GlobalObject>(globalObject));
+    return JSBunObject::create(vm, uncheckedDowncast<Rust::GlobalObject>(globalObject));
 }
 
 static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues)
@@ -1215,14 +1215,14 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
 
 } // namespace Bun
 
-namespace Zig {
+namespace Rust {
 void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::Identifier moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    Rust::GlobalObject* globalObject = uncheckedDowncast<Rust::GlobalObject>(lexicalGlobalObject);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* object = globalObject->bunObject();
@@ -1237,4 +1237,4 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
     Bun::exportBunObject(vm, globalObject, object, exportNames, exportValues);
 }
 
-} // namespace Zig
+} // namespace Rust

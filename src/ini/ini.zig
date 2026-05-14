@@ -574,7 +574,7 @@ pub const Parser = struct {
 };
 
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
-pub const IniTestingAPIs = @import("../install_jsc/ini_jsc.zig").IniTestingAPIs;
+pub const IniTestingAPIs = @import("../install_jsc/ini_jsc.rust").IniTestingAPIs;
 
 pub const ToStringFormatter = struct {
     d: js_ast.Expr.Data,

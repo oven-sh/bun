@@ -928,7 +928,7 @@ pub const generated_color_conversions = struct {
     };
 };
 
-const color = @import("./color.zig");
+const color = @import("./color.rust");
 const A98 = color.A98;
 const HSL = color.HSL;
 const HWB = color.HWB;

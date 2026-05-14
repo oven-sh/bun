@@ -10,7 +10,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
         event_loop: jsc.EventLoopHandle,
         buffer: []const u8 = "",
 
-        // It seems there is a bug in the Zig compiler. We'll get back to this one later
+        // It seems there is a bug in the Rust compiler. We'll get back to this one later
         const WriterRefCount = bun.ptr.RefCount(@This(), "ref_count", _deinit, .{});
         pub const ref = WriterRefCount.ref;
         pub const deref = WriterRefCount.deref;

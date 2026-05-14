@@ -1,4 +1,4 @@
-pub const css = @import("../css_parser.zig");
+pub const css = @import("../css_parser.rust");
 
 const LengthPercentage = css.css_values.length.LengthPercentage;
 const CssColor = css.css_values.color.CssColor;

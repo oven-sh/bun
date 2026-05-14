@@ -118,7 +118,7 @@ pub const Class = G.Class;
 const string = []const u8;
 
 const std = @import("std");
-const Runtime = @import("../runtime.zig").Runtime;
+const Runtime = @import("../runtime.rust").Runtime;
 
 const bun = @import("bun");
 const BabyList = bun.BabyList;

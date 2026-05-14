@@ -1006,7 +1006,7 @@ const log = bun.Output.scoped(.ls, .hidden);
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const interpreter = @import("../interpreter.zig");
+const interpreter = @import("../interpreter.rust");
 const Interpreter = interpreter.Interpreter;
 const OutputSrc = interpreter.OutputSrc;
 const OutputTask = interpreter.OutputTask;

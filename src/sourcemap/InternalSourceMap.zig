@@ -73,7 +73,7 @@
 //!     gen_col_len / orig_line_len / orig_col_len: 3 × u16 LE
 //!     gen_line_mask / orig_line_eq_mask / orig_col_eq_mask: 3 × 8 bytes
 //!       (bit i=1 ⇒ d_gen_line>=1 / d_orig_line==d_gen_line / d_orig_col==d_gen_col)
-//!     gen_col_lane:          count-1 zig-zag varints (d_gen_col)
+//!     gen_col_lane:          count-1 rust-zag varints (d_gen_col)
 //!     orig_line_exceptions:  one varint per 0-bit in orig_line_eq_mask
 //!     orig_col_exceptions:   one varint per 0-bit in orig_col_eq_mask
 //!     if has_gen_line_exceptions:
@@ -217,19 +217,19 @@ const State = struct {
     }
 };
 
-inline fn zigzagEncode(value: i32) u32 {
+inline fn rustzagEncode(value: i32) u32 {
     return @bitCast((value << 1) ^ (value >> 31));
 }
 
-inline fn zigzagDecode(value: u32) i32 {
+inline fn rustzagDecode(value: u32) i32 {
     return @as(i32, @bitCast(value >> 1)) ^ (-@as(i32, @bitCast(value & 1)));
 }
 
-/// Max bytes for a zig-zag-encoded i32 in 7-bit varint form: ceil(32 / 7) = 5.
+/// Max bytes for a rust-zag-encoded i32 in 7-bit varint form: ceil(32 / 7) = 5.
 const max_varint_len = 5;
 
 fn writeVarint(buf: [*]u8, signed: i32) usize {
-    var v = zigzagEncode(signed);
+    var v = rustzagEncode(signed);
     var i: usize = 0;
     while (true) {
         var byte: u8 = @intCast(v & 0x7f);
@@ -247,7 +247,7 @@ fn readVarint(bytes: []const u8, pos: *usize) i32 {
     i += 1;
     if (first < 0x80) {
         pos.* = i;
-        return zigzagDecode(first);
+        return rustzagDecode(first);
     }
     var result: u32 = first & 0x7f;
     var shift: u6 = 7;
@@ -260,7 +260,7 @@ fn readVarint(bytes: []const u8, pos: *usize) i32 {
         shift += 7;
     }
     pos.* = i;
-    return zigzagDecode(result);
+    return rustzagDecode(result);
 }
 
 inline fn testBit(base: [*]const u8, idx: usize) bool {
@@ -914,11 +914,11 @@ pub fn fromVLQ(
     return owned;
 }
 
-pub const TestingAPIs = @import("../sourcemap_jsc/internal_jsc.zig").TestingAPIs;
+pub const TestingAPIs = @import("../sourcemap_jsc/internal_jsc.rust").TestingAPIs;
 
 const std = @import("std");
 
-const SourceMap = @import("./sourcemap.zig");
+const SourceMap = @import("./sourcemap.rust");
 const Mapping = SourceMap.Mapping;
 const SourceMapState = SourceMap.SourceMapState;
 const VLQ = SourceMap.VLQ;

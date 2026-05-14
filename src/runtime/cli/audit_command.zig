@@ -77,7 +77,7 @@ pub const AuditCommand = struct {
         Output.flush();
 
         const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);
-        @import("./package_manager_command.zig").PackageManagerCommand.handleLoadLockfileErrors(load_lockfile, pm);
+        @import("./package_manager_command.rust").PackageManagerCommand.handleLoadLockfileErrors(load_lockfile, pm);
 
         var dependency_tree = try buildDependencyTree(ctx.allocator, pm);
         defer dependency_tree.deinit();
@@ -819,12 +819,12 @@ fn printEnhancedAuditReport(
     return 0;
 }
 
-const libdeflate = @import("../../libdeflate_sys/libdeflate.zig");
+const libdeflate = @import("../../libdeflate_sys/libdeflate.rust");
 const std = @import("std");
-const AuditLevel = @import("../../install/PackageManager/CommandLineArguments.zig").AuditLevel;
-const Command = @import("./cli.zig").Command;
-const PackageManager = @import("../../install/install.zig").PackageManager;
-const URL = @import("../../url/url.zig").URL;
+const AuditLevel = @import("../../install/PackageManager/CommandLineArguments.rust").AuditLevel;
+const Command = @import("./cli.rust").Command;
+const PackageManager = @import("../../install/install.rust").PackageManager;
+const URL = @import("../../url/url.rust").URL;
 
 const bun = @import("bun");
 const Global = bun.Global;

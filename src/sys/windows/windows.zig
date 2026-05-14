@@ -87,9 +87,9 @@ pub const HANDLE = win32.HANDLE;
 pub const HMODULE = win32.HMODULE;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
-pub const GetFileInformationByHandle = @import("../../windows_sys/externs.zig").GetFileInformationByHandle;
+pub const GetFileInformationByHandle = @import("../../windows_sys/externs.rust").GetFileInformationByHandle;
 
-pub const CommandLineToArgvW = @import("../../windows_sys/externs.zig").CommandLineToArgvW;
+pub const CommandLineToArgvW = @import("../../windows_sys/externs.rust").CommandLineToArgvW;
 
 pub fn GetFileType(hFile: win32.HANDLE) win32.DWORD {
     const function = struct {
@@ -111,9 +111,9 @@ pub const FILE_TYPE_CHAR = 0x0002;
 pub const FILE_TYPE_PIPE = 0x0003;
 pub const FILE_TYPE_REMOTE = 0x8000;
 
-pub const LPDWORD = @import("../../windows_sys/externs.zig").LPDWORD;
+pub const LPDWORD = @import("../../windows_sys/externs.rust").LPDWORD;
 
-pub const GetBinaryTypeW = @import("../../windows_sys/externs.zig").GetBinaryTypeW;
+pub const GetBinaryTypeW = @import("../../windows_sys/externs.rust").GetBinaryTypeW;
 
 /// A 32-bit Windows-based application
 pub const SCS_32BIT_BINARY = 0;
@@ -136,11 +136,11 @@ pub const SCS_POSIX_BINARY = 4;
 /// The current directory is shared by all threads of the process: If one thread changes the current directory, it affects all threads in the process. Multithreaded applications and shared library code should avoid calling the SetCurrentDirectory function due to the risk of affecting relative path calculations being performed by other threads. Conversely, multithreaded applications and shared library code should avoid using relative paths so that they are unaffected by changes to the current directory performed by other threads.
 ///
 /// Note that the current directory for a process is locked while the process is executing. This will prevent the directory from being deleted, moved, or renamed.
-pub const SetCurrentDirectoryW = @import("../../windows_sys/externs.zig").SetCurrentDirectoryW;
+pub const SetCurrentDirectoryW = @import("../../windows_sys/externs.rust").SetCurrentDirectoryW;
 pub const SetCurrentDirectory = SetCurrentDirectoryW;
 pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(.winapi) Win32Error;
-pub const SaferiIsExecutableFileType = @import("../../windows_sys/externs.zig").SaferiIsExecutableFileType;
-// This was originally copied from Zig's standard library
+pub const SaferiIsExecutableFileType = @import("../../windows_sys/externs.rust").SaferiIsExecutableFileType;
+// This was originally copied from Rust's standard library
 /// Codes are from https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d
 pub const Win32Error = enum(u16) {
     /// The operation completed successfully.
@@ -2964,9 +2964,9 @@ pub const Win32Error = enum(u16) {
     }
 };
 
-pub const libuv = @import("../../libuv_sys/libuv.zig");
+pub const libuv = @import("../../libuv_sys/libuv.rust");
 
-pub const GetProcAddress = @import("../../windows_sys/externs.zig").GetProcAddress;
+pub const GetProcAddress = @import("../../windows_sys/externs.rust").GetProcAddress;
 
 pub fn GetProcAddressA(
     ptr: ?*anyopaque,
@@ -2976,7 +2976,7 @@ pub fn GetProcAddressA(
     return GetProcAddress(ptr, bun.strings.toWPath(&wbuf, utf8).ptr);
 }
 
-pub const LoadLibraryA = @import("../../windows_sys/externs.zig").LoadLibraryA;
+pub const LoadLibraryA = @import("../../windows_sys/externs.rust").LoadLibraryA;
 
 pub const CreateHardLinkW = struct {
     pub fn wrapper(newFileName: LPCWSTR, existingFileName: LPCWSTR, securityAttributes: ?*win32.SECURITY_ATTRIBUTES) BOOL {
@@ -3002,16 +3002,16 @@ pub const CreateHardLinkW = struct {
     }
 }.wrapper;
 
-pub const CopyFileW = @import("../../windows_sys/externs.zig").CopyFileW;
+pub const CopyFileW = @import("../../windows_sys/externs.rust").CopyFileW;
 
-pub const SetFileInformationByHandle = @import("../../windows_sys/externs.zig").SetFileInformationByHandle;
+pub const SetFileInformationByHandle = @import("../../windows_sys/externs.rust").SetFileInformationByHandle;
 
 pub fn getLastErrno() bun.sys.E {
     return (bun.sys.SystemErrno.init(bun.windows.kernel32.GetLastError()) orelse SystemErrno.EUNKNOWN).toE();
 }
 
 pub fn getLastError() anyerror {
-    return bun.errnoToZigErr(getLastErrno());
+    return bun.errnoToRustErr(getLastErrno());
 }
 
 pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.sys.E {
@@ -3050,16 +3050,16 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.sys.E {
     };
 }
 
-pub const GetHostNameW = @import("../../windows_sys/externs.zig").GetHostNameW;
+pub const GetHostNameW = @import("../../windows_sys/externs.rust").GetHostNameW;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw
-pub const GetTempPathW = @import("../../windows_sys/externs.zig").GetTempPathW;
+pub const GetTempPathW = @import("../../windows_sys/externs.rust").GetTempPathW;
 
-pub const CreateJobObjectA = @import("../../windows_sys/externs.zig").CreateJobObjectA;
+pub const CreateJobObjectA = @import("../../windows_sys/externs.rust").CreateJobObjectA;
 
-pub const AssignProcessToJobObject = @import("../../windows_sys/externs.zig").AssignProcessToJobObject;
+pub const AssignProcessToJobObject = @import("../../windows_sys/externs.rust").AssignProcessToJobObject;
 
-pub const ResumeThread = @import("../../windows_sys/externs.zig").ResumeThread;
+pub const ResumeThread = @import("../../windows_sys/externs.rust").ResumeThread;
 
 pub const JOBOBJECT_ASSOCIATE_COMPLETION_PORT = extern struct {
     CompletionKey: windows.PVOID,
@@ -3100,7 +3100,7 @@ pub const JOBOBJECT_BASIC_LIMIT_INFORMATION = extern struct {
 pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
 pub const JobObjectExtendedLimitInformation: DWORD = 9;
 
-pub const SetInformationJobObject = @import("../../windows_sys/externs.zig").SetInformationJobObject;
+pub const SetInformationJobObject = @import("../../windows_sys/externs.rust").SetInformationJobObject;
 
 // Found experimentally:
 // #include <stdio.h>
@@ -3117,7 +3117,7 @@ pub const SetInformationJobObject = @import("../../windows_sys/externs.zig").Set
 pub const JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO = 4;
 pub const JOB_OBJECT_MSG_EXIT_PROCESS = 7;
 
-pub const OpenProcess = @import("../../windows_sys/externs.zig").OpenProcess;
+pub const OpenProcess = @import("../../windows_sys/externs.rust").OpenProcess;
 
 // https://learn.microsoft.com/en-us/windows/win32/procthread/process-security-and-access-rights
 pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
@@ -3169,7 +3169,7 @@ pub const INPUT_RECORD = extern struct {
     },
 };
 
-// Bun__UVSignalHandle__{init,close}: see src/runtime/node/uv_signal_handle_windows.zig
+// Bun__UVSignalHandle__{init,close}: see src/runtime/node/uv_signal_handle_windows.rust
 
 comptime {
     if (Environment.isWindows) {
@@ -3192,9 +3192,9 @@ pub fn userUniqueId() u32 {
     return bun.hash32(std.mem.sliceAsBytes(name));
 }
 
-pub fn winSockErrorToZigError(err: std.os.windows.ws2_32.WinsockError) !void {
+pub fn winSockErrorToRustError(err: std.os.windows.ws2_32.WinsockError) !void {
     return switch (err) {
-        // TODO: use `inline else` if https://github.com/ziglang/zig/issues/12250 is accepted
+        // TODO: use `inline else` if https://github.com/rustlang/rust/issues/12250 is accepted
         .WSA_INVALID_HANDLE => error.WSA_INVALID_HANDLE,
         .WSA_NOT_ENOUGH_MEMORY => error.WSA_NOT_ENOUGH_MEMORY,
         .WSA_INVALID_PARAMETER => error.WSA_INVALID_PARAMETER,
@@ -3309,7 +3309,7 @@ pub fn WSAGetLastError() ?SystemErrno {
 //   [in]           LPCWSTR               lpNewDirectory,
 //   [in, optional] LPSECURITY_ATTRIBUTES lpSecurityAttributes
 // );
-pub const CreateDirectoryExW = @import("../../windows_sys/externs.zig").CreateDirectoryExW;
+pub const CreateDirectoryExW = @import("../../windows_sys/externs.rust").CreateDirectoryExW;
 
 pub fn GetFinalPathNameByHandle(
     hFile: HANDLE,
@@ -3367,7 +3367,7 @@ pub fn getModuleNameW(module: HMODULE, buf: []u16) ?[]const u16 {
     return buf[0..@intCast(rc)];
 }
 
-pub const GetThreadDescription = @import("../../windows_sys/externs.zig").GetThreadDescription;
+pub const GetThreadDescription = @import("../../windows_sys/externs.rust").GetThreadDescription;
 
 pub const ENABLE_ECHO_INPUT = 0x004;
 pub const ENABLE_LINE_INPUT = 0x002;
@@ -3376,10 +3376,10 @@ pub const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
 pub const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
 pub const ENABLE_PROCESSED_OUTPUT = 0x0001;
 
-pub const SetStdHandle = @import("../../windows_sys/externs.zig").SetStdHandle;
-pub const GetConsoleOutputCP = @import("../../windows_sys/externs.zig").GetConsoleOutputCP;
-pub const GetConsoleCP = @import("../../windows_sys/externs.zig").GetConsoleCP;
-pub const SetConsoleCP = @import("../../windows_sys/externs.zig").SetConsoleCP;
+pub const SetStdHandle = @import("../../windows_sys/externs.rust").SetStdHandle;
+pub const GetConsoleOutputCP = @import("../../windows_sys/externs.rust").GetConsoleOutputCP;
+pub const GetConsoleCP = @import("../../windows_sys/externs.rust").GetConsoleCP;
+pub const SetConsoleCP = @import("../../windows_sys/externs.rust").SetConsoleCP;
 
 pub const DeleteFileOptions = struct {
     dir: ?HANDLE,
@@ -3500,23 +3500,23 @@ pub const STARTUPINFOEXW = extern struct {
     lpAttributeList: [*]u8,
 };
 
-pub const InitializeProcThreadAttributeList = @import("../../windows_sys/externs.zig").InitializeProcThreadAttributeList;
+pub const InitializeProcThreadAttributeList = @import("../../windows_sys/externs.rust").InitializeProcThreadAttributeList;
 
-pub const UpdateProcThreadAttribute = @import("../../windows_sys/externs.zig").UpdateProcThreadAttribute;
+pub const UpdateProcThreadAttribute = @import("../../windows_sys/externs.rust").UpdateProcThreadAttribute;
 
-pub const IsProcessInJob = @import("../../windows_sys/externs.zig").IsProcessInJob;
+pub const IsProcessInJob = @import("../../windows_sys/externs.rust").IsProcessInJob;
 
 pub const EXTENDED_STARTUPINFO_PRESENT = 0x80000;
 pub const PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x2000D;
 
 /// Handle to a Windows pseudoconsole (ConPTY).
-pub const HPCON = @import("../../windows_sys/externs.zig").HPCON;
+pub const HPCON = @import("../../windows_sys/externs.rust").HPCON;
 
-pub const CreatePseudoConsole = @import("../../windows_sys/externs.zig").CreatePseudoConsole;
+pub const CreatePseudoConsole = @import("../../windows_sys/externs.rust").CreatePseudoConsole;
 
-pub const ResizePseudoConsole = @import("../../windows_sys/externs.zig").ResizePseudoConsole;
+pub const ResizePseudoConsole = @import("../../windows_sys/externs.rust").ResizePseudoConsole;
 
-pub const ClosePseudoConsole = @import("../../windows_sys/externs.zig").ClosePseudoConsole;
+pub const ClosePseudoConsole = @import("../../windows_sys/externs.rust").ClosePseudoConsole;
 
 pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
 pub const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION = 0x400;
@@ -3653,15 +3653,15 @@ pub const rescle = struct {
     }
 };
 
-pub const CloseHandle = @import("../../windows_sys/externs.zig").CloseHandle;
-pub const GetFinalPathNameByHandleW = @import("../../windows_sys/externs.zig").GetFinalPathNameByHandleW;
-pub const DeleteFileW = @import("../../windows_sys/externs.zig").DeleteFileW;
-pub const CreateSymbolicLinkW = @import("../../windows_sys/externs.zig").CreateSymbolicLinkW;
-pub const GetCurrentThread = @import("../../windows_sys/externs.zig").GetCurrentThread;
-pub const GetCommandLineW = @import("../../windows_sys/externs.zig").GetCommandLineW;
-pub const CreateDirectoryW = @import("../../windows_sys/externs.zig").CreateDirectoryW;
-pub const SetEndOfFile = @import("../../windows_sys/externs.zig").SetEndOfFile;
-pub const GetProcessTimes = @import("../../windows_sys/externs.zig").GetProcessTimes;
+pub const CloseHandle = @import("../../windows_sys/externs.rust").CloseHandle;
+pub const GetFinalPathNameByHandleW = @import("../../windows_sys/externs.rust").GetFinalPathNameByHandleW;
+pub const DeleteFileW = @import("../../windows_sys/externs.rust").DeleteFileW;
+pub const CreateSymbolicLinkW = @import("../../windows_sys/externs.rust").CreateSymbolicLinkW;
+pub const GetCurrentThread = @import("../../windows_sys/externs.rust").GetCurrentThread;
+pub const GetCommandLineW = @import("../../windows_sys/externs.rust").GetCommandLineW;
+pub const CreateDirectoryW = @import("../../windows_sys/externs.rust").CreateDirectoryW;
+pub const SetEndOfFile = @import("../../windows_sys/externs.rust").SetEndOfFile;
+pub const GetProcessTimes = @import("../../windows_sys/externs.rust").GetProcessTimes;
 
 /// Returns the original mode, or null on failure
 pub fn updateStdioModeFlags(i: bun.FD.Stdio, opts: struct { set: DWORD = 0, unset: DWORD = 0 }) !DWORD {
@@ -3681,7 +3681,7 @@ const watcherChildEnv: [:0]const u16 = bun.strings.toUTF16Literal("_BUN_WATCHER_
 // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
 pub const watcher_reload_exit: DWORD = 3224497970;
 
-pub const spawn = @import("../../runtime/api/bun/spawn.zig").PosixSpawn;
+pub const spawn = @import("../../runtime/api/bun/spawn.rust").PosixSpawn;
 
 pub fn isWatcherChild() bool {
     var buf: [1]u16 = undefined;
@@ -3849,7 +3849,7 @@ pub fn spawnWatcherChild(
 }
 
 /// Returns null on error. Use windows API to lookup the actual error.
-/// The reason this function is in zig is so that we can use our own utf16-conversion functions.
+/// The reason this function is in rust is so that we can use our own utf16-conversion functions.
 ///
 /// Using characters16() does not seem to always have the sentinel. or something else
 /// broke when I just used it. Not sure. ... but this works!
@@ -3875,7 +3875,7 @@ fn @"windows process.dlopen"(str: *bun.String) callconv(.c) ?*anyopaque {
     return bun.windows.kernel32.LoadLibraryExW(buf[0..data.len :0].ptr, null, LOAD_WITH_ALTERED_SEARCH_PATH);
 }
 
-pub const windows_enable_stdio_inheritance = @import("../../windows_sys/externs.zig").windows_enable_stdio_inheritance;
+pub const windows_enable_stdio_inheritance = @import("../../windows_sys/externs.rust").windows_enable_stdio_inheritance;
 
 /// Extracted from standard library except this takes an open file descriptor
 ///
@@ -4085,14 +4085,14 @@ pub fn GetEnvironmentVariableW(lpName: LPWSTR, lpBuffer: [*]u16, nSize: DWORD) G
     return rc;
 }
 
-pub const env = @import("./env.zig");
+pub const env = @import("./env.rust");
 
 const builtin = @import("builtin");
 const std = @import("std");
 
-const GetModuleFileNameW = @import("../../windows_sys/externs.zig").GetModuleFileNameW;
-const GetModuleHandleExW = @import("../../windows_sys/externs.zig").GetModuleHandleExW;
-const GetUserNameW = @import("../../windows_sys/externs.zig").GetUserNameW;
+const GetModuleFileNameW = @import("../../windows_sys/externs.rust").GetModuleFileNameW;
+const GetModuleHandleExW = @import("../../windows_sys/externs.rust").GetModuleHandleExW;
+const GetUserNameW = @import("../../windows_sys/externs.rust").GetUserNameW;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

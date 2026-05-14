@@ -43,7 +43,7 @@ pub const WriteFile = struct {
 
     pub fn onIOError(this: *WriteFile, err: bun.sys.Error) void {
         bloblog("WriteFile.onIOError()", .{});
-        this.errno = bun.errnoToZigErr(err.errno);
+        this.errno = bun.errnoToRustErr(err.errno);
         this.system_error = err.toSystemError();
         this.task = .{ .callback = &doWriteLoopTask };
         jsc.WorkPool.schedule(&this.task);
@@ -148,7 +148,7 @@ pub const WriteFile = struct {
                             return false;
                         },
                         else => {
-                            this.errno = bun.errnoToZigErr(err.getErrno());
+                            this.errno = bun.errnoToRustErr(err.getErrno());
                             this.system_error = err.toSystemError();
                             return false;
                         },
@@ -693,7 +693,7 @@ pub const WriteFileWaitFromLockedValueTask = struct {
                 _ = value.use();
                 this.promise.deinit();
                 bun.destroy(this);
-                try promise.reject(globalThis, ZigString.init("Body was used after it was consumed").toErrorInstance(globalThis));
+                try promise.reject(globalThis, RustString.init("Body was used after it was consumed").toErrorInstance(globalThis));
             },
             .WTFStringImpl,
             .InternalBlob,
@@ -747,7 +747,7 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSPromise = jsc.JSPromise;
 const SystemError = jsc.SystemError;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 const Body = jsc.WebCore.Body;
 
 const Blob = jsc.WebCore.Blob;

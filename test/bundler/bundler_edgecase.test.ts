@@ -709,7 +709,7 @@ describe("bundler", () => {
   });
   itBundled("edgecase/AssetEntryPoint", {
     files: {
-      "/entry.zig": `
+      "/entry.rust": `
         const std = @import("std");
 
         pub fn main() void {
@@ -718,12 +718,12 @@ describe("bundler", () => {
       `,
     },
     outdir: "/out",
-    entryPointsRaw: ["./entry.zig"],
+    entryPointsRaw: ["./entry.rust"],
     runtimeFiles: {
       "/exec.js": `
         import assert from 'node:assert';
         import the_path from './out/entry.js';
-        assert.strictEqual(the_path, './entry-z5artd5z.zig');
+        assert.strictEqual(the_path, './entry-z5artd5z.rust');
       `,
     },
     run: {

@@ -1,10 +1,10 @@
 pub const PackageID = bun.install.PackageID;
 pub const DependencyID = bun.install.DependencyID;
 
-pub const Lockfile = @import("./lockfile.zig");
+pub const Lockfile = @import("./lockfile.rust");
 pub const PatchedDep = Lockfile.PatchedDep;
 
-pub const Resolution = @import("./resolution.zig").Resolution;
+pub const Resolution = @import("./resolution.rust").Resolution;
 
 pub const PackageInstall = bun.install.PackageInstall;
 
@@ -578,7 +578,7 @@ const stringZ = [:0]const u8;
 
 const std = @import("std");
 
-const Fs = @import("../resolver/fs.zig");
+const Fs = @import("../resolver/fs.rust");
 const FileSystem = Fs.FileSystem;
 
 const bun = @import("bun");

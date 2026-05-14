@@ -153,7 +153,7 @@ pub const Value = union(Kind) {
     }
 };
 
-pub const SavedFile = @import("../bundler_jsc/output_file_jsc.zig").SavedFile;
+pub const SavedFile = @import("../bundler_jsc/output_file_jsc.rust").SavedFile;
 
 pub fn initPending(loader: Loader, pending: resolver.Result) OutputFile {
     return .{
@@ -318,16 +318,16 @@ pub fn copyTo(file: *const OutputFile, _: string, rel_path: []const u8, dir: Fil
     try bun.copyFile(fd_in, fd_out).unwrap();
 }
 
-pub const toJS = @import("../bundler_jsc/output_file_jsc.zig").toJS;
+pub const toJS = @import("../bundler_jsc/output_file_jsc.rust").toJS;
 
-pub const toBlob = @import("../bundler_jsc/output_file_jsc.zig").toBlob;
+pub const toBlob = @import("../bundler_jsc/output_file_jsc.rust").toBlob;
 
 const string = []const u8;
 
-const resolve_path = @import("../paths/resolve_path.zig");
-const resolver = @import("../resolver/resolver.zig");
+const resolve_path = @import("../paths/resolve_path.rust");
+const resolver = @import("../resolver/resolver.rust");
 const std = @import("std");
-const Loader = @import("./options.zig").Loader;
+const Loader = @import("./options.rust").Loader;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

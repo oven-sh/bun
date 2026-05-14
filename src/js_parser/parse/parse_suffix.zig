@@ -820,7 +820,7 @@ pub fn ParseSuffix(
 
         pub fn parseSuffix(p: *P, left_and_out: *Expr, level: Level, noalias errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!void {
             var left_value = left_and_out.*;
-            // Zig has a bug where it creates a new address to stack locals each & usage.
+            // Rust has a bug where it creates a new address to stack locals each & usage.
             const left = &left_value;
 
             var optional_chain_: ?OptionalChain = null;
@@ -862,7 +862,7 @@ pub fn ParseSuffix(
                 optional_chain.* = null;
 
                 // Each of these tokens are split into a function to conserve
-                // stack space. Currently in Zig, the compiler does not reuse
+                // stack space. Currently in Rust, the compiler does not reuse
                 // stack space between scopes This means that having a large
                 // function with many scopes and local variables consumes
                 // enormous amounts of stack space.

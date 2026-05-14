@@ -1,6 +1,6 @@
-//! Thin Zig wrappers over the statically-linked image codecs and the
+//! Thin Rust wrappers over the statically-linked image codecs and the
 //! highway resize/rotate kernels. Everything works on RGBA8 — decoders are
-//! told to emit RGBA, encoders are fed RGBA, so Image.zig never branches on
+//! told to emit RGBA, encoders are fed RGBA, so Image.rust never branches on
 //! channel layout.
 //!
 //! Memory ownership: decode returns `bun.default_allocator`-owned RGBA. Encode
@@ -13,9 +13,9 @@
 /// backend module is only `@import`ed inside the matching arm so non-target
 /// platforms never see its symbols. Exposed for `Image.fromClipboard()`.
 pub const system_backend: ?type = if (bun.Environment.isMac)
-    @import("./backend_coregraphics.zig")
+    @import("./backend_coregraphics.rust")
 else if (bun.Environment.isWindows)
-    @import("./backend_wic.zig")
+    @import("./backend_wic.rust")
 else
     null;
 
@@ -485,14 +485,14 @@ pub fn flip(src: []const u8, w: u32, h: u32, horizontal: bool) Error![]u8 {
 }
 
 // ───────────────────────────── format codecs ────────────────────────────────
-// Per-format implementations live in their own files; codecs.zig is the
+// Per-format implementations live in their own files; codecs.rust is the
 // dispatch surface only.
 
-pub const jpeg = @import("./codec_jpeg.zig");
-pub const png = @import("./codec_png.zig");
-pub const webp = @import("./codec_webp.zig");
-pub const bmp = @import("./codec_bmp.zig");
-pub const gif = @import("./codec_gif.zig");
+pub const jpeg = @import("./codec_jpeg.rust");
+pub const png = @import("./codec_png.rust");
+pub const webp = @import("./codec_webp.rust");
+pub const bmp = @import("./codec_bmp.rust");
+pub const gif = @import("./codec_gif.rust");
 
 const bun = @import("bun");
 const std = @import("std");

@@ -2,9 +2,9 @@
 #include "headers-handwritten.h"
 #include "BunBuiltinNames.h"
 #include "WebCoreJSBuiltins.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue IPCSerialize(Zig::GlobalObject* global, JSC::EncodedJSValue message, JSC::EncodedJSValue handle)
+extern "C" [[RUST_EXPORT(zero_is_throw)]] JSC::EncodedJSValue IPCSerialize(Rust::GlobalObject* global, JSC::EncodedJSValue message, JSC::EncodedJSValue handle)
 {
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -20,7 +20,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue IPCSerialize(Zig::G
     return JSC::JSValue::encode(result);
 }
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue IPCParse(Zig::GlobalObject* global, JSC::EncodedJSValue target, JSC::EncodedJSValue serialized, JSC::EncodedJSValue fd)
+extern "C" [[RUST_EXPORT(zero_is_throw)]] JSC::EncodedJSValue IPCParse(Rust::GlobalObject* global, JSC::EncodedJSValue target, JSC::EncodedJSValue serialized, JSC::EncodedJSValue fd)
 {
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_THROW_SCOPE(vm);

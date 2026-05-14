@@ -1,7 +1,7 @@
 //! One QUIC connection to an origin. Owns its UDP endpoint via quic.c and
 //! multiplexes `Stream`s, each bound 1:1 to an `HTTPClient`. The `qsocket`
 //! pointer becomes dangling after `callbacks.onConnClose`, so every accessor
-//! checks `closed` first. See `src/http/H3Client.zig` for the module-level
+//! checks `closed` first. See `src/http/H3Client.rust` for the module-level
 //! overview.
 
 const ClientSession = @This();
@@ -255,10 +255,10 @@ const HeaderResult = enum { has_body, finished };
 
 const log = bun.Output.scoped(.h3_client, .hidden);
 
-const ClientContext = @import("./ClientContext.zig");
-const H3 = @import("../H3Client.zig");
-const Stream = @import("./Stream.zig");
-const encode = @import("./encode.zig");
+const ClientContext = @import("./ClientContext.rust");
+const H3 = @import("../H3Client.rust");
+const Stream = @import("./Stream.rust");
+const encode = @import("./encode.rust");
 const std = @import("std");
 
 const bun = @import("bun");

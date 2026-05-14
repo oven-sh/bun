@@ -203,7 +203,7 @@ interface JSCommonJSModule {
  *
  * Binding files are located in `src/jsc/bindings`
  *
- * @see {@link $zig} for native zig bindings.
+ * @see {@link $rust} for native rust bindings.
  * @see `src/codegen/replacements.ts` for the script that performs replacement of this funciton.
  *
  * @param filename name of the c++ file containing the function. Do not pass a path.
@@ -214,10 +214,10 @@ interface JSCommonJSModule {
  */
 declare function $cpp<T = any>(filename: NativeFilenameCPP, symbol: string): T;
 /**
- * Call a native zig binding function, getting whatever it returns.
+ * Call a native rust binding function, getting whatever it returns.
  *
  * This is more like a macro; it is replaced with a WebKit intrisic during
- * codegen. Passing a template parameter will break codegen. Prefer `$zig(...)
+ * codegen. Passing a template parameter will break codegen. Prefer `$rust(...)
  * as Foo` instead.
  *
  * Binding files are located in `src/jsc/bindings`
@@ -225,25 +225,25 @@ declare function $cpp<T = any>(filename: NativeFilenameCPP, symbol: string): T;
  * @see {@link $cpp} for native c++ bindings.
  * @see `src/codegen/replacements.ts` for the script that performs replacement of this funciton.
  *
- * @param filename name of the zig file containing the function. Do not pass a path.
+ * @param filename name of the rust file containing the function. Do not pass a path.
  * @param symbol   The name of the binding function. Use `dot.notation` to access
  *                 member symbols.
  *
  * @returns whatever the binding function returns.
  */
-declare function $zig<T = any>(filename: NativeFilenameZig, symbol: string): T;
+declare function $rust<T = any>(filename: NativeFilenameRust, symbol: string): T;
 declare function $newCppFunction<T = (...args: any) => any>(
   filename: NativeFilenameCPP,
   symbol: string,
   argCount: number,
 ): T;
-declare function $newZigFunction<T = (...args: any) => any>(
-  filename: NativeFilenameZig,
+declare function $newRustFunction<T = (...args: any) => any>(
+  filename: NativeFilenameRust,
   symbol: string,
   argCount: number,
 ): T;
 /**
- * Retrieves a handle to a function defined in Zig or C++, defined in a
+ * Retrieves a handle to a function defined in Rust or C++, defined in a
  * `.bind.ts` file. For more information on how to define bindgen functions, see
  * [bindgen's documentation](https://bun.com/docs/project/bindgen).
  * @param filename - The basename of the `.bind.ts` file.

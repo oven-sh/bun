@@ -37,7 +37,7 @@ pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *bun.String) callconv(.
 }
 
 pub fn createArgv0(globalObject: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
-    return jsc.ZigString.fromUTF8(bun.argv[0]).toJS(globalObject);
+    return jsc.RustString.fromUTF8(bun.argv[0]).toJS(globalObject);
 }
 
 pub fn getExecPath(globalObject: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
@@ -46,7 +46,7 @@ pub fn getExecPath(globalObject: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
         return createArgv0(globalObject);
     };
 
-    return jsc.ZigString.fromUTF8(out).toJS(globalObject);
+    return jsc.RustString.fromUTF8(out).toJS(globalObject);
 }
 
 fn createExecArgv(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
@@ -163,7 +163,7 @@ fn createArgv(globalObject: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
 
     // Allocate up to 32 strings in stack
     var stack_fallback_allocator = std.heap.stackFallback(
-        32 * @sizeOf(jsc.ZigString) + (bun.MAX_PATH_BYTES + 1) + 32,
+        32 * @sizeOf(jsc.RustString) + (bun.MAX_PATH_BYTES + 1) + 32,
         bun.default_allocator,
     );
     const allocator = stack_fallback_allocator.get();
@@ -235,7 +235,7 @@ pub fn getExecArgv(global: *JSGlobalObject) callconv(.c) JSValue {
 pub fn getEval(globalObject: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
     const vm = globalObject.bunVM();
     if (vm.module_loader.eval_source) |source| {
-        return jsc.ZigString.init(source.contents).toJS(globalObject);
+        return jsc.RustString.init(source.contents).toJS(globalObject);
     }
     return .js_undefined;
 }
@@ -244,7 +244,7 @@ pub const getCwd = jsc.host_fn.wrap1(getCwd_);
 fn getCwd_(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     var buf: bun.PathBuffer = undefined;
     switch (bun.api.node.path.getCwd(&buf)) {
-        .result => |r| return jsc.ZigString.init(r).withEncoding().toJS(globalObject),
+        .result => |r| return jsc.RustString.init(r).withEncoding().toJS(globalObject),
         .err => |e| {
             return globalObject.throwValue(try e.toJS(globalObject));
         },
@@ -252,7 +252,7 @@ fn getCwd_(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
 }
 
 pub const setCwd = jsc.host_fn.wrap2(setCwd_);
-fn setCwd_(globalObject: *jsc.JSGlobalObject, to: *jsc.ZigString) bun.JSError!jsc.JSValue {
+fn setCwd_(globalObject: *jsc.JSGlobalObject, to: *jsc.RustString) bun.JSError!jsc.JSValue {
     if (to.len == 0) {
         return globalObject.throwInvalidArguments("Expected path to be a non-empty string", .{});
     }
@@ -378,4 +378,4 @@ const strings = bun.strings;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

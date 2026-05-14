@@ -32,14 +32,14 @@
 namespace WebCore {
 
 template<class ConstructorClass, DOMConstructorID constructorID>
-inline JSC::JSObject* getDOMConstructor(JSC::VM& vm, const Zig::GlobalObject& globalObject)
+inline JSC::JSObject* getDOMConstructor(JSC::VM& vm, const Rust::GlobalObject& globalObject)
 {
-    // No locking is necessary unless we need to add a new constructor to Zig::GlobalObject::constructors().
+    // No locking is necessary unless we need to add a new constructor to Rust::GlobalObject::constructors().
     if (JSC::JSObject* constructor = globalObject.constructors().array()[static_cast<unsigned>(constructorID)].get())
         return constructor;
-    JSC::JSObject* constructor = ConstructorClass::create(vm, ConstructorClass::createStructure(vm, const_cast<Zig::GlobalObject&>(globalObject), ConstructorClass::prototypeForStructure(vm, globalObject)), const_cast<Zig::GlobalObject&>(globalObject));
+    JSC::JSObject* constructor = ConstructorClass::create(vm, ConstructorClass::createStructure(vm, const_cast<Rust::GlobalObject&>(globalObject), ConstructorClass::prototypeForStructure(vm, globalObject)), const_cast<Rust::GlobalObject&>(globalObject));
     ASSERT(!globalObject.constructors().array()[static_cast<unsigned>(constructorID)].get());
-    Zig::GlobalObject& mutableGlobalObject = const_cast<Zig::GlobalObject&>(globalObject);
+    Rust::GlobalObject& mutableGlobalObject = const_cast<Rust::GlobalObject&>(globalObject);
     mutableGlobalObject.constructors().array()[static_cast<unsigned>(constructorID)].set(vm, &globalObject, constructor);
     return constructor;
 }

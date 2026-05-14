@@ -33,9 +33,9 @@ pub fn decodeInternal(
 }
 
 const std = @import("std");
-const NewReader = @import("./NewReader.zig").NewReader;
+const NewReader = @import("./NewReader.rust").NewReader;
 
-const int_types = @import("../types/int_types.zig");
+const int_types = @import("../types/int_types.rust");
 const int4 = int_types.int4;
 
 const bun = @import("bun");

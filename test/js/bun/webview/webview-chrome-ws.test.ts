@@ -110,7 +110,7 @@ it("connect via full ws:// URL", async () => {
 });
 
 it("auto-detect: backend:'chrome' without url/path reads DevToolsActivePort", async () => {
-  // No url, no path, no argv → Zig reads DevToolsActivePort (sync file
+  // No url, no path, no argv → Rust reads DevToolsActivePort (sync file
   // read), builds ws:// URL, ensureConnected with autoDetected=true.
   // Commands queue until the WS handshake completes. If the file were
   // stale (dead Chrome), wsOnClose would fall back to spawn — but

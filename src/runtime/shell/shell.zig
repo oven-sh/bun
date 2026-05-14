@@ -1,7 +1,7 @@
-pub const interpret = @import("./interpreter.zig");
-pub const subproc = @import("./subproc.zig");
+pub const interpret = @import("./interpreter.rust");
+pub const subproc = @import("./subproc.rust");
 
-pub const AllocScope = @import("./AllocScope.zig");
+pub const AllocScope = @import("./AllocScope.rust");
 
 pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;
@@ -14,7 +14,7 @@ pub const IOReader = Interpreter.IOReader;
 // pub const IOWriter = interpret.IOWriter;
 // pub const SubprocessMini = subproc.ShellSubprocessMini;
 
-pub const Yield = @import("./Yield.zig").Yield;
+pub const Yield = @import("./Yield.rust").Yield;
 pub const unreachableState = interpret.unreachableState;
 
 const GlobWalker = bun.glob.GlobWalker(null, true);
@@ -76,7 +76,7 @@ pub const ShellErr = union(enum) {
             .custom => {
                 const err_value = bun.String.cloneUTF8(this.custom).toErrorInstance(globalThis);
                 return globalThis.throwValue(err_value);
-                // this.bunVM().allocator.free(jsc.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
+                // this.bunVM().allocator.free(jsc.RustString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
             },
             .invalid_arguments => {
                 return globalThis.throwInvalidArguments("{s}", .{this.invalid_arguments.val});
@@ -3910,7 +3910,7 @@ pub fn shellCmdFromJS(
         if (!try builder.appendJSValueStr(js_value, false)) {
             return globalThis.throw("Shell script string contains invalid UTF-16", .{});
         }
-        // const str = js_value.getZigString(globalThis);
+        // const str = js_value.getRustString(globalThis);
         // try script.appendSlice(str.full());
         if (i < last) {
             const template_value = try template_args.next() orelse {
@@ -4022,7 +4022,7 @@ pub fn handleTemplateValue(
 
                 // Check for null bytes in shell argument (security: prevent null byte injection)
                 if (bunstr.indexOfAsciiChar(0) != null) {
-                    return globalThis.ERR(.INVALID_ARG_VALUE, "The shell argument must be a string without null bytes. Received \"{f}\"", .{bunstr.toZigString()}).throw();
+                    return globalThis.ERR(.INVALID_ARG_VALUE, "The shell argument must be a string without null bytes. Received \"{f}\"", .{bunstr.toRustString()}).throw();
                 }
 
                 if (!try builder.appendBunStr(bunstr, false)) {
@@ -4076,7 +4076,7 @@ pub const ShellSrcBuilder = struct {
 
         // Check for null bytes in shell argument (security: prevent null byte injection)
         if (bunstr.indexOfAsciiChar(0) != null) {
-            return this.globalThis.ERR(.INVALID_ARG_VALUE, "The shell argument must be a string without null bytes. Received \"{f}\"", .{bunstr.toZigString()}).throw();
+            return this.globalThis.ERR(.INVALID_ARG_VALUE, "The shell argument must be a string without null bytes. Received \"{f}\"", .{bunstr.toRustString()}).throw();
         }
 
         return try this.appendBunStr(bunstr, allow_escape);
@@ -4687,9 +4687,9 @@ pub const TestingAPIs = struct {
     }
 };
 
-pub const ShellSubprocess = @import("./subproc.zig").ShellSubprocess;
+pub const ShellSubprocess = @import("./subproc.rust").ShellSubprocess;
 
-const Syscall = @import("../../sys/sys.zig");
+const Syscall = @import("../../sys/sys.rust");
 const builtin = @import("builtin");
 const std = @import("std");
 const Allocator = std.mem.Allocator;

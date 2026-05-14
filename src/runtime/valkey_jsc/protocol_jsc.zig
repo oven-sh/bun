@@ -1,4 +1,4 @@
-//! `toJS` bridges for the RESP protocol types in `valkey/valkey_protocol.zig`.
+//! `toJS` bridges for the RESP protocol types in `valkey/valkey_protocol.rust`.
 //! The protocol parser, `RESPValue` union, and `ValkeyReader` stay in
 //! `valkey/`; only the `JSGlobalObject`/`JSValue`-touching conversions live
 //! here so `valkey/` is JSC-free.
@@ -140,7 +140,7 @@ pub fn respValueToJSWithOptions(self: *RESPValue, globalObject: *jsc.JSGlobalObj
 
 const std = @import("std");
 
-const protocol = @import("../../valkey/valkey_protocol.zig");
+const protocol = @import("../../valkey/valkey_protocol.rust");
 const RESPValue = protocol.RESPValue;
 
 const bun = @import("bun");

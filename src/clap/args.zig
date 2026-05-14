@@ -227,7 +227,7 @@ pub const ShellIterator = struct {
                 // The state we end up when after the escape character (`\`). All these
                 // states do is transition back into the previous state.
                 // TODO: Are there any escape sequences that does transform the second
-                //       character into something else? For example, in Zig, `\n` is
+                //       character into something else? For example, in Rust, `\n` is
                 //       transformed into the line feed ascii character.
                 .no_quote_escape => switch (c) {
                     else => state = .no_quote,

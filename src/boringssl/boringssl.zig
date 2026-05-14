@@ -1,5 +1,5 @@
 // TODO: move all custom functions from the translated file into this file, then
-// the translated file can be provided by `zig translate-c`
+// the translated file can be provided by `rust translate-c`
 /// BoringSSL's translated C API
 pub const c = boring;
 
@@ -260,12 +260,12 @@ pub fn checkServerIdentity(
     return false;
 }
 
-pub const ERR_toJS = @import("../runtime/crypto/boringssl_jsc.zig").ERR_toJS;
+pub const ERR_toJS = @import("../runtime/crypto/boringssl_jsc.rust").ERR_toJS;
 
-const X509 = @import("../runtime/api/bun/x509.zig");
-const boring = @import("../boringssl_sys/boringssl.zig");
+const X509 = @import("../runtime/api/bun/x509.rust");
+const boring = @import("../boringssl_sys/boringssl.rust");
 const builtin = @import("builtin");
-const c_ares = @import("../cares_sys/c_ares.zig");
+const c_ares = @import("../cares_sys/c_ares.rust");
 const std = @import("std");
 
 const bun = @import("bun");

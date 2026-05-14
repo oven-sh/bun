@@ -217,7 +217,7 @@ pub const Runner = struct {
     const VisitMap = std.AutoHashMapUnmanaged(jsc.JSValue, Expr);
 
     threadlocal var args_buf: [3]js.JSObjectRef = undefined;
-    threadlocal var exception_holder: jsc.ZigException.Holder = undefined;
+    threadlocal var exception_holder: jsc.RustException.Holder = undefined;
     pub const MacroError = error{ MacroFailed, OutOfMemory } || ToJSError || bun.JSError;
 
     pub const Run = struct {
@@ -442,7 +442,7 @@ pub const Runner = struct {
                     // if (console_tag.cell == .JSDate) {
                     //     // in the code for printing dates, it never exceeds this amount
                     //     var iso_string_buf = this.allocator.alloc(u8, 36) catch unreachable;
-                    //     var str = jsc.ZigString.init("");
+                    //     var str = jsc.RustString.init("");
                     //     value.jsonStringify(this.global, 0, &str);
                     //     var out_buf: []const u8 = std.fmt.bufPrint(iso_string_buf, "{}", .{str}) catch "";
                     //     if (out_buf.len > 2) {
@@ -521,7 +521,7 @@ pub const Runner = struct {
     ) MacroError!Expr {
         if (comptime Environment.isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{s}<r>", .{function_name});
 
-        exception_holder = jsc.ZigException.Holder.init();
+        exception_holder = jsc.RustException.Holder.init();
         var js_args: []jsc.JSValue = &.{};
         var js_processed_args_len: usize = 0;
         defer {
@@ -606,15 +606,15 @@ pub const Runner = struct {
 
 const string = []const u8;
 
-const DotEnv = @import("../dotenv/env_loader.zig");
+const DotEnv = @import("../dotenv/env_loader.rust");
 const std = @import("std");
 
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const MacroRemapEntry = @import("../resolver/package_json.zig").MacroImportReplacementMap;
+const MacroRemap = @import("../resolver/package_json.rust").MacroMap;
+const MacroRemapEntry = @import("../resolver/package_json.rust").MacroImportReplacementMap;
 
-const ResolveResult = @import("../resolver/resolver.zig").Result;
-const Resolver = @import("../resolver/resolver.zig").Resolver;
-const isPackagePath = @import("../resolver/resolver.zig").isPackagePath;
+const ResolveResult = @import("../resolver/resolver.rust").Result;
+const Resolver = @import("../resolver/resolver.rust").Resolver;
+const isPackagePath = @import("../resolver/resolver.rust").isPackagePath;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

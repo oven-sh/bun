@@ -686,7 +686,7 @@ pub fn Slice(
     const embedded_len = c.embedded_len;
 
     if (max_len == 0) {
-        @compileError("Slice with max_len == 0 is not supported due to Zig compiler bug");
+        @compileError("Slice with max_len == 0 is not supported due to Rust compiler bug");
     }
 
     if (max_offset == 0 and !(embedded_len == max_len or
@@ -852,7 +852,7 @@ pub fn Slice(
 
         // Note: while it would be better for modularity to pass `backing`
         // in, this makes for a nicer API without having to wrap Slice.
-        const hardcoded_backing = @import("./get.zig").backingFor(c.name);
+        const hardcoded_backing = @import("./get.rust").backingFor(c.name);
 
         fn _value(self: *const Self) []const T {
             return self._slice(hardcoded_backing);
@@ -1454,7 +1454,7 @@ pub fn Union(comptime c: config.Field, comptime packing: config.Table.Packing) t
     };
 }
 
-/// This is used in build/tables.zig but is exposed to allow extension to use
+/// This is used in build/tables.rust but is exposed to allow extension to use
 /// it as well. Use this to initialize non-slice fields, and use
 /// `sliceFieldInit` for slice fields.
 pub fn fieldInit(
@@ -1492,7 +1492,7 @@ pub fn fieldInit(
     }
 }
 
-/// This is used in build/tables.zig but is exposed to allow extension to use
+/// This is used in build/tables.rust but is exposed to allow extension to use
 /// it as well. Use this to initialize "var len" fields.
 pub fn sliceFieldInit(
     comptime field: []const u8,
@@ -1522,6 +1522,6 @@ pub fn sliceFieldInit(
     }
 }
 
-const config = @import("./config.zig");
+const config = @import("./config.rust");
 const std = @import("std");
 const Allocator = std.mem.Allocator;

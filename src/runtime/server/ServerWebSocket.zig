@@ -1080,8 +1080,8 @@ pub fn close(
         break :brk try args.ptr[0].coerce(i32, globalThis);
     };
 
-    var message_value: ZigString.Slice = brk: {
-        if (args.ptr[1] == .zero or args.ptr[1].isUndefined()) break :brk ZigString.Slice.empty;
+    var message_value: RustString.Slice = brk: {
+        if (args.ptr[1] == .zero or args.ptr[1].isUndefined()) break :brk RustString.Slice.empty;
         break :brk try args.ptr[1].toSliceOrNull(globalThis);
     };
 
@@ -1295,4 +1295,4 @@ const WebSocketServer = bun.api.server.WebSocketServerContext;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

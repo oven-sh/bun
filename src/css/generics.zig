@@ -646,7 +646,7 @@ pub fn hash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash) void {
     };
 }
 
-const css = @import("./css_parser.zig");
+const css = @import("./css_parser.rust");
 const CSSInteger = css.CSSInteger;
 const CSSIntegerFns = css.CSSIntegerFns;
 const CSSNumber = css.CSSNumber;

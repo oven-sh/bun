@@ -2,22 +2,22 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     const object = JSValue.createEmptyObject(globalThis, 4);
     object.put(
         globalThis,
-        ZigString.static("html"),
+        RustString.static("html"),
         jsc.JSFunction.create(globalThis, "html", renderToHTML, 1, .{}),
     );
     object.put(
         globalThis,
-        ZigString.static("ansi"),
+        RustString.static("ansi"),
         jsc.JSFunction.create(globalThis, "ansi", renderToAnsi, 2, .{}),
     );
     object.put(
         globalThis,
-        ZigString.static("render"),
+        RustString.static("render"),
         jsc.JSFunction.create(globalThis, "render", render, 3, .{}),
     );
     object.put(
         globalThis,
-        ZigString.static("react"),
+        RustString.static("react"),
         jsc.JSFunction.create(globalThis, "react", renderReact, 3, .{}),
     );
     return object;
@@ -479,8 +479,8 @@ const ParseRenderer = struct {
         } else {
             const obj = JSValue.createEmptyObject(self.#globalObject, 2);
             self.#marked_args.append(obj);
-            obj.put(self.#globalObject, ZigString.static("type"), type_val);
-            obj.put(self.#globalObject, ZigString.static("props"), props);
+            obj.put(self.#globalObject, RustString.static("type"), type_val);
+            obj.put(self.#globalObject, RustString.static("props"), props);
             return obj;
         }
     }
@@ -566,30 +566,30 @@ const ParseRenderer = struct {
         switch (block_type) {
             .h => {
                 if (slug) |s| {
-                    props.put(g, ZigString.static("id"), try bun.String.createUTF8ForJS(g, s));
+                    props.put(g, RustString.static("id"), try bun.String.createUTF8ForJS(g, s));
                 }
             },
             .ol => {
-                props.put(g, ZigString.static("start"), JSValue.jsNumber(entry.data));
+                props.put(g, RustString.static("start"), JSValue.jsNumber(entry.data));
             },
             .li => {
                 const task_mark = md.types.taskMarkFromData(entry.data);
                 if (task_mark != 0) {
-                    props.put(g, ZigString.static("checked"), JSValue.jsBoolean(md.types.isTaskChecked(task_mark)));
+                    props.put(g, RustString.static("checked"), JSValue.jsBoolean(md.types.isTaskChecked(task_mark)));
                 }
             },
             .code => {
                 if (entry.flags & md.BLOCK_FENCED_CODE != 0) {
                     const lang = extractLanguage(self.#src_text, entry.data);
                     if (lang.len > 0) {
-                        props.put(g, ZigString.static("language"), try bun.String.createUTF8ForJS(g, lang));
+                        props.put(g, RustString.static("language"), try bun.String.createUTF8ForJS(g, lang));
                     }
                 }
             },
             .th, .td => {
                 const alignment = md.types.alignmentFromData(entry.data);
                 if (md.types.alignmentName(alignment)) |align_str| {
-                    props.put(g, ZigString.static("align"), try bun.String.createUTF8ForJS(g, align_str));
+                    props.put(g, RustString.static("align"), try bun.String.createUTF8ForJS(g, align_str));
                 }
             },
             else => {},
@@ -597,7 +597,7 @@ const ParseRenderer = struct {
 
         // Set children (skip for void elements)
         if (block_type != .hr) {
-            props.put(g, ZigString.static("children"), entry.children);
+            props.put(g, RustString.static("children"), entry.children);
         }
 
         const obj = self.createElement(type_val, props);
@@ -661,22 +661,22 @@ const ParseRenderer = struct {
         // Set metadata props
         switch (span_type) {
             .a => {
-                props.put(g, ZigString.static("href"), try bun.String.createUTF8ForJS(g, entry.detail.href));
+                props.put(g, RustString.static("href"), try bun.String.createUTF8ForJS(g, entry.detail.href));
                 if (entry.detail.title.len > 0) {
-                    props.put(g, ZigString.static("title"), try bun.String.createUTF8ForJS(g, entry.detail.title));
+                    props.put(g, RustString.static("title"), try bun.String.createUTF8ForJS(g, entry.detail.title));
                 }
             },
             .img => {
-                props.put(g, ZigString.static("src"), try bun.String.createUTF8ForJS(g, entry.detail.href));
+                props.put(g, RustString.static("src"), try bun.String.createUTF8ForJS(g, entry.detail.href));
                 if (entry.detail.title.len > 0) {
-                    props.put(g, ZigString.static("title"), try bun.String.createUTF8ForJS(g, entry.detail.title));
+                    props.put(g, RustString.static("title"), try bun.String.createUTF8ForJS(g, entry.detail.title));
                 }
             },
             .wikilink => {
-                props.put(g, ZigString.static("target"), try bun.String.createUTF8ForJS(g, entry.detail.href));
+                props.put(g, RustString.static("target"), try bun.String.createUTF8ForJS(g, entry.detail.href));
             },
             .latexmath_display => {
-                props.put(g, ZigString.static("display"), .true);
+                props.put(g, RustString.static("display"), .true);
             },
             else => {},
         }
@@ -687,7 +687,7 @@ const ParseRenderer = struct {
             if (len == 1) {
                 const child = try entry.children.getIndex(g, 0);
                 if (child.isString()) {
-                    props.put(g, ZigString.static("alt"), child);
+                    props.put(g, RustString.static("alt"), child);
                 }
             } else if (len > 1) {
                 // Multiple children — concatenate string parts
@@ -702,11 +702,11 @@ const ParseRenderer = struct {
                     }
                 }
                 if (alt_buf.items.len > 0) {
-                    props.put(g, ZigString.static("alt"), try bun.String.createUTF8ForJS(g, alt_buf.items));
+                    props.put(g, RustString.static("alt"), try bun.String.createUTF8ForJS(g, alt_buf.items));
                 }
             }
         } else {
-            props.put(g, ZigString.static("children"), entry.children);
+            props.put(g, RustString.static("children"), entry.children);
         }
 
         const obj = self.createElement(type_val, props);
@@ -1097,9 +1097,9 @@ const JsCallbackRenderer = struct {
                 const slug = self.#heading_tracker.leaveHeading(self.#allocator);
                 const field_count: usize = if (slug != null) 2 else 1;
                 const obj = JSValue.createEmptyObject(g, field_count);
-                obj.put(g, ZigString.static("level"), JSValue.jsNumber(data));
+                obj.put(g, RustString.static("level"), JSValue.jsNumber(data));
                 if (slug) |s| {
-                    obj.put(g, ZigString.static("id"), try bun.String.createUTF8ForJS(g, s));
+                    obj.put(g, RustString.static("id"), try bun.String.createUTF8ForJS(g, s));
                 }
                 return obj;
             },
@@ -1114,7 +1114,7 @@ const JsCallbackRenderer = struct {
                     const lang = extractLanguage(self.#src_text, data);
                     if (lang.len > 0) {
                         const obj = JSValue.createEmptyObject(g, 1);
-                        obj.put(g, ZigString.static("language"), try bun.String.createUTF8ForJS(g, lang));
+                        obj.put(g, RustString.static("language"), try bun.String.createUTF8ForJS(g, lang));
                         return obj;
                     }
                 }
@@ -1169,9 +1169,9 @@ const JsCallbackRenderer = struct {
                 // second slot, so just fall back to the generic path here —
                 // images are rare enough that it doesn't matter.
                 const obj = JSValue.createEmptyObject(g, 2);
-                obj.put(g, ZigString.static("src"), try bun.String.createUTF8ForJS(g, detail.href));
+                obj.put(g, RustString.static("src"), try bun.String.createUTF8ForJS(g, detail.href));
                 if (detail.title.len > 0) {
-                    obj.put(g, ZigString.static("title"), try bun.String.createUTF8ForJS(g, detail.title));
+                    obj.put(g, RustString.static("title"), try bun.String.createUTF8ForJS(g, detail.title));
                 }
                 return obj;
             },
@@ -1289,4 +1289,4 @@ const md = bun.md;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;

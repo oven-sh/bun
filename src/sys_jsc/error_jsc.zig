@@ -14,7 +14,7 @@ pub fn toJSWithAsyncStack(this: Error, ptr: *jsc.JSGlobalObject, promise: *jsc.J
 
 pub const TestingAPIs = struct {
     /// Exercises Error.name() with from_libuv=true so tests can feed the
-    /// negated-UV-code errno values that node_fs.zig stores and verify the
+    /// negated-UV-code errno values that node_fs.rust stores and verify the
     /// integer overflow at translateUVErrorToE(-code) is fixed. Windows-only.
     pub fn sysErrorNameFromLibuv(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const arguments = callframe.arguments();

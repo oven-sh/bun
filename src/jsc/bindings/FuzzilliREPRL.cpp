@@ -2,7 +2,7 @@
 #include "JavaScriptCore/CallFrame.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/JSGlobalObject.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "root.h"
 #include "wtf/text/WTFString.h"
 #include <cerrno>
@@ -255,7 +255,7 @@ JSC_DEFINE_HOST_FUNCTION(jsResetCoverage, (JSC::JSGlobalObject * globalObject, J
 }
 
 // Register the fuzzilli() function on a Bun global object
-void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
+void Bun__REPRL__registerFuzzilliFunctions(Rust::GlobalObject* globalObject)
 {
     JSC::VM& vm = globalObject->vm();
 

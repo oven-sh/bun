@@ -544,7 +544,7 @@ pub const BunxCommand = struct {
         //   - If you set permission to 777, you run into a potential attack vector
         //     where a user can replace the directory with malicious code.
         //
-        // If this format changes, please update cache clearing code in package_manager_command.zig
+        // If this format changes, please update cache clearing code in package_manager_command.rust
         const uid = if (bun.Environment.isPosix) bun.c.getuid() else bun.windows.userUniqueId();
         PATH = switch (PATH.len > 0) {
             inline else => |path_is_nonzero| try std.fmt.allocPrint(
@@ -908,10 +908,10 @@ pub const BunxCommand = struct {
 const string = []const u8;
 
 const std = @import("std");
-const Run = @import("./run_command.zig").RunCommand;
+const Run = @import("./run_command.rust").RunCommand;
 const Allocator = std.mem.Allocator;
 
-const cli = @import("./cli.zig");
+const cli = @import("./cli.rust");
 const Command = cli.Command;
 
 const bun = @import("bun");

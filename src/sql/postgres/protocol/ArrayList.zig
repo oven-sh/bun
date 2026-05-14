@@ -15,5 +15,5 @@ pub fn pwrite(this: @This(), bytes: []const u8, i: usize) AnyPostgresError!void 
 pub const Writer = NewWriter(@This());
 
 const std = @import("std");
-const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
-const NewWriter = @import("./NewWriter.zig").NewWriter;
+const AnyPostgresError = @import("../AnyPostgresError.rust").AnyPostgresError;
+const NewWriter = @import("./NewWriter.rust").NewWriter;

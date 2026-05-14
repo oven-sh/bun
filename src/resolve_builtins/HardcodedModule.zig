@@ -420,8 +420,8 @@ pub const HardcodedModule = enum {
 };
 
 const bun = @import("bun");
-const options = @import("../bundler/options.zig");
+const options = @import("../bundler/options.rust");
 const std = @import("std");
 
-const ast = @import("../options_types/import_record.zig");
+const ast = @import("../options_types/import_record.rust");
 const ImportRecord = ast.ImportRecord;

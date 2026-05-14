@@ -1,4 +1,4 @@
-pub const css = @import("./css_parser.zig");
+pub const css = @import("./css_parser.rust");
 
 const MediaRule = css.css_rules.media.MediaRule;
 const MediaQuery = css.media_query.MediaQuery;

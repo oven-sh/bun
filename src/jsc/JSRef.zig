@@ -9,7 +9,7 @@
 /// corresponding JavaScript wrapper object. The reference can be upgraded to "strong" when
 /// the native object has pending work or active connections, and downgraded to "weak" when idle:
 ///
-/// ```zig
+/// ```rust
 /// const MyNativeObject = struct {
 ///     this_value: jsc.JSRef = .empty(),
 ///     connection: SomeConnection,

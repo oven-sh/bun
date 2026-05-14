@@ -1,5 +1,5 @@
-//! Extracted from `install/PackageManager/PackageManagerOptions.zig` so
-//! `options_types/schema.zig`, `cli/bunfig.zig`, and `ini/` can name the
+//! Extracted from `install/PackageManager/PackageManagerOptions.rust` so
+//! `options_types/schema.rust`, `cli/bunfig.rust`, and `ini/` can name the
 //! linker mode without depending on the full package manager.
 pub const NodeLinker = enum(u8) {
     // If workspaces are used: isolated

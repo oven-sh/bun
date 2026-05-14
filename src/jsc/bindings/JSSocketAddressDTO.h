@@ -3,7 +3,7 @@
 #include "headers.h"
 #include "root.h"
 #include "JavaScriptCore/JSObjectInlines.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 using namespace JSC;
 
@@ -11,7 +11,7 @@ namespace Bun {
 namespace JSSocketAddressDTO {
 
 Structure* createStructure(VM& vm, JSGlobalObject* globalObject);
-JSObject* create(Zig::GlobalObject* globalObject, JSString* value, int port, bool isIPv6);
+JSObject* create(Rust::GlobalObject* globalObject, JSString* value, int port, bool isIPv6);
 
 } // namespace JSSocketAddress
 } // namespace Bun

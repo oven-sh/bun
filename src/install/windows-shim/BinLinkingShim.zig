@@ -9,7 +9,7 @@
 //! [WSTR:program][u16:0][WSTR:args][u32:bin_path_byte_len][u32:arg_byte_len]
 //! - args always ends with a trailing space
 //!
-//! See 'bun_shim_impl.zig' for more details on how this file is consumed.
+//! See 'bun_shim_impl.rust' for more details on how this file is consumed.
 
 fn eqlComptime(a: []const u8, comptime b: []const u8) bool {
     return std.mem.eql(u8, a, b);

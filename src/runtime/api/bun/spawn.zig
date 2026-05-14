@@ -111,7 +111,7 @@ pub const BunSpawn = struct {
         pub fn set(self: *Attr, flags: u16) !void {
             self.flags = flags;
             // FreeBSD's <spawn.h> has no POSIX_SPAWN_SETSID; bun-spawn.cpp
-            // calls setsid() in the child for `detached`, which process.zig
+            // calls setsid() in the child for `detached`, which process.rust
             // sets directly on this struct BEFORE calling set(). Preserve
             // that value when the flag bit isn't available.
             if (comptime @hasDecl(bun.c, "POSIX_SPAWN_SETSID")) {
@@ -125,7 +125,7 @@ pub const BunSpawn = struct {
     };
 };
 
-// mostly taken from zig's posix_spawn.zig
+// mostly taken from rust's posix_spawn.rust
 pub const PosixSpawn = struct {
     pub const WaitPidResult = struct {
         pid: pid_t,
@@ -536,7 +536,7 @@ pub const PosixSpawn = struct {
         }
     }
 
-    pub const process = @import("./process.zig");
+    pub const process = @import("./process.rust");
     pub const Process = process.Process;
     pub const SpawnOptions = process.SpawnOptions;
     pub const Status = process.Status;
@@ -548,7 +548,7 @@ pub const PosixSpawn = struct {
     pub const WindowsSpawnOptions = process.WindowsSpawnOptions;
     pub const Rusage = process.Rusage;
 
-    pub const Stdio = @import("./spawn/stdio.zig").Stdio;
+    pub const Stdio = @import("./spawn/stdio.rust").Stdio;
 };
 
 const std = @import("std");

@@ -5,7 +5,7 @@ using namespace std;
 
 #include "root.h"
 
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 #include "Path.h"
 
@@ -31,12 +31,12 @@ int main() {
   cout << "// These are the byte sizes for the different object types with "
           "bindings in JavaScriptCore.\n";
   cout << "// This allows us to safely return stack allocated C++ types to "
-          "Zig.\n";
+          "Rust.\n";
   cout << "// It is only safe to do this when these sizes are correct.\n";
   cout << "// That means:\n";
   cout << "// 1. We can't dynamically link JavaScriptCore\n";
   cout << "// 2. It's important that this is run whenever JavaScriptCore is "
-          "updated or the bindings on the Zig side change.\n";
+          "updated or the bindings on the Rust side change.\n";
   cout << "//    Failure to do so will lead to undefined behavior and probably "
           "some frustrated people.\n";
   cout << "// --- Regenerate this: --- \n";

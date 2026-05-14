@@ -68,7 +68,7 @@ pub fn isOptionLikeValue(value: String) bool {
 /// Find the long option associated with a short option. Looks for a configured
 /// `short` and returns the short option itself if a long option is not found.
 /// Example:
-/// ```zig
+/// ```rust
 /// findOptionByShortName('a', {}) // returns 'a'
 /// findOptionByShortName('b', {
 ///   options: { bar: { short: 'b' } }

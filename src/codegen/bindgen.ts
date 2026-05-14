@@ -1,7 +1,7 @@
 // The binding generator to rule them all.
-// Converts binding definition files (.bind.ts) into C++ and Zig code.
+// Converts binding definition files (.bind.ts) into C++ and Rust code.
 //
-// Generated bindings are available in `bun.generated.<basename>.*` in Zig,
+// Generated bindings are available in `bun.generated.<basename>.*` in Rust,
 // or `Generated::<basename>::*` in C++ from including `Generated<basename>.h`.
 import assert from "node:assert";
 import fs from "node:fs";
@@ -60,7 +60,7 @@ function resolveVariantStrategies(vari: Variant, name: string) {
     const abiType = !isNullable && arg.type.canDirectlyMapToCAbi();
     if (abiType) {
       arg.loweringStrategy = {
-        // This does not work in release builds, possibly due to a Zig 0.13 bug
+        // This does not work in release builds, possibly due to a Rust 0.13 bug
         // regarding by-value extern structs in C functions.
         // type: cAbiTypeInfo(abiType)[0] > 8 ? "c-abi-pointer" : "c-abi-value",
         // Always pass an argument by-pointer for now.
@@ -327,7 +327,7 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
 
     if (arg.type.isVirtualArgument()) {
       switch (arg.type.kind) {
-        case "zigVirtualMachine":
+        case "rustVirtualMachine":
         case "globalObject":
           addCommaAfterArgument();
           cpp.add("global");
@@ -599,7 +599,7 @@ function getArgumentExceptionHandler(type: TypeImpl, argumentIndex: number, name
     }
   }
   switch (type.kind) {
-    case "zigEnum":
+    case "rustEnum":
     case "stringEnum": {
       return {
         params: `[](JSC::JSGlobalObject& global, JSC::ThrowScope& scope)`,
@@ -719,21 +719,21 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
   cpp.line();
 }
 
-function emitZigStruct(type: TypeImpl) {
-  zig.add(`pub const ${type.name()} = `);
+function emitRustStruct(type: TypeImpl) {
+  rust.add(`pub const ${type.name()} = `);
 
   switch (type.kind) {
-    case "zigEnum":
+    case "rustEnum":
     case "stringEnum": {
       const signPrefix = "u";
       const tagType = `${signPrefix}${alignForward(type.data.length, 8)}`;
-      zig.line(`enum(${tagType}) {`);
-      zig.indent();
+      rust.line(`enum(${tagType}) {`);
+      rust.indent();
       for (const value of type.data) {
-        zig.line(`${snake(value)},`);
+        rust.line(`${snake(value)},`);
       }
-      zig.dedent();
-      zig.line("};");
+      rust.dedent();
+      rust.line("};");
       return;
     }
   }
@@ -741,32 +741,32 @@ function emitZigStruct(type: TypeImpl) {
   const externLayout = type.canDirectlyMapToCAbi();
   if (externLayout) {
     if (typeof externLayout === "string") {
-      zig.line(externLayout + ";");
+      rust.line(externLayout + ";");
     } else {
-      externLayout.emitZig(zig, "with-semi");
+      externLayout.emitRust(rust, "with-semi");
     }
     return;
   }
 
   switch (type.kind) {
     case "dictionary": {
-      zig.line("struct {");
-      zig.indent();
+      rust.line("struct {");
+      rust.indent();
       for (const { key, type: fieldType } of type.data as DictionaryField[]) {
-        zig.line(`    ${snake(key)}: ${zigTypeName(fieldType)},`);
+        rust.line(`    ${snake(key)}: ${rustTypeName(fieldType)},`);
       }
-      zig.dedent();
-      zig.line(`};`);
+      rust.dedent();
+      rust.line(`};`);
       break;
     }
     default: {
-      throw new Error(`TODO: emitZigStruct for Type ${type.kind}`);
+      throw new Error(`TODO: emitRustStruct for Type ${type.kind}`);
     }
   }
 }
 
 function emitCppStructHeader(w: CodeWriter, type: TypeImpl) {
-  if (type.kind === "zigEnum" || type.kind === "stringEnum") {
+  if (type.kind === "rustEnum" || type.kind === "stringEnum") {
     emitCppEnumHeader(w, type);
     return;
   }
@@ -785,13 +785,13 @@ function emitCppStructHeader(w: CodeWriter, type: TypeImpl) {
 
   switch (type.kind) {
     default: {
-      throw new Error(`TODO: emitZigStruct for Type ${type.kind}`);
+      throw new Error(`TODO: emitRustStruct for Type ${type.kind}`);
     }
   }
 }
 
 function emitCppEnumHeader(w: CodeWriter, type: TypeImpl) {
-  assert(type.kind === "zigEnum" || type.kind === "stringEnum");
+  assert(type.kind === "rustEnum" || type.kind === "stringEnum");
 
   assert(type.kind === "stringEnum"); // TODO
   assert(type.data.length > 0);
@@ -808,7 +808,7 @@ function emitCppEnumHeader(w: CodeWriter, type: TypeImpl) {
 
 // This function assumes in the WebCore namespace
 function emitConvertEnumFunction(w: CodeWriter, type: TypeImpl) {
-  assert(type.kind === "zigEnum" || type.kind === "stringEnum");
+  assert(type.kind === "rustEnum" || type.kind === "stringEnum");
   assert(type.kind === "stringEnum"); // TODO
   assert(type.data.length > 0);
 
@@ -863,15 +863,15 @@ function emitConvertEnumFunction(w: CodeWriter, type: TypeImpl) {
   w.line();
 }
 
-function zigTypeName(type: TypeImpl): string {
-  let name = zigTypeNameInner(type);
+function rustTypeName(type: TypeImpl): string {
+  let name = rustTypeNameInner(type);
   if (type.flags.optional) {
     name = "?" + name;
   }
   return name;
 }
 
-function zigTypeNameInner(type: TypeImpl): string {
+function rustTypeNameInner(type: TypeImpl): string {
   if (type.lowersToNamedType()) {
     const namespace = typeHashToNamespace.get(type.hash());
     return namespace ? `${namespace}.${type.name()}` : type.name();
@@ -887,7 +887,7 @@ function zigTypeNameInner(type: TypeImpl): string {
     case "usize":
       return "usize";
     case "globalObject":
-    case "zigVirtualMachine":
+    case "rustVirtualMachine":
       return "*jsc.JSGlobalObject";
     default:
       const cAbiType = type.canDirectlyMapToCAbi();
@@ -897,7 +897,7 @@ function zigTypeNameInner(type: TypeImpl): string {
         }
         return cAbiType.name();
       }
-      throw new Error(`TODO: emitZigTypeName for Type ${type.kind}`);
+      throw new Error(`TODO: emitRustTypeName for Type ${type.kind}`);
   }
 }
 
@@ -915,7 +915,7 @@ function returnStrategyCppType(strategy: ReturnStrategy): string {
   }
 }
 
-function returnStrategyZigType(strategy: ReturnStrategy): string {
+function returnStrategyRustType(strategy: ReturnStrategy): string {
   switch (strategy.type) {
     case "basic-out-param":
     case "void":
@@ -924,12 +924,12 @@ function returnStrategyZigType(strategy: ReturnStrategy): string {
       return "jsc.JSValue";
     default:
       throw new Error(
-        `TODO: returnStrategyZigType for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`,
+        `TODO: returnStrategyRustType for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`,
       );
   }
 }
 
-function emitNullableZigDecoder(w: CodeWriter, prefix: string, type: TypeImpl, children: ArgStrategyChildItem[]) {
+function emitNullableRustDecoder(w: CodeWriter, prefix: string, type: TypeImpl, children: ArgStrategyChildItem[]) {
   assert(children.length > 0);
   const indent = children[0].type !== "c-abi-compatible";
   w.add(`if (${prefix}_set)`);
@@ -938,7 +938,7 @@ function emitNullableZigDecoder(w: CodeWriter, prefix: string, type: TypeImpl, c
   } else {
     w.add(` `);
   }
-  emitComplexZigDecoder(w, prefix + "_value", type, children);
+  emitComplexRustDecoder(w, prefix + "_value", type, children);
   if (indent) {
     w.line();
     w.dedent();
@@ -955,7 +955,7 @@ function emitNullableZigDecoder(w: CodeWriter, prefix: string, type: TypeImpl, c
   if (indent) w.dedent();
 }
 
-function emitComplexZigDecoder(w: CodeWriter, prefix: string, type: TypeImpl, children: ArgStrategyChildItem[]) {
+function emitComplexRustDecoder(w: CodeWriter, prefix: string, type: TypeImpl, children: ArgStrategyChildItem[]) {
   assert(children.length > 0);
   if (children[0].type === "c-abi-compatible") {
     w.add(`${prefix}`);
@@ -964,7 +964,7 @@ function emitComplexZigDecoder(w: CodeWriter, prefix: string, type: TypeImpl, ch
 
   switch (type.kind) {
     default:
-      throw new Error(`TODO: emitComplexZigDecoder for Type ${type.kind}`);
+      throw new Error(`TODO: emitComplexRustDecoder for Type ${type.kind}`);
   }
 }
 
@@ -1163,19 +1163,19 @@ const unsortedFiles = readdirRecursiveWithExclusionsAndExtensionsSync(src, ["nod
 
 // Sort for deterministic output
 for (const fileName of [...unsortedFiles].sort()) {
-  const zigFile = path.relative(src, fileName.replace(/\.bind\.ts$/, ".zig"));
-  const zigFilePath = path.join(src, zigFile);
-  let file = files.get(zigFile);
-  if (!fs.existsSync(zigFilePath)) {
+  const rustFile = path.relative(src, fileName.replace(/\.bind\.ts$/, ".rust"));
+  const rustFilePath = path.join(src, rustFile);
+  let file = files.get(rustFile);
+  if (!fs.existsSync(rustFilePath)) {
     // It would be nice if this would generate the file with the correct boilerplate
     const bindName = path.basename(fileName);
     throw new Error(
-      `${bindName} is missing a corresponding Zig file at ${zigFile}. Please create it and make sure it matches signatures in ${bindName}.`,
+      `${bindName} is missing a corresponding Rust file at ${rustFile}. Please create it and make sure it matches signatures in ${bindName}.`,
     );
   }
   if (!file) {
     file = { functions: [], typedefs: [] };
-    files.set(zigFile, file);
+    files.set(rustFile, file);
   }
 
   const exports = import.meta.require(fileName);
@@ -1205,24 +1205,24 @@ for (const fileName of [...unsortedFiles].sort()) {
   }
 }
 
-const zig = new CodeWriter();
-const zigInternal = new CodeWriter();
+const rust = new CodeWriter();
+const rustInternal = new CodeWriter();
 // TODO: split each *.bind file into a separate .cpp file
 const cpp = new CodeWriter();
 const cppInternal = new CodeWriter();
 const headers = new Set<string>();
 
-zig.line('const bun = @import("bun");');
-zig.line("const jsc = bun.jsc;");
-zig.line("const JSHostFunctionType = jsc.JSHostFn;\n");
+rust.line('const bun = @import("bun");');
+rust.line("const jsc = bun.jsc;");
+rust.line("const JSHostFunctionType = jsc.JSHostFn;\n");
 
-zigInternal.line("const binding_internals = struct {");
-zigInternal.indent();
+rustInternal.line("const binding_internals = struct {");
+rustInternal.indent();
 
 cpp.line("namespace Generated {");
 cpp.line();
 
-cppInternal.line('// These "Arguments" definitions are for communication between C++ and Zig.');
+cppInternal.line('// These "Arguments" definitions are for communication between C++ and Rust.');
 cppInternal.line('// Field layout depends on implementation details in "bindgen.ts", and');
 cppInternal.line("// is not intended for usage outside generated binding code.");
 
@@ -1237,17 +1237,17 @@ headers.add("JSDOMExceptionHandling.h");
 headers.add("JSDOMOperation.h");
 
 /**
- * Indexed by `zigFile`, values are the generated zig identifier name, without
+ * Indexed by `rustFile`, values are the generated rust identifier name, without
  * collisions.
  */
 const fileMap = new Map<string, string>();
 const fileNames = new Set<string>();
 
 for (const [filename, { functions, typedefs }] of files) {
-  const basename = path.basename(filename, ".zig");
+  const basename = path.basename(filename, ".rust");
   let varName = basename;
   if (fileNames.has(varName)) {
-    throw new Error(`File name collision: ${basename}.zig`);
+    throw new Error(`File name collision: ${basename}.rust`);
   }
   fileNames.add(varName);
   fileMap.set(filename, varName);
@@ -1275,7 +1275,7 @@ for (const type of typeHashToReachableType.values()) {
       emitConvertDictionaryFunction(type);
       break;
     case "stringEnum":
-    case "zigEnum":
+    case "rustEnum":
       needsWebCore = true;
       break;
   }
@@ -1284,14 +1284,14 @@ for (const type of typeHashToReachableType.values()) {
 for (const [filename, { functions, typedefs }] of files) {
   const namespaceVar = fileMap.get(filename)!;
   assert(namespaceVar, `namespaceVar not found for ${filename}, ${inspect(fileMap)}`);
-  zigInternal.line(`const import_${namespaceVar} = @import(${str("../../" + filename)});`);
+  rustInternal.line(`const import_${namespaceVar} = @import(${str("../../" + filename)});`);
 
-  zig.line(`/// Generated for "src/${filename}"`);
-  zig.line(`pub const ${namespaceVar} = struct {`);
-  zig.indent();
+  rust.line(`/// Generated for "src/${filename}"`);
+  rust.line(`pub const ${namespaceVar} = struct {`);
+  rust.indent();
 
   for (const fn of functions) {
-    cpp.line(`// Dispatch for \"fn ${zid(fn.name)}(...)\" in \"src/${fn.zigFile}\"`);
+    cpp.line(`// Dispatch for \"fn ${zid(fn.name)}(...)\" in \"src/${fn.rustFile}\"`);
     const externName = extJsFunction(namespaceVar, fn.name);
 
     // C++ forward declarations
@@ -1354,7 +1354,7 @@ for (const [filename, { functions, typedefs }] of files) {
     }
 
     // Public function
-    zig.line(
+    rust.line(
       `pub const ${zid("js" + cap(fn.name))} = @extern(*const JSHostFunctionType, .{ .name = ${str(externName)} });`,
     );
 
@@ -1376,7 +1376,7 @@ for (const [filename, { functions, typedefs }] of files) {
     cpp.line(`}`);
     cpp.line();
 
-    // Generated Zig dispatch functions
+    // Generated Rust dispatch functions
     variNum = 1;
     for (const vari of fn.variants) {
       const dispatchName = extDispatchVariant(namespaceVar, fn.name, variNum);
@@ -1384,8 +1384,8 @@ for (const [filename, { functions, typedefs }] of files) {
       const returnStrategy = vari.returnStrategy!;
       const { communicationStruct } = vari;
       if (communicationStruct) {
-        zigInternal.add(`const ${communicationStruct.name()} = `);
-        communicationStruct.emitZig(zigInternal, "with-semi");
+        rustInternal.add(`const ${communicationStruct.name()} = `);
+        communicationStruct.emitRust(rustInternal, "with-semi");
       }
 
       assert(vari.globalObjectArg !== undefined);
@@ -1406,19 +1406,19 @@ for (const [filename, { functions, typedefs }] of files) {
           globalObjectArg = argName;
         }
         argNum += 1;
-        arg.zigMappedName = argName;
+        arg.rustMappedName = argName;
         const strategy = arg.loweringStrategy!;
         switch (strategy.type) {
           case "c-abi-pointer":
-            args.push(`${argName}: *const ${zigTypeName(arg.type)}`);
+            args.push(`${argName}: *const ${rustTypeName(arg.type)}`);
             break;
           case "c-abi-value":
-            args.push(`${argName}: ${zigTypeName(arg.type)}`);
+            args.push(`${argName}: ${rustTypeName(arg.type)}`);
             break;
           case "uses-communication-buffer":
             break;
           default:
-            throw new Error(`TODO: zig dispatch function for ${inspect(strategy)}`);
+            throw new Error(`TODO: rust dispatch function for ${inspect(strategy)}`);
         }
       }
       assert(globalObjectArg, `globalObjectArg not found from ${vari.globalObjectArg}`);
@@ -1428,57 +1428,57 @@ for (const [filename, { functions, typedefs }] of files) {
       }
 
       if (returnStrategy.type === "basic-out-param") {
-        args.push(`out: *${zigTypeName(vari.ret)}`);
+        args.push(`out: *${rustTypeName(vari.ret)}`);
       }
 
-      zigInternal.line(`export fn ${zid(dispatchName)}(${args.join(", ")}) ${returnStrategyZigType(returnStrategy)} {`);
-      zigInternal.indent();
+      rustInternal.line(`export fn ${zid(dispatchName)}(${args.join(", ")}) ${returnStrategyRustType(returnStrategy)} {`);
+      rustInternal.indent();
 
-      zigInternal.line(
-        `if (!@hasDecl(import_${namespaceVar}${fn.zigPrefix.length > 0 ? "." + fn.zigPrefix.slice(0, -1) : ""}, ${str(fn.name + vari.suffix)}))`,
+      rustInternal.line(
+        `if (!@hasDecl(import_${namespaceVar}${fn.rustPrefix.length > 0 ? "." + fn.rustPrefix.slice(0, -1) : ""}, ${str(fn.name + vari.suffix)}))`,
       );
-      zigInternal.line(
-        `    @compileError(${str(`Missing binding declaration "${fn.zigPrefix}${fn.name + vari.suffix}" in "${path.basename(filename)}"`)});`,
+      rustInternal.line(
+        `    @compileError(${str(`Missing binding declaration "${fn.rustPrefix}${fn.name + vari.suffix}" in "${path.basename(filename)}"`)});`,
       );
 
       for (const arg of vari.args) {
         if (arg.type.kind === "UTF8String") {
-          zigInternal.line(`const ${arg.zigMappedName}_utf8 = ${arg.zigMappedName}.toUTF8(bun.default_allocator);`);
-          zigInternal.line(`defer ${arg.zigMappedName}_utf8.deinit();`);
+          rustInternal.line(`const ${arg.rustMappedName}_utf8 = ${arg.rustMappedName}.toUTF8(bun.default_allocator);`);
+          rustInternal.line(`defer ${arg.rustMappedName}_utf8.deinit();`);
         }
       }
 
       switch (returnStrategy.type) {
         case "jsvalue":
-          zigInternal.add(`return jsc.toJSHostCall(${globalObjectArg}, @src(), `);
+          rustInternal.add(`return jsc.toJSHostCall(${globalObjectArg}, @src(), `);
           break;
         case "basic-out-param":
-          zigInternal.add(`out.* = @as(bun.JSError!${returnStrategy.abiType}, `);
+          rustInternal.add(`out.* = @as(bun.JSError!${returnStrategy.abiType}, `);
           break;
         case "void":
-          zigInternal.add(`@as(bun.JSError!void, `);
+          rustInternal.add(`@as(bun.JSError!void, `);
           break;
       }
 
-      zigInternal.add(`${zid("import_" + namespaceVar)}.${fn.zigPrefix}${fn.name + vari.suffix}`);
+      rustInternal.add(`${zid("import_" + namespaceVar)}.${fn.rustPrefix}${fn.name + vari.suffix}`);
       if (returnStrategy.type === "jsvalue") {
-        zigInternal.line(", .{");
+        rustInternal.line(", .{");
       } else {
-        zigInternal.line("(");
+        rustInternal.line("(");
       }
-      zigInternal.indent();
+      rustInternal.indent();
       for (const arg of vari.args) {
-        const argName = arg.zigMappedName!;
+        const argName = arg.rustMappedName!;
 
         if (arg.type.isIgnoredUndefinedType()) continue;
 
         if (arg.type.isVirtualArgument()) {
           switch (arg.type.kind) {
-            case "zigVirtualMachine":
-              zigInternal.line(`${argName}.bunVM(),`);
+            case "rustVirtualMachine":
+              rustInternal.line(`${argName}.bunVM(),`);
               break;
             case "globalObject":
-              zigInternal.line(`${argName},`);
+              rustInternal.line(`${argName},`);
               break;
             default:
               throw new Error("unexpected");
@@ -1490,70 +1490,70 @@ for (const [filename, { functions, typedefs }] of files) {
         switch (strategy.type) {
           case "c-abi-pointer":
             if (arg.type.kind === "UTF8String") {
-              zigInternal.line(`${argName}_utf8.slice(),`);
+              rustInternal.line(`${argName}_utf8.slice(),`);
               break;
             }
-            zigInternal.line(`${argName}.*,`);
+            rustInternal.line(`${argName}.*,`);
             break;
           case "c-abi-value":
-            zigInternal.line(`${argName},`);
+            rustInternal.line(`${argName},`);
             break;
           case "uses-communication-buffer":
             const prefix = `buf.${snake(arg.name)}`;
             const type = arg.type;
             const isNullable = type.flags.optional && !("default" in type.flags);
-            if (isNullable) emitNullableZigDecoder(zigInternal, prefix, type, strategy.children);
-            else emitComplexZigDecoder(zigInternal, prefix, type, strategy.children);
-            zigInternal.line(`,`);
+            if (isNullable) emitNullableRustDecoder(rustInternal, prefix, type, strategy.children);
+            else emitComplexRustDecoder(rustInternal, prefix, type, strategy.children);
+            rustInternal.line(`,`);
             break;
           default:
-            throw new Error(`TODO: zig dispatch function for ${inspect(strategy satisfies never)}`);
+            throw new Error(`TODO: rust dispatch function for ${inspect(strategy satisfies never)}`);
         }
       }
-      zigInternal.dedent();
+      rustInternal.dedent();
       switch (returnStrategy.type) {
         case "jsvalue":
-          zigInternal.line(`});`);
+          rustInternal.line(`});`);
           break;
         case "basic-out-param":
         case "void":
-          zigInternal.line(`)) catch |err| switch (err) {`);
-          zigInternal.line(`    error.JSError => return false,`);
-          zigInternal.line(`    error.OutOfMemory => ${globalObjectArg}.throwOutOfMemory() catch return false,`);
-          zigInternal.line(`    error.JSTerminated => return false,`);
-          zigInternal.line(`};`);
-          zigInternal.line(`return true;`);
+          rustInternal.line(`)) catch |err| switch (err) {`);
+          rustInternal.line(`    error.JSError => return false,`);
+          rustInternal.line(`    error.OutOfMemory => ${globalObjectArg}.throwOutOfMemory() catch return false,`);
+          rustInternal.line(`    error.JSTerminated => return false,`);
+          rustInternal.line(`};`);
+          rustInternal.line(`return true;`);
           break;
       }
-      zigInternal.dedent();
-      zigInternal.line(`}`);
+      rustInternal.dedent();
+      rustInternal.line(`}`);
       variNum += 1;
     }
   }
   if (functions.length > 0) {
-    zig.line();
+    rust.line();
   }
   for (const fn of functions) {
     // Wrapper to init JSValue
     const wrapperName = zid("create" + cap(fn.name) + "Callback");
     const minArgCount = fn.variants.reduce((acc, vari) => Math.min(acc, vari.args.length), Number.MAX_SAFE_INTEGER);
-    zig.line(`pub fn ${wrapperName}(global: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {`);
-    zig.line(
-      `    return jsc.host_fn.NewRuntimeFunction(global, jsc.ZigString.static(${str(fn.name)}), ${minArgCount}, js${cap(fn.name)}, false, null);`,
+    rust.line(`pub fn ${wrapperName}(global: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {`);
+    rust.line(
+      `    return jsc.host_fn.NewRuntimeFunction(global, jsc.RustString.static(${str(fn.name)}), ${minArgCount}, js${cap(fn.name)}, false, null);`,
     );
-    zig.line(`}`);
+    rust.line(`}`);
   }
 
   if (typedefs.length > 0) {
-    zig.line();
+    rust.line();
   }
   for (const td of typedefs) {
-    emitZigStruct(td.type);
+    emitRustStruct(td.type);
   }
 
-  zig.dedent();
-  zig.line(`};`);
-  zig.line();
+  rust.dedent();
+  rust.line(`};`);
+  rust.line();
 }
 
 cpp.line("} // namespace Generated");
@@ -1563,7 +1563,7 @@ if (needsWebCore) {
   cpp.line();
   for (const [type, reachableType] of typeHashToReachableType) {
     switch (reachableType.kind) {
-      case "zigEnum":
+      case "rustEnum":
       case "stringEnum":
         emitConvertEnumFunction(cpp, reachableType);
         break;
@@ -1573,22 +1573,22 @@ if (needsWebCore) {
   cpp.line();
 }
 
-zigInternal.dedent();
-zigInternal.line("};");
-zigInternal.line();
-zigInternal.line("comptime {");
-zigInternal.line(`    if (bun.Environment.export_cpp_apis) {`);
-zigInternal.line('        for (@typeInfo(binding_internals).@"struct".decls) |decl| {');
-zigInternal.line("            _ = &@field(binding_internals, decl.name);");
-zigInternal.line("        }");
-zigInternal.line("    }");
-zigInternal.line("}");
+rustInternal.dedent();
+rustInternal.line("};");
+rustInternal.line();
+rustInternal.line("comptime {");
+rustInternal.line(`    if (bun.Environment.export_cpp_apis) {`);
+rustInternal.line('        for (@typeInfo(binding_internals).@"struct".decls) |decl| {');
+rustInternal.line("            _ = &@field(binding_internals, decl.name);");
+rustInternal.line("        }");
+rustInternal.line("    }");
+rustInternal.line("}");
 
 writeIfNotChanged(
   path.join(codegenRoot, "GeneratedBindings.cpp"),
   [...headers].map(name => `#include ${str(name)}\n`).join("") + "\n" + cppInternal.buffer + "\n" + cpp.buffer,
 );
-writeIfNotChanged(path.join(src, "jsc/bindings/GeneratedBindings.zig"), zig.buffer + zigInternal.buffer);
+writeIfNotChanged(path.join(src, "jsc/bindings/GeneratedBindings.rust"), rust.buffer + rustInternal.buffer);
 
 // Headers
 for (const [filename, { functions, typedefs }] of files) {
@@ -1618,7 +1618,7 @@ for (const [filename, { functions, typedefs }] of files) {
     emitCppStructHeader(header, td.type);
 
     switch (td.type.kind) {
-      case "zigEnum":
+      case "rustEnum":
       case "stringEnum":
       case "dictionary":
         needsWebCoreNamespace = true;
@@ -1640,7 +1640,7 @@ for (const [filename, { functions, typedefs }] of files) {
     header.line();
     for (const td of typedefs) {
       switch (td.type.kind) {
-        case "zigEnum":
+        case "rustEnum":
         case "stringEnum":
           headerIncludes.add("JSDOMConvertEnumeration.h");
           const basename = td.type.name();

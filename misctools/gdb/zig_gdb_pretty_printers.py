@@ -1,11 +1,11 @@
 # pretty printing for the language.
-# put "source /path/to/zig_gdb_pretty_printers.py" in ~/.gdbinit to load it automatically.
+# put "source /path/to/rust_gdb_pretty_printers.py" in ~/.gdbinit to load it automatically.
 import gdb.printing
 
 
-class ZigPrettyPrinter(gdb.printing.PrettyPrinter):
+class RustPrettyPrinter(gdb.printing.PrettyPrinter):
     def __init__(self):
-        super().__init__('Zig')
+        super().__init__('Rust')
 
     def __call__(self, val):
         tag = val.type.tag
@@ -60,4 +60,4 @@ class OptionalPrinter:
             return 'null'
 
 
-gdb.printing.register_pretty_printer(gdb.current_objfile(), ZigPrettyPrinter())
+gdb.printing.register_pretty_printer(gdb.current_objfile(), RustPrettyPrinter())

@@ -45,19 +45,19 @@ import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
 
 /**
- * Codegen outputs that land in `src/` instead of `codegenDir`. The zig
+ * Codegen outputs that land in `src/` instead of `codegenDir`. The rust
  * compiler refuses to import files outside its source tree, so these two
- * generated `.zig` files live in `src/jsc/bindings/` (gitignored).
+ * generated `.rust` files live in `src/jsc/bindings/` (gitignored).
  *
- * Consumers of `sources.zig` (the `src/**\/*.zig` glob) must filter these
+ * Consumers of `sources.rust` (the `src/**\/*.rust` glob) must filter these
  * out — they're OUTPUTS of codegen, not inputs.
  *
  * Paths are relative to repo root. This list is the single source of truth;
  * `globAllSources()` does NOT hardcode these.
  */
-export const zigFilesGeneratedIntoSrc = [
-  "src/jsc/bindings/GeneratedBindings.zig",
-  "src/jsc/bindings/GeneratedJS2Native.zig",
+export const rustFilesGeneratedIntoSrc = [
+  "src/jsc/bindings/GeneratedBindings.rust",
+  "src/jsc/bindings/GeneratedJS2Native.rust",
 ] as const;
 
 // The individual emit functions take these four params. Bundled to keep
@@ -209,10 +209,10 @@ export interface CodegenOutputs {
   /** All codegen outputs — use for phony target `codegen`. */
   all: string[];
 
-  /** Outputs that zig `@embedFile`s or imports. */
+  /** Outputs that rust `@embedFile`s or imports. */
   rustInputs: string[];
 
-  /** Outputs that zig needs to exist but doesn't embed (debug bake runtime). */
+  /** Outputs that rust needs to exist but doesn't embed (debug bake runtime). */
   rustOrderOnly: string[];
 
   /** Generated .cpp files. Compiled alongside handwritten C++ in bun.ts. */
@@ -233,7 +233,7 @@ export interface CodegenOutputs {
    * outputs. Using `all` would pull bake-codegen in cpp-only CI mode, which
    * fails on old CI bun versions (bake-codegen shells out to `bun build`
    * whose CSS url() handling changed between versions). cmake only wired
-   * bake outputs into BUN_ZIG_GENERATED_SOURCES, never C++ deps — same here.
+   * bake outputs into BUN_RUST_GENERATED_SOURCES, never C++ deps — same here.
    *
    * The "undeclared .h files" issue (some scripts emit .h alongside their
    * declared outputs): those steps also emit a .cpp or .h that IS declared
@@ -244,8 +244,8 @@ export interface CodegenOutputs {
   /** The bindgenv2 .cpp outputs (compiled separately from handwritten C++). */
   bindgenV2Cpp: string[];
 
-  /** The bindgenv2 .zig outputs (legacy artifacts, retained for reference). */
-  bindgenV2Zig: string[];
+  /** The bindgenv2 .rust outputs (legacy artifacts, retained for reference). */
+  bindgenV2Rust: string[];
 
   /**
    * Stamp output from `bun install` at repo root.
@@ -279,7 +279,7 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
     cppHeaders: [],
     cppAll: [],
     bindgenV2Cpp: [],
-    bindgenV2Zig: [],
+    bindgenV2Rust: [],
     rootInstall,
   };
 
@@ -576,7 +576,7 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
   const outputs = [
     resolve(cfg.codegenDir, "ErrorCode+List.h"),
     resolve(cfg.codegenDir, "ErrorCode+Data.h"),
-    resolve(cfg.codegenDir, "ErrorCode.zig"),
+    resolve(cfg.codegenDir, "ErrorCode.rust"),
   ];
 
   n.build({
@@ -586,7 +586,7 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: "ErrorCode.{zig,h}",
+      desc: "ErrorCode.{rust,h}",
       args: shJoin(cfg, ["run", script, cfg.codegenDir]),
     },
   });
@@ -600,14 +600,14 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "generate-classes.ts");
 
   const outputs = [
-    resolve(cfg.codegenDir, "ZigGeneratedClasses.h"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses.cpp"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses+lazyStructureHeader.h"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses+DOMClientIsoSubspaces.h"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses+DOMIsoSubspaces.h"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses+lazyStructureImpl.h"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses.zig"),
-    resolve(cfg.codegenDir, "ZigGeneratedClasses.lut.txt"),
+    resolve(cfg.codegenDir, "RustGeneratedClasses.h"),
+    resolve(cfg.codegenDir, "RustGeneratedClasses.cpp"),
+    resolve(cfg.codegenDir, "RustGeneratedClasses+lazyStructureHeader.h"),
+    resolve(cfg.codegenDir, "RustGeneratedClasses+DOMClientIsoSubspaces.h"),
+    resolve(cfg.codegenDir, "RustGeneratedClasses+DOMIsoSubspaces.h"),
+    resolve(cfg.codegenDir, "RustGeneratedClasses+lazyStructureImpl.h"),
+    resolve(cfg.codegenDir, "RustGeneratedClasses.rust"),
+    resolve(cfg.codegenDir, "RustGeneratedClasses.lut.txt"),
     // Rust sibling: include!()'d by src/runtime/generated_classes.rs. Must be
     // a declared output so the cargo edge (which lists this in rustInputs)
     // re-invokes when generate-classes.ts changes — cargo doesn't track
@@ -618,12 +618,12 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
   n.build({
     outputs,
     rule: "codegen",
-    inputs: [script, ...sources.zigGeneratedClasses],
+    inputs: [script, ...sources.rustGeneratedClasses],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: "ZigGeneratedClasses.{zig,cpp,h}",
-      args: shJoin(cfg, ["run", script, ...sources.zigGeneratedClasses, cfg.codegenDir]),
+      desc: "RustGeneratedClasses.{rust,cpp,h}",
+      args: shJoin(cfg, ["run", script, ...sources.rustGeneratedClasses, cfg.codegenDir]),
     },
   });
 
@@ -666,7 +666,7 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   o.all.push(output);
   // bun_runtime/build.rs panics if this file is absent, so the rust_build edge
-  // must wait on it — `rustInputs` is the implicit-dep list both zig and the
+  // must wait on it — `rustInputs` is the implicit-dep list both rust and the
   // cargo edge consume.
   o.rustInputs.push(output);
 }
@@ -674,7 +674,7 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
 function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "cppbind.ts");
 
-  const output = resolve(cfg.codegenDir, "cpp.zig");
+  const output = resolve(cfg.codegenDir, "cpp.rust");
   const outputRs = resolve(cfg.codegenDir, "cpp.rs");
 
   // Write the .cpp file list for cppbind to scan. Build system owns the
@@ -695,7 +695,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
     outputs: [output, outputRs],
     rule: "codegen",
     inputs: [script],
-    // cppbind scans ALL .cpp files for [[ZIG_EXPORT]] annotations. Every
+    // cppbind scans ALL .cpp files for [[RUST_EXPORT]] annotations. Every
     // .cpp is an implicit input so changing an annotation retriggers.
     // ~540 files — ninja handles this fine via .ninja_deps stat caching.
     // cxxSourcesFile also listed — if the list itself changes (file
@@ -712,7 +712,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: "cpp.{zig,rs} (cppbind)",
+      desc: "cpp.{rust,rs} (cppbind)",
       // cppbind.ts takes: <srcdir> <codegendir> <cxx-sources>. No `run` —
       // direct script invocation (`${BUN_EXECUTABLE} ${script} ...`).
       args: shJoin(cfg, [script, resolve(cfg.cwd, "src"), cfg.codegenDir, cxxSourcesFile]),
@@ -726,7 +726,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
 function emitCiInfo({ n, cfg, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "ci_info.ts");
-  const output = resolve(cfg.codegenDir, "ci_info.zig");
+  const output = resolve(cfg.codegenDir, "ci_info.rust");
 
   // CMake lists JavaScriptCodegenSources as deps here, but ci_info.ts doesn't
   // read any of those files — it's a pure static data generator. The CMake
@@ -738,7 +738,7 @@ function emitCiInfo({ n, cfg, o, dirStamp }: Ctx): void {
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: "ci_info.zig",
+      desc: "ci_info.rust",
       args: shJoin(cfg, [script, output]),
     },
   });
@@ -753,8 +753,8 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // InternalModuleRegistry.cpp is read by the script (for a sanity check).
   const extraInput = resolve(cfg.cwd, "src", "jsc", "bindings", "InternalModuleRegistry.cpp");
 
-  // Written into src/ (not codegenDir) — see zigFilesGeneratedIntoSrc at top.
-  const js2nativeZig = resolve(cfg.cwd, zigFilesGeneratedIntoSrc[1]);
+  // Written into src/ (not codegenDir) — see rustFilesGeneratedIntoSrc at top.
+  const js2nativeRust = resolve(cfg.cwd, rustFilesGeneratedIntoSrc[1]);
 
   const outputs = [
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.cpp"),
@@ -764,10 +764,10 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "InternalModuleRegistry+enum.h"),
     resolve(cfg.codegenDir, "InternalModuleRegistry+numberOfModules.h"),
     resolve(cfg.codegenDir, "NativeModuleImpl.h"),
-    resolve(cfg.codegenDir, "ResolvedSourceTag.zig"),
+    resolve(cfg.codegenDir, "ResolvedSourceTag.rust"),
     resolve(cfg.codegenDir, "SyntheticModuleType.h"),
     resolve(cfg.codegenDir, "GeneratedJS2Native.h"),
-    js2nativeZig,
+    js2nativeRust,
     // Rust sibling: include!()'d by src/runtime/generated_js2native.rs. Must be
     // a declared output so the cargo edge re-invokes when bundle-modules.ts /
     // generate-js2native.ts changes — the includer shim's mtime never moves.
@@ -867,8 +867,8 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
   assert(allOutputs.length > 0, "bindgenv2 list-outputs returned no files");
 
   const cppOutputs = allOutputs.filter(p => p.endsWith(".cpp"));
-  const zigOutputs = allOutputs.filter(p => p.endsWith(".zig"));
-  const other = allOutputs.filter(p => !p.endsWith(".cpp") && !p.endsWith(".zig"));
+  const rustOutputs = allOutputs.filter(p => p.endsWith(".rust"));
+  const other = allOutputs.filter(p => !p.endsWith(".cpp") && !p.endsWith(".rust"));
   assert(other.length === 0, `bindgenv2 emitted unexpected output type: ${other.join(", ")}`);
 
   n.build({
@@ -891,35 +891,35 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   o.all.push(...allOutputs);
   o.bindgenV2Cpp.push(...cppOutputs);
-  o.bindgenV2Zig.push(...zigOutputs);
-  o.rustInputs.push(...zigOutputs);
+  o.bindgenV2Rust.push(...rustOutputs);
+  o.rustInputs.push(...rustOutputs);
 }
 
 function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
 
-  // Written into src/ (not codegenDir) — see zigFilesGeneratedIntoSrc at top.
-  const zigOut = resolve(cfg.cwd, zigFilesGeneratedIntoSrc[0]);
+  // Written into src/ (not codegenDir) — see rustFilesGeneratedIntoSrc at top.
+  const rustOut = resolve(cfg.cwd, rustFilesGeneratedIntoSrc[0]);
   const cppOut = resolve(cfg.codegenDir, "GeneratedBindings.cpp");
 
   // bindgen.ts scans src/ for .bind.ts files itself — this list is only for
   // ninja dependency tracking. New .bind.ts files need a reconfigure to be
   // picked up (next glob gets them).
   n.build({
-    outputs: [cppOut, zigOut],
+    outputs: [cppOut, rustOut],
     rule: "codegen",
     inputs: [script, ...sources.bindgen],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: ".bind.ts → GeneratedBindings.{cpp,zig}",
+      desc: ".bind.ts → GeneratedBindings.{cpp,rust}",
       args: shJoin(cfg, ["run", script, debugFlag(cfg), `--codegen-root=${cfg.codegenDir}`]),
     },
   });
 
-  o.all.push(cppOut, zigOut);
+  o.all.push(cppOut, rustOut);
   o.cppSources.push(cppOut);
-  o.rustInputs.push(zigOut);
+  o.rustInputs.push(rustOut);
 }
 
 function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
@@ -975,11 +975,11 @@ function emitObjectLuts({ n, cfg, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "create-hash-table.ts");
   const perlScript = resolve(cfg.cwd, "src", "codegen", "create_hash_table");
 
-  // (source, output) pairs. ZigGeneratedClasses.lut.txt is special: it's
+  // (source, output) pairs. RustGeneratedClasses.lut.txt is special: it's
   // GENERATED by emitGeneratedClasses, so it's in codegenDir not src/.
   const pairs: [src: string, out: string][] = [
     [resolve(cfg.cwd, "src/jsc/bindings/BunObject.cpp"), resolve(cfg.codegenDir, "BunObject.lut.h")],
-    [resolve(cfg.cwd, "src/jsc/bindings/ZigGlobalObject.lut.txt"), resolve(cfg.codegenDir, "ZigGlobalObject.lut.h")],
+    [resolve(cfg.cwd, "src/jsc/bindings/RustGlobalObject.lut.txt"), resolve(cfg.codegenDir, "RustGlobalObject.lut.h")],
     [resolve(cfg.cwd, "src/jsc/bindings/JSBuffer.cpp"), resolve(cfg.codegenDir, "JSBuffer.lut.h")],
     [resolve(cfg.cwd, "src/jsc/bindings/BunProcess.cpp"), resolve(cfg.codegenDir, "BunProcess.lut.h")],
     [
@@ -1000,7 +1000,7 @@ function emitObjectLuts({ n, cfg, o, dirStamp }: Ctx): void {
       resolve(cfg.codegenDir, "ProcessBindingHTTPParser.lut.h"),
     ],
     [resolve(cfg.cwd, "src/jsc/modules/NodeModuleModule.cpp"), resolve(cfg.codegenDir, "NodeModuleModule.lut.h")],
-    [resolve(cfg.codegenDir, "ZigGeneratedClasses.lut.txt"), resolve(cfg.codegenDir, "ZigGeneratedClasses.lut.h")],
+    [resolve(cfg.codegenDir, "RustGeneratedClasses.lut.txt"), resolve(cfg.codegenDir, "RustGeneratedClasses.lut.h")],
     [resolve(cfg.cwd, "src/jsc/bindings/webcore/JSEvent.cpp"), resolve(cfg.codegenDir, "JSEvent.lut.h")],
   ];
 

@@ -1,9 +1,9 @@
 ---
-name: zig-system-calls
-description: Guides using bun.sys for system calls and file I/O in Zig. Use when implementing file operations instead of std.fs or std.posix.
+name: rust-system-calls
+description: Guides using bun.sys for system calls and file I/O in Rust. Use when implementing file operations instead of std.fs or std.posix.
 ---
 
-# System Calls & File I/O in Zig
+# System Calls & File I/O in Rust
 
 Use `bun.sys` instead of `std.fs` or `std.posix` for cross-platform syscalls with proper error handling.
 
@@ -11,7 +11,7 @@ Use `bun.sys` instead of `std.fs` or `std.posix` for cross-platform syscalls wit
 
 For most file operations, use the `bun.sys.File` wrapper:
 
-```zig
+```rust
 const File = bun.sys.File;
 
 const file = switch (File.open(path, bun.O.RDWR, 0o644)) {
@@ -35,7 +35,7 @@ const writer = file.writer();
 
 ### Complete Example
 
-```zig
+```rust
 const File = bun.sys.File;
 
 pub fn writeFile(path: [:0]const u8, data: []const u8) File.WriteError!void {
@@ -65,7 +65,7 @@ pub fn writeFile(path: [:0]const u8, data: []const u8) File.WriteError!void {
 
 `bun.sys` functions return `Maybe(T)` - a tagged union:
 
-```zig
+```rust
 const sys = bun.sys;
 
 // Pattern 1: Switch on result/error
@@ -81,7 +81,7 @@ switch (sys.read(fd, buffer)) {
     },
 }
 
-// Pattern 2: Unwrap with try (converts to Zig error)
+// Pattern 2: Unwrap with try (converts to Rust error)
 const bytes = try sys.read(fd, buffer).unwrap();
 
 // Pattern 3: Unwrap with default
@@ -94,7 +94,7 @@ Only use these when `bun.sys.File` doesn't meet your needs.
 
 ### Opening Files
 
-```zig
+```rust
 const sys = bun.sys;
 
 // Use bun.O flags (cross-platform normalized)
@@ -112,7 +112,7 @@ bun.O.NONBLOCK, bun.O.DIRECTORY
 
 ### Reading & Writing
 
-```zig
+```rust
 // Single read (may return less than buffer size)
 switch (sys.read(fd, buffer)) {
     .result => |n| { /* n bytes read */ },
@@ -133,7 +133,7 @@ sys.writev(fd, iovecs)
 
 ### File Info
 
-```zig
+```rust
 sys.stat(path)      // Follow symlinks
 sys.lstat(path)     // Don't follow symlinks
 sys.fstat(fd)       // From file descriptor
@@ -145,7 +145,7 @@ sys.statx(path, &.{ .size, .mtime })
 
 ### Path Operations
 
-```zig
+```rust
 sys.unlink(path)
 sys.unlinkat(dir_fd, path)
 sys.rename(from, to)
@@ -163,7 +163,7 @@ sys.rmdir(path)
 
 ### Permissions
 
-```zig
+```rust
 sys.chmod(path, mode)
 sys.fchmod(fd, mode)
 sys.fchmodat(fd, path, mode, flags)
@@ -175,7 +175,7 @@ sys.fchown(fd, uid, gid)
 
 Close is on `bun.FD`:
 
-```zig
+```rust
 fd.close();  // Asserts on error (use in defer)
 
 // Or if you need error info:
@@ -186,7 +186,7 @@ if (fd.closeAllowingBadFileDescriptor(null)) |err| {
 
 ## Directory Operations
 
-```zig
+```rust
 var buf: bun.PathBuffer = undefined;
 const cwd = try sys.getcwd(&buf).unwrap();
 const cwdZ = try sys.getcwdZ(&buf).unwrap();  // Zero-terminated
@@ -197,7 +197,7 @@ sys.chdir(path, destination)
 
 Use `bun.DirIterator` instead of `std.fs.Dir.Iterator`:
 
-```zig
+```rust
 var iter = bun.iterateDir(dir_fd);
 while (true) {
     switch (iter.next()) {
@@ -219,11 +219,11 @@ while (true) {
 **Important**: `bun.sys` has limited socket support. For network I/O:
 
 - **Non-blocking sockets**: Use `uws.Socket` (libuwebsockets) exclusively
-- **Pipes/blocking I/O**: Use `PipeReader.zig` and `PipeWriter.zig`
+- **Pipes/blocking I/O**: Use `PipeReader.rust` and `PipeWriter.rust`
 
 Available in bun.sys:
 
-```zig
+```rust
 sys.setsockopt(fd, level, optname, value)
 sys.socketpair(domain, socktype, protocol, nonblocking_status)
 ```
@@ -232,7 +232,7 @@ Do NOT use `bun.sys` for socket read/write - use `uws.Socket` instead.
 
 ## Other Operations
 
-```zig
+```rust
 sys.ftruncate(fd, size)
 sys.lseek(fd, offset, whence)
 sys.dup(fd)
@@ -248,7 +248,7 @@ sys.utimens(path, atime, mtime)
 
 ## Error Type
 
-```zig
+```rust
 const err: bun.sys.Error = ...;
 err.errno      // Raw errno value
 err.getErrno() // As std.posix.E enum

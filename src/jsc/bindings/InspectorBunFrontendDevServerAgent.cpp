@@ -11,7 +11,7 @@
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 #include <wtf/TZoneMallocInlines.h>
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 
 namespace Inspector {
 
@@ -133,7 +133,7 @@ void InspectorBunFrontendDevServerAgent::consoleLog(int devServerId, char kind, 
     m_frontendDispatcher->consoleLog(devServerId, kind, data);
 }
 
-// C API implementations for Zig
+// C API implementations for Rust
 extern "C" {
 
 void InspectorBunFrontendDevServerAgent__notifyClientConnected(InspectorBunFrontendDevServerAgent* agent, int devServerId, int connectionId)

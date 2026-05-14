@@ -5,7 +5,7 @@ pub var start_time: i128 = undefined;
 pub var Bun__Node__ProcessTitle: ?string = null;
 
 pub const Cli = struct {
-    pub const CompileTarget = @import("../../options_types/CompileTarget.zig");
+    pub const CompileTarget = @import("../../options_types/CompileTarget.rust");
     pub var log_: logger.Log = undefined;
     pub fn startTransform(_: std.mem.Allocator, _: api.TransformOptions, _: *logger.Log) anyerror!void {}
     pub fn start(allocator: std.mem.Allocator) void {
@@ -64,37 +64,37 @@ pub fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
     std.process.exit(1);
 }
 
-pub const BuildCommand = @import("./build_command.zig").BuildCommand;
-pub const AddCommand = @import("./add_command.zig").AddCommand;
-pub const CreateCommand = @import("./create_command.zig").CreateCommand;
-pub const CreateCommandExample = @import("./create_command.zig").Example;
-pub const CreateListExamplesCommand = @import("./create_command.zig").CreateListExamplesCommand;
-pub const DiscordCommand = @import("./discord_command.zig").DiscordCommand;
-pub const InstallCommand = @import("./install_command.zig").InstallCommand;
-pub const LinkCommand = @import("./link_command.zig").LinkCommand;
-pub const UnlinkCommand = @import("./unlink_command.zig").UnlinkCommand;
-pub const InstallCompletionsCommand = @import("./install_completions_command.zig").InstallCompletionsCommand;
-pub const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
-pub const RemoveCommand = @import("./remove_command.zig").RemoveCommand;
-pub const RunCommand = @import("./run_command.zig").RunCommand;
-pub const ShellCompletions = @import("./shell_completions.zig");
-pub const UpdateCommand = @import("./update_command.zig").UpdateCommand;
-pub const UpgradeCommand = @import("./upgrade_command.zig").UpgradeCommand;
-pub const BunxCommand = @import("./bunx_command.zig").BunxCommand;
-pub const ExecCommand = @import("./exec_command.zig").ExecCommand;
-pub const PatchCommand = @import("./patch_command.zig").PatchCommand;
-pub const PatchCommitCommand = @import("./patch_commit_command.zig").PatchCommitCommand;
-pub const OutdatedCommand = @import("./outdated_command.zig").OutdatedCommand;
-pub const UpdateInteractiveCommand = @import("./update_interactive_command.zig").UpdateInteractiveCommand;
-pub const PublishCommand = @import("./publish_command.zig").PublishCommand;
-pub const PackCommand = @import("./pack_command.zig").PackCommand;
-pub const AuditCommand = @import("./audit_command.zig").AuditCommand;
-pub const InitCommand = @import("./init_command.zig").InitCommand;
-pub const WhyCommand = @import("./why_command.zig").WhyCommand;
-pub const FuzzilliCommand = @import("./fuzzilli_command.zig").FuzzilliCommand;
-pub const ReplCommand = @import("./repl_command.zig").ReplCommand;
+pub const BuildCommand = @import("./build_command.rust").BuildCommand;
+pub const AddCommand = @import("./add_command.rust").AddCommand;
+pub const CreateCommand = @import("./create_command.rust").CreateCommand;
+pub const CreateCommandExample = @import("./create_command.rust").Example;
+pub const CreateListExamplesCommand = @import("./create_command.rust").CreateListExamplesCommand;
+pub const DiscordCommand = @import("./discord_command.rust").DiscordCommand;
+pub const InstallCommand = @import("./install_command.rust").InstallCommand;
+pub const LinkCommand = @import("./link_command.rust").LinkCommand;
+pub const UnlinkCommand = @import("./unlink_command.rust").UnlinkCommand;
+pub const InstallCompletionsCommand = @import("./install_completions_command.rust").InstallCompletionsCommand;
+pub const PackageManagerCommand = @import("./package_manager_command.rust").PackageManagerCommand;
+pub const RemoveCommand = @import("./remove_command.rust").RemoveCommand;
+pub const RunCommand = @import("./run_command.rust").RunCommand;
+pub const ShellCompletions = @import("./shell_completions.rust");
+pub const UpdateCommand = @import("./update_command.rust").UpdateCommand;
+pub const UpgradeCommand = @import("./upgrade_command.rust").UpgradeCommand;
+pub const BunxCommand = @import("./bunx_command.rust").BunxCommand;
+pub const ExecCommand = @import("./exec_command.rust").ExecCommand;
+pub const PatchCommand = @import("./patch_command.rust").PatchCommand;
+pub const PatchCommitCommand = @import("./patch_commit_command.rust").PatchCommitCommand;
+pub const OutdatedCommand = @import("./outdated_command.rust").OutdatedCommand;
+pub const UpdateInteractiveCommand = @import("./update_interactive_command.rust").UpdateInteractiveCommand;
+pub const PublishCommand = @import("./publish_command.rust").PublishCommand;
+pub const PackCommand = @import("./pack_command.rust").PackCommand;
+pub const AuditCommand = @import("./audit_command.rust").AuditCommand;
+pub const InitCommand = @import("./init_command.rust").InitCommand;
+pub const WhyCommand = @import("./why_command.rust").WhyCommand;
+pub const FuzzilliCommand = @import("./fuzzilli_command.rust").FuzzilliCommand;
+pub const ReplCommand = @import("./repl_command.rust").ReplCommand;
 
-pub const Arguments = @import("./Arguments.zig");
+pub const Arguments = @import("./Arguments.rust");
 
 const AutoCommand = struct {
     pub fn exec(allocator: std.mem.Allocator) !void {
@@ -308,7 +308,7 @@ pub const Command = struct {
         return global_cli_ctx;
     }
 
-    const ctx_types = @import("../../options_types/Context.zig");
+    const ctx_types = @import("../../options_types/Context.rust");
     pub const ContextData = ctx_types.ContextData;
     pub const Context = ctx_types.Context;
     pub const DebugOptions = ctx_types.DebugOptions;
@@ -325,7 +325,7 @@ pub const Command = struct {
 
     /// `ContextData.create` body — kept here because it calls `Arguments.parse`
     /// and reaches into Windows watcher hooks. Aliased onto `ContextData` in
-    /// `options_types/Context.zig`.
+    /// `options_types/Context.rust`.
     pub fn createContextData(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
         Cli.cmd = command;
         context_data = .{
@@ -408,7 +408,7 @@ pub const Command = struct {
         }
 
         if (isNode(argv0)) {
-            @import("../../clap/streaming.zig").warn_on_unrecognized_flag = false;
+            @import("../../clap/streaming.rust").warn_on_unrecognized_flag = false;
             pretend_to_be_node = true;
             return .RunAsNodeCommand;
         }
@@ -854,7 +854,7 @@ pub const Command = struct {
         }
     }
 
-    pub const Tag = @import("../../options_types/CommandTag.zig").Tag;
+    pub const Tag = @import("../../options_types/CommandTag.rust").Tag;
 
     pub fn tagParams(comptime cmd: Tag) []const Arguments.ParamType {
         return comptime &switch (cmd) {
@@ -880,7 +880,7 @@ pub const Command = struct {
             // .HelpCommand => return try HelpCommand.exec(allocator),
             // .ReservedCommand => return try ReservedCommand.exec(allocator),
 
-            // these commands are implemented in install.zig
+            // these commands are implemented in install.rust
             // Command.Tag.InstallCommand => {},
             // Command.Tag.AddCommand => {},
             // Command.Tag.RemoveCommand => {},
@@ -1466,18 +1466,18 @@ pub fn printRevisionAndExit() noreturn {
 
 const string = []const u8;
 
-const AddCompletions = @import("./add_completions.zig");
-const FilterRun = @import("./filter_run.zig");
-const MultiRun = @import("./multi_run.zig");
-const PmViewCommand = @import("./pm_view_command.zig");
-const fs = @import("../../resolver/fs.zig");
-const options = @import("../../bundler/options.zig");
+const AddCompletions = @import("./add_completions.rust");
+const FilterRun = @import("./filter_run.rust");
+const MultiRun = @import("./multi_run.rust");
+const PmViewCommand = @import("./pm_view_command.rust");
+const fs = @import("../../resolver/fs.rust");
+const options = @import("../../bundler/options.rust");
 const std = @import("std");
-const ColonListType = @import("./colon_list_type.zig").ColonListType;
-const RunCommand_ = @import("./run_command.zig").RunCommand;
-const TestCommand = @import("./test_command.zig").TestCommand;
+const ColonListType = @import("./colon_list_type.rust").ColonListType;
+const RunCommand_ = @import("./run_command.rust").RunCommand;
+const TestCommand = @import("./test_command.rust").TestCommand;
 
-const Install = @import("../../install/install.zig");
+const Install = @import("../../install/install.rust");
 const PackageManager = Install.PackageManager;
 
 const bun = @import("bun");

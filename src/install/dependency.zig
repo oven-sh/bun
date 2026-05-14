@@ -284,7 +284,7 @@ pub const Version = struct {
     literal: String = .{},
     value: Value = .{ .uninitialized = {} },
 
-    pub const toJS = @import("../install_jsc/dependency_jsc.zig").versionToJS;
+    pub const toJS = @import("../install_jsc/dependency_jsc.rust").versionToJS;
     pub inline fn npm(this: *const Version) ?NpmInfo {
         return if (this.tag == .npm) this.value.npm else null;
     }
@@ -514,7 +514,7 @@ pub const Version = struct {
                             switch (url[0]) {
                                 ':' => {
                                     // TODO(markovejnovic): This check for testing whether the URL
-                                    // is a Git URL shall be moved to npm_package_arg.zig when that
+                                    // is a Git URL shall be moved to npm_package_arg.rust when that
                                     // is implemented.
                                     if (strings.hasPrefixComptime(url, "://")) {
                                         url = url["://".len..];
@@ -720,7 +720,7 @@ pub const Version = struct {
             return .npm;
         }
 
-        pub const inferFromJS = @import("../install_jsc/dependency_jsc.zig").tagInferFromJS;
+        pub const inferFromJS = @import("../install_jsc/dependency_jsc.rust").tagInferFromJS;
     };
 
     pub const NpmInfo = struct {
@@ -1186,7 +1186,7 @@ pub fn parseWithTag(
     }
 }
 
-pub const fromJS = @import("../install_jsc/dependency_jsc.zig").dependencyFromJS;
+pub const fromJS = @import("../install_jsc/dependency_jsc.rust").dependencyFromJS;
 
 pub const Behavior = packed struct(u8) {
     _unused_1: u1 = 0,
@@ -1321,12 +1321,12 @@ fn hgiToTag(info: hosted_git_info.HostedGitInfo) Version.Tag {
 
 const string = []const u8;
 
-const Environment = @import("../bun_core/env.zig");
-const hosted_git_info = @import("./hosted_git_info.zig");
+const Environment = @import("../bun_core/env.rust");
+const hosted_git_info = @import("./hosted_git_info.rust");
 const std = @import("std");
-const Repository = @import("./repository.zig").Repository;
+const Repository = @import("./repository.rust").Repository;
 
-const Install = @import("./install.zig");
+const Install = @import("./install.rust");
 const Features = Install.Features;
 const PackageManager = Install.PackageManager;
 const PackageNameHash = Install.PackageNameHash;

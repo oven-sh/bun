@@ -1,7 +1,7 @@
-// test.each(arr) / describe.each(arr) create a ScopeFunctions whose Zig struct
+// test.each(arr) / describe.each(arr) create a ScopeFunctions whose Rust struct
 // stores `arr` as a raw jsc.JSValue. The codegen for `values: ["each"]` in
 // jest.classes.ts emits a C++ `m_each` WriteBarrier that visitChildren walks,
-// but the Zig side never called `eachSetCached` to populate it — so the only
+// but the Rust side never called `eachSetCached` to populate it — so the only
 // reference to `arr` lived in unmanaged memory the GC never scans. If GC ran
 // between `.each(arr)` and the trailing `("name", cb)` call, the array could
 // be collected and `callAsFunction` would iterate a freed cell.

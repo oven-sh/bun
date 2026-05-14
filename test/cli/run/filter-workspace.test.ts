@@ -585,7 +585,7 @@ describe("bun", () => {
     const stdoutval = stdout.toString();
     expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
     // Elision text is written to stdout via std.fs.File.stdout().writeAll() in
-    // filter_run.zig's flushDrawBuf; guard the correct stream.
+    // filter_run.rust's flushDrawBuf; guard the correct stream.
     expect(stdoutval).not.toMatch(/lines elided/);
     expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
     expect(exitCode).toBe(0);

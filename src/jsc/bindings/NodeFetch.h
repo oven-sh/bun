@@ -2,6 +2,6 @@
 
 namespace Bun {
 
-JSC::JSValue createNodeFetchInternalBinding(Zig::GlobalObject*);
+JSC::JSValue createNodeFetchInternalBinding(Rust::GlobalObject*);
 
 }

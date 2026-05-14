@@ -1,4 +1,4 @@
-// bun.sys.Sigaction must match the host libc's `struct sigaction`. Zig's
+// bun.sys.Sigaction must match the host libc's `struct sigaction`. Rust's
 // std.posix.Sigaction assumes the glibc/musl layout on Linux, which is wrong
 // for bionic (Android LP64 puts sa_flags first and sigset_t is a single
 // unsigned long). A layout mismatch means libc reads sa_handler from the
@@ -8,7 +8,7 @@
 //
 // This test installs a known handler for SIGUSR2 via bun.sys.sigaction,
 // reads the disposition back via sigaction(sig, NULL, &old), and checks the
-// handler pointer and flags round-trip. That property holds iff the Zig
+// handler pointer and flags round-trip. That property holds iff the Rust
 // struct agrees with libc's on this platform.
 import { expect, test } from "bun:test";
 import { isPosix } from "harness";

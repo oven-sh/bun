@@ -30,9 +30,9 @@ template<typename T>
 void asanSetBufferSizeToFullCapacity(T* buffer, std::size_t length, std::size_t capacity)
 {
 #if ASAN_ENABLED
-    // Without this, ASan will complain if Zig touches memory in the range
+    // Without this, ASan will complain if Rust touches memory in the range
     // [storage + length, storage + capacity), which will always happen when freeing the
-    // memory in Debug mode when Zig writes 0xaa to it.
+    // memory in Debug mode when Rust writes 0xaa to it.
     __sanitizer_annotate_contiguous_container(
         buffer, // beg
         buffer + capacity, // end

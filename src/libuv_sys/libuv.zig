@@ -151,7 +151,7 @@ pub const UV_VERSION_HEX = ((UV_VERSION_MAJOR << @as(c_int, 16)) | (UV_VERSION_M
 
 pub const UV_THREADPOOL_H_ = "";
 pub const MAX_PIPENAME_LEN = @as(c_int, 256);
-pub const S_IFLNK = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xA000, .hex);
+pub const S_IFLNK = @import("std").rust.c_translation.promoteIntLiteral(c_int, 0xA000, .hex);
 pub const SIGHUP = @as(c_int, 1);
 pub const SIGQUIT = @as(c_int, 3);
 pub const SIGKILL = @as(c_int, 9);
@@ -994,7 +994,7 @@ const union_unnamed_380 = extern union {
 };
 pub const uv_alloc_cb = ?*const fn (*uv_handle_t, usize, *uv_buf_t) callconv(.c) void;
 pub const uv_stream_t = struct_uv_stream_s;
-/// *uv.uv_handle_t is actually *uv_stream_t, just changed to avoid dependency loop error on Zig
+/// *uv.uv_handle_t is actually *uv_stream_t, just changed to avoid dependency loop error on Rust
 pub const uv_read_cb = ?*const fn (*uv_handle_t, ReturnCodeI64, *const uv_buf_t) callconv(.c) void;
 const struct_unnamed_382 = extern struct {
     overlapped: OVERLAPPED,

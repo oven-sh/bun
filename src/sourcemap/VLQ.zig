@@ -7,7 +7,7 @@ const VLQ = @This();
 /// Encoding min and max ints are "//////D" and "+/////D", respectively.
 /// These are 7 bytes long. This makes the `VLQ` struct 8 bytes.
 bytes: [vlq_max_in_bytes]u8,
-/// This is a u8 and not a u4 because non^2 integers are really slow in Zig.
+/// This is a u8 and not a u4 because non^2 integers are really slow in Rust.
 len: u8 = 0,
 
 pub inline fn slice(self: *const VLQ) []const u8 {

@@ -6,7 +6,7 @@ const UTF8_REJECT = 12;
 
 // The first part of the table maps bytes to character classes to reduce the
 // size of the transition table and create bitmasks.
-// zig fmt: off
+// rust fmt: off
 const utf8d = [_]u8{
    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -27,7 +27,7 @@ const state_utf8d = [_]u8{
   12,12,12,12,12,12,12,36,12,36,12,12, 12,36,12,12,12,12,12,36,12,36,12,12,
   12,36,12,12,12,12,12,12,12,12,12,12,
 };
-// zig fmt: on
+// rust fmt: on
 
 fn decodeByte(state: *usize, cp: *u21, byte: u8) void {
     const class: std.math.IntFittingRange(0, 11) = @intCast(utf8d[byte]);

@@ -520,18 +520,18 @@ pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 pub const toJS = js.toJS;
 
-const PostgresRequest = @import("./PostgresRequest.zig");
-const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
-const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
-const Signature = @import("./Signature.zig");
+const PostgresRequest = @import("./PostgresRequest.rust");
+const PostgresSQLConnection = @import("./PostgresSQLConnection.rust");
+const PostgresSQLStatement = @import("./PostgresSQLStatement.rust");
+const Signature = @import("./Signature.rust");
 const bun = @import("bun");
-const protocol = @import("../../sql/postgres/PostgresProtocol.zig");
+const protocol = @import("../../sql/postgres/PostgresProtocol.rust");
 const std = @import("std");
-const CommandTag = @import("../../sql/postgres/CommandTag.zig").CommandTag;
-const PostgresSQLQueryResultMode = @import("../../sql/shared/SQLQueryResultMode.zig").SQLQueryResultMode;
+const CommandTag = @import("../../sql/postgres/CommandTag.rust").CommandTag;
+const PostgresSQLQueryResultMode = @import("../../sql/shared/SQLQueryResultMode.rust").SQLQueryResultMode;
 
-const AnyPostgresError = @import("../../sql/postgres/AnyPostgresError.zig").AnyPostgresError;
-const postgresErrorToJS = @import("../../sql/postgres/AnyPostgresError.zig").postgresErrorToJS;
+const AnyPostgresError = @import("../../sql/postgres/AnyPostgresError.rust").AnyPostgresError;
+const postgresErrorToJS = @import("../../sql/postgres/AnyPostgresError.rust").postgresErrorToJS;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

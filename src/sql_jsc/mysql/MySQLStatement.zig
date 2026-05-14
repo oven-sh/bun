@@ -163,20 +163,20 @@ pub fn structure(this: *MySQLStatement, owner: JSValue, globalObject: *jsc.JSGlo
 
     return this.cached_structure;
 }
-pub const Param = @import("../../sql/mysql/MySQLParam.zig").Param;
+pub const Param = @import("../../sql/mysql/MySQLParam.rust").Param;
 const _ParamUnused = struct {
     type: types.FieldType,
     flags: ColumnDefinition41.ColumnFlags,
 };
 const debug = bun.Output.scoped(.MySQLStatement, .hidden);
 
-const CachedStructure = @import("../shared/CachedStructure.zig");
-const ColumnDefinition41 = @import("../../sql/mysql/protocol/ColumnDefinition41.zig");
-const ErrorPacket = @import("../../sql/mysql/protocol/ErrorPacket.zig");
-const Signature = @import("./protocol/Signature.zig");
+const CachedStructure = @import("../shared/CachedStructure.rust");
+const ColumnDefinition41 = @import("../../sql/mysql/protocol/ColumnDefinition41.rust");
+const ErrorPacket = @import("../../sql/mysql/protocol/ErrorPacket.rust");
+const Signature = @import("./protocol/Signature.rust");
 const std = @import("std");
-const types = @import("../../sql/mysql/MySQLTypes.zig");
-const SQLDataCell = @import("../shared/SQLDataCell.zig").SQLDataCell;
+const types = @import("../../sql/mysql/MySQLTypes.rust");
+const SQLDataCell = @import("../shared/SQLDataCell.rust").SQLDataCell;
 
 const bun = @import("bun");
 const String = bun.String;

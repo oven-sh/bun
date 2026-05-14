@@ -1,6 +1,6 @@
 //! Socket event dispatch. `loop.c` calls these `us_dispatch_*` exports for
 //! every readable/writable/close/etc; we switch on `s->kind` and direct-call
-//! the right Zig handler with the ext already typed. C++ kinds (uWS) and
+//! the right Rust handler with the ext already typed. C++ kinds (uWS) and
 //! `.dynamic` go through `s->group->vtable`.
 //!
 //! This file is the ONLY place that knows the kind→handler mapping. Adding a
@@ -8,7 +8,7 @@
 //! arm — no silent fallthrough.
 
 comptime {
-    // Force these into the link even if nothing in Zig calls them.
+    // Force these into the link even if nothing in Rust calls them.
     _ = us_dispatch_open;
     _ = us_dispatch_data;
     _ = us_dispatch_fd;
@@ -23,7 +23,7 @@ comptime {
     _ = us_dispatch_ssl_raw_tap;
 }
 
-/// kind → vtable. Zig kinds get a comptime-generated `Trampolines(H)` vtable
+/// kind → vtable. Rust kinds get a comptime-generated `Trampolines(H)` vtable
 /// (so the call is *still* indirect by one pointer, but the table itself is
 /// `.rodata` and there's exactly one per kind — not one per connection). C++
 /// kinds use the per-group vtable since the handler closure differs per App.
@@ -131,9 +131,9 @@ export fn us_dispatch_ssl_raw_tap(s: *us_socket_t, data: [*c]u8, len: c_int) ?*u
 }
 
 const bun = @import("bun");
-const handlers = @import("./uws_handlers.zig");
+const handlers = @import("./uws_handlers.rust");
 const std = @import("std");
-const vtable = @import("../../uws_sys/vtable.zig");
+const vtable = @import("../../uws_sys/vtable.rust");
 
 const uws = bun.uws;
 const ConnectingSocket = uws.ConnectingSocket;

@@ -21,7 +21,7 @@ pub fn toJSNumber(this: CommandTag) JSValue {
     };
 }
 
-const CommandTag = @import("../../sql/postgres/CommandTag.zig").CommandTag;
+const CommandTag = @import("../../sql/postgres/CommandTag.rust").CommandTag;
 
 const bun = @import("bun");
 const String = bun.String;

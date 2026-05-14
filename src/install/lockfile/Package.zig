@@ -41,9 +41,9 @@ pub fn Package(comptime SemverIntType: type) type {
 
         const Resolution = ResolutionType(SemverIntType);
 
-        pub const Scripts = @import("./Package/Scripts.zig").Scripts;
-        pub const Meta = @import("./Package/Meta.zig").Meta;
-        pub const WorkspaceMap = @import("./Package/WorkspaceMap.zig");
+        pub const Scripts = @import("./Package/Scripts.rust").Scripts;
+        pub const Meta = @import("./Package/Meta.rust").Meta;
+        pub const WorkspaceMap = @import("./Package/WorkspaceMap.rust");
 
         pub const DependencyGroup = struct {
             prop: string,
@@ -2250,7 +2250,7 @@ pub fn Package(comptime SemverIntType: type) type {
 const string = []const u8;
 
 const std = @import("std");
-const ResolutionType = @import("../resolution.zig").ResolutionType;
+const ResolutionType = @import("../resolution.rust").ResolutionType;
 const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");

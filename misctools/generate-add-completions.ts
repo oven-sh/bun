@@ -84,7 +84,7 @@ console.log(`Uncompressed size: ${totalUncompressed} bytes`);
 console.log(`Compressed size: ${totalCompressed} bytes`);
 console.log(`Compression ratio: ${ratio}%`);
 
-// Generate Zig code
+// Generate Rust code
 const chunks: string[] = [];
 
 // Header with comments and imports
@@ -214,18 +214,18 @@ pub fn getPackages(letter: FirstLetter) []const []const u8 {
 chunks.push(`pub const biggest_list: usize = ${maxListSize};`);
 
 // Write the output
-let zigCode = chunks.join("\n\n");
+let rustCode = chunks.join("\n\n");
 
-zigCode = execSync("zig fmt --stdin", {
-  input: zigCode,
+rustCode = execSync("rust fmt --stdin", {
+  input: rustCode,
   encoding: "utf8",
 }).toString();
 
-fs.writeFileSync(path.join(__dirname, "..", "src", "cli", "add_completions.zig"), zigCode);
+fs.writeFileSync(path.join(__dirname, "..", "src", "cli", "add_completions.rust"), rustCode);
 
 // Clean up temp dir
 try {
   fs.rmdirSync(tmpDir);
 } catch {}
 
-console.log(`\nGenerated Zig completions for ${packages.length} packages`);
+console.log(`\nGenerated Rust completions for ${packages.length} packages`);

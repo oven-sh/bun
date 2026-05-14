@@ -302,7 +302,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
     
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Rust::GlobalObject* globalObject = reinterpret_cast<Rust::GlobalObject*>(lexicalGlobalObject);
 
     JSC::JSValue readableStream = callFrame->argument(0);
     JSC::JSValue onPull = callFrame->argument(1);
@@ -416,7 +416,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__unref, (JSC::JSGlobalObject * lexicalGlobalObj
 
 JSC_DEFINE_CUSTOM_GETTER(function${name}__getter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Rust::GlobalObject* globalObject = reinterpret_cast<Rust::GlobalObject*>(lexicalGlobalObject);
 
     return JSC::JSValue::encode(globalObject->${name}());
 }
@@ -449,7 +449,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
     
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Rust::GlobalObject* globalObject = reinterpret_cast<Rust::GlobalObject*>(lexicalGlobalObject);
     WebCore::${controller}* controller = dynamicDowncast<WebCore::${controller}>(callFrame->thisValue());
     if (!controller) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${controller}"_s));
@@ -472,7 +472,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Rust::GlobalObject* globalObject = reinterpret_cast<Rust::GlobalObject*>(lexicalGlobalObject);
     WebCore::${controller}* controller = dynamicDowncast<WebCore::${controller}>(callFrame->thisValue());
     if (!controller) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${controller}"_s));
@@ -497,7 +497,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__getFd, (JSC::JSGlobalObject * lexicalGlobalObj
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Rust::GlobalObject* globalObject = reinterpret_cast<Rust::GlobalObject*>(lexicalGlobalObject);
     WebCore::${className}* sink = dynamicDowncast<WebCore::${className}>(callFrame->thisValue());
     if (!sink) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${name}"_s));
@@ -518,7 +518,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Rust::GlobalObject* globalObject = reinterpret_cast<Rust::GlobalObject*>(lexicalGlobalObject);
     WebCore::${className}* sink = dynamicDowncast<WebCore::${className}>(callFrame->thisValue());
     if (!sink) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${name}"_s));
@@ -938,7 +938,7 @@ default:
 extern "C" JSC::EncodedJSValue ${name}__createObject(JSC::JSGlobalObject* arg0, void* sinkPtr, uintptr_t destructor)
 {
     auto& vm = arg0->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
+    Rust::GlobalObject* globalObject = reinterpret_cast<Rust::GlobalObject*>(arg0);
     JSC::Structure* structure = globalObject->${name}Structure();
     return JSC::JSValue::encode(WebCore::JS${name}::create(vm, globalObject, structure, sinkPtr, destructor));
 }
@@ -971,7 +971,7 @@ extern "C" void ${name}__detachPtr(JSC::EncodedJSValue JSValue0)
 extern "C" JSC::EncodedJSValue ${name}__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue stream, void* sinkPtr, void **controllerValue)
 {
     auto& vm = arg0->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
+    Rust::GlobalObject* globalObject = reinterpret_cast<Rust::GlobalObject*>(arg0);
 
     JSC::Structure* structure = WebCore::getDOMStructure<WebCore::${controller}>(vm, *globalObject);
     WebCore::${controller} *controller = WebCore::${controller}::create(vm, globalObject, structure, sinkPtr, 0);
@@ -1033,16 +1033,16 @@ extern "C" void ${name}__onClose(JSC::EncodedJSValue controllerValue, JSC::Encod
 // `BUN_DECLARE_HOST_FUNCTION(${name}__{construct,write,end,flush,start})` plus
 // the two non-host-fn externs `${name}__getInternalFd` / `${name}__memoryCost`.
 // Each thunk calls an inherent method on the real sink struct in
-// `crate::webcore` (mirroring Zig's `@import("…").${name}.<fn>`); a missing
+// `crate::webcore` (mirroring Rust's `@import("…").${name}.<fn>`); a missing
 // method is a compile error.
 //
 // Calling convention: `BUN_DECLARE_HOST_FUNCTION` and `endWithSink` use
 // `SYSV_ABI` (= `extern "sysv64"` on win-x64, `"C"` elsewhere) — wrapped in
-// `bun_jsc::jsc_host_abi!`. The remaining `ZIG_DECL` / plain `extern "C"`
+// `bun_jsc::jsc_host_abi!`. The remaining `RUST_DECL` / plain `extern "C"`
 // symbols (finalize/close/updateRef/getInternalFd/memoryCost) stay `extern "C"`.
 function rustSink() {
-  // All sink structs live (or will live) under `crate::webcore`; the Zig
-  // originals are `src/runtime/webcore/streams.zig::${name}`.
+  // All sink structs live (or will live) under `crate::webcore`; the Rust
+  // originals are `src/runtime/webcore/streams.rust::${name}`.
   const sinkPaths: Record<string, string> = {
     ArrayBufferSink: "crate::webcore::array_buffer_sink::ArrayBufferSink",
     FileSink: "crate::webcore::file_sink::FileSink",
@@ -1068,7 +1068,7 @@ function rustSink() {
 // a missing method is a hard compile error.
 //
 // Calling convention: \`BUN_DECLARE_HOST_FUNCTION\` and \`endWithSink\` use
-// SYSV ABI (\`jsc_host_abi!\`); the \`ZIG_DECL\` / plain \`extern "C"\` symbols
+// SYSV ABI (\`jsc_host_abi!\`); the \`RUST_DECL\` / plain \`extern "C"\` symbols
 // (finalize/close/updateRef/getInternalFd/memoryCost) stay \`extern "C"\`.
 //
 // Safe-body: \`m_sinkPtr\` params are typed \`&\`/\`&mut\` (every C++ caller
@@ -1125,7 +1125,7 @@ pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
 
 `;
 
-    // ZIG_DECL void ${name}__finalize(void* sinkPtr) — called from JS${name}::~JS${name}.
+    // RUST_DECL void ${name}__finalize(void* sinkPtr) — called from JS${name}::~JS${name}.
     // C++ caller null-checks `m_sinkPtr` before calling.
     symbols.push(`${name}__finalize`);
     templ += `#[unsafe(no_mangle)]
@@ -1135,7 +1135,7 @@ pub extern "C" fn ${name}__finalize(this: &mut ${name}) {
 
 `;
 
-    // ZIG_DECL JSC::EncodedJSValue ${name}__close(JSC::JSGlobalObject*, void* sinkPtr)
+    // RUST_DECL JSC::EncodedJSValue ${name}__close(JSC::JSGlobalObject*, void* sinkPtr)
     // C++ caller null-checks `ptr` before calling.
     symbols.push(`${name}__close`);
     templ += `#[unsafe(no_mangle)]
@@ -1145,7 +1145,7 @@ pub extern "C" fn ${name}__close(global: &JSGlobalObject, this: &mut ${name}) ->
 
 `;
 
-    // ZIG_DECL JSC::EncodedJSValue SYSV_ABI ${name}__endWithSink(void* sinkPtr, JSC::JSGlobalObject*)
+    // RUST_DECL JSC::EncodedJSValue SYSV_ABI ${name}__endWithSink(void* sinkPtr, JSC::JSGlobalObject*)
     // headers.h declares this with `callconv(jsc.conv)` (SYSV_ABI) — sysv64 on
     // win-x64, "C" elsewhere. C++ caller null-checks `ptr` before calling.
     symbols.push(`${name}__endWithSink`);
@@ -1158,7 +1158,7 @@ pub extern "C" fn ${name}__close(global: &JSGlobalObject, this: &mut ${name}) ->
 
 `;
 
-    // ZIG_DECL void ${name}__updateRef(void* sinkPtr, bool)
+    // RUST_DECL void ${name}__updateRef(void* sinkPtr, bool)
     // C++ caller null-checks `m_sinkPtr` before calling.
     symbols.push(`${name}__updateRef`);
     templ += `#[unsafe(no_mangle)]

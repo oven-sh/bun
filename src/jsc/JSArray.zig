@@ -18,7 +18,7 @@ pub const JSArray = opaque {
 };
 
 const bun = @import("bun");
-const JSArrayIterator = @import("./JSArrayIterator.zig").JSArrayIterator;
+const JSArrayIterator = @import("./JSArrayIterator.rust").JSArrayIterator;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

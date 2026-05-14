@@ -177,15 +177,15 @@ pub fn processAllBlocks(self: *Parser) Parser.Error!void {
     }
 }
 
-const parser_mod = @import("./parser.zig");
+const parser_mod = @import("./parser.rust");
 
-const autolinks_mod = @import("./autolinks.zig");
+const autolinks_mod = @import("./autolinks.rust");
 const isListBullet = autolinks_mod.isListBullet;
 
 const Parser = parser_mod.Parser;
 const BlockHeader = Parser.BlockHeader;
 
-const types = @import("./types.zig");
+const types = @import("./types.rust");
 const Align = types.Align;
 const BlockType = types.BlockType;
 const Container = types.Container;

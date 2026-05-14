@@ -100,7 +100,7 @@ pub fn doConnect(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
     return bun.api.Listener.connectInner(globalThis, maybe_tcp, maybe_tls, opts);
 }
 
-const validators = @import("./util/validators.zig");
+const validators = @import("./util/validators.rust");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

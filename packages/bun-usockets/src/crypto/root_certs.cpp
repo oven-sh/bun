@@ -23,7 +23,7 @@ extern "C" void BUN__warn__extra_ca_load_failed(const char* filename, const char
 // Forward declarations for platform-specific functions
 // (Actual implementations are in platform-specific files)
 
-// External variable from Zig CLI arguments
+// External variable from Rust CLI arguments
 extern "C" bool Bun__Node__UseSystemCA;
 
 // Helper function to check if system CA should be used

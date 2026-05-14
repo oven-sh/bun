@@ -1,6 +1,6 @@
 test {
-    _ = @import("./shell_parser/braces.zig");
-    _ = @import("./runtime/node/assert/myers_diff.zig");
+    _ = @import("./shell_parser/braces.rust");
+    _ = @import("./runtime/node/assert/myers_diff.rust");
 }
 
 test "basic string usage" {

@@ -588,7 +588,7 @@ pub const Value = union(Tag) {
                     .InternalBlob = .{
                         .bytes = std.array_list.Managed(u8){
                             .items = bun.default_allocator.dupe(u8, bytes) catch {
-                                return globalThis.throwValue(ZigString.static("Failed to clone ArrayBufferView").toErrorInstance(globalThis));
+                                return globalThis.throwValue(RustString.static("Failed to clone ArrayBufferView").toErrorInstance(globalThis));
                             },
                             .capacity = bytes.len,
                             .allocator = bun.default_allocator,
@@ -747,7 +747,7 @@ pub const Value = union(Tag) {
                         var blob = new.useAsAnyBlob();
                         defer blob.detach();
                         var async_form_data: *bun.FormData.AsyncFormData = locked.action.getFormData orelse {
-                            try promise.reject(global, ZigString.init("Internal error: task for FormData must not be null").toErrorInstance(global));
+                            try promise.reject(global, RustString.init("Internal error: task for FormData must not be null").toErrorInstance(global));
                             break :inner;
                         };
                         defer async_form_data.deinit();
@@ -1823,7 +1823,7 @@ const JSPromise = jsc.JSPromise;
 const JSValue = jsc.JSValue;
 const SystemError = jsc.SystemError;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 
 const Response = jsc.WebCore.Response;
 const streams = jsc.WebCore.streams;

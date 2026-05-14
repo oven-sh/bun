@@ -57,7 +57,7 @@ const SERVER_CAPS =
   CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA |
   CLIENT_DEPRECATE_EOF;
 
-// MYSQL_TYPE_* values used below. From src/sql/mysql/MySQLTypes.zig.
+// MYSQL_TYPE_* values used below. From src/sql/mysql/MySQLTypes.rust.
 const MYSQL_TYPE_VAR_STRING = 0xfd;
 const MYSQL_TYPE_JSON = 0xf5;
 
@@ -259,7 +259,7 @@ test(".raw() strips length-prefix bytes (#30039) — text protocol", async () =>
   try {
     await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
     // `.simple().raw()` exercises the ResultSet.decodeText raw branch
-    // (ResultSet.zig:177) that used to call rawEncodeLenData.
+    // (ResultSet.rust:177) that used to call rawEncodeLenData.
     const rows = (await sql`SELECT name, post FROM t`.simple().raw()) as unknown as [Uint8Array, Uint8Array][];
     expect(rows).toHaveLength(1);
     const [name, post] = rows[0];
@@ -277,7 +277,7 @@ test(".raw() strips length-prefix bytes (#30039) — binary protocol", async () 
     await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
     // Without `.simple()`, the client uses a prepared statement and the
     // binary-protocol row decoder — exercising the DecodeBinaryValue raw
-    // branches (DecodeBinaryValue.zig:153, :172) that used to call
+    // branches (DecodeBinaryValue.rust:153, :172) that used to call
     // rawEncodeLenData for VAR_STRING and JSON.
     const rows = (await sql`SELECT name, post FROM t`.raw()) as unknown as [Uint8Array, Uint8Array][];
     expect(rows).toHaveLength(1);

@@ -80,7 +80,7 @@ fn getArgv(globalThis: *jsc.JSGlobalObject, args: JSValue, PATH: []const u8, cwd
 
         // Check for null bytes in argument (security: prevent null byte injection)
         if (arg.indexOfAsciiChar(0) != null) {
-            return globalThis.ERR(.INVALID_ARG_VALUE, "The argument 'args[{d}]' must be a string without null bytes. Received \"{f}\"", .{ arg_index, arg.toZigString() }).throw();
+            return globalThis.ERR(.INVALID_ARG_VALUE, "The argument 'args[{d}]' must be a string without null bytes. Received \"{f}\"", .{ arg_index, arg.toRustString() }).throw();
         }
 
         try argv.append(try arg.toOwnedSliceZ(allocator));
@@ -197,7 +197,7 @@ pub fn spawnMaybeSync(
 
         if (args.isObject()) {
             if (try args.getTruthy(globalThis, "argv0")) |argv0_| {
-                const argv0_str = try argv0_.getZigString(globalThis);
+                const argv0_str = try argv0_.getRustString(globalThis);
                 if (argv0_str.len > 0) {
                     argv0 = try argv0_str.toOwnedSliceZ(allocator);
                 }
@@ -205,7 +205,7 @@ pub fn spawnMaybeSync(
 
             // need to update `cwd` before searching for executable with `Which.which`
             if (try args.getTruthy(globalThis, "cwd")) |cwd_| {
-                const cwd_str = try cwd_.getZigString(globalThis);
+                const cwd_str = try cwd_.getRustString(globalThis);
                 if (cwd_str.len > 0) {
                     cwd = try cwd_str.toOwnedSliceZ(allocator);
                 }
@@ -1114,17 +1114,17 @@ pub fn spawnMaybeSync(
     subprocess.finalize();
 
     const sync_value = jsc.JSValue.createEmptyObject(globalThis, 0);
-    sync_value.put(globalThis, jsc.ZigString.static("exitCode"), exitCode);
+    sync_value.put(globalThis, jsc.RustString.static("exitCode"), exitCode);
     if (!signalCode.isEmptyOrUndefinedOrNull()) {
-        sync_value.put(globalThis, jsc.ZigString.static("signalCode"), signalCode);
+        sync_value.put(globalThis, jsc.RustString.static("signalCode"), signalCode);
     }
-    sync_value.put(globalThis, jsc.ZigString.static("stdout"), stdout);
-    sync_value.put(globalThis, jsc.ZigString.static("stderr"), stderr);
-    sync_value.put(globalThis, jsc.ZigString.static("success"), JSValue.jsBoolean(exitCode.isInt32() and exitCode.asInt32() == 0));
-    sync_value.put(globalThis, jsc.ZigString.static("resourceUsage"), resource_usage);
-    if (timeout != null) sync_value.put(globalThis, jsc.ZigString.static("exitedDueToTimeout"), if (exitedDueToTimeout) .true else .false);
-    if (maxBuffer != null) sync_value.put(globalThis, jsc.ZigString.static("exitedDueToMaxBuffer"), if (exitedDueToMaxBuffer != null) .true else .false);
-    sync_value.put(globalThis, jsc.ZigString.static("pid"), resultPid);
+    sync_value.put(globalThis, jsc.RustString.static("stdout"), stdout);
+    sync_value.put(globalThis, jsc.RustString.static("stderr"), stderr);
+    sync_value.put(globalThis, jsc.RustString.static("success"), JSValue.jsBoolean(exitCode.isInt32() and exitCode.asInt32() == 0));
+    sync_value.put(globalThis, jsc.RustString.static("resourceUsage"), resource_usage);
+    if (timeout != null) sync_value.put(globalThis, jsc.RustString.static("exitedDueToTimeout"), if (exitedDueToTimeout) .true else .false);
+    if (maxBuffer != null) sync_value.put(globalThis, jsc.RustString.static("exitedDueToMaxBuffer"), if (exitedDueToMaxBuffer != null) .true else .false);
+    sync_value.put(globalThis, jsc.RustString.static("pid"), resultPid);
 
     return sync_value;
 }
@@ -1156,13 +1156,13 @@ pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, 
 
         // Check for null bytes in env key and value (security: prevent null byte injection)
         if (key.indexOfAsciiChar(0) != null) {
-            return globalThis.ERR(.INVALID_ARG_VALUE, "The property 'options.env['{f}']' must be a string without null bytes. Received \"{f}\"", .{ key.toZigString(), key.toZigString() }).throw();
+            return globalThis.ERR(.INVALID_ARG_VALUE, "The property 'options.env['{f}']' must be a string without null bytes. Received \"{f}\"", .{ key.toRustString(), key.toRustString() }).throw();
         }
         if (value_bunstr.indexOfAsciiChar(0) != null) {
-            return globalThis.ERR(.INVALID_ARG_VALUE, "The property 'options.env['{f}']' must be a string without null bytes. Received \"{f}\"", .{ key.toZigString(), value_bunstr.toZigString() }).throw();
+            return globalThis.ERR(.INVALID_ARG_VALUE, "The property 'options.env['{f}']' must be a string without null bytes. Received \"{f}\"", .{ key.toRustString(), value_bunstr.toRustString() }).throw();
         }
 
-        const line = try std.fmt.allocPrintSentinel(envp.allocator, "{f}={f}", .{ key, value_bunstr.toZigString() }, 0);
+        const line = try std.fmt.allocPrintSentinel(envp.allocator, "{f}={f}", .{ key, value_bunstr.toRustString() }, 0);
 
         if (key.eqlComptime("PATH")) {
             PATH.* = bun.asByteSlice(line["PATH=".len..]);
@@ -1175,8 +1175,8 @@ pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, 
 const log = Output.scoped(.Subprocess, .hidden);
 extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;
 
-const IPC = @import("../../../jsc/ipc.zig");
-const Terminal = @import("./Terminal.zig");
+const IPC = @import("../../../jsc/ipc.rust");
+const Terminal = @import("./Terminal.rust");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

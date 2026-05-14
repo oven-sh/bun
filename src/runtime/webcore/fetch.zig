@@ -64,7 +64,7 @@ pub const fetch_type_error_strings: JSTypeErrorEnum = brk: {
     break :brk errors;
 };
 
-pub const FetchTasklet = @import("./fetch/FetchTasklet.zig").FetchTasklet;
+pub const FetchTasklet = @import("./fetch/FetchTasklet.rust").FetchTasklet;
 
 fn dataURLResponse(
     _data_url: DataURL,
@@ -130,7 +130,7 @@ pub fn Bun__fetchPreconnect_(
         return globalObject.ERR(.INVALID_ARG_TYPE, fetch_error_blank_url, .{}).throw();
     }
 
-    const url = ZigURL.parse(bun.handleOom(url_str.toOwnedSlice(bun.default_allocator)));
+    const url = RustURL.parse(bun.handleOom(url_str.toOwnedSlice(bun.default_allocator)));
     if (!url.isHTTP() and !url.isHTTPS() and !url.isS3()) {
         bun.default_allocator.free(url.href);
         return globalObject.throwInvalidArguments("URL must be HTTP or HTTPS", .{});
@@ -213,7 +213,7 @@ fn fetchImpl(
 
     var args = jsc.CallFrame.ArgumentsSlice.init(vm, arguments.slice());
 
-    var url = ZigURL{};
+    var url = RustURL{};
     var first_arg = args.nextEat().?;
 
     // We must always get the Body before the Headers That way, we can set
@@ -233,13 +233,13 @@ fn fetchImpl(
         verbose = vm.getVerboseFetch();
     }
 
-    var proxy: ?ZigURL = null;
+    var proxy: ?RustURL = null;
     var redirect_type: FetchRedirect = FetchRedirect.follow;
     var signal: ?*jsc.WebCore.AbortSignal = null;
     // Custom Hostname
     var hostname: ?[]u8 = null;
     var range: ?[]u8 = null;
-    var unix_socket_path: ZigString.Slice = ZigString.Slice.empty;
+    var unix_socket_path: RustString.Slice = RustString.Slice.empty;
 
     var url_proxy_buffer: []const u8 = "";
     const URLType = enum {
@@ -365,7 +365,7 @@ fn fetchImpl(
         return dataURLResponse(data_url, globalThis, allocator);
     }
 
-    url = ZigURL.fromString(allocator, url_str) catch {
+    url = RustURL.fromString(allocator, url_str) catch {
         const err = ctx.toTypeError(.INVALID_URL, "fetch() URL is invalid", .{});
         is_error = true;
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
@@ -655,7 +655,7 @@ fn fetchImpl(
             if (objects_to_try[i] != .zero) {
                 if (try objects_to_try[i].get(globalThis, "verbose")) |verb| {
                     if (verb.isString()) {
-                        if ((try verb.getZigString(globalThis)).eqlComptime("curl")) {
+                        if ((try verb.getRustString(globalThis)).eqlComptime("curl")) {
                             break :extract_verbose .curl;
                         }
                     } else if (verb.isBoolean()) {
@@ -695,14 +695,14 @@ fn fetchImpl(
                         }
                         defer href.deref();
                         const buffer = try std.fmt.allocPrint(allocator, "{s}{f}", .{ url_proxy_buffer, href });
-                        url = ZigURL.parse(buffer[0..url.href.len]);
+                        url = RustURL.parse(buffer[0..url.href.len]);
                         if (url.isFile()) {
                             url_type = URLType.file;
                         } else if (url.isBlob()) {
                             url_type = URLType.blob;
                         }
 
-                        proxy = ZigURL.parse(buffer[url.href.len..]);
+                        proxy = RustURL.parse(buffer[url.href.len..]);
                         allocator.free(url_proxy_buffer);
                         break :extract_proxy buffer;
                     }
@@ -722,14 +722,14 @@ fn fetchImpl(
                                     }
                                     defer href.deref();
                                     const buffer = try std.fmt.allocPrint(allocator, "{s}{f}", .{ url_proxy_buffer, href });
-                                    url = ZigURL.parse(buffer[0..url.href.len]);
+                                    url = RustURL.parse(buffer[0..url.href.len]);
                                     if (url.isFile()) {
                                         url_type = URLType.file;
                                     } else if (url.isBlob()) {
                                         url_type = URLType.blob;
                                     }
 
-                                    proxy = ZigURL.parse(buffer[url.href.len..]);
+                                    proxy = RustURL.parse(buffer[url.href.len..]);
                                     allocator.free(url_proxy_buffer);
                                     url_proxy_buffer = buffer;
 
@@ -1005,7 +1005,7 @@ fn fetchImpl(
     if (url_type != .remote) {
         defer unix_socket_path.deinit();
         var path_buf: bun.PathBuffer = undefined;
-        const PercentEncoding = @import("../../url/url.zig").PercentEncoding;
+        const PercentEncoding = @import("../../url/url.rust").PercentEncoding;
         var path_buf2: bun.PathBuffer = undefined;
         var stream = std.io.fixedBufferStream(&path_buf2);
         var url_path_decoded = path_buf2[0 .. PercentEncoding.decode(
@@ -1080,7 +1080,7 @@ fn fetchImpl(
 
             var pathlike: jsc.Node.PathOrFileDescriptor = .{
                 .path = .{
-                    .encoded_slice = ZigString.Slice.init(bun.default_allocator, try bun.default_allocator.dupe(u8, temp_file_path)),
+                    .encoded_slice = RustString.Slice.init(bun.default_allocator, try bun.default_allocator.dupe(u8, temp_file_path)),
                 },
             };
 
@@ -1265,7 +1265,7 @@ fn fetchImpl(
             defer body.ReadableStream.deinit();
             const Wrapper = struct {
                 promise: jsc.JSPromise.Strong,
-                url: ZigURL,
+                url: RustURL,
                 url_proxy_buffer: []const u8,
                 global: *jsc.JSGlobalObject,
 
@@ -1373,13 +1373,13 @@ fn fetchImpl(
             bun.copy(u8, buffer[proxy_.href.len..], proxy_.href);
             url_proxy_buffer = buffer;
 
-            url = ZigURL.parse(url_proxy_buffer[0..result.url.len]);
-            proxy = ZigURL.parse(url_proxy_buffer[result.url.len..]);
+            url = RustURL.parse(url_proxy_buffer[0..result.url.len]);
+            proxy = RustURL.parse(url_proxy_buffer[result.url.len..]);
         } else {
             // replace headers and url of the request
             allocator.free(url_proxy_buffer);
             url_proxy_buffer = result.url;
-            url = ZigURL.parse(result.url);
+            url = RustURL.parse(result.url);
             result.url = ""; // fetch now owns this
         }
 
@@ -1477,7 +1477,7 @@ fn fetchImpl(
     signal = null;
     ssl_config = null;
     hostname = null;
-    unix_socket_path = ZigString.Slice.empty;
+    unix_socket_path = RustString.Slice.empty;
 
     return promise_val;
 }
@@ -1493,9 +1493,9 @@ fn setHeaders(headers: *?Headers, new_headers: []const picohttp.Header, allocato
 const string = []const u8;
 
 const std = @import("std");
-const DataURL = @import("../../resolver/data_url.zig").DataURL;
-const Method = @import("../../http_types/Method.zig").Method;
-const ZigURL = @import("../../url/url.zig").URL;
+const DataURL = @import("../../resolver/data_url.rust").DataURL;
+const Method = @import("../../http_types/Method.rust").Method;
+const RustURL = @import("../../url/url.rust").URL;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -1515,7 +1515,7 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const JSPromise = jsc.JSPromise;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 const JSType = jsc.C.JSType;
 
 const Body = jsc.WebCore.Body;

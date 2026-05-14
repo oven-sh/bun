@@ -1,4 +1,4 @@
-pub const css = @import("../css_parser.zig");
+pub const css = @import("../css_parser.rust");
 const Property = css.Property;
 const PropertyIdTag = css.PropertyIdTag;
 const PropertyCategory = css.logical.PropertyCategory;

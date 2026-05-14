@@ -527,7 +527,7 @@ pub fn deinit(this: *TimerObjectInternals) void {
     }
 }
 
-const Debugger = @import("../../jsc/Debugger.zig");
+const Debugger = @import("../../jsc/Debugger.rust");
 const std = @import("std");
 
 const bun = @import("bun");

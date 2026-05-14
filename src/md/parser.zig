@@ -142,7 +142,7 @@ pub const Parser = struct {
     // Delegated methods (re-exports)
     // ========================================
 
-    // render_blocks.zig
+    // render_blocks.rust
     pub const enterBlock = render_blocks_mod.enterBlock;
     pub const leaveBlock = render_blocks_mod.leaveBlock;
     pub const processCodeBlock = render_blocks_mod.processCodeBlock;
@@ -150,7 +150,7 @@ pub const Parser = struct {
     pub const processTableBlock = render_blocks_mod.processTableBlock;
     pub const processTableRow = render_blocks_mod.processTableRow;
 
-    // blocks.zig
+    // blocks.rust
     pub const processDoc = blocks_mod.processDoc;
     pub const analyzeLine = blocks_mod.analyzeLine;
     pub const processLine = blocks_mod.processLine;
@@ -161,7 +161,7 @@ pub const Parser = struct {
     pub const getBlockHeaderAt = blocks_mod.getBlockHeaderAt;
     pub const getBlockAt = blocks_mod.getBlockAt;
 
-    // containers.zig
+    // containers.rust
     pub const pushContainer = containers_mod.pushContainer;
     pub const pushContainerBytes = containers_mod.pushContainerBytes;
     pub const enterChildContainers = containers_mod.enterChildContainers;
@@ -169,7 +169,7 @@ pub const Parser = struct {
     pub const isContainerCompatible = containers_mod.isContainerCompatible;
     pub const processAllBlocks = containers_mod.processAllBlocks;
 
-    // inlines.zig
+    // inlines.rust
     pub const processLeafBlock = inlines_mod.processLeafBlock;
     pub const processInlineContent = inlines_mod.processInlineContent;
     pub const enterSpan = inlines_mod.enterSpan;
@@ -188,7 +188,7 @@ pub const Parser = struct {
     pub const findEntity = inlines_mod.findEntity;
     pub const findHtmlTag = inlines_mod.findHtmlTag;
 
-    // links.zig
+    // links.rust
     pub const processLink = links_mod.processLink;
     pub const tryMatchBracketLink = links_mod.tryMatchBracketLink;
     pub const labelContainsLink = links_mod.labelContainsLink;
@@ -197,7 +197,7 @@ pub const Parser = struct {
     pub const findAutolink = links_mod.findAutolink;
     pub const renderAutolink = links_mod.renderAutolink;
 
-    // line_analysis.zig
+    // line_analysis.rust
     pub const isSetextUnderline = line_analysis_mod.isSetextUnderline;
     pub const isHrLine = line_analysis_mod.isHrLine;
     pub const isAtxHeaderLine = line_analysis_mod.isAtxHeaderLine;
@@ -212,7 +212,7 @@ pub const Parser = struct {
     pub const countTableRowColumns = line_analysis_mod.countTableRowColumns;
     pub const isContainerMark = line_analysis_mod.isContainerMark;
 
-    // ref_defs.zig
+    // ref_defs.rust
     pub const normalizeLabel = ref_defs_mod.normalizeLabel;
     pub const lookupRefDef = ref_defs_mod.lookupRefDef;
     pub const parseRefDef = ref_defs_mod.parseRefDef;
@@ -260,21 +260,21 @@ pub fn renderWithRenderer(text: []const u8, allocator: Allocator, flags: Flags, 
     try p.processDoc();
 }
 
-const blocks_mod = @import("./blocks.zig");
+const blocks_mod = @import("./blocks.rust");
 const bun = @import("bun");
-const containers_mod = @import("./containers.zig");
-const helpers = @import("./helpers.zig");
-const inlines_mod = @import("./inlines.zig");
-const line_analysis_mod = @import("./line_analysis.zig");
-const links_mod = @import("./links.zig");
-const ref_defs_mod = @import("./ref_defs.zig");
-const render_blocks_mod = @import("./render_blocks.zig");
-const root = @import("./root.zig");
+const containers_mod = @import("./containers.rust");
+const helpers = @import("./helpers.rust");
+const inlines_mod = @import("./inlines.rust");
+const line_analysis_mod = @import("./line_analysis.rust");
+const links_mod = @import("./links.rust");
+const ref_defs_mod = @import("./ref_defs.rust");
+const render_blocks_mod = @import("./render_blocks.rust");
+const root = @import("./root.rust");
 const std = @import("std");
-const HtmlRenderer = @import("./html_renderer.zig").HtmlRenderer;
+const HtmlRenderer = @import("./html_renderer.rust").HtmlRenderer;
 const Allocator = std.mem.Allocator;
 
-const types = @import("./types.zig");
+const types = @import("./types.rust");
 const Align = types.Align;
 const BlockType = types.BlockType;
 const Container = types.Container;

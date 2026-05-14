@@ -76,10 +76,10 @@ pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_valu
 
 const bun = @import("bun");
 const std = @import("std");
-const Param = @import("../MySQLStatement.zig").Param;
-const QueryBindingIterator = @import("../../shared/QueryBindingIterator.zig").QueryBindingIterator;
+const Param = @import("../MySQLStatement.rust").Param;
+const QueryBindingIterator = @import("../../shared/QueryBindingIterator.rust").QueryBindingIterator;
 
-const types = @import("../../../sql/mysql/MySQLTypes.zig");
+const types = @import("../../../sql/mysql/MySQLTypes.rust");
 const FieldType = types.FieldType;
 
 const jsc = bun.jsc;

@@ -65,9 +65,9 @@ const {
   getHashes,
   scrypt,
   scryptSync,
-} = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
+} = $rust("node_crypto_binding.rust", "createNodeCryptoBindingRust");
 
-const normalizeEncoding = $newZigFunction("node_util_binding.zig", "normalizeEncoding", 1);
+const normalizeEncoding = $newRustFunction("node_util_binding.rust", "normalizeEncoding", 1);
 
 const { validateString } = require("internal/validators");
 
@@ -153,7 +153,7 @@ crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
   return CryptoHasher.hash(algorithm, input, outputEncoding);
 };
 
-// TODO: move this to zig
+// TODO: move this to rust
 function pbkdf2(password, salt, iterations, keylen, digest, callback) {
   if (typeof digest === "function") {
     callback = digest;

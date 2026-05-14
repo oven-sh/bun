@@ -1,4 +1,4 @@
-/// Called from isolated_install.zig on the main thread.
+/// Called from isolated_install.rust on the main thread.
 pub fn runTasks(
     manager: *PackageManager,
     comptime Ctx: type,

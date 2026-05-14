@@ -1,4 +1,4 @@
-pub const css = @import("../css_parser.zig");
+pub const css = @import("../css_parser.rust");
 const CSSStringFns = css.CSSStringFns;
 
 pub const Printer = css.Printer;
@@ -3653,7 +3653,7 @@ pub fn parse_attribute_flags(input: *css.Parser) Result(AttributeFlags) {
     }
 }
 
-const selector_builder = @import("./builder.zig");
+const selector_builder = @import("./builder.rust");
 const SelectorBuilder = selector_builder.SelectorBuilder;
 
 const bun = @import("bun");

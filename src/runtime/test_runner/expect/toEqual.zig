@@ -38,7 +38,7 @@ pub fn toEqual(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
 }
 
 const bun = @import("bun");
-const DiffFormatter = @import("../diff_format.zig").DiffFormatter;
+const DiffFormatter = @import("../diff_format.rust").DiffFormatter;
 
 const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;

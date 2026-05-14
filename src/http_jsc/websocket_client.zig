@@ -1,4 +1,4 @@
-/// This is the Zig implementation of the WebSocket client.
+/// This is the Rust implementation of the WebSocket client.
 ///
 /// It manages the WebSocket connection, including sending and receiving data,
 /// handling connection events, and managing the WebSocket state.
@@ -87,7 +87,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             return true;
         }
 
-        /// Handler set referenced by `dispatch.zig` (kind = `.ws_client[_tls]`).
+        /// Handler set referenced by `dispatch.rust` (kind = `.ws_client[_tls]`).
         /// Replaces the C++→`register()`→`us_socket_context_on_*` round-trip.
         pub const onClose = handleClose;
         pub const onData = handleData;
@@ -295,14 +295,14 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         this.terminate(ErrorCode.invalid_utf8);
                         return;
                     };
-                    var outstring = jsc.ZigString.Empty;
+                    var outstring = jsc.RustString.Empty;
                     if (utf16_bytes_) |utf16| {
-                        outstring = jsc.ZigString.from16Slice(utf16);
+                        outstring = jsc.RustString.from16Slice(utf16);
                         outstring.markGlobal();
                         jsc.markBinding(@src());
                         out.didReceiveText(false, &outstring);
                     } else {
-                        outstring = jsc.ZigString.init(data_);
+                        outstring = jsc.RustString.init(data_);
                         jsc.markBinding(@src());
                         out.didReceiveText(true, &outstring);
                     }
@@ -1135,7 +1135,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         pub fn writeString(
             this: *WebSocket,
-            str_: *const jsc.ZigString,
+            str_: *const jsc.RustString,
             op: u8,
         ) callconv(.c) void {
             // See writeBinaryData() — tunnel.write() can re-enter fail().
@@ -1205,7 +1205,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.deref();
         }
 
-        pub fn close(this: *WebSocket, code: u16, reason: ?*const jsc.ZigString) callconv(.c) void {
+        pub fn close(this: *WebSocket, code: u16, reason: ?*const jsc.RustString) callconv(.c) void {
             // In tunnel mode, SSLWrapper.writeData() (via sendCloseWithBody →
             // enqueueEncodedBytes → tunnel.write) can synchronously fire
             // onClose → ws.fail() → cancel() → clearData() and free `this`
@@ -1773,13 +1773,13 @@ const log = Output.scoped(.WebSocketClient, .visible);
 
 const string = []const u8;
 
-const WebSocketDeflate = @import("./websocket_client/WebSocketDeflate.zig");
-const WebSocketProxyTunnel = @import("./websocket_client/WebSocketProxyTunnel.zig");
+const WebSocketDeflate = @import("./websocket_client/WebSocketDeflate.rust");
+const WebSocketProxyTunnel = @import("./websocket_client/WebSocketProxyTunnel.rust");
 const std = @import("std");
-const CppWebSocket = @import("./websocket_client/CppWebSocket.zig").CppWebSocket;
+const CppWebSocket = @import("./websocket_client/CppWebSocket.rust").CppWebSocket;
 
-const Opcode = @import("../http/websocket.zig").Opcode;
-const WebsocketHeader = @import("../http/websocket.zig").WebsocketHeader;
+const Opcode = @import("../http/websocket.rust").Opcode;
+const WebsocketHeader = @import("../http/websocket.rust").WebsocketHeader;
 
 const bun = @import("bun");
 const Async = bun.Async;

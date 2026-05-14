@@ -27,11 +27,11 @@ pub fn loaderFromJS(global: *jsc.JSGlobalObject, loader: jsc.JSValue) bun.JSErro
         return global.throwInvalidArguments("loader must be a string", .{});
     }
 
-    var zig_str = jsc.ZigString.init("");
-    try loader.toZigString(&zig_str, global);
-    if (zig_str.len == 0) return null;
+    var rust_str = jsc.RustString.init("");
+    try loader.toRustString(&rust_str, global);
+    if (rust_str.len == 0) return null;
 
-    const slice = zig_str.toSlice(bun.default_allocator);
+    const slice = rust_str.toSlice(bun.default_allocator);
     defer slice.deinit();
 
     return options.Loader.fromString(slice.slice()) orelse {
@@ -62,7 +62,7 @@ pub fn compileTargetFromSlice(global: *jsc.JSGlobalObject, slice_with_bun_prefix
     return target_parsed;
 }
 
-const CompileTarget = @import("../options_types/CompileTarget.zig");
+const CompileTarget = @import("../options_types/CompileTarget.rust");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

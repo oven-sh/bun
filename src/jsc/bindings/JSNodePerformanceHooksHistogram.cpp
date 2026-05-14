@@ -3,7 +3,7 @@
 #include "JSNodePerformanceHooksHistogram.h"
 #include "JSNodePerformanceHooksHistogramPrototype.h"
 #include "JSNodePerformanceHooksHistogramConstructor.h"
-#include "ZigGlobalObject.h"
+#include "RustGlobalObject.h"
 #include "ErrorCode.h"
 #include "BunString.h"
 #include "JSDOMExceptionHandling.h"

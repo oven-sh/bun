@@ -70,7 +70,7 @@ pub inline fn setUrl(this: *Response, url: bun.String) void {
     this.#url.deref();
     this.#url = url;
 }
-pub inline fn getUTF8Url(this: *Response, allocator: std.mem.Allocator) ZigString.Slice {
+pub inline fn getUTF8Url(this: *Response, allocator: std.mem.Allocator) RustString.Slice {
     return this.#url.toUTF8(allocator);
 }
 pub inline fn getUrl(this: *Response) bun.String {
@@ -93,7 +93,7 @@ pub inline fn getMethod(this: *Response) Method {
     return this.#init.method;
 }
 pub fn getFormDataEncoding(this: *Response) bun.JSError!?*bun.FormData.AsyncFormData {
-    var content_type_slice: ZigString.Slice = (try this.getContentType()) orelse return null;
+    var content_type_slice: RustString.Slice = (try this.getContentType()) orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
     return bun.handleOom(bun.FormData.AsyncFormData.init(bun.default_allocator, encoding));
@@ -489,7 +489,7 @@ pub fn finalize(
 
 pub fn getContentType(
     this: *Response,
-) bun.JSError!?ZigString.Slice {
+) bun.JSError!?RustString.Slice {
     if (this.#init.headers) |headers| {
         if (headers.fastGet(.ContentType)) |value| {
             return value.toSlice(bun.default_allocator);
@@ -498,7 +498,7 @@ pub fn getContentType(
 
     if (this.#body.value == .Blob) {
         if (this.#body.value.Blob.content_type.len > 0)
-            return ZigString.Slice.fromUTF8NeverFree(this.#body.value.Blob.content_type);
+            return RustString.Slice.fromUTF8NeverFree(this.#body.value.Blob.content_type);
     }
 
     return null;
@@ -614,7 +614,7 @@ pub fn constructRedirectImpl(
     // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
 
-    var url_string_slice = ZigString.Slice.empty;
+    var url_string_slice = RustString.Slice.empty;
     defer url_string_slice.deinit();
     var response: Response = brk: {
         var response = Response{
@@ -628,10 +628,10 @@ pub fn constructRedirectImpl(
         };
 
         const url_string_value = args.nextEat() orelse jsc.JSValue.zero;
-        var url_string = ZigString.init("");
+        var url_string = RustString.init("");
 
         if (@intFromEnum(url_string_value) != 0) {
-            url_string = try url_string_value.getZigString(globalThis);
+            url_string = try url_string_value.getRustString(globalThis);
         }
         url_string_slice = url_string.toSlice(bun.default_allocator);
         var did_succeed = false;
@@ -909,10 +909,10 @@ inline fn emptyWithStatus(_: *jsc.JSGlobalObject, status: u16) Response {
 }
 
 /// https://developer.mozilla.org/en-US/docs/Web/API/Headers
-// TODO: move to http.zig. this has nothing to do with jsc or WebCore
+// TODO: move to http.rust. this has nothing to do with jsc or WebCore
 
 const std = @import("std");
-const Method = @import("../../http_types/Method.zig").Method;
+const Method = @import("../../http_types/Method.rust").Method;
 
 const bun = @import("bun");
 const Output = bun.Output;
@@ -926,7 +926,7 @@ const MimeType = bun.http.MimeType;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
+const RustString = jsc.RustString;
 const Request = jsc.WebCore.Request;
 
 const Blob = jsc.WebCore.Blob;

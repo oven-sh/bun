@@ -396,16 +396,16 @@ const debug = bun.Output.scoped(.Postgres, .visible);
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
 const max_parameters = std.math.maxInt(u16);
 
-const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
-const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");
-const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
-const Signature = @import("./Signature.zig");
-const protocol = @import("../../sql/postgres/PostgresProtocol.zig");
+const PostgresSQLConnection = @import("./PostgresSQLConnection.rust");
+const PostgresSQLQuery = @import("./PostgresSQLQuery.rust");
+const PostgresSQLStatement = @import("./PostgresSQLStatement.rust");
+const Signature = @import("./Signature.rust");
+const protocol = @import("../../sql/postgres/PostgresProtocol.rust");
 const std = @import("std");
-const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").QueryBindingIterator;
+const QueryBindingIterator = @import("../shared/QueryBindingIterator.rust").QueryBindingIterator;
 
-const types = @import("../../sql/postgres/PostgresTypes.zig");
-const AnyPostgresError = @import("../../sql/postgres/PostgresTypes.zig").AnyPostgresError;
+const types = @import("../../sql/postgres/PostgresTypes.rust");
+const AnyPostgresError = @import("../../sql/postgres/PostgresTypes.rust").AnyPostgresError;
 const int4 = types.int4;
 const short = types.short;
 

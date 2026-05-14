@@ -1,4 +1,4 @@
-pub const css = @import("../css_parser.zig");
+pub const css = @import("../css_parser.rust");
 
 const GenericBorder = css.css_properties.border.GenericBorder;
 const LineStyle = css.css_properties.border.LineStyle;

@@ -2,7 +2,7 @@
 /// Normalization is necessary because most fields in the API schema are optional
 const std = @import("std");
 
-pub const defines = @import("./defines.zig");
+pub const defines = @import("./defines.rust");
 pub const Define = defines.Define;
 
 pub const WriteDestination = enum {
@@ -363,7 +363,7 @@ pub const ExternalModules = struct {
     });
 };
 
-pub const BundlePackage = @import("../options_types/BundleEnums.zig").BundlePackage;
+pub const BundlePackage = @import("../options_types/BundleEnums.rust").BundlePackage;
 
 pub const ModuleType = enum {
     unknown,
@@ -393,7 +393,7 @@ pub const Target = enum {
         .{ "node", .node },
     });
 
-    pub const fromJS = @import("../bundler_jsc/options_jsc.zig").targetFromJS;
+    pub const fromJS = @import("../bundler_jsc/options_jsc.rust").targetFromJS;
 
     pub fn toAPI(this: Target) api.Target {
         return switch (this) {
@@ -557,9 +557,9 @@ pub const Target = enum {
     }
 };
 
-pub const Format = @import("../options_types/BundleEnums.zig").Format;
+pub const Format = @import("../options_types/BundleEnums.rust").Format;
 
-pub const WindowsOptions = @import("../options_types/BundleEnums.zig").WindowsOptions;
+pub const WindowsOptions = @import("../options_types/BundleEnums.rust").WindowsOptions;
 
 // The max integer value in this enum can only be appended to.
 // It has dependencies in several places:
@@ -718,7 +718,7 @@ pub const Loader = enum(u8) {
         return stdin_name.get(this);
     }
 
-    pub const fromJS = @import("../bundler_jsc/options_jsc.zig").loaderFromJS;
+    pub const fromJS = @import("../bundler_jsc/options_jsc.rust").loaderFromJS;
 
     pub const names = bun.ComptimeStringMap(Loader, .{
         .{ "js", .js },
@@ -2158,7 +2158,7 @@ pub const TransformOptions = struct {
     }
 };
 
-pub const OutputFile = @import("./OutputFile.zig");
+pub const OutputFile = @import("./OutputFile.rust");
 
 pub const TransformResult = struct {
     errors: []logger.Msg = &([_]logger.Msg{}),
@@ -2499,7 +2499,7 @@ pub const RouteConfig = struct {
     }
 };
 
-pub const GlobalCache = @import("../resolver/resolver.zig").GlobalCache;
+pub const GlobalCache = @import("../resolver/resolver.rust").GlobalCache;
 
 pub const PathTemplate = struct {
     data: string = "",
@@ -2632,15 +2632,15 @@ pub const PathTemplate = struct {
 
 const string = []const u8;
 
-const DotEnv = @import("../dotenv/env_loader.zig");
-const Fs = @import("../resolver/fs.zig");
-const resolver = @import("../resolver/resolver.zig");
-const Runtime = @import("../js_parser/runtime.zig").Runtime;
-const URL = @import("../url/url.zig").URL;
+const DotEnv = @import("../dotenv/env_loader.rust");
+const Fs = @import("../resolver/fs.rust");
+const resolver = @import("../resolver/resolver.rust");
+const Runtime = @import("../js_parser/runtime.rust").Runtime;
+const URL = @import("../url/url.rust").URL;
 
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
-const ConditionsMap = @import("../resolver/package_json.zig").ESModule.ConditionsMap;
+const MacroRemap = @import("../resolver/package_json.rust").MacroMap;
+const PackageJSON = @import("../resolver/package_json.rust").PackageJSON;
+const ConditionsMap = @import("../resolver/package_json.rust").ESModule.ConditionsMap;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

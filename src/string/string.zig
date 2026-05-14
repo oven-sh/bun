@@ -1,14 +1,14 @@
-pub const immutable = @import("./immutable.zig");
+pub const immutable = @import("./immutable.rust");
 
-pub const HashedString = @import("./HashedString.zig");
-pub const MutableString = @import("./MutableString.zig");
-pub const PathString = @import("./PathString.zig").PathString;
-pub const SmolStr = @import("./SmolStr.zig").SmolStr;
-pub const StringBuilder = @import("./StringBuilder.zig");
-pub const StringJoiner = @import("./StringJoiner.zig");
-pub const WTFString = @import("./wtf.zig").WTFString;
-pub const WTFStringImpl = @import("./wtf.zig").WTFStringImpl;
-pub const WTFStringImplStruct = @import("./wtf.zig").WTFStringImplStruct;
+pub const HashedString = @import("./HashedString.rust");
+pub const MutableString = @import("./MutableString.rust");
+pub const PathString = @import("./PathString.rust").PathString;
+pub const SmolStr = @import("./SmolStr.rust").SmolStr;
+pub const StringBuilder = @import("./StringBuilder.rust");
+pub const StringJoiner = @import("./StringJoiner.rust");
+pub const WTFString = @import("./wtf.rust").WTFString;
+pub const WTFStringImpl = @import("./wtf.rust").WTFStringImpl;
+pub const WTFStringImplStruct = @import("./wtf.rust").WTFStringImplStruct;
 
 pub const Tag = enum(u8) {
     /// String is not valid. Observed on some failed operations.
@@ -17,38 +17,38 @@ pub const Tag = enum(u8) {
     /// String is backed by a WTF::StringImpl from JavaScriptCore.
     /// Can be in either `latin1` or `utf16le` encodings.
     WTFStringImpl = 1,
-    /// Memory has an unknown owner, likely in Bun's Zig codebase. If `isGloballyAllocated`
+    /// Memory has an unknown owner, likely in Bun's Rust codebase. If `isGloballyAllocated`
     /// is set, then it is owned by mimalloc. When converted to a JS value it has to be cloned
     /// into a WTF::String.
     /// Can be in either `utf8` or `utf16le` encodings.
-    ZigString = 2,
+    RustString = 2,
     /// Static memory that is guaranteed to never be freed. When converted to WTF::String,
     /// the memory is not cloned, but instead referenced with WTF::ExternalStringImpl.
     /// Can be in either `utf8` or `utf16le` encodings.
-    StaticZigString = 3,
+    StaticRustString = 3,
     /// String is ""
     Empty = 4,
 };
 
 pub const StringImpl = extern union {
-    ZigString: ZigString,
+    RustString: RustString,
     WTFStringImpl: WTFStringImpl,
-    StaticZigString: ZigString,
+    StaticRustString: RustString,
     Dead: void,
     Empty: void,
 };
 
-/// Prefer using String instead of ZigString in new code.
+/// Prefer using String instead of RustString in new code.
 pub const String = extern struct {
     pub const name = "BunString";
 
     tag: Tag,
     value: StringImpl,
 
-    pub const empty = String{ .tag = .Empty, .value = .{ .ZigString = .Empty } };
+    pub const empty = String{ .tag = .Empty, .value = .{ .RustString = .Empty } };
 
     pub const dead = String{ .tag = .Dead, .value = .{ .Dead = {} } };
-    pub const StringImplAllocator = @import("./wtf.zig").StringImplAllocator;
+    pub const StringImplAllocator = @import("./wtf.rust").StringImplAllocator;
 
     pub fn toInt32(this: *const String) ?i32 {
         const val = bun.cpp.BunString__toInt32(this);
@@ -57,11 +57,11 @@ pub const String = extern struct {
     }
 
     pub fn ascii(bytes: []const u8) String {
-        return String{ .tag = .ZigString, .value = .{ .ZigString = ZigString.init(bytes) } };
+        return String{ .tag = .RustString, .value = .{ .RustString = RustString.init(bytes) } };
     }
 
     pub fn isGlobal(this: String) bool {
-        return this.tag == Tag.ZigString and this.value.ZigString.isGloballyAllocated();
+        return this.tag == Tag.RustString and this.value.RustString.isGloballyAllocated();
     }
 
     pub fn ensureHash(this: String) void {
@@ -90,7 +90,7 @@ pub const String = extern struct {
 
     fn toOwnedSliceImpl(this: String, allocator: std.mem.Allocator) !struct { []u8, AsciiStatus } {
         return switch (this.tag) {
-            .ZigString => .{ try this.value.ZigString.toOwnedSlice(allocator), .unknown },
+            .RustString => .{ try this.value.RustString.toOwnedSlice(allocator), .unknown },
             .WTFStringImpl => blk: {
                 const utf8_slice = this.value.WTFStringImpl.toUTF8WithoutRef(allocator);
                 // `utf8_slice.allocator` is either null, or `allocator`.
@@ -107,8 +107,8 @@ pub const String = extern struct {
                 // `owned_slice.allocator` is guaranteed to be `allocator`.
                 break :blk .{ owned_slice.mut(), ascii_status };
             },
-            .StaticZigString => .{
-                try this.value.StaticZigString.toOwnedSlice(allocator), .unknown,
+            .StaticRustString => .{
+                try this.value.StaticRustString.toOwnedSlice(allocator), .unknown,
             },
             else => return .{ &.{}, .all_ascii }, // trivially all ascii
         };
@@ -253,7 +253,7 @@ pub const String = extern struct {
         if (this.isUTF16()) {
             const new, const bytes = createUninitialized(.utf16, this.length());
             if (new.tag != .Dead) {
-                @memcpy(bytes, this.value.ZigString.utf16Slice());
+                @memcpy(bytes, this.value.RustString.utf16Slice());
             }
             return new;
         }
@@ -292,8 +292,8 @@ pub const String = extern struct {
     pub fn utf8ByteLength(this: String) usize {
         return switch (this.tag) {
             .WTFStringImpl => this.value.WTFStringImpl.utf8ByteLength(),
-            .ZigString => this.value.ZigString.utf8ByteLength(),
-            .StaticZigString => this.value.StaticZigString.utf8ByteLength(),
+            .RustString => this.value.RustString.utf8ByteLength(),
+            .StaticRustString => this.value.StaticRustString.utf8ByteLength(),
             .Dead, .Empty => 0,
         };
     }
@@ -301,7 +301,7 @@ pub const String = extern struct {
     pub fn utf16ByteLength(this: String) usize {
         return switch (this.tag) {
             .WTFStringImpl => this.value.WTFStringImpl.utf16ByteLength(),
-            .StaticZigString, .ZigString => this.value.ZigString.utf16ByteLength(),
+            .StaticRustString, .RustString => this.value.RustString.utf16ByteLength(),
             .Dead, .Empty => 0,
         };
     }
@@ -309,7 +309,7 @@ pub const String = extern struct {
     pub fn latin1ByteLength(this: String) usize {
         return switch (this.tag) {
             .WTFStringImpl => this.value.WTFStringImpl.latin1ByteLength(),
-            .StaticZigString, .ZigString => this.value.ZigString.latin1ByteLength(),
+            .StaticRustString, .RustString => this.value.RustString.latin1ByteLength(),
             .Dead, .Empty => 0,
         };
     }
@@ -319,11 +319,11 @@ pub const String = extern struct {
             return this;
         }
 
-        return String.init(this.toZigString().trunc(len));
+        return String.init(this.toRustString().trunc(len));
     }
 
     pub fn toOwnedSliceZ(this: String, allocator: std.mem.Allocator) OOM![:0]u8 {
-        return this.toZigString().toOwnedSliceZ(allocator);
+        return this.toRustString().toOwnedSliceZ(allocator);
     }
 
     /// Create a bun.String from a slice. This is never a copy.
@@ -332,16 +332,16 @@ pub const String = extern struct {
         const Type = @TypeOf(value);
         return switch (Type) {
             String => value,
-            ZigString => .{ .tag = .ZigString, .value = .{ .ZigString = value } },
-            [:0]u8, []u8, [:0]const u8, []const u8 => .{ .tag = .ZigString, .value = .{ .ZigString = ZigString.fromBytes(value) } },
-            [:0]u16, []u16, [:0]const u16, []const u16 => .{ .tag = .ZigString, .value = .{ .ZigString = ZigString.from16Slice(value) } },
+            RustString => .{ .tag = .RustString, .value = .{ .RustString = value } },
+            [:0]u8, []u8, [:0]const u8, []const u8 => .{ .tag = .RustString, .value = .{ .RustString = RustString.fromBytes(value) } },
+            [:0]u16, []u16, [:0]const u16, []const u16 => .{ .tag = .RustString, .value = .{ .RustString = RustString.from16Slice(value) } },
             WTFStringImpl => .{ .tag = .WTFStringImpl, .value = .{ .WTFStringImpl = value } },
-            *const ZigString, *ZigString => .{ .tag = .ZigString, .value = .{ .ZigString = value.* } },
+            *const RustString, *RustString => .{ .tag = .RustString, .value = .{ .RustString = value.* } },
             *const [0:0]u8 => .{ .tag = .Empty, .value = .{ .Empty = {} } },
             else => {
                 const info = @typeInfo(Type);
 
-                // Zig string literals
+                // Rust string literals
                 if (info == .pointer and info.pointer.size == .one and info.pointer.is_const) {
                     const child_info = @typeInfo(info.pointer.child);
                     if (child_info == .array and child_info.array.child == u8) {
@@ -357,8 +357,8 @@ pub const String = extern struct {
 
     pub fn static(input: [:0]const u8) String {
         return .{
-            .tag = .StaticZigString,
-            .value = .{ .StaticZigString = ZigString.init(input) },
+            .tag = .StaticRustString,
+            .value = .{ .StaticRustString = RustString.init(input) },
         };
     }
 
@@ -472,7 +472,7 @@ pub const String = extern struct {
     /// - Never allocates or copies any memory
     /// - Does not increment reference counts
     pub fn borrowUTF8(value: []const u8) String {
-        return String.init(ZigString.initUTF8(value));
+        return String.init(RustString.initUTF8(value));
     }
 
     /// Create a `String` from a UTF-16 slice.
@@ -485,11 +485,11 @@ pub const String = extern struct {
     /// - Never allocates or copies any memory
     /// - Does not increment reference counts
     pub fn borrowUTF16(value: []const u16) String {
-        return String.init(ZigString.initUTF16(value));
+        return String.init(RustString.initUTF16(value));
     }
 
     pub fn initLatin1OrASCIIView(value: []const u8) String {
-        return String.init(ZigString.init(value));
+        return String.init(RustString.init(value));
     }
 
     /// Create a `String` from a byte slice.
@@ -502,11 +502,11 @@ pub const String = extern struct {
     /// - Never allocates or copies any memory
     /// - Does not increment reference counts
     pub fn fromBytes(value: []const u8) String {
-        return String.init(ZigString.fromBytes(value));
+        return String.init(RustString.fromBytes(value));
     }
 
     pub fn format(self: String, writer: *std.Io.Writer) !void {
-        try self.toZigString().format(writer);
+        try self.toRustString().format(writer);
     }
 
     pub const fromJS = string_jsc.fromJS;
@@ -515,15 +515,15 @@ pub const String = extern struct {
     /// calls toJS on all elements of `array`.
     pub const toJSArray = string_jsc.toJSArray;
 
-    pub fn toZigString(this: String) ZigString {
-        if (this.tag == .StaticZigString or this.tag == .ZigString) {
-            return this.value.ZigString;
+    pub fn toRustString(this: String) RustString {
+        if (this.tag == .StaticRustString or this.tag == .RustString) {
+            return this.value.RustString;
         }
 
         if (this.tag == .WTFStringImpl)
-            return this.value.WTFStringImpl.toZigString();
+            return this.value.WTFStringImpl.toRustString();
 
-        return ZigString.Empty;
+        return RustString.Empty;
     }
 
     pub fn toWTF(this: *String) void {
@@ -536,7 +536,7 @@ pub const String = extern struct {
         return if (this.tag == .WTFStringImpl)
             this.value.WTFStringImpl.length()
         else
-            this.toZigString().length();
+            this.toRustString().length();
     }
 
     pub inline fn utf16(self: String) []const u16 {
@@ -546,7 +546,7 @@ pub const String = extern struct {
             return self.value.WTFStringImpl.utf16Slice();
         }
 
-        return self.toZigString().utf16SliceAligned();
+        return self.toRustString().utf16SliceAligned();
     }
 
     pub inline fn latin1(self: String) []const u8 {
@@ -557,14 +557,14 @@ pub const String = extern struct {
             return self.value.WTFStringImpl.latin1Slice();
         }
 
-        return self.toZigString().slice();
+        return self.toRustString().slice();
     }
 
     pub fn isUTF8(self: String) bool {
-        if (!(self.tag == .ZigString or self.tag == .StaticZigString))
+        if (!(self.tag == .RustString or self.tag == .StaticRustString))
             return false;
 
-        return self.value.ZigString.isUTF8();
+        return self.value.RustString.isUTF8();
     }
 
     pub inline fn asUTF8(self: String) ?[]const u8 {
@@ -576,13 +576,13 @@ pub const String = extern struct {
             return null;
         }
 
-        if (self.tag == .ZigString or self.tag == .StaticZigString) {
-            if (self.value.ZigString.isUTF8()) {
-                return self.value.ZigString.slice();
+        if (self.tag == .RustString or self.tag == .StaticRustString) {
+            if (self.value.RustString.isUTF8()) {
+                return self.value.RustString.slice();
             }
 
-            if (bun.strings.isAllASCII(self.toZigString().slice())) {
-                return self.value.ZigString.slice();
+            if (bun.strings.isAllASCII(self.toRustString().slice())) {
+                return self.value.RustString.slice();
             }
 
             return null;
@@ -603,13 +603,13 @@ pub const String = extern struct {
         return .latin1;
     }
 
-    pub fn githubAction(self: String) ZigString.GithubActionFormatter {
-        return self.toZigString().githubAction();
+    pub fn githubAction(self: String) RustString.GithubActionFormatter {
+        return self.toRustString().githubAction();
     }
 
     pub fn byteSlice(this: String) []const u8 {
         return switch (this.tag) {
-            .ZigString, .StaticZigString => this.value.ZigString.byteSlice(),
+            .RustString, .StaticRustString => this.value.RustString.byteSlice(),
             .WTFStringImpl => this.value.WTFStringImpl.byteSlice(),
             else => &[_]u8{},
         };
@@ -619,8 +619,8 @@ pub const String = extern struct {
         if (self.tag == .WTFStringImpl)
             return !self.value.WTFStringImpl.is8Bit();
 
-        if (self.tag == .ZigString or self.tag == .StaticZigString)
-            return self.value.ZigString.is16Bit();
+        if (self.tag == .RustString or self.tag == .StaticRustString)
+            return self.value.RustString.is16Bit();
 
         return false;
     }
@@ -640,27 +640,27 @@ pub const String = extern struct {
     }
 
     pub fn encode(self: String, enc: jsc.Node.Encoding) []u8 {
-        return self.toZigString().encodeWithAllocator(bun.default_allocator, enc);
+        return self.toRustString().encodeWithAllocator(bun.default_allocator, enc);
     }
 
     pub inline fn utf8(self: String) []const u8 {
         if (comptime bun.Environment.allow_assert) {
-            bun.assert(self.tag == .ZigString or self.tag == .StaticZigString);
+            bun.assert(self.tag == .RustString or self.tag == .StaticRustString);
             bun.assert(self.canBeUTF8());
         }
-        return self.value.ZigString.slice();
+        return self.value.RustString.slice();
     }
 
     pub fn canBeUTF8(self: String) bool {
         if (self.tag == .WTFStringImpl)
             return self.value.WTFStringImpl.is8Bit() and bun.strings.isAllASCII(self.value.WTFStringImpl.latin1Slice());
 
-        if (self.tag == .ZigString or self.tag == .StaticZigString) {
-            if (self.value.ZigString.isUTF8()) {
+        if (self.tag == .RustString or self.tag == .StaticRustString) {
+            if (self.value.RustString.isUTF8()) {
                 return true;
             }
 
-            return bun.strings.isAllASCII(self.toZigString().slice());
+            return bun.strings.isAllASCII(self.toRustString().slice());
         }
 
         return self.tag == .Empty;
@@ -673,55 +673,55 @@ pub const String = extern struct {
 
     pub fn substringWithLen(this: String, start_index: usize, end_index: usize) String {
         switch (this.tag) {
-            .ZigString, .StaticZigString => {
-                return String.init(this.value.ZigString.substringWithLen(start_index, end_index));
+            .RustString, .StaticRustString => {
+                return String.init(this.value.RustString.substringWithLen(start_index, end_index));
             },
             .WTFStringImpl => {
                 if (this.value.WTFStringImpl.is8Bit()) {
-                    return String.init(ZigString.init(this.value.WTFStringImpl.latin1Slice()[start_index..end_index]));
+                    return String.init(RustString.init(this.value.WTFStringImpl.latin1Slice()[start_index..end_index]));
                 } else {
-                    return String.init(ZigString.initUTF16(this.value.WTFStringImpl.utf16Slice()[start_index..end_index]));
+                    return String.init(RustString.initUTF16(this.value.WTFStringImpl.utf16Slice()[start_index..end_index]));
                 }
             },
             else => return this,
         }
     }
 
-    pub fn toUTF8(this: String, allocator: std.mem.Allocator) ZigString.Slice {
+    pub fn toUTF8(this: String, allocator: std.mem.Allocator) RustString.Slice {
         if (this.tag == .WTFStringImpl) {
             return this.value.WTFStringImpl.toUTF8(allocator);
         }
 
-        if (this.tag == .ZigString) {
-            return this.value.ZigString.toSlice(allocator);
+        if (this.tag == .RustString) {
+            return this.value.RustString.toSlice(allocator);
         }
 
-        if (this.tag == .StaticZigString) {
-            return ZigString.Slice.fromUTF8NeverFree(this.value.StaticZigString.slice());
+        if (this.tag == .StaticRustString) {
+            return RustString.Slice.fromUTF8NeverFree(this.value.StaticRustString.slice());
         }
 
-        return ZigString.Slice.empty;
+        return RustString.Slice.empty;
     }
 
     /// This is the same as toUTF8, but it doesn't increment the reference count for latin1 strings
-    pub fn toUTF8WithoutRef(this: String, allocator: std.mem.Allocator) ZigString.Slice {
+    pub fn toUTF8WithoutRef(this: String, allocator: std.mem.Allocator) RustString.Slice {
         if (this.tag == .WTFStringImpl) {
             return this.value.WTFStringImpl.toUTF8WithoutRef(allocator);
         }
 
-        if (this.tag == .ZigString) {
-            return this.value.ZigString.toSlice(allocator);
+        if (this.tag == .RustString) {
+            return this.value.RustString.toSlice(allocator);
         }
 
-        if (this.tag == .StaticZigString) {
-            return ZigString.Slice.fromUTF8NeverFree(this.value.StaticZigString.slice());
+        if (this.tag == .StaticRustString) {
+            return RustString.Slice.fromUTF8NeverFree(this.value.StaticRustString.slice());
         }
 
-        return ZigString.Slice.empty;
+        return RustString.Slice.empty;
     }
 
     /// Equivalent to calling `toUTF8WithoutRef` followed by `cloneIfBorrowed`.
-    pub fn toUTF8Owned(this: String, allocator: std.mem.Allocator) ZigString.Slice {
+    pub fn toUTF8Owned(this: String, allocator: std.mem.Allocator) RustString.Slice {
         return bun.handleOom(this.toUTF8WithoutRef(allocator).cloneIfBorrowed(allocator));
     }
 
@@ -747,7 +747,7 @@ pub const String = extern struct {
                 if (slice.allocator.isNull()) {
                     // This is an ASCII latin1 string with the same reference as the original.
                     return .{
-                        .utf8 = ZigString.Slice.init(allocator, try allocator.dupe(u8, slice.slice())),
+                        .utf8 = RustString.Slice.init(allocator, try allocator.dupe(u8, slice.slice())),
                         .underlying = empty,
                     };
                 }
@@ -776,7 +776,7 @@ pub const String = extern struct {
 
                     // We didn't clone anything, so let's conserve memory by re-using the existing WTFStringImpl
                     return .{
-                        .utf8 = ZigString.Slice.init(this.value.WTFStringImpl.refCountAllocator(), slice.slice()),
+                        .utf8 = RustString.Slice.init(this.value.WTFStringImpl.refCountAllocator(), slice.slice()),
                         .underlying = this.*,
                     };
                 }
@@ -817,13 +817,13 @@ pub const String = extern struct {
     }
 
     pub fn eqlComptime(this: String, comptime value: []const u8) bool {
-        return this.toZigString().eqlComptime(value);
+        return this.toRustString().eqlComptime(value);
     }
 
     pub fn is8Bit(this: String) bool {
         return switch (this.tag) {
             .WTFStringImpl => this.value.WTFStringImpl.is8Bit(),
-            .ZigString => !this.value.ZigString.is16Bit(),
+            .RustString => !this.value.RustString.is16Bit(),
             else => true,
         };
     }
@@ -834,7 +834,7 @@ pub const String = extern struct {
         }
         return switch (this.tag) {
             .WTFStringImpl => if (this.value.WTFStringImpl.is8Bit()) this.value.WTFStringImpl.latin1Slice()[index] else this.value.WTFStringImpl.utf16Slice()[index],
-            .ZigString, .StaticZigString => if (!this.value.ZigString.is16Bit()) this.value.ZigString.slice()[index] else this.value.ZigString.utf16Slice()[index],
+            .RustString, .StaticRustString => if (!this.value.RustString.is16Bit()) this.value.RustString.slice()[index] else this.value.RustString.utf16Slice()[index],
             else => 0,
         };
     }
@@ -970,7 +970,7 @@ pub const String = extern struct {
             return this.value.WTFStringImpl.hasPrefix(value);
         }
 
-        var str = this.toZigString();
+        var str = this.toRustString();
         if (str.len < value.len) return false;
 
         return str.substringWithLen(0, value.len).eqlComptime(value);
@@ -1008,11 +1008,11 @@ pub const String = extern struct {
     }
 
     pub fn eqlUTF8(this: String, other: []const u8) bool {
-        return this.toZigString().eql(ZigString.fromUTF8(other));
+        return this.toRustString().eql(RustString.fromUTF8(other));
     }
 
     pub fn eql(this: String, other: String) bool {
-        return this.toZigString().eql(other.toZigString());
+        return this.toRustString().eql(other.toRustString());
     }
 
     pub const jsGetStringWidth = string_jsc.jsGetStringWidth;
@@ -1020,20 +1020,20 @@ pub const String = extern struct {
     /// Reports owned allocation size, not the actual size of the string.
     pub fn estimatedSize(this: *const String) usize {
         return switch (this.tag) {
-            .Dead, .Empty, .StaticZigString => 0,
-            .ZigString => this.value.ZigString.len,
+            .Dead, .Empty, .StaticRustString => 0,
+            .RustString => this.value.RustString.len,
             .WTFStringImpl => this.value.WTFStringImpl.byteLength(),
         };
     }
 
-    // TODO: move ZigString.Slice here
+    // TODO: move RustString.Slice here
     /// A UTF-8 encoded slice tied to the lifetime of a `bun.String`
     /// Must call `.deinit` to release memory
-    pub const Slice = ZigString.Slice;
+    pub const Slice = RustString.Slice;
 };
 
 pub const SliceWithUnderlyingString = struct {
-    utf8: ZigString.Slice = ZigString.Slice.empty,
+    utf8: RustString.Slice = RustString.Slice.empty,
     underlying: String = String.dead,
 
     did_report_extra_memory_debug: bun.DebugOnly(bool) = if (bun.Environment.isDebug) false,
@@ -1058,7 +1058,7 @@ pub const SliceWithUnderlyingString = struct {
 
     pub fn dupeRef(this: SliceWithUnderlyingString) SliceWithUnderlyingString {
         return .{
-            .utf8 = ZigString.Slice.empty,
+            .utf8 = RustString.Slice.empty,
             .underlying = this.underlying.dupeRef(),
         };
     }
@@ -1069,7 +1069,7 @@ pub const SliceWithUnderlyingString = struct {
     pub fn transcodeFromOwnedSlice(owned_input_bytes: []u8, encoding: jsc.Node.Encoding) SliceWithUnderlyingString {
         if (owned_input_bytes.len == 0) {
             return .{
-                .utf8 = ZigString.Slice.empty,
+                .utf8 = RustString.Slice.empty,
                 .underlying = String.empty,
             };
         }
@@ -1082,7 +1082,7 @@ pub const SliceWithUnderlyingString = struct {
     /// Assumes default allocator in use
     pub fn fromUTF8(utf8: []const u8) SliceWithUnderlyingString {
         return .{
-            .utf8 = ZigString.Slice.init(bun.default_allocator, utf8),
+            .utf8 = RustString.Slice.init(bun.default_allocator, utf8),
             .underlying = String.dead,
         };
     }
@@ -1133,11 +1133,11 @@ comptime {
 }
 
 const std = @import("std");
-const string_jsc = @import("../jsc/bun_string_jsc.zig");
+const string_jsc = @import("../jsc/bun_string_jsc.rust");
 
 const bun = @import("bun");
 const OOM = bun.OOM;
 const AsciiStatus = bun.strings.AsciiStatus;
 
 const jsc = bun.jsc;
-const ZigString = bun.jsc.ZigString;
+const RustString = bun.jsc.RustString;

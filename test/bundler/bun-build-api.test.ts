@@ -575,6 +575,19 @@ describe("Bun.build", () => {
     expect(await bundle.outputs[0].text()).toBe("var o=/*@__PURE__*/console.log(1);export{o as OUT};\n");
   });
 
+  test.concurrent("many user conditions does not crash", async () => {
+    const fixture = tempDirWithFiles("build-many-conditions", {
+      "entry.ts": `export const x = 1;`,
+    });
+
+    const bundle = await Bun.build({
+      entrypoints: [join(fixture, "entry.ts")],
+      target: "bun",
+      conditions: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"],
+    });
+    expect(bundle.success).toBe(true);
+  });
+
   test.concurrent(
     "you can write onLoad and onResolve plugins using the 'html' loader, and it includes script and link tags as bundled entrypoints",
     async () => {

@@ -510,8 +510,13 @@ impl<'a> ZlibReaderArrayList<'a> {
                 //   flush parameter).
 
                 if self.zlib.avail_out == 0 {
-                    // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
-                    let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(4096) };
+                    let total_out = self.zlib.total_out as usize;
+                    debug_assert!(total_out <= self.list_ptr.capacity());
+                    // SAFETY: zlib has initialized `list_ptr[..total_out]`; commit so
+                    // the spare tail returned below starts past it (without this the
+                    // next iteration rewinds `next_out` and overwrites prior output).
+                    unsafe { self.list_ptr.set_len(total_out) };
+                    let (next_out, avail_out) = self.list_ptr.ffi_spare_tail(4096);
                     self.zlib.next_out = next_out;
                     self.zlib.avail_out = avail_out as uInt;
                 }
@@ -560,12 +565,9 @@ impl<'a> ZlibReaderArrayList<'a> {
 
         // defer epilogue (runs unconditionally):
         let total_out = self.zlib.total_out as usize;
-        if self.list_ptr.len() > total_out {
-            self.list_ptr.truncate(total_out);
-        } else if total_out < self.list_ptr.capacity() {
-            // SAFETY: zlib has written `total_out` bytes into list_ptr's buffer.
-            unsafe { self.list_ptr.set_len(total_out) };
-        }
+        debug_assert!(total_out <= self.list_ptr.capacity());
+        // SAFETY: zlib has written `total_out` bytes into list_ptr's buffer.
+        unsafe { self.list_ptr.set_len(total_out) };
 
         result
     }
@@ -1023,8 +1025,12 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 //   flush parameter).
 
                 if self.zlib.avail_out == 0 {
-                    // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
-                    let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(4096) };
+                    let total_out = self.zlib.total_out as usize;
+                    debug_assert!(total_out <= self.list_ptr.capacity());
+                    // SAFETY: zlib has initialized `list_ptr[..total_out]`; commit so
+                    // the spare tail returned below starts past it.
+                    unsafe { self.list_ptr.set_len(total_out) };
+                    let (next_out, avail_out) = self.list_ptr.ffi_spare_tail(4096);
                     self.zlib.next_out = next_out;
                     self.zlib.avail_out = avail_out as uInt;
                 }
@@ -1068,7 +1074,10 @@ impl<'a> ZlibCompressorArrayList<'a> {
 
         // defer epilogue (runs unconditionally):
         // Zig: this.list.shrinkRetainingCapacity(this.zlib.total_out); this.list_ptr.* = this.list;
-        self.list_ptr.truncate(self.zlib.total_out as usize);
+        let total_out = self.zlib.total_out as usize;
+        debug_assert!(total_out <= self.list_ptr.capacity());
+        // SAFETY: zlib has written `total_out` bytes into list_ptr's buffer.
+        unsafe { self.list_ptr.set_len(total_out) };
 
         result
     }

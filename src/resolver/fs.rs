@@ -2595,22 +2595,22 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
 
         let mut bytes_read: u64 = 0;
         shared_buffer.grow_by(size + 1)?;
-        // SAFETY: u8; `read_all` overwrites the exposed tail before any read.
-        unsafe { shared_buffer.list.expand_to_capacity() };
 
         // if you press save on a large file we might not read all the
         // bytes in the first few pread() calls. we only handle this on
         // stream because we assume that this only realistically happens
         // during HMR
         loop {
+            debug_assert_eq!(shared_buffer.list.len(), bytes_read as usize);
             // We use pread to ensure if the file handle was open, it doesn't seek from the last position
-            let read_count = match file.read_all(&mut shared_buffer.list[bytes_read as usize..]) {
+            // SAFETY: write-only spare; `read_all` only stores into it.
+            let spare = unsafe { bun_core::vec::spare_bytes_mut(&mut shared_buffer.list) };
+            let read_count = match file.read_all(spare) {
                 Ok(n) => n,
                 Err(err) => return Err(err.into()),
             };
-            shared_buffer
-                .list
-                .truncate(read_count + bytes_read as usize);
+            // SAFETY: `read_all` initialized `spare[..read_count]`.
+            unsafe { bun_core::vec::commit_spare(&mut shared_buffer.list, read_count) };
             file_contents_ptr = shared_buffer.list.as_ptr();
             file_contents_len = shared_buffer.list.len();
             debug!("read({}, {}) = {}", file.handle(), size, read_count);
@@ -2632,8 +2632,6 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
 
                 if (bytes_read as usize) < new_size {
                     shared_buffer.grow_by(new_size - size)?;
-                    // SAFETY: u8; `read_all` overwrites the exposed tail before any read.
-                    unsafe { shared_buffer.list.expand_to_capacity() };
                     size = new_size;
                     continue;
                 }

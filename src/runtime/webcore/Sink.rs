@@ -235,17 +235,9 @@ impl UTF8Fallback {
 
             strings::replace_latin1_with_utf8(&mut slice[..str_.len()]);
             if input.is_done() {
-                write_fn(
-                    ctx,
-                    streams::Result::OwnedAndDone(Vec::<u8>::from_owned_slice(
-                        slice.into_boxed_slice(),
-                    )),
-                )
+                write_fn(ctx, streams::Result::OwnedAndDone(slice))
             } else {
-                write_fn(
-                    ctx,
-                    streams::Result::Owned(Vec::<u8>::from_owned_slice(slice.into_boxed_slice())),
-                )
+                write_fn(ctx, streams::Result::Owned(slice))
             }
         }
     }
@@ -284,19 +276,9 @@ impl UTF8Fallback {
             // `.err = oom`.
             let allocated = strings::to_utf8_alloc(str_);
             if input.is_done() {
-                write_fn(
-                    ctx,
-                    streams::Result::OwnedAndDone(Vec::<u8>::from_owned_slice(
-                        allocated.into_boxed_slice(),
-                    )),
-                )
+                write_fn(ctx, streams::Result::OwnedAndDone(allocated))
             } else {
-                write_fn(
-                    ctx,
-                    streams::Result::Owned(Vec::<u8>::from_owned_slice(
-                        allocated.into_boxed_slice(),
-                    )),
-                )
+                write_fn(ctx, streams::Result::Owned(allocated))
             }
         }
     }

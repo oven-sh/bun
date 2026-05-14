@@ -2124,7 +2124,7 @@ fn parse_data_loader(
         }
     };
     let mut ast = bun_ast::Ast::from_parts(parts);
-    ast.symbols = bun_ast::symbol::List::from_owned_slice(symbols.into_boxed_slice());
+    ast.symbols = symbols;
 
     return Some(ParseResult {
         ast,

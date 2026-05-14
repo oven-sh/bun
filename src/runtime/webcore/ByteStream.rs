@@ -131,8 +131,7 @@ impl ByteStream {
         }
 
         if self.has_received_last_chunk.get() {
-            let buffer = self.buffer.replace(Vec::new());
-            return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(buffer));
+            return streams::Start::OwnedAndDone(self.buffer.replace(Vec::new()));
         }
 
         if self.high_water_mark == 0 {
@@ -250,7 +249,7 @@ impl ByteStream {
                         // PORT NOTE: reshaped for borrowck — move the owned Vec<u8> into `buffer`
                         // directly instead of round-tripping through `chunk` (which would borrow
                         // `stream`).
-                        self.buffer.set(owned.move_to_list_managed());
+                        self.buffer.set(owned);
                         let mut blob = self.to_any_blob().unwrap();
                         return action.fulfill(self.parent_const().global_this(), &mut blob);
                     }
@@ -361,9 +360,9 @@ impl ByteStream {
     ) -> Result<(), bun_alloc::AllocError> {
         if self.buffer.get().capacity() == 0 {
             match stream {
-                streams::Result::Owned(mut owned) | streams::Result::OwnedAndDone(mut owned) => {
+                streams::Result::Owned(owned) | streams::Result::OwnedAndDone(owned) => {
                     // Zig: `owned.moveToListManaged(allocator)` — moves the buffer, no copy.
-                    self.buffer.set(owned.move_to_list_managed());
+                    self.buffer.set(owned);
                     self.offset.set(self.offset.get() + offset);
                 }
                 streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
@@ -556,7 +555,7 @@ impl ByteStream {
 
     pub fn drain(&self) -> Vec<u8> {
         if !self.buffer.get().is_empty() {
-            return Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()));
+            return self.buffer.replace(Vec::new());
         }
         Vec::<u8>::default()
     }

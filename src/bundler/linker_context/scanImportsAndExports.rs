@@ -831,7 +831,7 @@ pub fn scan_imports_and_exports(
                 let entry_point_part_index = this.graph.add_part_to_file(
                     source_index,
                     Part {
-                        dependencies: Vec::<Dependency>::move_from_list(dependencies),
+                        dependencies,
                         can_be_removed_if_unused: false,
                         ..Default::default()
                     },

@@ -2972,10 +2972,7 @@ where
                             // If we've received the complete body by the time this function is called
                             // we can avoid streaming it and just send it all at once.
                             if byte_stream.has_received_last_chunk.get() {
-                                let mut byte_list = byte_stream.drain();
-                                this.blob = AnyBlob::from_array_list(
-                                    byte_list.move_to_list_managed(),
-                                );
+                                this.blob = AnyBlob::from_array_list(byte_stream.drain());
                                 this.response_body_readable_stream_ref.deinit();
                                 this.do_render_blob();
                                 return;
@@ -2989,8 +2986,7 @@ where
                                 readable_stream::Strong::init(stream, global_this);
 
                             this.byte_stream = Some(byte_stream_nn);
-                            let mut response_buf = byte_stream.drain();
-                            this.response_buf_owned = response_buf.move_to_list();
+                            this.response_buf_owned = byte_stream.drain();
 
                             // we don't set size here because even if we have a hint
                             // uWebSockets won't let us partially write streaming content

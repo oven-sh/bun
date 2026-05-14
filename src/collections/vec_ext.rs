@@ -93,28 +93,22 @@ pub trait VecExt<T>: Sized {
     fn replace_range(&mut self, start: usize, len: usize, new_items: &[T])
     where
         T: Clone;
-    /// # Safety
-    /// Exposes `self[len..capacity]` as initialized. Every element must be
-    /// overwritten before any read (including Drop). Prefer
-    /// [`unused_capacity_slice`] for `T` with validity invariants.
-    unsafe fn expand_to_capacity(&mut self);
     /// Reserves `additional` and returns the first `additional` slots of
     /// spare capacity as `MaybeUninit<T>`. Caller writes some prefix then
     /// calls `set_len` (or [`bun_core::vec::commit_spare`] for `Vec<u8>`) to
     /// commit. Unlike `spare_capacity_mut()` the returned slice is exactly
     /// `additional` long, not `capacity - len`.
     fn reserve_spare(&mut self, additional: usize) -> &mut [core::mem::MaybeUninit<T>];
-    /// `reserve(additional)` then [`expand_to_capacity`], returning the
-    /// freshly-exposed tail as a raw `(ptr, len)` pair — i.e.
-    /// `(next_out, avail_out)` for C streaming APIs (zlib, brotli, zstd).
-    /// Exposes the *full* over-allocated capacity (`cap - prev_len`), not
-    /// exactly `additional`, so the FFI callee can use the allocator's slack.
-    /// Pass `additional = 0` when the caller has already reserved.
+    /// `reserve(additional)` then return the spare-capacity tail as a raw
+    /// `(ptr, len)` pair — i.e. `(next_out, avail_out)` for C streaming APIs
+    /// (zlib, brotli, zstd). Exposes the *full* spare capacity (`cap - len`),
+    /// not exactly `additional`, so the FFI callee can use the allocator's
+    /// slack. Pass `additional = 0` when the caller has already reserved.
     ///
-    /// # Safety
-    /// Same as [`expand_to_capacity`]: every byte in `[prev_len, cap)` must be
-    /// written by the FFI callee (or `len` truncated back) before any read.
-    unsafe fn reserve_expand_tail(&mut self, additional: usize) -> (*mut T, usize);
+    /// `len()` is **not** advanced; the caller must `set_len()` after the FFI
+    /// write — and on each loop iteration when called repeatedly, so the next
+    /// call returns a fresh tail past the previous write.
+    fn ffi_spare_tail(&mut self, additional: usize) -> (*mut T, usize);
 
     // ── ownership transfer ────────────────────────────────────────────────
     fn move_to_list(&mut self) -> Vec<T>;
@@ -169,17 +163,9 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     }
     #[inline]
     fn move_from_list(list: Vec<T>) -> Self {
-        // Mirror of the `move_to_list` fast-path: when `A == Global` this is a
-        // pointer adopt (Zig `moveFromList`, baby_list.zig:46), not a realloc.
-        // Hot Global callers: `FileReader`, `ByteStream`, `shell::Cmd`.
-        if core::any::TypeId::of::<A>() == core::any::TypeId::of::<std::alloc::Global>() {
-            // SAFETY: `A == Global`, so `Vec<T>` and `Vec<T, A>` have identical
-            // layout, allocator, and drop semantics.
-            let mut list = core::mem::ManuallyDrop::new(list);
-            return unsafe {
-                Vec::from_raw_parts_in(list.as_mut_ptr(), list.len(), list.capacity(), A::default())
-            };
-        }
+        // `A == Global` callers are identity and have been rewritten to drop
+        // this call entirely; only the cross-allocator (`AstAlloc`) callers
+        // remain, which always needed this realloc+move.
         let mut v = Vec::with_capacity_in(list.len(), A::default());
         v.extend(list);
         v
@@ -357,45 +343,25 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         self.splice(start..start + len, new_items.iter().cloned());
     }
     #[inline]
-    unsafe fn expand_to_capacity(&mut self) {
-        // SAFETY: caller contract — every element in `[len, cap)` is written
-        // before being observed.
-        unsafe { self.set_len(self.capacity()) };
-    }
-    #[inline]
     fn reserve_spare(&mut self, additional: usize) -> &mut [core::mem::MaybeUninit<T>] {
         self.reserve(additional);
         &mut self.spare_capacity_mut()[..additional]
     }
     #[inline]
-    unsafe fn reserve_expand_tail(&mut self, additional: usize) -> (*mut T, usize) {
-        let prev = self.len();
+    fn ffi_spare_tail(&mut self, additional: usize) -> (*mut T, usize) {
         if additional != 0 {
             self.reserve(additional);
         }
-        let cap = self.capacity();
-        // SAFETY: caller contract — `[prev, cap)` is FFI-written or truncated before any read.
-        unsafe { self.set_len(cap) };
-        // SAFETY: `prev <= cap`; ptr is within (or one-past) the allocation.
-        (unsafe { self.as_mut_ptr().add(prev) }, cap - prev)
+        let spare = self.spare_capacity_mut();
+        (spare.as_mut_ptr().cast::<T>(), spare.len())
     }
 
     #[inline]
     fn move_to_list(&mut self) -> Vec<T> {
+        // `A == Global` callers are identity and have been rewritten to
+        // `mem::take`/direct move; only cross-allocator (`AstAlloc`) callers
+        // remain, which always needed this realloc+move.
         let taken = core::mem::replace(self, Vec::new_in(A::default()));
-        // Fast path: `Vec<T, Global>` → `Vec<T>` is a pointer move, not a
-        // realloc+memcpy. Restores zero-copy behavior on the HTTP streaming
-        // paths (`RequestContext::response_buf`, `ByteStream`); the copying
-        // path is still required for `AstAlloc` etc. where the buffer must
-        // migrate heaps.
-        if core::any::TypeId::of::<A>() == core::any::TypeId::of::<std::alloc::Global>() {
-            // SAFETY: `A == Global`, so `Vec<T, A>` and `Vec<T>` have the
-            // same layout, allocator, and drop semantics.
-            let mut taken = core::mem::ManuallyDrop::new(taken);
-            return unsafe {
-                Vec::from_raw_parts(taken.as_mut_ptr(), taken.len(), taken.capacity())
-            };
-        }
         let mut out = Vec::with_capacity(taken.len());
         out.extend(taken);
         out

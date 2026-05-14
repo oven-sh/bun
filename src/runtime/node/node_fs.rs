@@ -4966,16 +4966,13 @@ impl NodeFS {
                 let clamped_size: usize = stat_size.min(8 * 1024 * 1024);
                 // PORT NOTE: Zig used `bun.default_allocator.alloc(u8, clamped_size)` —
                 // uninitialised heap. `Vec::resize` here was a debug-build hot path
-                // (byte-by-byte `extend_with`); use `expand_to_capacity` to match the spec
-                // (the slab is write-only — `Syscall::read` fills it from the kernel).
-                use bun_collections::vec_ext::VecExt as _;
+                // (byte-by-byte `extend_with`); hand the spare to the kernel directly.
                 if buf_to_free.try_reserve_exact(clamped_size).is_err() {
                     break 'maybe_allocate_large_temp_buf;
                 }
-                // SAFETY: `u8` has no validity invariant; the buffer is handed
-                // straight to the kernel which only stores into it.
-                unsafe { buf_to_free.expand_to_capacity() };
-                buf = &mut buf_to_free[..];
+                // SAFETY: write-only scratch; `Syscall::read` fills it from the
+                // kernel before any byte is observed.
+                buf = unsafe { bun_core::vec::spare_bytes_mut(&mut buf_to_free) };
             }
         }
         // buf_to_free dropped at scope exit
@@ -7334,13 +7331,10 @@ impl NodeFS {
         // PORT NOTE: Zig `buf.expandToCapacity()` then indexed `buf.items.ptr[total..cap]`
         // to read into uninitialised tail. `Vec::resize(cap, 0)` is *not* equivalent in
         // debug builds: it goes through `extend_with`'s byte-by-byte loop (no memset
-        // specialisation), which dominated `readFileSync` of large files. Match the spec
-        // exactly via `VecExt::expand_to_capacity` (the tail is write-only — `Syscall::read`
-        // hands it straight to the kernel, which only stores into it).
-        use bun_collections::vec_ext::VecExt as _;
-        // SAFETY: `u8` has no validity invariant; the buffer is handed straight
-        // to the kernel which only stores into it.
-        unsafe { buf.expand_to_capacity() };
+        // specialisation), which dominated `readFileSync` of large files. Read into the
+        // spare-capacity slice directly and commit `amt` per iteration — `buf.len()`
+        // tracks `total` throughout.
+        debug_assert_eq!(buf.len(), total);
 
         // Two-phase read: first up to `size`, then keep going until EOF.
         // PORT NOTE: Zig spelled this as `while (total < size) { ... } else { while (true) { ... } }`.
@@ -7356,9 +7350,13 @@ impl NodeFS {
             // Do NOT pre-grow here; growth happens only in the `total > size && amt != 0 &&
             // !has_max_size` arm below.
             let upper = (buf.capacity() as u64).min(max_size) as usize;
-            match Syscall::read(fd, &mut buf[total..upper]) {
+            // SAFETY: write-only window; the kernel only stores into it.
+            let window = unsafe { &mut bun_core::vec::spare_bytes_mut(&mut buf)[..upper - total] };
+            match Syscall::read(fd, window) {
                 Err(err) => return Err(err),
                 Ok(amt) => {
+                    // SAFETY: kernel initialized `buf[total..total+amt]`.
+                    unsafe { bun_core::vec::commit_spare(&mut buf, amt) };
                     total += amt;
 
                     if args.limit_size_for_javascript {
@@ -7379,8 +7377,6 @@ impl NodeFS {
                                 &args.path,
                             ));
                         }
-                        // SAFETY: `u8` has no validity invariant; kernel only stores.
-                        unsafe { buf.expand_to_capacity() };
                         continue;
                     }
 

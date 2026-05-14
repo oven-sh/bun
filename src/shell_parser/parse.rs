@@ -2067,6 +2067,13 @@ impl<'bump> Parser<'bump> {
         let Token::Text(range) = peektok else {
             return false;
         };
+        // A keyword like `fi` only terminates the if body when it is followed
+        // by a delimiter. `fi$x`, `else$x`, etc. are ordinary command text and
+        // must keep the body loop running so they go through the normal
+        // command/atom path instead of the panicking `expect_if_clause_text_token`.
+        if !self.delimits(self.peek_n(1)) {
+            return false;
+        }
         let txt = self.text(range);
         for &tag in toktags {
             if txt == <&'static str>::from(tag).as_bytes() {
@@ -2186,9 +2193,16 @@ pub enum IfClauseTok {
 }
 
 impl IfClauseTok {
+    /// Classify the *current peeked* token as an if-clause keyword.
+    ///
+    /// `tok` must be `p.peek()`: like `match_if_clausetok` and
+    /// `is_if_clause_text_token`, this only treats the text as a keyword when
+    /// the *next* token delimits it, so `fi$x` / `else$x` / `elif$x` are not
+    /// misclassified and routed into the panicking
+    /// `expect_if_clause_text_token`.
     pub fn from_tok(p: &Parser<'_>, tok: Token) -> Option<IfClauseTok> {
         match tok {
-            Token::Text(range) => Self::from_text(p.text(range)),
+            Token::Text(range) if p.delimits(p.peek_n(1)) => Self::from_text(p.text(range)),
             _ => None,
         }
     }

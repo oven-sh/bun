@@ -169,10 +169,21 @@ test("static sibling import waits for a TLA dep that suspended earlier in the sa
 // the Nitro self-deadlock the skip was written for) we must still take the
 // spec wait. Discriminator: the dynamic-import initiator the DFS was launched
 // from — skip only when dep == initiator.
+//
+// Timing note: `setTimeout` is the race condition this PR fixes. The first
+// dynamic import must fully complete its DFS (tla.mjs transitions to
+// EvaluatingAsync) before the second dynamic import's Evaluate() runs. File
+// fetching in the module loader is async I/O, so purely promise-chained
+// coordination inside JS can't sequence it deterministically — we need a
+// timer to yield to the loop iteration that drains the I/O completions
+// between the two imports.
 test("parallel dynamic imports of the same TLA dep wait instead of running against TDZ bindings", async () => {
   using dir = tempDir("parallel-dynamic-tla", {
     "driver.mjs": `
       const p1 = import("./entry1.mjs");
+      // 10ms is enough for p1's fetch+link+Evaluate() to complete and
+      // leave tla.mjs parked in EvaluatingAsync (its \`await\` is on a
+      // 100ms timer that outlives this delay).
       await new Promise(r => setTimeout(r, 10));
       const p2 = import("./entry2.mjs");
       await Promise.all([p1, p2]);

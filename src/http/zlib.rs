@@ -1,21 +1,36 @@
 use bun_core::MutableString;
 use bun_zlib::{ZlibError, ZlibReaderArrayList};
 
-// PORT NOTE: Zig used `bun.ObjectPool(MutableString, initMutableString, false, 4)` and
-// recovered the node via `container_of`. `MutableString` is a foreign type so we
-// cannot impl `ObjectPoolType` for it directly (orphan rule); a `#[repr(transparent)]`
-// newtype lets us cast `*mut PooledMutableString` ↔ `*mut MutableString` at the API
-// boundary.
+// PORT NOTE: Zig used `bun.ObjectPool(MutableString, initMutableString, false, 4)`.
+// `MutableString` already has an `ObjectPoolType` impl in `bun_collections` (with
+// `init2048`); a `#[repr(transparent)]` newtype gives this pool its own
+// `init_empty` constructor without colliding.
 mod buffer_pool {
     use super::*;
     use bun_collections::ObjectPoolType;
 
     #[repr(transparent)]
-    pub(super) struct PooledMutableString(pub MutableString);
+    pub struct PooledMutableString(pub MutableString);
+
+    impl core::ops::Deref for PooledMutableString {
+        type Target = MutableString;
+        #[inline]
+        fn deref(&self) -> &MutableString {
+            &self.0
+        }
+    }
+    impl core::ops::DerefMut for PooledMutableString {
+        #[inline]
+        fn deref_mut(&mut self) -> &mut MutableString {
+            &mut self.0
+        }
+    }
 
     impl ObjectPoolType for PooledMutableString {
-        const INIT: Option<fn() -> Result<Self, bun_core::Error>> =
-            Some(|| Ok(PooledMutableString(MutableString::init_empty())));
+        #[inline]
+        fn init() -> Self {
+            PooledMutableString(MutableString::init_empty())
+        }
         #[inline]
         fn reset(&mut self) {
             self.0.reset();
@@ -26,24 +41,13 @@ mod buffer_pool {
     // `threadsafe = false` ⇒ `global` storage mode.
     bun_collections::object_pool!(pub BufferPool: PooledMutableString, global, 4);
 
-    pub fn get() -> *mut MutableString {
-        // TODO(port): Zig returns `*MutableString` borrowed from a pool node; consider an RAII
-        // guard in Phase B so callers don't hand-pair get/put.
-        // SAFETY: `first()` returns a valid `*mut PooledMutableString` whose data is initialized
-        // (INIT is Some); #[repr(transparent)] makes the cast to `*mut MutableString` sound.
-        BufferPool::first().cast::<MutableString>()
-    }
-
-    pub fn put(mutable: *mut MutableString) {
-        // SAFETY: `mutable` was returned by `get()` above; #[repr(transparent)] cast is sound;
-        // `release_value` recovers the parent node via offset_of.
-        unsafe {
-            (*mutable).reset();
-            BufferPool::release_value(mutable.cast::<PooledMutableString>());
-        }
+    /// RAII guard derefing to a pooled `MutableString`; returned to the pool on
+    /// `Drop`. (Currently no callers; kept for parity with the Zig API.)
+    pub fn get() -> bun_collections::PoolGuard<PooledMutableString> {
+        BufferPool::get()
     }
 }
-pub use buffer_pool::{get, put};
+pub use buffer_pool::get;
 
 pub fn decompress(compressed_data: &[u8], output: &mut MutableString) -> Result<(), ZlibError> {
     let mut reader = ZlibReaderArrayList::init_with_options_and_list_allocator(

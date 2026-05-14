@@ -188,9 +188,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let strict_loc = fn_body_contains_use_strict(opts.body);
         let has_simple_args = Self::is_simple_parameter_list(args, opts.has_rest_arg);
         // StringVoidMap::get returns a pool guard; Drop releases (replaces Zig `defer release`).
-        let mut duplicate_args_check: Option<
-            bun_collections::pool::PoolGuard<'static, StringVoidMap>,
-        > = None;
+        let mut duplicate_args_check: Option<bun_collections::pool::PoolGuard<StringVoidMap>> =
+            None;
 
         // Section 15.2.1 Static Semantics: Early Errors: "It is a Syntax Error if
         // FunctionBodyContainsUseStrict of FunctionBody is true and

@@ -32,7 +32,7 @@ pub mod linear_fifo;
 // stable: enum const params → const usize/bool, inherent assoc → free aliases.
 pub mod bit_set;
 pub mod pool;
-pub use pool::{ObjectPool, ObjectPoolTrait, ObjectPoolType, PoolGuard};
+pub use pool::{ObjectPool, ObjectPoolType, PoolGuard};
 pub mod comptime_string_map;
 pub use comptime_string_map::{ComptimeStringMap, ComptimeStringMapWithKeyType};
 #[path = "StaticHashMap.rs"]

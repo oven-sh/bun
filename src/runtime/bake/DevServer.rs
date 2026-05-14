@@ -624,7 +624,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             NextBundle {
                 route_queue: Default::default(),
                 reload_event: None,
-                requests: deferred_request::List::default(),
+                requests: deferred_request::List::new(),
                 promise: DeferredPromise::default(),
             }
         );
@@ -1135,15 +1135,11 @@ impl Drop for DevServer {
         }
 
         {
-            let mut r = self.next_bundle.requests.first;
-            while !r.is_null() {
-                // SAFETY: intrusive list node; `data` was written by `defer_request`.
-                let request = unsafe { &mut *r };
-                let data = unsafe { request.data.assume_init_mut() };
+            for r in ::core::mem::take(&mut self.next_bundle.requests) {
+                // SAFETY: hive-slot node; `data` was written by `defer_request`.
+                let data = unsafe { (*r.as_ptr()).data.assume_init_mut() };
                 debug_assert!(!matches!(data.handler, Handler::ServerHandler(_)));
-                let next = request.next;
                 data.deref_();
-                r = next;
             }
             self.next_bundle.promise.deinit_idempotently();
         }
@@ -2198,7 +2194,7 @@ impl DevServer {
             deferred_data.weak_ref();
         }
 
-        requests_array.prepend(deferred_ptr);
+        requests_array.push(::core::ptr::NonNull::new(deferred_ptr).expect("hive slot"));
         Ok(())
     }
 }
@@ -2916,8 +2912,20 @@ pub mod deferred_request {
     /// is very silly. This contributes to ~6kb of the initial DevServer allocation.
     pub const MAX_PREALLOCATED: usize = 16;
 
-    pub type List = bun_collections::pool::SinglyLinkedList<DeferredRequest>;
-    pub type Node = bun_collections::pool::Node<DeferredRequest>;
+    /// Nodes are owned by `dev.deferred_request_pool` (a `HiveArrayFallback`
+    /// — stable addresses required for the uWS abort-callback registration).
+    /// `List` is a `Vec` of borrowed pointers; LIFO push/pop matches the
+    /// original `SinglyLinkedList` `prepend`/`pop_first`.
+    pub type List = Vec<::core::ptr::NonNull<Node>>;
+
+    /// `data` is `MaybeUninit` so `HiveArrayFallback::put`'s `drop_in_place`
+    /// is a no-op — `__deinit` already tore down the payload, and on the
+    /// `prepare_and_save_js_request_context` failure path `data` was never
+    /// written.
+    #[repr(C)]
+    pub struct Node {
+        pub data: ::core::mem::MaybeUninit<DeferredRequest>,
+    }
 
     bun_output::define_scoped_log!(debug_log_dr, DlogeferredRequest, hidden);
     pub(super) use debug_log_dr;
@@ -3014,8 +3022,8 @@ impl DeferredRequest {
             bun_core::from_field_ptr!(deferred_request::Node, data, std::ptr::from_mut(self))
         };
         // SAFETY: dev backref is valid while the pool entry exists; `node` is a
-        // fully-initialized hive slot. `pool::Node<T>` has no drop glue (`data`
-        // is `MaybeUninit`), so `put`'s in-place drop is a no-op — `__deinit`
+        // fully-initialized hive slot. `Node` has no drop glue (`data` is
+        // `MaybeUninit`), so `put`'s in-place drop is a no-op — `__deinit`
         // already tore down the payload.
         unsafe {
             (*self.dev.cast_mut()).deferred_request_pool.put(node);
@@ -3219,7 +3227,7 @@ impl DevServer {
         });
 
         self.next_bundle.promise = DeferredPromise::default();
-        self.next_bundle.requests = deferred_request::List::default();
+        self.next_bundle.requests = deferred_request::List::new();
         self.next_bundle.route_queue.clear_retaining_capacity();
         Ok(())
     }
@@ -3778,16 +3786,15 @@ pub fn finalize_bundle(
         // SAFETY: see `current_bundle!` SAFETY above; this `defer!` runs
         // before `_outer_defer` (LIFO), so `current_bundle_ptr` is still live.
         let current_bundle = unsafe { &mut *current_bundle_ptr_defer };
-        if !current_bundle.requests.first.is_null() {
+        if !current_bundle.requests.is_empty() {
             // cannot be an assertion because in the case of OOM, the request list was not drained.
             Output::debug(
-                "current_bundle.requests.first != null. this leaves pending requests without an error page!",
+                "current_bundle.requests not empty. this leaves pending requests without an error page!",
             );
         }
-        while let Some(node) = current_bundle.requests.pop_first() {
-            // SAFETY: pop_first returns a live `*mut Node<T>`; `data` was
-            // initialized by `defer_request`.
-            let req = unsafe { (*node).data.assume_init_mut() };
+        while let Some(node) = current_bundle.requests.pop() {
+            // SAFETY: hive-slot node; `data` was initialized by `defer_request`.
+            let req = unsafe { (*node.as_ptr()).data.assume_init_mut() };
             req.abort();
             req.deref_();
         }
@@ -4551,10 +4558,9 @@ pub fn finalize_bundle(
             )?;
         }
 
-        while let Some(node) = current_bundle!().requests.pop_first() {
-            // SAFETY: `pop_first` hands back ownership of the intrusive node;
-            // `data` was initialized by `defer_request`.
-            let req = unsafe { (*node).data.assume_init_mut() };
+        while let Some(node) = current_bundle!().requests.pop() {
+            // SAFETY: hive-slot node; `data` was initialized by `defer_request`.
+            let req = unsafe { (*node.as_ptr()).data.assume_init_mut() };
             let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
             // SAFETY: the node stays alive until `deref_()` releases it below.
             scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
@@ -4656,11 +4662,9 @@ pub fn finalize_bundle(
             } else {
                 'brk: {
                     let route_bundle_index = 'rbi: {
-                        let first = current_bundle!().requests.first;
-                        if !first.is_null() {
-                            // SAFETY: first is an intrusive list node valid while current_bundle.requests holds it
-                            // SAFETY: `data` was initialized by `defer_request`.
-                            break 'rbi unsafe { (*first).data.assume_init_ref() }
+                        if let Some(&first) = current_bundle!().requests.last() {
+                            // SAFETY: hive-slot node; `data` was initialized by `defer_request`.
+                            break 'rbi unsafe { (*first.as_ptr()).data.assume_init_ref() }
                                 .route_bundle_index;
                         }
                         let route_bundle_indices =
@@ -4721,14 +4725,11 @@ pub fn finalize_bundle(
 
     // Set all the deferred routes to the .loaded state up front
     {
-        let mut node = current_bundle!().requests.first;
-        while !node.is_null() {
-            // SAFETY: node is an intrusive list node valid while current_bundle.requests holds it;
-            // `data` was initialized by `defer_request`.
-            let n = unsafe { &*node };
-            let rb = dev.route_bundle_ptr(unsafe { n.data.assume_init_ref() }.route_bundle_index);
+        for &n in current_bundle!().requests.iter() {
+            // SAFETY: hive-slot node; `data` was initialized by `defer_request`.
+            let rb = dev
+                .route_bundle_ptr(unsafe { (*n.as_ptr()).data.assume_init_ref() }.route_bundle_index);
             rb.server_state = route_bundle::State::Loaded;
-            node = n.next;
         }
     }
 
@@ -4749,10 +4750,9 @@ pub fn finalize_bundle(
             .resolve(vm.global(), JSValue::TRUE)?;
     }
 
-    while let Some(node) = current_bundle!().requests.pop_first() {
-        // SAFETY: `pop_first` hands back ownership of the intrusive node;
-        // `data` was initialized by `defer_request`.
-        let req = unsafe { (*node).data.assume_init_mut() };
+    while let Some(node) = current_bundle!().requests.pop() {
+        // SAFETY: hive-slot node; `data` was initialized by `defer_request`.
+        let req = unsafe { (*node.as_ptr()).data.assume_init_mut() };
         let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
         // SAFETY: the node stays alive until `deref_()` releases it below.
         scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
@@ -4803,7 +4803,7 @@ impl DevServer {
 
         // If there were pending requests, begin another bundle.
         if self.next_bundle.reload_event.is_some()
-            || !self.next_bundle.requests.first.is_null()
+            || !self.next_bundle.requests.is_empty()
             || self.next_bundle.promise.strong.has_value()
         {
             // PERF(port): was stack-fallback (4096)
@@ -6449,11 +6449,10 @@ impl DevServer {
 
     pub fn on_plugins_rejected(&mut self) -> Result<(), bun_core::Error> {
         self.plugin_state = PluginState::Err;
-        while let Some(item) = self.next_bundle.requests.pop_first() {
-            // SAFETY: `pop_first` returns a valid `*mut Node<DeferredRequest>`;
-            // `data` was initialized by `defer_request`.
+        while let Some(item) = self.next_bundle.requests.pop() {
+            // SAFETY: hive-slot node; `data` was initialized by `defer_request`.
             unsafe {
-                let d = (*item).data.assume_init_mut();
+                let d = (*item.as_ptr()).data.assume_init_mut();
                 d.abort();
                 d.deref_();
             }

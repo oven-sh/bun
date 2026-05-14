@@ -1535,10 +1535,10 @@ impl StringVoidMap {
         self.map.contains_key(key)
     }
 
-    fn init() -> Result<StringVoidMap, bun_core::Error> {
-        Ok(StringVoidMap {
+    fn init() -> StringVoidMap {
+        StringVoidMap {
             map: StringHashMap::default(),
-        })
+        }
     }
 
     pub fn reset(&mut self) {
@@ -1549,13 +1549,16 @@ impl StringVoidMap {
     /// Returns an RAII guard that derefs to `&mut StringVoidMap` and is
     /// returned to the pool on `Drop` (replaces Zig's `get` + `defer release`).
     #[inline]
-    pub fn get() -> bun_collections::pool::PoolGuard<'static, StringVoidMap> {
+    pub fn get() -> bun_collections::pool::PoolGuard<StringVoidMap> {
         StringVoidMapPool::get()
     }
 }
 
 impl bun_collections::pool::ObjectPoolType for StringVoidMap {
-    const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(StringVoidMap::init);
+    #[inline]
+    fn init() -> Self {
+        StringVoidMap::init()
+    }
     #[inline]
     fn reset(&mut self) {
         StringVoidMap::reset(self)

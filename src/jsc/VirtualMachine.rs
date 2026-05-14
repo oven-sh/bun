@@ -6018,13 +6018,9 @@ impl VirtualMachine {
         let mut exception_list = exception_list;
         for &err in &errors_to_append {
             // Circular-ref guard for cause chains.
-            if formatter.map_node.is_none() {
-                let mut node = NonNull::new(console_object::formatter::visited::Pool::get_node())
-                    .expect("ObjectPool::get_node always returns a valid heap node");
-                let data = console_object::formatter::visited::node_data_mut(&mut node);
-                data.clear();
-                formatter.map = core::mem::take(data);
-                formatter.map_node = Some(node);
+            if !formatter.map_from_pool {
+                formatter.map = console_object::formatter::visited::Pool::take();
+                formatter.map_from_pool = true;
             }
 
             let entry = formatter.map.get_or_put(err).expect("unreachable");

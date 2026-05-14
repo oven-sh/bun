@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls } from "harness";
 import { once } from "node:events";
 import nodetls from "node:tls";

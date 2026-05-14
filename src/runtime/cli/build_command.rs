@@ -571,10 +571,13 @@ impl BuildCommand {
             // owned by the arena. `generate_from_cli` → `wait_for_parse` derefs
             // this via `r#loop()` to drain parse tasks; passing `None` panics.
             let event_loop = arena.alloc(bun_event_loop::AnyEventLoop::init());
+            // Process-lifetime (matches `this_transpiler` — `exec` diverges).
+            let arena_pool: &bun_bundler::ArenaPool = arena.alloc(bun_bundler::ArenaPool::new());
 
             let build_result = match BundleV2::generate_from_cli(
                 this_transpiler,
                 arena,
+                arena_pool,
                 Some(core::ptr::NonNull::from(event_loop)),
                 ctx.debug.hot_reload == HotReload::Watch,
                 &mut reachable_file_count,

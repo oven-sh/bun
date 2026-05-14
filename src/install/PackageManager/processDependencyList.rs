@@ -43,14 +43,14 @@ impl<'a> ResolverContext for GitResolver<'a> {
         true
     }
 
-    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: &Expr) {
+    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: &Expr<'_>) {
         builder.count(self.resolved);
     }
 
     fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
-        _json: &Expr,
+        _json: &Expr<'_>,
     ) -> Result<ResolutionType<u64>, bun_core::Error> {
         // Zig: `var resolution = this.resolution.*;
         //       resolution.value.github.resolved = builder.append(String, this.resolved);`
@@ -100,14 +100,14 @@ impl<'a> ResolverContext for TarballResolver<'a> {
         true
     }
 
-    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: &Expr) {
+    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: &Expr<'_>) {
         builder.count(self.url);
     }
 
     fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
-        _json: &Expr,
+        _json: &Expr<'_>,
     ) -> Result<ResolutionType<u64>, bun_core::Error> {
         Ok(ResolutionType::<u64>::init(match self.resolution.tag {
             ResolutionTag::LocalTarball => {

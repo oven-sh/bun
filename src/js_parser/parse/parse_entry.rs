@@ -83,7 +83,7 @@ pub struct Options<'a> {
     pub use_define_for_class_fields: bool,
     pub suppress_warnings_about_weird_code: bool,
     pub filepath_hash_for_hmr: u32,
-    pub features: RuntimeFeatures,
+    pub features: RuntimeFeatures<'a>,
 
     pub tree_shaking: bool,
     pub bundle: bool,
@@ -317,14 +317,14 @@ impl<'a> Options<'a> {
 impl<'a> Parser<'a> {
     pub fn init(
         options: Options<'a>,
-        log: &'a mut bun_ast::Log,
+        log: &mut bun_ast::Log,
         source: &'a bun_ast::Source,
         define: &'a Define,
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
         let lexer = js_lexer::Lexer::init(log, source, bump)?;
         // Copy the lexer's `NonNull<Log>` so both handles share one provenance
-        // chain (the `&'a mut Log` was consumed by `Lexer::init`).
+        // chain (the `&mut Log` was consumed by `Lexer::init`).
         let log_ptr = lexer.log;
         Ok(Parser {
             options,
@@ -357,7 +357,7 @@ impl<'a> Parser<'a> {
 // surface lands.
 impl<'a> Parser<'a> {
     #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
-    pub fn parse(mut self) -> Result<crate::Result, Error> {
+    pub fn parse(mut self) -> Result<crate::Result<'a>, Error> {
         // TODO(port): narrow error set
         #[cfg(target_arch = "wasm32")]
         {
@@ -384,7 +384,7 @@ impl<'a> Parser<'a> {
     /// `bun run`, so keep the `_scan_imports` monomorphizations out of the hot
     /// `.text` between the lexer and the live `_parse` bodies.
     #[cold]
-    pub fn scan_imports(&mut self, scan_pass: &'a mut ScanPassResult) -> Result<(), Error> {
+    pub fn scan_imports(&mut self, scan_pass: &'a mut ScanPassResult<'a>) -> Result<(), Error> {
         if self.options.ts {
             self._scan_imports::<true>(scan_pass)
         } else {
@@ -395,7 +395,7 @@ impl<'a> Parser<'a> {
     #[cold]
     fn _scan_imports<const TS: bool>(
         &mut self,
-        scan_pass: &'a mut ScanPassResult,
+        scan_pass: &'a mut ScanPassResult<'a>,
     ) -> Result<(), Error> {
         type Pi<'a, const TS: bool> = P<'a, TS, true>;
         // Zig moves lexer/options by value into `P` (Parser.zig) and only
@@ -541,10 +541,10 @@ impl<'a> Parser<'a> {
 
     pub fn to_lazy_export_ast(
         &mut self,
-        expr: Expr,
+        expr: Expr<'a>,
         runtime_api_call: &'static [u8],
-        symbols: js_ast::symbol::List,
-    ) -> Result<crate::Result, Error> {
+        symbols: js_ast::symbol::List<'a>,
+    ) -> Result<crate::Result<'a>, Error> {
         // TODO(port): narrow error set
         // Zig moves lexer/options by value into `P` (Parser.zig) and only
         // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
@@ -734,7 +734,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn _parse<const TS: bool>(self) -> Result<crate::Result, Error> {
+    fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
         // TODO(port): narrow error set
         // TODO(b2-blocked): bun_crash_handler::current_action — `Action` stores
         // `&'static [u8]` but `self.source.path.text` is `'a`; Phase B widens
@@ -1343,8 +1343,8 @@ impl<'a> Parser<'a> {
             //
             // When tree-shaking is enabled, each statement becomes its own part, so we need
             // to look across all parts to find the single meaningful statement.
-            struct StmtAndPart {
-                stmt: Stmt,
+            struct StmtAndPart<'arena> {
+                stmt: Stmt<'arena>,
                 part_idx: usize,
             }
             let stmt_and_part: Option<StmtAndPart> = 'brk: {

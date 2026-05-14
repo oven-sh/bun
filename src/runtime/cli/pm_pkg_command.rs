@@ -41,9 +41,9 @@ impl SubCommand {
 }
 
 struct PackageJson {
-    root: Expr,
+    root: Expr<'static>,
     contents: Box<[u8]>,
-    source: Source,
+    source: &'static Source,
     indentation: bun_ast::Indentation,
 }
 
@@ -150,11 +150,12 @@ impl PmPkgCommand {
             }
         };
 
-        let source = Source::init_path_string(path, &contents[..]);
         // Zig passes the global allocator; use the process-lifetime CLI arena
         // so the returned `Expr` (which may reference arena-owned nodes)
         // outlives this frame. CLI is one-shot.
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+        let source: &'static Source =
+            bump.alloc(Source::init_path_string(path, &contents[..]));
         let log: &mut Log = unsafe { ctx.log_mut() };
         // const generics mirror Zig `.{ .is_json, .allow_comments,
         // .allow_trailing_commas, .guess_indentation = true }` with the
@@ -168,7 +169,7 @@ impl PmPkgCommand {
             false, // JSON_WARN_DUPLICATE_KEYS
             false, // WAS_ORIGINALLY_MACRO
             true,  // GUESS_INDENTATION
-        >(&source, log, bump)
+        >(source, log, bump)
         {
             Ok(r) => r,
             Err(e) => {
@@ -177,11 +178,14 @@ impl PmPkgCommand {
             }
         };
 
+        let root = result.root.into();
+        let indentation = result.indentation;
+
         Ok(PackageJson {
-            root: result.root.into(),
+            root,
             contents,
             source,
-            indentation: result.indentation,
+            indentation,
         })
     }
 
@@ -432,7 +436,7 @@ impl PmPkgCommand {
         Ok(())
     }
 
-    fn format_json(expr: Expr, initial_indent: Option<usize>) -> Result<Box<[u8]>, Error> {
+    fn format_json(expr: Expr<'_>, initial_indent: Option<usize>) -> Result<Box<[u8]>, Error> {
         match &expr.data {
             ExprData::EBoolean(b) => Ok(Box::<[u8]>::from(if b.value {
                 &b"true"[..]
@@ -482,7 +486,7 @@ impl PmPkgCommand {
     }
 
     fn get_json_value(
-        root: Expr,
+        root: Expr<'_>,
         key: &[u8],
         initial_indent: Option<usize>,
     ) -> Result<Box<[u8]>, Error> {
@@ -490,7 +494,7 @@ impl PmPkgCommand {
         Self::format_json(expr, initial_indent)
     }
 
-    fn resolve_path(root: Expr, key: &[u8]) -> Result<Expr, Error> {
+    fn resolve_path<'arena>(root: Expr<'arena>, key: &[u8]) -> Result<Expr<'arena>, Error> {
         if !matches!(root.data, ExprData::EObject(_)) {
             return Err(err!("NotFound"));
         }
@@ -614,7 +618,7 @@ impl PmPkgCommand {
         Ok(path_parts)
     }
 
-    fn set_value(root: &mut Expr, key: &[u8], value: &[u8], parse_json: bool) -> Result<(), Error> {
+    fn set_value(root: &mut Expr<'_>, key: &[u8], value: &[u8], parse_json: bool) -> Result<(), Error> {
         if !matches!(root.data, ExprData::EObject(_)) {
             return Err(err!("InvalidRoot"));
         }
@@ -666,7 +670,7 @@ impl PmPkgCommand {
     }
 
     fn set_nested_simple(
-        root: &mut Expr,
+        root: &mut Expr<'_>,
         path: &[&[u8]],
         value: &[u8],
         parse_json: bool,
@@ -713,7 +717,7 @@ impl PmPkgCommand {
     }
 
     fn set_nested(
-        root: &mut Expr,
+        root: &mut Expr<'_>,
         path: &mut [Box<[u8]>],
         value: &[u8],
         parse_json: bool,
@@ -763,7 +767,7 @@ impl PmPkgCommand {
         Self::set_nested(&mut nested, remaining_path, value, parse_json)
     }
 
-    fn parse_value(value: &[u8], parse_json: bool) -> Result<Expr, Error> {
+    fn parse_value<'arena>(value: &[u8], parse_json: bool) -> Result<Expr<'arena>, Error> {
         if parse_json {
             if value == b"true" {
                 return Ok(Expr::init(E::Boolean { value: true }, Loc::EMPTY));
@@ -786,10 +790,11 @@ impl PmPkgCommand {
                 return Ok(Expr::init(E::Number { value: float_val }, Loc::EMPTY));
             }
 
-            let temp_source = Source::init_path_string(b"package.json", value);
+            let temp_source: &Source =
+                dummy_bump().alloc(Source::init_path_string(b"package.json", value));
             let mut temp_log = Log::init();
             if let Ok(json_expr) =
-                json::parse_package_json_utf8(&temp_source, &mut temp_log, dummy_bump())
+                json::parse_package_json_utf8(temp_source, &mut temp_log, dummy_bump())
             {
                 return Ok(json_expr.into());
             } else {
@@ -802,7 +807,7 @@ impl PmPkgCommand {
         }
     }
 
-    fn delete_value(root: &mut Expr, key: &[u8]) -> Result<bool, Error> {
+    fn delete_value(root: &mut Expr<'_>, key: &[u8]) -> Result<bool, Error> {
         if !matches!(root.data, ExprData::EObject(_)) {
             return Ok(false);
         }
@@ -827,7 +832,7 @@ impl PmPkgCommand {
         Self::delete_nested(root, &path_parts)
     }
 
-    fn delete_nested(root: &mut Expr, path: &[&[u8]]) -> Result<bool, Error> {
+    fn delete_nested(root: &mut Expr<'_>, path: &[&[u8]]) -> Result<bool, Error> {
         if path.is_empty() {
             return Ok(false);
         }
@@ -863,7 +868,7 @@ impl PmPkgCommand {
         Ok(deleted)
     }
 
-    fn remove_property(obj: &mut Expr, key: &[u8]) -> Result<bool, Error> {
+    fn remove_property(obj: &mut Expr<'_>, key: &[u8]) -> Result<bool, Error> {
         let ExprData::EObject(e_obj) = &mut obj.data else {
             return Ok(false);
         };
@@ -891,7 +896,7 @@ impl PmPkgCommand {
         // old buffer (CLI is one-shot — leak is intentional, see
         // load_package_json).
         let old = bun_alloc::AstAlloc::take(&mut e_obj.properties);
-        let mut new_props: G::PropertyList = G::PropertyList::init_capacity(old_len - 1);
+        let mut new_props: G::PropertyList<'_> = G::PropertyList::init_capacity(old_len - 1);
         for prop in old.slice() {
             if let Some(k) = &prop.key {
                 if let ExprData::EString(s) = &k.data {
@@ -910,7 +915,7 @@ impl PmPkgCommand {
         Ok(true)
     }
 
-    fn save_package_json(path: &[u8], root: Expr, pkg: &PackageJson) -> Result<(), Error> {
+    fn save_package_json(path: &[u8], root: Expr<'_>, pkg: &PackageJson) -> Result<(), Error> {
         let preserve_newline =
             !pkg.contents.is_empty() && pkg.contents[pkg.contents.len() - 1] == b'\n';
 
@@ -926,7 +931,7 @@ impl PmPkgCommand {
         if let Err(e) = js_printer::print_json(
             &mut writer,
             root,
-            &pkg.source,
+            pkg.source,
             js_printer::PrintJsonOptions {
                 indent: pkg.indentation,
                 mangled_props: None,

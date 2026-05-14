@@ -477,32 +477,35 @@ pub mod bun_renamer {
     /// `renamer.Renamer` set late (`= undefined`); the Rust `Renamer<'r,'src>`
     /// enum has borrowed lifetimes that can't be stored in a 'static-ish
     /// struct, so this owns the boxed concrete renamer instead and produces a
-    /// borrowed `Renamer` view on demand. TODO(port): thread `'bump` once
-    /// Chunk gains a lifetime.
+    /// borrowed `Renamer` view on demand. `'a` is the [`crate::ArenaPool`]
+    /// lifetime (same as `Chunk<'a>` / `LinkerGraph<'a>`).
     #[derive(Default)]
-    pub enum ChunkRenamer {
+    pub enum ChunkRenamer<'a> {
         #[default]
         None,
-        Number(Box<bun_js_printer::renamer::NumberRenamer>),
-        Minify(Box<bun_js_printer::renamer::MinifyRenamer>),
+        Number(Box<bun_js_printer::renamer::NumberRenamer<'a>>),
+        Minify(Box<bun_js_printer::renamer::MinifyRenamer<'a>>),
     }
 
-    impl ChunkRenamer {
-        pub fn name_for_symbol(&mut self, ref_: bun_ast::Ref) -> &[u8] {
+    impl<'a> ChunkRenamer<'a> {
+        pub fn name_for_symbol(&self, ref_: bun_ast::Ref) -> &[u8] {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
                 ChunkRenamer::Number(r) => r.name_for_symbol(ref_),
                 ChunkRenamer::Minify(r) => r.name_for_symbol(ref_),
             }
         }
-        pub fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, '_> {
+        // `Renamer<'r,'src,'arena>` is covariant in `'arena` (holds `&'r`, not
+        // `&'r mut`), so the `'a → 'arena` shortening is a plain coercion.
+        pub fn as_renamer<'r, 'arena>(
+            &'r self,
+        ) -> bun_js_printer::renamer::Renamer<'r, 'r, 'arena>
+        where
+            'a: 'arena,
+        {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
                 ChunkRenamer::Number(r) => bun_js_printer::renamer::Renamer::NumberRenamer(r),
-                // PORT NOTE: `Renamer<'r,'src>` borrows the concrete renamer
-                // (`&'r mut MinifyRenamer`); `ChunkRenamer` owns the `Box`, so
-                // the deref-coerced `&mut **r` yields a per-call borrowed view
-                // exactly like the Zig tag+ptr union.
                 ChunkRenamer::Minify(r) => bun_js_printer::renamer::Renamer::MinifyRenamer(r),
             }
         }
@@ -525,12 +528,12 @@ pub mod html_import_manifest {
     /// literal body (`writePreQuotedString`). Chunk.rs uses this with
     /// `bun_core::fmt::count` for the counting pass.
     #[inline]
-    pub fn format_escaped_json<'a>(
+    pub fn format_escaped_json<'r, 'a>(
         index: u32,
-        graph: &'a Graph,
-        chunks: &'a [Chunk],
-        linker_graph: &'a LinkerGraph,
-    ) -> real::EscapedJson<'a> {
+        graph: &'r Graph<'a>,
+        chunks: &'r [Chunk<'a>],
+        linker_graph: &'r LinkerGraph<'a>,
+    ) -> real::EscapedJson<'r, 'a> {
         real::HTMLImportManifest {
             index,
             graph,
@@ -546,9 +549,9 @@ pub mod html_import_manifest {
     /// slice in place so it can recover `pos = before_len - cursor.len()`.
     pub fn write_escaped_json(
         index: u32,
-        graph: &Graph,
-        linker_graph: &LinkerGraph,
-        chunks: &[Chunk],
+        graph: &Graph<'_>,
+        linker_graph: &LinkerGraph<'_>,
+        chunks: &[Chunk<'_>],
         w: &mut &mut [u8],
     ) -> Result<(), core::fmt::Error> {
         let taken = core::mem::take(w);
@@ -598,14 +601,11 @@ pub use bun_js_printer::MangledProps;
 
 /// `js_ast.BundledAst` (the bundler-facing AST view).
 ///
-/// PORT NOTE: lifetime-erased to `'static`. `BundledAst<'arena>` borrows the
-/// per-file parse arena (`hashbang`/`url_for_css`/`export_star_import_records`
-/// slices). The bundler owns those arenas for the entire link (see
-/// `LinkerGraph.bump: *const Arena` "stays `'static`-ish" note); `JSAst` is
-/// stored in a `MultiArrayList` SoA inside `LinkerGraph`/`Graph`, neither of
-/// which carries a lifetime parameter yet. Pin to `'static` until Phase B
-/// threads `'bump` through `Chunk`/`LinkerGraph`/`LinkerContext`.
-pub type JSAst = crate::BundledAst<'static>;
+/// `'a` is the [`crate::ArenaPool`] lifetime — every per-worker parse arena
+/// and the bundler-thread arena are owned by the pool, which is
+/// stack-allocated in the bundle entry point alongside `Transpiler<'a>`, so
+/// `'a` unifies with the existing `BundleV2<'a>` lifetime.
+pub type JSAst<'a> = crate::BundledAst<'a>;
 pub(crate) use bun_ast::{Part, Ref, Symbol};
 
 /// `bundle_v2.zig:EntryPoint` — both a struct and (via the sibling module

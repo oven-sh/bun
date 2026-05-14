@@ -148,20 +148,20 @@ const _: () = assert!(Ref::NONE.is_empty());
 // Different parts of the bundler use different formats of the symbol table.
 // In the parser you only have one array, and .sourceIndex() is ignored.
 // In the bundler, you have a 2D array where both parts of the ref are used.
-pub trait SymbolTable {
-    fn get_symbol(&mut self, r: Ref) -> &mut symbol::Symbol;
+pub trait SymbolTable<'arena> {
+    fn get_symbol(&mut self, r: Ref) -> &mut symbol::Symbol<'arena>;
 }
 
-impl SymbolTable for [symbol::Symbol] {
+impl<'arena> SymbolTable<'arena> for [symbol::Symbol<'arena>] {
     #[inline]
-    fn get_symbol(&mut self, r: Ref) -> &mut symbol::Symbol {
+    fn get_symbol(&mut self, r: Ref) -> &mut symbol::Symbol<'arena> {
         &mut self[r.inner_index() as usize]
     }
 }
 
-impl SymbolTable for Vec<symbol::Symbol> {
+impl<'arena> SymbolTable<'arena> for Vec<symbol::Symbol<'arena>> {
     #[inline]
-    fn get_symbol(&mut self, r: Ref) -> &mut symbol::Symbol {
+    fn get_symbol(&mut self, r: Ref) -> &mut symbol::Symbol<'arena> {
         &mut self[r.inner_index() as usize]
     }
 }
@@ -172,10 +172,10 @@ impl SymbolTable for Vec<symbol::Symbol> {
 /// `Ref` methods that need `Symbol` / JSON writer.
 impl Ref {
     #[inline]
-    pub fn get_symbol<T: SymbolTable + ?Sized>(self, symbol_table: &mut T) -> &mut symbol::Symbol {
+    pub fn get_symbol<'arena, T: SymbolTable<'arena> + ?Sized>(self, symbol_table: &mut T) -> &mut symbol::Symbol<'arena> {
         symbol_table.get_symbol(self)
     }
-    pub fn dump<T: SymbolTable + ?Sized>(self, symbol_table: &mut T) -> RefDump<'_> {
+    pub fn dump<'arena, T: SymbolTable<'arena> + ?Sized>(self, symbol_table: &'arena mut T) -> RefDump<'arena> {
         RefDump {
             ref_: self,
             symbol: symbol_table.get_symbol(self),
@@ -192,7 +192,7 @@ impl Ref {
 // Zig: `DumpImplData` + `dumpImpl` — formatter wrapper returned by `Ref.dump`.
 pub struct RefDump<'a> {
     ref_: Ref,
-    symbol: &'a symbol::Symbol,
+    symbol: &'a symbol::Symbol<'a>,
 }
 impl fmt::Display for RefDump<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -68,7 +68,7 @@ struct UnsupportedPackages {
 }
 
 impl UnsupportedPackages {
-    pub fn update(&mut self, expr: bun_ast::Expr) {
+    pub fn update(&mut self, expr: bun_ast::Expr<'_>) {
         for prop in expr
             .data
             .e_object()
@@ -914,8 +914,8 @@ impl CreateCommand {
                 //     }
                 // };
 
-                let mut dev_dependencies: Option<bun_ast::Expr> = None;
-                let mut dependencies: Option<bun_ast::Expr> = None;
+                let mut dev_dependencies: Option<bun_ast::Expr<'_>> = None;
+                let mut dependencies: Option<bun_ast::Expr<'_>> = None;
 
                 if let Some(q) = package_json_expr.as_property(b"devDependencies") {
                     let property = q.expr;
@@ -1154,7 +1154,7 @@ impl CreateCommand {
                         // InjectionPrefill.bun_macros_relay_only_object.properties = ...fromBorrowedSliceDangerous(&bun_macros_relay_only_object_properties);
                     }
 
-                    pub fn npx_react_scripts_build() -> bun_ast::Expr {
+                    pub fn npx_react_scripts_build<'arena>() -> bun_ast::Expr<'arena> {
                         // TODO(port): build bun_ast::Expr { .e_string = "npx react-scripts build" }
                         bun_ast::Expr::init(
                             bun_ast::E::EString::init(b"npx react-scripts build"),

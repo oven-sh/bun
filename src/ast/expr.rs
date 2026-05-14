@@ -25,25 +25,25 @@ use crate::StoreStr as Str;
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy)]
-pub struct Expr {
+pub struct Expr<'arena> {
     pub loc: Loc,
-    pub data: Data,
+    pub data: Data<'arena>,
 }
 
-impl Default for Expr {
+impl<'arena> Default for Expr<'arena> {
     fn default() -> Self {
         Self::EMPTY
     }
 }
 
-impl Expr {
-    pub const EMPTY: Expr = Expr {
+impl<'arena> Expr<'arena> {
+    pub const EMPTY: Expr<'arena> = Expr {
         data: Data::EMissing(E::Missing {}),
         loc: Loc::EMPTY,
     };
 }
 
-impl Expr {
+impl<'arena> Expr<'arena> {
     pub fn is_anonymous_named(&self) -> bool {
         match self.data {
             Data::EArrow(_) => true,
@@ -71,7 +71,7 @@ impl Expr {
         self.data.can_be_moved()
     }
 
-    pub fn unwrap_inlined(self) -> Expr {
+    pub fn unwrap_inlined(self) -> Expr<'arena> {
         if let Data::EInlinedEnum(inlined) = self.data {
             return inlined.value;
         }
@@ -79,14 +79,14 @@ impl Expr {
     }
 
     #[inline]
-    pub fn init_identifier(ref_: Ref, loc: Loc) -> Expr {
+    pub fn init_identifier(ref_: Ref, loc: Loc) -> Expr<'arena> {
         Expr {
             loc,
             data: Data::EIdentifier(E::Identifier::init(ref_)),
         }
     }
 
-    pub fn to_empty(self) -> Expr {
+    pub fn to_empty(self) -> Expr<'arena> {
         Expr {
             data: Data::EMissing(E::Missing {}),
             loc: self.loc,
@@ -114,8 +114,8 @@ impl Expr {
     }
 }
 
-impl Expr {
-    pub fn clone_in(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
+impl<'arena> Expr<'arena> {
+    pub fn clone_in(&self, bump: &Bump) -> Result<Expr<'arena>, bun_core::Error> {
         // TODO(port): narrow error set
         Ok(Expr {
             loc: self.loc,
@@ -123,19 +123,23 @@ impl Expr {
         })
     }
 
-    pub fn deep_clone(&self, bump: &Bump) -> Result<Expr, AllocError> {
+    // TODO(arena-lifetimes): should be `fn deep_clone<'dst>(&self, bump: &'dst
+    // Bump) -> Expr<'dst>`. Blocked on the body shallow-copying `Str<'arena>`
+    // slices (`E::Dot::name`, `E::String::data`, …) — those must be duped into
+    // `bump` before the return lifetime can detach from `'arena`.
+    pub fn deep_clone(&self, bump: &Bump) -> Result<Expr<'arena>, AllocError> {
         let _g = bun_alloc::ast_alloc::DetachAstHeap::new();
         self.deep_clone_no_detach(bump)
     }
     #[inline]
-    fn deep_clone_no_detach(&self, bump: &Bump) -> Result<Expr, AllocError> {
+    fn deep_clone_no_detach(&self, bump: &Bump) -> Result<Expr<'arena>, AllocError> {
         Ok(Expr {
             loc: self.loc,
             data: self.data.deep_clone_no_detach(bump)?,
         })
     }
 
-    pub fn wrap_in_arrow(this: Expr, bump: &Bump) -> Result<Expr, bun_core::Error> {
+    pub fn wrap_in_arrow(this: Expr<'arena>, bump: &Bump) -> Result<Expr<'arena>, bun_core::Error> {
         // TODO(port): narrow error set
         let stmts: &mut [Stmt] = bump.alloc_slice_fill_with(1, |_| {
             Stmt::alloc(S::Return { value: Some(this) }, this.loc)
@@ -159,13 +163,13 @@ impl Expr {
 }
 
 #[derive(Clone, Copy)]
-pub struct Query {
-    pub expr: Expr,
+pub struct Query<'arena> {
+    pub expr: Expr<'arena>,
     pub loc: Loc,
     pub i: u32,
 }
 
-impl Default for Query {
+impl<'arena> Default for Query<'arena> {
     fn default() -> Self {
         Self {
             expr: Expr::EMPTY,
@@ -180,7 +184,7 @@ impl Default for Query {
 // Subset of the gated impl below; bodies adapted to the live `E::Object` /
 // `E::EString` surface added this round. The full set/get_path/rope helpers
 // stay gated.
-impl Expr {
+impl<'arena> Expr<'arena> {
     #[inline]
     pub fn is_array(&self) -> bool {
         matches!(self.data, Data::EArray(_))
@@ -196,7 +200,7 @@ impl Expr {
 
     /// Making this comptime bloats the binary and doesn't seem to impact
     /// runtime performance.
-    pub fn as_property(&self, name: &[u8]) -> Option<Query> {
+    pub fn as_property(&self, name: &[u8]) -> Option<Query<'arena>> {
         let Data::EObject(obj) = &self.data else {
             return None;
         };
@@ -206,16 +210,16 @@ impl Expr {
         obj.as_property(name)
     }
 
-    pub fn get(&self, name: &[u8]) -> Option<Expr> {
+    pub fn get(&self, name: &[u8]) -> Option<Expr<'arena>> {
         self.as_property(name).map(|q| q.expr)
     }
 
-    pub fn get_object(&self, name: &[u8]) -> Option<Expr> {
+    pub fn get_object(&self, name: &[u8]) -> Option<Expr<'arena>> {
         self.as_property(name)
             .and_then(|q| q.expr.is_object().then_some(q.expr))
     }
 
-    pub fn as_array(&self) -> Option<ArrayIterator> {
+    pub fn as_array(&self) -> Option<ArrayIterator<'arena>> {
         match &self.data {
             Data::EArray(array) => {
                 if array.items.len_u32() == 0 {
@@ -288,7 +292,7 @@ impl Expr {
 // blocked_on) and `Vec::deep_clone`. Types are real; bodies un-gate with
 // the parser round once those land.
 
-impl Expr {
+impl<'arena> Expr<'arena> {
     pub fn has_any_property_named(&self, names: &'static [&'static [u8]]) -> bool {
         let Data::EObject(obj) = &self.data else {
             return false;
@@ -319,7 +323,7 @@ impl Expr {
     /// Only use this for pretty-printing JSON. Do not use in transpiler.
     ///
     /// This does not handle edgecases like `-1` or stringifying arbitrary property lookups.
-    pub fn get_by_index(&self, index: u32, index_str: &[u8], bump: &Bump) -> Option<Expr> {
+    pub fn get_by_index(&self, index: u32, index_str: &[u8], bump: &Bump) -> Option<Expr<'arena>> {
         match &self.data {
             Data::EArray(array) => {
                 if index >= array.items.len_u32() {
@@ -380,7 +384,7 @@ impl Expr {
     /// This is not intended for use by the transpiler, instead by pretty printing JSON.
     // PORT NOTE: Zig passed `bun.default_allocator` to getByIndex; Rust threads the arena
     // explicitly because get_by_index allocates an E.String slice into &Bump.
-    pub fn get_path_may_be_index(&self, bump: &Bump, name: &[u8]) -> Option<Expr> {
+    pub fn get_path_may_be_index(&self, bump: &Bump, name: &[u8]) -> Option<Expr<'arena>> {
         if name.is_empty() {
             return None;
         }
@@ -434,7 +438,7 @@ impl Expr {
     ///
     /// Sets the value of a property, creating it if it doesn't exist.
     /// `self` must be an object.
-    pub fn set(&mut self, _bump: &Bump, name: &[u8], value: Expr) -> Result<(), AllocError> {
+    pub fn set(&mut self, _bump: &Bump, name: &[u8], value: Expr<'arena>) -> Result<(), AllocError> {
         debug_assert!(self.is_object());
         let Data::EObject(obj) = &mut self.data else {
             unreachable!()
@@ -579,9 +583,9 @@ impl Expr {
     }
 
     // PORT NOTE: `Query` holds `expr` by value (Copy). The iterator stores the
-    // `StoreRef<E::Array>` directly (Copy, arena-backed) so no lifetime is tied
+    // `StoreRef<'arena, E::Array<'arena>>` directly (Copy, arena-backed) so no lifetime is tied
     // to a local temporary — `StoreRef::Deref` re-borrows the arena slot on use.
-    pub fn get_array(&self, name: &[u8]) -> Option<ArrayIterator> {
+    pub fn get_array(&self, name: &[u8]) -> Option<ArrayIterator<'arena>> {
         let q = self.as_property(name)?;
         match q.expr.data {
             Data::EArray(array) => {
@@ -594,7 +598,7 @@ impl Expr {
         }
     }
 
-    pub fn get_rope<'a>(&self, rope: &'a E::Rope) -> Option<E::RopeQuery<'a>> {
+    pub fn get_rope<'a>(&self, rope: &'a E::Rope<'arena>) -> Option<E::RopeQuery<'a, 'arena>> {
         if let Some(existing) = self.get(&rope.head.data.as_e_string().unwrap().data) {
             match &existing.data {
                 Data::EArray(array) => {
@@ -690,15 +694,15 @@ impl Expr {
 // ArrayIterator
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct ArrayIterator {
+pub struct ArrayIterator<'arena> {
     /// Arena-backed handle (`StoreRef` invariant: pointee lives until arena
     /// reset). Stored by value so the iterator carries no borrowed lifetime.
-    pub array: StoreRef<E::Array>,
+    pub array: StoreRef<'arena, E::Array<'arena>>,
     pub index: u32,
 }
 
-impl ArrayIterator {
-    pub fn next(&mut self) -> Option<Expr> {
+impl<'arena> ArrayIterator<'arena> {
+    pub fn next(&mut self) -> Option<Expr<'arena>> {
         if self.index >= self.array.items.len_u32() {
             return None;
         }
@@ -714,7 +718,7 @@ impl ArrayIterator {
 // implementations above (lines ~231-315) with worse signatures (`expr: &Expr`,
 // raw-ptr returns). Those drafts were dropped during un-gating; only the methods
 // without a live counterpart remain.
-impl Expr {
+impl<'arena> Expr<'arena> {
     #[inline]
     pub fn as_string_literal<'b>(&self, bump: &'b Bump) -> Option<&'b [u8]> {
         let Data::EString(s) = &self.data else {
@@ -772,15 +776,15 @@ pub enum EFlags {
 }
 
 #[allow(dead_code)] // see gated `json_stringify` below
-struct Serializable {
+struct Serializable<'arena> {
     type_: Tag,
     object: &'static [u8],
-    value: Data,
+    value: Data<'arena>,
     loc: Loc,
 }
 
 // `is_missing` lives in the `init`/`allocate` impl block below (round-A hoist).
-impl Expr {
+impl<'arena> Expr<'arena> {
     /// The goal of this function is to "rotate" the AST if it's possible to use the
     /// left-associative property of the operator to avoid unnecessary parentheses.
     ///
@@ -791,7 +795,7 @@ impl Expr {
     // PERF(port): Zig took `comptime op: Op.Code`. `Op::Code` does not derive
     // `ConstParamTy` (Op.rs owns the enum); pass at runtime here. Revisit once
     // `Code` gains `ConstParamTy` — call sites are a handful of literal ops.
-    pub fn join_with_left_associative_op(op: Op::Code, a: Expr, b: Expr) -> Expr {
+    pub fn join_with_left_associative_op(op: Op::Code, a: Expr<'arena>, b: Expr<'arena>) -> Expr<'arena> {
         // "(a, b) op c" => "a, b op c"
         if let Data::EBinary(mut comma) = a.data {
             if comma.op == crate::OpCode::BinComma {
@@ -826,7 +830,7 @@ impl Expr {
     // PORT NOTE: Zig threaded `_: std.mem.Allocator` (unused) so the caller's
     // arena reached `Expr.init`. The Rust port uses the thread-local
     // `data::Store` and drops the parameter.
-    pub fn join_with_comma(self, b: Expr) -> Expr {
+    pub fn join_with_comma(self, b: Expr<'arena>) -> Expr<'arena> {
         if self.is_missing() {
             return b;
         }
@@ -843,7 +847,7 @@ impl Expr {
         )
     }
 
-    pub fn join_all_with_comma(all: &[Expr]) -> Expr {
+    pub fn join_all_with_comma(all: &[Expr<'arena>]) -> Expr<'arena> {
         debug_assert!(!all.is_empty());
         match all.len() {
             1 => all[0],
@@ -862,10 +866,10 @@ impl Expr {
     // each element. Rust passes `ctx` by `&mut` so a single `&mut P` (the parser
     // state) can be reborrowed for each callback invocation without `Copy`.
     pub fn join_all_with_comma_callback<C: ?Sized>(
-        all: &[Expr],
+        all: &[Expr<'arena>],
         ctx: &mut C,
-        callback: fn(ctx: &mut C, expr: Expr) -> Option<Expr>,
-    ) -> Option<Expr> {
+        callback: fn(ctx: &mut C, expr: Expr<'arena>) -> Option<Expr<'arena>>,
+    ) -> Option<Expr<'arena>> {
         match all.len() {
             0 => None,
             1 => callback(ctx, all[0]),
@@ -911,7 +915,7 @@ impl Expr {
         }
     }
 
-    pub fn extract_numeric_values_in_safe_range(left: &Data, right: &Data) -> Option<[f64; 2]> {
+    pub fn extract_numeric_values_in_safe_range(left: &Data<'arena>, right: &Data<'arena>) -> Option<[f64; 2]> {
         let l_value = left.extract_numeric_value()?;
         let r_value = right.extract_numeric_value()?;
 
@@ -934,7 +938,7 @@ impl Expr {
         Some([l_value, r_value])
     }
 
-    pub fn extract_numeric_values(left: &Data, right: &Data) -> Option<[f64; 2]> {
+    pub fn extract_numeric_values(left: &Data<'arena>, right: &Data<'arena>) -> Option<[f64; 2]> {
         Some([
             left.extract_numeric_value()?,
             right.extract_numeric_value()?,
@@ -942,10 +946,10 @@ impl Expr {
     }
 
     pub fn extract_string_values(
-        left: &Data,
-        right: &Data,
+        left: &Data<'arena>,
+        right: &Data<'arena>,
         bump: &Bump,
-    ) -> Option<[crate::StoreRef<E::String>; 2]> {
+    ) -> Option<[crate::StoreRef<'arena, E::String<'arena>>; 2]> {
         let mut l_string = Data::extract_string_value(*left)?;
         let mut r_string = Data::extract_string_value(*right)?;
         // `extract_string_value` returns the arena `StoreRef`; mutate via DerefMut.
@@ -963,7 +967,7 @@ impl Expr {
 // TODO(port): jsonStringify protocol — replace with serde or custom trait in
 // Phase B. Kept gated; `Serializable` is its payload shape.
 
-impl Expr {
+impl<'arena> Expr<'arena> {
     // PORT NOTE: Zig's `jsonStringify` fed `Serializable` to `std.json.stringify`.
     // The Rust port emits the same shape directly (no serde dependency).
     pub fn json_stringify(self_: &Expr, writer: &mut impl fmt::Write) -> fmt::Result {
@@ -1002,24 +1006,41 @@ pub static ICOUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicU
 /// Trait implemented by every `E::*` payload type to construct an `Expr`.
 ///
 /// Replaces Zig's `comptime Type: type` switch in `Expr.init` / `Expr.allocate`.
-pub trait IntoExprData: Sized {
+pub trait IntoExprData<'arena>: Sized {
     /// Construct `Data` using the thread-local `Data::Store` arena (Zig: `Expr.init`).
-    fn into_data_store(self) -> Data;
+    fn into_data_store(self) -> Data<'arena>;
     /// Construct `Data` using a caller-supplied arena (Zig: `Expr.allocate`).
     /// Be careful to free the memory (or use an arena that does it for you).
-    fn into_data_alloc(self, bump: &Bump) -> Data;
+    fn into_data_alloc(self, bump: &Bump) -> Data<'arena>;
 }
 
 macro_rules! impl_into_expr_data_boxed {
     ($($ty:ident => $variant:ident),* $(,)?) => {
         $(
-            impl IntoExprData for E::$ty {
+            impl<'arena> IntoExprData<'arena> for E::$ty<'arena> {
                 #[inline]
-                fn into_data_store(self) -> Data {
+                fn into_data_store(self) -> Data<'arena> {
                     Data::$variant(data::Store::append(self))
                 }
                 #[inline]
-                fn into_data_alloc(self, bump: &Bump) -> Data {
+                fn into_data_alloc(self, bump: &Bump) -> Data<'arena> {
+                    Data::$variant(StoreRef::from_bump(bump.alloc(self)))
+                }
+            }
+        )*
+    };
+}
+
+macro_rules! impl_into_expr_data_boxed_nolife {
+    ($($ty:ident => $variant:ident),* $(,)?) => {
+        $(
+            impl<'arena> IntoExprData<'arena> for E::$ty {
+                #[inline]
+                fn into_data_store(self) -> Data<'arena> {
+                    Data::$variant(data::Store::append(self))
+                }
+                #[inline]
+                fn into_data_alloc(self, bump: &Bump) -> Data<'arena> {
                     Data::$variant(StoreRef::from_bump(bump.alloc(self)))
                 }
             }
@@ -1030,18 +1051,17 @@ macro_rules! impl_into_expr_data_boxed {
 macro_rules! impl_into_expr_data_inline {
     ($($ty:ident => $variant:ident),* $(,)?) => {
         $(
-            impl IntoExprData for E::$ty {
+            impl<'arena> IntoExprData<'arena> for E::$ty {
                 #[inline]
-                fn into_data_store(self) -> Data { Data::$variant(self) }
+                fn into_data_store(self) -> Data<'arena> { Data::$variant(self) }
                 #[inline]
-                fn into_data_alloc(self, _bump: &Bump) -> Data { Data::$variant(self) }
+                fn into_data_alloc(self, _bump: &Bump) -> Data<'arena> { Data::$variant(self) }
             }
         )*
     };
 }
 
 impl_into_expr_data_boxed! {
-    NameOfSymbol => ENameOfSymbol,
     Array => EArray,
     Class => EClass,
     Unary => EUnary,
@@ -1065,6 +1085,10 @@ impl_into_expr_data_boxed! {
     InlinedEnum => EInlinedEnum,
 }
 
+impl_into_expr_data_boxed_nolife! {
+    NameOfSymbol => ENameOfSymbol,
+}
+
 impl_into_expr_data_inline! {
     This => EThis,
     Boolean => EBoolean,
@@ -1082,35 +1106,35 @@ impl_into_expr_data_inline! {
 
 // E::Identifier — Zig copies fields explicitly (normalization). With the
 // packed-flag layout the struct is a single `Ref`, so the copy is trivial.
-impl IntoExprData for E::Identifier {
+impl<'arena> IntoExprData<'arena> for E::Identifier {
     #[inline]
-    fn into_data_store(self) -> Data {
+    fn into_data_store(self) -> Data<'arena> {
         Data::EIdentifier(self)
     }
     #[inline]
-    fn into_data_alloc(self, _bump: &Bump) -> Data {
+    fn into_data_alloc(self, _bump: &Bump) -> Data<'arena> {
         Data::EIdentifier(self)
     }
 }
 
-impl IntoExprData for E::ImportIdentifier {
+impl<'arena> IntoExprData<'arena> for E::ImportIdentifier {
     #[inline]
-    fn into_data_store(self) -> Data {
+    fn into_data_store(self) -> Data<'arena> {
         Data::EImportIdentifier(self)
     }
     #[inline]
-    fn into_data_alloc(self, _bump: &Bump) -> Data {
+    fn into_data_alloc(self, _bump: &Bump) -> Data<'arena> {
         Data::EImportIdentifier(self)
     }
 }
 
-impl IntoExprData for E::CommonJSExportIdentifier {
+impl<'arena> IntoExprData<'arena> for E::CommonJSExportIdentifier {
     #[inline]
-    fn into_data_store(self) -> Data {
+    fn into_data_store(self) -> Data<'arena> {
         Data::ECommonjsExportIdentifier(self)
     }
     #[inline]
-    fn into_data_alloc(self, _bump: &Bump) -> Data {
+    fn into_data_alloc(self, _bump: &Bump) -> Data<'arena> {
         // Packed layout collapses Zig's init()/allocate() distinction — `base`
         // rides inside `ref_`, so a single-word copy carries both regardless.
         Data::ECommonjsExportIdentifier(self)
@@ -1118,9 +1142,9 @@ impl IntoExprData for E::CommonJSExportIdentifier {
 }
 
 // E::EString — special debug assert + boxed
-impl IntoExprData for E::EString {
+impl<'arena> IntoExprData<'arena> for E::EString<'arena> {
     #[inline]
-    fn into_data_store(self) -> Data {
+    fn into_data_store(self) -> Data<'arena> {
         #[cfg(debug_assertions)]
         {
             // Sanity check: assert string is not a null ptr
@@ -1130,7 +1154,7 @@ impl IntoExprData for E::EString {
         }
         Data::EString(data::Store::append(self))
     }
-    fn into_data_alloc(self, bump: &Bump) -> Data {
+    fn into_data_alloc(self, bump: &Bump) -> Data<'arena> {
         #[cfg(debug_assertions)]
         {
             if !self.data.is_empty() && self.is_utf8() {
@@ -1144,23 +1168,23 @@ impl IntoExprData for E::EString {
 // *E.String — Zig allows passing a pointer to copy from. `EString` derives no
 // `Clone` (rope `next` ptr); Zig copies the struct bytes. Mirror with a
 // shallow field-copy.
-impl IntoExprData for &E::EString {
+impl<'arena> IntoExprData<'arena> for &E::EString<'arena> {
     #[inline]
-    fn into_data_store(self) -> Data {
+    fn into_data_store(self) -> Data<'arena> {
         Data::EString(data::Store::append(self.shallow_clone()))
     }
     #[inline]
-    fn into_data_alloc(self, bump: &Bump) -> Data {
+    fn into_data_alloc(self, bump: &Bump) -> Data<'arena> {
         Data::EString(StoreRef::from_bump(bump.alloc(self.shallow_clone())))
     }
 }
 
-impl Expr {
+impl<'arena> Expr<'arena> {
     /// When the lifetime of an Expr.Data's pointer must exist longer than reset() is called, use this function.
     /// Be careful to free the memory (or use an arena that does it for you)
     /// Also, prefer Expr.init or Expr.alloc when possible. This will be slower.
     #[inline]
-    pub fn allocate<T: IntoExprData>(bump: &Bump, st: T, loc: Loc) -> Expr {
+    pub fn allocate<T: IntoExprData<'arena>>(bump: &Bump, st: T, loc: Loc) -> Expr<'arena> {
         #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         data::Store::assert();
@@ -1171,7 +1195,7 @@ impl Expr {
     }
 
     #[inline]
-    pub fn init<T: IntoExprData>(st: T, loc: Loc) -> Expr {
+    pub fn init<T: IntoExprData<'arena>>(st: T, loc: Loc) -> Expr<'arena> {
         #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         data::Store::assert();
@@ -1191,7 +1215,7 @@ impl Expr {
         matches!(self.data, Data::EMissing(_))
     }
     #[inline]
-    pub fn assign(a: Expr, b: Expr) -> Expr {
+    pub fn assign(a: Expr<'arena>, b: Expr<'arena>) -> Expr<'arena> {
         Expr::init(
             E::Binary {
                 op: crate::OpCode::BinAssign,
@@ -1203,9 +1227,9 @@ impl Expr {
     }
 }
 
-pub type Disabler = DebugOnlyDisabler<Expr>;
+pub type Disabler = DebugOnlyDisabler<Expr<'static>>;
 
-impl Expr {
+impl<'arena> Expr<'arena> {
     #[inline]
     pub fn is_primitive_literal(&self) -> bool {
         Tag::is_primitive_literal(self.data.tag())
@@ -1463,7 +1487,7 @@ impl fmt::Display for Tag {
 // Expr methods (continued)
 // ───────────────────────────────────────────────────────────────────────────
 
-impl Expr {
+impl<'arena> Expr<'arena> {
     pub fn is_boolean(&self) -> bool {
         match self.data {
             Data::EBoolean(_) | Data::EBranchBoolean(_) => true,
@@ -1491,7 +1515,7 @@ impl Expr {
     // `assign` lives in the `init`/`allocate` impl block above (round-A hoist).
 
     #[inline]
-    pub fn at<T: IntoExprData>(&self, t: T) -> Expr {
+    pub fn at<T: IntoExprData<'arena>>(&self, t: T) -> Expr<'arena> {
         Expr::init(t, self.loc)
     }
 
@@ -1499,7 +1523,7 @@ impl Expr {
     // will potentially be simplified to avoid generating unnecessary extra "!"
     // operators. For example, calling this with "!!x" will return "!x" instead
     // of returning "!!!x".
-    pub fn not(&self, bump: &Bump) -> Expr {
+    pub fn not(&self, bump: &Bump) -> Expr<'arena> {
         self.maybe_simplify_not(bump).unwrap_or_else(|| {
             Expr::init(
                 E::Unary {
@@ -1527,7 +1551,7 @@ impl Expr {
     /// whole operator (i.e. the "!x") if it can be simplified, or false if not.
     /// It's separate from "Not()" above to avoid allocation on failure in case
     /// that is undesired.
-    pub fn maybe_simplify_not(&self, bump: &Bump) -> Option<Expr> {
+    pub fn maybe_simplify_not(&self, bump: &Bump) -> Option<Expr<'arena>> {
         let expr = self;
         match expr.data {
             Data::ENull(_) | Data::EUndefined(_) => {
@@ -1604,7 +1628,7 @@ impl Expr {
         None
     }
 
-    pub fn to_string_expr_without_side_effects(&self, bump: &Bump) -> Option<Expr> {
+    pub fn to_string_expr_without_side_effects(&self, bump: &Bump) -> Option<Expr<'arena>> {
         let expr = self;
         let unwrapped = expr.unwrap_inlined();
         let slice: Option<&[u8]> = match unwrapped.data {
@@ -1707,34 +1731,34 @@ impl PrimitiveType {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Tagged union of expression payloads. Pointer variants are arena-allocated
-/// `StoreRef<E::*>` (thin `NonNull` into `expr::data::Store` / a bump arena);
+/// `StoreRef<'arena, E::*>` (thin `NonNull` into `expr::data::Store` / a bump arena);
 /// inline variants are stored by value. `StoreRef` is `Copy` + `Deref`, so
 /// `Data` is `Copy` and `let Data::EBinary(b) = data; b.op` works (matching
 /// Zig's `data.e_binary.op`).
 #[derive(Clone, Copy, bun_core::EnumTag)]
 #[enum_tag(existing = Tag)]
-pub enum Data {
-    EArray(StoreRef<E::Array>),
-    EUnary(StoreRef<E::Unary>),
-    EBinary(StoreRef<E::Binary>),
-    EClass(StoreRef<E::Class>),
+pub enum Data<'arena> {
+    EArray(StoreRef<'arena, E::Array<'arena>>),
+    EUnary(StoreRef<'arena, E::Unary<'arena>>),
+    EBinary(StoreRef<'arena, E::Binary<'arena>>),
+    EClass(StoreRef<'arena, E::Class<'arena>>),
 
-    ENew(StoreRef<E::New>),
-    EFunction(StoreRef<E::Function>),
-    ECall(StoreRef<E::Call>),
-    EDot(StoreRef<E::Dot>),
-    EIndex(StoreRef<E::Index>),
-    EArrow(StoreRef<E::Arrow>),
+    ENew(StoreRef<'arena, E::New<'arena>>),
+    EFunction(StoreRef<'arena, E::Function<'arena>>),
+    ECall(StoreRef<'arena, E::Call<'arena>>),
+    EDot(StoreRef<'arena, E::Dot<'arena>>),
+    EIndex(StoreRef<'arena, E::Index<'arena>>),
+    EArrow(StoreRef<'arena, E::Arrow<'arena>>),
 
-    EJsxElement(StoreRef<E::JSXElement>),
-    EObject(StoreRef<E::Object>),
-    ESpread(StoreRef<E::Spread>),
-    ETemplate(StoreRef<E::Template>),
-    ERegExp(StoreRef<E::RegExp>),
-    EAwait(StoreRef<E::Await>),
-    EYield(StoreRef<E::Yield>),
-    EIf(StoreRef<E::If>),
-    EImport(StoreRef<E::Import>),
+    EJsxElement(StoreRef<'arena, E::JSXElement<'arena>>),
+    EObject(StoreRef<'arena, E::Object<'arena>>),
+    ESpread(StoreRef<'arena, E::Spread<'arena>>),
+    ETemplate(StoreRef<'arena, E::Template<'arena>>),
+    ERegExp(StoreRef<'arena, E::RegExp<'arena>>),
+    EAwait(StoreRef<'arena, E::Await<'arena>>),
+    EYield(StoreRef<'arena, E::Yield<'arena>>),
+    EIf(StoreRef<'arena, E::If<'arena>>),
+    EImport(StoreRef<'arena, E::Import<'arena>>),
 
     EIdentifier(E::Identifier),
     EImportIdentifier(E::ImportIdentifier),
@@ -1744,8 +1768,8 @@ pub enum Data {
     EBoolean(E::Boolean),
     EBranchBoolean(E::Boolean),
     ENumber(E::Number),
-    EBigInt(StoreRef<E::BigInt>),
-    EString(StoreRef<E::EString>),
+    EBigInt(StoreRef<'arena, E::BigInt<'arena>>),
+    EString(StoreRef<'arena, E::EString<'arena>>),
 
     ERequireString(E::RequireString),
     ERequireResolveString(E::RequireResolveString),
@@ -1767,9 +1791,9 @@ pub enum Data {
     /// places this is found it all follows similar handling.
     ESpecial(E::Special),
 
-    EInlinedEnum(StoreRef<E::InlinedEnum>),
+    EInlinedEnum(StoreRef<'arena, E::InlinedEnum<'arena>>),
 
-    ENameOfSymbol(StoreRef<E::NameOfSymbol>),
+    ENameOfSymbol(StoreRef<'arena, E::NameOfSymbol>),
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
@@ -1785,15 +1809,15 @@ pub enum Data {
 // contributes a NonNull niche), so `None` packs into an unused bit-pattern
 // rather than adding a word. If a future variant adds `#[repr(C)]`/`#[repr(u32)]`
 // or a nullable `*mut T` payload, this assert catches the size regression.
-const _: () = assert!(core::mem::size_of::<Data>() == 16); // Do not increase the size of Expr
-const _: () = assert!(core::mem::size_of::<Expr>() == 24);
+const _: () = assert!(core::mem::size_of::<Data<'static>>() == 16); // Do not increase the size of Expr
+const _: () = assert!(core::mem::size_of::<Expr<'static>>() == 24);
 const _: () = assert!(
-    core::mem::size_of::<Option<Data>>() == core::mem::size_of::<Data>(),
+    core::mem::size_of::<Option<Data<'static>>>() == core::mem::size_of::<Data<'static>>(),
     "expr::Data lost its niche — check for #[repr] or nullable-ptr payload"
 );
 const _: () = assert!(
-    core::mem::size_of::<Option<Expr>>() == core::mem::size_of::<Expr>(),
-    "Expr lost its niche — Option<Expr> is used in G::Property/B::Property/etc."
+    core::mem::size_of::<Option<Expr<'static>>>() == core::mem::size_of::<Expr<'static>>(),
+    "Expr lost its niche — Option<Expr<'arena>> is used in G::Property/B::Property/etc."
 );
 // Inline-payload ceilings (regress any of these and `Data` grows past 16):
 const _: () = assert!(core::mem::size_of::<E::Identifier>() == 8);
@@ -1804,14 +1828,14 @@ const _: () = assert!(core::mem::size_of::<E::Number>() <= 8);
 const _: () = assert!(core::mem::size_of::<E::Special>() <= 8);
 const _: () = assert!(core::mem::size_of::<E::RequireString>() <= 8);
 const _: () = assert!(core::mem::size_of::<E::NewTarget>() <= 8);
-const _: () = assert!(core::mem::size_of::<StoreRef<E::Binary>>() == core::mem::size_of::<usize>());
+const _: () = assert!(core::mem::size_of::<StoreRef<'static, E::Binary<'static>>>() == core::mem::size_of::<usize>());
 
 // Zig field-style union accessors (`data.e_string`, `data.e_object`). The
 // match arms in this file use these heavily; keeping them as inherent methods
 // avoids rewriting ~25 sites. Returns `Option<StoreRef<T>>` (Copy).
-impl Data {
+impl<'arena> Data<'arena> {
     #[inline]
-    pub fn e_string(&self) -> Option<StoreRef<E::EString>> {
+    pub fn e_string(&self) -> Option<StoreRef<'arena, E::EString<'arena>>> {
         if let Data::EString(s) = *self {
             Some(s)
         } else {
@@ -1819,7 +1843,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_string_mut(&mut self) -> Option<&mut E::EString> {
+    pub fn e_string_mut(&mut self) -> Option<&mut E::EString<'arena>> {
         if let Data::EString(s) = self {
             Some(&mut **s)
         } else {
@@ -1827,7 +1851,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_object(&self) -> Option<StoreRef<E::Object>> {
+    pub fn e_object(&self) -> Option<StoreRef<'arena, E::Object<'arena>>> {
         if let Data::EObject(o) = *self {
             Some(o)
         } else {
@@ -1835,7 +1859,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_array(&self) -> Option<StoreRef<E::Array>> {
+    pub fn e_array(&self) -> Option<StoreRef<'arena, E::Array<'arena>>> {
         if let Data::EArray(a) = *self {
             Some(a)
         } else {
@@ -1843,7 +1867,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_array_mut(&mut self) -> Option<&mut E::Array> {
+    pub fn e_array_mut(&mut self) -> Option<&mut E::Array<'arena>> {
         if let Data::EArray(a) = self {
             Some(&mut **a)
         } else {
@@ -1851,7 +1875,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_object_mut(&mut self) -> Option<&mut E::Object> {
+    pub fn e_object_mut(&mut self) -> Option<&mut E::Object<'arena>> {
         if let Data::EObject(o) = self {
             Some(&mut **o)
         } else {
@@ -1859,26 +1883,26 @@ impl Data {
         }
     }
     #[inline]
-    pub fn as_e_string(&self) -> Option<StoreRef<E::EString>> {
+    pub fn as_e_string(&self) -> Option<StoreRef<'arena, E::EString<'arena>>> {
         self.e_string()
     }
     /// Zig: `data.e_array` field-access. Mirrors `e_array()`; provided under
     /// the `as_*` name for downstream crates ported from `.e_array.*`.
     #[inline]
-    pub fn as_e_array(&self) -> Option<StoreRef<E::Array>> {
+    pub fn as_e_array(&self) -> Option<StoreRef<'arena, E::Array<'arena>>> {
         self.e_array()
     }
     /// Zig: `data.e_object` field-access. Panics if not an object — callers
     /// gate with `is_object()` / `is_e_object()` first (mirrors Zig union
     /// access).
     #[inline]
-    pub fn as_e_object(&self) -> StoreRef<E::Object> {
+    pub fn as_e_object(&self) -> StoreRef<'arena, E::Object<'arena>> {
         self.e_object()
             .expect("ExprData::as_e_object on non-object")
     }
     /// Zig: `data.e_object` field-access (mutable).
     #[inline]
-    pub fn as_e_object_mut(&mut self) -> &mut E::Object {
+    pub fn as_e_object_mut(&mut self) -> &mut E::Object<'arena> {
         self.e_object_mut()
             .expect("ExprData::as_e_object_mut on non-object")
     }
@@ -1908,12 +1932,12 @@ impl Data {
         matches!(self, Data::ENumber(_))
     }
 
-    // ── Remaining StoreRef<E::*> field-style accessors ──────────────────
+    // ── Remaining StoreRef<'arena, E::*> field-style accessors ──────────────────
     // visitExpr / maybe.rs port from Zig's `data.e_dot.*` etc., which are
     // unchecked union field reads. Rust callers `.unwrap()` (or pattern-match)
     // — the `Option` is the cheapest sound encoding of Zig's UB-on-mismatch.
     #[inline]
-    pub fn e_unary(&self) -> Option<StoreRef<E::Unary>> {
+    pub fn e_unary(&self) -> Option<StoreRef<'arena, E::Unary<'arena>>> {
         if let Data::EUnary(v) = *self {
             Some(v)
         } else {
@@ -1921,7 +1945,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_unary_mut(&mut self) -> Option<&mut E::Unary> {
+    pub fn e_unary_mut(&mut self) -> Option<&mut E::Unary<'arena>> {
         if let Data::EUnary(v) = self {
             Some(&mut **v)
         } else {
@@ -1929,7 +1953,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_binary(&self) -> Option<StoreRef<E::Binary>> {
+    pub fn e_binary(&self) -> Option<StoreRef<'arena, E::Binary<'arena>>> {
         if let Data::EBinary(v) = *self {
             Some(v)
         } else {
@@ -1937,7 +1961,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_binary_mut(&mut self) -> Option<&mut E::Binary> {
+    pub fn e_binary_mut(&mut self) -> Option<&mut E::Binary<'arena>> {
         if let Data::EBinary(v) = self {
             Some(&mut **v)
         } else {
@@ -1945,7 +1969,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_class(&self) -> Option<StoreRef<E::Class>> {
+    pub fn e_class(&self) -> Option<StoreRef<'arena, E::Class<'arena>>> {
         if let Data::EClass(v) = *self {
             Some(v)
         } else {
@@ -1953,7 +1977,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_class_mut(&mut self) -> Option<&mut E::Class> {
+    pub fn e_class_mut(&mut self) -> Option<&mut E::Class<'arena>> {
         if let Data::EClass(v) = self {
             Some(&mut **v)
         } else {
@@ -1961,7 +1985,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_new(&self) -> Option<StoreRef<E::New>> {
+    pub fn e_new(&self) -> Option<StoreRef<'arena, E::New<'arena>>> {
         if let Data::ENew(v) = *self {
             Some(v)
         } else {
@@ -1969,7 +1993,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_new_mut(&mut self) -> Option<&mut E::New> {
+    pub fn e_new_mut(&mut self) -> Option<&mut E::New<'arena>> {
         if let Data::ENew(v) = self {
             Some(&mut **v)
         } else {
@@ -1977,7 +2001,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_function(&self) -> Option<StoreRef<E::Function>> {
+    pub fn e_function(&self) -> Option<StoreRef<'arena, E::Function<'arena>>> {
         if let Data::EFunction(v) = *self {
             Some(v)
         } else {
@@ -1985,7 +2009,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_function_mut(&mut self) -> Option<&mut E::Function> {
+    pub fn e_function_mut(&mut self) -> Option<&mut E::Function<'arena>> {
         if let Data::EFunction(v) = self {
             Some(&mut **v)
         } else {
@@ -1993,7 +2017,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_call(&self) -> Option<StoreRef<E::Call>> {
+    pub fn e_call(&self) -> Option<StoreRef<'arena, E::Call<'arena>>> {
         if let Data::ECall(v) = *self {
             Some(v)
         } else {
@@ -2001,7 +2025,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_call_mut(&mut self) -> Option<&mut E::Call> {
+    pub fn e_call_mut(&mut self) -> Option<&mut E::Call<'arena>> {
         if let Data::ECall(v) = self {
             Some(&mut **v)
         } else {
@@ -2009,7 +2033,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_dot(&self) -> Option<StoreRef<E::Dot>> {
+    pub fn e_dot(&self) -> Option<StoreRef<'arena, E::Dot<'arena>>> {
         if let Data::EDot(v) = *self {
             Some(v)
         } else {
@@ -2017,7 +2041,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_dot_mut(&mut self) -> Option<&mut E::Dot> {
+    pub fn e_dot_mut(&mut self) -> Option<&mut E::Dot<'arena>> {
         if let Data::EDot(v) = self {
             Some(&mut **v)
         } else {
@@ -2025,7 +2049,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_index(&self) -> Option<StoreRef<E::Index>> {
+    pub fn e_index(&self) -> Option<StoreRef<'arena, E::Index<'arena>>> {
         if let Data::EIndex(v) = *self {
             Some(v)
         } else {
@@ -2033,7 +2057,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_index_mut(&mut self) -> Option<&mut E::Index> {
+    pub fn e_index_mut(&mut self) -> Option<&mut E::Index<'arena>> {
         if let Data::EIndex(v) = self {
             Some(&mut **v)
         } else {
@@ -2041,7 +2065,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_arrow(&self) -> Option<StoreRef<E::Arrow>> {
+    pub fn e_arrow(&self) -> Option<StoreRef<'arena, E::Arrow<'arena>>> {
         if let Data::EArrow(v) = *self {
             Some(v)
         } else {
@@ -2049,7 +2073,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_arrow_mut(&mut self) -> Option<&mut E::Arrow> {
+    pub fn e_arrow_mut(&mut self) -> Option<&mut E::Arrow<'arena>> {
         if let Data::EArrow(v) = self {
             Some(&mut **v)
         } else {
@@ -2057,7 +2081,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_jsx_element(&self) -> Option<StoreRef<E::JSXElement>> {
+    pub fn e_jsx_element(&self) -> Option<StoreRef<'arena, E::JSXElement<'arena>>> {
         if let Data::EJsxElement(v) = *self {
             Some(v)
         } else {
@@ -2065,7 +2089,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_jsx_element_mut(&mut self) -> Option<&mut E::JSXElement> {
+    pub fn e_jsx_element_mut(&mut self) -> Option<&mut E::JSXElement<'arena>> {
         if let Data::EJsxElement(v) = self {
             Some(&mut **v)
         } else {
@@ -2073,7 +2097,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_spread(&self) -> Option<StoreRef<E::Spread>> {
+    pub fn e_spread(&self) -> Option<StoreRef<'arena, E::Spread<'arena>>> {
         if let Data::ESpread(v) = *self {
             Some(v)
         } else {
@@ -2081,7 +2105,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_spread_mut(&mut self) -> Option<&mut E::Spread> {
+    pub fn e_spread_mut(&mut self) -> Option<&mut E::Spread<'arena>> {
         if let Data::ESpread(v) = self {
             Some(&mut **v)
         } else {
@@ -2089,7 +2113,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_template(&self) -> Option<StoreRef<E::Template>> {
+    pub fn e_template(&self) -> Option<StoreRef<'arena, E::Template<'arena>>> {
         if let Data::ETemplate(v) = *self {
             Some(v)
         } else {
@@ -2097,7 +2121,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_template_mut(&mut self) -> Option<&mut E::Template> {
+    pub fn e_template_mut(&mut self) -> Option<&mut E::Template<'arena>> {
         if let Data::ETemplate(v) = self {
             Some(&mut **v)
         } else {
@@ -2105,7 +2129,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_reg_exp(&self) -> Option<StoreRef<E::RegExp>> {
+    pub fn e_reg_exp(&self) -> Option<StoreRef<'arena, E::RegExp<'arena>>> {
         if let Data::ERegExp(v) = *self {
             Some(v)
         } else {
@@ -2113,7 +2137,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_await(&self) -> Option<StoreRef<E::Await>> {
+    pub fn e_await(&self) -> Option<StoreRef<'arena, E::Await<'arena>>> {
         if let Data::EAwait(v) = *self {
             Some(v)
         } else {
@@ -2121,7 +2145,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_await_mut(&mut self) -> Option<&mut E::Await> {
+    pub fn e_await_mut(&mut self) -> Option<&mut E::Await<'arena>> {
         if let Data::EAwait(v) = self {
             Some(&mut **v)
         } else {
@@ -2129,7 +2153,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_yield(&self) -> Option<StoreRef<E::Yield>> {
+    pub fn e_yield(&self) -> Option<StoreRef<'arena, E::Yield<'arena>>> {
         if let Data::EYield(v) = *self {
             Some(v)
         } else {
@@ -2137,7 +2161,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_yield_mut(&mut self) -> Option<&mut E::Yield> {
+    pub fn e_yield_mut(&mut self) -> Option<&mut E::Yield<'arena>> {
         if let Data::EYield(v) = self {
             Some(&mut **v)
         } else {
@@ -2145,7 +2169,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_if(&self) -> Option<StoreRef<E::If>> {
+    pub fn e_if(&self) -> Option<StoreRef<'arena, E::If<'arena>>> {
         if let Data::EIf(v) = *self {
             Some(v)
         } else {
@@ -2153,7 +2177,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_if_mut(&mut self) -> Option<&mut E::If> {
+    pub fn e_if_mut(&mut self) -> Option<&mut E::If<'arena>> {
         if let Data::EIf(v) = self {
             Some(&mut **v)
         } else {
@@ -2161,7 +2185,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_import(&self) -> Option<StoreRef<E::Import>> {
+    pub fn e_import(&self) -> Option<StoreRef<'arena, E::Import<'arena>>> {
         if let Data::EImport(v) = *self {
             Some(v)
         } else {
@@ -2169,7 +2193,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_import_mut(&mut self) -> Option<&mut E::Import> {
+    pub fn e_import_mut(&mut self) -> Option<&mut E::Import<'arena>> {
         if let Data::EImport(v) = self {
             Some(&mut **v)
         } else {
@@ -2177,7 +2201,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_big_int(&self) -> Option<StoreRef<E::BigInt>> {
+    pub fn e_big_int(&self) -> Option<StoreRef<'arena, E::BigInt<'arena>>> {
         if let Data::EBigInt(v) = *self {
             Some(v)
         } else {
@@ -2185,7 +2209,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_inlined_enum(&self) -> Option<StoreRef<E::InlinedEnum>> {
+    pub fn e_inlined_enum(&self) -> Option<StoreRef<'arena, E::InlinedEnum<'arena>>> {
         if let Data::EInlinedEnum(v) = *self {
             Some(v)
         } else {
@@ -2193,7 +2217,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_name_of_symbol(&self) -> Option<StoreRef<E::NameOfSymbol>> {
+    pub fn e_name_of_symbol(&self) -> Option<StoreRef<'arena, E::NameOfSymbol>> {
         if let Data::ENameOfSymbol(v) = *self {
             Some(v)
         } else {
@@ -2286,14 +2310,14 @@ impl Data {
     }
 }
 
-impl Data {
+impl<'arena> Data<'arena> {
     /// Human-readable variant name for diagnostics (`"string"`, `"object"`, …).
     #[inline]
     pub fn tag_name(&self) -> &'static str {
         self.tag().into()
     }
 
-    // Zig: `pub fn as(data: Data, comptime tag: Tag) ?@FieldType(Data, @tagName(tag))`
+    // Zig: `pub fn as(data: Data<'arena>, comptime tag: Tag) ?@FieldType(Data, @tagName(tag))`
     // Rust has no field-by-tag reflection. Per-variant `as_*` accessors live
     // alongside the enum decl above (`e_string`/`e_object`/...).
     pub fn as_e_identifier(&self) -> Option<E::Identifier> {
@@ -2303,7 +2327,7 @@ impl Data {
             None
         }
     }
-    pub fn as_e_inlined_enum(&self) -> Option<StoreRef<E::InlinedEnum>> {
+    pub fn as_e_inlined_enum(&self) -> Option<StoreRef<'arena, E::InlinedEnum<'arena>>> {
         if let Data::EInlinedEnum(i) = *self {
             Some(i)
         } else {
@@ -2319,7 +2343,7 @@ impl Data {
 // with `P.rs`/`Parser.rs`. The *types* (`Data`/`Expr`/`Tag`/`Store`) are real;
 // only these method bodies wait. The round-B verify gate covers what's live.
 
-impl Data {
+impl<'arena> Data<'arena> {
     /// Shallow clone: re-allocate the boxed payload (so the caller owns a fresh
     /// arena slot) but don't recurse into children. Zig: `Data.clone`.
     ///
@@ -2328,7 +2352,7 @@ impl Data {
     /// with a `core::ptr::read` of the payload, which is sound because every
     /// payload is `Copy`-shaped (no `Drop`, no owned heap state — `Vec`
     /// stores a raw pointer + len/cap into the arena).
-    pub fn clone_in(this: Data, bump: &Bump) -> Result<Data, bun_core::Error> {
+    pub fn clone_in(this: Data<'arena>, bump: &Bump) -> Result<Data<'arena>, bun_core::Error> {
         // TODO(port): narrow error set
         macro_rules! shallow {
             ($variant:ident, $el:expr) => {{
@@ -2377,12 +2401,13 @@ impl Data {
     /// those vecs land on global mimalloc. The guard is installed once here
     /// and at [`Expr::deep_clone`]; the recursive body goes through
     /// `*_no_detach` so we don't pay 3 TLS ops per node.
-    pub fn deep_clone(&self, bump: &Bump) -> Result<Data, AllocError> {
+    // TODO(arena-lifetimes): see `Expr::deep_clone`.
+    pub fn deep_clone(&self, bump: &Bump) -> Result<Data<'arena>, AllocError> {
         let _g = bun_alloc::ast_alloc::DetachAstHeap::new();
         self.deep_clone_no_detach(bump)
     }
 
-    fn deep_clone_no_detach(&self, bump: &Bump) -> Result<Data, AllocError> {
+    fn deep_clone_no_detach(&self, bump: &Bump) -> Result<Data<'arena>, AllocError> {
         let this = *self;
         match &this {
             Data::EArray(el) => {
@@ -2621,7 +2646,7 @@ impl Data {
     }
 } // end `impl Data` (clone_in/deep_clone)
 
-impl Data {
+impl<'arena> Data<'arena> {
     /// `hasher` should be something with `fn update(&[u8])`;
     /// symbol table is passed to serialize `Ref` as identifier names instead of nondeterministic numbers.
     ///
@@ -2633,7 +2658,7 @@ impl Data {
     pub fn write_to_hasher<H, S>(&self, hasher: &mut H, symbol_table: &mut S)
     where
         H: bun_core::Hasher + ?Sized,
-        S: crate::base::SymbolTable + ?Sized,
+        S: crate::base::SymbolTable<'arena> + ?Sized,
     {
         // Local mirror of `bun.writeAnyToHasher` for padding-free POD —
         // `bun_core::write_any_to_hasher` is bound by `AsBytes` (ints only) and
@@ -2645,7 +2670,7 @@ impl Data {
             h.update(bytemuck::bytes_of(&v));
         }
         #[inline(always)]
-        fn name_of<H: bun_core::Hasher + ?Sized, S: crate::base::SymbolTable + ?Sized>(
+        fn name_of<'arena, H: bun_core::Hasher + ?Sized, S: crate::base::SymbolTable<'arena> + ?Sized>(
             h: &mut H,
             symbol_table: &mut S,
             r: Ref,
@@ -2710,7 +2735,7 @@ impl Data {
             }
             Data::EYield(e) => {
                 // TODO(port): Zig hashed the raw bytes of `.{ e.is_star, e.value }` (the full
-                // `?Expr` optional, including loc/data pointer). Rust `Option<Expr>` layout is
+                // `?Expr` optional, including loc/data pointer). Rust `Option<Expr<'arena>>` layout is
                 // not byte-compatible, so we hash the discriminant here and recurse below.
                 raw(hasher, e.is_star);
                 raw(hasher, e.value.is_some());
@@ -2784,7 +2809,7 @@ impl Data {
     }
 }
 
-impl Data {
+impl<'arena> Data<'arena> {
     /// "const values" here refers to expressions that can participate in constant
     /// inlining, as they have no side effects on instantiation, and there would be
     /// no observable difference if duplicated. This is a subset of canBeMoved()
@@ -2989,7 +3014,7 @@ impl Data {
         }
     }
 
-    pub fn merge_known_primitive(&self, rhs: &Data) -> PrimitiveType {
+    pub fn merge_known_primitive(&self, rhs: &Data<'arena>) -> PrimitiveType {
         PrimitiveType::merge(self.known_primitive(), rhs.known_primitive())
     }
 
@@ -3070,7 +3095,7 @@ impl Data {
         }
     }
 
-    pub fn extract_string_value(data: Data) -> Option<crate::StoreRef<E::String>> {
+    pub fn extract_string_value(data: Data<'arena>) -> Option<crate::StoreRef<'arena, E::String<'arena>>> {
         match data {
             Data::EString(s) => Some(s),
             Data::EInlinedEnum(inlined) => match inlined.value.data {
@@ -3153,11 +3178,11 @@ pub trait EqlParser {
 }
 // `impl EqlParser for P<...>` lives in `bun_js_parser` (next to `P`).
 
-impl Data {
+impl<'arena> Data<'arena> {
     // Returns "equal, ok". If "ok" is false, then nothing is known about the two
     // values. If "ok" is true, the equality or inequality of the two values is
     // stored in "equal".
-    pub fn eql<P: EqlParser, K: EqlKindT>(left: &Data, right: &Data, p: &mut P) -> Equality {
+    pub fn eql<P: EqlParser, K: EqlKindT>(left: &Data<'arena>, right: &Data<'arena>, p: &mut P) -> Equality {
         // https://dorey.github.io/JavaScript-Equality-Table/
         match left {
             Data::EInlinedEnum(inlined) => {
@@ -3349,34 +3374,36 @@ impl Data {
 // `new_store!` emits `pub mod expr_store { pub struct Store; ... }`.
 // Type list mirrors Zig's `Data.Store = NewStore(&.{ E.Array, ... }, 512)`
 // (Expr.zig:2550-2580).
+// Types use `'static` here because the macro only uses them for size/align
+// computation; the actual `append<T>` is generic over the caller's `'arena`.
 crate::new_store!(
     expr_store,
     [
-        E::Array,
-        E::Unary,
-        E::Binary,
-        E::Class,
-        E::New,
-        E::Function,
-        E::Call,
-        E::Dot,
-        E::Index,
-        E::Arrow,
-        E::JSXElement,
+        E::Array<'static>,
+        E::Unary<'static>,
+        E::Binary<'static>,
+        E::Class<'static>,
+        E::New<'static>,
+        E::Function<'static>,
+        E::Call<'static>,
+        E::Dot<'static>,
+        E::Index<'static>,
+        E::Arrow<'static>,
+        E::JSXElement<'static>,
         E::Number,
-        E::Object,
-        E::Spread,
-        E::TemplatePart,
-        E::Template,
-        E::RegExp,
-        E::Await,
-        E::Yield,
-        E::If,
-        E::Import,
+        E::Object<'static>,
+        E::Spread<'static>,
+        E::TemplatePart<'static>,
+        E::Template<'static>,
+        E::RegExp<'static>,
+        E::Await<'static>,
+        E::Yield<'static>,
+        E::If<'static>,
+        E::Import<'static>,
         E::PrivateIdentifier,
-        E::BigInt,
-        E::EString,
-        E::InlinedEnum,
+        E::BigInt<'static>,
+        E::EString<'static>,
+        E::InlinedEnum<'static>,
         E::NameOfSymbol,
     ],
     512

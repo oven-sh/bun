@@ -54,14 +54,14 @@ use crate::{BundleV2, Chunk, LinkerGraph};
 // TODO(port): lifetime — LIFETIMES.tsv has no rows for this file; classified as
 // BORROW_PARAM (transient formatter struct passed by value).
 #[derive(Clone, Copy)]
-pub struct HTMLImportManifest<'a> {
+pub struct HTMLImportManifest<'r, 'a> {
     pub index: u32,
-    pub graph: &'a Graph,
-    pub chunks: &'a [Chunk],
-    pub linker_graph: &'a LinkerGraph,
+    pub graph: &'r Graph<'a>,
+    pub chunks: &'r [Chunk<'a>],
+    pub linker_graph: &'r LinkerGraph<'a>,
 }
 
-impl<'a> fmt::Display for HTMLImportManifest<'a> {
+impl<'r, 'a> fmt::Display for HTMLImportManifest<'r, 'a> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut adapter = FmtAdapter::new(writer);
         match write(
@@ -133,9 +133,9 @@ fn write_entry_item<W: Write + ?Sized>(
 // Extremely unfortunate, but necessary due to E.String not accepting pre-escaped input and this happening at the very end.
 pub fn write_escaped_json<W: Write + ?Sized>(
     index: u32,
-    graph: &Graph,
-    linker_graph: &LinkerGraph,
-    chunks: &[Chunk],
+    graph: &Graph<'_>,
+    linker_graph: &LinkerGraph<'_>,
+    chunks: &[Chunk<'_>],
     writer: &mut W,
 ) -> Result<(), bun_core::Error> {
     // PERF(port): was stack-fallback (std.heap.stackFallback(4096)) — profile in Phase B
@@ -149,9 +149,9 @@ pub fn write_escaped_json<W: Write + ?Sized>(
 
 /// Newtype wrapper produced by [`HTMLImportManifest::format_escaped_json`].
 /// Mirrors Zig's `std.fmt.Alt(HTMLImportManifest, escapedJSONFormatter)`.
-pub struct EscapedJson<'a>(pub HTMLImportManifest<'a>);
+pub struct EscapedJson<'r, 'a>(pub HTMLImportManifest<'r, 'a>);
 
-impl<'a> fmt::Display for EscapedJson<'a> {
+impl<'r, 'a> fmt::Display for EscapedJson<'r, 'a> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut adapter = FmtAdapter::new(writer);
         match write_escaped_json(
@@ -169,17 +169,17 @@ impl<'a> fmt::Display for EscapedJson<'a> {
     }
 }
 
-impl<'a> HTMLImportManifest<'a> {
-    pub fn format_escaped_json(self) -> EscapedJson<'a> {
+impl<'r, 'a> HTMLImportManifest<'r, 'a> {
+    pub fn format_escaped_json(self) -> EscapedJson<'r, 'a> {
         EscapedJson(self)
     }
 }
 
 pub fn write<W: Write + ?Sized>(
     index: u32,
-    graph: &Graph,
-    linker_graph: &LinkerGraph,
-    chunks: &[Chunk],
+    graph: &Graph<'_>,
+    linker_graph: &LinkerGraph<'_>,
+    chunks: &[Chunk<'_>],
     writer: &mut W,
 ) -> Result<(), bun_core::Error> {
     let browser_source_index = graph.html_imports.html_source_indices.slice()[index as usize];

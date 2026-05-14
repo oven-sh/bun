@@ -37,7 +37,7 @@ use crate::e::String as EString;
 /// by sharing the map of exported members between all matching sibling scopes.
 // PORT NOTE: 'arena lifetime dropped — `EnumString` payload uses *const EString
 // (LIFETIMES.tsv ARENA → raw ptr in Phase A; Phase B threads 'bump crate-wide).
-pub struct TSNamespaceScope {
+pub struct TSNamespaceScope<'arena> {
     /// This is specific to this namespace block. It's the argument of the
     /// immediately-invoked function expression that the namespace block is
     /// compiled into:
@@ -55,7 +55,7 @@ pub struct TSNamespaceScope {
     // LIFETIMES.tsv: ARENA — p.arena.create(Pair); &pair.map; shared across
     // sibling scopes. `StoreRef` (arena back-pointer with safe `Deref`) so
     // callers don't open-code `unsafe { &mut *exported_members }` at every use.
-    pub exported_members: crate::nodes::StoreRef<TSNamespaceMemberMap>,
+    pub exported_members: crate::nodes::StoreRef<'arena, TSNamespaceMemberMap<'arena>>,
 
     /// This is a lazily-generated map of identifiers that actually represent
     /// property accesses to this namespace's properties. For example:
@@ -112,31 +112,31 @@ pub struct TSNamespaceScope {
     pub is_enum_scope: bool,
 }
 
-pub type TSNamespaceMemberMap = StringArrayHashMap<TSNamespaceMember>;
+pub type TSNamespaceMemberMap<'arena> = StringArrayHashMap<TSNamespaceMember<'arena>>;
 
-pub struct TSNamespaceMember {
+pub struct TSNamespaceMember<'arena> {
     pub loc: Loc,
-    pub data: Data,
+    pub data: Data<'arena>,
 }
 
 #[derive(Clone, Copy)]
-pub enum Data {
+pub enum Data<'arena> {
     /// "namespace ns { export let it }"
     Property,
     /// "namespace ns { export namespace it {} }"
     // LIFETIMES.tsv: ARENA — assigned from ts_namespace.exported_members (parser-arena alloc)
-    Namespace(crate::nodes::StoreRef<TSNamespaceMemberMap>),
+    Namespace(crate::nodes::StoreRef<'arena, TSNamespaceMemberMap<'arena>>),
     /// "enum ns { it }"
     EnumNumber(f64),
     /// "enum ns { it = 'it' }"
     // LIFETIMES.tsv: ARENA — assigned from Expr.Data.e_string payload (AST Expr store).
     // TODO(port): &'bump EString once 'bump threaded crate-wide.
-    EnumString(crate::nodes::StoreRef<EString>),
+    EnumString(crate::nodes::StoreRef<'arena, EString<'arena>>),
     /// "enum ns { it = something() }"
     EnumProperty,
 }
 
-impl Data {
+impl<'arena> Data<'arena> {
     pub fn is_enum(&self) -> bool {
         // PORT NOTE: Zig used `inline else` + comptime `@tagName` prefix check ("enum_").
         // Expanded to an explicit match over the enum_* variants.

@@ -12,7 +12,7 @@ pub use self::lexer::Lexer;
 use self::lexer::T;
 
 // Zig: `js_ast.E.Object.Rope`. The MOVE_DOWN landed it at
-type Rope = js_ast::e::Rope;
+type Rope<'arena> = js_ast::e::Rope<'arena>;
 use js_ast::e::SetError;
 use js_ast::expr::Data as ExprData;
 
@@ -25,13 +25,13 @@ use js_ast::expr::Data as ExprData;
 // `src/js_parser/ast/E.zig` `setRope` / `getOrPutArray`.
 // ──────────────────────────────────────────────────────────────────────────
 
-trait ObjectRopeExt {
-    fn set_rope(&mut self, rope: &Rope, bump: &Bump, value: Expr) -> Result<(), SetError>;
-    fn get_or_put_array(&mut self, rope: &Rope, bump: &Bump) -> Result<Expr, SetError>;
+trait ObjectRopeExt<'arena> {
+    fn set_rope(&mut self, rope: &Rope<'arena>, bump: &Bump, value: Expr<'arena>) -> Result<(), SetError>;
+    fn get_or_put_array(&mut self, rope: &Rope<'arena>, bump: &Bump) -> Result<Expr<'arena>, SetError>;
 }
 
-impl ObjectRopeExt for E::Object {
-    fn set_rope(&mut self, rope: &Rope, bump: &Bump, value: Expr) -> Result<(), SetError> {
+impl<'arena> ObjectRopeExt<'arena> for E::Object<'arena> {
+    fn set_rope(&mut self, rope: &Rope<'arena>, bump: &Bump, value: Expr<'arena>) -> Result<(), SetError> {
         let head_key = match rope.head.data.e_string() {
             Some(s) => s.data,
             None => return Err(SetError::Clobber),
@@ -39,24 +39,22 @@ impl ObjectRopeExt for E::Object {
         if let Some(existing) = self.get(&head_key) {
             match existing.data {
                 ExprData::EArray(mut array) => {
-                    if rope.next.is_null() {
+                    let Some(next) = rope.next_ref() else {
                         array.push(bump, value)?;
                         return Ok(());
-                    }
+                    };
                     if let Some(last) = array.items.last() {
                         let ExprData::EObject(mut obj) = last.data else {
                             return Err(SetError::Clobber);
                         };
-                        // SAFETY: rope.next non-null (checked) and arena-owned.
-                        return obj.set_rope(unsafe { &*rope.next }, bump, value);
+                        return obj.set_rope(next, bump, value);
                     }
                     array.push(bump, value)?;
                     return Ok(());
                 }
                 ExprData::EObject(mut object) => {
-                    if !rope.next.is_null() {
-                        // SAFETY: rope.next non-null and arena-owned.
-                        return object.set_rope(unsafe { &*rope.next }, bump, value);
+                    if let Some(next) = rope.next_ref() {
+                        return object.set_rope(next, bump, value);
                     }
                     return Err(SetError::Clobber);
                 }
@@ -65,13 +63,9 @@ impl ObjectRopeExt for E::Object {
         }
 
         let mut value_ = value;
-        if !rope.next.is_null() {
+        if let Some(next) = rope.next_ref() {
             let obj = Expr::init(E::Object::default(), rope.head.loc);
-            // SAFETY: rope.next non-null and arena-owned.
-            obj.data
-                .e_object()
-                .unwrap()
-                .set_rope(unsafe { &*rope.next }, bump, value)?;
+            obj.data.e_object().unwrap().set_rope(next, bump, value)?;
             value_ = obj;
         }
 
@@ -86,7 +80,7 @@ impl ObjectRopeExt for E::Object {
         Ok(())
     }
 
-    fn get_or_put_array(&mut self, rope: &Rope, bump: &Bump) -> Result<Expr, SetError> {
+    fn get_or_put_array(&mut self, rope: &Rope<'arena>, bump: &Bump) -> Result<Expr<'arena>, SetError> {
         let head_key = match rope.head.data.e_string() {
             Some(s) => s.data,
             None => return Err(SetError::Clobber),
@@ -94,37 +88,30 @@ impl ObjectRopeExt for E::Object {
         if let Some(existing) = self.get(&head_key) {
             match existing.data {
                 ExprData::EArray(array) => {
-                    if rope.next.is_null() {
+                    let Some(next) = rope.next_ref() else {
                         return Ok(existing);
-                    }
+                    };
                     if let Some(last) = array.items.last() {
                         let ExprData::EObject(mut obj) = last.data else {
                             return Err(SetError::Clobber);
                         };
-                        // SAFETY: rope.next non-null (checked) and arena-owned.
-                        return obj.get_or_put_array(unsafe { &*rope.next }, bump);
+                        return obj.get_or_put_array(next, bump);
                     }
                     return Err(SetError::Clobber);
                 }
                 ExprData::EObject(mut object) => {
-                    if rope.next.is_null() {
+                    let Some(next) = rope.next_ref() else {
                         return Err(SetError::Clobber);
-                    }
-                    // SAFETY: rope.next non-null and arena-owned.
-                    return object.get_or_put_array(unsafe { &*rope.next }, bump);
+                    };
+                    return object.get_or_put_array(next, bump);
                 }
                 _ => return Err(SetError::Clobber),
             }
         }
 
-        if !rope.next.is_null() {
+        if let Some(next) = rope.next_ref() {
             let obj = Expr::init(E::Object::default(), rope.head.loc);
-            // SAFETY: rope.next non-null and arena-owned.
-            let out = obj
-                .data
-                .e_object()
-                .unwrap()
-                .get_or_put_array(unsafe { &*rope.next }, bump)?;
+            let out = obj.data.e_object().unwrap().get_or_put_array(next, bump)?;
             VecExt::append(
                 &mut self.properties,
                 js_ast::G::Property {
@@ -227,8 +214,8 @@ mod hash_map_pool {
 // TOML parser
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct TOML<'a> {
-    pub lexer: Lexer<'a>,
+pub struct TOML<'a, 'log> {
+    pub lexer: Lexer<'a, 'log>,
     // PORT NOTE: Zig also stores `log: *logger.Log` on the parser, but it is
     // never read — all logging goes through `lexer.log`. Dropped here to avoid
     // a second `&mut Log` borrow overlapping `lexer.log`.
@@ -236,13 +223,13 @@ pub struct TOML<'a> {
     pub stack_check: StackCheck,
 }
 
-impl<'a> TOML<'a> {
+impl<'a, 'log> TOML<'a, 'log> {
     pub fn init(
         bump: &'a Bump,
         source_: &'a bun_ast::Source,
-        log: &'a mut bun_ast::Log,
+        log: &'log mut bun_ast::Log,
         redact_logs: bool,
-    ) -> Result<TOML<'a>, bun_core::Error> {
+    ) -> Result<TOML<'a, 'log>, bun_core::Error> {
         // TODO(port): narrow error set
         Ok(TOML {
             lexer: Lexer::init(log, source_, bump, redact_logs)?,
@@ -259,19 +246,19 @@ impl<'a> TOML<'a> {
     // Zig: `fn e(_: *TOML, t: anytype, loc: logger.Loc) Expr` with a
     // `@typeInfo(Type) == .pointer` auto-deref. In Rust the deref is implicit at
     // call sites, so this collapses to a single generic forwarding to Expr::init.
-    pub fn e<D>(&self, t: D, loc: bun_ast::Loc) -> Expr
+    pub fn e<D>(&self, t: D, loc: bun_ast::Loc) -> Expr<'a>
     where
-        D: js_ast::ExprInit, // TODO(port): real trait bound for Expr::init payloads
+        D: js_ast::ExprInit<'a>, // TODO(port): real trait bound for Expr::init payloads
     {
         Expr::init(t, loc)
     }
 
     pub fn parse(
         source_: &'a bun_ast::Source,
-        log: &'a mut bun_ast::Log,
+        log: &'log mut bun_ast::Log,
         bump: &'a Bump,
         redact_logs: bool,
-    ) -> Result<Expr, bun_core::Error> {
+    ) -> Result<Expr<'a>, bun_core::Error> {
         // TODO(port): narrow error set
         match source_.contents.len() {
             // This is to be consisntent with how disabled JS files are handled
@@ -306,7 +293,7 @@ impl<'a> TOML<'a> {
 
     // ── AST-producing methods ──────────────────────────────────────────────
 
-    pub fn parse_key_segment(&mut self) -> Result<Option<Expr>, bun_core::Error> {
+    pub fn parse_key_segment(&mut self) -> Result<Option<Expr<'a>>, bun_core::Error> {
         let loc = self.lexer.loc();
 
         match self.lexer.token {
@@ -339,11 +326,11 @@ impl<'a> TOML<'a> {
         }
     }
 
-    pub fn parse_key(&mut self, bump: &'a Bump) -> Result<&'a mut Rope, bun_core::Error> {
+    pub fn parse_key(&mut self, bump: &'a Bump) -> Result<&'a mut Rope<'a>, bun_core::Error> {
         // TODO(port): lifetime — Zig returns `*Rope` allocated from `allocator`
         // (a stack-fallback arena reset per-iteration). Here we allocate from the
         // caller-provided bump and return `&mut Rope` borrowed from it.
-        let rope: &mut Rope = bump.alloc(Rope {
+        let rope: &mut Rope<'a> = bump.alloc(Rope {
             head: match self.parse_key_segment()? {
                 Some(seg) => seg,
                 None => {
@@ -351,10 +338,10 @@ impl<'a> TOML<'a> {
                     return Err(bun_core::err!("SyntaxError"));
                 }
             },
-            next: core::ptr::null_mut(),
+            next: None,
         });
-        let head: *mut Rope = rope;
-        let mut rope: *mut Rope = rope;
+        let head = core::ptr::NonNull::from(rope);
+        let mut rope = head;
 
         while self.lexer.token == T::t_dot {
             self.lexer.next()?;
@@ -366,17 +353,17 @@ impl<'a> TOML<'a> {
             // the sole mutator. Raw pointers used to avoid stacked &mut reborrows.
             // PORT NOTE: reshaped for borrowck
             unsafe {
-                rope = (*rope).append(seg, bump)?;
+                rope = (*rope.as_ptr()).append(seg, bump)?;
             }
         }
 
         // SAFETY: `head` was just allocated from `bump` above and is non-null.
-        Ok(unsafe { &mut *head })
+        Ok(unsafe { &mut *head.as_ptr() })
     }
 
-    fn run_parser(&mut self) -> Result<Expr, bun_core::Error> {
+    fn run_parser(&mut self) -> Result<Expr<'a>, bun_core::Error> {
         let root = self.e(E::Object::default(), self.lexer.loc());
-        let mut head: *mut E::Object = root
+        let mut head: *mut E::Object<'a> = root
             .data
             .e_object()
             .expect("infallible: variant checked")
@@ -476,7 +463,7 @@ impl<'a> TOML<'a> {
 
     pub fn parse_assignment(
         &mut self,
-        obj: &mut E::Object,
+        obj: &mut E::Object<'a>,
         bump: &'a Bump,
     ) -> Result<(), bun_core::Error> {
         self.lexer.allow_double_bracket = false;
@@ -519,7 +506,7 @@ impl<'a> TOML<'a> {
         Ok(())
     }
 
-    pub fn parse_value(&mut self) -> Result<Expr, bun_core::Error> {
+    pub fn parse_value(&mut self) -> Result<Expr<'a>, bun_core::Error> {
         // Zig: `bun.throwStackOverflow()` guarded only by `StackCheck`. The
         // Rust port previously added a hard depth cap because release-mode
         // frames are smaller than Zig's (Zig didn't emit LLVM lifetime
@@ -534,7 +521,7 @@ impl<'a> TOML<'a> {
         self.parse_value_inner()
     }
 
-    fn parse_value_inner(&mut self) -> Result<Expr, bun_core::Error> {
+    fn parse_value_inner(&mut self) -> Result<Expr<'a>, bun_core::Error> {
         let loc = self.lexer.loc();
 
         self.lexer.allow_double_bracket = true;
@@ -586,7 +573,7 @@ impl<'a> TOML<'a> {
                 // profile
                 let key_allocator = self.bump;
                 let expr = self.e(E::Object::default(), loc);
-                let obj: *mut E::Object = expr
+                let obj: *mut E::Object<'a> = expr
                     .data
                     .e_object()
                     .expect("infallible: variant checked")
@@ -631,7 +618,7 @@ impl<'a> TOML<'a> {
                 self.lexer.next()?;
                 let mut is_single_line = !self.lexer.has_newline_before;
                 let array_ = self.e(E::Array::default(), loc);
-                let array: *mut E::Array = array_
+                let array: *mut E::Array<'a> = array_
                     .data
                     .e_array()
                     .expect("infallible: variant checked")

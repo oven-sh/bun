@@ -22,7 +22,7 @@ type ImportRecordList = Vec<ImportRecord>;
 
 pub type TopLevelSymbolToParts = ArrayHashMap<Ref, Vec<u32>>;
 
-pub struct Ast {
+pub struct Ast<'arena> {
     pub approximate_newline_count: usize,
     pub has_lazy_export: bool,
     pub runtime_imports: runtime::Imports,
@@ -56,12 +56,12 @@ pub struct Ast {
     // `hashbang`/`directive` are `[]const u8` slices into source text (not
     // freed in Zig `deinit`). `StoreStr` records them under the same
     // lifetime-erased contract as `StoreRef`.
-    pub hashbang: StoreStr,
-    pub directive: Option<StoreStr>,
-    pub parts: PartList,
+    pub hashbang: StoreStr<'arena>,
+    pub directive: Option<StoreStr<'arena>>,
+    pub parts: PartList<'arena>,
     // This list may be mutated later, so we should store the capacity
-    pub symbols: SymbolList,
-    pub module_scope: Scope,
+    pub symbols: SymbolList<'arena>,
+    pub module_scope: Scope<'arena>,
     pub char_freq: Option<CharFreq>,
     pub exports_ref: Ref,
     pub module_ref: Ref,
@@ -74,7 +74,7 @@ pub struct Ast {
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
-    pub named_imports: NamedImports,
+    pub named_imports: NamedImports<'arena>,
     pub named_exports: NamedExports,
     // TODO(port): `[]u32` not freed in Zig `deinit` — likely arena-owned. Using Box<[u32]> for now.
     pub export_star_import_records: Box<[u32]>,
@@ -89,7 +89,7 @@ pub struct Ast {
     /// Only populated when bundling
     pub target: Target,
     // const_values: ConstValuesMap,
-    pub ts_enums: TsEnumsMap,
+    pub ts_enums: TsEnumsMap<'arena>,
 
     /// Not to be confused with `commonjs_named_exports`
     /// This is a list of named exports that may exist in a CommonJS module
@@ -102,7 +102,7 @@ pub struct Ast {
 // PORT NOTE: Zig field defaults reference named constants (`Ref.None`, `logger.Range.None`,
 // `ExportsKind.none`, `Target.browser`) whose equivalence to the Rust types' `Default::default()`
 // is unverified across crates, so spell them out here instead of `#[derive(Default)]`.
-impl Default for Ast {
+impl<'arena> Default for Ast<'arena> {
     fn default() -> Self {
         Self {
             approximate_newline_count: 0,
@@ -170,13 +170,13 @@ impl Default for CommonJSNamedExport {
 // `G::DeclList`/`PropertyList` and `Scope::members`).
 pub type CommonJSNamedExports = StringArrayHashMap<CommonJSNamedExport, StringContext, AstAlloc>;
 
-pub type NamedImports = ArrayHashMap<Ref, NamedImport, AutoContext, AstAlloc>;
+pub type NamedImports<'arena> = ArrayHashMap<Ref, NamedImport<'arena>, AutoContext, AstAlloc>;
 pub type NamedExports = StringArrayHashMap<NamedExport, StringContext, AstAlloc>;
-pub type ConstValuesMap = ArrayHashMap<Ref, Expr, AutoContext, AstAlloc>;
-pub type TsEnumsMap = ArrayHashMap<Ref, StringHashMap<InlinedEnumValue>, AutoContext, AstAlloc>;
+pub type ConstValuesMap<'arena> = ArrayHashMap<Ref, Expr<'arena>, AutoContext, AstAlloc>;
+pub type TsEnumsMap<'arena> = ArrayHashMap<Ref, StringHashMap<InlinedEnumValue<'arena>>, AutoContext, AstAlloc>;
 
-impl Ast {
-    pub fn from_parts(parts: Box<[Part]>) -> Ast {
+impl<'arena> Ast<'arena> {
+    pub fn from_parts(parts: Box<[Part<'arena>]>) -> Ast<'arena> {
         Ast {
             parts: PartList::from_owned_slice(parts),
             runtime_imports: Default::default(),
@@ -188,7 +188,7 @@ impl Ast {
     // and relied on explicit `deinit` never being called. `Vec::drop` now
     // unconditionally guards on `Origin::Borrowed` (not debug-only), so unwrapping
     // the `ManuallyDrop` is safe — the caller's slice is never freed by `Ast`'s Drop.
-    pub fn init_test(parts: &[Part]) -> Ast {
+    pub fn init_test(parts: &[Part<'arena>]) -> Ast<'arena> {
         Ast {
             // SAFETY: test-only helper; the borrowed list is tagged
             // `Origin::Borrowed`, so `Vec::drop` skips the free, and no
@@ -204,7 +204,7 @@ impl Ast {
     // Zig: `pub const empty = Ast{ .parts = Part.List{}, .runtime_imports = .{} };`
     // All fields use their defaults, so `Ast::default()` is the Rust equivalent.
     // TODO(port): if a true `const` is required at use sites, revisit once field types are `const`-constructible.
-    pub fn empty() -> Ast {
+    pub fn empty() -> Ast<'arena> {
         Ast::default()
     }
 

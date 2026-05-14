@@ -1,4 +1,4 @@
-use crate::BundledAst as JSAst;
+use crate::ungate_support::JSAst;
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
 use bun_alloc::{AllocError, Arena as Bump};
@@ -42,12 +42,12 @@ use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 ///   ┃   };
 ///     }, false ],
 ///        ----- "is the module async?"
-pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
-    c: &mut LinkerContext,
-    stmts: &mut StmtList,
-    part_stmts: &[bun_ast::Stmt],
+pub fn convert_stmts_for_chunk_for_dev_server<'a, 'bump>(
+    c: &mut LinkerContext<'a>,
+    stmts: &mut StmtList<'a>,
+    part_stmts: &[bun_ast::Stmt<'a>],
     bump: &'bump Bump,
-    ast: &mut JSAst,
+    ast: &mut JSAst<'a>,
 ) -> Result<(), AllocError> {
     // TODO(port): narrow error set
     let hmr_api_ref = ast.wrapper_ref;

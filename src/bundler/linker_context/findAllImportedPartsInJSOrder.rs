@@ -13,7 +13,7 @@ use bun_core::perf;
 
 pub fn find_all_imported_parts_in_js_order(
     this: &mut LinkerContext,
-    chunks: &mut [Chunk],
+    chunks: &mut [Chunk<'_>],
 ) -> Result<(), bun_core::Error> {
     let _trace = perf::trace("Bundler.findAllImportedPartsInJSOrder");
 
@@ -42,7 +42,7 @@ pub fn find_all_imported_parts_in_js_order(
 
 pub fn find_imported_parts_in_js_order(
     this: &mut LinkerContext,
-    chunk: &mut Chunk,
+    chunk: &mut Chunk<'_>,
     part_ranges_shared: &mut Vec<PartRange>,
     parts_prefix_shared: &mut Vec<PartRange>,
     chunk_index: u32,
@@ -150,7 +150,7 @@ fn run_visits<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
 pub struct FindImportedPartsVisitor<'a, 'ctx> {
     pub entry_bits: &'a AutoBitSet,
     pub flags: &'a [crate::js_meta::Flags],
-    pub parts: &'a [Vec<Part>],
+    pub parts: &'a [Vec<Part<'a>>],
     pub import_records: &'a [Vec<ImportRecord>],
     pub files: Vec<IndexInt>,
     pub part_ranges: Vec<PartRange>,

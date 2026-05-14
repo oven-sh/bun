@@ -37,9 +37,9 @@ impl Default for Result {
 }
 
 #[derive(Clone, Copy)]
-pub struct BinaryExpressionSimplifyVisitor {
+pub struct BinaryExpressionSimplifyVisitor<'arena> {
     // ARENA: points into the AST store (see LIFETIMES.tsv)
-    pub bin: *const E::Binary,
+    pub bin: *const E::Binary<'arena>,
 }
 
 impl SideEffects {
@@ -53,8 +53,8 @@ impl SideEffects {
 
     pub fn simplify_boolean<'a, const TS: bool, const SCAN: bool>(
         p: &P<'a, TS, SCAN>,
-        expr: Expr,
-    ) -> Expr {
+        expr: Expr<'a>,
+    ) -> Expr<'a> {
         if !p.options.features.dead_code_elimination {
             return expr;
         }
@@ -143,8 +143,8 @@ impl SideEffects {
 
     pub fn simplify_unused_expr<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, TS, SCAN>,
-        expr: Expr,
-    ) -> Option<Expr> {
+        expr: Expr<'a>,
+    ) -> Option<Expr<'a>> {
         if !p.options.features.dead_code_elimination {
             return Some(expr);
         }
@@ -486,8 +486,8 @@ impl SideEffects {
     /// recursive `simplify_unused_expr` call.
     fn join_all_simplified<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, TS, SCAN>,
-        items: &[Expr],
-    ) -> Option<Expr> {
+        items: &[Expr<'a>],
+    ) -> Option<Expr<'a>> {
         let len = items.len();
         if len == 0 {
             return None;
@@ -516,8 +516,8 @@ impl SideEffects {
     ///
     fn simplify_unused_binary_comma_expr<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, TS, SCAN>,
-        expr: Expr,
-    ) -> Option<Expr> {
+        expr: Expr<'a>,
+    ) -> Option<Expr<'a>> {
         let ExprData::EBinary(root_bin) = expr.data else {
             if cfg!(debug_assertions) {
                 unreachable!("simplify_unused_binary_comma_expr: not e_binary");
@@ -567,7 +567,7 @@ impl SideEffects {
         }
     }
 
-    fn find_identifiers(binding: Binding, decls: &mut Vec<G::Decl>) {
+    fn find_identifiers<'arena>(binding: Binding<'arena>, decls: &mut Vec<G::Decl<'arena>>) {
         match binding.data {
             bun_ast::binding::Data::BIdentifier(_) => {
                 decls.push(G::Decl {

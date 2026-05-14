@@ -632,7 +632,7 @@ pub use bun_install_types::resolver_hooks::{
 
 /// Port of `Negatable(T).fromJson` (src/install/npm.zig). Lives here (not in
 /// `bun_install_types`) because `bun_ast::Expr` is not reachable from that crate.
-pub fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result<T, AllocError> {
+pub fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr<'_>) -> Result<T, AllocError> {
     let mut this = T::NONE.negatable();
     if let JSON::ExprData::EArray(a) = &expr.data {
         for item in a.items.slice() {

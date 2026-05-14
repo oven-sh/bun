@@ -40,7 +40,12 @@ pub enum JsonMode {
 /// `parse_*` themselves — eagerly constructing `Arena::new()` here costs one
 /// `mi_heap_new` per worker (≈11 empty heaps on a typical build/elysia run).
 pub struct JsonCache {
-    bump: Option<bun_alloc::Arena>,
+    /// `&'static` (leaked on first use) so the returned `Expr<'a>` borrows only
+    /// the caller's `source`, not `&mut self` — callers interleave `parse_*`
+    /// results with other `&mut Resolver` calls. The arena is never reset and
+    /// lives for the process anyway (DirInfo cache is process-global), so
+    /// leaking matches the Zig `bun.default_allocator` semantics.
+    bump: Option<&'static bun_alloc::Arena>,
 }
 
 impl JsonCache {
@@ -49,24 +54,28 @@ impl JsonCache {
     }
 
     /// Port of `cache::Json::parse` (cache.zig:287).
+    ///
+    /// Returned `Expr<'a>` borrows `source` (string slices may point into
+    /// `source.contents`) and the cache's process-lifetime arena. The arena
+    /// borrow does *not* extend the `&mut self` borrow — see `bump` field doc.
     #[inline]
-    fn parse(
+    fn parse<'a>(
         &mut self,
         log: &mut bun_ast::Log,
-        source: &bun_ast::Source,
-        func: fn(
-            &bun_ast::Source,
+        source: &'a bun_ast::Source,
+        func: for<'b> fn(
+            &'b bun_ast::Source,
             &mut bun_ast::Log,
-            &bun_alloc::Arena,
-        ) -> Result<bun_ast::Expr, bun_core::Error>,
-    ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
+            &'b bun_alloc::Arena,
+        ) -> Result<bun_ast::Expr<'b>, bun_core::Error>,
+    ) -> Result<Option<bun_ast::Expr<'a>>, bun_core::Error> {
         let mut temp_log = bun_ast::Log::init();
-        let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
+        let bump: &'static bun_alloc::Arena = *self
+            .bump
+            .get_or_insert_with(|| Box::leak(Box::new(bun_alloc::Arena::new())));
         // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(log, source) catch {}`
         // runs after the `func() catch null` body; here the append is hoisted past the match.
         let result = match func(source, &mut temp_log, bump) {
-            // Lift the T2 value-subset `bun_ast::Expr` into the full
-            // `bun_ast::Expr` (src/js_parser/ast/Expr.rs `From` impl).
             Ok(expr) => Some(bun_ast::Expr::from(expr)),
             Err(_) => None,
         };
@@ -76,22 +85,22 @@ impl JsonCache {
 
     /// Port of `cache::Json.parseTSConfig` (cache.zig:311).
     #[inline]
-    pub fn parse_tsconfig(
+    pub fn parse_tsconfig<'a>(
         &mut self,
         log: &mut bun_ast::Log,
-        source: &bun_ast::Source,
-    ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
+        source: &'a bun_ast::Source,
+    ) -> Result<Option<bun_ast::Expr<'a>>, bun_core::Error> {
         self.parse(log, source, json_parser::parse_ts_config::<true>)
     }
 
     /// Port of `cache::Json.parsePackageJSON` (cache.zig:307).
     #[inline]
-    pub fn parse_package_json(
+    pub fn parse_package_json<'a>(
         &mut self,
         log: &mut bun_ast::Log,
-        source: &bun_ast::Source,
+        source: &'a bun_ast::Source,
         force_utf8: bool,
-    ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
+    ) -> Result<Option<bun_ast::Expr<'a>>, bun_core::Error> {
         if force_utf8 {
             self.parse(log, source, json_parser::parse_ts_config::<true>)
         } else {
@@ -101,21 +110,21 @@ impl JsonCache {
 
     /// Port of `cache::Json.parseJSON` (cache.zig:296).
     #[inline]
-    pub fn parse_json(
+    pub fn parse_json<'a>(
         &mut self,
         log: &mut bun_ast::Log,
-        source: &bun_ast::Source,
+        source: &'a bun_ast::Source,
         mode: JsonMode,
         force_utf8: bool,
-    ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
+    ) -> Result<Option<bun_ast::Expr<'a>>, bun_core::Error> {
         // tsconfig.* and jsconfig.* files are JSON files, but they are not valid JSON files.
         // They are JSON files with comments and trailing commas.
         // Sometimes tooling expects this to work.
-        let f: fn(
-            &bun_ast::Source,
+        let f: for<'b> fn(
+            &'b bun_ast::Source,
             &mut bun_ast::Log,
-            &bun_alloc::Arena,
-        ) -> Result<bun_ast::Expr, bun_core::Error> = match (mode, force_utf8) {
+            &'b bun_alloc::Arena,
+        ) -> Result<bun_ast::Expr<'b>, bun_core::Error> = match (mode, force_utf8) {
             (JsonMode::Jsonc, true) => json_parser::parse_ts_config::<true>,
             (JsonMode::Jsonc, false) => json_parser::parse_ts_config::<false>,
             (JsonMode::Json, true) => json_parser::parse::<true>,

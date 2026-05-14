@@ -59,15 +59,15 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     let worker = Worker::get(ctx.bundle());
     let _unget = scopeguard::guard(&mut *worker, |w| w.unget());
 
-    // `ctx.chunks` is a `BackRef<[Chunk]>` constructed via `new_mut` (write
+    // `ctx.chunks` is a `BackRef<[Chunk<'_>]>` constructed via `new_mut` (write
     // provenance); recover the raw `*mut [Chunk]` for the HTML loader, which
     // still needs `&mut [Chunk]` for `get_{js,css}_chunk_for_html`.
-    let chunks: *mut [Chunk] = ctx.chunks.as_ptr();
-    // `ctx.c` is `ParentRef<LinkerContext>` and `ctx.chunk` is `BackRef<Chunk>`
+    let chunks: *mut [Chunk<'_>] = ctx.chunks.as_ptr();
+    // `ctx.c` is `ParentRef<LinkerContext>` and `ctx.chunk` is `BackRef<Chunk<'_>>`
     // — both yield safe shared borrows via `.get()`. `chunk` is this task's
     // exclusively-owned HTML chunk for the duration of the compile step.
     let c_ref: &LinkerContext = ctx.c.get();
-    let chunk_ref: &Chunk = ctx.chunk.get();
+    let chunk_ref: &Chunk<'_> = ctx.chunk.get();
     let result = generate_compile_result_for_html_chunk_impl(c_ref, chunk_ref, chunks);
     // SAFETY: HTML chunks have exactly one part-range (i == 0); see
     // `Chunk::write_compile_result_slot` for the disjoint-slot contract.
@@ -92,8 +92,8 @@ struct HTMLLoader<'a> {
     /// Backref to this task's HTML chunk (an element of `*chunks`). The chunk
     /// outlives this `HTMLLoader` (link-step duration), so `BackRef`'s
     /// owner-outlives-holder invariant holds and reads go through safe `Deref`.
-    chunk: bun_ptr::BackRef<Chunk>,
-    chunks: *mut [Chunk],
+    chunk: bun_ptr::BackRef<Chunk<'a>>,
+    chunks: *mut [Chunk<'a>],
     #[allow(dead_code)]
     minify_whitespace: bool,
     compile_to_standalone_html: bool,
@@ -286,7 +286,7 @@ impl<'a> HTMLLoader<'a> {
         // PERF(port): was stack-fallback arena; now heap Vec<u8>
         let mut array: BoundedArray<Vec<u8>, 2> = BoundedArray::default();
         // `self.chunk` is a `BackRef` (safe `Deref`).
-        let chunk: &Chunk = &self.chunk;
+        let chunk: &Chunk<'_> = &self.chunk;
         // SAFETY: `chunks` raw pointer valid for the link step; sole live `&mut`.
         let chunks = unsafe { &mut *self.chunks };
         if self.compile_to_standalone_html {
@@ -407,8 +407,8 @@ impl<'a> HTMLLoader<'a> {
 /// `HTMLLoader::{on_tag,get_head_tags}` and the standalone-HTML branch below.
 fn generate_compile_result_for_html_chunk_impl<'a>(
     c: &'a LinkerContext<'a>,
-    chunk: &Chunk,
-    chunks: *mut [Chunk],
+    chunk: &Chunk<'a>,
+    chunks: *mut [Chunk<'a>],
 ) -> CompileResult {
     let parse_graph = c.parse_graph();
     let sources = parse_graph.input_files.items_source();

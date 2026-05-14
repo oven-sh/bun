@@ -57,8 +57,8 @@ fn fmt_size(bytes: u64) -> bfmt::SizeFormatter {
 /// The result is stored in chunk.metafile_chunk_json and assembled later.
 pub fn generate_chunk_json(
     c: &LinkerContext,
-    chunk: &Chunk,
-    chunks: &[Chunk],
+    chunk: &Chunk<'_>,
+    chunks: &[Chunk<'_>],
 ) -> Result<Box<[u8]>, bun_core::Error> {
     let mut json: Vec<u8> = Vec::new();
     // errdefer json.deinit() — handled by Drop on early return
@@ -202,7 +202,7 @@ pub fn generate_chunk_json(
 /// Called after all chunks have been generated in parallel.
 /// Chunk references (unique_keys) are resolved to their final output paths.
 /// The caller is responsible for freeing the returned slice.
-pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> Result<Box<[u8]>, bun_core::Error> {
+pub fn generate<'a>(c: &mut LinkerContext<'a>, chunks: &mut [Chunk<'a>]) -> Result<Box<[u8]>, bun_core::Error> {
     // Use StringJoiner so we can use breakOutputIntoPieces to resolve chunk references
     let mut j = StringJoiner::default();
     // errdefer j.deinit() — handled by Drop

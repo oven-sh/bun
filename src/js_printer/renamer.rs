@@ -16,17 +16,17 @@ use bun_collections::{HashMap, StringHashMap, VecExt};
 use bun_core::Output;
 use bun_core::{MutableString, immutable as strings};
 use bun_options_types::Format;
-use enum_map::EnumMap;
 
 /// Renamed-name strings are either borrowed from `Symbol.original_name` (AST
 /// arena) or duped into the renamer's `bumpalo::Bump` arena. `StoreStr` is the
-/// arena-backed lifetime-erased slice wrapper that centralises the raw deref
-/// (one `unsafe` in `StoreStr::slice`), so the renamer's name-table reads stay
-/// safe. Phase B may later thread `'bump` and rewrite to `&'bump [u8]`.
-type NameStr = bun_ast::StoreStr;
+/// arena-backed slice wrapper that centralises the raw deref (one `unsafe` in
+/// `StoreStr::slice`), so the renamer's name-table reads stay safe. The
+/// `'arena` lifetime is the AST arena; renamer-bump-allocated names are
+/// covariantly shortened to it (the bump outlives every read).
+type NameStr<'arena> = bun_ast::StoreStr<'arena>;
 
 #[inline]
-const fn name_str_empty() -> NameStr {
+const fn name_str_empty<'arena>() -> NameStr<'arena> {
     bun_ast::StoreStr::EMPTY
 }
 
@@ -39,7 +39,7 @@ const SLOT_NAMESPACES: [SlotNamespace; 4] = [
     SlotNamespace::MangledProp,
 ];
 
-pub struct NoOpRenamer<'a> {
+pub struct NoOpRenamer<'a, 'arena> {
     // PORT NOTE: Zig `Symbol.Map` is a non-owning `BabyList(BabyList(Symbol))`
     // slice header passed by value (renamer.zig:2,126,452 — no `deinit` ever
     // frees it). In the Rust port `symbol::Map` is `Vec<Vec<Symbol>>` (owning).
@@ -52,12 +52,12 @@ pub struct NoOpRenamer<'a> {
     // every transpile (require-cache.test.ts "files transpiled and loaded don't
     // leak the output source code" — `await import()` re-transpiles each
     // iteration, so the leak compounds to OOM).
-    pub symbols: symbol::Map,
+    pub symbols: symbol::Map<'arena>,
     pub source: &'a bun_ast::Source,
 }
 
-impl<'a> NoOpRenamer<'a> {
-    pub fn init(symbols: symbol::Map, source: &'a bun_ast::Source) -> NoOpRenamer<'a> {
+impl<'a, 'arena> NoOpRenamer<'a, 'arena> {
+    pub fn init(symbols: symbol::Map<'arena>, source: &'a bun_ast::Source) -> NoOpRenamer<'a, 'arena> {
         NoOpRenamer { symbols, source }
     }
 
@@ -84,23 +84,25 @@ impl<'a> NoOpRenamer<'a> {
         }
     }
 
-    pub fn to_renamer(&mut self) -> Renamer<'_, 'a> {
+    pub fn to_renamer(&self) -> Renamer<'_, 'a, 'arena> {
         Renamer::NoOpRenamer(self)
     }
 }
 
-// PORT NOTE: two lifetime params — `'r` is the borrow of the underlying renamer,
-// `'src` is `NoOpRenamer`'s borrow of the `Source`. The Zig `Renamer` was a
-// tag+ptr union that erased both; using `&'a mut NoOpRenamer<'a>` would make
-// `'a` invariant and lock the source borrow to the renamer borrow.
-pub enum Renamer<'r, 'src> {
-    NumberRenamer(&'r mut NumberRenamer),
-    NoOpRenamer(&'r mut NoOpRenamer<'src>),
-    MinifyRenamer(&'r mut MinifyRenamer),
+// PORT NOTE: three lifetime params — `'r` is the borrow of the underlying
+// renamer, `'src` is `NoOpRenamer`'s borrow of the `Source`, `'arena` is the
+// AST arena. The Zig `Renamer` was a tag+ptr union that erased all of them.
+// Variants hold `&'r` (not `&'r mut`) so the enum is **covariant** in
+// `'src`/`'arena` — the printer never mutates through the renamer (all three
+// `name_for_symbol` impls are read-only once the rename pass has finished).
+pub enum Renamer<'r, 'src, 'arena> {
+    NumberRenamer(&'r NumberRenamer<'arena>),
+    NoOpRenamer(&'r NoOpRenamer<'src, 'arena>),
+    MinifyRenamer(&'r MinifyRenamer<'arena>),
 }
 
-impl<'r, 'src> Renamer<'r, 'src> {
-    pub fn symbols(&self) -> &symbol::Map {
+impl<'r, 'src, 'arena> Renamer<'r, 'src, 'arena> {
+    pub fn symbols(&self) -> &symbol::Map<'arena> {
         match self {
             Renamer::NumberRenamer(r) => &r.symbols,
             Renamer::NoOpRenamer(r) => &r.symbols,
@@ -108,7 +110,7 @@ impl<'r, 'src> Renamer<'r, 'src> {
         }
     }
 
-    pub fn name_for_symbol(&mut self, ref_: Ref) -> &[u8] {
+    pub fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
         match self {
             Renamer::NumberRenamer(r) => r.name_for_symbol(ref_),
             Renamer::NoOpRenamer(r) => r.name_for_symbol(ref_),
@@ -130,18 +132,18 @@ impl<'r, 'src> Renamer<'r, 'src> {
 // storage). No explicit deinit needed.
 
 #[derive(Clone, Copy)]
-pub struct SymbolSlot {
+pub struct SymbolSlot<'arena> {
     // Most minified names are under 15 bytes
     // Instead of allocating a string for every symbol slot
     // We can store the string inline!
     // But we have to be very careful of where it's used.
     // Or we WILL run into memory bugs.
-    pub name: TinyString,
+    pub name: TinyString<'arena>,
     pub count: u32,
     pub needs_capital_for_jsx: bool,
 }
 
-impl Default for SymbolSlot {
+impl<'arena> Default for SymbolSlot<'arena> {
     fn default() -> Self {
         SymbolSlot {
             name: TinyString::String(name_str_empty()),
@@ -151,7 +153,27 @@ impl Default for SymbolSlot {
     }
 }
 
-pub type SymbolSlotList = EnumMap<symbol::SlotNamespace, Vec<SymbolSlot>>;
+/// `EnumMap<SlotNamespace, Vec<SymbolSlot<'arena>>>` is invariant in `'arena`
+/// (associated-type projection through `EnumArray::Array`). A plain array
+/// keeps `MinifyRenamer<'arena>` covariant, which lets [`Renamer`] hand out
+/// shortened-lifetime views without a transmute.
+#[derive(Default)]
+pub struct SymbolSlotList<'arena>([Vec<SymbolSlot<'arena>>; <symbol::SlotNamespace as enum_map::Enum>::LENGTH]);
+
+impl<'arena> core::ops::Index<symbol::SlotNamespace> for SymbolSlotList<'arena> {
+    type Output = Vec<SymbolSlot<'arena>>;
+    #[inline]
+    fn index(&self, ns: symbol::SlotNamespace) -> &Self::Output {
+        &self.0[enum_map::Enum::into_usize(ns)]
+    }
+}
+
+impl<'arena> core::ops::IndexMut<symbol::SlotNamespace> for SymbolSlotList<'arena> {
+    #[inline]
+    fn index_mut(&mut self, ns: symbol::SlotNamespace) -> &mut Self::Output {
+        &mut self.0[enum_map::Enum::into_usize(ns)]
+    }
+}
 
 #[derive(Clone, Copy, Default)]
 pub struct InlineString {
@@ -172,23 +194,23 @@ impl InlineString {
         this
     }
 
-    // do not make this *const or you will run into memory bugs.
-    // we cannot let the compiler decide to copy this struct because
-    // that would cause this to become a pointer to stack memory.
-    pub fn slice(&mut self) -> &[u8] {
+    // PORT NOTE: Zig took `*self` (mutable single-item ptr) so the inline buffer
+    // wouldn't be copied to a temporary by Zig's pass-by-value. Rust `&self` is
+    // already a reference; no implicit copy.
+    pub fn slice(&self) -> &[u8] {
         &self.bytes[0..self.len as usize]
     }
 }
 
 #[derive(Clone, Copy)]
-pub enum TinyString {
+pub enum TinyString<'arena> {
     InlineString(InlineString),
     // Arena-owned slice when len > 15 (allocated from `MinifyRenamer.arena`).
-    String(NameStr),
+    String(NameStr<'arena>),
 }
 
-impl TinyString {
-    pub fn init(input: &[u8], arena: &Bump) -> Result<TinyString, bun_alloc::AllocError> {
+impl<'arena> TinyString<'arena> {
+    pub fn init(input: &[u8], arena: &Bump) -> Result<TinyString<'arena>, bun_alloc::AllocError> {
         if input.len() <= 15 {
             Ok(TinyString::InlineString(InlineString::init(input)))
         } else {
@@ -198,10 +220,9 @@ impl TinyString {
         }
     }
 
-    // do not make this *const or you will run into memory bugs.
-    // we cannot let the compiler decide to copy this struct because
-    // that would cause this to become a pointer to stack memory.
-    pub fn slice(&mut self) -> &[u8] {
+    // PORT NOTE: Zig took `*self` so the inline buffer wouldn't be copied to a
+    // temporary by Zig's pass-by-value. Rust `&self` is already a reference.
+    pub fn slice(&self) -> &[u8] {
         match self {
             TinyString::InlineString(s) => s.slice(),
             // `StoreStr::slice` centralises the arena-backed deref; the payload
@@ -211,13 +232,13 @@ impl TinyString {
     }
 }
 
-pub struct MinifyRenamer {
+pub struct MinifyRenamer<'arena> {
     pub reserved_names: StringHashMap<u32>,
-    pub slots: SymbolSlotList,
+    pub slots: SymbolSlotList<'arena>,
     pub top_level_symbol_to_slot: TopLevelSymbolSlotMap,
     // PORT NOTE: see `NoOpRenamer.symbols` — non-owning view; Zig
     // `MinifyRenamer.deinit` (renamer.zig:156) never frees `symbols`.
-    pub symbols: ManuallyDrop<symbol::Map>,
+    pub symbols: ManuallyDrop<symbol::Map<'arena>>,
     /// Backs `TinyString::String` slot-name allocations (Zig: `this.allocator`).
     pub arena: Bump,
 }
@@ -226,12 +247,12 @@ pub struct MinifyRenamer {
 // bun_collections::HashMap should be parameterized with RefCtx hasher.
 pub type TopLevelSymbolSlotMap = HashMap<Ref, usize>;
 
-impl MinifyRenamer {
+impl<'arena> MinifyRenamer<'arena> {
     pub fn init(
-        symbols: symbol::Map,
+        symbols: symbol::Map<'arena>,
         first_top_level_slots: js_ast::SlotCounts,
         reserved_names: StringHashMap<u32>,
-    ) -> Result<Box<MinifyRenamer>, bun_alloc::AllocError> {
+    ) -> Result<Box<MinifyRenamer<'arena>>, bun_alloc::AllocError> {
         let mut slots = SymbolSlotList::default();
 
         for (ns, &count) in first_top_level_slots.slots.iter() {
@@ -250,13 +271,13 @@ impl MinifyRenamer {
         }))
     }
 
-    pub fn to_renamer(&mut self) -> Renamer<'_, 'static> {
+    pub fn to_renamer(&self) -> Renamer<'_, 'static, 'arena> {
         Renamer::MinifyRenamer(self)
     }
 
-    pub fn name_for_symbol(&mut self, ref_: Ref) -> &[u8] {
+    pub fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
         let ref_ = self.symbols.follow(ref_);
-        let symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
+        let symbol: &Symbol<'arena> = self.symbols.get_const(ref_).unwrap();
 
         let ns = symbol.slot_namespace();
         if ns == SlotNamespace::MustNotBeRenamed {
@@ -308,7 +329,7 @@ impl MinifyRenamer {
         stable_source_indices: &[u32],
     ) -> Result<(), bun_alloc::AllocError> {
         let mut ref_ = self.symbols.follow(ref_);
-        let mut symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
+        let mut symbol: &Symbol<'arena> = self.symbols.get_const(ref_).unwrap();
 
         while let Some(alias) = &symbol.namespace_alias {
             let new_ref = self.symbols.follow(alias.namespace_ref);
@@ -346,7 +367,7 @@ impl MinifyRenamer {
         top_level_symbols: &[StableSymbolCount],
     ) -> Result<(), bun_alloc::AllocError> {
         for stable in top_level_symbols {
-            let symbol: &Symbol = self.symbols.get_const(stable.ref_).unwrap();
+            let symbol: &Symbol<'arena> = self.symbols.get_const(stable.ref_).unwrap();
             // PORT NOTE: reshaped for borrowck — capture symbol fields before mut-borrowing slots
             let ns = symbol.slot_namespace();
             let must_start_with_capital = symbol.must_start_with_capital_letter_for_jsx;
@@ -435,8 +456,8 @@ impl MinifyRenamer {
 }
 
 pub fn assign_nested_scope_slots(
-    module_scope: &js_ast::Scope,
-    symbols: &mut [Symbol],
+    module_scope: &js_ast::Scope<'_>,
+    symbols: &mut [Symbol<'_>],
 ) -> js_ast::SlotCounts {
     let mut slot_counts = js_ast::SlotCounts::default();
     let mut sorted_members: Vec<u32> = Vec::new();
@@ -478,8 +499,8 @@ pub fn assign_nested_scope_slots(
 
 pub fn assign_nested_scope_slots_helper(
     sorted_members: &mut Vec<u32>,
-    scope: &js_ast::Scope,
-    symbols: &mut [Symbol],
+    scope: &js_ast::Scope<'_>,
+    symbols: &mut [Symbol<'_>],
     slot_to_copy: js_ast::SlotCounts,
 ) -> js_ast::SlotCounts {
     let mut slot = slot_to_copy;
@@ -587,11 +608,11 @@ impl SlotAndCount {
     }
 }
 
-pub struct NumberRenamer {
+pub struct NumberRenamer<'arena> {
     // PORT NOTE: see `NoOpRenamer.symbols` — non-owning view; Zig
     // `NumberRenamer.deinit` (renamer.zig:462) never frees `symbols`.
-    pub symbols: ManuallyDrop<symbol::Map>,
-    pub names: Box<[Vec<NameStr>]>,
+    pub symbols: ManuallyDrop<symbol::Map<'arena>>,
+    pub names: Box<[Vec<NameStr<'arena>>]>,
     // PERF(port): Zig had separate allocator/temp_allocator; global mimalloc now
     pub number_scope_pool: HiveArrayFallback<NumberScope, 128>,
     // PERF(port): was arena bulk-free for NumberScope pool + name temp buffers
@@ -601,8 +622,8 @@ pub struct NumberRenamer {
     // PERF(port): was StackFallbackAllocator(512) — profile
 }
 
-impl NumberRenamer {
-    pub fn to_renamer(&mut self) -> Renamer<'_, 'static> {
+impl<'arena> NumberRenamer<'arena> {
+    pub fn to_renamer(&self) -> Renamer<'_, 'static, 'arena> {
         Renamer::NumberRenamer(self)
     }
 
@@ -624,14 +645,14 @@ impl NumberRenamer {
         let ref_ = self.symbols.follow(input_ref);
 
         // Don't rename the same symbol more than once
-        let inner: &mut Vec<NameStr> = &mut self.names[ref_.source_index() as usize];
+        let inner: &mut Vec<NameStr<'arena>> = &mut self.names[ref_.source_index() as usize];
         if inner.len() > ref_.inner_index() as usize && inner[ref_.inner_index() as usize].len() > 0
         {
             return;
         }
 
         // Don't rename unbound symbols, symbols marked as reserved names, labels, or private names
-        let symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
+        let symbol: &Symbol<'arena> = self.symbols.get_const(ref_).unwrap();
         if symbol.slot_namespace() != SlotNamespace::Default {
             return;
         }
@@ -639,7 +660,7 @@ impl NumberRenamer {
         // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
         let original_name: &[u8] = symbol.original_name.slice();
         // PERF(port): Zig reset stack-fallback FBA here; arena reset semantics differ
-        let name: NameStr = match scope.find_unused_name(&self.arena, original_name) {
+        let name: NameStr<'arena> = match scope.find_unused_name(&self.arena, original_name) {
             UnusedName::Renamed(name) => name,
             UnusedName::NoCollision => symbol.original_name,
         };
@@ -651,11 +672,11 @@ impl NumberRenamer {
     }
 
     pub fn init(
-        symbols: symbol::Map,
+        symbols: symbol::Map<'arena>,
         root_names: StringHashMap<u32>,
-    ) -> Result<Box<NumberRenamer>, bun_alloc::AllocError> {
+    ) -> Result<Box<NumberRenamer<'arena>>, bun_alloc::AllocError> {
         let len = symbols.symbols_for_source.len();
-        let names: Box<[Vec<NameStr>]> = core::iter::repeat_with(Vec::<NameStr>::default)
+        let names: Box<[Vec<NameStr<'arena>>]> = core::iter::repeat_with(Vec::<NameStr<'arena>>::default)
             .take(len)
             .collect();
 
@@ -681,7 +702,7 @@ impl NumberRenamer {
 
     pub fn assign_names_recursive(
         &mut self,
-        scope: &js_ast::Scope,
+        scope: &js_ast::Scope<'_>,
         source_index: u32,
         parent: Option<bun_ptr::ParentRef<NumberScope>>,
         sorted: &mut Vec<u32>,
@@ -707,7 +728,7 @@ impl NumberRenamer {
     fn assign_names_in_scope(
         &mut self,
         s: &mut NumberScope,
-        scope: &js_ast::Scope,
+        scope: &js_ast::Scope<'_>,
         source_index: u32,
         sorted: &mut Vec<u32>,
     ) {
@@ -740,7 +761,7 @@ impl NumberRenamer {
     pub fn assign_names_recursive_with_number_scope(
         &mut self,
         initial_scope: *mut NumberScope,
-        scope_: &js_ast::Scope,
+        scope_: &js_ast::Scope<'_>,
         source_index: u32,
         sorted: &mut Vec<u32>,
     ) {
@@ -835,7 +856,7 @@ impl NumberRenamer {
         let renamed_list = &self.names[source_index as usize];
 
         if renamed_list.len() > inner_index as usize {
-            let renamed: NameStr = renamed_list[inner_index as usize];
+            let renamed: NameStr<'arena> = renamed_list[inner_index as usize];
             if renamed.raw_len() > 0 {
                 // `StoreStr::slice` centralises the deref; allocated from
                 // `self.arena` or borrows an AST-arena `original_name`, both
@@ -896,9 +917,9 @@ impl NameUse {
     }
 }
 
-pub enum UnusedName {
+pub enum UnusedName<'arena> {
     NoCollision,
-    Renamed(NameStr),
+    Renamed(NameStr<'arena>),
 }
 
 /// Fast-path for `MutableString::ensure_valid_identifier`: returns `true` iff
@@ -928,7 +949,7 @@ fn is_simple_ascii_identifier(s: &[u8]) -> bool {
 
 impl NumberScope {
     /// Caller must use an arena allocator
-    pub fn find_unused_name(&mut self, arena: &Bump, input_name: &[u8]) -> UnusedName {
+    pub fn find_unused_name<'arena>(&mut self, arena: &Bump, input_name: &[u8]) -> UnusedName<'arena> {
         // PORT NOTE: Zig's `MutableString.ensureValidIdentifier` borrows the
         // input when it is already a valid ASCII identifier; the Rust port
         // always heap-allocates (Box<[u8]>). Skip the call entirely for the
@@ -1027,7 +1048,7 @@ impl NumberScope {
 
         // Zig: `allocator.dupe(u8, name)` — allocate into the renamer arena.
         let duped: &[u8] = arena.alloc_slice_copy(name);
-        let name: NameStr = bun_ast::StoreStr::new(duped);
+        let name: NameStr<'arena> = bun_ast::StoreStr::new(duped);
 
         self.name_counts
             .put_no_clobber(duped, 1)
@@ -1169,15 +1190,15 @@ pub fn compute_initial_reserved_names(
 }
 
 pub fn compute_reserved_names_for_scope(
-    scope: &js_ast::Scope,
-    symbols: &symbol::Map,
+    scope: &js_ast::Scope<'_>,
+    symbols: &symbol::Map<'_>,
     names: &mut StringHashMap<u32>,
 ) {
     // PORT NOTE: Zig copied `names_.*` to a local and wrote back via defer.
     // In Rust we mutate through &mut directly.
 
     for member in scope.members.values() {
-        let symbol: &Symbol = symbols.get_const(member.ref_).unwrap();
+        let symbol: &Symbol<'_> = symbols.get_const(member.ref_).unwrap();
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed {
             // SAFETY: `original_name` is an AST-arena slice.
             names
@@ -1187,7 +1208,7 @@ pub fn compute_reserved_names_for_scope(
     }
 
     for ref_ in scope.generated.slice() {
-        let symbol: &Symbol = symbols.get_const(*ref_).unwrap();
+        let symbol: &Symbol<'_> = symbols.get_const(*ref_).unwrap();
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed {
             // SAFETY: `original_name` is an AST-arena slice.
             names

@@ -118,8 +118,8 @@ pub struct ParseTask {
     /// scheduled task has it set via `init` / `bundle_v2.rs` write-sites.
     pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
-    pub package_version: ast::StoreStr,
-    pub package_name: ast::StoreStr,
+    pub package_version: ast::StoreStr<'static>,
+    pub package_name: ast::StoreStr<'static>,
     pub is_entry_point: bool,
 }
 
@@ -133,10 +133,10 @@ pub enum ParseTaskStage {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// The information returned to the Bundler thread when a parse finishes.
-pub struct Result {
+pub struct Result<'a> {
     pub task: EventLoop::Task,
-    pub ctx: bun_ptr::ParentRef<BundleV2<'static>>,
-    pub value: ResultValue,
+    pub ctx: bun_ptr::ParentRef<BundleV2<'a>>,
+    pub value: ResultValue<'a>,
     pub watcher_data: WatcherData,
     /// This is used for native onBeforeParsePlugins to store
     /// a function pointer and context pointer to free the
@@ -144,8 +144,8 @@ pub struct Result {
     pub external: ExternalFreeFunction,
 }
 
-pub enum ResultValue {
-    Success(Success),
+pub enum ResultValue<'a> {
+    Success(Success<'a>),
     Err(ResultError),
     Empty { source_index: Index },
 }
@@ -163,22 +163,22 @@ impl WatcherData {
     };
 }
 
-pub struct Success {
-    pub ast: JSAst,
+pub struct Success<'a> {
+    pub ast: JSAst<'a>,
     pub source: Source,
     pub log: Log,
     pub use_directive: UseDirective,
     pub side_effects: bun_ast::SideEffects,
 
     /// Used by "file" loader files.
-    pub unique_key_for_additional_file: ast::StoreStr,
+    pub unique_key_for_additional_file: ast::StoreStr<'a>,
     /// Used by "file" loader files.
     pub content_hash_for_additional_file: u64,
 
     pub loader: Loader,
 
     /// The package name from package.json, used for barrel optimization.
-    pub package_name: ast::StoreStr,
+    pub package_name: ast::StoreStr<'a>,
 }
 
 pub struct ResultError {
@@ -609,13 +609,13 @@ pub mod parse_worker {
     // `(*transpiler).resolver`; materializing `&mut Transpiler` here would assert
     // exclusive access to the whole struct and invalidate that sibling pointer.
     // We only touch the disjoint `options.define` field.
-    fn get_empty_css_ast(
+    fn get_empty_css_ast<'a>(
         log: &mut Log,
         transpiler: *mut Transpiler,
-        opts: ParserOptions,
-        bump: &'static Bump,
-        source: &Source,
-    ) -> core::result::Result<JSAst, AnyError> {
+        opts: ParserOptions<'a>,
+        bump: &'a Bump,
+        source: &'a Source,
+    ) -> core::result::Result<JSAst<'a>, AnyError> {
         let root = Expr::init(E::Object::default(), Loc { start: 0 });
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
         // is disjoint from any other field the caller may hold a pointer to.
@@ -629,13 +629,13 @@ pub mod parse_worker {
         Ok(ast)
     }
 
-    fn get_empty_ast<RootType: Default + bun_ast::expr::IntoExprData>(
+    fn get_empty_ast<'a, RootType: Default + bun_ast::expr::IntoExprData<'a>>(
         log: &mut Log,
         transpiler: *mut Transpiler,
-        opts: ParserOptions,
-        bump: &'static Bump,
-        source: &Source,
-    ) -> core::result::Result<JSAst, AnyError> {
+        opts: ParserOptions<'a>,
+        bump: &'a Bump,
+        source: &'a Source,
+    ) -> core::result::Result<JSAst<'a>, AnyError> {
         let root = Expr::init(RootType::default(), Loc::EMPTY);
         // SAFETY: see `get_empty_css_ast` — disjoint field of a live `*mut Transpiler`.
         let define = unsafe { &mut (*transpiler).options.define };
@@ -649,7 +649,7 @@ pub mod parse_worker {
     // ───────────────────────────────────────────────────────────────────────────
 
     pub struct FileLoaderHash {
-        pub key: ast::StoreStr,
+        pub key: ast::StoreStr<'static>,
         pub content_hash: u64,
     }
 
@@ -721,18 +721,18 @@ pub mod parse_worker {
     // `&mut Resolver` would be aliased-`&mut` UB. We instead reborrow only the
     // disjoint `(*transpiler).options` field, never the whole struct.
     #[allow(clippy::too_many_arguments)]
-    fn get_ast(
+    fn get_ast<'a>(
         log: &mut Log,
         transpiler: *mut Transpiler,
-        opts: ParserOptions,
-        bump: &'static Bump,
+        opts: ParserOptions<'a>,
+        bump: &'a Bump,
         resolver: *mut Resolver,
-        source: &Source,
+        source: &'a Source,
         loader: Loader,
         unique_key_prefix: u64,
         unique_key_for_additional_file: &mut FileLoaderHash,
         has_any_css_locals: &AtomicU32,
-    ) -> core::result::Result<JSAst, AnyError> {
+    ) -> core::result::Result<JSAst<'a>, AnyError> {
         use core::fmt::Write as _;
 
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`.
@@ -811,7 +811,7 @@ pub mod parse_worker {
                 // scopeguard would alias `log`/`temp_log` (both borrowed mutably
                 // below); reshape as a closure so every `?` exits through one
                 // post-amble that flushes `temp_log`.
-                let result = (|| -> core::result::Result<JSAst, AnyError> {
+                let result = (|| -> core::result::Result<JSAst<'a>, AnyError> {
                     let root: Expr =
                         bun_parsers::toml::TOML::parse(source, &mut temp_log, bump, false)?.into();
                     Ok(JSAst::init(
@@ -833,7 +833,7 @@ pub mod parse_worker {
             Loader::Yaml => {
                 let _trace = perf::trace("Bundler.ParseYAML");
                 let mut temp_log = Log::init();
-                let result = (|| -> core::result::Result<JSAst, AnyError> {
+                let result = (|| -> core::result::Result<JSAst<'a>, AnyError> {
                     let root: Expr =
                         bun_parsers::yaml::YAML::parse(source, &mut temp_log, bump)?.into();
                     Ok(JSAst::init(
@@ -855,7 +855,7 @@ pub mod parse_worker {
             Loader::Json5 => {
                 let _trace = perf::trace("Bundler.ParseJSON5");
                 let mut temp_log = Log::init();
-                let result = (|| -> core::result::Result<JSAst, AnyError> {
+                let result = (|| -> core::result::Result<JSAst<'a>, AnyError> {
                     let root: Expr =
                         bun_parsers::json5::JSON5Parser::parse(source, &mut temp_log, bump)?.into();
                     Ok(JSAst::init(
@@ -2191,13 +2191,13 @@ pub mod parse_worker {
 
     fn get_source_code(
         task: &mut ParseTask,
-        this: &mut crate::Worker,
+        this: &mut crate::Worker<'_>,
         log: &mut Log,
     ) -> core::result::Result<CacheEntry, AnyError> {
         // `Worker.arena` is a `BackRef` to `Worker.heap` once `has_created` (see
         // `ThreadPool::Worker::create`); the worker is pinned for the bundle pass.
         // Disjoint-field borrow vs `this.data` below.
-        let bump: &Bump = this.arena.get();
+        let bump: &Bump = this.arena;
 
         // `has_created` ⇒ `data`/`transpiler` were initialized in `create()`.
         let data = this.data.as_mut().expect("Worker.data set in create()");
@@ -2207,7 +2207,7 @@ pub mod parse_worker {
         // pointers and reborrows disjoint fields only.
         // SAFETY: `data.transpiler` is initialized (see above) and pinned for the
         // bundle pass.
-        let transpiler: *mut Transpiler<'static> = &raw mut data.transpiler;
+        let transpiler: *mut Transpiler<'_> = &raw mut data.transpiler;
         // PORT NOTE: errdefer transpiler.resetStore() — reshaped: call on the err
         // path explicitly (scopeguard would alias `transpiler` access below).
         // SAFETY: `transpiler` is live; `resolver` projects a field of it.
@@ -2250,18 +2250,18 @@ pub mod parse_worker {
     // Signature is real; body un-gates once the `ThreadPool` module + the
     // `parser::options` ↔ `BundleOptions` type unification land.
 
-    fn run_with_source_code(
+    fn run_with_source_code<'a>(
         task: &mut ParseTask,
-        this: &mut crate::Worker,
+        this: &mut crate::Worker<'a>,
         step: &mut Step,
         log: &mut Log,
         entry: &mut CacheEntry,
-    ) -> core::result::Result<Success, AnyError> {
+    ) -> core::result::Result<Success<'a>, AnyError> {
         // PORT NOTE: reshaped for borrowck — `transpiler_for_target` borrows `this`
         // mutably; we may need to call it again below (server-components branch),
         // so hold it as a raw pointer and reborrow per use site.
         //
-        // Stacked-Borrows: derive a single raw `*mut Worker` once and route every
+        // Stacked-Borrows: derive a single raw `*mut Worker<'_>` once and route every
         // subsequent worker access through it. The second `transpiler_for_target`
         // call (server-components/browser branch) must NOT autoref `&mut *this`
         // directly — that retag of the parent `&mut` pops the SharedRW tag chain
@@ -2271,15 +2271,14 @@ pub mod parse_worker {
         // pointing into the original — valid in Zig (no aliasing model); in Rust
         // both calls' `&mut self` must be children of the same raw so neither pops
         // the other's tag chain.
-        let worker_raw: *mut crate::Worker = this;
-        // SAFETY: see `get_source_code` — worker arena pinned for the bundle pass.
-        // `'static` matches `JSAst = BundledAst<'static>` (ungate_support.rs); the
-        // arena outlives all reads through the returned ASTs. `arena` is a
-        // `*const Bump` field; the deref points outside `*worker_raw`.
-        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(&*(*worker_raw).arena) };
-
+        let worker_raw: *mut crate::Worker<'a> = this;
+        // The worker arena is owned by the bundle's `ArenaPool` (`&'a Arena`);
+        // `arena` is a `&'a Bump` field, so the deref points outside `*worker_raw`.
         // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
-        let mut transpiler: *mut Transpiler<'static> =
+        let bump: &'a Bump = unsafe { (*worker_raw).arena };
+
+        // SAFETY: `worker_raw` just derived from the live `this: &mut Worker<'_>`.
+        let mut transpiler: *mut Transpiler<'a> =
             std::ptr::from_mut(unsafe { (*worker_raw).transpiler_for_target(task.known_target) });
         // PORT NOTE: Zig errdefers (`transpiler.resetStore()` .zig:1123 and
         // `if (.fd) entry.deinit(arena)` .zig:1148) are reshaped into the
@@ -2312,7 +2311,7 @@ pub mod parse_worker {
         #[cfg(debug_assertions)]
         let debug_original_variant_check: ContentsOrFdTag = task.contents_or_fd.tag();
 
-        // SAFETY: `worker_raw` derived from the live `this: &mut Worker` above.
+        // SAFETY: `worker_raw` derived from the live `this: &mut Worker<'_>` above.
         // Read the `BackRef` field via `worker_raw` (not `this`) so no
         // parent-`&mut` access pops the `transpiler`/`resolver` tag chain derived
         // above. `BackRef` is `Copy`; the deref to `&BundleV2` is safe.
@@ -2379,7 +2378,11 @@ pub mod parse_worker {
         // reassigned above); reborrow only the disjoint `options` field.
         let topts = unsafe { &(*transpiler).options };
 
-        let source = Source {
+        // Bump-allocated so the `&'a Source` borrow handed to
+        // `new_lazy_export_ast<'bump>` (which ties the returned `Ast<'bump>` to
+        // every input borrow including `source`) lives for the arena lifetime
+        // `'a`. Cloned into the returned `Success` below.
+        let source: &'a Source = bump.alloc(Source {
             // PORT NOTE: `Source.path` is `bun_paths::fs::Path<'static>`, distinct from
             // `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
             // field-by-field across the type boundary.
@@ -2401,7 +2404,7 @@ pub mod parse_worker {
             contents: std::borrow::Cow::Borrowed(ast::StoreStr::new(entry_contents).slice()),
             contents_is_recycled: false,
             ..Default::default()
-        };
+        });
 
         let target = (if task.source_index.get() == 1 {
             target_from_hashbang(entry_contents)
@@ -2607,18 +2610,18 @@ pub mod parse_worker {
                     opts,
                     bump,
                     resolver,
-                    &source,
+                    source,
                     loader,
                     task_ctx.unique_key,
                     &mut unique_key_for_additional_file,
                     &task_ctx.linker.has_any_css_locals,
                 )
             } else if loader.is_css() {
-                get_empty_css_ast(log, transpiler, opts, bump, &source)
+                get_empty_css_ast(log, transpiler, opts, bump, source)
             } else if module_type == options::ModuleType::Esm {
-                get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, &source)
+                get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, source)
             } else {
-                get_empty_ast::<E::Object>(log, transpiler, opts, bump, &source)
+                get_empty_ast::<E::Object>(log, transpiler, opts, bump, source)
             };
         // PERF(port): Zig used `switch (bool) { inline else => |as_undefined| ... }`
         // to monomorphize. Expanded to if/else.
@@ -2660,7 +2663,7 @@ pub mod parse_worker {
 
         Ok(Success {
             ast,
-            source,
+            source: source.clone(),
             log: core::mem::take(log),
             // PORT NOTE: Zig returned `log.*` by value; here we take ownership.
             use_directive,
@@ -2696,7 +2699,7 @@ pub mod parse_worker {
     fn run_from_thread_pool_impl(this: &mut ParseTask) {
         // SAFETY: ctx backref valid for the bundle pass (outlives this task).
         let ctx = unsafe { this.ctx() };
-        let worker: &mut crate::Worker = crate::Worker::get(ctx);
+        let worker: &mut crate::Worker<'_> = crate::Worker::get(ctx);
         // PORT NOTE: `defer worker.unget()` — handled at function exit (scopeguard
         // would alias the `&mut worker` borrows below).
         scoped_log!(
@@ -2846,7 +2849,7 @@ pub mod parse_worker {
         worker.unget();
     }
 
-    fn on_complete_mini(result: *mut Result, ctx: *mut BundleV2<'static>) {
+    fn on_complete_mini<'a>(result: *mut Result<'a>, ctx: *mut BundleV2<'a>) {
         // SAFETY: callback contract — `result` was heap-allocated above; `ctx` is
         // the BACKREF stashed in `result.ctx` (Zig passed `BundleV2` as ParentContext).
         BundleV2::on_parse_task_complete(unsafe { &mut *result }, unsafe { &mut *ctx });

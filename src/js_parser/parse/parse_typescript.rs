@@ -23,7 +23,7 @@ use bun_core::{Error, err};
 // `ts::Data` carries only Copy payloads but lacks a `derive(Clone)` upstream;
 // local helper so we can re-insert values fetched from `ref_to_ts_namespace_member`.
 #[inline]
-fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
+fn clone_ts_member_data<'arena>(d: &TSNamespaceMemberData<'arena>) -> TSNamespaceMemberData<'arena> {
     match d {
         TSNamespaceMemberData::Property => TSNamespaceMemberData::Property,
         TSNamespaceMemberData::Namespace(m) => TSNamespaceMemberData::Namespace(*m),
@@ -39,7 +39,7 @@ fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // TODO(port): narrow error set
-    pub fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
+    pub fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList<'a>, Error> {
         let p = self;
         if !Self::IS_TYPESCRIPT_ENABLED && !p.options.features.standard_decorators {
             return Ok(bun_alloc::AstAlloc::vec());
@@ -85,7 +85,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ///   @ DecoratorCallExpression
     ///   @ DecoratorParenthesizedExpression
     // TODO(port): narrow error set
-    pub fn parse_standard_decorator(&mut self) -> Result<ExprNodeIndex, Error> {
+    pub fn parse_standard_decorator(&mut self) -> Result<ExprNodeIndex<'a>, Error> {
         let p = self;
         let loc = p.lexer.loc();
 
@@ -181,7 +181,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions,
-    ) -> Result<Stmt, Error> {
+    ) -> Result<Stmt<'a>, Error> {
         let p = self;
         // "namespace foo {}";
         let name_loc = p.lexer.loc();
@@ -438,7 +438,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         opts: &mut ParseStatementOptions,
         default_name_loc: bun_ast::Loc,
         default_name: &'a [u8],
-    ) -> Result<Stmt, Error> {
+    ) -> Result<Stmt<'a>, Error> {
         let p = self;
         p.lexer.expect(T::TEquals)?;
 
@@ -532,7 +532,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions,
-    ) -> Result<Stmt, Error> {
+    ) -> Result<Stmt<'a>, Error> {
         let p = self;
         p.lexer.expect(T::TEnum)?;
         let name_loc = p.lexer.loc();

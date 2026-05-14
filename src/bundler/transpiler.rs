@@ -848,13 +848,29 @@ impl AlreadyBundled {
 }
 
 /// Port of `transpiler.zig:ParseResult`.
-// PORT NOTE: lifetime-free — `runtime_transpiler_cache` is a raw pointer (Zig
-// `?*RuntimeTranspilerCache`) so `AsyncModule.parse_result` / `JSTranspiler`
-// can store this by value without threading a borrow lifetime.
+/// Erase `'arena` to `'static` for [`ParseResult::ast`]. The runtime
+/// transpiler's arena is owned by `JSTranspiler` (a long-lived GC object that
+/// stores both the arena and the `ParseResult` as sibling fields) — a
+/// self-referential pattern that cannot be expressed with a lifetime
+/// parameter. This is the runtime-transpiler analogue of the bundler's
+/// `ArenaPool`; the bundler path does not use `ParseResult` and so does not
+/// hit this cast.
+#[inline(always)]
+fn erase_ast_arena_for_runtime(ast: bun_ast::Ast<'_>) -> bun_ast::Ast<'static> {
+    // SAFETY: see fn doc — `JSTranspiler.arena` outlives `JSTranspiler.result`
+    // by struct drop order; both are dropped together when the JS object is
+    // finalized.
+    unsafe { core::mem::transmute(ast) }
+}
+
+// PORT NOTE: `ast` is `'static`-erased because the runtime-transpiler arena
+// is owned by `JSTranspiler` (a long-lived GC object) — self-referential, so
+// the lifetime cannot be threaded through the JS-object boundary. The bundler
+// path does not use `ParseResult`; it uses `parse_task::Success<'a>` instead.
 pub struct ParseResult {
     pub source: bun_ast::Source,
     pub loader: options::Loader,
-    pub ast: bun_ast::Ast,
+    pub ast: bun_ast::Ast<'static>,
     pub already_bundled: AlreadyBundled,
     pub input_fd: Option<FD>,
     pub empty: bool,
@@ -958,7 +974,7 @@ pub struct ParseOptions<'a> {
     pub macro_js_ctx: MacroJSCtx,
     pub virtual_source: Option<&'a bun_ast::Source>,
     /// Zig: `runtime.Runtime.Features.ReplaceableExport.Map`.
-    pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
+    pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport<'static>>,
     pub inject_jest_globals: bool,
     pub set_breakpoint_on_first_line: bool,
     pub emit_decorator_metadata: bool,
@@ -1726,7 +1742,7 @@ impl<'a> Transpiler<'a> {
                 };
                 return Some(match parsed {
                     js_ast::Result::Ast(value) => ParseResult {
-                        ast: *value,
+                        ast: erase_ast_arena_for_runtime(*value),
                         source: source.clone(),
                         loader,
                         input_fd,
@@ -2127,7 +2143,7 @@ fn parse_data_loader(
     ast.symbols = bun_ast::symbol::List::from_owned_slice(symbols.into_boxed_slice());
 
     return Some(ParseResult {
-        ast,
+        ast: erase_ast_arena_for_runtime(ast),
         source: source.clone(),
         loader,
         input_fd,
@@ -2349,16 +2365,19 @@ pub use js_printer::Format as PrintFormat;
 // to the one concrete type and marking the public entry points
 // `#[inline(never)]` makes LTO emit exactly one copy in `bun_bundler`.
 impl<'a> Transpiler<'a> {
-    fn print_with_source_map_maybe<const ENABLE_SOURCE_MAP: bool>(
+    fn print_with_source_map_maybe<'b, const ENABLE_SOURCE_MAP: bool>(
         &mut self,
-        mut ast: bun_ast::Ast,
-        source: &bun_ast::Source,
+        ast: bun_ast::Ast<'static>,
+        source: &'b bun_ast::Source,
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
-        source_map_context: Option<js_printer::SourceMapHandler<'_>>,
+        source_map_context: Option<js_printer::SourceMapHandler<'b>>,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
-    ) -> Result<usize, bun_core::Error> {
+    ) -> Result<usize, bun_core::Error>
+    where
+        'a: 'b,
+    {
         // TODO(port): narrow error set
         // TODO(port): `bun.perf.trace("JSPrinter.printWithSourceMap")` /
         // `("JSPrinter.print")` — `bun_perf::trace` now takes a `PerfEvent`
@@ -2373,6 +2392,9 @@ impl<'a> Transpiler<'a> {
         // walks `symbols` exclusively — `rg tree.symbols js_printer/lib.rs` is
         // empty). `init_with_one_list` boxes the single inner list.
         // PERF(port): one extra alloc vs Zig's borrowed-slice — profile Phase B.
+        // `Ast<'arena>` is covariant: `'static` shortens to `'b` so the
+        // printer's single `'a` can unify with `source`/`handler` borrows.
+        let mut ast: bun_ast::Ast<'b> = ast;
         let symbols = bun_ast::symbol::Map::init_with_one_list(core::mem::take(&mut ast.symbols));
 
         // `runtime_imports` is now forwarded — after Round-G `Ast.runtime_imports`
@@ -2459,15 +2481,18 @@ impl<'a> Transpiler<'a> {
     #[cold]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
-    fn print_cjs_cold<const ENABLE_SOURCE_MAP: bool>(
+    fn print_cjs_cold<'b, const ENABLE_SOURCE_MAP: bool>(
         &mut self,
         writer: &mut js_printer::BufferPrinter,
-        ast: &bun_ast::Ast,
-        symbols: bun_ast::symbol::Map,
+        ast: &bun_ast::Ast<'b>,
+        symbols: bun_ast::symbol::Map<'b>,
         source: &bun_ast::Source,
-        source_map_context: Option<js_printer::SourceMapHandler<'_>>,
+        source_map_context: Option<js_printer::SourceMapHandler<'b>>,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
-    ) -> Result<usize, bun_core::Error> {
+    ) -> Result<usize, bun_core::Error>
+    where
+        'a: 'b,
+    {
         js_printer::print_common_js::<_, false, ENABLE_SOURCE_MAP>(
             writer,
             // PORT NOTE: `print_common_js` grew a `&bumpalo::Bump` arg in
@@ -2503,15 +2528,18 @@ impl<'a> Transpiler<'a> {
     #[cold]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
-    fn print_esm_cold<const ENABLE_SOURCE_MAP: bool>(
+    fn print_esm_cold<'b, const ENABLE_SOURCE_MAP: bool>(
         &mut self,
         writer: &mut js_printer::BufferPrinter,
-        ast: &bun_ast::Ast,
-        symbols: bun_ast::symbol::Map,
+        ast: &bun_ast::Ast<'b>,
+        symbols: bun_ast::symbol::Map<'b>,
         source: &bun_ast::Source,
-        source_map_context: Option<js_printer::SourceMapHandler<'_>>,
+        source_map_context: Option<js_printer::SourceMapHandler<'b>>,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
-    ) -> Result<usize, bun_core::Error> {
+    ) -> Result<usize, bun_core::Error>
+    where
+        'a: 'b,
+    {
         let opts = js_printer::Options {
             bundling: false,
             runtime_imports: ast.runtime_imports.clone(),
@@ -2544,17 +2572,20 @@ impl<'a> Transpiler<'a> {
     #[cold]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
-    fn print_ast_esm_ascii_not_bun_cold<const ENABLE_SOURCE_MAP: bool>(
+    fn print_ast_esm_ascii_not_bun_cold<'b, const ENABLE_SOURCE_MAP: bool>(
         &mut self,
         writer: &mut js_printer::BufferPrinter,
-        ast: bun_ast::Ast,
-        symbols: bun_ast::symbol::Map,
-        source: &bun_ast::Source,
-        source_map_context: Option<js_printer::SourceMapHandler<'_>>,
+        ast: bun_ast::Ast<'b>,
+        symbols: bun_ast::symbol::Map<'b>,
+        source: &'b bun_ast::Source,
+        source_map_context: Option<js_printer::SourceMapHandler<'b>>,
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
-    ) -> Result<usize, bun_core::Error> {
+    ) -> Result<usize, bun_core::Error>
+    where
+        'a: 'b,
+    {
         self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, false>(
             writer,
             ast,
@@ -2571,17 +2602,20 @@ impl<'a> Transpiler<'a> {
     // print_with_source_map_maybe to express the comptime bool dispatch as a
     // const generic.
     #[allow(clippy::too_many_arguments)]
-    fn print_ast_esm_ascii<const ENABLE_SOURCE_MAP: bool, const IS_BUN: bool>(
+    fn print_ast_esm_ascii<'b, const ENABLE_SOURCE_MAP: bool, const IS_BUN: bool>(
         &mut self,
         writer: &mut js_printer::BufferPrinter,
-        ast: bun_ast::Ast,
-        symbols: bun_ast::symbol::Map,
-        source: &bun_ast::Source,
-        source_map_context: Option<js_printer::SourceMapHandler<'_>>,
+        ast: bun_ast::Ast<'b>,
+        symbols: bun_ast::symbol::Map<'b>,
+        source: &'b bun_ast::Source,
+        source_map_context: Option<js_printer::SourceMapHandler<'b>>,
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<js_printer::RuntimeTranspilerCacheRef>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
-    ) -> Result<usize, bun_core::Error> {
+    ) -> Result<usize, bun_core::Error>
+    where
+        'a: 'b,
+    {
         // Spec transpiler.zig:662-663 — both set on this (EsmAscii) arm only.
         // SAFETY: `module_info` is `ModuleInfo::create`'s `heap::alloc` (or
         // null); it is exclusively owned by this print call until T6 reclaims

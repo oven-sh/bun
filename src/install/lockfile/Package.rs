@@ -52,7 +52,7 @@ bun_output::declare_scope!(Lockfile, hidden);
 trait ExprStr {
     fn as_utf8<'b>(&self, bump: &'b bun_alloc::Arena) -> Option<&'b [u8]>;
 }
-impl ExprStr for Expr {
+impl<'arena> ExprStr for Expr<'arena> {
     // Zig `Expr.asString` (expr.zig:477) — transparently transcodes UTF-16
     // `EString`s. The earlier `is_utf8()` guard returned `None` for keys the
     // lexer stored as UTF-16 (e.g. `\u`-escaped non-ASCII), tripping the
@@ -139,7 +139,7 @@ pub trait ResolverContext {
 
     /// Zig: `resolver.count(builder, json)` — counts strings to be appended by
     /// `resolve`. Default no-op for void/folder resolvers that don't need it.
-    fn count(&mut self, _builder: &mut StringBuilder<'_>, _json: &Expr) {}
+    fn count(&mut self, _builder: &mut StringBuilder<'_>, _json: &Expr<'_>) {}
 
     /// Zig: `resolver.resolve(builder, json)` — produces the package's
     /// `Resolution`. Only called when `!IS_VOID`.
@@ -156,7 +156,7 @@ pub trait ResolverContext {
     fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
-        json: &Expr,
+        json: &Expr<'_>,
     ) -> Result<ResolutionType<u64>, bun_core::Error>;
 
     // ── GitResolver-only surface ────────────────────────────────────────────
@@ -197,7 +197,7 @@ impl ResolverContext for () {
     fn resolve(
         &mut self,
         _builder: &mut StringBuilder<'_>,
-        _json: &Expr,
+        _json: &Expr<'_>,
     ) -> Result<ResolutionType<u64>, bun_core::Error> {
         // Zig: `if (comptime ResolverContext != void) { … }` — the void
         // resolver never assigned `package.resolution`, so it kept its
@@ -224,11 +224,11 @@ pub trait ResolverContextDyn {
     fn is_git(&self) -> bool;
     fn check_bundled_dependencies(&self) -> bool;
 
-    fn count(&mut self, builder: &mut StringBuilder<'_>, json: &Expr);
+    fn count(&mut self, builder: &mut StringBuilder<'_>, json: &Expr<'_>);
     fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
-        json: &Expr,
+        json: &Expr<'_>,
     ) -> Result<ResolutionType<u64>, bun_core::Error>;
 
     fn resolution(&self) -> &ResolutionType<u64>;
@@ -253,14 +253,14 @@ impl<R: ResolverContext> ResolverContextDyn for R {
     }
 
     #[inline]
-    fn count(&mut self, builder: &mut StringBuilder<'_>, json: &Expr) {
+    fn count(&mut self, builder: &mut StringBuilder<'_>, json: &Expr<'_>) {
         ResolverContext::count(self, builder, json)
     }
     #[inline]
     fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
-        json: &Expr,
+        json: &Expr<'_>,
     ) -> Result<ResolutionType<u64>, bun_core::Error> {
         ResolverContext::resolve(self, builder, json)
     }
@@ -1466,7 +1466,7 @@ impl Diff {
                         // `&mut pm` reborrow below doesn't conflict. The entry
                         // lives in a `StringHashMap` whose backing storage is
                         // not touched by `parse_with_json`.
-                        let (source_ref, json_root): (bun_ptr::ParentRef<bun_ast::Source>, Expr) =
+                        let (source_ref, json_root): (bun_ptr::ParentRef<bun_ast::Source>, Expr<'_>) =
                             match pm
                                 .workspace_package_json_cache
                                 .get_with_path(
@@ -2095,7 +2095,7 @@ impl Package<u64> {
         pm: &mut PackageManager,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
-        json: Expr,
+        json: Expr<'_>,
         resolver: &mut R,
         features: Features,
     ) -> Result<(), bun_core::Error> {
@@ -2112,7 +2112,7 @@ impl Package<u64> {
         pm: &mut PackageManager,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
-        json: Expr,
+        json: Expr<'_>,
         resolver: &mut dyn ResolverContextDyn,
         features: Features,
     ) -> Result<(), bun_core::Error> {

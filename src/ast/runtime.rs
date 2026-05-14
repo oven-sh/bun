@@ -30,14 +30,14 @@ impl Runtime {
 
 /// Zig: `Runtime.Features.ReplaceableExport`
 #[derive(Clone)]
-pub enum ReplaceableExport {
+pub enum ReplaceableExport<'arena> {
     Delete,
-    Replace(Expr),
-    Inject { name: Box<[u8]>, value: Expr },
+    Replace(Expr<'arena>),
+    Inject { name: Box<[u8]>, value: Expr<'arena> },
     // TODO(port): `name` was `string` (= []const u8). Ownership unclear; using Box<[u8]>.
 }
 
-impl ReplaceableExport {
+impl<'arena> ReplaceableExport<'arena> {
     #[inline]
     pub fn is_replace(&self) -> bool {
         matches!(self, Self::Replace(_))
@@ -51,29 +51,29 @@ impl ReplaceableExport {
 /// satisfies the `replace_exports.entries.len` shape `visitStmt` ported
 /// verbatim from Zig's `ArrayHashMap.entries`.
 #[derive(Default)]
-pub struct ReplaceableExportMap {
+pub struct ReplaceableExportMap<'arena> {
     /// Backing map. Named `entries` so `replace_exports.entries.len()` —
     /// the literal Zig spelling — resolves (Zig's `ArrayHashMap.entries`
     /// is a `MultiArrayList` with `.len`; here `StringArrayHashMap` derefs
     /// to `ArrayHashMap` which has `.len()`).
-    pub entries: StringArrayHashMap<ReplaceableExport>,
+    pub entries: StringArrayHashMap<ReplaceableExport<'arena>>,
 }
 
-impl core::ops::Deref for ReplaceableExportMap {
-    type Target = StringArrayHashMap<ReplaceableExport>;
+impl<'arena> core::ops::Deref for ReplaceableExportMap<'arena> {
+    type Target = StringArrayHashMap<ReplaceableExport<'arena>>;
     #[inline]
     fn deref(&self) -> &Self::Target {
         &self.entries
     }
 }
-impl core::ops::DerefMut for ReplaceableExportMap {
+impl<'arena> core::ops::DerefMut for ReplaceableExportMap<'arena> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.entries
     }
 }
 
-impl ReplaceableExportMap {
+impl<'arena> ReplaceableExportMap<'arena> {
     #[inline]
     pub fn count(&self) -> usize {
         self.entries.count()
@@ -83,11 +83,11 @@ impl ReplaceableExportMap {
     /// `get_ptr` (`&V`) and `get_ptr_mut` (`&mut V`); call sites in the
     /// visitor only read through it.
     #[inline]
-    pub fn get_ptr(&self, key: &[u8]) -> Option<&ReplaceableExport> {
+    pub fn get_ptr(&self, key: &[u8]) -> Option<&ReplaceableExport<'arena>> {
         self.entries.get(key)
     }
     #[inline]
-    pub fn get_ptr_mut(&mut self, key: &[u8]) -> Option<&mut ReplaceableExport> {
+    pub fn get_ptr_mut(&mut self, key: &[u8]) -> Option<&mut ReplaceableExport<'arena>> {
         self.entries.get_ptr_mut(key)
     }
     #[inline]

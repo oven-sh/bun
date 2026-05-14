@@ -1424,7 +1424,7 @@ fn iterate_project_tree(
 }
 
 fn get_bundled_deps(
-    json: &Expr,
+    json: &Expr<'_>,
     field: &'static str,
 ) -> Result<Option<Vec<BundledDep>>, AllocError> {
     let mut deps: Vec<BundledDep> = Vec::new();
@@ -1513,7 +1513,7 @@ struct BinInfo {
     ty: BinType,
 }
 
-fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
+fn get_package_bins(json: &Expr<'_>) -> Result<Vec<BinInfo>, AllocError> {
     let mut bins: Vec<BinInfo> = Vec::new();
 
     let mut path_buf = PathBuffer::uninit();
@@ -1732,7 +1732,7 @@ trait PackExprExt {
     fn pack_as_string(&self) -> Option<&[u8]>;
     fn pack_as_string_cloned(&self) -> Result<Option<Box<[u8]>>, AllocError>;
 }
-impl PackExprExt for Expr {
+impl PackExprExt for Expr<'_> {
     #[inline]
     fn pack_as_string(&self) -> Option<&[u8]> {
         self.as_utf8_string_literal()
@@ -2025,7 +2025,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         // maybe otp
     }
 
-    let mut package_name_expr: Expr = json
+    let mut package_name_expr: Expr<'_> = json
         .root
         .get(b"name")
         .ok_or(PackError::MissingPackageName)?;
@@ -2046,7 +2046,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         return Err(PackError::InvalidPackageName);
     }
 
-    let mut package_version_expr: Expr = json
+    let mut package_version_expr: Expr<'_> = json
         .root
         .get(b"version")
         .ok_or(PackError::MissingPackageVersion)?;

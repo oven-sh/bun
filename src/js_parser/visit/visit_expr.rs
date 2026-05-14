@@ -48,7 +48,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // `Expr -> Expr` shape moved 24B in + 24B out per frame; the in-place form moves 8B
     // and only writes back when the visitor produces a *different* node.
     #[inline]
-    pub fn visit_expr(&mut self, e: &mut Expr) {
+    pub fn visit_expr(&mut self, e: &mut Expr<'a>) {
         // Zig: `if (only_scan_imports_and_do_not_visit) @compileError(...)` — SCAN_ONLY
         // monomorphizations must never reach the visit pass.
         debug_assert!(
@@ -58,7 +58,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.visit_expr_in_out(e, ExprIn::default())
     }
 
-    pub fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
+    pub fn visit_expr_in_out(&mut self, e: &mut Expr<'a>, in_: ExprIn) {
         if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(e) {
             self.log()
                 .add_error(Some(self.source), e.loc, b"Invalid assignment target");
@@ -101,23 +101,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // In Zig these live on a nested `const visitors = struct { ... }`; in Rust they are private
     // associated fns on this impl so they can see the const-generic feature params.
 
-    fn e_new_target(_: &mut Self, _e: &mut Expr, _: ExprIn) {
+    fn e_new_target(_: &mut Self, _e: &mut Expr<'a>, _: ExprIn) {
         // this error is not necessary and it is causing breakages
         // if (!p.fn_only_data_visit.is_new_target_allowed) {
         //     p.log.addRangeError(p.source, target.range, "Cannot use \"new.target\" here") catch unreachable;
         // }
     }
 
-    fn e_string(_: &mut Self, _e: &mut Expr, _: ExprIn) {
+    fn e_string(_: &mut Self, _e: &mut Expr<'a>, _: ExprIn) {
         // If you're using this, you're probably not using 0-prefixed legacy octal notation
         // if e.LegacyOctalLoc.Start > 0 {
     }
 
-    fn e_number(_: &mut Self, _e: &mut Expr, _: ExprIn) {
+    fn e_number(_: &mut Self, _e: &mut Expr<'a>, _: ExprIn) {
         // idc about legacy octal loc
     }
 
-    fn e_this(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_this(p: &mut Self, e: &mut Expr<'a>, _: ExprIn) {
         if let Some(exp) = p.value_for_this(e.loc) {
             *e = exp;
             return;
@@ -130,20 +130,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // }
     }
 
-    fn e_spread(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_spread(p: &mut Self, e: &mut Expr<'a>, _: ExprIn) {
         if let js_ast::ExprData::ESpread(mut exp) = e.data {
             p.visit_expr(&mut exp.value);
         }
     }
 
-    fn e_await(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_await(p: &mut Self, e: &mut Expr<'a>, _: ExprIn) {
         if let js_ast::ExprData::EAwait(mut e_) = e.data {
             p.await_target = Some(e_.value.data);
             p.visit_expr(&mut e_.value);
         }
     }
 
-    fn e_yield(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_yield(p: &mut Self, e: &mut Expr<'a>, _: ExprIn) {
         if let js_ast::ExprData::EYield(mut e_) = e.data {
             if let Some(val) = e_.value.as_mut() {
                 p.visit_expr(val);
@@ -154,7 +154,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // ─── heavy visitors ─────────────────────────────────────────────────────
     // e_* accessors on `expr::Data` return Option<StoreRef<T>> / Option<T>.
 
-    fn e_import_meta(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_import_meta(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         // TODO: delete import.meta might not work
         let is_delete_target = matches!(p.delete_target, Data::EImportMeta(..));
@@ -176,7 +176,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn e_identifier(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_identifier(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr
             .data
@@ -357,7 +357,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // frame is the #2 hottest bun-native instruction under `bun --bun lint`).
     // Mirrors Zig's switch-with-helper-fns layout.
     #[inline(never)]
-    fn e_jsx_element(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_jsx_element(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         use crate::parser::{JSXImport, JSXTransformType, options};
         let _ = in_;
@@ -711,7 +711,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_template(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_template(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
@@ -816,7 +816,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
     }
-    fn e_binary(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_binary(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         use crate::visit::visit_binary::BinaryExpressionVisitor;
         let mut e_ = expr.data.e_binary().expect("infallible: variant checked");
@@ -898,7 +898,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *e = current;
     }
 
-    fn e_index(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_index(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_index().expect("infallible: variant checked");
         let is_call_target = matches!(p.call_target, Data::EIndex(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
@@ -1182,7 +1182,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `p.newExpr(e_, loc)` re-wraps the same pointer; here `*e` is already that.
     }
 
-    fn e_unary(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_unary(p: &mut Self, e: &mut Expr<'a>, _: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_unary().expect("infallible: variant checked");
         match e_.op {
@@ -1360,7 +1360,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
     }
-    fn e_dot(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_dot(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_dot().expect("infallible: variant checked");
         let is_delete_target = matches!(p.delete_target, Data::EDot(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
@@ -1486,7 +1486,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn e_if(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_if(p: &mut Self, e: &mut Expr<'a>, _: ExprIn) {
         let mut e_ = e.data.e_if().expect("infallible: variant checked");
         let is_call_target =
             matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
@@ -1564,7 +1564,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_array(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_array(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let mut e_ = e.data.e_array().expect("infallible: variant checked");
         if in_.assign_target != js_ast::AssignTarget::None {
             p.maybe_comma_spread_error(e_.comma_after_spread);
@@ -1673,7 +1673,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_object(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_object(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let mut e_ = e.data.e_object().expect("infallible: variant checked");
         if in_.assign_target != js_ast::AssignTarget::None {
             p.maybe_comma_spread_error(e_.comma_after_spread);
@@ -1836,7 +1836,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let _ = has_spread;
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_import(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_import(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let _ = in_;
         let mut e_ = e.data.e_import().expect("infallible: variant checked");
         // We want to forcefully fold constants inside of imports
@@ -1884,7 +1884,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
     }
-    fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_call(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
         p.call_target = e_.target.data;
@@ -2378,7 +2378,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_new(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_new(p: &mut Self, e: &mut Expr<'a>, _: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_new().expect("infallible: variant checked");
         p.visit_expr(&mut e_.target);
@@ -2404,9 +2404,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Note: Caller must check `p.bundler_feature_flag_ref.is_valid()` before calling.
     fn maybe_replace_bundler_feature_call(
         p: &mut Self,
-        e_: &mut E::Call,
+        e_: &mut E::Call<'a>,
         loc: bun_ast::Loc,
-    ) -> Option<Expr> {
+    ) -> Option<Expr<'a>> {
         // Check if the target is the `feature` function from "bun:bundle"
         // It could be e_identifier (for unbound) or e_import_identifier (for imports)
         let target_ref: Option<Ref> = match &e_.target.data {
@@ -2482,7 +2482,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_arrow(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_arrow(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_arrow().expect("infallible: variant checked");
@@ -2572,7 +2572,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         e_.body.stmts = bun_ast::StoreSlice::new_mut(stmts_list.into_bump_slice_mut());
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_function(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_function(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_function().expect("infallible: variant checked");
@@ -2643,7 +2643,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_class(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_class(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_class().expect("infallible: variant checked");

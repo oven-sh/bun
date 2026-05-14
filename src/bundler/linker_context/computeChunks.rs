@@ -34,10 +34,10 @@ fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) ->
 
 // TODO(port): narrow error set
 #[inline(never)]
-pub fn compute_chunks(
-    this: &mut LinkerContext,
+pub fn compute_chunks<'a>(
+    this: &mut LinkerContext<'a>,
     unique_key: u64,
-) -> Result<Box<[Chunk]>, bun_core::Error> {
+) -> Result<Box<[Chunk<'a>]>, bun_core::Error> {
     let _trace = bun_core::perf::trace("Bundler.computeChunks");
 
     debug_assert!(this.dev_server.is_none()); // use
@@ -47,8 +47,8 @@ pub fn compute_chunks(
     let arena = Arena::new();
     let temp = &arena;
 
-    // TODO(port): StringArrayHashMap keyed by arena-allocated &[u8]; using ArrayHashMap<&[u8], Chunk> here.
-    let mut js_chunks: ArrayHashMap<&[u8], Chunk> = ArrayHashMap::new();
+    // TODO(port): StringArrayHashMap keyed by arena-allocated &[u8]; using ArrayHashMap<&[u8], Chunk<'_>> here.
+    let mut js_chunks: ArrayHashMap<&[u8], Chunk<'_>> = ArrayHashMap::new();
     js_chunks.reserve(this.graph.entry_points.len());
 
     // Key is the hash of the CSS order. This deduplicates identical CSS files.
@@ -79,7 +79,7 @@ pub fn compute_chunks(
 
     let entry_source_indices = this.graph.entry_points.items_source_index();
     let css_asts = this.graph.ast.items_css();
-    let mut html_chunks: ArrayHashMap<&[u8], Chunk> = ArrayHashMap::new();
+    let mut html_chunks: ArrayHashMap<&[u8], Chunk<'_>> = ArrayHashMap::new();
     let loaders = parse_graph.input_files.items_loader();
     let ast_targets = this.graph.ast.items_target();
 
@@ -353,12 +353,12 @@ pub fn compute_chunks(
                     } else {
                         // PORT NOTE: Zig used a local `Handler` struct passed to entry_bits.forEach;
                         // in Rust we pass a context struct + fn pointer.
-                        struct Handler<'a> {
-                            chunks: &'a mut [Chunk],
+                        struct Handler<'r, 'a> {
+                            chunks: &'r mut [Chunk<'a>],
                             source_id: u32,
-                            entry_point_to_js_chunk_idx: &'a [u32],
+                            entry_point_to_js_chunk_idx: &'r [u32],
                         }
-                        fn next(c: &mut Handler<'_>, entry_point_id: usize) {
+                        fn next(c: &mut Handler<'_, '_>, entry_point_id: usize) {
                             // Map the entry point ID to the actual JS chunk index.
                             // CSS-only entry points don't have JS chunks (sentinel value).
                             let chunk_idx = c.entry_point_to_js_chunk_idx[entry_point_id];
@@ -388,7 +388,7 @@ pub fn compute_chunks(
 
     // Sort the chunks for determinism. This matters because we use chunk indices
     // as sorting keys in a few places.
-    let mut sorted_chunks: Vec<Chunk> = 'sort_chunks: {
+    let mut sorted_chunks: Vec<Chunk<'_>> = 'sort_chunks: {
         let mut sorted_chunks = Vec::<Chunk>::init_capacity(
             js_chunks.count() + css_chunks.count() + html_chunks.count(),
         );
@@ -400,11 +400,11 @@ pub fn compute_chunks(
 
         // sort by entry_point_id to ensure the main entry point (id=0) comes first,
         // then by key for determinism among the rest.
-        struct ChunkSortContext<'a> {
-            chunks: &'a ArrayHashMap<&'a [u8], Chunk>,
+        struct ChunkSortContext<'r, 'a> {
+            chunks: &'r ArrayHashMap<&'r [u8], Chunk<'a>>,
         }
 
-        impl<'a> ChunkSortContext<'a> {
+        impl<'r, 'a> ChunkSortContext<'r, 'a> {
             fn less_than(&self, a_key: &[u8], b_key: &[u8]) -> bool {
                 let Some(a_chunk) = self.chunks.get(&a_key) else {
                     return true;
@@ -507,7 +507,7 @@ pub fn compute_chunks(
         // TODO(port): return type — Zig returns []Chunk allocated by this.arena(); here we return Box<[Chunk]>.
         // Phase B: confirm ownership of `chunks` slice (sorted_chunks Vec backing storage).
     };
-    let chunks: &mut [Chunk] = sorted_chunks.slice_mut();
+    let chunks: &mut [Chunk<'_>] = sorted_chunks.slice_mut();
 
     let entry_point_chunk_indices: &mut [u32] =
         this.graph.files.items_entry_point_chunk_index_mut();

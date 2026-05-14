@@ -563,12 +563,12 @@ pub mod BunInfo {
     }
 
     #[inline]
-    fn str_expr(s: &[u8]) -> Expr {
+    fn str_expr<'arena>(s: &[u8]) -> Expr<'arena> {
         Expr::init(EString::init(s), Loc::EMPTY)
     }
 
     #[inline]
-    fn prop(key: &'static [u8], value: Expr) -> G::Property {
+    fn prop<'arena>(key: &'static [u8], value: Expr<'arena>) -> G::Property<'arena> {
         G::Property {
             key: Some(str_expr(key)),
             value: Some(value),
@@ -579,7 +579,7 @@ pub mod BunInfo {
     /// Zig: `pub fn generate(comptime Bundler: type, _: Bundler, allocator) !JSAst.Expr`.
     /// `Bundler` is an unused comptime witness; `allocator` maps onto the
     /// global expr `Store` used by `Expr::init`.
-    pub fn generate<B>(_transpiler: B) -> Result<Expr, bun_core::Error> {
+    pub fn generate<'arena, B>(_transpiler: B) -> Result<Expr<'arena>, bun_core::Error> {
         let info = BunInfo {
             bun_version: Global::package_json_version.as_bytes(),
             platform: generate_platform::for_os(),

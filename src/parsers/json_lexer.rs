@@ -563,7 +563,7 @@ where
     }
 
     /// Zig: `toEString`.
-    pub fn to_e_string(&mut self) -> LexResult<js_ast::E::String> {
+    pub fn to_e_string(&mut self) -> LexResult<js_ast::E::String<'a>> {
         match self.string_literal_raw_format {
             StringLiteralFormat::Ascii => {
                 Ok(js_ast::E::String::init(self.string_literal_raw_content))
@@ -600,7 +600,7 @@ where
     }
 
     /// Zig: `toUTF8EString`.
-    pub fn to_utf8_e_string(&mut self) -> LexResult<js_ast::E::String> {
+    pub fn to_utf8_e_string(&mut self) -> LexResult<js_ast::E::String<'a>> {
         let mut res = self.to_e_string()?;
         if res.is_utf16 {
             let utf8 = strings::to_utf8_alloc(res.slice16());

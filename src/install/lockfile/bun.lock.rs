@@ -1461,7 +1461,7 @@ impl<T> PkgMap<T> {
 
 pub fn parse_into_binary_lockfile(
     lockfile: &mut BinaryLockfile,
-    root: JSON::Expr,
+    root: JSON::Expr<'_>,
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     mut manager: Option<&mut PackageManager>,
@@ -1885,7 +1885,7 @@ pub fn parse_into_binary_lockfile(
         return Err(ParseError::InvalidWorkspaceObject);
     };
 
-    let mut maybe_root_pkg: Option<Expr> = None;
+    let mut maybe_root_pkg: Option<Expr<'_>> = None;
 
     for prop in workspaces_obj
         .data
@@ -1895,7 +1895,7 @@ pub fn parse_into_binary_lockfile(
         .slice()
     {
         let key = prop.key.expect("infallible: prop has key");
-        let value: Expr = prop.value.expect("infallible: prop has value");
+        let value: Expr<'_> = prop.value.expect("infallible: prop has value");
         if !key.is_string() {
             log.add_error(Some(source), key.loc, b"Expected a string");
             return Err(ParseError::InvalidWorkspaceObject);
@@ -2860,14 +2860,14 @@ fn dependency_resolution_failure(
 // and `workspace_paths`.
 fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>(
     lockfile: &mut BinaryLockfile,
-    obj: &Expr,
+    obj: &Expr<'_>,
     log: &mut bun_ast::Log,
     source: &bun_ast::Source,
     optional_peers_buf: &mut HashMap<u64, ()>,
     // Zig: `if (check_for_bundled) string else void` → carried as Option, gated by const generic
     pkg_path: Option<&[u8]>,
     bundled_pkgs: Option<&PkgPathSet>,
-    workspaces_obj: Option<&Expr>,
+    workspaces_obj: Option<&Expr<'_>>,
 ) -> Result<(u32, u32), ParseError> {
     // PORT NOTE: defer optional_peers_buf.clearRetainingCapacity() moved to fn tail
     // (and to each early-return path implicitly via clear-on-next-call semantics in caller).

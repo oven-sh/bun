@@ -271,7 +271,7 @@ mod draft {
         pub opts: Options,
         pub source: Source,
         pub src: &'a [u8],
-        pub out: Expr,
+        pub out: Expr<'a>,
         pub logger: Log,
         pub arena: Arena,
         pub env: &'a mut DotEnvLoader<'a>,
@@ -294,14 +294,14 @@ mod draft {
     }
 
     enum PrepareResult<'bump> {
-        Value(Expr),
-        Section(&'bump mut Rope),
+        Value(Expr<'bump>),
+        Section(&'bump mut Rope<'bump>),
         Key(&'bump [u8]),
     }
 
     impl<'bump> PrepareResult<'bump> {
-        bun_core::enum_unwrap!(PrepareResult, Value   => into fn into_value   -> Expr);
-        bun_core::enum_unwrap!(PrepareResult, Section => into fn into_section -> &'bump mut Rope);
+        bun_core::enum_unwrap!(PrepareResult, Value   => into fn into_value   -> Expr<'bump>);
+        bun_core::enum_unwrap!(PrepareResult, Section => into fn into_section -> &'bump mut Rope<'bump>);
         bun_core::enum_unwrap!(PrepareResult, Key     => into fn into_key     -> &'bump [u8]);
     }
 
@@ -335,7 +335,7 @@ mod draft {
             // TODO(port): borrowck — `head` aliases into `self.out.data.e_object` while
             // `self` is also borrowed mutably for prepare_str(). Kept as raw `*mut`
             // (the underlying `E::Object` lives in the Expr Store, not on `self`).
-            let mut head: *mut E::Object = std::ptr::from_mut::<E::Object>(
+            let mut head: *mut E::Object<'a> = std::ptr::from_mut::<E::Object<'a>>(
                 self.out
                     .data
                     .e_object_mut()
@@ -384,7 +384,7 @@ mod draft {
                         let offset = i32::try_from(line.as_ptr() as usize - src.as_ptr() as usize)
                             .unwrap()
                             + 1;
-                        let section: &mut Rope = self
+                        let section: &mut Rope<'a> = self
                             .prepare_str(
                                 Usage::Section,
                                 bump,
@@ -439,7 +439,7 @@ mod draft {
                                 break 'treat_as_key;
                             }
                         };
-                        head = std::ptr::from_mut::<E::Object>(
+                        head = std::ptr::from_mut::<E::Object<'a>>(
                             parent_object
                                 .data
                                 .e_object_mut()
@@ -497,7 +497,7 @@ mod draft {
                     continue;
                 }
 
-                let value_raw: Expr = 'brk: {
+                let value_raw: Expr<'a> = 'brk: {
                     if let Some(eq_sign_idx) = maybe_eq_sign_idx {
                         if eq_sign_idx + 1 < line.len() {
                             break 'brk self
@@ -515,7 +515,7 @@ mod draft {
                     Expr::init(E::Boolean { value: true }, Loc::EMPTY)
                 };
 
-                let value: Expr = match &value_raw.data {
+                let value: Expr<'a> = match &value_raw.data {
                     ExprData::EString(s) => {
                         if s.data == b"true" {
                             Expr::init(E::Boolean { value: true }, Loc::EMPTY)
@@ -597,11 +597,15 @@ mod draft {
                     // PORTING.md §Allocators / `Parser::init` above). `val` is a
                     // sub-slice of `self.src` and outlives the temporary `Source`.
                     let val_s: &'static [u8] = val.into_str();
-                    let src = Source::init_path_string(self.source.path.text, val_s);
+                    // `parse_utf8_impl` ties its `'arena` to the `source` borrow;
+                    // allocate the `Source` in `bump` so the result is `Expr<'a>`
+                    // directly.
+                    let src: &'a Source =
+                        bump.alloc(Source::init_path_string(self.source.path.text, val_s));
                     let mut log = Log::init();
                     // Try to parse it and if it fails will just treat it as a string
-                    let json_val: Expr =
-                        match bun_parsers::json::parse_utf8_impl::<true>(&src, &mut log, bump) {
+                    let json_val: Expr<'a> =
+                        match bun_parsers::json::parse_utf8_impl::<true>(src, &mut log, bump) {
                             Ok(v) => Expr::from(v),
                             Err(_) => {
                                 // JSON parse failed (e.g., single-quoted string like '${VAR}')
@@ -697,7 +701,7 @@ mod draft {
 
                 // RopeT is *Rope when usage==Section, else unit. In Rust we just
                 // keep an Option<&mut Rope> and ignore it for non-section usages.
-                let mut rope: Option<&'a mut Rope> = None;
+                let mut rope: Option<&'a mut Rope<'a>> = None;
 
                 let mut i: usize = 0;
                 'walk: while i < val.len() {
@@ -1026,10 +1030,10 @@ mod draft {
             Ok(None)
         }
 
-        fn single_str_rope(ropealloc: &'a Arena, str_: &[u8]) -> OOM<&'a mut Rope> {
+        fn single_str_rope(ropealloc: &'a Arena, str_: &[u8]) -> OOM<&'a mut Rope<'a>> {
             let rope = ropealloc.alloc(Rope {
                 head: Expr::init(E::EString::init(str_), Loc::EMPTY),
-                next: ptr::null_mut(),
+                next: None,
             });
             Ok(rope)
         }
@@ -1039,7 +1043,7 @@ mod draft {
             bump: &'a Arena,
             ropealloc: &'a Arena,
             unesc: &mut ArenaVec<'a, u8>,
-            existing_rope: &mut Option<&'a mut Rope>,
+            existing_rope: &mut Option<&'a mut Rope<'a>>,
         ) -> OOM<()> {
             let _ = self; // autofix
             let slice = bump.alloc_slice_copy(&unesc[..]);
@@ -1047,32 +1051,29 @@ mod draft {
             if let Some(r) = existing_rope.as_deref_mut() {
                 let _ = r.append(expr, ropealloc)?;
             } else {
-                *existing_rope = Some(ropealloc.alloc(Rope {
-                    head: expr,
-                    next: ptr::null_mut(),
-                }));
+                *existing_rope = Some(ropealloc.alloc(Rope { head: expr, next: None }));
             }
             unesc.clear();
             Ok(())
         }
 
-        fn str_to_rope(ropealloc: &'a Arena, key: &[u8]) -> OOM<&'a mut Rope> {
+        fn str_to_rope(ropealloc: &'a Arena, key: &[u8]) -> OOM<&'a mut Rope<'a>> {
             let Some(mut dot_idx) = next_dot(key) else {
                 let rope = ropealloc.alloc(Rope {
                     head: Expr::init(E::EString::init(key), Loc::EMPTY),
-                    next: ptr::null_mut(),
+                    next: None,
                 });
                 return Ok(rope);
             };
-            let rope_head: &'a mut Rope = ropealloc.alloc(Rope {
+            let rope_head: &'a mut Rope<'a> = ropealloc.alloc(Rope {
                 head: Expr::init(E::EString::init(&key[..dot_idx]), Loc::EMPTY),
-                next: ptr::null_mut(),
+                next: None,
             });
             // SAFETY: `head` is the same allocation as `rope`'s initial value;
             // we walk `rope` forward via `append` while keeping `head` to return.
             // PORT NOTE: reshaped for borrowck — Zig holds two *Rope simultaneously.
-            let head: *mut Rope = std::ptr::from_mut::<Rope>(rope_head);
-            let mut rope: *mut Rope = head;
+            let head = ptr::NonNull::from(rope_head);
+            let mut rope = head;
 
             while dot_idx + 1 < key.len() {
                 let next_dot_idx = match next_dot(&key[dot_idx + 1..]) {
@@ -1080,21 +1081,21 @@ mod draft {
                     None => {
                         let rest = &key[dot_idx + 1..];
                         // SAFETY: `rope` points into a live bump allocation; no aliasing borrow.
-                        rope = unsafe { &mut *rope }
+                        rope = unsafe { &mut *rope.as_ptr() }
                             .append(Expr::init(E::EString::init(rest), Loc::EMPTY), ropealloc)?;
                         break;
                     }
                 };
                 let part = &key[dot_idx + 1..next_dot_idx];
                 // SAFETY: `rope` points into a live bump allocation; no aliasing borrow.
-                rope = unsafe { &mut *rope }
+                rope = unsafe { &mut *rope.as_ptr() }
                     .append(Expr::init(E::EString::init(part), Loc::EMPTY), ropealloc)?;
                 dot_idx = next_dot_idx;
             }
 
             let _ = rope;
             // SAFETY: head was created by ropealloc.alloc above and is still live in the bump.
-            Ok(unsafe { &mut *head })
+            Ok(unsafe { &mut *head.as_ptr() })
         }
     }
 
@@ -1105,7 +1106,7 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct ToStringFormatter<'a> {
-        pub d: &'a ExprData,
+        pub d: &'a ExprData<'a>,
     }
 
     impl fmt::Display for ToStringFormatter<'_> {
@@ -1153,7 +1154,7 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct ConfigIterator<'a> {
-        pub config: &'a E::Object,
+        pub config: &'a E::Object<'a>,
         pub source: &'a Source,
         pub log: &'a mut Log,
 
@@ -1221,7 +1222,7 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct ScopeIterator<'a> {
-        pub config: &'a E::Object,
+        pub config: &'a E::Object<'a>,
         pub source: &'a Source,
         pub log: &'a mut Log,
 
@@ -1542,7 +1543,7 @@ mod draft {
 
         // SAFETY: `parser.out` is an `E::Object` produced by `Parser::parse`; the
         // arena pointee lives until `parser` drops at end of fn.
-        let out_obj: &E::Object = unsafe {
+        let out_obj: &E::Object<'_> = unsafe {
             &*parser
                 .out
                 .data
@@ -1830,7 +1831,7 @@ mod draft {
     /// overload lives here. The matcher construction is delegated to the shared
     /// `create_matcher` helper in `bun_install_types::NodeLinker`.
     fn pnpm_matcher_from_expr(
-        expr: &Expr,
+        expr: &Expr<'_>,
         log: &mut Log,
         source: &Source,
         bump: &Arena,
@@ -1848,7 +1849,7 @@ mod draft {
             ExprData::EString(s) => {
                 // SAFETY: arena-backed `EString::slice` mutates only its own
                 // resolved-data cache; the StoreRef pointee outlives this call.
-                let s_mut: &mut E::EString = unsafe { &mut *s.as_ptr() };
+                let s_mut: &mut E::EString<'_> = unsafe { &mut *s.as_ptr() };
                 let pattern = s_mut.slice(bump);
                 let matcher = match create_matcher(pattern, &mut buf) {
                     Ok(m) => m,

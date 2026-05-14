@@ -148,7 +148,7 @@ pub struct Printer<'a> {
     pub error_kind: Option<css::PrinterError>,
     pub import_info: Option<ImportInfo<'a>>,
     pub public_path: &'a [u8],
-    pub symbols: &'a SymbolMap,
+    pub symbols: &'a SymbolMap<'a>,
     pub local_names: Option<&'a css::LocalsResultsMap>,
     /// NOTE This should be the same mimalloc heap arena arena
     pub arena: &'a Bump,
@@ -272,7 +272,7 @@ impl<'a> Printer<'a> {
         options: PrinterOptions<'a>,
         import_info: Option<ImportInfo<'a>>,
         local_names: Option<&'a css::LocalsResultsMap>,
-        symbols: &'a SymbolMap,
+        symbols: &'a SymbolMap<'a>,
     ) -> Self {
         Printer {
             sources: None,
@@ -323,7 +323,7 @@ impl<'a> Printer<'a> {
         dest: &'a mut Vec<u8>,
         import_info: Option<ImportInfo<'a>>,
         local_names: Option<&'a css::LocalsResultsMap>,
-        symbols: &'a SymbolMap,
+        symbols: &'a SymbolMap<'a>,
     ) -> Self {
         Printer::new(
             arena,
@@ -875,6 +875,6 @@ const INDENTS_LEVELS: usize = 32;
 static INDENT_SPACES: [u8; INDENTS_LEVELS * 2] = [b' '; INDENTS_LEVELS * 2];
 
 // bun.ast.Symbol.Map — lives in bun_logger.
-type SymbolMap = bun_ast::symbol::Map;
+type SymbolMap<'arena> = bun_ast::symbol::Map<'arena>;
 
 // ported from: src/css/printer.zig

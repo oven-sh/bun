@@ -27,16 +27,16 @@ use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_d
 // `list.items_field()` method calls (codegen'd accessors on the SoA wrappers).
 
 #[allow(clippy::too_many_arguments)]
-pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
-    c: &mut LinkerContext,
+pub fn generate_code_for_file_in_chunk_js<'r, 'src, 'a>(
+    c: &mut LinkerContext<'a>,
     writer: &mut js_printer::BufferWriter,
-    r: renamer::Renamer<'r, 'src>,
-    chunk: &mut Chunk,
+    r: renamer::Renamer<'r, 'src, 'a>,
+    chunk: &mut Chunk<'a>,
     part_range: PartRange,
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
     runtime_require_ref: Option<Ref>,
-    stmts: &mut StmtList,
+    stmts: &mut StmtList<'a>,
     arena: &Bump,
     temp_arena: &Bump,
     decl_collector: Option<&mut DeclCollector>,
@@ -642,15 +642,15 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 // swallow any exceptions thrown during module initialization.
                 let is_async = flags.is_async_or_has_async_dependency;
 
-                struct ExportHoist {
-                    decls: Vec<G::Decl>,
+                struct ExportHoist<'a> {
+                    decls: Vec<G::Decl<'a>>,
                     // BackRef: the arena is the caller's `temp_arena: &Bump`,
                     // which strictly outlives this local helper struct.
                     arena: bun_ptr::BackRef<Bump>,
                 }
 
-                impl ExportHoist {
-                    fn wrap_identifier(&mut self, loc: bun_ast::Loc, ref_: Ref) -> Expr {
+                impl<'a> ExportHoist<'a> {
+                    fn wrap_identifier(&mut self, loc: bun_ast::Loc, ref_: Ref) -> Expr<'a> {
                         // Copy the BackRef so the `&Bump` borrow is detached
                         // from `&mut self` (needed for `self.decls.push`).
                         let arena = self.arena;
@@ -671,7 +671,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         ctx: *mut core::ffi::c_void,
                         loc: bun_ast::Loc,
                         ref_: Ref,
-                    ) -> Expr {
+                    ) -> Expr<'a> {
                         // SAFETY: `ctx` is `&mut ExportHoist` derived at the call site.
                         let this = unsafe { bun_ptr::callback_ctx::<ExportHoist>(ctx) };
                         this.wrap_identifier(loc, ref_)
@@ -982,7 +982,7 @@ impl DeclCollector {
     pub fn collect_from_stmts(
         &mut self,
         stmts: &[Stmt],
-        r: &mut renamer::Renamer<'_, '_>,
+        r: &mut renamer::Renamer<'_, '_, '_>,
         c: &LinkerContext,
     ) {
         for stmt in stmts {
@@ -1020,7 +1020,7 @@ impl DeclCollector {
         &mut self,
         binding: Binding,
         kind: DeclInfoKind,
-        r: &mut renamer::Renamer<'_, '_>,
+        r: &mut renamer::Renamer<'_, '_, '_>,
         c: &LinkerContext,
     ) {
         match binding.data {
@@ -1045,7 +1045,7 @@ impl DeclCollector {
         &mut self,
         ref_: Ref,
         kind: DeclInfoKind,
-        r: &mut renamer::Renamer<'_, '_>,
+        r: &mut renamer::Renamer<'_, '_, '_>,
         c: &LinkerContext,
     ) {
         let followed = c.graph.symbols.follow(ref_);

@@ -8,7 +8,7 @@ use crate::thread_pool;
 pub fn post_process_html_chunk(
     ctx: GenerateChunkCtx,
     worker: &mut thread_pool::Worker,
-    chunk: &mut Chunk,
+    chunk: &mut Chunk<'_>,
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set — Zig `!void` but body has zero `try` sites (inferred-empty)
     // This is where we split output into pieces

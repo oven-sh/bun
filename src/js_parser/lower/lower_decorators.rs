@@ -50,8 +50,8 @@ impl PrivateLoweredInfo {
 
 type PrivateLoweredMap = HashMap<u32, PrivateLoweredInfo>;
 
-struct FieldInitEntry {
-    prop: Property,
+struct FieldInitEntry<'arena> {
+    prop: Property<'arena>,
     is_private: bool,
     is_accessor: bool,
 }
@@ -78,7 +78,7 @@ enum RewriteKind {
 //    raw arena pointers; copying the pointers is the intended Zig semantic). ──
 
 #[inline]
-fn prop_copy(p: &Property) -> Property {
+fn prop_copy<'arena>(p: &Property<'arena>) -> Property<'arena> {
     Property {
         initializer: p.initializer,
         kind: p.kind,
@@ -94,7 +94,7 @@ fn prop_copy(p: &Property) -> Property {
 }
 
 #[inline]
-fn prop_full_copy(p: &Property) -> Property {
+fn prop_full_copy<'arena>(p: &Property<'arena>) -> Property<'arena> {
     // Same as `prop_copy` but preserves `ts_decorators` (used for the "keep
     // undecorated property as-is" path).
     // SAFETY: Vec is repr-compatible with a (ptr,len,cap,origin) POD; the
@@ -114,7 +114,7 @@ fn prop_full_copy(p: &Property) -> Property {
 }
 
 #[inline]
-fn class_copy(c: &G::Class) -> G::Class {
+fn class_copy<'arena>(c: &G::Class<'arena>) -> G::Class<'arena> {
     G::Class {
         class_keyword: c.class_keyword,
         // SAFETY: see `prop_full_copy`.
@@ -136,7 +136,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// recordUsage + E.Identifier in one call.
     #[inline]
-    fn use_ref(&mut self, ref_: Ref, l: bun_ast::Loc) -> Expr {
+    fn use_ref(&mut self, ref_: Ref, l: bun_ast::Loc) -> Expr<'a> {
         self.record_usage(ref_);
         self.new_expr(
             E::Identifier {
@@ -148,7 +148,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Allocate args + callRuntime in one call.
-    fn call_rt(&mut self, l: bun_ast::Loc, name: &'static [u8], args: &[Expr]) -> Expr {
+    fn call_rt(&mut self, l: bun_ast::Loc, name: &'static [u8], args: &[Expr<'a>]) -> Expr<'a> {
         let bump = self.arena;
         let a = bump.alloc_slice_copy(args);
         let list = ExprNodeList::from_arena_slice(a);
@@ -163,7 +163,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Single var declaration statement.
-    fn var_decl(&mut self, ref_: Ref, value: Option<Expr>, l: bun_ast::Loc) -> Stmt {
+    fn var_decl(&mut self, ref_: Ref, value: Option<Expr<'a>>, l: bun_ast::Loc) -> Stmt<'a> {
         let binding = self.b(B::Identifier { r#ref: ref_ }, l);
         let decls = DeclList::from_slice(&[G::Decl { binding, value }]);
         self.s(
@@ -179,11 +179,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn var_decl2(
         &mut self,
         r1: Ref,
-        v1: Option<Expr>,
+        v1: Option<Expr<'a>>,
         r2: Ref,
-        v2: Option<Expr>,
+        v2: Option<Expr<'a>>,
         l: bun_ast::Loc,
-    ) -> Stmt {
+    ) -> Stmt<'a> {
         let b1 = self.b(B::Identifier { r#ref: r1 }, l);
         let b2 = self.b(B::Identifier { r#ref: r2 }, l);
         let decls = DeclList::from_slice(&[
@@ -206,7 +206,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// recordUsage + Expr.assign.
-    fn assign_to(&mut self, ref_: Ref, value: Expr, l: bun_ast::Loc) -> Expr {
+    fn assign_to(&mut self, ref_: Ref, value: Expr<'a>, l: bun_ast::Loc) -> Expr<'a> {
         self.record_usage(ref_);
         Expr::assign(
             self.new_expr(
@@ -221,7 +221,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// new WeakMap() expression.
-    fn new_weak_map_expr(&mut self, l: bun_ast::Loc) -> Expr {
+    fn new_weak_map_expr(&mut self, l: bun_ast::Loc) -> Expr<'a> {
         let ref_ = self.find_symbol(l, b"WeakMap").expect("unreachable").r#ref;
         let target = self.new_expr(
             E::Identifier {
@@ -242,7 +242,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// new WeakSet() expression.
-    fn new_weak_set_expr(&mut self, l: bun_ast::Loc) -> Expr {
+    fn new_weak_set_expr(&mut self, l: bun_ast::Loc) -> Expr<'a> {
         let ref_ = self.find_symbol(l, b"WeakSet").expect("unreachable").r#ref;
         let target = self.new_expr(
             E::Identifier {
@@ -263,7 +263,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Create a static block property from a single expression.
-    fn make_static_block(&mut self, expr: Expr, l: bun_ast::Loc) -> Property {
+    fn make_static_block(&mut self, expr: Expr<'a>, l: bun_ast::Loc) -> Property<'a> {
         let bump = self.arena;
         let stmt = self.s(
             S::SExpr {
@@ -286,7 +286,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Build property access: target.name or target[key].
-    fn member_target(&mut self, target_expr: Expr, prop: &Property) -> Expr {
+    fn member_target(&mut self, target_expr: Expr<'a>, prop: &Property<'a>) -> Expr<'a> {
         let key_expr = prop.key.expect("infallible: prop has key");
         if prop.flags.contains(Flags::Property::IsComputed)
             || matches!(key_expr.data, js_ast::ExprData::ENumber(_))
@@ -334,10 +334,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         is_static: bool,
         storage_ref: Ref,
-        value: Option<Expr>,
+        value: Option<Expr<'a>>,
         loc: bun_ast::Loc,
-        constructor_inject: &mut BumpVec<'_, Stmt>,
-        static_blocks: &mut BumpVec<'_, Property>,
+        constructor_inject: &mut BumpVec<'_, Stmt<'a>>,
+        static_blocks: &mut BumpVec<'_, Property<'a>>,
     ) {
         let target = self.new_expr(E::This {}, loc);
         let storage = self.use_ref(storage_ref, loc);
@@ -360,7 +360,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Get the method kind code (1=method, 2=getter, 3=setter).
-    fn method_kind(prop: &Property) -> u8 {
+    fn method_kind(prop: &Property<'a>) -> u8 {
         match prop.kind {
             PropertyKind::Get => 2,
             PropertyKind::Set => 3,
@@ -401,7 +401,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ── Generic tree rewriter ────────────────────────────
 
-    fn rewrite_expr(&mut self, expr: &mut Expr, kind: RewriteKind) {
+    fn rewrite_expr(&mut self, expr: &mut Expr<'a>, kind: RewriteKind) {
         match kind {
             RewriteKind::ReplaceRef { old, new } => {
                 if let js_ast::ExprData::EIdentifier(id) = &expr.data {
@@ -497,7 +497,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn rewrite_stmts(&mut self, stmts: &mut [Stmt], kind: RewriteKind) {
+    fn rewrite_stmts(&mut self, stmts: &mut [Stmt<'a>], kind: RewriteKind) {
         for cur_stmt in stmts.iter_mut() {
             let cur_loc = cur_stmt.loc;
             match &mut cur_stmt.data {
@@ -631,7 +631,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ── Private access rewriting ─────────────────────────
 
-    fn private_get_expr(&mut self, obj: Expr, info: PrivateLoweredInfo, l: bun_ast::Loc) -> Expr {
+    fn private_get_expr(&mut self, obj: Expr<'a>, info: PrivateLoweredInfo, l: bun_ast::Loc) -> Expr<'a> {
         if let Some(desc_ref) = info.accessor_desc_ref {
             let storage = self.use_ref(info.storage_ref, l);
             let desc = self.use_ref(desc_ref, l);
@@ -661,11 +661,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn private_set_expr(
         &mut self,
-        obj: Expr,
+        obj: Expr<'a>,
         info: PrivateLoweredInfo,
-        val: Expr,
+        val: Expr<'a>,
         l: bun_ast::Loc,
-    ) -> Expr {
+    ) -> Expr<'a> {
         if let Some(desc_ref) = info.accessor_desc_ref {
             let storage = self.use_ref(info.storage_ref, l);
             let desc = self.use_ref(desc_ref, l);
@@ -689,7 +689,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn rewrite_private_accesses_in_expr(&mut self, expr: &mut Expr, map: &PrivateLoweredMap) {
+    fn rewrite_private_accesses_in_expr(&mut self, expr: &mut Expr<'a>, map: &PrivateLoweredMap) {
         let expr_loc = expr.loc;
         match &mut expr.data {
             js_ast::ExprData::EIndex(e) => {
@@ -843,7 +843,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn rewrite_private_accesses_in_stmts(&mut self, stmts: &mut [Stmt], map: &PrivateLoweredMap) {
+    fn rewrite_private_accesses_in_stmts(&mut self, stmts: &mut [Stmt<'a>], map: &PrivateLoweredMap) {
         for stmt_item in stmts.iter_mut() {
             match &mut stmt_item.data {
                 js_ast::StmtData::SExpr(data) => {
@@ -970,7 +970,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ── Public API ───────────────────────────────────────
 
-    pub fn lower_standard_decorators_stmt(&mut self, stmt: Stmt, out: &mut BumpVec<'a, Stmt>) {
+    pub fn lower_standard_decorators_stmt(&mut self, stmt: Stmt<'a>, out: &mut BumpVec<'a, Stmt<'a>>) {
         // Every call site is the visitStmt `s_class` branch. `Stmt` and the
         // `StoreRef<S::Class>` payload are both `Copy`, so we can hold a copy
         // of the arena handle while still passing `stmt` by value below.
@@ -985,10 +985,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn lower_standard_decorators_expr(
         &mut self,
-        class: &mut G::Class,
+        class: &mut G::Class<'a>,
         loc: bun_ast::Loc,
         name_from_context: Option<&'a [u8]>,
-    ) -> Expr {
+    ) -> Expr<'a> {
         let bump = self.arena;
         let mut out = BumpVec::<Stmt>::new_in(bump);
         self.lower_impl(class, loc, name_from_context, true, None, &mut out);
@@ -1006,12 +1006,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[allow(clippy::too_many_lines)]
     fn lower_impl(
         &mut self,
-        class: &mut G::Class,
+        class: &mut G::Class<'a>,
         loc: bun_ast::Loc,
         name_from_context: Option<&'a [u8]>,
         is_expr: bool,
-        original_stmt: Option<Stmt>,
-        out: &mut BumpVec<'a, Stmt>,
+        original_stmt: Option<Stmt<'a>>,
+        out: &mut BumpVec<'a, Stmt<'a>>,
     ) {
         let p = self;
         let bump = p.arena;

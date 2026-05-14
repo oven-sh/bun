@@ -8,12 +8,12 @@ use bun_alloc::Arena; // bumpalo::Bump re-export
 // without touching E.rs. These mirror the Zig bodies 1:1.
 
 #[inline]
-fn store_append_string(s: E::EString) -> StoreRef<E::EString> {
+fn store_append_string<'arena>(s: E::EString<'arena>) -> StoreRef<'arena, E::EString<'arena>> {
     data::Store::append(s)
 }
 
 /// Zig `E.String.push` — link `other` onto `lhs`'s rope tail.
-fn estring_push(lhs: &mut E::EString, mut other: StoreRef<E::EString>) {
+fn estring_push<'arena>(lhs: &mut E::EString<'arena>, mut other: StoreRef<'arena, E::EString<'arena>>) {
     debug_assert!(lhs.is_utf8());
     debug_assert!(other.is_utf8());
 
@@ -43,14 +43,14 @@ fn estring_push(lhs: &mut E::EString, mut other: StoreRef<E::EString>) {
 
 /// Zig `E.String.cloneRopeNodes` — deep-copy the `next` chain into fresh
 /// Store nodes so mutating the result can't alias an inlined-enum's string.
-fn clone_rope_nodes(s: &E::EString) -> E::EString {
+fn clone_rope_nodes<'arena>(s: &E::EString<'arena>) -> E::EString<'arena> {
     let mut root = s.shallow_clone();
     if let Some(first) = root.next {
         // Clone the first link, then walk the freshly-cloned chain via
         // `StoreRef` (safe `Deref`/`DerefMut`) instead of a raw `*mut`
         // cursor. Each cloned node's `next` still points at the original
         // chain (shallow clone), so re-clone link-by-link.
-        let mut tail: StoreRef<E::EString> = store_append_string(first.get().shallow_clone());
+        let mut tail: StoreRef<'arena, E::EString<'arena>> = store_append_string(first.get().shallow_clone());
         root.next = Some(tail);
         while let Some(next) = tail.next {
             let cloned = store_append_string(next.get().shallow_clone());
@@ -69,11 +69,11 @@ fn clone_rope_nodes(s: &E::EString) -> E::EString {
 /// bugs due to inlined enum values sharing `E::String`s. If a new use case
 /// besides inlined enums comes up to set this to true, please rename the
 /// variable and document it.
-fn join_strings(
-    left: &E::EString,
-    right: &E::EString,
+fn join_strings<'arena>(
+    left: &E::EString<'arena>,
+    right: &E::EString<'arena>,
     has_inlined_enum_poison: bool,
-) -> E::EString {
+) -> E::EString<'arena> {
     let mut new = if has_inlined_enum_poison {
         // Inlined enums can be shared by multiple call sites. In
         // this case, we need to ensure that the ENTIRE rope is
@@ -115,15 +115,15 @@ fn join_strings(
 /// arena. `TemplatePart` is POD-shaped (no Drop) but not `Copy` because
 /// `EString` opted out; mirror `Template::fold`'s field-wise copy via
 /// `shallow_clone` instead of raw `copy_nonoverlapping`.
-fn concat_parts(
+fn concat_parts<'arena>(
     bump: &Arena,
-    a: &[e::TemplatePart],
-    b: &[e::TemplatePart],
-) -> crate::StoreSlice<e::TemplatePart> {
-    let mut v = bun_alloc::ArenaVec::<e::TemplatePart>::with_capacity_in(a.len() + b.len(), bump);
+    a: &[e::TemplatePart<'arena>],
+    b: &[e::TemplatePart<'arena>],
+) -> crate::StoreSlice<'arena, e::TemplatePart<'arena>> {
+    let mut v = bun_alloc::ArenaVec::<e::TemplatePart<'arena>>::with_capacity_in(a.len() + b.len(), bump);
     for p in a.iter().chain(b.iter()) {
         // Zig `var part = part.*` — field-wise copy (all fields structurally `Copy`).
-        v.push(e::TemplatePart {
+        v.push(e::TemplatePart::<'arena> {
             value: p.value,
             tail_loc: p.tail_loc,
             tail: p.tail.shallow_clone(),
@@ -146,12 +146,12 @@ pub enum FoldStringAdditionKind {
 
 /// NOTE: unlike esbuild's js_ast_helpers.FoldStringAddition, this does mutate
 /// the input AST in the case of rope strings
-pub fn fold_string_addition(
-    l: Expr,
-    r: Expr,
+pub fn fold_string_addition<'arena>(
+    l: Expr<'arena>,
+    r: Expr<'arena>,
     bump: &Arena,
     kind: FoldStringAdditionKind,
-) -> Option<Expr> {
+) -> Option<Expr<'arena>> {
     // "See through" inline enum constants
     // TODO: implement foldAdditionPreProcess to fold some more things :)
     let mut lhs = l.unwrap_inlined();

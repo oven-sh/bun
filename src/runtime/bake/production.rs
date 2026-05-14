@@ -656,6 +656,7 @@ pub fn build_with_vm(
         // value (NOT a pointer-cast: the bundler matches on its discriminant).
         // Lives in this block's stack frame, outliving the bundle call.
         let mut any_loop = bun_event_loop::AnyEventLoop::js(vm.event_loop().cast());
+        let arena_pool = bun_bundler::ArenaPool::new();
 
         // Spec production.zig:312 — plain `try`; propagate via `?`. Do NOT
         // catch-and-exit here: the bake path expects this call to succeed for
@@ -672,6 +673,7 @@ pub fn build_with_vm(
                 plugins: options.bundler_options.plugin,
             },
             &options.arena,
+            &arena_pool,
             Some(NonNull::from(&mut any_loop)),
         )?
     };

@@ -127,6 +127,7 @@ impl PmVersionCommand {
         };
 
         let mut json = json_result.root;
+        let json_indentation = json_result.indentation;
 
         if !matches!(json.data, ExprData::EObject(_)) {
             Output::err_generic("Failed to parse package.json: root must be an object", ());
@@ -205,7 +206,7 @@ impl PmVersionCommand {
             let mut package_json_writer = JSPrinter::BufferPrinter::init(buffer_writer);
 
             // `bun_ast::Indentation` is the same type the printer consumes.
-            let printer_indent: bun_ast::Indentation = json_result.indentation;
+            let printer_indent: bun_ast::Indentation = json_indentation;
 
             if let Err(err) = JSPrinter::print_json(
                 &mut package_json_writer,

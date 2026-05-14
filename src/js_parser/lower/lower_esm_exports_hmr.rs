@@ -39,15 +39,15 @@ fn generate_temp_ref<'p, const TS: bool, const SCAN: bool>(
     r#ref
 }
 
-pub struct ConvertESMExportsForHmr<'a> {
-    pub last_part: &'a mut js_ast::Part,
+pub struct ConvertESMExportsForHmr<'b, 'a> {
+    pub last_part: &'b mut js_ast::Part<'a>,
     /// files in node modules will not get hot updates, so the code generation
     /// can be a bit more concise for re-exports
     pub is_in_node_modules: bool,
     pub imports_seen: StringArrayHashMap<ImportRef>,
-    pub export_star_props: Vec<G::Property>,
-    pub export_props: Vec<G::Property>,
-    pub stmts: Vec<Stmt>,
+    pub export_star_props: Vec<G::Property<'a>>,
+    pub export_props: Vec<G::Property<'a>>,
+    pub stmts: Vec<Stmt<'a>>,
 }
 // PORT NOTE: Zig used `std.ArrayListUnmanaged` with `p.arena` for the four
 // collections; in Rust the parser arena is a `bumpalo::Bump`, but the consumers
@@ -66,14 +66,14 @@ pub struct DeduplicatedImportResult {
     pub import_record_index: u32,
 }
 
-impl<'a> ConvertESMExportsForHmr<'a> {
+impl<'b, 'a> ConvertESMExportsForHmr<'b, 'a> {
     // PORT NOTE: round-E un-gate — `<P>` unbounded generic → concrete `P<'p, TS, SCAN>`.
     // TODO(b2-ast-E): Zig `p: anytype` also accepts AstBuilder; add `ParserLike` trait bound
     //   when bundle_v2 lands.
-    pub fn convert_stmt<'p, const TS: bool, const SCAN: bool>(
+    pub fn convert_stmt<const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, TS, SCAN>,
-        stmt: Stmt,
+        p: &mut P<'a, TS, SCAN>,
+        stmt: Stmt<'a>,
     ) -> Result<(), AllocError> {
         let new_stmt: Stmt = match stmt.data {
             js_ast::StmtData::SLocal(mut st) => 'stmt: {
@@ -460,7 +460,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         p: &mut P<'p, TS, SCAN>,
         import_record_index: u32,
         namespace_ref: Ref,
-        items: js_ast::StoreSlice<js_ast::ClauseItem>,
+        items: js_ast::StoreSlice<'a, js_ast::ClauseItem<'a>>,
         star_name_loc: Option<bun_ast::Loc>,
         default_name: Option<js_ast::LocRef>,
         loc: bun_ast::Loc,

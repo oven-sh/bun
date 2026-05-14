@@ -45,13 +45,13 @@ type ListManaged<'bump, T> = BumpVec<'bump, T>;
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
-    fn vis_scope(&mut self) -> &mut js_ast::Scope {
+    fn vis_scope(&mut self) -> &mut js_ast::Scope<'a> {
         self.current_scope_mut()
     }
 
     pub fn visit_stmts_and_prepend_temp_refs(
         &mut self,
-        stmts: &mut ListManaged<'a, Stmt>,
+        stmts: &mut ListManaged<'a, Stmt<'a>>,
         opts: &mut PrependTempRefsOpts,
     ) -> Result<(), bun_core::Error> {
         // Zig: `if (only_scan_imports_and_do_not_visit) @compileError(...)`
@@ -90,7 +90,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("oom");
     }
 
-    pub fn visit_func(&mut self, mut func: G::Fn, open_parens_loc: bun_ast::Loc) -> G::Fn {
+    pub fn visit_func(&mut self, mut func: G::Fn<'a>, open_parens_loc: bun_ast::Loc) -> G::Fn<'a> {
         // Zig: `if (only_scan_imports_and_do_not_visit) @compileError(...)`
         debug_assert!(
             !SCAN_ONLY,
@@ -184,7 +184,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         func
     }
 
-    pub fn visit_args(&mut self, args: &mut [G::Arg], opts: VisitArgsOpts) {
+    pub fn visit_args(&mut self, args: &mut [G::Arg<'a>], opts: VisitArgsOpts) {
         let strict_loc = fn_body_contains_use_strict(opts.body);
         let has_simple_args = Self::is_simple_parameter_list(args, opts.has_rest_arg);
         // StringVoidMap::get returns a pool guard; Drop releases (replaces Zig `defer release`).
@@ -232,7 +232,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // PORT NOTE: Zig returned the list by value (`ExprNodeList` is a fat ptr there).
     // `Vec<Expr>` is not `Copy` in Rust; mutate in place instead.
-    pub fn visit_ts_decorators(&mut self, decs: &mut ExprNodeList) {
+    pub fn visit_ts_decorators(&mut self, decs: &mut ExprNodeList<'a>) {
         for dec in decs.slice_mut() {
             self.visit_expr(dec);
         }
@@ -240,7 +240,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(
         &mut self,
-        decls: &mut [G::Decl],
+        decls: &mut [G::Decl<'a>],
         was_const: bool,
     ) -> usize {
         let mut j: usize = 0;
@@ -437,7 +437,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         j
     }
 
-    pub fn visit_binding_and_expr_for_macro(&mut self, binding: Binding, expr: Expr) {
+    pub fn visit_binding_and_expr_for_macro(&mut self, binding: Binding<'a>, expr: Expr<'a>) {
         match binding.data {
             BData::BObject(bound_object) => {
                 let bound_object = bound_object.get();
@@ -521,7 +521,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn visit_decl(
         &mut self,
-        decl: &mut G::Decl,
+        decl: &mut G::Decl<'a>,
         was_anonymous_named_expr: bool,
         could_be_const_value: bool,
         could_be_macro: bool,
@@ -560,7 +560,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn visit_for_loop_init(&mut self, stmt: Stmt, is_in_or_of: bool) -> Stmt {
+    pub fn visit_for_loop_init(&mut self, stmt: Stmt<'a>, is_in_or_of: bool) -> Stmt<'a> {
         match stmt.data {
             StmtData::SExpr(mut st) => {
                 let assign_target = if is_in_or_of {
@@ -596,7 +596,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn visit_binding(
         &mut self,
-        binding: BindingNodeIndex,
+        binding: BindingNodeIndex<'a>,
         mut duplicate_arg_check: Option<&mut StringVoidMap>,
     ) {
         match binding.data {
@@ -708,7 +708,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // PORT NOTE: P::stmts_to_single_stmt is ``-gated (P.rs:6267, blocked on
     // S::Block Default). Inline a local copy until that un-gates.
-    fn stmts_to_single_stmt_(&mut self, loc: bun_ast::Loc, stmts: &'a mut [Stmt]) -> Stmt {
+    fn stmts_to_single_stmt_(&mut self, loc: bun_ast::Loc, stmts: &'a mut [Stmt]) -> Stmt<'a> {
         if stmts.is_empty() {
             return Stmt {
                 data: StmtData::SEmpty(S::Empty {}),
@@ -730,7 +730,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub fn visit_loop_body(&mut self, stmt: Stmt) -> Stmt {
+    pub fn visit_loop_body(&mut self, stmt: Stmt<'a>) -> Stmt<'a> {
         let old_is_inside_loop = self.fn_or_arrow_data_visit.is_inside_loop;
         self.fn_or_arrow_data_visit.is_inside_loop = true;
         self.loop_body = stmt.data;
@@ -739,11 +739,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         res
     }
 
-    pub fn visit_single_stmt_block(&mut self, stmt: Stmt, kind: StmtsKind) -> Stmt {
+    pub fn visit_single_stmt_block(&mut self, stmt: Stmt<'a>, kind: StmtsKind) -> Stmt<'a> {
         let mut new_stmt = stmt;
         self.push_scope_for_visit_pass(ScopeKind::Block, stmt.loc)
             .expect("unreachable");
-        let block_stmts: &[Stmt] = match stmt.data {
+        let block_stmts: &[Stmt<'a>] = match stmt.data {
             StmtData::SBlock(b) => b.stmts.slice(),
             _ => unreachable!(),
         };
@@ -764,7 +764,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         new_stmt
     }
 
-    pub fn visit_single_stmt(&mut self, stmt: Stmt, kind: StmtsKind) -> Stmt {
+    pub fn visit_single_stmt(&mut self, stmt: Stmt<'a>, kind: StmtsKind) -> Stmt<'a> {
         if matches!(stmt.data, StmtData::SBlock(_)) {
             return self.visit_single_stmt_block(stmt, kind);
         }
@@ -794,7 +794,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn visit_class(
         &mut self,
         name_scope_loc: bun_ast::Loc,
-        class: &mut G::Class,
+        class: &mut G::Class<'a>,
         default_name_ref: Ref,
     ) -> Ref {
         // Zig: `if (only_scan_imports_and_do_not_visit) @compileError(...)`
@@ -1204,7 +1204,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // Try separating the list for appending, so that it's not a pointer.
     pub fn visit_stmts(
         &mut self,
-        stmts: &mut ListManaged<'a, Stmt>,
+        stmts: &mut ListManaged<'a, Stmt<'a>>,
         kind: StmtsKind,
     ) -> Result<(), bun_core::Error> {
         // Zig: `if (only_scan_imports_and_do_not_visit) @compileError(...)`

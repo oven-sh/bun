@@ -119,16 +119,19 @@ pub mod Macro {
         // raw pointer involved is `ctx.data`, which is a struct invariant
         // maintained by `init`/`Default` — not a caller precondition. The
         // `#[no_mangle]` body in `bun_js_parser_jsc` is itself a safe `pub fn`.
-        safe fn __bun_macro_context_call(
+        // `'arena` is erased at link time; declaring it lets callers pass
+        // `Expr<'arena>` without a transmute (the impl side round-trips the
+        // arena-owned `Expr` by value into the same arena).
+        safe fn __bun_macro_context_call<'arena>(
             ctx: &mut MacroContext,
             import_record_path: &[u8],
             source_dir: &[u8],
             log: &mut bun_ast::Log,
             source: &bun_ast::Source,
             import_range: bun_ast::Range,
-            caller: bun_ast::Expr,
+            caller: bun_ast::Expr<'arena>,
             function_name: &[u8],
-        ) -> Result<bun_ast::Expr, bun_core::Error>;
+        ) -> Result<bun_ast::Expr<'arena>, bun_core::Error>;
         // NOT `safe fn`: callee derefs `data` unconditionally as
         // `&MacroContext` — caller must guarantee non-null + produced by
         // `__bun_macro_context_init` + the backing `Transpiler.options` table
@@ -142,16 +145,16 @@ pub mod Macro {
         /// Zig: `pub fn call(self: *MacroContext, import_record_path, source_dir,
         /// log, source, import_range, caller, function_name) !Expr`.
         #[inline]
-        pub fn call(
+        pub fn call<'arena>(
             &mut self,
             import_record_path: &[u8],
             source_dir: &[u8],
             log: &mut bun_ast::Log,
             source: &bun_ast::Source,
             import_range: bun_ast::Range,
-            caller: bun_ast::Expr,
+            caller: bun_ast::Expr<'arena>,
             function_name: &[u8],
-        ) -> Result<bun_ast::Expr, bun_core::Error> {
+        ) -> Result<bun_ast::Expr<'arena>, bun_core::Error> {
             __bun_macro_context_call(
                 self,
                 import_record_path,
@@ -226,10 +229,10 @@ use bun_ast::{Ast, Ref};
 // `Ast` variant collapses `Result` to 16 B so only a thin pointer is moved up
 // the stack — one mimalloc-arena alloc per parsed module is far cheaper than
 // 4+ kilobyte memmoves. The other variants are already tiny.
-pub enum Result {
+pub enum Result<'arena> {
     AlreadyBundled(AlreadyBundled),
     Cached,
-    Ast(Box<Ast>),
+    Ast(Box<Ast<'arena>>),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -240,7 +243,7 @@ pub enum AlreadyBundled {
     BytecodeCjs,
 }
 
-pub type BindingList = Vec<Binding>;
+pub type BindingList<'arena> = Vec<Binding<'arena>>;
 
 /// `impl EqlParser for P` — moved out of `bun_ast::expr` (next to `P`).
 impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
@@ -365,7 +368,7 @@ pub mod defines {
 
     #[derive(Clone)]
     pub struct DefineData {
-        pub value: ExprData,
+        pub value: ExprData<'static>,
         // Zig stored `original_name_ptr: ?[*]const u8` + `original_name_len: u32`
         // borrowing into caller-owned strings (defines.zig:24-25 — the 48→40-byte
         // packing trick). The Rust port owns the `RawDefines` value bytes
@@ -398,7 +401,7 @@ pub mod defines {
     /// Named-init shim (mirrors Zig anonymous-struct init).
     pub struct Options<'a> {
         pub original_name: Option<&'a [u8]>,
-        pub value: ExprData,
+        pub value: ExprData<'static>,
         pub valueless: bool,
         pub can_be_removed_if_unused: bool,
         pub call_can_be_unwrapped_if_unused: E::CallUnwrap,
@@ -632,7 +635,7 @@ pub mod defines_full_draft {
 
     #[derive(Clone)]
     pub struct DefineData {
-        pub value: expr::Data,
+        pub value: expr::Data<'static>,
         // Zig stored `original_name_ptr: ?[*]const u8` + `original_name_len: u32`
         // borrowing into caller-owned strings (defines.zig:24-25 — the 48→40-byte
         // packing trick). The Rust port owns the `RawDefines` value bytes
@@ -752,7 +755,7 @@ pub mod defines_full_draft {
                 &mut bun_ast::Log,
                 &bun_alloc::Arena,
             )
-                -> core::result::Result<bun_ast::Expr, bun_core::Error>,
+                -> core::result::Result<bun_ast::Expr<'static>, bun_core::Error>,
         ) -> core::result::Result<DefineData, bun_core::Error> {
             for part in key.split(|&c| c == b'.') {
                 if !js_lexer::is_identifier(part) {
@@ -964,7 +967,7 @@ pub mod renamer {
     use bun_collections::VecExt;
 
     // Round-C alias kept for P.rs/Parser.rs callers.
-    pub type SymbolMap = bun_ast::symbol::Map;
+    pub type SymbolMap<'arena> = bun_ast::symbol::Map<'arena>;
 
     pub fn assign_nested_scope_slots(
         _arena: &bun_alloc::Arena,

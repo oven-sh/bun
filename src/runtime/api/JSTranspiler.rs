@@ -50,7 +50,8 @@ pub struct JSTranspiler {
     /// resting-state log that `transpiler.log: *mut Log` points at between
     /// host-fn calls. `JsCell` so a `*mut Log` can be projected from `&self`.
     pub config: JsCell<Config>,
-    pub scan_pass_result: JsCell<ScanPassResult>,
+    // TRANSITIONAL: see `Config.runtime` — same JSTranspiler-owned arena.
+    pub scan_pass_result: JsCell<ScanPassResult<'static>>,
     pub buffer_writer: JsCell<Option<JSPrinter::BufferWriter>>,
     pub log_level: bun_ast::Level,
     // TODO(port): non-AST crate keeps an arena field for bulk-freeing config strings.
@@ -80,7 +81,10 @@ pub struct Config {
     pub tsconfig_buf: Box<[u8]>,
     pub macros_buf: Box<[u8]>,
     pub log: bun_ast::Log,
-    pub runtime: Runtime::Features,
+    // TRANSITIONAL: `Features<'arena>` ties to the JSTranspiler's owned arena
+    // (sibling field on `JSTranspiler`); erase to `'static` like
+    // `ParseOptions.replace_exports` in bun_bundler.
+    pub runtime: Runtime::Features<'static>,
     pub tree_shaking: bool,
     pub trim_unused_imports: Option<bool>,
     pub inlining: bool,
@@ -489,7 +493,7 @@ impl Config {
                 );
             }
 
-            let mut replacements = bun_ast::runtime::ReplaceableExportMap::default();
+            let mut replacements = bun_ast::runtime::ReplaceableExportMap::<'static>::default();
             // errdefer replacements.clearAndFree(allocator) → Drop on error path
 
             if let Some(eliminate) = exports.get_truthy(global, "eliminate")? {
@@ -693,7 +697,7 @@ pub struct TransformTask<'a> {
     pub tsconfig: Option<&'a TSConfigJSON>,
     pub loader: Loader,
     pub global: &'a JSGlobalObject,
-    pub replace_exports: bun_ast::runtime::ReplaceableExportMap,
+    pub replace_exports: bun_ast::runtime::ReplaceableExportMap<'static>,
 }
 
 pub type AsyncTransformTask<'a> =
@@ -910,11 +914,15 @@ impl<'a> TransformTask<'a> {
 //   js_instance.deref() → IntrusiveRc::drop
 //   bun.destroy(this) → Box drop by owner
 
+// TRANSITIONAL: returns `'static` because the result is stored in
+// `Config.runtime.replace_exports: ReplaceableExportMap<'static>`. The backing
+// data lives in the thread-local AST store + the JSTranspiler-owned `arena`
+// (both outlive `Config`).
 fn export_replacement_value(
     value: JSValue,
     global: &JSGlobalObject,
     arena: &Arena,
-) -> JsResult<Option<bun_ast::Expr>> {
+) -> JsResult<Option<bun_ast::Expr<'static>>> {
     if value.is_boolean() {
         return Ok(Some(Expr {
             data: bun_ast::ExprData::EBoolean(bun_ast::E::Boolean {
@@ -1754,9 +1762,15 @@ impl JSTranspiler {
         // Both are stateless unit structs, so calling the bundler-crate one
         // directly is equivalent.
         // SAFETY: `scan_pass_result` JsCell — `scan()` does not re-enter JS.
+        // TRANSITIONAL: `scan()` ties `scan_pass_result: &'a mut
+        // ScanPassResult<'a>` to the local `&arena` lifetime, but the field is
+        // typed `'static`. Rebind for the call; the result is `reset()` below
+        // before `arena` drops, so no `'a`-data escapes.
+        let scan_pass_result: &mut ScanPassResult<'_> =
+            unsafe { core::mem::transmute(self.scan_pass_result.get_mut()) };
         let scan_result = bun_bundler::cache::JavaScript::init().scan(
             &arena,
-            unsafe { self.scan_pass_result.get_mut() },
+            scan_pass_result,
             opts,
             define,
             &mut log,

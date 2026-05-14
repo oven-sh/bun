@@ -20,8 +20,20 @@ use bun_paths::is_absolute;
 use crate::bun_json as json;
 use crate::initialize_store;
 
+/// TRANSITIONAL: erase `'arena` on an `Expr` that is about to be stored
+/// alongside its owning `Arena` in the same struct (self-referential). The
+/// arena's heap pages do not move when the `Arena` value is moved, so the
+/// pointers remain valid; rustc just cannot express the sibling-borrow.
+#[inline(always)]
+unsafe fn erase_expr_arena<'a>(e: Expr<'a>) -> Expr<'static> {
+    unsafe { core::mem::transmute::<Expr<'a>, Expr<'static>>(e) }
+}
+
 pub struct MapEntry {
-    pub root: Expr,
+    // TRANSITIONAL: `root` borrows from `json_arena` (self-referential). The
+    // proper `'arena` cannot name a sibling field, so erase to `'static` until
+    // the cache is restructured (e.g. ouroboros / arena handle).
+    pub root: Expr<'static>,
     pub source: Source,
     pub indentation: Indentation,
     /// Owns the path bytes that `source.path.{text,pretty,name.*}` borrow.
@@ -63,8 +75,12 @@ impl MapEntry {
     /// invokes this to restore the invariant `root == parse(source)`.
     pub fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
         let json_bump = bun_alloc::Arena::new();
-        let parsed = parse_package_json(&self.source, log, &json_bump, false)?;
-        self.root = bun_core::handle_oom(parsed.root.deep_clone(&json_bump));
+        let root = {
+            let parsed = parse_package_json(&self.source, log, &json_bump, false)?;
+            // SAFETY: `root` is stored alongside `json_bump` below; see `erase_expr_arena`.
+            unsafe { erase_expr_arena(bun_core::handle_oom(parsed.root.deep_clone(&json_bump))) }
+        };
+        self.root = root;
         self.json_arena = json_bump;
         Ok(())
     }
@@ -79,12 +95,12 @@ pub type Map = StringHashMap<MapEntry>;
 // to runtime), so dispatch on that one bool here and keep the rest fixed to
 // match the Zig call sites (.is_json/.allow_comments/.allow_trailing_commas
 // = true, others default false).
-fn parse_package_json(
-    source: &Source,
+fn parse_package_json<'arena>(
+    source: &'arena Source,
     log: &mut Log,
-    bump: &bun_alloc::Arena,
+    bump: &'arena bun_alloc::Arena,
     guess_indentation: bool,
-) -> Result<json::JsonResult, bun_core::Error> {
+) -> Result<json::JsonResult<'arena>, bun_core::Error> {
     if guess_indentation {
         json::parse_package_json_utf8_with_opts::<
             true,  // IS_JSON
@@ -203,18 +219,24 @@ impl WorkspacePackageJSONCache {
         }
 
         let json_bump = bun_alloc::Arena::new();
-        let parsed = match parse_package_json(&source, log, &json_bump, opts.guess_indentation) {
-            Ok(p) => p,
-            Err(err) => {
-                // Zig: `bun.handleErrorReturnTrace(err, @errorReturnTrace())` — no Rust equivalent.
-                return GetResult::ParseErr(err);
-            }
+        let (root, indentation) = {
+            let parsed = match parse_package_json(&source, log, &json_bump, opts.guess_indentation) {
+                Ok(p) => p,
+                Err(err) => {
+                    // Zig: `bun.handleErrorReturnTrace(err, @errorReturnTrace())` — no Rust equivalent.
+                    return GetResult::ParseErr(err);
+                }
+            };
+            // SAFETY: `root` is stored alongside `json_bump` below; see `erase_expr_arena`.
+            let root =
+                unsafe { erase_expr_arena(bun_core::handle_oom(parsed.root.deep_clone(&json_bump))) };
+            (root, parsed.indentation)
         };
 
         let value = MapEntry {
-            root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
+            root,
             source,
-            indentation: parsed.indentation,
+            indentation,
             // `source.path` borrows this allocation; the `Box<[u8]>` heap
             // address is stable across the move into the map.
             path_storage: key,
@@ -260,17 +282,23 @@ impl WorkspacePackageJSONCache {
         }
 
         let json_bump = bun_alloc::Arena::new();
-        let parsed = match parse_package_json(source, log, &json_bump, opts.guess_indentation) {
-            Ok(p) => p,
-            Err(err) => {
-                return GetResult::ParseErr(err);
-            }
+        let (root, indentation) = {
+            let parsed = match parse_package_json(source, log, &json_bump, opts.guess_indentation) {
+                Ok(p) => p,
+                Err(err) => {
+                    return GetResult::ParseErr(err);
+                }
+            };
+            // SAFETY: `root` is stored alongside `json_bump` below; see `erase_expr_arena`.
+            let root =
+                unsafe { erase_expr_arena(bun_core::handle_oom(parsed.root.deep_clone(&json_bump))) };
+            (root, parsed.indentation)
         };
 
         let value = MapEntry {
-            root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
+            root,
             source: source.clone(),
-            indentation: parsed.indentation,
+            indentation,
             path_storage: bun_core::ZBox::default(),
             json_arena: json_bump,
         };

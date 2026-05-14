@@ -414,7 +414,7 @@ impl IdentOrRef {
             .map(|p| unsafe { crate::arena_str(&**p) })
     }
 
-    pub fn as_original_string(self, symbols: &bun_ast::symbol::List) -> &[u8] {
+    pub fn as_original_string<'a>(self, symbols: &'a bun_ast::symbol::List<'_>) -> &'a [u8] {
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len
             return unsafe { crate::arena_str(self.as_ident().unwrap().v) };

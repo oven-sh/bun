@@ -2594,7 +2594,7 @@ pub mod cache {
     #[derive(Default)]
     pub struct JavaScript {}
 
-    pub type JavaScriptResult = bun_js_parser::Result;
+    pub type JavaScriptResult<'arena> = bun_js_parser::Result<'arena>;
 
     impl JavaScript {
         #[inline]

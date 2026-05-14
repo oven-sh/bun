@@ -40,15 +40,15 @@ pub struct AstBuilder<'a, 'bump> {
     pub bump: &'bump Bump,
     pub source: &'a Source,
     pub source_index: u32, // Zig: u31
-    pub stmts: Vec<Stmt>,
-    pub scopes: Vec<*mut Scope>,
-    pub symbols: Vec<Symbol>,
+    pub stmts: Vec<Stmt<'bump>>,
+    pub scopes: Vec<NonNull<Scope<'bump>>>,
+    pub symbols: Vec<Symbol<'bump>>,
     pub import_records: Vec<ImportRecord>,
-    pub named_imports: NamedImports,
+    pub named_imports: NamedImports<'bump>,
     pub named_exports: NamedExports,
     pub import_records_for_current_part: Vec<u32>,
     pub export_star_import_records: Vec<u32>,
-    pub current_scope: *mut Scope,
+    pub current_scope: *mut Scope<'bump>,
     pub log: Log,
     pub module_ref: Ref,
     pub declared_symbols: DeclaredSymbolList,
@@ -87,7 +87,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     }
 
     pub fn init(bump: &'bump Bump, source: &'a Source, hot_reloading: bool) -> Result<Self, OOM> {
-        let scope: *mut Scope = bump.alloc(Scope {
+        let scope: *mut Scope<'bump> = bump.alloc(Scope {
             kind: ScopeKind::Entry,
             label_ref: None,
             parent: None,
@@ -128,7 +128,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     /// pointers / `StoreRef`s and are never dereferenced while a `&mut self`
     /// borrow is held, so the returned `&mut Scope` is unique for its lifetime.
     #[inline]
-    pub fn current_scope_mut(&mut self) -> &mut Scope {
+    pub fn current_scope_mut(&mut self) -> &mut Scope<'bump> {
         debug_assert!(
             !self.current_scope.is_null(),
             "AstBuilder.current_scope read before init()"
@@ -139,10 +139,10 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     }
 
     // PORT NOTE: Zig signature lacks `!` but body uses `try` — porting as fallible.
-    pub fn push_scope(&mut self, kind: ScopeKind) -> Result<*mut Scope, OOM> {
+    pub fn push_scope(&mut self, kind: ScopeKind) -> Result<*mut Scope<'bump>, OOM> {
         self.scopes.reserve(1);
         self.current_scope_mut().children.ensure_unused_capacity(1);
-        let scope: *mut Scope = self.bump.alloc(Scope {
+        let scope: *mut Scope<'bump> = self.bump.alloc(Scope {
             kind,
             label_ref: None,
             parent: NonNull::new(self.current_scope).map(bun_ast::StoreRef::from),
@@ -153,14 +153,15 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         self.current_scope_mut()
             .children
             .append_assume_capacity(NonNull::new(scope).expect("bump alloc non-null").into());
-        self.scopes.push(self.current_scope);
+        self.scopes
+            .push(NonNull::new(self.current_scope).expect("current_scope non-null after init"));
         // PERF(port): was appendAssumeCapacity — profile in Phase B
         self.current_scope = scope;
         Ok(scope)
     }
 
     pub fn pop_scope(&mut self) {
-        self.current_scope = self.scopes.pop().unwrap();
+        self.current_scope = self.scopes.pop().unwrap().as_ptr();
     }
 
     pub fn new_symbol(&mut self, kind: SymbolKind, identifier: &[u8]) -> Result<Ref, OOM> {
@@ -175,12 +176,12 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         self.declared_symbols.append(DeclaredSymbol {
             ref_,
             is_top_level: self.scopes.is_empty()
-                || core::ptr::eq(self.current_scope, self.scopes[0]),
+                || core::ptr::eq(self.current_scope, self.scopes[0].as_ptr()),
         })?;
         Ok(ref_)
     }
 
-    pub fn get_symbol(&mut self, ref_: Ref) -> &mut Symbol {
+    pub fn get_symbol(&mut self, ref_: Ref) -> &mut Symbol<'bump> {
         debug_assert!(ref_.source_index() == self.source.index.0);
         &mut self.symbols[ref_.inner_index() as usize]
     }
@@ -205,8 +206,8 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         &mut self,
         path: &'static [u8],
         identifiers_to_import: [&'static [u8]; N],
-    ) -> Result<[Expr; N], OOM> {
-        let mut out: [MaybeUninit<Expr>; N] = [const { MaybeUninit::uninit() }; N];
+    ) -> Result<[Expr<'bump>; N], OOM> {
+        let mut out: [MaybeUninit<Expr<'bump>>; N] = [const { MaybeUninit::uninit() }; N];
 
         let record = self.add_import_record(path, ImportKind::Stmt)?;
 
@@ -219,7 +220,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let name: &[u8] = self.bump.alloc_slice_copy(&name);
         let namespace_ref = self.new_symbol(SymbolKind::Other, name)?;
 
-        let clauses: &mut [ClauseItem] = self.bump.alloc_slice_fill_default(N);
+        let clauses: &mut [ClauseItem<'bump>] = self.bump.alloc_slice_fill_default(N);
 
         // Zig: `inline for` — all elements are `[]const u8`, so a plain loop suffices.
         for ((import_id, out_ref), clause) in identifiers_to_import
@@ -266,18 +267,18 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(out.map(|e| unsafe { e.assume_init() }))
     }
 
-    pub fn append_stmt<T: StatementData>(&mut self, data: T) -> Result<(), OOM> {
+    pub fn append_stmt<T: StatementData<'bump>>(&mut self, data: T) -> Result<(), OOM> {
         self.stmts.reserve(1);
         self.stmts.push(self.new_stmt(data));
         // PERF(port): was appendAssumeCapacity — profile in Phase B
         Ok(())
     }
 
-    pub fn new_stmt<T: StatementData>(&self, data: T) -> Stmt {
+    pub fn new_stmt<T: StatementData<'bump>>(&self, data: T) -> Stmt<'bump> {
         Stmt::alloc::<T>(data, Loc::EMPTY)
     }
 
-    pub fn new_expr<T: IntoExprData>(&self, data: T) -> Expr {
+    pub fn new_expr<T: IntoExprData<'bump>>(&self, data: T) -> Expr<'bump> {
         Expr::init::<T>(data, Loc::EMPTY)
     }
 
@@ -295,7 +296,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     pub fn to_bundled_ast(
         &mut self,
         target: options::Target,
-    ) -> Result<crate::BundledAst<'static>, OOM> {
+    ) -> Result<crate::BundledAst<'bump>, OOM> {
         // TODO: missing import scanner
         debug_assert!(self.scopes.is_empty());
         let module_scope = self.current_scope;
@@ -650,7 +651,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(())
     }
 
-    pub fn record_exported_binding(&mut self, binding: Binding) {
+    pub fn record_exported_binding(&mut self, binding: Binding<'_>) {
         match binding.data {
             B::BMissing(_) => {}
             B::BIdentifier(ident) => {
@@ -679,7 +680,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     }
 
     /// Zig: `@"module.exports"` — Rust identifiers can't contain `.`
-    pub fn module_exports(&self, loc: Loc) -> Expr {
+    pub fn module_exports(&self, loc: Loc) -> Expr<'bump> {
         self.new_expr(E::Dot {
             name: b"exports".into(),
             name_loc: loc,

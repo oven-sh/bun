@@ -23,11 +23,11 @@ pub use bun_css::BundlerStyleSheet;
 /// the type system. `StoreRef`'s `Deref`/`DerefMut` encapsulate the single
 /// documented `unsafe` deref justified by that invariant; callers use `&*r`
 /// (or `Option::as_deref`) instead of open-coded `unsafe { &*ptr }`.
-pub type CssAstRef = bun_ast::StoreRef<BundlerStyleSheet>;
+pub type CssAstRef<'arena> = bun_ast::StoreRef<'arena, BundlerStyleSheet>;
 
 /// Element type of the `css` SoA column (`items_css()`). Exposed so bundler
 /// call sites can name the column without re-spelling the pointer shape.
-pub type CssCol = Option<CssAstRef>;
+pub type CssCol<'arena> = Option<CssAstRef<'arena>>;
 
 use bun_ast::import_record;
 use bun_core::strings;
@@ -38,9 +38,9 @@ use bun_ast::{part, symbol};
 // TODO(port): verify exact module paths for Ast/Part/Symbol associated `List` types in Phase B.
 
 pub type CommonJSNamedExports = bun_ast::ast_result::CommonJSNamedExports;
-pub type ConstValuesMap = bun_ast::ast_result::ConstValuesMap;
+pub type ConstValuesMap<'arena> = bun_ast::ast_result::ConstValuesMap<'arena>;
 pub type NamedExports = bun_ast::ast_result::NamedExports;
-pub type NamedImports = bun_ast::ast_result::NamedImports;
+pub type NamedImports<'arena> = bun_ast::ast_result::NamedImports<'arena>;
 pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 
 // PORT NOTE: Zig stores `MultiArrayList(BundledAst)` on `Graph.ast` /
@@ -65,14 +65,14 @@ pub struct BundledAst<'arena> {
 
     // PORT NOTE: Ast.hashbang is `StoreStr`; mirror it here so init/to_ast can
     // round-trip.
-    pub hashbang: StoreStr,
-    pub parts: part::List,
+    pub hashbang: StoreStr<'arena>,
+    pub parts: part::List<'arena>,
     // Zig: `?*bun.css.BundlerStyleSheet`. See `CssAstRef` doc for the arena
     // drop-order invariant that backs the safe `Deref`.
-    pub css: CssCol,
+    pub css: CssCol<'arena>,
     pub url_for_css: &'arena [u8],
-    pub symbols: symbol::List,
-    pub module_scope: Scope,
+    pub symbols: symbol::List<'arena>,
+    pub module_scope: Scope<'arena>,
     // TODO(port): Zig used `= undefined`; only valid when flags.HAS_CHAR_FREQ is set.
     pub char_freq: CharFreq,
     pub exports_ref: Ref,
@@ -85,7 +85,7 @@ pub struct BundledAst<'arena> {
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
-    pub named_imports: NamedImports,
+    pub named_imports: NamedImports<'arena>,
     pub named_exports: NamedExports,
     // PORT NOTE: Ast owns Box<[u32]>; matching it here avoids the &'arena↔Box
     // re-alloc on init/to_ast (Zig's `[]u32` is a fat-ptr move either way).
@@ -103,7 +103,7 @@ pub struct BundledAst<'arena> {
     pub target: bun_ast::Target,
 
     // const_values: ConstValuesMap,
-    pub ts_enums: bun_ast::ast_result::TsEnumsMap,
+    pub ts_enums: bun_ast::ast_result::TsEnumsMap<'arena>,
 
     pub flags: Flags,
 }
@@ -114,12 +114,12 @@ bun_collections::multi_array_columns! {
         nested_scope_slot_counts: SlotCounts,
         exports_kind: ExportsKind,
         import_records: import_record::List,
-        hashbang: StoreStr,
-        parts: part::List,
-        css: CssCol,
+        hashbang: StoreStr<'arena>,
+        parts: part::List<'arena>,
+        css: CssCol<'arena>,
         url_for_css: &'arena [u8],
-        symbols: symbol::List,
-        module_scope: Scope,
+        symbols: symbol::List<'arena>,
+        module_scope: Scope<'arena>,
         char_freq: CharFreq,
         exports_ref: Ref,
         module_ref: Ref,
@@ -127,14 +127,14 @@ bun_collections::multi_array_columns! {
         require_ref: Ref,
         top_level_await_keyword: bun_ast::Range,
         tla_check: TlaCheck,
-        named_imports: NamedImports,
+        named_imports: NamedImports<'arena>,
         named_exports: NamedExports,
         export_star_import_records: Box<[u32]>,
         top_level_symbols_to_parts: TopLevelSymbolToParts,
         commonjs_named_exports: CommonJSNamedExports,
         redirect_import_record_index: u32,
         target: bun_ast::Target,
-        ts_enums: bun_ast::ast_result::TsEnumsMap,
+        ts_enums: bun_ast::ast_result::TsEnumsMap<'arena>,
         flags: Flags,
     }
 }
@@ -170,7 +170,7 @@ impl<'arena> BundledAst<'arena> {
     // PORT NOTE: Zig's `*const BundledAst` bitwise-copies every field; the Rust
     // collection types aren't Copy, so consume `self` to move them (toAST is a
     // one-shot conversion back to the fat Ast).
-    pub fn to_ast(self) -> Ast {
+    pub fn to_ast(self) -> Ast<'arena> {
         Ast {
             approximate_newline_count: self.approximate_newline_count as usize,
             nested_scope_slot_counts: self.nested_scope_slot_counts,
@@ -248,7 +248,7 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 
-    pub fn init(ast: Ast) -> Self {
+    pub fn init(ast: Ast<'arena>) -> Self {
         let mut flags = Flags::empty();
         flags.set(Flags::USES_EXPORTS_REF, ast.uses_exports_ref);
         flags.set(Flags::USES_MODULE_REF, ast.uses_module_ref);

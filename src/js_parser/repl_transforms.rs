@@ -26,7 +26,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// - Wraps code with await in async IIFE with variable hoisting
     pub fn apply_repl_transforms<'bump>(
         &mut self,
-        parts: &mut BumpVec<'bump, js_ast::Part>,
+        parts: &mut BumpVec<'bump, js_ast::Part<'a>>,
         bump: &'bump Bump,
     ) -> Result<(), bun_alloc::AllocError> {
         // Skip transform if there's a top-level return (indicates module pattern)
@@ -52,7 +52,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 all_stmts.push(*stmt);
             }
         }
-        let all_stmts: &mut [Stmt] = all_stmts.into_bump_slice_mut();
+        let all_stmts: &mut [Stmt<'a>] = all_stmts.into_bump_slice_mut();
 
         // Check if there's top-level await or imports (imports become dynamic awaited imports)
         let mut has_top_level_await = self.top_level_await_keyword.len > 0;
@@ -73,8 +73,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// `is_async`: true for async IIFE (when top-level await present), false for sync IIFE
     fn repl_transform_with_hoisting<'bump>(
         &mut self,
-        parts: &mut BumpVec<'bump, js_ast::Part>,
-        all_stmts: &[Stmt],
+        parts: &mut BumpVec<'bump, js_ast::Part<'a>>,
+        all_stmts: &[Stmt<'a>],
         bump: &'bump Bump,
         is_async: bool,
     ) -> Result<(), bun_alloc::AllocError> {
@@ -530,9 +530,9 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         &mut self,
         import_data: &S::Import,
         import_items: &[bun_ast::ClauseItem],
-        await_expr: Expr,
-        hoisted_stmts: &mut BumpVec<'bump, Stmt>,
-        inner_stmts: &mut BumpVec<'bump, Stmt>,
+        await_expr: Expr<'a>,
+        hoisted_stmts: &mut BumpVec<'bump, Stmt<'a>>,
+        inner_stmts: &mut BumpVec<'bump, Stmt<'a>>,
         bump: &'bump Bump,
         loc: bun_ast::Loc,
     ) -> Result<(), bun_alloc::AllocError> {
@@ -639,7 +639,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Wrap the last expression in return { value: expr }
     fn repl_wrap_last_expression_with_return<'bump>(
         &mut self,
-        inner_stmts: &mut BumpVec<'bump, Stmt>,
+        inner_stmts: &mut BumpVec<'bump, Stmt<'a>>,
         bump: &'bump Bump,
     ) {
         if !inner_stmts.is_empty() {
@@ -669,8 +669,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Extract individual identifiers from a binding pattern for hoisting
     fn repl_extract_identifiers_from_binding<'bump>(
         &mut self,
-        binding: Binding,
-        decls: &mut BumpVec<'bump, G::Decl>,
+        binding: Binding<'a>,
+        decls: &mut BumpVec<'bump, G::Decl<'a>>,
     ) -> Result<(), bun_alloc::AllocError> {
         match binding.data {
             B::B::BIdentifier(ident) => {
@@ -696,7 +696,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
     /// Create { __proto__: null, value: expr } wrapper object
     /// Uses null prototype to create a clean data object
-    fn repl_wrap_expr_in_value_object<'bump>(&mut self, expr: Expr, bump: &'bump Bump) -> Expr {
+    fn repl_wrap_expr_in_value_object<'bump>(&mut self, expr: Expr<'a>, bump: &'bump Bump) -> Expr<'a> {
         // PERF(port): was bun.handleOom(arena.alloc(G.Property, 2)).
         // G::Property is non-Copy (owns Vec) → use bump Vec instead of alloc_slice_copy.
         let mut properties = BumpVec::<G::Property>::with_capacity_in(2, bump);
@@ -737,10 +737,10 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Create assignment expression from binding pattern
     fn repl_create_binding_assignment<'bump>(
         &mut self,
-        binding: Binding,
-        value: Expr,
+        binding: Binding<'a>,
+        value: Expr<'a>,
         bump: &'bump Bump,
-    ) -> Expr {
+    ) -> Expr<'a> {
         match binding.data {
             B::B::BIdentifier(ident) => {
                 let left = self.new_expr(
@@ -792,7 +792,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
     /// Convert a binding pattern to an expression (for assignment targets)
     /// Handles spread/rest patterns in arrays and objects to match Binding.toExpr behavior
-    fn repl_convert_binding_to_expr<'bump>(&mut self, binding: Binding, bump: &'bump Bump) -> Expr {
+    fn repl_convert_binding_to_expr<'bump>(&mut self, binding: Binding<'a>, bump: &'bump Bump) -> Expr<'a> {
         match binding.data {
             B::B::BIdentifier(ident) => self.new_expr(
                 E::Identifier {
@@ -871,7 +871,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
 /// Bump-allocate a single-element `G::DeclList` (Zig: `Decl.List.fromOwnedSlice(arena.dupe(...))`).
 #[inline]
-fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
+fn repl_one_decl<'arena>(bump: &Bump, binding: Binding<'arena>) -> G::DeclList<'arena> {
     let slice: &mut [G::Decl] = bump.alloc_slice_fill_with(1, |_| G::Decl {
         binding,
         value: None,

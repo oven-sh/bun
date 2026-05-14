@@ -29,25 +29,20 @@ bun_core::declare_scope!(LinkerGraph, visible);
 // were drafted against an older `.items().field_name` shape; rewritten to the
 // `items_<field>()` spelling (matches `LinkerContext.rs`).
 
-pub struct LinkerGraph {
+pub struct LinkerGraph<'a> {
     pub files: FileList,
     pub files_live: BitSet,
     pub entry_points: entry_point::List,
-    pub symbols: symbol::Map,
+    pub symbols: symbol::Map<'a>,
 
-    // PORT NOTE: lifetime-erased. Zig stores `std.mem.Allocator`; the Rust
-    // arena is owned by `BundleV2` and outlives every `LinkerGraph` — kept as
-    // a raw pointer (matching `LinkerContext.parse_graph: *mut Graph`) so the
-    // struct stays `'static`-ish and `LinkerContext`/`Chunk` callers don't
-    // grow a `'bump` parameter yet. Phase B: thread `'bump` once `Chunk` and
-    // `html_import_manifest` gain lifetimes.
+    /// Backref into `Graph.heap` (owned by the [`crate::ArenaPool`]).
     pub bump: bun_ptr::BackRef<Arena>,
 
     pub code_splitting: bool,
 
     // This is an alias from Graph
     // it is not a clone!
-    pub ast: MultiArrayList<JSAst>,
+    pub ast: MultiArrayList<JSAst<'a>>,
     pub meta: MultiArrayList<JSMeta>,
 
     /// We should avoid traversing all files in the bundle, because the linker
@@ -67,7 +62,7 @@ pub struct LinkerGraph {
     /// This is for cross-module inlining of detected inlinable constants
     // const_values: bun_ast::Ast::ConstValuesMap,
     /// This is for cross-module inlining of TypeScript enum constants
-    pub ts_enums: bun_ast::ast_result::TsEnumsMap,
+    pub ts_enums: bun_ast::ast_result::TsEnumsMap<'a>,
 }
 
 // SAFETY: `LinkerGraph` is shared read-mostly across worker threads during
@@ -93,10 +88,10 @@ pub struct LinkerGraph {
 // `Send` is required because `LinkerGraph` is moved into `LinkerContext`
 // which is itself sent to the link task; the only `!Send` constituent is the
 // raw `*const Arena`, whose pointee is `Sync` and outlives the graph.
-unsafe impl Send for LinkerGraph {}
-unsafe impl Sync for LinkerGraph {}
+unsafe impl Send for LinkerGraph<'_> {}
+unsafe impl Sync for LinkerGraph<'_> {}
 
-impl LinkerGraph {
+impl<'a> LinkerGraph<'a> {
     /// `&Arena` accessor — `bump` is a raw backref into `BundleV2`.
     #[inline]
     pub fn arena(&self) -> &Arena {
@@ -106,8 +101,8 @@ impl LinkerGraph {
     }
 }
 
-impl LinkerGraph {
-    pub fn init(bump: &Arena, file_count: usize) -> Result<Self, bun_core::Error> {
+impl<'a> LinkerGraph<'a> {
+    pub fn init(bump: &'a Arena, file_count: usize) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
         Ok(LinkerGraph {
             files: FileList::default(),
@@ -126,7 +121,7 @@ impl LinkerGraph {
     }
 }
 
-impl Default for LinkerGraph {
+impl Default for LinkerGraph<'_> {
     fn default() -> Self {
         LinkerGraph {
             files: FileList::default(),
@@ -212,12 +207,12 @@ pub fn top_level_symbol_to_parts<'a>(
     &[]
 }
 
-pub fn add_part_to_file(
-    parts: &mut [part::List],
+pub fn add_part_to_file<'a>(
+    parts: &mut [part::List<'a>],
     top_level_symbol_to_parts_overlay: &mut [TopLevelSymbolToParts],
     top_level_symbols_to_parts: &[bundled_ast::TopLevelSymbolToParts],
     id: u32,
-    part: Part,
+    part: Part<'a>,
 ) -> Result<u32, bun_alloc::AllocError> {
     let part_id = parts[id as usize].len() as u32; // @truncate (u32)
     parts[id as usize].push(part);
@@ -359,7 +354,7 @@ pub fn generate_symbol_import_and_use(
     Ok(())
 }
 
-impl LinkerGraph {
+impl<'a> LinkerGraph<'a> {
     pub fn runtime_function(&self, name: &[u8]) -> Ref {
         runtime_function(self.ast.items_named_exports(), name)
     }
@@ -442,7 +437,7 @@ impl LinkerGraph {
         )
     }
 
-    pub fn add_part_to_file(&mut self, id: u32, part: Part) -> Result<u32, bun_alloc::AllocError> {
+    pub fn add_part_to_file(&mut self, id: u32, part: Part<'a>) -> Result<u32, bun_alloc::AllocError> {
         let ast = self.ast.split_mut();
         add_part_to_file(
             ast.parts,
@@ -489,7 +484,7 @@ impl LinkerGraph {
     }
 }
 
-impl LinkerGraph {
+impl<'a> LinkerGraph<'a> {
     pub fn load(
         &mut self,
         entry_points: &[Index],

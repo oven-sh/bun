@@ -6,14 +6,14 @@ use crate::s as S;
 use crate::{DebugOnlyDisabler, NewBatcher, StoreRef};
 
 #[derive(Clone, Copy)]
-pub struct Stmt {
+pub struct Stmt<'arena> {
     pub loc: crate::Loc,
-    pub data: Data,
+    pub data: Data<'arena>,
 }
 
-pub type Batcher = NewBatcher<Stmt>;
+pub type Batcher<'arena> = NewBatcher<'arena, Stmt<'arena>>;
 
-impl Stmt {
+impl<'arena> Stmt<'arena> {
     /// Zig: `Stmt.Data.Store.reset()`. Associated wrapper so downstream crates
     /// can call `crate::Stmt::data_store_reset()` without naming the
     /// thread-local Store module path.
@@ -34,7 +34,7 @@ impl Stmt {
         crate::DebugOnlyDisabler::<Stmt>::assert();
     }
 
-    pub fn assign(a: Expr, b: Expr) -> Stmt {
+    pub fn assign(a: Expr<'arena>, b: Expr<'arena>) -> Stmt<'arena> {
         Stmt::alloc(
             S::SExpr {
                 value: Expr::assign(a, b),
@@ -49,14 +49,14 @@ impl Stmt {
 // shape-agnostic `JsonWriter::write<V>`; fields are the serialization
 // contract, not dead, but no reflective writer exists yet to read them.
 #[expect(dead_code)]
-struct Serializable {
+struct Serializable<'arena> {
     r#type: Tag,
     object: &'static [u8],
-    value: Data,
+    value: Data<'arena>,
     loc: crate::Loc,
 }
 
-impl Stmt {
+impl<'arena> Stmt<'arena> {
     pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
     where
         W: crate::JsonWriter,
@@ -89,14 +89,14 @@ impl Stmt {
         false
     }
 
-    pub fn empty() -> Stmt {
+    pub fn empty() -> Stmt<'arena> {
         Stmt {
             data: Data::SEmpty(NONE),
             loc: crate::Loc::default(),
         }
     }
 
-    pub fn to_empty(self) -> Stmt {
+    pub fn to_empty(self) -> Stmt<'arena> {
         Stmt {
             data: Data::SEmpty(NONE),
             loc: self.loc,
@@ -104,7 +104,7 @@ impl Stmt {
     }
 }
 
-impl Default for Stmt {
+impl<'arena> Default for Stmt<'arena> {
     /// Zig: `nullStmtData = Stmt.Data{ .s_empty = s_missing }` (P.zig) — used to
     /// zero-init `loop_body` and bulk-fill stmt slices before population.
     #[inline]
@@ -131,18 +131,18 @@ pub static ICOUNT: AtomicUsize = AtomicUsize::new(0);
 /// The Zig used three near-identical 32-arm comptime switches; in Rust the
 /// dispatch is the trait impl and the arm list is the `impl_statement_data!`
 /// invocation below — diff that list against the Zig switch.
-pub trait StatementData: Sized {
+pub trait StatementData<'arena>: Sized {
     /// Wrap an already-allocated payload (Zig `Stmt.init` / `comptime_init`).
-    fn wrap_ref(ptr: StoreRef<Self>) -> Data;
+    fn wrap_ref(ptr: StoreRef<'arena, Self>) -> Data<'arena>;
     /// Store-append `self` and wrap (Zig `Stmt.alloc` / `comptime_alloc`).
-    fn store_alloc(self) -> Data;
+    fn store_alloc(self) -> Data<'arena>;
     /// Arena-allocate `self` and wrap (Zig `Stmt.allocate` / `allocateData`).
-    fn arena_alloc(self, bump: &bun_alloc::Arena) -> Data;
+    fn arena_alloc(self, bump: &bun_alloc::Arena) -> Data<'arena>;
 }
 
-impl Stmt {
+impl<'arena> Stmt<'arena> {
     #[inline]
-    pub fn init<T: StatementData>(orig_data: StoreRef<T>, loc: crate::Loc) -> Stmt {
+    pub fn init<T: StatementData<'arena>>(orig_data: StoreRef<'arena, T>, loc: crate::Loc) -> Stmt<'arena> {
         #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, Ordering::Relaxed);
         Stmt {
@@ -154,7 +154,7 @@ impl Stmt {
     // Zig `comptime_alloc` — folded into `StatementData::store_alloc`; kept as a
     // private helper for diff parity.
     #[inline]
-    fn comptime_alloc<T: StatementData>(orig_data: T, loc: crate::Loc) -> Stmt {
+    fn comptime_alloc<T: StatementData<'arena>>(orig_data: T, loc: crate::Loc) -> Stmt<'arena> {
         Stmt {
             loc,
             data: orig_data.store_alloc(),
@@ -162,11 +162,11 @@ impl Stmt {
     }
 
     // Zig `allocateData` — folded into `StatementData::arena_alloc`.
-    fn allocate_data<T: StatementData>(
+    fn allocate_data<T: StatementData<'arena>>(
         bump: &bun_alloc::Arena,
         orig_data: T,
         loc: crate::Loc,
-    ) -> Stmt {
+    ) -> Stmt<'arena> {
         // `arena.create(@TypeOf(origData)) catch unreachable; value.* = origData;`
         // → bump.alloc(orig_data), performed inside arena_alloc.
         Stmt {
@@ -181,7 +181,7 @@ impl Stmt {
     // TODO(port): no direct equivalent; callers use the trait.
 
     #[inline]
-    pub fn alloc<T: StatementData>(orig_data: T, loc: crate::Loc) -> Stmt {
+    pub fn alloc<T: StatementData<'arena>>(orig_data: T, loc: crate::Loc) -> Stmt<'arena> {
         data::Store::assert();
         #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, Ordering::Relaxed);
@@ -189,24 +189,24 @@ impl Stmt {
     }
 }
 
-pub type Disabler = DebugOnlyDisabler<Stmt>;
+pub type Disabler = DebugOnlyDisabler<Stmt<'static>>;
 
-impl Stmt {
+impl<'arena> Stmt<'arena> {
     /// When the lifetime of an Stmt.Data's pointer must exist longer than reset() is called, use this function.
     /// Be careful to free the memory (or use an arena that does it for you)
     /// Also, prefer Stmt.init or Stmt.alloc when possible. This will be slower.
-    pub fn allocate<T: StatementData>(
+    pub fn allocate<T: StatementData<'arena>>(
         bump: &bun_alloc::Arena,
         orig_data: T,
         loc: crate::Loc,
-    ) -> Stmt {
+    ) -> Stmt<'arena> {
         data::Store::assert();
         #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, Ordering::Relaxed);
         Stmt::allocate_data(bump, orig_data, loc)
     }
 
-    pub fn allocate_expr(bump: &bun_alloc::Arena, expr: Expr) -> Stmt {
+    pub fn allocate_expr(bump: &bun_alloc::Arena, expr: Expr<'arena>) -> Stmt<'arena> {
         Stmt::allocate(
             bump,
             S::SExpr {
@@ -222,31 +222,46 @@ impl Stmt {
 
 macro_rules! impl_statement_data {
     // Pointer-payload variants: stored via Store / arena.
-    ( ptr: $( ($ty:ty, $variant:ident) ),* $(,)?
+    ( ptr: $( ($ty:ident, $variant:ident) ),* $(,)?
+      ; ptr_nolife: $( ($pty:ident, $pvariant:ident) ),* $(,)?
       ; inline: $( ($ity:ty, $ivariant:ident) ),* $(,)? ) => {
         $(
-            impl StatementData for $ty {
+            impl<'arena> StatementData<'arena> for S::$ty<'arena> {
                 #[inline]
-                fn wrap_ref(ptr: StoreRef<Self>) -> Data { Data::$variant(ptr) }
+                fn wrap_ref(ptr: StoreRef<'arena, Self>) -> Data<'arena> { Data::$variant(ptr) }
                 #[inline]
-                fn store_alloc(self) -> Data {
+                fn store_alloc(self) -> Data<'arena> {
                     Data::$variant(data::Store::append(self))
                 }
                 #[inline]
-                fn arena_alloc(self, bump: &bun_alloc::Arena) -> Data {
+                fn arena_alloc(self, bump: &bun_alloc::Arena) -> Data<'arena> {
                     // TODO(port): StoreRef vs &'bump — Phase B unify arena ref type
                     Data::$variant(StoreRef::from_bump(bump.alloc(self)))
                 }
             }
         )*
         $(
-            impl StatementData for $ity {
+            impl<'arena> StatementData<'arena> for S::$pty {
                 #[inline]
-                fn wrap_ref(_ptr: StoreRef<Self>) -> Data { Data::$ivariant(<$ity>::default()) }
+                fn wrap_ref(ptr: StoreRef<'arena, Self>) -> Data<'arena> { Data::$pvariant(ptr) }
                 #[inline]
-                fn store_alloc(self) -> Data { Data::$ivariant(self) }
+                fn store_alloc(self) -> Data<'arena> {
+                    Data::$pvariant(data::Store::append(self))
+                }
                 #[inline]
-                fn arena_alloc(self, _bump: &bun_alloc::Arena) -> Data { Data::$ivariant(self) }
+                fn arena_alloc(self, bump: &bun_alloc::Arena) -> Data<'arena> {
+                    Data::$pvariant(StoreRef::from_bump(bump.alloc(self)))
+                }
+            }
+        )*
+        $(
+            impl<'arena> StatementData<'arena> for $ity {
+                #[inline]
+                fn wrap_ref(_ptr: StoreRef<'arena, Self>) -> Data<'arena> { Data::$ivariant(<$ity>::default()) }
+                #[inline]
+                fn store_alloc(self) -> Data<'arena> { Data::$ivariant(self) }
+                #[inline]
+                fn arena_alloc(self, _bump: &bun_alloc::Arena) -> Data<'arena> { Data::$ivariant(self) }
             }
         )*
     };
@@ -254,35 +269,36 @@ macro_rules! impl_statement_data {
 
 impl_statement_data! {
     ptr:
-        (S::Block,         SBlock),
-        (S::Break,         SBreak),
-        (S::Class,         SClass),
-        (S::Comment,       SComment),
-        (S::Continue,      SContinue),
-        (S::Directive,     SDirective),
-        (S::DoWhile,       SDoWhile),
-        (S::Enum,          SEnum),
-        (S::ExportClause,  SExportClause),
-        (S::ExportDefault, SExportDefault),
-        (S::ExportEquals,  SExportEquals),
-        (S::ExportFrom,    SExportFrom),
-        (S::ExportStar,    SExportStar),
-        (S::SExpr,         SExpr),
-        (S::ForIn,         SForIn),
-        (S::ForOf,         SForOf),
-        (S::For,           SFor),
-        (S::Function,      SFunction),
-        (S::If,            SIf),
-        (S::Import,        SImport),
-        (S::Label,         SLabel),
-        (S::Local,         SLocal),
-        (S::Namespace,     SNamespace),
-        (S::Return,        SReturn),
-        (S::Switch,        SSwitch),
-        (S::Throw,         SThrow),
-        (S::Try,           STry),
-        (S::While,         SWhile),
-        (S::With,          SWith),
+        (Block,         SBlock),
+        (Class,         SClass),
+        (Comment,       SComment),
+        (Directive,     SDirective),
+        (DoWhile,       SDoWhile),
+        (Enum,          SEnum),
+        (ExportClause,  SExportClause),
+        (ExportDefault, SExportDefault),
+        (ExportEquals,  SExportEquals),
+        (ExportFrom,    SExportFrom),
+        (ExportStar,    SExportStar),
+        (SExpr,         SExpr),
+        (ForIn,         SForIn),
+        (ForOf,         SForOf),
+        (For,           SFor),
+        (Function,      SFunction),
+        (If,            SIf),
+        (Import,        SImport),
+        (Label,         SLabel),
+        (Local,         SLocal),
+        (Namespace,     SNamespace),
+        (Return,        SReturn),
+        (Switch,        SSwitch),
+        (Throw,         SThrow),
+        (Try,           STry),
+        (While,         SWhile),
+        (With,          SWith),
+    ; ptr_nolife:
+        (Break,         SBreak),
+        (Continue,      SContinue),
     ; inline:
         (S::Empty,      SEmpty),
         (S::Debugger,   SDebugger),
@@ -352,42 +368,42 @@ impl Tag {
 
 #[derive(Clone, Copy, bun_core::EnumTag)]
 #[enum_tag(existing = Tag)]
-pub enum Data {
-    SBlock(StoreRef<S::Block>),
-    SBreak(StoreRef<S::Break>),
-    SClass(StoreRef<S::Class>),
-    SComment(StoreRef<S::Comment>),
-    SContinue(StoreRef<S::Continue>),
-    SDirective(StoreRef<S::Directive>),
-    SDoWhile(StoreRef<S::DoWhile>),
-    SEnum(StoreRef<S::Enum>),
-    SExportClause(StoreRef<S::ExportClause>),
-    SExportDefault(StoreRef<S::ExportDefault>),
-    SExportEquals(StoreRef<S::ExportEquals>),
-    SExportFrom(StoreRef<S::ExportFrom>),
-    SExportStar(StoreRef<S::ExportStar>),
-    SExpr(StoreRef<S::SExpr>),
-    SForIn(StoreRef<S::ForIn>),
-    SForOf(StoreRef<S::ForOf>),
-    SFor(StoreRef<S::For>),
-    SFunction(StoreRef<S::Function>),
-    SIf(StoreRef<S::If>),
-    SImport(StoreRef<S::Import>),
-    SLabel(StoreRef<S::Label>),
-    SLocal(StoreRef<S::Local>),
-    SNamespace(StoreRef<S::Namespace>),
-    SReturn(StoreRef<S::Return>),
-    SSwitch(StoreRef<S::Switch>),
-    SThrow(StoreRef<S::Throw>),
-    STry(StoreRef<S::Try>),
-    SWhile(StoreRef<S::While>),
-    SWith(StoreRef<S::With>),
+pub enum Data<'arena> {
+    SBlock(StoreRef<'arena, S::Block<'arena>>),
+    SBreak(StoreRef<'arena, S::Break>),
+    SClass(StoreRef<'arena, S::Class<'arena>>),
+    SComment(StoreRef<'arena, S::Comment<'arena>>),
+    SContinue(StoreRef<'arena, S::Continue>),
+    SDirective(StoreRef<'arena, S::Directive<'arena>>),
+    SDoWhile(StoreRef<'arena, S::DoWhile<'arena>>),
+    SEnum(StoreRef<'arena, S::Enum<'arena>>),
+    SExportClause(StoreRef<'arena, S::ExportClause<'arena>>),
+    SExportDefault(StoreRef<'arena, S::ExportDefault<'arena>>),
+    SExportEquals(StoreRef<'arena, S::ExportEquals<'arena>>),
+    SExportFrom(StoreRef<'arena, S::ExportFrom<'arena>>),
+    SExportStar(StoreRef<'arena, S::ExportStar<'arena>>),
+    SExpr(StoreRef<'arena, S::SExpr<'arena>>),
+    SForIn(StoreRef<'arena, S::ForIn<'arena>>),
+    SForOf(StoreRef<'arena, S::ForOf<'arena>>),
+    SFor(StoreRef<'arena, S::For<'arena>>),
+    SFunction(StoreRef<'arena, S::Function<'arena>>),
+    SIf(StoreRef<'arena, S::If<'arena>>),
+    SImport(StoreRef<'arena, S::Import<'arena>>),
+    SLabel(StoreRef<'arena, S::Label<'arena>>),
+    SLocal(StoreRef<'arena, S::Local<'arena>>),
+    SNamespace(StoreRef<'arena, S::Namespace<'arena>>),
+    SReturn(StoreRef<'arena, S::Return<'arena>>),
+    SSwitch(StoreRef<'arena, S::Switch<'arena>>),
+    SThrow(StoreRef<'arena, S::Throw<'arena>>),
+    STry(StoreRef<'arena, S::Try<'arena>>),
+    SWhile(StoreRef<'arena, S::While<'arena>>),
+    SWith(StoreRef<'arena, S::With<'arena>>),
 
     STypeScript(S::TypeScript),
     SEmpty(S::Empty), // special case, its a zero value type
     SDebugger(S::Debugger),
 
-    SLazyExport(StoreRef<expr::Data>),
+    SLazyExport(StoreRef<'arena, expr::Data<'arena>>),
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
@@ -400,25 +416,25 @@ pub enum Data {
 // NonNull niche), so `Option<Stmt>` / `Option<Data>` add no discriminant word.
 // Adding `#[repr(C)]`/`#[repr(u8)]` to `Data` or a nullable `*mut T` payload
 // would break this — the asserts catch it.
-const _: () = assert!(core::mem::size_of::<Data>() == 16);
+const _: () = assert!(core::mem::size_of::<Data<'static>>() == 16);
 const _: () = assert!(
-    core::mem::size_of::<Stmt>() <= 24,
+    core::mem::size_of::<Stmt<'static>>() <= 24,
     "Expected Stmt to be <= 24 bytes"
 );
 const _: () = assert!(
-    core::mem::size_of::<Option<Data>>() == core::mem::size_of::<Data>(),
+    core::mem::size_of::<Option<Data<'static>>>() == core::mem::size_of::<Data<'static>>(),
     "stmt::Data lost its niche — check for #[repr] or nullable-ptr payload"
 );
 const _: () = assert!(
-    core::mem::size_of::<Option<Stmt>>() == core::mem::size_of::<Stmt>(),
+    core::mem::size_of::<Option<Stmt<'static>>>() == core::mem::size_of::<Stmt<'static>>(),
     "Stmt lost its niche"
 );
-const _: () = assert!(core::mem::size_of::<StoreRef<S::SExpr>>() == core::mem::size_of::<usize>());
+const _: () = assert!(core::mem::size_of::<StoreRef<'static, S::SExpr<'static>>>() == core::mem::size_of::<usize>());
 
 /// Zig: `std.meta.eql(p.loop_body, stmt.data)` (visitStmt.zig) — tag compare,
 /// then payload compare. Payloads here are arena pointers (`StoreRef<T>`) or
 /// ZSTs, so this is tag + pointer-identity, never a deep structural compare.
-impl PartialEq for Data {
+impl<'arena> PartialEq for Data<'arena> {
     fn eq(&self, other: &Self) -> bool {
         use Data::*;
         match (*self, *other) {
@@ -459,7 +475,7 @@ impl PartialEq for Data {
         }
     }
 }
-impl Eq for Data {}
+impl<'arena> Eq for Data<'arena> {}
 
 // Zig field-style union accessors (`data.s_function`, `data.s_local`, …).
 // visitStmt and the printer port from Zig's `data.s_local.*` etc., which are
@@ -467,10 +483,10 @@ impl Eq for Data {}
 // the `Option` is the cheapest sound encoding of Zig's UB-on-mismatch.
 // Mirrors `expr::Data::e_*()`. Returns `Option<StoreRef<T>>` (Copy) for
 // pointer-payload variants and `Option<T>` by value for inline ZST variants.
-impl Data {
-    // ── StoreRef<S::*> field-style accessors ────────────────────────────
+impl<'arena> Data<'arena> {
+    // ── StoreRef<'arena, S::*> field-style accessors ────────────────────────────
     #[inline]
-    pub fn s_block(&self) -> Option<StoreRef<S::Block>> {
+    pub fn s_block(&self) -> Option<StoreRef<'arena, S::Block<'arena>>> {
         if let Data::SBlock(v) = *self {
             Some(v)
         } else {
@@ -478,7 +494,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_block_mut(&mut self) -> Option<&mut S::Block> {
+    pub fn s_block_mut(&mut self) -> Option<&mut S::Block<'arena>> {
         if let Data::SBlock(v) = self {
             Some(&mut **v)
         } else {
@@ -486,7 +502,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_break(&self) -> Option<StoreRef<S::Break>> {
+    pub fn s_break(&self) -> Option<StoreRef<'arena, S::Break>> {
         if let Data::SBreak(v) = *self {
             Some(v)
         } else {
@@ -502,7 +518,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_class(&self) -> Option<StoreRef<S::Class>> {
+    pub fn s_class(&self) -> Option<StoreRef<'arena, S::Class<'arena>>> {
         if let Data::SClass(v) = *self {
             Some(v)
         } else {
@@ -510,7 +526,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_class_mut(&mut self) -> Option<&mut S::Class> {
+    pub fn s_class_mut(&mut self) -> Option<&mut S::Class<'arena>> {
         if let Data::SClass(v) = self {
             Some(&mut **v)
         } else {
@@ -518,7 +534,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_comment(&self) -> Option<StoreRef<S::Comment>> {
+    pub fn s_comment(&self) -> Option<StoreRef<'arena, S::Comment<'arena>>> {
         if let Data::SComment(v) = *self {
             Some(v)
         } else {
@@ -526,7 +542,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_comment_mut(&mut self) -> Option<&mut S::Comment> {
+    pub fn s_comment_mut(&mut self) -> Option<&mut S::Comment<'arena>> {
         if let Data::SComment(v) = self {
             Some(&mut **v)
         } else {
@@ -534,7 +550,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_continue(&self) -> Option<StoreRef<S::Continue>> {
+    pub fn s_continue(&self) -> Option<StoreRef<'arena, S::Continue>> {
         if let Data::SContinue(v) = *self {
             Some(v)
         } else {
@@ -550,7 +566,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_directive(&self) -> Option<StoreRef<S::Directive>> {
+    pub fn s_directive(&self) -> Option<StoreRef<'arena, S::Directive<'arena>>> {
         if let Data::SDirective(v) = *self {
             Some(v)
         } else {
@@ -558,7 +574,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_directive_mut(&mut self) -> Option<&mut S::Directive> {
+    pub fn s_directive_mut(&mut self) -> Option<&mut S::Directive<'arena>> {
         if let Data::SDirective(v) = self {
             Some(&mut **v)
         } else {
@@ -566,7 +582,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_do_while(&self) -> Option<StoreRef<S::DoWhile>> {
+    pub fn s_do_while(&self) -> Option<StoreRef<'arena, S::DoWhile<'arena>>> {
         if let Data::SDoWhile(v) = *self {
             Some(v)
         } else {
@@ -574,7 +590,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_do_while_mut(&mut self) -> Option<&mut S::DoWhile> {
+    pub fn s_do_while_mut(&mut self) -> Option<&mut S::DoWhile<'arena>> {
         if let Data::SDoWhile(v) = self {
             Some(&mut **v)
         } else {
@@ -582,7 +598,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_enum(&self) -> Option<StoreRef<S::Enum>> {
+    pub fn s_enum(&self) -> Option<StoreRef<'arena, S::Enum<'arena>>> {
         if let Data::SEnum(v) = *self {
             Some(v)
         } else {
@@ -590,7 +606,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_enum_mut(&mut self) -> Option<&mut S::Enum> {
+    pub fn s_enum_mut(&mut self) -> Option<&mut S::Enum<'arena>> {
         if let Data::SEnum(v) = self {
             Some(&mut **v)
         } else {
@@ -598,7 +614,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_export_clause(&self) -> Option<StoreRef<S::ExportClause>> {
+    pub fn s_export_clause(&self) -> Option<StoreRef<'arena, S::ExportClause<'arena>>> {
         if let Data::SExportClause(v) = *self {
             Some(v)
         } else {
@@ -606,7 +622,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_export_clause_mut(&mut self) -> Option<&mut S::ExportClause> {
+    pub fn s_export_clause_mut(&mut self) -> Option<&mut S::ExportClause<'arena>> {
         if let Data::SExportClause(v) = self {
             Some(&mut **v)
         } else {
@@ -614,7 +630,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_export_default(&self) -> Option<StoreRef<S::ExportDefault>> {
+    pub fn s_export_default(&self) -> Option<StoreRef<'arena, S::ExportDefault<'arena>>> {
         if let Data::SExportDefault(v) = *self {
             Some(v)
         } else {
@@ -622,7 +638,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_export_default_mut(&mut self) -> Option<&mut S::ExportDefault> {
+    pub fn s_export_default_mut(&mut self) -> Option<&mut S::ExportDefault<'arena>> {
         if let Data::SExportDefault(v) = self {
             Some(&mut **v)
         } else {
@@ -630,7 +646,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_export_equals(&self) -> Option<StoreRef<S::ExportEquals>> {
+    pub fn s_export_equals(&self) -> Option<StoreRef<'arena, S::ExportEquals<'arena>>> {
         if let Data::SExportEquals(v) = *self {
             Some(v)
         } else {
@@ -638,7 +654,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_export_equals_mut(&mut self) -> Option<&mut S::ExportEquals> {
+    pub fn s_export_equals_mut(&mut self) -> Option<&mut S::ExportEquals<'arena>> {
         if let Data::SExportEquals(v) = self {
             Some(&mut **v)
         } else {
@@ -646,7 +662,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_export_from(&self) -> Option<StoreRef<S::ExportFrom>> {
+    pub fn s_export_from(&self) -> Option<StoreRef<'arena, S::ExportFrom<'arena>>> {
         if let Data::SExportFrom(v) = *self {
             Some(v)
         } else {
@@ -654,7 +670,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_export_from_mut(&mut self) -> Option<&mut S::ExportFrom> {
+    pub fn s_export_from_mut(&mut self) -> Option<&mut S::ExportFrom<'arena>> {
         if let Data::SExportFrom(v) = self {
             Some(&mut **v)
         } else {
@@ -662,7 +678,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_export_star(&self) -> Option<StoreRef<S::ExportStar>> {
+    pub fn s_export_star(&self) -> Option<StoreRef<'arena, S::ExportStar<'arena>>> {
         if let Data::SExportStar(v) = *self {
             Some(v)
         } else {
@@ -670,7 +686,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_export_star_mut(&mut self) -> Option<&mut S::ExportStar> {
+    pub fn s_export_star_mut(&mut self) -> Option<&mut S::ExportStar<'arena>> {
         if let Data::SExportStar(v) = self {
             Some(&mut **v)
         } else {
@@ -678,7 +694,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_expr(&self) -> Option<StoreRef<S::SExpr>> {
+    pub fn s_expr(&self) -> Option<StoreRef<'arena, S::SExpr<'arena>>> {
         if let Data::SExpr(v) = *self {
             Some(v)
         } else {
@@ -686,7 +702,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_expr_mut(&mut self) -> Option<&mut S::SExpr> {
+    pub fn s_expr_mut(&mut self) -> Option<&mut S::SExpr<'arena>> {
         if let Data::SExpr(v) = self {
             Some(&mut **v)
         } else {
@@ -694,7 +710,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_for_in(&self) -> Option<StoreRef<S::ForIn>> {
+    pub fn s_for_in(&self) -> Option<StoreRef<'arena, S::ForIn<'arena>>> {
         if let Data::SForIn(v) = *self {
             Some(v)
         } else {
@@ -702,7 +718,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_for_in_mut(&mut self) -> Option<&mut S::ForIn> {
+    pub fn s_for_in_mut(&mut self) -> Option<&mut S::ForIn<'arena>> {
         if let Data::SForIn(v) = self {
             Some(&mut **v)
         } else {
@@ -710,7 +726,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_for_of(&self) -> Option<StoreRef<S::ForOf>> {
+    pub fn s_for_of(&self) -> Option<StoreRef<'arena, S::ForOf<'arena>>> {
         if let Data::SForOf(v) = *self {
             Some(v)
         } else {
@@ -718,7 +734,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_for_of_mut(&mut self) -> Option<&mut S::ForOf> {
+    pub fn s_for_of_mut(&mut self) -> Option<&mut S::ForOf<'arena>> {
         if let Data::SForOf(v) = self {
             Some(&mut **v)
         } else {
@@ -726,7 +742,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_for(&self) -> Option<StoreRef<S::For>> {
+    pub fn s_for(&self) -> Option<StoreRef<'arena, S::For<'arena>>> {
         if let Data::SFor(v) = *self {
             Some(v)
         } else {
@@ -734,7 +750,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_for_mut(&mut self) -> Option<&mut S::For> {
+    pub fn s_for_mut(&mut self) -> Option<&mut S::For<'arena>> {
         if let Data::SFor(v) = self {
             Some(&mut **v)
         } else {
@@ -742,7 +758,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_function(&self) -> Option<StoreRef<S::Function>> {
+    pub fn s_function(&self) -> Option<StoreRef<'arena, S::Function<'arena>>> {
         if let Data::SFunction(v) = *self {
             Some(v)
         } else {
@@ -750,7 +766,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_function_mut(&mut self) -> Option<&mut S::Function> {
+    pub fn s_function_mut(&mut self) -> Option<&mut S::Function<'arena>> {
         if let Data::SFunction(v) = self {
             Some(&mut **v)
         } else {
@@ -758,7 +774,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_if(&self) -> Option<StoreRef<S::If>> {
+    pub fn s_if(&self) -> Option<StoreRef<'arena, S::If<'arena>>> {
         if let Data::SIf(v) = *self {
             Some(v)
         } else {
@@ -766,7 +782,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_if_mut(&mut self) -> Option<&mut S::If> {
+    pub fn s_if_mut(&mut self) -> Option<&mut S::If<'arena>> {
         if let Data::SIf(v) = self {
             Some(&mut **v)
         } else {
@@ -774,7 +790,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_import(&self) -> Option<StoreRef<S::Import>> {
+    pub fn s_import(&self) -> Option<StoreRef<'arena, S::Import<'arena>>> {
         if let Data::SImport(v) = *self {
             Some(v)
         } else {
@@ -782,7 +798,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_import_mut(&mut self) -> Option<&mut S::Import> {
+    pub fn s_import_mut(&mut self) -> Option<&mut S::Import<'arena>> {
         if let Data::SImport(v) = self {
             Some(&mut **v)
         } else {
@@ -790,7 +806,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_label(&self) -> Option<StoreRef<S::Label>> {
+    pub fn s_label(&self) -> Option<StoreRef<'arena, S::Label<'arena>>> {
         if let Data::SLabel(v) = *self {
             Some(v)
         } else {
@@ -798,7 +814,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_label_mut(&mut self) -> Option<&mut S::Label> {
+    pub fn s_label_mut(&mut self) -> Option<&mut S::Label<'arena>> {
         if let Data::SLabel(v) = self {
             Some(&mut **v)
         } else {
@@ -806,7 +822,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_local(&self) -> Option<StoreRef<S::Local>> {
+    pub fn s_local(&self) -> Option<StoreRef<'arena, S::Local<'arena>>> {
         if let Data::SLocal(v) = *self {
             Some(v)
         } else {
@@ -814,7 +830,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_local_mut(&mut self) -> Option<&mut S::Local> {
+    pub fn s_local_mut(&mut self) -> Option<&mut S::Local<'arena>> {
         if let Data::SLocal(v) = self {
             Some(&mut **v)
         } else {
@@ -822,7 +838,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_namespace(&self) -> Option<StoreRef<S::Namespace>> {
+    pub fn s_namespace(&self) -> Option<StoreRef<'arena, S::Namespace<'arena>>> {
         if let Data::SNamespace(v) = *self {
             Some(v)
         } else {
@@ -830,7 +846,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_namespace_mut(&mut self) -> Option<&mut S::Namespace> {
+    pub fn s_namespace_mut(&mut self) -> Option<&mut S::Namespace<'arena>> {
         if let Data::SNamespace(v) = self {
             Some(&mut **v)
         } else {
@@ -838,7 +854,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_return(&self) -> Option<StoreRef<S::Return>> {
+    pub fn s_return(&self) -> Option<StoreRef<'arena, S::Return<'arena>>> {
         if let Data::SReturn(v) = *self {
             Some(v)
         } else {
@@ -846,7 +862,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_return_mut(&mut self) -> Option<&mut S::Return> {
+    pub fn s_return_mut(&mut self) -> Option<&mut S::Return<'arena>> {
         if let Data::SReturn(v) = self {
             Some(&mut **v)
         } else {
@@ -854,7 +870,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_switch(&self) -> Option<StoreRef<S::Switch>> {
+    pub fn s_switch(&self) -> Option<StoreRef<'arena, S::Switch<'arena>>> {
         if let Data::SSwitch(v) = *self {
             Some(v)
         } else {
@@ -862,7 +878,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_switch_mut(&mut self) -> Option<&mut S::Switch> {
+    pub fn s_switch_mut(&mut self) -> Option<&mut S::Switch<'arena>> {
         if let Data::SSwitch(v) = self {
             Some(&mut **v)
         } else {
@@ -870,7 +886,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_throw(&self) -> Option<StoreRef<S::Throw>> {
+    pub fn s_throw(&self) -> Option<StoreRef<'arena, S::Throw<'arena>>> {
         if let Data::SThrow(v) = *self {
             Some(v)
         } else {
@@ -878,7 +894,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_throw_mut(&mut self) -> Option<&mut S::Throw> {
+    pub fn s_throw_mut(&mut self) -> Option<&mut S::Throw<'arena>> {
         if let Data::SThrow(v) = self {
             Some(&mut **v)
         } else {
@@ -886,7 +902,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_try(&self) -> Option<StoreRef<S::Try>> {
+    pub fn s_try(&self) -> Option<StoreRef<'arena, S::Try<'arena>>> {
         if let Data::STry(v) = *self {
             Some(v)
         } else {
@@ -894,7 +910,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_try_mut(&mut self) -> Option<&mut S::Try> {
+    pub fn s_try_mut(&mut self) -> Option<&mut S::Try<'arena>> {
         if let Data::STry(v) = self {
             Some(&mut **v)
         } else {
@@ -902,7 +918,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_while(&self) -> Option<StoreRef<S::While>> {
+    pub fn s_while(&self) -> Option<StoreRef<'arena, S::While<'arena>>> {
         if let Data::SWhile(v) = *self {
             Some(v)
         } else {
@@ -910,7 +926,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_while_mut(&mut self) -> Option<&mut S::While> {
+    pub fn s_while_mut(&mut self) -> Option<&mut S::While<'arena>> {
         if let Data::SWhile(v) = self {
             Some(&mut **v)
         } else {
@@ -918,7 +934,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_with(&self) -> Option<StoreRef<S::With>> {
+    pub fn s_with(&self) -> Option<StoreRef<'arena, S::With<'arena>>> {
         if let Data::SWith(v) = *self {
             Some(v)
         } else {
@@ -926,7 +942,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_with_mut(&mut self) -> Option<&mut S::With> {
+    pub fn s_with_mut(&mut self) -> Option<&mut S::With<'arena>> {
         if let Data::SWith(v) = self {
             Some(&mut **v)
         } else {
@@ -934,7 +950,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_lazy_export(&self) -> Option<StoreRef<expr::Data>> {
+    pub fn s_lazy_export(&self) -> Option<StoreRef<'arena, expr::Data<'arena>>> {
         if let Data::SLazyExport(v) = *self {
             Some(v)
         } else {
@@ -942,7 +958,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_lazy_export_mut(&mut self) -> Option<&mut expr::Data> {
+    pub fn s_lazy_export_mut(&mut self) -> Option<&mut expr::Data<'arena>> {
         if let Data::SLazyExport(v) = self {
             Some(&mut **v)
         } else {
@@ -982,38 +998,40 @@ impl Data {
 
 // `new_store!` emits `pub mod stmt_store { pub struct Store; ... }` with
 // `init/append/reset/destroy`. Type list mirrors Zig's `Data.Store = NewStore(&.{...}, 128)`.
+// Types use `'static` here because the macro only uses them for size/align
+// computation; the actual `append<T>` is generic over the caller's `'arena`.
 crate::new_store!(
     stmt_store,
     [
-        S::Block,
+        S::Block<'static>,
         S::Break,
-        S::Class,
-        S::Comment,
+        S::Class<'static>,
+        S::Comment<'static>,
         S::Continue,
-        S::Directive,
-        S::DoWhile,
-        S::Enum,
-        S::ExportClause,
-        S::ExportDefault,
-        S::ExportEquals,
-        S::ExportFrom,
-        S::ExportStar,
-        S::SExpr,
-        S::ForIn,
-        S::ForOf,
-        S::For,
-        S::Function,
-        S::If,
-        S::Import,
-        S::Label,
-        S::Local,
-        S::Namespace,
-        S::Return,
-        S::Switch,
-        S::Throw,
-        S::Try,
-        S::While,
-        S::With,
+        S::Directive<'static>,
+        S::DoWhile<'static>,
+        S::Enum<'static>,
+        S::ExportClause<'static>,
+        S::ExportDefault<'static>,
+        S::ExportEquals<'static>,
+        S::ExportFrom<'static>,
+        S::ExportStar<'static>,
+        S::SExpr<'static>,
+        S::ForIn<'static>,
+        S::ForOf<'static>,
+        S::For<'static>,
+        S::Function<'static>,
+        S::If<'static>,
+        S::Import<'static>,
+        S::Label<'static>,
+        S::Local<'static>,
+        S::Namespace<'static>,
+        S::Return<'static>,
+        S::Switch<'static>,
+        S::Throw<'static>,
+        S::Try<'static>,
+        S::While<'static>,
+        S::With<'static>,
     ],
     128
 );
@@ -1028,7 +1046,7 @@ pub mod data {
 // TODO(port): callers should use the `StatementData` trait or a per-variant
 // associated type; revisit once call sites are known.
 
-impl Stmt {
+impl<'arena> Stmt<'arena> {
     pub fn cares_about_scope(&self) -> bool {
         match &self.data {
             Data::SBlock(_)

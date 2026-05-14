@@ -117,14 +117,14 @@ impl<'a, const TAG: ResolutionTag> ResolverContext for NewResolver<'a, TAG> {
         matches!(TAG, ResolutionTag::Folder | ResolutionTag::Symlink)
     }
 
-    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: &Expr) {
+    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: &Expr<'_>) {
         builder.count(self.folder_path);
     }
 
     fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
-        _json: &Expr,
+        _json: &Expr<'_>,
     ) -> Result<ResolutionType<u64>, bun_core::Error> {
         // Zig: @unionInit(Resolution.Value, @tagName(tag), builder.append(String, this.folder_path))
         let appended = builder.append::<SemverString>(self.folder_path);
@@ -150,12 +150,12 @@ impl ResolverContext for CacheFolderResolver {
         true
     }
 
-    fn count(&mut self, _builder: &mut StringBuilder<'_>, _json: &Expr) {}
+    fn count(&mut self, _builder: &mut StringBuilder<'_>, _json: &Expr<'_>) {}
 
     fn resolve(
         &mut self,
         _builder: &mut StringBuilder<'_>,
-        _json: &Expr,
+        _json: &Expr<'_>,
     ) -> Result<ResolutionType<u64>, bun_core::Error> {
         Ok(ResolutionType::<u64>::init(TaggedValue::Npm(
             VersionedURLType {
@@ -305,7 +305,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         // `Expr` is `Copy`; take a raw pointer to `source` so the borrow on
         // `workspace_package_json_cache` ends before `&mut *manager_ptr` is
         // formed for `parse_with_json`.
-        let root: Expr = json.root;
+        let root: Expr<'_> = json.root;
         let source: *const bun_ast::Source = &raw const json.source;
 
         // SAFETY: see PORT NOTE above on borrow splitting.

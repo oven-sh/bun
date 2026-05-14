@@ -1406,10 +1406,10 @@ mod __css_validation {
         }
     }
 
-    pub(super) fn validate_css_import_composes(
-        this: &mut LinkerContext,
+    pub(super) fn validate_css_import_composes<'a>(
+        this: &mut LinkerContext<'a>,
         id: usize,
-        css_asts: *mut [CssCol],
+        css_asts: *mut [CssCol<'a>],
         import_records_list: *mut [ImportRecordList],
         input_files: *mut [Source],
     ) {
@@ -1490,12 +1490,12 @@ mod __css_validation {
     /// 2. Composing from the global scope is pretty rare
     ///
     /// We should find a way to do this without incurring performance penalties to the common cases.
-    fn validate_composes_from_properties(
-        this: &mut LinkerContext,
+    fn validate_composes_from_properties<'a>(
+        this: &mut LinkerContext<'a>,
         index: IndexInt,
         root_css_ast: &BundlerStyleSheet,
         import_records_list: *mut [ImportRecordList],
-        all_css_asts: *mut [CssCol],
+        all_css_asts: *mut [CssCol<'a>],
     ) {
         #[derive(Default)]
         struct PropertyInFile {
@@ -1503,19 +1503,19 @@ mod __css_validation {
             range: bun_ast::Range,
         }
 
-        struct Visitor<'a> {
+        struct Visitor<'r, 'a> {
             visited: ArrayHashMap<bun_ast::Ref, ()>,
             properties: StringArrayHashMap<PropertyInFile>,
             all_import_records: *mut [ImportRecordList],
-            all_css_asts: *mut [CssCol],
-            all_symbols: &'a symbol::Map,
+            all_css_asts: *mut [CssCol<'a>],
+            all_symbols: &'r symbol::Map<'a>,
             all_sources: *mut [Source],
-            log: &'a mut Log,
+            log: &'r mut Log,
         }
 
         // PORT NOTE: `pub fn deinit` → Drop on `visited` / `properties` handles cleanup.
 
-        impl<'a> Visitor<'a> {
+        impl<'r, 'a> Visitor<'r, 'a> {
             fn add_property_or_warn(
                 &mut self,
                 local: bun_ast::Ref,

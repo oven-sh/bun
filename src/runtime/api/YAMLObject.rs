@@ -1031,7 +1031,7 @@ pub struct ParserCtx<'a> {
     stack_check: StackCheck,
 
     global: &'a JSGlobalObject,
-    root: Expr,
+    root: Expr<'a>,
 
     result: JSValue,
 }
@@ -1105,7 +1105,7 @@ impl<'a> ParserCtx<'a> {
     pub fn to_js(
         &mut self,
         args: &mut MarkedArgumentBuffer,
-        expr: Expr,
+        expr: Expr<'a>,
     ) -> Result<JSValue, ToJsError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ToJsError::StackOverflow);

@@ -2298,7 +2298,7 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
 // parameter is dropped to keep `update_catalog_definitions` borrowck-clean.
 pub fn edit_catalog_definitions(
     updates: &mut [CatalogUpdateRequest],
-    current_package_json: &mut Expr,
+    current_package_json: &mut Expr<'_>,
 ) -> Result<(), bun_core::Error> {
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
@@ -2343,10 +2343,10 @@ enum CatalogSource {
 /// Find the `StoreRef<E::Object>` for `package_json[.workspaces].<key>`, or
 /// `None` if absent / not an object. Mirrors the labeled-block lookup in
 /// updateDefaultCatalog/updateNamedCatalog.
-fn find_catalog_object(
-    package_json: &Expr,
+fn find_catalog_object<'arena>(
+    package_json: &Expr<'arena>,
     key: &[u8],
-) -> (Option<bun_ast::StoreRef<E::Object>>, CatalogSource) {
+) -> (Option<bun_ast::StoreRef<'arena, E::Object<'arena>>>, CatalogSource) {
     if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
         if workspaces_query.expr.is_object() {
             if let Some(q) = workspaces_query.expr.as_property(key) {
@@ -2366,7 +2366,7 @@ fn find_catalog_object(
 
 fn update_default_catalog(
     bump: &Bump,
-    package_json: &mut Expr,
+    package_json: &mut Expr<'_>,
     package_name: &[u8],
     new_version: &[u8],
 ) -> Result<(), bun_core::Error> {
@@ -2456,7 +2456,7 @@ fn update_default_catalog(
 
 fn update_named_catalog(
     bump: &Bump,
-    package_json: &mut Expr,
+    package_json: &mut Expr<'_>,
     catalog_name: &[u8],
     package_name: &[u8],
     new_version: &[u8],
@@ -2478,7 +2478,7 @@ fn update_named_catalog(
 
         // Get or create the specific catalog
         let mut fresh_catalog = E::Object::default();
-        let existing_catalog: Option<bun_ast::StoreRef<E::Object>> = catalogs_obj
+        let existing_catalog: Option<bun_ast::StoreRef<'_, E::Object<'_>>> = catalogs_obj
             .get(catalog_name)
             .and_then(|e| e.data.e_object());
         let catalog_obj: &mut E::Object = match existing_catalog {

@@ -18,8 +18,8 @@ use bun_crash_handler::handle_oom::handle_oom;
 // PORT NOTE: Zig file-level struct → Rust struct. `stmts` is a sub-slice of the
 // input `stmts` argument (in-place compacted), so it borrows from the caller.
 #[derive(Default)]
-pub struct ImportScanner<'a> {
-    pub stmts: &'a mut [Stmt],
+pub struct ImportScanner<'b, 'a> {
+    pub stmts: &'b mut [Stmt<'a>],
     pub kept_import_equals: bool,
     pub removed_import_equals: bool,
 }
@@ -31,26 +31,25 @@ fn raw_str(s: &'static [u8]) -> js_ast::StoreStr {
     js_ast::StoreStr::new(s)
 }
 
-impl<'a> ImportScanner<'a> {
+impl<'b, 'a> ImportScanner<'b, 'a> {
     // TODO(port): narrow error set
     // PORT NOTE: round-E un-gate — `<P>` unbounded generic → concrete `P<'a, TS, SCAN>`.
     // TODO(b2-ast-E): the Zig also accepts `bun.bundle_v2.AstBuilder` as P (comptime
     //   `P != AstBuilder` check). Round-E only handles the parser P; AstBuilder path
     //   needs a `ParserLike` trait or a separate monomorphization.
     pub fn scan<
-        'p,
         const TYPESCRIPT: bool,
         const SCAN_ONLY: bool,
         const HOT_MODULE_RELOADING_TRANSFORMATIONS: bool,
     >(
-        p: &mut P<'p, TYPESCRIPT, SCAN_ONLY>,
-        stmts: &'a mut [Stmt],
+        p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
+        stmts: &'b mut [Stmt<'a>],
         will_transform_to_common_js: bool,
         // PORT NOTE: Zig used `if (comptime_bool) *T else void` for this param's
         // type; Rust const generics can't gate a param type, so use Option and
         // debug-assert presence matches the const.
-        mut hot_module_reloading_context: Option<&mut ConvertESMExportsForHmr>,
-    ) -> Result<ImportScanner<'a>, bun_core::Error> {
+        mut hot_module_reloading_context: Option<&mut ConvertESMExportsForHmr<'_, 'a>>,
+    ) -> Result<ImportScanner<'b, 'a>, bun_core::Error> {
         debug_assert_eq!(
             HOT_MODULE_RELOADING_TRANSFORMATIONS,
             hot_module_reloading_context.is_some()
@@ -557,7 +556,7 @@ impl<'a> ImportScanner<'a> {
                     if st.func.flags.contains(bun_ast::flags::Function::IsExport) {
                         if let Some(name) = st.func.name {
                             // SAFETY: arena-owned slice valid for 'p.
-                            let original_name: &'p [u8] = p.symbols
+                            let original_name: &'a [u8] = p.symbols
                                 [name.ref_.expect("infallible: ref bound").inner_index() as usize]
                                 .original_name
                                 .slice();
@@ -582,7 +581,7 @@ impl<'a> ImportScanner<'a> {
                     if st.is_export {
                         if let Some(name) = st.class.class_name {
                             // SAFETY: arena-owned slice valid for 'p.
-                            let original_name: &'p [u8] = p.symbols
+                            let original_name: &'a [u8] = p.symbols
                                 [name.ref_.expect("infallible: ref bound").inner_index() as usize]
                                 .original_name
                                 .slice();
@@ -684,7 +683,7 @@ impl<'a> ImportScanner<'a> {
                     // SAFETY: arena-owned slice valid for 'p.
                     for item in st.items.slice().iter() {
                         // SAFETY: arena-owned alias slice valid for 'p.
-                        let alias: &'p [u8] = item.alias.slice();
+                        let alias: &'a [u8] = item.alias.slice();
                         p.record_export(
                             item.alias_loc,
                             alias,
@@ -710,7 +709,7 @@ impl<'a> ImportScanner<'a> {
                                 local_parts_with_uses: Default::default(),
                             },
                         )?;
-                        let original: &'p [u8] = alias.original_name.slice();
+                        let original: &'a [u8] = alias.original_name.slice();
                         p.record_export(alias.loc, original, st.namespace_ref)?;
                         p.import_records.items_mut()[st.import_record_index as usize]
                             .flags
@@ -748,7 +747,7 @@ impl<'a> ImportScanner<'a> {
                             },
                         )?;
                         // SAFETY: arena-owned alias slice valid for 'p.
-                        let alias: &'p [u8] = item.alias.slice();
+                        let alias: &'a [u8] = item.alias.slice();
                         p.record_export(item.name.loc, alias, ref_)?;
 
                         let record =

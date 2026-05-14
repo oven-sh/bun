@@ -200,7 +200,7 @@ impl Bin {
 
     /// Used for packages read from text lockfile / pnpm migration.
     pub fn parse_append(
-        bin_expr: &Expr,
+        bin_expr: &Expr<'_>,
         buf: &mut bun_semver::string::Buf,
         extern_strings: &mut Vec<ExternalString>,
     ) -> Result<Bin, AllocError> {
@@ -290,7 +290,7 @@ impl Bin {
     }
 
     pub fn parse_append_from_directories(
-        bin_expr: &Expr,
+        bin_expr: &Expr<'_>,
         buf: &mut bun_semver::string::Buf,
     ) -> Result<Bin, AllocError> {
         if let Some(bin_str) = bin_expr.as_utf8_string_literal() {

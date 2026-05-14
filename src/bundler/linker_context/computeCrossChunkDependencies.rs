@@ -14,9 +14,9 @@ use crate::{
     JSMeta, Ref, RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
 };
 
-pub fn compute_cross_chunk_dependencies(
-    c: &mut LinkerContext,
-    chunks: &mut [Chunk],
+pub fn compute_cross_chunk_dependencies<'a>(
+    c: &mut LinkerContext<'a>,
+    chunks: &mut [Chunk<'a>],
 ) -> Result<(), bun_alloc::AllocError> {
     if !c.graph.code_splitting {
         // No need to compute cross-chunk dependencies if there can't be any
@@ -47,13 +47,9 @@ pub fn compute_cross_chunk_dependencies(
         // `from_ref(c)` would push a SharedRO tag that the `&mut c.graph.X` reborrows
         // pop, leaving the raw dangling under SB.
         //
-        // Lifetime-erase the `LinkerContext<'_>` so the struct's `'a` (which
-        // ties only the local SoA-column borrows) is not forced to equal the
-        // LinkerContext's invariant `'_`. `NonNull::from(&mut *c)` preserves
-        // `c`'s Unique provenance (see PORT NOTE above).
-        let ctx_ref = bun_ptr::BackRef::from(
-            core::ptr::NonNull::from(&mut *c).cast::<LinkerContext<'static>>(),
-        );
+        // `NonNull::from(&mut *c)` preserves `c`'s Unique provenance (see PORT
+        // NOTE above); `'a` is the arena lifetime so no erasure is needed.
+        let ctx_ref = bun_ptr::BackRef::from(core::ptr::NonNull::from(&mut *c));
         // `BackRef` from raw place addr (not `BackRef::new(&…)`) so no
         // intermediate `&` borrow is pushed before the `split_mut()` calls
         // below — matches the `ctx_ref` construction pattern just above.
@@ -87,39 +83,37 @@ pub fn compute_cross_chunk_dependencies(
     compute_cross_chunk_dependencies_with_chunk_metas(c, chunks, &mut chunk_metas)
 }
 
-pub struct CrossChunkDependencies<'a> {
-    chunk_meta: &'a mut [ChunkMeta],
+pub struct CrossChunkDependencies<'r, 'a> {
+    chunk_meta: &'r mut [ChunkMeta],
     // PORT NOTE: `BackRef` — the same `[Chunk]` slice is also iterated mutably by
     // the caller's sequential `walk` loop; `walk` only reads `chunks[other].unique_key`
     // (disjoint from the per-iteration `&mut Chunk`). The slice outlives the struct
     // (caller stack frame).
-    chunks: bun_ptr::BackRef<[Chunk]>,
-    parts: &'a [Vec<Part>],
-    import_records: &'a mut [Vec<ImportRecord>],
-    flags: &'a [js_meta::Flags],
-    entry_point_chunk_indices: &'a [IndexInt],
-    imports_to_bind: &'a [RefImportData],
-    wrapper_refs: &'a [Ref],
-    exports_refs: &'a [Ref],
+    chunks: bun_ptr::BackRef<[Chunk<'a>]>,
+    parts: &'r [Vec<Part<'a>>],
+    import_records: &'r mut [Vec<ImportRecord>],
+    flags: &'r [js_meta::Flags],
+    entry_point_chunk_indices: &'r [IndexInt],
+    imports_to_bind: &'r [RefImportData],
+    wrapper_refs: &'r [Ref],
+    exports_refs: &'r [Ref],
     // Zig: []const []const string → SoA column type is Box<[Box<[u8]>]>
-    sorted_and_filtered_export_aliases: &'a [Box<[Box<[u8]>]>],
-    resolved_exports: &'a [ResolvedExports],
+    sorted_and_filtered_export_aliases: &'r [Box<[Box<[u8]>]>],
+    resolved_exports: &'r [ResolvedExports],
     // PORT NOTE: `BackRef` — Zig stores `*LinkerContext` / `*Symbol.Map` and freely
     // aliases `c.graph` columns alongside; borrowck cannot express that split, so
-    // opt out here via `BackRef` (safe `Deref` at each use site in `walk`). Lifetime
-    // erased (`'static`) so the outer `CrossChunkDependencies<'_>` borrow is not tied
-    // to the LinkerContext's own invariant lifetime parameter.
-    ctx: bun_ptr::BackRef<LinkerContext<'static>>,
+    // opt out here via `BackRef` (safe `Deref` at each use site in `walk`).
+    ctx: bun_ptr::BackRef<LinkerContext<'a>>,
     // `BackRef` — `walk` mutates per-chunk symbol slots via
     // `Map::assign_chunk_index(&self)`, which is a Relaxed store to
     // `Symbol.chunk_index: AtomicU32`, so a shared `&Map` suffices. Holding
     // `&mut Map` here would conflict with the `&LinkerContext` deref of `ctx`
     // (which also reaches `c.graph.symbols`); `BackRef::Deref` yields the
     // shared `&Map` each `walk` call needs.
-    symbols: bun_ptr::BackRef<bun_ast::symbol::Map>,
+    symbols: bun_ptr::BackRef<bun_ast::symbol::Map<'a>>,
 }
 
-impl<'a> CrossChunkDependencies<'a> {
+impl<'r, 'a> CrossChunkDependencies<'r, 'a> {
     // Called once per chunk from the sequential loop above. Writes:
     // `self.chunk_meta[chunk_index]` (per-chunk disjoint),
     // `self.import_records[source_index][rec].{path,source_index}` (per-chunk
@@ -129,7 +123,7 @@ impl<'a> CrossChunkDependencies<'a> {
     // membership — debug-asserted in `assign_chunk_index`).
     // Reads `ctx`/`chunks`/SoA columns shared. Never forms `&mut
     // LinkerContext` (`ctx` is a `BackRef`, deref'd to `&`).
-    pub fn walk(&mut self, chunk: &mut Chunk, chunk_index: usize) {
+    pub fn walk(&mut self, chunk: &mut Chunk<'_>, chunk_index: usize) {
         let deps = self;
         // `ctx` / `chunks` are `BackRef`s into `LinkerContext` / the caller's chunk
         // slice, valid for the link pass (see PORT NOTE on the struct fields).
@@ -139,7 +133,7 @@ impl<'a> CrossChunkDependencies<'a> {
         // pass. Shared `&Map` — per-slot writes go through
         // `Symbol.chunk_index: AtomicU32`; no `&mut Map` is materialized.
         let symbols: &bun_ast::symbol::Map = deps.symbols.get();
-        let _chunks: &[Chunk] = deps.chunks.get();
+        let _chunks: &[Chunk<'_>] = deps.chunks.get();
         let chunk_meta = &mut deps.chunk_meta[chunk_index];
         // PORT NOTE: reshaped for borrowck — Zig held `&chunk_meta` and `&chunk_meta.imports`
         // simultaneously; here we go through `chunk_meta.imports` / `chunk_meta.dynamic_imports`.
@@ -323,9 +317,9 @@ impl<'a> CrossChunkDependencies<'a> {
     }
 }
 
-fn compute_cross_chunk_dependencies_with_chunk_metas(
-    c: &mut LinkerContext,
-    chunks: &mut [Chunk],
+fn compute_cross_chunk_dependencies_with_chunk_metas<'a>(
+    c: &mut LinkerContext<'a>,
+    chunks: &mut [Chunk<'a>],
     chunk_metas: &mut [ChunkMeta],
 ) -> Result<(), bun_alloc::AllocError> {
     // TODO(port): narrow error set

@@ -21,7 +21,7 @@ use bun_threading::{self as sync, WaitGroup, thread_pool as ThreadPoolLib};
 use crate::bake_types as bake;
 use crate::bun_css as css;
 
-use crate::BundledAst as JSAst;
+use crate::ungate_support::JSAst;
 use bun_ast::{
     self as js_ast, Binding, DeclaredSymbol, Dependency, ExportsKind, Expr, NamedImport, Part, Ref,
     Stmt, Symbol, TlaCheck,
@@ -102,7 +102,7 @@ bun_crash_handler::link_impl_BundleGenerateChunkCtx! {
 #[inline]
 pub fn bundle_generate_chunk_action(
     ctx: &LinkerContext,
-    chunk: &Chunk,
+    chunk: &Chunk<'_>,
     part_range: &PartRange,
 ) -> bun_crash_handler::Action {
     bun_crash_handler::Action::BundleGenerateChunk(bun_crash_handler::BundleGenerateChunk {
@@ -121,7 +121,7 @@ pub fn bundle_generate_chunk_action(
 #[inline]
 pub fn bundle_generate_chunk_action(
     _ctx: &LinkerContext,
-    _chunk: &Chunk,
+    _chunk: &Chunk<'_>,
     _part_range: &PartRange,
 ) -> bun_crash_handler::Action {
     bun_crash_handler::Action::BundleGenerateChunk(())
@@ -176,8 +176,8 @@ pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
 
 pub struct LinkerContext<'a> {
-    pub parse_graph: *mut Graph,
-    pub graph: LinkerGraph,
+    pub parse_graph: *mut Graph<'a>,
+    pub graph: LinkerGraph<'a>,
     /// Backref into `Transpiler.log`, assigned in [`Self::load`]. Stored as a
     /// raw pointer (like `parse_graph` / `resolver`) so `Default` can be
     /// `null_mut()` instead of a dangling `&mut` (instant UB). Use
@@ -291,7 +291,7 @@ impl<'a> LinkerContext<'a> {
     /// `generate_isolated_hash`) must continue to deref the raw
     /// `self.parse_graph` field directly.
     #[inline]
-    pub fn parse_graph(&self) -> &Graph {
+    pub fn parse_graph(&self) -> &Graph<'a> {
         debug_assert!(
             !self.parse_graph.is_null(),
             "LinkerContext.parse_graph accessed before load()"
@@ -306,7 +306,7 @@ impl<'a> LinkerContext<'a> {
     /// split-borrow patterns that interleave `&mut Graph` with other `self`
     /// borrows.
     #[inline]
-    pub fn parse_graph_mut(&mut self) -> &mut Graph {
+    pub fn parse_graph_mut(&mut self) -> &mut Graph<'a> {
         debug_assert!(
             !self.parse_graph.is_null(),
             "LinkerContext.parse_graph accessed before load()"
@@ -515,7 +515,7 @@ impl<'a> LinkerContext<'a> {
     /// (or otherwise not overlap the fields named above).
     pub unsafe fn load(
         &mut self,
-        bundle: *mut BundleV2,
+        bundle: *mut BundleV2<'a>,
         entry_points: &[Index],
         server_component_boundaries: &bun_ast::server_component_boundary::List,
         reachable: &[Index],
@@ -705,7 +705,7 @@ impl<'a> LinkerContext<'a> {
         // PORT NOTE: reshaped for borrowck — Zig held overlapping `&`/`&mut`
         // into `parse_graph.html_imports` and `parse_graph.input_files`; here
         // we go through raw pointers and reborrow per use.
-        let parse_graph: *mut Graph = self.parse_graph;
+        let parse_graph: *mut Graph<'_> = self.parse_graph;
         // SAFETY: see above; sole accessor of `html_imports` for this scope.
         let server_len = unsafe { (*parse_graph).html_imports.server_source_indices.len() };
         if server_len > 0 {
@@ -787,11 +787,11 @@ impl<'a> LinkerContext<'a> {
     #[inline(never)]
     pub unsafe fn link(
         &mut self,
-        bundle: *mut BundleV2,
+        bundle: *mut BundleV2<'a>,
         entry_points: &[Index],
         server_component_boundaries: &bun_ast::server_component_boundary::List,
         reachable: &[Index],
-    ) -> Result<Box<[Chunk]>, LinkError> {
+    ) -> Result<Box<[Chunk<'a>]>, LinkError> {
         // SAFETY: forwarded; see fn-level contract.
         unsafe { self.load(bundle, entry_points, server_component_boundaries, reachable)? };
 
@@ -814,7 +814,7 @@ impl<'a> LinkerContext<'a> {
             // reallocate inside `validate_tla`; we cache raw column pointers
             // and reborrow per call to satisfy borrowck (`&mut self` is held
             // across the recursion).
-            let parse_graph: *mut Graph = self.parse_graph;
+            let parse_graph: *mut Graph<'_> = self.parse_graph;
             let import_records_list: *const [Vec<ImportRecord>] =
                 self.graph.ast.items_import_records();
             let flags: *mut [crate::ungate_support::js_meta::Flags] =
@@ -1020,12 +1020,12 @@ impl<'a> LinkerContext<'a> {
     // `post_process_*` callees take `GenerateChunkCtx` by value and deref
     // `ctx.c` to `&LinkerContext` for read-only graph access plus per-chunk
     // raw-ptr writes (see `postProcessJSChunk.rs`).
-    pub fn generate_chunk(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
+    pub fn generate_chunk(ctx: &GenerateChunkCtx, chunk: *mut Chunk<'_>, chunk_index: usize) {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
         // the duration of this body. ctx.c points into BundleV2.linker;
         // container_of pattern. `Worker::get` only reads `bundle.graph.pool`
         // (shared), so a `&` is sufficient and avoids aliasing.
-        let chunk: &mut Chunk = unsafe { &mut *chunk };
+        let chunk: &mut Chunk<'_> = unsafe { &mut *chunk };
         let worker = crate::thread_pool::Worker::get(ctx.bundle());
         let mut worker = scopeguard::guard(worker, |w| w.unget());
         let worker: &mut crate::thread_pool::Worker = &mut **worker;
@@ -1049,10 +1049,10 @@ impl<'a> LinkerContext<'a> {
     // `ctx.c.options` shared. `rename_symbols_in_chunk` takes `*mut
     // LinkerContext` raw and never materializes `&mut LinkerContext` while
     // peer renamer tasks are live (see its CONCURRENCY note).
-    pub fn generate_js_renamer(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
+    pub fn generate_js_renamer(ctx: &GenerateChunkCtx<'a>, chunk: *mut Chunk<'a>, chunk_index: usize) {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
         // the body. container_of pattern — see `generate_chunk` above.
-        let chunk: &mut Chunk = unsafe { &mut *chunk };
+        let chunk: &mut Chunk<'a> = unsafe { &mut *chunk };
         let worker = crate::thread_pool::Worker::get(ctx.bundle());
         let mut worker = scopeguard::guard(worker, |w| w.unget());
         if let crate::chunk::Content::Javascript(_) = chunk.content {
@@ -1061,9 +1061,9 @@ impl<'a> LinkerContext<'a> {
     }
 
     fn generate_js_renamer_(
-        ctx: GenerateChunkCtx,
-        _worker: &mut crate::thread_pool::Worker,
-        chunk: &mut Chunk,
+        ctx: GenerateChunkCtx<'a>,
+        _worker: &mut crate::thread_pool::Worker<'a>,
+        chunk: &mut Chunk<'a>,
         chunk_index: usize,
     ) {
         let _ = chunk_index;
@@ -1570,8 +1570,8 @@ impl SourceMapData {
 // Clone: bitwise OK — `alias` borrows from the AST arena (non-owning); all
 // other fields are POD.
 #[derive(Clone, Default)]
-pub struct MatchImport {
-    alias: bun_ast::StoreStr, // Zig string borrowed from AST arena
+pub struct MatchImport<'a> {
+    alias: bun_ast::StoreStr<'a>, // Zig string borrowed from AST arena
     kind: MatchImportKind,
     namespace_ref: Ref,
     source_index: u32,
@@ -1615,18 +1615,18 @@ pub type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 #[derive(Clone, Copy)]
 pub struct GenerateChunkCtx<'a> {
     pub c: bun_ptr::ParentRef<LinkerContext<'a>>,
-    /// Backref to the full `chunks: &mut [Chunk]` slice owned by
+    /// Backref to the full `chunks: &mut [Chunk<'_>]` slice owned by
     /// `generate_chunks_in_parallel`. The slice outlives every
     /// `GenerateChunkCtx` (joined via `wait_for_all`), so [`bun_ptr::BackRef`]'s
     /// owner-outlives-holder invariant holds and per-task reads go through
     /// safe `Deref`. Tasks that need write provenance (HTML loader) recover
     /// the raw `*mut [Chunk]` via [`bun_ptr::BackRef::as_ptr`].
-    pub chunks: bun_ptr::BackRef<[Chunk]>,
+    pub chunks: bun_ptr::BackRef<[Chunk<'a>]>,
     /// Backref to this task's `Chunk` (an element of `chunks`). Constructed
     /// via [`bun_ptr::BackRef::new_mut`] so the stored `NonNull` carries write
     /// provenance; per-task slot writes recover the raw `*mut Chunk` via
     /// [`bun_ptr::BackRef::as_ptr`], shared reads go through safe `Deref`.
-    pub chunk: bun_ptr::BackRef<Chunk>,
+    pub chunk: bun_ptr::BackRef<Chunk<'a>>,
 }
 // SAFETY: see PORT NOTE above — mirrors Zig's freely-aliased `*LinkerContext`.
 unsafe impl<'a> Send for GenerateChunkCtx<'a> {}
@@ -1700,10 +1700,10 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
 ) -> (
     &'a PendingPartRange<'a>,
     *mut LinkerContext<'a>,
-    *mut Chunk,
+    *mut Chunk<'a>,
     scopeguard::ScopeGuard<
-        &'static mut crate::thread_pool::Worker,
-        impl FnOnce(&'static mut crate::thread_pool::Worker),
+        &'static mut crate::thread_pool::Worker<'a>,
+        impl FnOnce(&'static mut crate::thread_pool::Worker<'a>),
     >,
 ) {
     // SAFETY: per fn contract — `task` is the intrusive `task` field.
@@ -1711,7 +1711,7 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
         unsafe { &*bun_core::from_field_ptr!(PendingPartRange, task, task) };
     let ctx = part_range.ctx;
     let c_ptr: *mut LinkerContext = ctx.c.as_mut_ptr().cast();
-    let chunk_ptr: *mut Chunk = ctx.chunk.as_ptr();
+    let chunk_ptr: *mut Chunk<'_> = ctx.chunk.as_ptr();
     let worker = crate::thread_pool::Worker::get(ctx.bundle());
     let worker = scopeguard::guard(worker, |w| w.unget());
     (part_range, c_ptr, chunk_ptr, worker)
@@ -1730,7 +1730,7 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
 #[must_use]
 pub(crate) fn crash_guard_for_part_range(
     c: &LinkerContext<'_>,
-    chunk: &Chunk,
+    chunk: &Chunk<'_>,
     part_range: &PartRange,
 ) -> bun_crash_handler::ActionGuard {
     bun_crash_handler::scoped_action(bundle_generate_chunk_action(c, chunk, part_range))
@@ -1748,7 +1748,7 @@ struct SubstituteChunkFinalPathResult {
 // and un-gate together with `LinkerGraph.rs`.
 
 impl<'a> LinkerContext<'a> {
-    pub fn generate_isolated_hash(&mut self, chunk: &Chunk) -> u64 {
+    pub fn generate_isolated_hash(&mut self, chunk: &Chunk<'_>) -> u64 {
         let _trace = bun::perf::trace("Bundler.generateIsolatedHash");
 
         let mut hasher = ContentHasher::default();
@@ -2025,12 +2025,12 @@ impl<'a> LinkerContext<'a> {
 
     pub fn should_remove_import_export_stmt(
         &mut self,
-        stmts: &mut StmtList,
+        stmts: &mut StmtList<'_>,
         loc: Loc,
         namespace_ref: Ref,
         import_record_index: u32,
         alloc: &Bump,
-        ast: &JSAst,
+        ast: &JSAst<'_>,
     ) -> Result<bool, BunError> {
         let record = ast.import_records.at(import_record_index as usize);
         // Barrel optimization: deferred import records should be dropped
@@ -2162,11 +2162,11 @@ impl<'a> LinkerContext<'a> {
 
     pub fn print_code_for_file_in_chunk_js(
         &mut self,
-        r: renamer::Renamer,
+        r: renamer::Renamer<'_, '_, '_>,
         alloc: &Bump,
         writer: &mut js_printer::BufferWriter,
-        out_stmts: &mut [Stmt],
-        ast: &JSAst,
+        out_stmts: &mut [Stmt<'a>],
+        ast: &JSAst<'a>,
         flags: crate::ungate_support::js_meta::Flags,
         to_esm_ref: Ref,
         to_commonjs_ref: Ref,
@@ -2275,18 +2275,6 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: `ast` is a valid `&BundledAst` for the duration of this call;
         // the read is a bitwise copy whose result is never dropped.
         let printer_ast = core::mem::ManuallyDrop::new(unsafe { core::ptr::read(ast) }.to_ast());
-
-        // PORT NOTE: `print_with_writer<'a>` requires `Renamer<'a,'a>` (the
-        // printer struct stores it with a single lifetime), but `Renamer`'s
-        // `'src` is invariant behind `&mut`, so the caller's `Renamer<'r,'src>`
-        // cannot unify with the local `'a` picked from `alloc`/`mangled_props`.
-        // Zig threads it as a raw pointer (no lifetimes). Rebind via a
-        // lifetime-only cast — sound because the renamer's borrowed data
-        // (symbol map, source) strictly outlives this call.
-        // SAFETY: lifetime-only erase; layout identical across instantiations.
-        let r: renamer::Renamer<'_, '_> = unsafe {
-            core::mem::transmute::<renamer::Renamer<'_, '_>, renamer::Renamer<'_, '_>>(r)
-        };
 
         let enable_source_maps =
             self.options.source_maps != SourceMapOption::None && !source_index.is_runtime();
@@ -2429,7 +2417,7 @@ impl<'a> LinkerContext<'a> {
     pub fn append_isolated_hashes_for_imported_chunks(
         &self,
         hash: &mut ContentHasher,
-        chunks: &mut [Chunk],
+        chunks: &mut [Chunk<'_>],
         index: u32,
         chunk_visit_map: &mut AutoBitSet,
     ) {
@@ -3520,7 +3508,7 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         init_tracker: ImportTracker,
         re_exports: &mut Vec<Dependency>,
-    ) -> MatchImport {
+    ) -> MatchImport<'a> {
         let cycle_detector_top = self.cycle_detector.len();
         // PORT NOTE: Zig's `defer cycle_detector.shrinkRetainingCapacity` is
         // lowered to an explicit `truncate` after the `'loop_` below — the only
@@ -4240,7 +4228,7 @@ impl<'a> LinkerContext<'a> {
 }
 
 // PartialEq for MatchImport (needed for std.meta.eql in match_import_with_export)
-impl PartialEq for MatchImport {
+impl PartialEq for MatchImport<'_> {
     fn eq(&self, other: &Self) -> bool {
         // PORT NOTE: Zig `std.meta.eql` on a slice compares ptr+len, not contents —
         // compare the raw fat pointer (address + length metadata).
@@ -4259,23 +4247,23 @@ impl PartialEq for MatchImport {
 // StmtList
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct StmtList {
+pub struct StmtList<'a> {
     // TODO(port): arena field dropped — Vec uses global mimalloc; bundler is AST crate but
     // these are temporary scratch buffers, not arena-backed in the original (uses generic arena param)
-    pub inside_wrapper_prefix: InsideWrapperPrefix,
-    pub outside_wrapper_prefix: Vec<Stmt>,
-    pub inside_wrapper_suffix: Vec<Stmt>,
-    pub all_stmts: Vec<Stmt>,
+    pub inside_wrapper_prefix: InsideWrapperPrefix<'a>,
+    pub outside_wrapper_prefix: Vec<Stmt<'a>>,
+    pub inside_wrapper_suffix: Vec<Stmt<'a>>,
+    pub all_stmts: Vec<Stmt<'a>>,
 }
 
-pub struct InsideWrapperPrefix {
-    pub stmts: Vec<Stmt>,
+pub struct InsideWrapperPrefix<'a> {
+    pub stmts: Vec<Stmt<'a>>,
     pub sync_dependencies_end: usize,
     // if true it will exist at `sync_dependencies_end`
     pub has_async_dependency: bool,
 }
 
-impl InsideWrapperPrefix {
+impl<'a> InsideWrapperPrefix<'a> {
     pub fn init() -> Self {
         Self {
             stmts: Vec::new(),
@@ -4296,18 +4284,18 @@ impl InsideWrapperPrefix {
 // TODO(b2-blocked): `Expr`/`Stmt` builder helpers (`E::Call`, `S::SExpr` etc.)
 // — bun_js_parser AST builder surface not yet stable.
 
-impl InsideWrapperPrefix {
-    pub fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
+impl<'a> InsideWrapperPrefix<'a> {
+    pub fn append_non_dependency(&mut self, stmt: Stmt<'a>) -> Result<(), AllocError> {
         self.stmts.push(stmt);
         Ok(())
     }
 
-    pub fn append_non_dependency_slice(&mut self, stmts: &[Stmt]) -> Result<(), AllocError> {
+    pub fn append_non_dependency_slice(&mut self, stmts: &[Stmt<'a>]) -> Result<(), AllocError> {
         self.stmts.extend_from_slice(stmts);
         Ok(())
     }
 
-    pub fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
+    pub fn append_sync_dependency(&mut self, call_expr: Expr<'a>) -> Result<(), AllocError> {
         self.stmts.insert(
             self.sync_dependencies_end,
             Stmt::alloc(
@@ -4324,7 +4312,7 @@ impl InsideWrapperPrefix {
 
     pub fn append_async_dependency(
         &mut self,
-        call_expr: Expr,
+        call_expr: Expr<'static>,
         promise_all_ref: Ref,
     ) -> Result<(), AllocError> {
         if !self.has_async_dependency {
@@ -4427,7 +4415,7 @@ impl InsideWrapperPrefix {
     }
 }
 
-impl StmtList {
+impl<'a> StmtList<'a> {
     pub fn reset(&mut self) {
         self.inside_wrapper_prefix.reset();
         self.outside_wrapper_prefix.clear();
@@ -4446,7 +4434,7 @@ impl StmtList {
         }
     }
 
-    pub fn append_slice(&mut self, list: StmtListWhich, stmts: &[Stmt]) {
+    pub fn append_slice(&mut self, list: StmtListWhich, stmts: &[Stmt<'a>]) {
         match list {
             StmtListWhich::OutsideWrapperPrefix => {
                 self.outside_wrapper_prefix.extend_from_slice(stmts)
@@ -4458,7 +4446,7 @@ impl StmtList {
         }
     }
 
-    pub fn append(&mut self, list: StmtListWhich, stmt: Stmt) {
+    pub fn append(&mut self, list: StmtListWhich, stmt: Stmt<'a>) {
         match list {
             StmtListWhich::OutsideWrapperPrefix => self.outside_wrapper_prefix.push(stmt),
             StmtListWhich::InsideWrapperSuffix => self.inside_wrapper_suffix.push(stmt),

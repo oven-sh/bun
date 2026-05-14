@@ -40,7 +40,7 @@ pub struct ChunkImport {
 // TODO(port): arena lifetime — string/slice fields below borrow from the bundler arena
 // (no deinit in Zig). Phase A uses &'static [u8] / Box<[T]> as placeholders; Phase B
 // should thread a `'bump` lifetime or use arena slice newtypes.
-pub struct Chunk {
+pub struct Chunk<'a> {
     /// This is a random string and is used to represent the output path of this
     /// chunk before the final output path has been computed. See OutputPiece
     /// for more info on this technique.
@@ -77,11 +77,7 @@ pub struct Chunk {
     pub intermediate_output: IntermediateOutput,
     pub isolated_hash: u64,
 
-    // TODO(port): was `= undefined` in Zig (set before use). The Zig field is
-    // the `renamer.Renamer` union; the Rust enum borrows from the symbol table
-    // (`Renamer<'r,'src>`), which can't live in a 'static-ish struct yet.
-    // `ChunkRenamer` is an owned-erased placeholder (see `crate::bun_renamer`).
-    pub renamer: bun_renamer::ChunkRenamer,
+    pub renamer: bun_renamer::ChunkRenamer<'a>,
 
     pub compile_results_for_chunk: CompileResultSlots,
 
@@ -130,8 +126,8 @@ impl Default for Content {
 // TODO(ub-audit): `Renamer<'r>` still borrows `&'r mut {Number,Minify}Renamer`,
 // so the per-chunk renamer is reborrowed mutably from each part-range task;
 // the printer never writes through it, but the borrow should become `&'r`.
-unsafe impl Send for Chunk {}
-unsafe impl Sync for Chunk {}
+unsafe impl Send for Chunk<'_> {}
+unsafe impl Sync for Chunk<'_> {}
 
 /// Disjoint-slot output buffer for [`Chunk::compile_results_for_chunk`].
 ///
@@ -185,7 +181,7 @@ impl core::ops::Index<usize> for CompileResultSlots {
     }
 }
 
-impl Default for Chunk {
+impl Default for Chunk<'_> {
     fn default() -> Self {
         Chunk {
             unique_key: b"",
@@ -208,7 +204,7 @@ impl Default for Chunk {
     }
 }
 
-impl Chunk {
+impl<'a> Chunk<'a> {
     /// Write `result` into `compile_results_for_chunk[i]` through a raw
     /// `*mut Chunk`, for the `generate_compile_result_for_*_chunk` worker
     /// callbacks.
@@ -227,7 +223,7 @@ impl Chunk {
     /// - No two concurrent callers may pass the same `i` for the same `chunk`.
     /// - No reader may observe slot `i` until after the worker-pool join.
     #[inline]
-    pub unsafe fn write_compile_result_slot(chunk: *mut Chunk, i: usize, result: CompileResult) {
+    pub unsafe fn write_compile_result_slot(chunk: *mut Chunk<'_>, i: usize, result: CompileResult) {
         // SAFETY: per fn contract — `chunk` is live, `i` in-bounds, slot
         // exclusively owned by this caller.
         unsafe {
@@ -269,7 +265,7 @@ impl Chunk {
         }
     }
 
-    pub fn get_js_chunk_for_html<'a>(&self, chunks: &'a mut [Chunk]) -> Option<&'a mut Chunk> {
+    pub fn get_js_chunk_for_html<'c>(&self, chunks: &'c mut [Chunk<'a>]) -> Option<&'c mut Chunk<'a>> {
         let entry_point_id = self.entry_point.entry_point_id();
         for other in chunks.iter_mut() {
             if matches!(other.content, Content::Javascript(_)) {
@@ -281,7 +277,7 @@ impl Chunk {
         None
     }
 
-    pub fn get_css_chunk_for_html<'a>(&self, chunks: &'a mut [Chunk]) -> Option<&'a mut Chunk> {
+    pub fn get_css_chunk_for_html<'c>(&self, chunks: &'c mut [Chunk<'a>]) -> Option<&'c mut Chunk<'a>> {
         // Look up the CSS chunk via the JS chunk's css_chunks indices.
         // This correctly handles deduplicated CSS chunks that are shared
         // across multiple HTML entry points (see issue #23668).
@@ -539,17 +535,17 @@ impl IntermediateOutput {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn code<'d>(
+    pub fn code<'a, 'd>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
-        parse_graph: &Graph,
-        linker_graph: &LinkerGraph,
+        parse_graph: &Graph<'a>,
+        linker_graph: &LinkerGraph<'a>,
         import_prefix: &[u8],
         // PORT NOTE: Zig passed `*Chunk` / `[]Chunk` (freely aliased — `chunk`
         // is `&chunks[i]`). The body only reads both, so take `&` to avoid
         // overlapping `&mut Chunk` + `&mut [Chunk]` UB at every call site.
-        chunk: &Chunk,
-        chunks: &[Chunk],
+        chunk: &Chunk<'a>,
+        chunks: &[Chunk<'a>],
         // PORT NOTE: `?*usize` in Zig — accept both `&mut usize` and
         // `Option<&mut usize>` so call sites that ported either way compile.
         display_size: impl Into<Option<&'d mut usize>>,
@@ -590,15 +586,15 @@ impl IntermediateOutput {
     /// resolved to inline code content instead of file paths. Asset references
     /// are resolved to data: URIs from url_for_css.
     #[allow(clippy::too_many_arguments)]
-    pub fn code_standalone<'d>(
+    pub fn code_standalone<'a, 'd>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
-        parse_graph: &Graph,
-        linker_graph: &LinkerGraph,
+        parse_graph: &Graph<'a>,
+        linker_graph: &LinkerGraph<'a>,
         import_prefix: &[u8],
         // See `code()` PORT NOTE — `chunk` aliases `chunks[i]`; body is read-only.
-        chunk: &Chunk,
-        chunks: &[Chunk],
+        chunk: &Chunk<'a>,
+        chunks: &[Chunk<'a>],
         // PORT NOTE: `?*usize` in Zig — accept both `&mut usize` and
         // `Option<&mut usize>` so call sites that ported either way compile.
         display_size: impl Into<Option<&'d mut usize>>,
@@ -635,15 +631,15 @@ impl IntermediateOutput {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn code_with_source_map_shifts<const ENABLE_SOURCE_MAP_SHIFTS: bool>(
+    pub fn code_with_source_map_shifts<'a, const ENABLE_SOURCE_MAP_SHIFTS: bool>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
-        graph: &Graph,
-        linker_graph: &LinkerGraph,
+        graph: &Graph<'a>,
+        linker_graph: &LinkerGraph<'a>,
         import_prefix: &[u8],
         // See `code()` PORT NOTE — `chunk` aliases `chunks[i]`; body is read-only.
-        chunk: &Chunk,
-        chunks: &[Chunk],
+        chunk: &Chunk<'a>,
+        chunks: &[Chunk<'a>],
         display_size: Option<&mut usize>,
         force_absolute_path: bool,
         standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
@@ -1291,8 +1287,8 @@ pub struct JavaScriptChunk {
     // TODO(port): Zig uses ArrayHashMapUnmanaged(Ref, string, Ref.ArrayHashCtx, false) — custom hash ctx
     pub exports_to_other_chunks: ArrayHashMap<Ref, &'static [u8]>,
     pub imports_from_other_chunks: ImportsFromOtherChunks,
-    pub cross_chunk_prefix_stmts: Vec<Stmt>,
-    pub cross_chunk_suffix_stmts: Vec<Stmt>,
+    pub cross_chunk_prefix_stmts: Vec<Stmt<'static>>,
+    pub cross_chunk_suffix_stmts: Vec<Stmt<'static>>,
 
     /// Indexes to CSS chunks. Currently this will only ever be zero or one
     /// items long, but smarter css chunking will allow multiple js entry points

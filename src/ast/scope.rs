@@ -20,17 +20,17 @@ pub type MemberHashMap = StringHashMap<Member, AstAlloc>;
 // hold it by value and `toAST` / `init` bitwise-copy it (`this.module_scope`). Vec no
 // longer derives `Clone` (private `origin` field); callers that need a shallow copy must
 // `core::mem::take` or `core::ptr::read` instead.
-pub struct Scope {
+pub struct Scope<'arena> {
     pub id: usize,
     pub kind: Kind,
     // BACKREF: parent owns this scope via `children`. `StoreRef` (arena
     // back-pointer with safe `Deref`/`DerefMut`) so callers don't open-code
     // `unsafe { &*parent.as_ptr() }` at every walk site.
-    pub parent: Option<StoreRef<Scope>>,
+    pub parent: Option<StoreRef<'arena, Scope<'arena>>>,
     /// `AstVec` for the same reason as `members` above — Zig's
     /// `ArrayListUnmanaged(*Scope)` was arena-backed. Elements are `StoreRef`
     /// so iteration yields safe `Deref` instead of `unsafe { child.as_ref() }`.
-    pub children: AstVec<StoreRef<Scope>>,
+    pub children: AstVec<StoreRef<'arena, Scope<'arena>>>,
     pub members: MemberHashMap,
     /// `AstVec`: Zig `ArrayListUnmanaged(Ref)`, arena-backed.
     pub generated: AstVec<Ref>,
@@ -54,10 +54,10 @@ pub struct Scope {
     // This will be non-null if this is a TypeScript "namespace" or "enum"
     // ARENA: allocated from p.arena, never freed per-field. `StoreRef` so
     // callers read `scope.ts_namespace?.exported_members` safely.
-    pub ts_namespace: Option<StoreRef<TSNamespaceScope>>,
+    pub ts_namespace: Option<StoreRef<'arena, TSNamespaceScope<'arena>>>,
 }
 
-impl Scope {
+impl<'arena> Scope<'arena> {
     /// All-empty `Scope` as a `const`. Used with struct-update syntax in the
     /// parser's per-scope allocation hot path (`push_scope_for_parse_pass`
     /// runs once per `{}` / function / class body) so the unspecified fields
@@ -83,16 +83,16 @@ impl Scope {
     };
 }
 
-impl Default for Scope {
+impl<'arena> Default for Scope<'arena> {
     #[inline]
     fn default() -> Self {
         Self::EMPTY
     }
 }
 
-pub type NestedScopeMap = ArrayHashMap<u32, Vec<StoreRef<Scope>>>;
+pub type NestedScopeMap<'arena> = ArrayHashMap<u32, Vec<StoreRef<'arena, Scope<'arena>>>>;
 
-impl Scope {
+impl<'arena> Scope<'arena> {
     // PERF(port): the parser's hot path computes the wyhash once and reuses it
     // for lookup+insert; `StringHashMap`'s current `std::HashMap` backing
     // ignores the precomputed hash (see `get_adapted` doc), so the rehash

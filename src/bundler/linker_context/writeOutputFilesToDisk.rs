@@ -31,10 +31,10 @@ use bun_sys::{
 /// Zig: `bun.bytecode_extension` (".jsc"). Mirror of `src/bun.zig:bytecode_extension`.
 const BYTECODE_EXTENSION: &str = ".jsc";
 
-pub fn write_output_files_to_disk(
-    c: &mut LinkerContext,
+pub fn write_output_files_to_disk<'a>(
+    c: &mut LinkerContext<'a>,
     root_path: &[u8],
-    chunks: &mut [Chunk],
+    chunks: &mut [Chunk<'a>],
     output_files: &mut OutputFileList,
     standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
 ) -> Result<(), Error> {
@@ -95,7 +95,7 @@ pub fn write_output_files_to_disk(
     let chunks_len = chunks.len();
 
     for chunk_index_in_chunks_list in 0..chunks_len {
-        let chunk: &Chunk = &chunks[chunk_index_in_chunks_list];
+        let chunk: &Chunk<'_> = &chunks[chunk_index_in_chunks_list];
         // In standalone mode, only write HTML chunks to disk.
         // Insert placeholder output files for non-HTML chunks to keep indices aligned.
         if standalone_chunk_contents.is_some() && !matches!(chunk.content, Content::Html) {
@@ -163,7 +163,7 @@ pub fn write_output_files_to_disk(
         // disjoint from the `&chunks[i]` / `&[Chunk]` reads below.
         let mut intermediate_output =
             core::mem::take(&mut chunks[chunk_index_in_chunks_list].intermediate_output);
-        let chunk: &Chunk = &chunks[chunk_index_in_chunks_list];
+        let chunk: &Chunk<'_> = &chunks[chunk_index_in_chunks_list];
         let parse_graph = c.parse_graph();
 
         let mut code_result = if let Some(scc) = standalone_chunk_contents {
@@ -207,7 +207,7 @@ pub fn write_output_files_to_disk(
         };
         // Tail of the loop body needs `&mut chunk` (`output_source_map.finalize()`);
         // no `&[Chunk]` is needed past this point so an exclusive reborrow is fine.
-        let chunk: &mut Chunk = &mut chunks[chunk_index_in_chunks_list];
+        let chunk: &mut Chunk<'_> = &mut chunks[chunk_index_in_chunks_list];
         chunk.intermediate_output = intermediate_output;
 
         let mut source_map_output_file: Option<OutputFile> = None;

@@ -50,7 +50,7 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
 /// `package.json` and would be discarded by Zig's bitwise `@memcpy` + arena
 /// reset anyway.
 #[inline]
-fn copy_property(p: &G::Property) -> G::Property {
+fn copy_property<'arena>(p: &G::Property<'arena>) -> G::Property<'arena> {
     G::Property {
         key: p.key,
         value: p.value,
@@ -60,7 +60,7 @@ fn copy_property(p: &G::Property) -> G::Property {
 
 pub fn edit_patched_dependencies(
     _manager: &mut PackageManager,
-    package_json: &mut Expr,
+    package_json: &mut Expr<'_>,
     patch_key: &[u8],
     patchfile_path: &[u8],
 ) -> Result<(), bun_alloc::AllocError> {
@@ -99,12 +99,12 @@ pub fn edit_patched_dependencies(
 }
 
 pub fn edit_trusted_dependencies(
-    package_json: &mut Expr,
+    package_json: &mut Expr<'_>,
     names_to_add: &mut [Box<[u8]>],
 ) -> Result<(), bun_alloc::AllocError> {
     let mut len = names_to_add.len();
 
-    let original_trusted_dependencies: Vec<Expr> = 'brk: {
+    let original_trusted_dependencies: Vec<Expr<'_>> = 'brk: {
         if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
             if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
                 break 'brk arr.items.slice().to_vec();
@@ -126,7 +126,7 @@ pub fn edit_trusted_dependencies(
         }
     }
 
-    let mut trusted_dependencies: &[Expr] = &[];
+    let mut trusted_dependencies: &[Expr<'_>] = &[];
     if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
         if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
             // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
@@ -136,7 +136,7 @@ pub fn edit_trusted_dependencies(
     }
 
     let trusted_dependencies_to_add = len;
-    let new_trusted_deps: js_ast::ExprNodeList = {
+    let new_trusted_deps: js_ast::ExprNodeList<'_> = {
         let mut deps = vec![Expr::EMPTY; trusted_dependencies.len() + trusted_dependencies_to_add]
             .into_boxed_slice();
         deps[0..trusted_dependencies.len()].copy_from_slice(trusted_dependencies);
@@ -173,7 +173,7 @@ pub fn edit_trusted_dependencies(
     };
 
     let mut needs_new_trusted_dependencies_list = true;
-    let mut trusted_dependencies_array: Expr = 'brk: {
+    let mut trusted_dependencies_array: Expr<'_> = 'brk: {
         if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
             if matches!(query.expr.data, bun_ast::ExprData::EArray(_)) {
                 needs_new_trusted_dependencies_list = false;
@@ -208,7 +208,7 @@ pub fn edit_trusted_dependencies(
             .len_u32()
             == 0
     {
-        let mut root_properties: Vec<G::Property> = Vec::with_capacity(1);
+        let mut root_properties: Vec<G::Property<'_>> = Vec::with_capacity(1);
         root_properties.push(G::Property {
             key: Some(Expr::init(
                 E::EString::init(TRUSTED_DEPENDENCIES_STRING),
@@ -231,7 +231,7 @@ pub fn edit_trusted_dependencies(
             .e_object()
             .expect("infallible: variant checked");
         let old_props = obj.properties.slice();
-        let mut root_properties: Vec<G::Property> = Vec::with_capacity(old_props.len() + 1);
+        let mut root_properties: Vec<G::Property<'_>> = Vec::with_capacity(old_props.len() + 1);
         for p in old_props {
             root_properties.push(copy_property(p));
         }
@@ -259,7 +259,7 @@ pub fn edit_trusted_dependencies(
 /// versions.
 pub fn edit_update_no_args(
     manager: &mut PackageManager,
-    current_package_json: &mut Expr,
+    current_package_json: &mut Expr<'_>,
     options: EditOptions,
 ) -> Result<(), bun_alloc::AllocError> {
     // using data store is going to result in undefined memory issues as
@@ -553,7 +553,7 @@ pub fn edit(
     manager: &mut PackageManager,
     // Zig `*[]UpdateRequest` — pointer-to-slice whose `.len` is shrunk in place.
     updates: &mut &mut [UpdateRequest],
-    current_package_json: &mut Expr,
+    current_package_json: &mut Expr<'_>,
     dependency_list: &[u8],
     options: EditOptions,
 ) -> Result<(), bun_alloc::AllocError> {
@@ -578,7 +578,7 @@ pub fn edit(
     // 3. There is a "dependencies" (or equivalent list), and the package name exists in multiple lists
     // Try to use the existing spot in the dependencies list if possible
     {
-        let original_trusted_dependencies: Vec<Expr> = 'brk: {
+        let original_trusted_dependencies: Vec<Expr<'_>> = 'brk: {
             if !options.add_trusted_dependencies {
                 break 'brk Vec::new();
             }
@@ -703,7 +703,8 @@ pub fn edit(
                                                     .data
                                                     .e_string()
                                                     .expect("infallible: variant checked")
-                                                    .as_ptr(),
+                                                    .as_ptr()
+                                                    .cast(),
                                             );
                                             remaining -= 1;
                                         } else {
@@ -742,7 +743,8 @@ pub fn edit(
                                                         v.data
                                                             .e_string()
                                                             .expect("infallible: variant checked")
-                                                            .as_ptr(),
+                                                            .as_ptr()
+                                                            .cast(),
                                                     );
                                                     remaining -= 1;
                                                     break 'dependency_group;
@@ -761,8 +763,8 @@ pub fn edit(
     }
 
     if remaining != 0 {
-        let mut new_dependencies: Vec<G::Property> = {
-            let mut dependencies: Vec<G::Property> = Vec::new();
+        let mut new_dependencies: Vec<G::Property<'_>> = {
+            let mut dependencies: Vec<G::Property<'_>> = Vec::new();
             if let Some(query) = current_package_json.as_property(dependency_list) {
                 if let bun_ast::ExprData::EObject(obj) = &query.expr.data {
                     for p in obj.properties.slice() {
@@ -777,7 +779,7 @@ pub fn edit(
             dependencies
         };
 
-        let mut trusted_dependencies: &[Expr] = &[];
+        let mut trusted_dependencies: &[Expr<'_>] = &[];
         if options.add_trusted_dependencies {
             if let Some(query) = current_package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
                 if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
@@ -788,7 +790,7 @@ pub fn edit(
         }
 
         let trusted_dependencies_to_add = manager.trusted_deps_to_add_to_package_json.len();
-        let new_trusted_deps: js_ast::ExprNodeList = 'brk: {
+        let new_trusted_deps: js_ast::ExprNodeList<'_> = 'brk: {
             if !options.add_trusted_dependencies || trusted_dependencies_to_add == 0 {
                 break 'brk bun_alloc::AstAlloc::vec();
             }
@@ -882,7 +884,8 @@ pub fn edit(
                         .data
                         .e_string()
                         .unwrap()
-                        .as_ptr(),
+                        .as_ptr()
+                        .cast(),
                 );
                 break;
             }
@@ -896,7 +899,7 @@ pub fn edit(
         }
 
         let mut needs_new_dependency_list = true;
-        let mut dependencies_object: Expr = 'brk: {
+        let mut dependencies_object: Expr<'_> = 'brk: {
             if let Some(query) = current_package_json.as_property(dependency_list) {
                 if matches!(query.expr.data, bun_ast::ExprData::EObject(_)) {
                     needs_new_dependency_list = false;
@@ -926,7 +929,7 @@ pub fn edit(
         }
 
         let mut needs_new_trusted_dependencies_list = true;
-        let mut trusted_dependencies_array: Expr = 'brk: {
+        let mut trusted_dependencies_array: Expr<'_> = 'brk: {
             if !options.add_trusted_dependencies || trusted_dependencies_to_add == 0 {
                 needs_new_trusted_dependencies_list = false;
                 break 'brk Expr::EMPTY;
@@ -973,7 +976,7 @@ pub fn edit(
             } else {
                 1
             };
-            let mut root_properties: Vec<G::Property> = Vec::with_capacity(n);
+            let mut root_properties: Vec<G::Property<'_>> = Vec::with_capacity(n);
             root_properties.push(G::Property {
                 key: Some(Expr::allocate(
                     arena,
@@ -1011,7 +1014,7 @@ pub fn edit(
                     .e_object()
                     .expect("infallible: variant checked");
                 let old_props = obj.properties.slice();
-                let mut root_properties: Vec<G::Property> = Vec::with_capacity(old_props.len() + 2);
+                let mut root_properties: Vec<G::Property<'_>> = Vec::with_capacity(old_props.len() + 2);
                 for p in old_props {
                     root_properties.push(copy_property(p));
                 }
@@ -1047,7 +1050,7 @@ pub fn edit(
                     .e_object()
                     .expect("infallible: variant checked");
                 let old_props = obj.properties.slice();
-                let mut root_properties: Vec<G::Property> = Vec::with_capacity(old_props.len() + 1);
+                let mut root_properties: Vec<G::Property<'_>> = Vec::with_capacity(old_props.len() + 1);
                 for p in old_props {
                     root_properties.push(copy_property(p));
                 }

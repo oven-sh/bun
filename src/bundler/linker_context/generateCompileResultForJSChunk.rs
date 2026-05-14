@@ -59,7 +59,7 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     // see TODO(ub-audit) on `unsafe impl Sync for Chunk`.)
     let result = {
         let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
-        let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
+        let chunk_mut: &mut Chunk<'_> = unsafe { &mut *chunk_ptr };
         generate_compile_result_for_js_chunk_impl(
             &mut **worker,
             c_mut,
@@ -74,10 +74,10 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     unsafe { Chunk::write_compile_result_slot(chunk_ptr, part_range.i as usize, result) };
 }
 
-fn generate_compile_result_for_js_chunk_impl(
-    worker: &mut Worker,
-    c: &mut LinkerContext,
-    chunk: &mut Chunk,
+fn generate_compile_result_for_js_chunk_impl<'a>(
+    worker: &mut Worker<'a>,
+    c: &mut LinkerContext<'a>,
+    chunk: &mut Chunk<'a>,
     part_range: PartRange,
 ) -> CompileResult {
     let _trace = bun_core::perf::trace("Bundler.generateCodeForFileInChunkJS");
@@ -149,14 +149,14 @@ fn generate_compile_result_for_js_chunk_impl(
     // DeclCollector; the Rust DeclCollector wants `*const Arena`. Use the
     // worker heap for now (see TODO above re: dev_server arena).
     let mut dc = DeclCollector {
-        arena: worker.arena.as_ptr(),
+        arena: core::ptr::from_ref(worker.arena),
         ..Default::default()
     };
 
     // `worker.arena` (= `BackRef` to `worker.heap`) is a disjoint field from
     // `worker.temporary_arena` / `worker.stmt_list` borrowed `&mut` above, so
     // a direct shared borrow is fine. Heap is pinned; see `Worker::arena`.
-    let worker_alloc = worker.arena.get();
+    let worker_alloc = worker.arena;
     // SAFETY: split borrow of `chunk` — `generate_code_for_file_in_chunk_js` never
     // touches `chunk.renamer` through its `chunk` parameter (Zig passes the renamer
     // union by value alongside `*Chunk`); take a raw-ptr view so borrowck doesn't

@@ -276,6 +276,10 @@ pub struct CurrentBundle {
     /// make `DevServer` self-referential; raw-ptr aliasing inside `BundleV2`
     /// already encodes that contract.
     pub bv2: Box<BundleV2<'static>>,
+    /// Owns every per-worker arena plus `bv2.graph.heap` for this bundle pass.
+    /// `bv2` borrows it as `&'static ArenaPool` under the same `'static`
+    /// stand-in as above; declared after `bv2` so it drops after.
+    pub arena_pool: Box<bun_bundler::ArenaPool>,
     /// Information BundleV2 needs to finalize the bundle
     pub start_data: bundler::bundle_v2::DevServerInput,
     /// Started when the bundle was queued
@@ -3109,48 +3113,32 @@ impl DevServer {
             server.on_pending_request();
         }
 
-        let heap = bun_alloc::MimallocArena::new();
-        // TODO(port): heap is moved into BundleV2; errdefer heap.deinit() handled by Drop
-        // PORT NOTE: `MimallocArena = bumpalo::Bump` (no `.arena()` accessor);
-        // `Bump::alloc` is the inherent method, and `BundleV2::init`'s `alloc`
-        // param is `&bun_alloc::Arena` (== `&Bump`).
-        // TODO(port): ASTMemoryAllocator scope — bake is an AST crate; arena threading required
-        // PORT NOTE: `heap.alloc` returns `&mut T` borrowing `heap`, but `heap` is
-        // later moved into `bv2.graph.heap`. Bumpalo chunk storage is heap-allocated
-        // and stable across the move of the `Bump` handle, so erase the borrow to a
-        // raw pointer (same rationale as `event_loop` below).
-        let ast_memory_store: *mut bun_ast::ASTMemoryAllocator =
-            heap.alloc(bun_ast::ASTMemoryAllocator::default());
-        // SAFETY: the `ASTMemoryAllocator` lives in a bumpalo chunk owned by
-        // `heap` → `bv2.graph.heap`; address is stable for the bv2 lifetime,
-        // and `_ast_scope` is dropped before `bv2` at end of this fn.
-        let _ast_scope = unsafe { &mut *ast_memory_store }.enter();
+        // Owns every per-worker arena plus `Graph.heap` for this bundle pass;
+        // moved into `CurrentBundle` below so it outlives `bv2`.
+        let arena_pool = Box::new(bun_bundler::ArenaPool::new());
+        // SAFETY: `arena_pool` is `Box`-allocated (stable address) and is
+        // moved into `self.current_bundle` below alongside `bv2`, so it
+        // outlives every `&ArenaPool` / `&Arena` derived here. Same `'static`
+        // stand-in as `CurrentBundle.bv2` (see PORT NOTE there) — DevServer is
+        // self-referential and cannot thread a real lifetime through.
+        let arena_pool_ref: &'static bun_bundler::ArenaPool =
+            unsafe { &*(&raw const *arena_pool) };
+        // One arena from the pool for the AST scratch store / event-loop slot
+        // and `BundleV2::init`'s short-lived `alloc` param. Lives until
+        // `arena_pool` drops with `CurrentBundle`.
+        let heap: &'static bun_alloc::Arena = arena_pool_ref.alloc();
+
+        let ast_memory_store = heap.alloc(bun_ast::ASTMemoryAllocator::default());
+        let _ast_scope = ast_memory_store.enter();
 
         // Zig: `.{ .js = dev.vm.eventLoop() }` constructed an `AnyEventLoop`
-        // by value; the Rust bundler instead stores
-        // `Option<NonNull<AnyEventLoop<'static>>>`. Park the value in `heap`
-        // — bumpalo chunks are heap-allocated, so the address is stable across
-        // the move of `heap` into `bv2.graph.heap` and lives exactly as long
-        // as `bv2`.
+        // by value; the Rust bundler stores `Option<NonNull<AnyEventLoop<'_>>>`.
+        // Parked in `heap` (pool-owned, lives as long as `bv2`).
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
             Some(::core::ptr::NonNull::from(heap.alloc(
                 bun_event_loop::AnyEventLoop::js(self.vm().event_loop().cast()),
             )));
 
-        // PORT NOTE: `BundleV2::init` consumes `heap` and also wants
-        // `alloc: &Arena` derived from it. Zig's `heap.arena()` is a
-        // `Copy` vtable handle that survives the move; in Rust the `Bump` is
-        // moved into `bv2.graph.heap`, so any pre-move borrow would dangle.
-        // `BundleV2::init` itself re-derives `linker.graph.bump = &this.graph
-        // .heap` internally and only uses `alloc` for short-lived setup —
-        // pass the heap's address via raw pointer (it lives at a stable
-        // `Box`-interior slot once `init` writes it).
-        //
-        // SAFETY: `heap_ptr` is read by `BundleV2::init` only after `heap` is
-        // moved into `this.graph.heap` (same allocation, stable address inside
-        // the freshly-`Box::new`'d `BundleV2`). The borrow is scoped to the
-        // call; we never reuse `heap_ptr` after `init` returns.
-        let heap_ptr: *const bun_alloc::Arena = &raw const heap;
         // PORT NOTE: split `&mut self` into disjoint field reborrows so
         // `server_transpiler` (`&'a mut`) and `client/ssr_transpiler`
         // (NonNull) don't trip the single-`&mut self` rule.
@@ -3170,14 +3158,13 @@ impl DevServer {
                 },
                 plugins: self.bundler_options.plugin,
             }),
-            // SAFETY: see `heap_ptr` note above.
-            unsafe { &*heap_ptr },
+            heap,
             event_loop,
             false, // watching is handled separately
             Some(::core::ptr::NonNull::from(
                 bun_threading::work_pool::WorkPool::get(),
             )),
-            heap,
+            arena_pool_ref,
         )?;
         bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut **self.bun_watcher));
         bv2.asynchronous = true;
@@ -3210,6 +3197,7 @@ impl DevServer {
         drop(entry_points);
         self.current_bundle = Some(CurrentBundle {
             bv2,
+            arena_pool,
             timer,
             start_data,
             had_reload_event,
@@ -3689,10 +3677,10 @@ impl<'a> HotUpdateContext<'a> {
 
 /// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s
 /// This function does not recover DevServer state if it fails (allocation failure)
-pub fn finalize_bundle(
+pub fn finalize_bundle<'a>(
     dev: &mut DevServer,
-    bv2: &mut BundleV2,
-    result: &mut bundler::bundle_v2::DevServerOutput,
+    bv2: &mut BundleV2<'a>,
+    result: &mut bundler::bundle_v2::DevServerOutput<'a>,
 ) -> JsResult<()> {
     debug_assert!(dev.magic == Magic::Valid);
     // PORT NOTE: `had_sent_hmr_event` is read inside the outer-defer scopeguard
@@ -3715,15 +3703,14 @@ pub fn finalize_bundle(
         // SAFETY: `dev`/`bv2` are `&mut` params; both outlive this fn-scoped guard.
         let dev = unsafe { &mut *dev_ptr_outer };
         let bv2 = unsafe { &mut *bv2_ptr_outer };
-        // TODO(port): heap moved out before deinit
-        let mut heap = ::core::mem::replace(&mut bv2.graph.heap, bun_alloc::Arena::new());
         bv2.deinit_without_freeing_arena();
         if let Some(cb) = &mut dev.current_bundle {
             cb.promise.deinit_idempotently();
         }
+        // Drops `CurrentBundle.arena_pool`, which owns `bv2.graph.heap` and
+        // every worker arena for this pass.
         dev.current_bundle = None;
         dev.log.clear_and_free();
-        drop(heap);
 
         let _ = dev.assets.reindex_if_needed(); // not fatal
 

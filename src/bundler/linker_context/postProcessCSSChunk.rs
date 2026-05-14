@@ -13,7 +13,7 @@ use crate::{Chunk, CompileResultForSourceMap, Index, options};
 pub fn post_process_css_chunk(
     ctx: GenerateChunkCtx,
     worker: &mut thread_pool::Worker,
-    chunk: &mut Chunk,
+    chunk: &mut Chunk<'_>,
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
     let c = ctx.c();

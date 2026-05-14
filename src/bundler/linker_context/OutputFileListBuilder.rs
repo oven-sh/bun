@@ -49,7 +49,7 @@ bun_core::named_error_set!(OutputFileListError);
 impl OutputFileList {
     pub fn init(
         c: &LinkerContext,
-        chunks: &[Chunk],
+        chunks: &[Chunk<'_>],
         _unused: usize,
     ) -> Result<Self, bun_core::Error> {
         let (length, supplementary_file_count) =
@@ -85,7 +85,7 @@ impl OutputFileList {
         core::mem::take(&mut self.output_files)
     }
 
-    pub fn calculate_output_file_list_capacity(c: &LinkerContext, chunks: &[Chunk]) -> (u32, u32) {
+    pub fn calculate_output_file_list_capacity(c: &LinkerContext, chunks: &[Chunk<'_>]) -> (u32, u32) {
         let parse_graph = c.parse_graph();
         let source_map_count: usize = if c.options.source_maps.has_external_files() {
             'brk: {

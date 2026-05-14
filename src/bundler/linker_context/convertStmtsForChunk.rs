@@ -1,4 +1,4 @@
-use crate::BundledAst as JSAst;
+use crate::ungate_support::JSAst;
 use crate::mal_prelude::*;
 use bun_alloc::Arena as Bump;
 use bun_ast::ImportRecordFlags;
@@ -39,15 +39,15 @@ use crate::ungate_support::WrapKind;
 /// In that case, when bundling, we still need to preserve that module
 /// namespace object (foo) because we cannot know what they are going to
 /// attempt to access statically
-pub fn convert_stmts_for_chunk(
-    c: &mut LinkerContext<'_>,
+pub fn convert_stmts_for_chunk<'a>(
+    c: &mut LinkerContext<'a>,
     source_index: u32,
-    stmts: &mut StmtList,
-    part_stmts: &[bun_ast::Stmt],
-    chunk: &mut Chunk,
+    stmts: &mut StmtList<'a>,
+    part_stmts: &[bun_ast::Stmt<'a>],
+    chunk: &mut Chunk<'a>,
     bump: &Bump,
     wrap: WrapKind,
-    ast: &JSAst,
+    ast: &JSAst<'a>,
 ) -> Result<(), bun_core::Error> {
     let _ = bump;
     let should_extract_esm_stmts_for_wrap = wrap != WrapKind::None;

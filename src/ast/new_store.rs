@@ -476,7 +476,7 @@ macro_rules! thread_local_ast_store {
             }
 
             #[inline]
-            pub fn append<T>(value: T) -> $crate::StoreRef<T> {
+            pub fn append<'arena, T>(value: T) -> $crate::StoreRef<'arena, T> {
                 if let Some(ma) = MEMORY_ALLOCATOR.get() {
                     // `BackRef<ASTMemoryAllocator>: Deref` — owning scope outlives this call.
                     return ma.append(value);

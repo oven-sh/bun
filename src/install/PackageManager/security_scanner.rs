@@ -1860,7 +1860,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 
 fn parse_security_advisories_from_expr(
     manager: &PackageManager,
-    advisories_expr: Expr,
+    advisories_expr: Expr<'_>,
     bump: &bun_alloc::Arena,
     package_paths: &mut ArrayHashMap<PackageID, PackagePath>,
 ) -> Result<Box<[SecurityAdvisory]>, Error> {

@@ -53,6 +53,8 @@ pub mod thread_pool;
 
 pub mod AstBuilder;
 pub mod analyze_transpiled_module;
+pub mod arena_pool;
+pub use arena_pool::ArenaPool;
 pub mod bundled_ast;
 pub use bundled_ast::BundledAst;
 pub mod barrel_imports;

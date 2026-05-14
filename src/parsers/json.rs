@@ -53,9 +53,9 @@ mod hash_map_pool {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-fn new_expr<Ty>(t: Ty, loc: bun_ast::Loc) -> Expr
+fn new_expr<'arena, Ty>(t: Ty, loc: bun_ast::Loc) -> Expr<'arena>
 where
-    Ty: js_ast::ExprInit, // TODO(port): bound to whatever trait Expr::init accepts
+    Ty: js_ast::ExprInit<'arena>, // TODO(port): bound to whatever trait Expr::init accepts
 {
     // Zig had: if @typeInfo(Type) == .pointer => @compileError — Rust's type system
     // already prevents passing a reference where a value is expected; no runtime check needed.
@@ -117,7 +117,7 @@ where
         opts: js_lexer::JSONOptions,
         bump: &'bump Bump,
         source_: &'a bun_ast::Source,
-        log: &'a mut bun_ast::Log,
+        log: &mut bun_ast::Log,
     ) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
         Self::init_with_list_allocator(opts, bump, bump, source_, log)
@@ -128,7 +128,7 @@ where
         bump: &'bump Bump,
         list_bump: &'bump Bump,
         source_: &'a bun_ast::Source,
-        log: &'a mut bun_ast::Log,
+        log: &mut bun_ast::Log,
     ) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
         Expr::data_store_assert();
@@ -163,7 +163,7 @@ where
         &mut self,
         maybe_auto_quote: bool,
         force_utf8: bool,
-    ) -> Result<Expr, bun_core::Error> {
+    ) -> Result<Expr<'a>, bun_core::Error> {
         if !self.stack_check.is_safe_to_recurse() {
             // Zig: `bun.throwStackOverflow()`.
             return Err(bun_core::err!("StackOverflow"));
@@ -185,7 +185,7 @@ where
                 Ok(new_expr(E::Null {}, loc))
             }
             T::TStringLiteral => {
-                let mut str: E::String = self.lexer.to_e_string()?;
+                let mut str: E::String<'a> = self.lexer.to_e_string()?;
                 if force_utf8 {
                     str.to_utf8(self.bump).expect("unreachable");
                 }
@@ -210,7 +210,7 @@ where
                 // PORT NOTE: Zig grew an `ArrayList(Expr)` in `list_allocator` and
                 // `moveFromList`-ed it. The Rust `Vec` is `Vec`-backed (global
                 // allocator), so build a `Vec<Expr>` directly and hand it off.
-                let mut exprs: Vec<Expr> = Vec::new();
+                let mut exprs: Vec<Expr<'a>> = Vec::new();
                 // errdefer exprs.deinit() — dropped automatically on `?`.
 
                 while self.lexer.token != T::TCloseBracket {
@@ -250,7 +250,7 @@ where
                 self.lexer.next()?;
                 let mut is_single_line = !self.lexer.has_newline_before;
                 // PORT NOTE: see TOpenBracket note — `Vec` is `Vec`-backed.
-                let mut properties: Vec<G::Property> = Vec::new();
+                let mut properties: Vec<G::Property<'a>> = Vec::new();
                 // errdefer properties.deinit() — dropped automatically on `?`.
 
                 // PORT NOTE: reshaped for borrowck — Zig used `void`/`*Node` when
@@ -448,7 +448,7 @@ where
     pub fn init(
         bump: &'bump Bump,
         source: &'a bun_ast::Source,
-        log: &'a mut bun_ast::Log,
+        log: &mut bun_ast::Log,
     ) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
         Ok(Self {
@@ -477,7 +477,7 @@ where
         &self.found_version_buf[..self.found_version_len]
     }
 
-    pub fn parse_expr(&mut self) -> Result<Expr, bun_core::Error> {
+    pub fn parse_expr(&mut self) -> Result<Expr<'a>, bun_core::Error> {
         if !self.stack_check.is_safe_to_recurse() {
             // Zig: `bun.throwStackOverflow()`.
             return Err(bun_core::err!("StackOverflow"));
@@ -503,7 +503,7 @@ where
                 Ok(new_expr(E::Null {}, loc))
             }
             T::TStringLiteral => {
-                let str: E::String = self.lexer.to_e_string()?;
+                let str: E::String<'a> = self.lexer.to_e_string()?;
 
                 self.lexer.next()?;
                 Ok(new_expr(str, loc))
@@ -544,7 +544,7 @@ where
                 // returns here and depth is decremented exactly once on every exit path
                 // (Ok, Err, early break). scopeguard cannot hold `&mut self.depth` while
                 // the body re-borrows `&mut self`.
-                let result = (|| -> Result<Expr, bun_core::Error> {
+                let result = (|| -> Result<Expr<'a>, bun_core::Error> {
                     let mut has_properties = false;
                     while self.lexer.token != T::TCloseBrace {
                         if has_properties {
@@ -640,11 +640,11 @@ where
 // per-type impls. Struct/enum/union arms require a derive macro.
 
 pub trait ToAst {
-    fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error>;
+    fn to_ast<'arena>(&self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_core::Error>;
 }
 
 impl ToAst for bool {
-    fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
+    fn to_ast<'arena>(&self, _bump: &'arena Bump) -> Result<Expr<'arena>, bun_core::Error> {
         Ok(Expr {
             data: js_ast::expr::Data::EBoolean(E::Boolean { value: *self }),
             loc: bun_ast::Loc::default(),
@@ -655,7 +655,7 @@ impl ToAst for bool {
 macro_rules! impl_to_ast_int {
     ($($t:ty),*) => {$(
         impl ToAst for $t {
-            fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
+            fn to_ast<'arena>(&self, _bump: &'arena Bump) -> Result<Expr<'arena>, bun_core::Error> {
                 Ok(Expr {
                     data: js_ast::expr::Data::ENumber(E::Number { value: *self as f64 }),
                     loc: bun_ast::Loc::default(),
@@ -673,7 +673,7 @@ impl_to_ast_int!(i8, i16, i32, i64, isize, u16, u32, u64, usize);
 macro_rules! impl_to_ast_float {
     ($($t:ty),*) => {$(
         impl ToAst for $t {
-            fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
+            fn to_ast<'arena>(&self, _bump: &'arena Bump) -> Result<Expr<'arena>, bun_core::Error> {
                 Ok(Expr {
                     data: js_ast::expr::Data::ENumber(E::Number { value: *self as f64 }),
                     loc: bun_ast::Loc::default(),
@@ -685,19 +685,19 @@ macro_rules! impl_to_ast_float {
 impl_to_ast_float!(f32, f64);
 
 impl ToAst for [u8] {
-    fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
+    fn to_ast<'arena>(&self, _bump: &'arena Bump) -> Result<Expr<'arena>, bun_core::Error> {
         Ok(Expr::init(E::String::init(self), bun_ast::Loc::EMPTY))
     }
 }
 
 impl<T: ToAst> ToAst for &T {
-    fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
+    fn to_ast<'arena>(&self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_core::Error> {
         (**self).to_ast(bump)
     }
 }
 
 impl<T: ToAst> ToAst for [T] {
-    fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
+    fn to_ast<'arena>(&self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_core::Error> {
         let mut exprs = BumpVec::with_capacity_in(self.len(), bump);
         for (_i, ex) in self.iter().enumerate() {
             exprs.push(ex.to_ast(bump)?);
@@ -713,14 +713,14 @@ impl<T: ToAst> ToAst for [T] {
 }
 
 impl<T: ToAst, const N: usize> ToAst for [T; N] {
-    fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
+    fn to_ast<'arena>(&self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_core::Error> {
         self.as_slice().to_ast(bump)
     }
 }
 
 // Spec json.zig:557-565 — `Array.child == u8` → `E::String` (not `E::Array`).
 impl<const N: usize> ToAst for [u8; N] {
-    fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
+    fn to_ast<'arena>(&self, _bump: &'arena Bump) -> Result<Expr<'arena>, bun_core::Error> {
         Ok(Expr::init(
             E::String::init(self.as_slice()),
             bun_ast::Loc::EMPTY,
@@ -729,7 +729,7 @@ impl<const N: usize> ToAst for [u8; N] {
 }
 
 impl<T: ToAst> ToAst for Option<T> {
-    fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
+    fn to_ast<'arena>(&self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_core::Error> {
         match self {
             Some(v) => v.to_ast(bump),
             None => Ok(Expr {
@@ -741,7 +741,7 @@ impl<T: ToAst> ToAst for Option<T> {
 }
 
 impl ToAst for () {
-    fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
+    fn to_ast<'arena>(&self, _bump: &'arena Bump) -> Result<Expr<'arena>, bun_core::Error> {
         Ok(Expr {
             data: js_ast::expr::Data::ENull(E::Null {}),
             loc: bun_ast::Loc::default(),
@@ -750,7 +750,7 @@ impl ToAst for () {
 }
 
 impl ToAst for bun_core::Error {
-    fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
+    fn to_ast<'arena>(&self, bump: &'arena Bump) -> Result<Expr<'arena>, bun_core::Error> {
         self.name().as_bytes().to_ast(bump)
     }
 }
@@ -780,7 +780,10 @@ impl ToAst for bun_core::Error {
 // In Rust this is the natural shape of `enum` payloads; the derive should emit
 // `match self { Variant(v) => /* { "Variant": v } */ }`.
 
-pub fn to_ast<Ty: ToAst + ?Sized>(bump: &Bump, value: &Ty) -> Result<Expr, bun_core::Error> {
+pub fn to_ast<'arena, Ty: ToAst + ?Sized>(
+    bump: &'arena Bump,
+    value: &Ty,
+) -> Result<Expr<'arena>, bun_core::Error> {
     value.to_ast(bump)
 }
 
@@ -838,22 +841,24 @@ const PACKAGE_JSON_OPTS: js_lexer::JSONOptions = js_lexer::JSONOptions {
 // `StoreRef::from_raw` wants a `*mut T` and the payload types are `!Sync`.
 // Phase B: prefer `Expr::Data` constructors that don't need a backing static
 // (e.g. inline empty-object sentinel).
-static EMPTY_OBJECT: bun_core::RacyCell<E::Object> = bun_core::RacyCell::new(E::Object::EMPTY);
-static EMPTY_ARRAY: bun_core::RacyCell<E::Array> = bun_core::RacyCell::new(E::Array::EMPTY);
-static EMPTY_STRING: bun_core::RacyCell<E::String> = bun_core::RacyCell::new(E::String::EMPTY);
+static EMPTY_OBJECT: bun_core::RacyCell<E::Object<'static>> =
+    bun_core::RacyCell::new(E::Object::EMPTY);
+static EMPTY_ARRAY: bun_core::RacyCell<E::Array<'static>> = bun_core::RacyCell::new(E::Array::EMPTY);
+static EMPTY_STRING: bun_core::RacyCell<E::String<'static>> =
+    bun_core::RacyCell::new(E::String::EMPTY);
 
 #[inline]
-fn empty_string_data() -> js_ast::expr::Data {
+fn empty_string_data<'arena>() -> js_ast::expr::Data<'arena> {
     // EMPTY_STRING is a never-mutated static; `StoreRef::from_raw` checks
     // non-null and the static trivially outlives any Store reset.
     js_ast::expr::Data::EString(js_ast::StoreRef::from_raw(EMPTY_STRING.get()))
 }
 #[inline]
-fn empty_object_data() -> js_ast::expr::Data {
+fn empty_object_data<'arena>() -> js_ast::expr::Data<'arena> {
     js_ast::expr::Data::EObject(js_ast::StoreRef::from_raw(EMPTY_OBJECT.get()))
 }
 #[inline]
-fn empty_array_data() -> js_ast::expr::Data {
+fn empty_array_data<'arena>() -> js_ast::expr::Data<'arena> {
     js_ast::expr::Data::EArray(js_ast::StoreRef::from_raw(EMPTY_ARRAY.get()))
 }
 
@@ -868,11 +873,11 @@ fn empty_array_data() -> js_ast::expr::Data {
 // trivial forward into the single non-generic `parse_expr`. The wrapper
 // monomorphizes to a few instructions; no large body is duplicated.
 #[inline]
-pub fn parse<const FORCE_UTF8: bool>(
-    source: &bun_ast::Source,
+pub fn parse<'arena, const FORCE_UTF8: bool>(
+    source: &'arena bun_ast::Source,
     log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
+    bump: &'arena Bump,
+) -> Result<Expr<'arena>, bun_core::Error> {
     // TODO(port): narrow error set
     let mut parser = JSONLikeParser::init(JSON_OPTS, bump, source, log)?;
     match source.contents.len() {
@@ -913,11 +918,11 @@ pub fn parse<const FORCE_UTF8: bool>(
 /// This eagerly transcodes UTF-16 strings into UTF-8 strings
 /// Use this when the text may need to be reprinted to disk as JSON (and not as JavaScript)
 /// Eagerly converting UTF-8 to UTF-16 can cause a performance issue
-pub fn parse_package_json_utf8(
-    source: &bun_ast::Source,
+pub fn parse_package_json_utf8<'arena>(
+    source: &'arena bun_ast::Source,
     log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
+    bump: &'arena Bump,
+) -> Result<Expr<'arena>, bun_core::Error> {
     // TODO(port): narrow error set
     let len = source.contents.len();
 
@@ -957,12 +962,12 @@ pub fn parse_package_json_utf8(
     parser.parse_expr(false, true)
 }
 
-pub struct JsonResult {
-    pub root: Expr,
+pub struct JsonResult<'arena> {
+    pub root: Expr<'arena>,
     pub indentation: Indentation,
 }
 
-impl Default for JsonResult {
+impl<'arena> Default for JsonResult<'arena> {
     fn default() -> Self {
         Self {
             root: Expr::default(),
@@ -979,6 +984,7 @@ impl Default for JsonResult {
 // `parse_expr` body is shared.
 #[inline]
 pub fn parse_package_json_utf8_with_opts<
+    'arena,
     const IS_JSON: bool,
     const ALLOW_COMMENTS: bool,
     const ALLOW_TRAILING_COMMAS: bool,
@@ -988,10 +994,10 @@ pub fn parse_package_json_utf8_with_opts<
     const WAS_ORIGINALLY_MACRO: bool,
     const GUESS_INDENTATION: bool,
 >(
-    source: &bun_ast::Source,
+    source: &'arena bun_ast::Source,
     log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> Result<JsonResult, bun_core::Error> {
+    bump: &'arena Bump,
+) -> Result<JsonResult<'arena>, bun_core::Error> {
     parse_package_json_utf8_with_opts_rt(
         js_lexer::JSONOptions {
             is_json: IS_JSON,
@@ -1011,12 +1017,12 @@ pub fn parse_package_json_utf8_with_opts<
 
 /// Runtime-options entry point. Prefer this over the const-generic shim above
 /// for new code.
-pub fn parse_package_json_utf8_with_opts_rt(
+pub fn parse_package_json_utf8_with_opts_rt<'arena>(
     opts: js_lexer::JSONOptions,
-    source: &bun_ast::Source,
+    source: &'arena bun_ast::Source,
     log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> Result<JsonResult, bun_core::Error> {
+    bump: &'arena Bump,
+) -> Result<JsonResult<'arena>, bun_core::Error> {
     // TODO(port): narrow error set
     let len = source.contents.len();
 
@@ -1082,21 +1088,21 @@ pub fn parse_package_json_utf8_with_opts_rt(
 /// This eagerly transcodes UTF-16 strings into UTF-8 strings
 /// Use this when the text may need to be reprinted to disk as JSON (and not as JavaScript)
 /// Eagerly converting UTF-8 to UTF-16 can cause a performance issue
-pub fn parse_utf8(
-    source: &bun_ast::Source,
+pub fn parse_utf8<'arena>(
+    source: &'arena bun_ast::Source,
     log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
+    bump: &'arena Bump,
+) -> Result<Expr<'arena>, bun_core::Error> {
     // TODO(port): narrow error set
     parse_utf8_impl::<false>(source, log, bump)
 }
 
 #[inline]
-pub fn parse_utf8_impl<const CHECK_LEN: bool>(
-    source: &bun_ast::Source,
+pub fn parse_utf8_impl<'arena, const CHECK_LEN: bool>(
+    source: &'arena bun_ast::Source,
     log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
+    bump: &'arena Bump,
+) -> Result<Expr<'arena>, bun_core::Error> {
     // TODO(port): narrow error set
     let len = source.contents.len();
 
@@ -1144,11 +1150,11 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
     Ok(result)
 }
 
-pub fn parse_for_macro(
-    source: &bun_ast::Source,
+pub fn parse_for_macro<'arena>(
+    source: &'arena bun_ast::Source,
     log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
+    bump: &'arena Bump,
+) -> Result<Expr<'arena>, bun_core::Error> {
     // TODO(port): narrow error set
     match source.contents.len() {
         // This is to be consisntent with how disabled JS files are handled
@@ -1185,8 +1191,8 @@ pub fn parse_for_macro(
     parser.parse_expr(false, false)
 }
 
-pub struct JSONParseResult {
-    pub expr: Expr,
+pub struct JSONParseResult<'arena> {
+    pub expr: Expr<'arena>,
     pub tag: JSONParseResultTag,
 }
 
@@ -1198,11 +1204,11 @@ pub enum JSONParseResultTag {
     Empty,
 }
 
-pub fn parse_for_bundling(
-    source: &bun_ast::Source,
+pub fn parse_for_bundling<'arena>(
+    source: &'arena bun_ast::Source,
     log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> Result<JSONParseResult, bun_core::Error> {
+    bump: &'arena Bump,
+) -> Result<JSONParseResult<'arena>, bun_core::Error> {
     // TODO(port): narrow error set
     match source.contents.len() {
         // This is to be consisntent with how disabled JS files are handled
@@ -1262,11 +1268,11 @@ pub fn parse_for_bundling(
 
 // threadlocal var env_json_auto_quote_buffer: MutableString = undefined;
 // threadlocal var env_json_auto_quote_buffer_loaded: bool = false;
-pub fn parse_env_json(
-    source: &bun_ast::Source,
+pub fn parse_env_json<'arena>(
+    source: &'arena bun_ast::Source,
     log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
+    bump: &'arena Bump,
+) -> Result<Expr<'arena>, bun_core::Error> {
     // TODO(port): narrow error set
     match source.contents.len() {
         // This is to be consisntent with how disabled JS files are handled
@@ -1331,11 +1337,11 @@ pub fn parse_env_json(
 }
 
 #[inline]
-pub fn parse_ts_config<const FORCE_UTF8: bool>(
-    source: &bun_ast::Source,
+pub fn parse_ts_config<'arena, const FORCE_UTF8: bool>(
+    source: &'arena bun_ast::Source,
     log: &mut bun_ast::Log,
-    bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
+    bump: &'arena Bump,
+) -> Result<Expr<'arena>, bun_core::Error> {
     // TODO(port): narrow error set
     match source.contents.len() {
         // This is to be consisntent with how disabled JS files are handled

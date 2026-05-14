@@ -28,7 +28,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions,
         async_range: Option<bun_ast::Range>,
-    ) -> Result<Stmt, Error> {
+    ) -> Result<Stmt<'a>, Error> {
         let p = self;
         let is_generator = p.lexer.token == T::TAsterisk;
         let is_async = async_range.is_some();
@@ -170,7 +170,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         name: Option<js_ast::LocRef>,
         opts: FnOrArrowDataParse,
-    ) -> Result<G::Fn, Error> {
+    ) -> Result<G::Fn<'a>, Error> {
         let p = self;
         // if data.allowAwait and data.allowYield {
         //     p.markSyntaxFeature(compat.AsyncGenerator, data.asyncRange)
@@ -425,7 +425,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         is_async: bool,
         async_range: bun_ast::Range,
-    ) -> Result<Expr, Error> {
+    ) -> Result<Expr<'a>, Error> {
         let p = self;
         p.lexer.next()?;
         let is_generator = p.lexer.token == T::TAsterisk;
@@ -492,7 +492,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::Function { func }, loc))
     }
 
-    pub fn parse_fn_body(&mut self, data: &mut FnOrArrowDataParse) -> Result<G::FnBody, Error> {
+    pub fn parse_fn_body(&mut self, data: &mut FnOrArrowDataParse) -> Result<G::FnBody<'a>, Error> {
         let p = self;
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
         let old_allow_in = p.allow_in;
@@ -526,9 +526,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn parse_arrow_body(
         &mut self,
-        args: &'a mut [G::Arg],
+        args: &'a mut [G::Arg<'a>],
         data: &mut FnOrArrowDataParse,
-    ) -> Result<E::Arrow, Error> {
+    ) -> Result<E::Arrow<'a>, Error> {
         let p = self;
         let arrow_loc = p.lexer.loc();
 

@@ -33,11 +33,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn parse_method_expression(
         &mut self,
         kind: PropertyKind,
-        opts: &mut PropertyOpts,
+        opts: &mut PropertyOpts<'a>,
         is_computed: bool,
-        key: &mut Expr,
+        key: &mut Expr<'a>,
         key_range: bun_ast::Range,
-    ) -> Result<Option<G::Property>, bun_core::Error> {
+    ) -> Result<Option<G::Property<'a>>, bun_core::Error> {
         let p = self;
         if p.lexer.token == T::TOpenParen && kind != PropertyKind::Get && kind != PropertyKind::Set
         {
@@ -252,9 +252,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn parse_property(
         &mut self,
         kind_: PropertyKind,
-        opts: &mut PropertyOpts,
+        opts: &mut PropertyOpts<'a>,
         errors_: Option<&mut DeferredErrors>,
-    ) -> Result<Option<G::Property>, bun_core::Error> {
+    ) -> Result<Option<G::Property<'a>>, bun_core::Error> {
         let p = self;
         if !p.stack_check.is_safe_to_recurse() {
             return Err(err!("StackOverflow"));

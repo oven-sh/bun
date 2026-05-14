@@ -31,13 +31,13 @@ pub fn expr_to_js(this: &Expr, global: &JSGlobalObject) -> Result<JSValue, ToJSE
 pub trait ExprJsc {
     fn to_js(&self, global: &JSGlobalObject) -> Result<JSValue, ToJSError>;
 }
-impl ExprJsc for Expr {
+impl ExprJsc for Expr<'_> {
     #[inline]
     fn to_js(&self, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
         expr_to_js(self, global)
     }
 }
-impl ExprJsc for ExprData {
+impl ExprJsc for ExprData<'_> {
     #[inline]
     fn to_js(&self, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
         data_to_js(self, global)

@@ -27,7 +27,7 @@ use bun_core::Error;
 use bun_core::strings;
 
 // `ListManaged(Stmt)` in the parser is arena-backed (`p.arena`).
-type StmtList<'bump> = BumpVec<'bump, Stmt>;
+type StmtList<'bump> = BumpVec<'bump, Stmt<'bump>>;
 
 use bun_ast::StmtNodeList;
 
@@ -42,9 +42,9 @@ use bun_ast::StmtNodeList;
 #[inline]
 fn visit_stmt_slice<'a, const TS: bool, const SO: bool>(
     p: &mut P<'a, TS, SO>,
-    slice: StmtNodeList,
+    slice: StmtNodeList<'a>,
     kind: StmtsKind,
-) -> StmtNodeList {
+) -> StmtNodeList<'a> {
     let src: &[Stmt] = slice.slice();
     let mut list: StmtList<'a> = BumpVec::with_capacity_in(src.len(), p.arena);
     list.extend_from_slice(src);
@@ -58,11 +58,11 @@ fn visit_stmt_slice<'a, const TS: bool, const SO: bool>(
 // reclaims both at end-of-parse.
 // PERF(port): was fromOwnedSlice (no copy) — profile in Phase B.
 #[inline]
-fn stmts_to_list<'a>(arena: &'a bun_alloc::Arena, ptr: StmtNodeList) -> StmtList<'a> {
+fn stmts_to_list<'a>(arena: &'a bun_alloc::Arena, ptr: StmtNodeList<'a>) -> StmtList<'a> {
     bun_alloc::vec_from_iter_in(ptr.iter().copied(), arena)
 }
 #[inline]
-fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
+fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList<'a> {
     StmtNodeList::from_bump(list)
 }
 
@@ -74,14 +74,14 @@ fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
-    fn cur_scope(&mut self) -> &mut js_ast::Scope {
+    fn cur_scope(&mut self) -> &mut js_ast::Scope<'a> {
         self.current_scope_mut()
     }
 
     pub fn visit_and_append_stmt(
         &mut self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
+        stmt: &mut Stmt<'a>,
     ) -> Result<(), Error> {
         let p = self;
         // By default any statement ends the const local prefix
@@ -160,8 +160,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_import(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Import,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Import<'a>,
     ) -> Result<(), Error> {
         p.record_declared_symbol(data.namespace_ref);
 
@@ -183,8 +183,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_export_equals(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::ExportEquals,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::ExportEquals<'a>,
     ) -> Result<(), Error> {
         // "module.exports = value"
         // Zig: p.@"module.exports"(stmt.loc) — mapped to `module_exports`
@@ -200,8 +200,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_export_clause(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::ExportClause,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::ExportClause<'a>,
     ) -> Result<(), Error> {
         // "export {foo}"
         let items = data.items.slice_mut();
@@ -298,8 +298,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_export_from(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::ExportFrom,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::ExportFrom<'a>,
     ) -> Result<(), Error> {
         // "export {foo} from 'path'"
         let name = p.load_name_from_ref(data.namespace_ref);
@@ -362,8 +362,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_export_star(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::ExportStar,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::ExportStar<'a>,
     ) -> Result<(), Error> {
         // "export * from 'path'"
         let name = p.load_name_from_ref(data.namespace_ref);
@@ -403,8 +403,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_export_default(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::ExportDefault,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::ExportDefault<'a>,
     ) -> Result<(), Error> {
         // Zig: defer { if (data.default_name.ref) |ref| p.recordDeclaredSymbol(ref) catch unreachable; }
         // PORT NOTE: scopeguard can't borrow `p` across the body; restructured to a tail
@@ -920,8 +920,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_function(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Function,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Function<'a>,
     ) -> Result<(), Error> {
         // We mark it as dead, but the value may not actually be dead
         // We just want to be sure to not increment the usage counts for anything in the function
@@ -1090,8 +1090,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_class(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Class,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Class<'a>,
     ) -> Result<(), Error> {
         let mark_as_dead = p.options.features.dead_code_elimination
             && data.is_export
@@ -1178,8 +1178,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_local(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Local,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Local<'a>,
         was_after_after_const_local_prefix: bool,
     ) -> Result<(), Error> {
         // TODO: Silently remove unsupported top-level "await" in dead code branches
@@ -1327,7 +1327,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_break(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
+        stmt: &mut Stmt<'a>,
         data: &mut S::Break,
     ) -> Result<(), Error> {
         if let Some(label) = &mut data.label {
@@ -1360,7 +1360,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_continue(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
+        stmt: &mut Stmt<'a>,
         data: &mut S::Continue,
     ) -> Result<(), Error> {
         if let Some(label) = &mut data.label {
@@ -1395,8 +1395,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_label(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Label,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Label<'a>,
     ) -> Result<(), Error> {
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Label, stmt.loc)
             .expect("unreachable");
@@ -1427,8 +1427,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_expr(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::SExpr,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::SExpr<'a>,
     ) -> Result<(), Error> {
         let should_trim_primitive = p.options.features.dead_code_elimination
             && (p.options.features.minify_syntax && data.value.is_primitive_literal());
@@ -1581,8 +1581,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_throw(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Throw,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Throw<'a>,
     ) -> Result<(), Error> {
         p.visit_expr(&mut data.value);
         stmts.push(*stmt);
@@ -1592,8 +1592,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_return(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Return,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Return<'a>,
     ) -> Result<(), Error> {
         // Forbid top-level return inside modules with ECMAScript-style exports
         if p.fn_or_arrow_data_visit.is_outside_fn_or_arrow {
@@ -1633,8 +1633,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_block(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Block,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Block<'a>,
     ) -> Result<(), Error> {
         {
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
@@ -1663,7 +1663,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if p.options.features.minify_syntax {
             // // trim empty statements
-            let block_stmts: &[Stmt] = data.stmts.slice();
+            let block_stmts: &[Stmt<'a>] = data.stmts.slice();
             if block_stmts.is_empty() {
                 stmts.push(Stmt {
                     data: Stmt::empty().data,
@@ -1684,8 +1684,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_with(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::With,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::With<'a>,
     ) -> Result<(), Error> {
         p.visit_expr(&mut data.value);
 
@@ -1710,8 +1710,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_while(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::While,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::While<'a>,
     ) -> Result<(), Error> {
         p.visit_expr(&mut data.test_);
         data.body = p.visit_loop_body(data.body);
@@ -1734,8 +1734,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_do_while(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::DoWhile,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::DoWhile<'a>,
     ) -> Result<(), Error> {
         data.body = p.visit_loop_body(data.body);
         p.visit_expr(&mut data.test_);
@@ -1748,8 +1748,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_if(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::If,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::If<'a>,
     ) -> Result<(), Error> {
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
@@ -1887,8 +1887,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_for(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::For,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::For<'a>,
     ) -> Result<(), Error> {
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
             .expect("unreachable");
@@ -1938,8 +1938,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_for_in(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::ForIn,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::ForIn<'a>,
     ) -> Result<(), Error> {
         {
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
@@ -1987,8 +1987,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_for_of(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::ForOf,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::ForOf<'a>,
     ) -> Result<(), Error> {
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
             .expect("unreachable");
@@ -2094,8 +2094,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_try(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Try,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Try<'a>,
     ) -> Result<(), Error> {
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
             .expect("unreachable");
@@ -2146,8 +2146,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_switch(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Switch,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Switch<'a>,
     ) -> Result<(), Error> {
         p.visit_expr(&mut data.test_);
         {
@@ -2180,8 +2180,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_enum(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Enum,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Enum<'a>,
         was_after_after_const_local_prefix: bool,
     ) -> Result<(), Error> {
         // Do not end the const local prefix after TypeScript enums. We process
@@ -2392,8 +2392,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn s_namespace(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Namespace,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Namespace<'a>,
     ) -> Result<(), Error> {
         p.record_declared_symbol(data.name.ref_.expect("infallible: ref bound"));
 
@@ -2401,7 +2401,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // ahead of time before visiting any statements inside the namespace
         // because we may end up visiting the uses before the declarations.
         // We need to convert the uses into property accesses on the namespace.
-        let child_stmts: &[Stmt] = data.stmts.slice();
+        let child_stmts: &[Stmt<'a>] = data.stmts.slice();
         for child_stmt in child_stmts.iter() {
             if let StmtData::SLocal(local) = child_stmt.data {
                 if local.is_export {

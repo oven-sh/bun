@@ -39,7 +39,7 @@ use crate::api::bun_process::sync as spawn_sync;
 // its own `as_property` / `as_string_cloned` surface.
 #[inline]
 fn json_get_string_cloned<'b>(
-    expr: &bun_ast::Expr,
+    expr: &bun_ast::Expr<'_>,
     bump: &'b bun_alloc::Arena,
     name: &[u8],
 ) -> Result<Option<&'b [u8]>, AllocError> {
@@ -322,8 +322,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         let package_json_contents: &'static [u8] = crate::cli::cli_adopt(package_json_contents);
 
         let bump = bun_alloc::Arena::new();
+        let source = bun_ast::Source::init_path_string(b"package.json", package_json_contents);
         let (package_name, package_version, json, json_source) = {
-            let source = bun_ast::Source::init_path_string(b"package.json", package_json_contents);
             let log = manager.log_mut();
             let json = match json_mod::parse_package_json_utf8(&source, log, &bump) {
                 Ok(j) => j,
@@ -389,7 +389,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                 return Err(FromTarballError::InvalidPackageVersion);
             }
 
-            (name, version, json, source)
+            (name, version, json, &source)
         };
 
         let mut shasum: SHA1Digest = [0u8; sha::SHA1::DIGEST];
@@ -411,7 +411,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         // `WorkspacePackageJSONCache::get_with_path` applies before stashing
         // `MapEntry.root`. The thread-local `data::Store` has already been
         // initialised by `PackageManager::init`.
-        let mut json: Expr = Expr::from(json);
+        let mut json: Expr<'_> = Expr::from(json);
         let normalized_pkg_info = PublishCommand::normalized_package(
             manager,
             &package_name,
@@ -1422,7 +1422,7 @@ impl PublishCommand {
         manager: &mut PackageManager,
         package_name: &[u8],
         package_version: &[u8],
-        json: &mut Expr,
+        json: &mut Expr<'_>,
         json_source: &bun_ast::Source,
         shasum: SHA1Digest,
         integrity: SHA512Digest,
@@ -1493,7 +1493,7 @@ impl PublishCommand {
             }
         }
 
-        let mut dist_props: Vec<G::Property> = Vec::with_capacity(3);
+        let mut dist_props: Vec<G::Property<'_>> = Vec::with_capacity(3);
         dist_props.push(G::Property {
             key: Some(Expr::init(
                 E::String::init(b"integrity"),
@@ -1633,7 +1633,7 @@ impl PublishCommand {
     }
 
     fn normalize_bin(
-        json: &mut Expr,
+        json: &mut Expr<'_>,
         bump: &bun_alloc::Arena,
         package_name: &[u8],
         workspace_root: Fd,
@@ -1650,7 +1650,7 @@ impl PublishCommand {
         if let Some(bin_query) = json.as_property(b"bin") {
             match &bin_query.expr.data {
                 ExprData::EString(bin_str) => {
-                    let mut bin_props: Vec<G::Property> = Vec::new();
+                    let mut bin_props: Vec<G::Property<'_>> = Vec::new();
                     let normalized = strings::without_prefix_comptime_z(
                         normalize_buf_z::<path::platform::Posix>(
                             bin_str.string(bump)?,
@@ -1692,7 +1692,7 @@ impl PublishCommand {
                     ));
                 }
                 ExprData::EObject(bin_obj) => {
-                    let mut bin_props: Vec<G::Property> = Vec::new();
+                    let mut bin_props: Vec<G::Property<'_>> = Vec::new();
                     for bin_prop in bin_obj.properties.slice() {
                         let key: Option<Box<[u8]>> = 'key: {
                             if let Some(key) = &bin_prop.key {
@@ -1784,7 +1784,7 @@ impl PublishCommand {
                 let Some(bin_dir_str) = bin_query.expr.as_string(bump) else {
                     return Ok(());
                 };
-                let mut bin_props: Vec<G::Property> = Vec::new();
+                let mut bin_props: Vec<G::Property<'_>> = Vec::new();
                 let normalized_bin_dir = bun_core::ZBox::from_bytes(
                     strings::without_trailing_slash(strings::without_prefix(
                         normalize_buf::<path::platform::Posix>(bin_dir_str, &mut *path_buf),

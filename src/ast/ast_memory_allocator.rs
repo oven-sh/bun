@@ -213,7 +213,7 @@ impl ASTMemoryAllocator {
     }
 
     #[inline]
-    pub fn append<T>(&self, value: T) -> crate::StoreRef<T> {
+    pub fn append<'arena, T>(&self, value: T) -> crate::StoreRef<'arena, T> {
         // Zig: `this.bump_allocator.create(ValueType) catch unreachable; ptr.* = value;`
         // bumpalo's `alloc` aborts on OOM, matching `catch unreachable`.
         // SAFETY: bumpalo never returns null.

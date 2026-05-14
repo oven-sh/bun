@@ -26,11 +26,11 @@ use bun_core::{self, StackCheck};
 pub struct YAML;
 
 impl YAML {
-    pub fn parse(
-        source: &bun_ast::Source,
+    pub fn parse<'arena>(
+        source: &'arena bun_ast::Source,
         log: &mut bun_ast::Log,
-        bump: &bun_alloc::Arena,
-    ) -> Result<Expr, YamlParseError> {
+        bump: &'arena bun_alloc::Arena,
+    ) -> Result<Expr<'arena>, YamlParseError> {
         // Zig: `bun.analytics.Features.yaml_parse += 1;`
         bun_core::analytics::Features::yaml_parse_inc();
 
@@ -101,7 +101,10 @@ impl From<YamlParseError> for bun_core::Error {
 // Top-level free functions
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn parse<Enc: Encoding>(bump: &bun_alloc::Arena, input: &[Enc::Unit]) -> ParseResult<Enc> {
+pub fn parse<'arena, Enc: Encoding>(
+    bump: &'arena bun_alloc::Arena,
+    input: &'arena [Enc::Unit],
+) -> ParseResult<'arena, Enc> {
     let mut parser: Parser<Enc> = Parser::init(bump, input);
 
     match parser.parse() {
@@ -110,7 +113,7 @@ pub fn parse<Enc: Encoding>(bump: &bun_alloc::Arena, input: &[Enc::Unit]) -> Par
     }
 }
 
-pub fn print<Enc: Encoding, W: fmt::Write>(stream: Stream<Enc>, writer: &mut W) -> fmt::Result {
+pub fn print<Enc: Encoding, W: fmt::Write>(stream: Stream<'_, Enc>, writer: &mut W) -> fmt::Result {
     // Zig body (yaml.zig:44-53) constructs `Parser(encoding).Printer(@TypeOf(writer))`
     // and calls `printer.print()`. The `Printer` type is commented out in the spec
     // (yaml.zig:4927-5250) and operates on the removed `Node` enum, so any Zig
@@ -1726,7 +1729,7 @@ pub enum NodeTag {
 }
 
 impl NodeTag {
-    pub fn resolve_null(self, loc: bun_ast::Loc) -> Expr {
+    pub fn resolve_null<'arena>(self, loc: bun_ast::Loc) -> Expr<'arena> {
         match self {
             NodeTag::None
             | NodeTag::Bool
@@ -1750,7 +1753,12 @@ pub enum NodeScalar<Enc: Encoding> {
 }
 
 impl<Enc: Encoding> NodeScalar<Enc> {
-    pub fn to_expr(&self, pos: Pos, input: &[Enc::Unit], bump: &bun_alloc::Arena) -> Expr {
+    pub fn to_expr<'arena>(
+        &self,
+        pos: Pos,
+        input: &[Enc::Unit],
+        bump: &'arena bun_alloc::Arena,
+    ) -> Expr<'arena> {
         match self {
             NodeScalar::Null => Expr::init(E::Null {}, pos.loc()),
             NodeScalar::Boolean(value) => Expr::init(E::Boolean { value: *value }, pos.loc()),
@@ -1826,15 +1834,15 @@ pub enum DirectiveTagPrefix {
     Global(StringRange),
 }
 
-pub struct Document {
+pub struct Document<'arena> {
     pub directives: Vec<Directive>,
-    pub root: Expr,
+    pub root: Expr<'arena>,
 }
 
 // impl Drop for Document — Vec<Directive> auto-drops; Expr is arena-backed.
 
-pub struct Stream<Enc: Encoding> {
-    pub docs: Vec<Document>,
+pub struct Stream<'arena, Enc: Encoding> {
+    pub docs: Vec<Document<'arena>>,
     pub input: *const [Enc::Unit],
     // TODO(port): lifetime — Zig stored `[]const enc.unit()` borrowing parser input.
 }
@@ -2136,13 +2144,13 @@ impl<Enc: Encoding> Token<Enc> {
 // ParseResult
 // ───────────────────────────────────────────────────────────────────────────
 
-pub enum ParseResult<Enc: Encoding> {
-    Result(ParseResultOk<Enc>),
+pub enum ParseResult<'arena, Enc: Encoding> {
+    Result(ParseResultOk<'arena, Enc>),
     Err(ParseResultError),
 }
 
-pub struct ParseResultOk<Enc: Encoding> {
-    pub stream: Stream<Enc>,
+pub struct ParseResultOk<'arena, Enc: Encoding> {
+    pub stream: Stream<'arena, Enc>,
     // allocator dropped — global mimalloc
 }
 
@@ -2217,12 +2225,12 @@ impl ParseResultError {
     }
 }
 
-impl<Enc: Encoding> ParseResult<Enc> {
-    pub fn success(stream: Stream<Enc>, _parser: &Parser<Enc>) -> Self {
+impl<'arena, Enc: Encoding> ParseResult<'arena, Enc> {
+    pub fn success(stream: Stream<'arena, Enc>, _parser: &Parser<'arena, Enc>) -> Self {
         ParseResult::Result(ParseResultOk { stream })
     }
 
-    pub fn fail(err: ParseError, parser: &Parser<Enc>) -> Self {
+    pub fn fail(err: ParseError, parser: &Parser<'arena, Enc>) -> Self {
         let e = match err {
             ParseError::OutOfMemory => ParseResultError::Oom,
             ParseError::StackOverflow => ParseResultError::StackOverflow,
@@ -2306,7 +2314,7 @@ pub struct Parser<'i, Enc: Encoding> {
 
     pub explicit_document_start_line: Option<Line>,
 
-    pub anchors: StringHashMap<Expr>,
+    pub anchors: StringHashMap<Expr<'i>>,
     // TODO(port): Zig key type was []const enc.unit(); StringHashMap keys are &[u8].
     // For Utf16 this needs a different map type.
     pub tag_handles: StringHashMap<()>,
@@ -2345,7 +2353,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         ParseError::UnexpectedToken
     }
 
-    pub fn parse(&mut self) -> Result<Stream<Enc>, ParseError> {
+    pub fn parse(&mut self) -> Result<Stream<'i, Enc>, ParseError> {
         self.scan(ScanOptions {
             first_scan: true,
             ..Default::default()
@@ -2353,8 +2361,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.parse_stream()
     }
 
-    pub fn parse_stream(&mut self) -> Result<Stream<Enc>, ParseError> {
-        let mut docs: Vec<Document> = Vec::new();
+    pub fn parse_stream(&mut self) -> Result<Stream<'i, Enc>, ParseError> {
+        let mut docs: Vec<Document<'i>> = Vec::new();
 
         // we want one null document if eof, not zero documents.
         let mut first = true;
@@ -2526,7 +2534,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Err(ParseError::InvalidDirective)
     }
 
-    pub fn parse_document(&mut self) -> Result<Document, ParseError> {
+    pub fn parse_document(&mut self) -> Result<Document<'i>, ParseError> {
         let mut directives: Vec<Directive> = Vec::new();
 
         // Zig: `clearRetainingCapacity()` — `HashMap::clear()` already retains capacity.
@@ -2586,12 +2594,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Ok(Document { root, directives })
     }
 
-    fn parse_flow_sequence(&mut self) -> Result<Expr, ParseError> {
+    fn parse_flow_sequence(&mut self) -> Result<Expr<'i>, ParseError> {
         let sequence_start = self.token.start;
         let _sequence_indent = self.token.indent;
         let _sequence_line = self.line;
 
-        let mut seq: ast::ExprNodeList = bun_alloc::AstAlloc::vec();
+        let mut seq: ast::ExprNodeList<'i> = bun_alloc::AstAlloc::vec();
 
         self.context.set(Context::FlowIn)?;
 
@@ -2633,7 +2641,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         ))
     }
 
-    fn parse_flow_mapping(&mut self) -> Result<Expr, ParseError> {
+    fn parse_flow_mapping(&mut self) -> Result<Expr<'i>, ParseError> {
         let mapping_start = self.token.start;
         let _mapping_indent = self.token.indent;
         let _mapping_line = self.token.line;
@@ -2735,7 +2743,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         ))
     }
 
-    fn parse_block_sequence(&mut self) -> Result<Expr, ParseError> {
+    fn parse_block_sequence(&mut self) -> Result<Expr<'i>, ParseError> {
         let sequence_start = self.token.start;
         let sequence_indent = self.token.indent;
 
@@ -2743,8 +2751,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         // PORT NOTE: Zig `defer self.block_indents.pop()` — capture the fallible
         // body's result and pop on EVERY exit (including `?` paths).
-        let result: Result<Expr, ParseError> = (|| {
-            let mut seq: ast::ExprNodeList = bun_alloc::AstAlloc::vec();
+        let result: Result<Expr<'i>, ParseError> = (|| {
+            let mut seq: ast::ExprNodeList<'i> = bun_alloc::AstAlloc::vec();
 
             let mut prev_line = Line::from(0);
 
@@ -2769,7 +2777,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 })?;
 
                 // check if the sequence entry is a null value (see Zig comments)
-                let item: Expr = match &self.token.data {
+                let item: Expr<'i> = match &self.token.data {
                     TokenData::Eof => Expr::init(E::Null {}, entry_start.add(2).loc()),
                     TokenData::SequenceEntry => {
                         if self.token.indent.is_less_than_or_equal(sequence_indent) {
@@ -2868,7 +2876,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// Should only be used with expressions created with the YAML parser. It assumes
     /// only null, boolean, number, string, array, object are possible. It also only
     /// does pointer comparison with arrays and objects (so exponential merges are avoided)
-    fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr) -> bool {
+    fn yaml_merge_key_expr_eql(l: &Expr<'_>, r: &Expr<'_>) -> bool {
         if core::mem::discriminant(&l.data) != core::mem::discriminant(&r.data) {
             return false;
         }
@@ -2899,11 +2907,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     fn parse_block_mapping(
         &mut self,
-        first_key: Expr,
+        first_key: Expr<'i>,
         mapping_start: Pos,
         mapping_indent: Indent,
         mapping_line: Line,
-    ) -> Result<Expr, ParseError> {
+    ) -> Result<Expr<'i>, ParseError> {
         if let Some(explicit_document_start_line) = self.explicit_document_start_line {
             if mapping_line == explicit_document_start_line {
                 // TODO: more specific error
@@ -2915,15 +2923,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         // PORT NOTE: Zig `defer self.block_indents.pop()` — capture the fallible
         // body's result and pop on EVERY exit (including `?` paths).
-        let result: Result<Expr, ParseError> = (|| {
-            let mut props = MappingProps::init();
+        let result: Result<Expr<'i>, ParseError> = (|| {
+            let mut props = MappingProps::<'i>::init();
 
             {
                 // get the first value
                 let mapping_value_start = self.token.start;
                 let mapping_value_line = self.token.line;
 
-                let value: Expr = match self.token.data {
+                let value: Expr<'i> = match self.token.data {
                     // it's a !!set entry
                     TokenData::MappingKey => {
                         if self.token.line == mapping_line {
@@ -2979,7 +2987,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
             // PORT NOTE: Zig `defer self.context.unset(.block_in)` — same
             // capture-then-unset pattern, nested.
-            let inner: Result<Expr, ParseError> = (|| {
+            let inner: Result<Expr<'i>, ParseError> = (|| {
                 let mut previous_line = mapping_line;
 
                 while !matches!(
@@ -3024,7 +3032,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let mapping_value_line = self.token.line;
                     let mapping_value_start = self.token.start;
 
-                    let value: Expr = match self.token.data {
+                    let value: Expr<'i> = match self.token.data {
                         // it's a !!set entry
                         TokenData::MappingKey => {
                             if self.token.line == key_line {
@@ -3094,23 +3102,23 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 // MappingProps
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct MappingProps {
-    list: G::PropertyList,
+pub struct MappingProps<'arena> {
+    list: G::PropertyList<'arena>,
 }
 
-impl MappingProps {
+impl<'arena> MappingProps<'arena> {
     pub fn init() -> Self {
         Self {
             list: bun_alloc::AstAlloc::vec(),
         }
     }
 
-    pub fn append(&mut self, prop: G::Property) -> Result<(), AllocError> {
+    pub fn append(&mut self, prop: G::Property<'arena>) -> Result<(), AllocError> {
         self.list.push(prop);
         Ok(())
     }
 
-    pub fn merge(&mut self, merge_props: &[G::Property]) -> Result<(), AllocError> {
+    pub fn merge(&mut self, merge_props: &[G::Property<'arena>]) -> Result<(), AllocError> {
         self.list.reserve(merge_props.len());
         // PERF(port): was ensureUnusedCapacity
         'next_merge_prop: for merge_prop in merge_props.iter().rev() {
@@ -3137,7 +3145,11 @@ impl MappingProps {
         Ok(())
     }
 
-    pub fn append_maybe_merge(&mut self, key: Expr, value: Expr) -> Result<(), AllocError> {
+    pub fn append_maybe_merge(
+        &mut self,
+        key: Expr<'arena>,
+        value: Expr<'arena>,
+    ) -> Result<(), AllocError> {
         let is_merge_key = match &key.data {
             ast::ExprData::EString(key_str) => key_str.eql_comptime(b"<<"),
             _ => false,
@@ -3176,7 +3188,7 @@ impl MappingProps {
         }
     }
 
-    pub fn move_list(&mut self) -> G::PropertyList {
+    pub fn move_list(&mut self) -> G::PropertyList<'arena> {
         core::mem::replace(&mut self.list, bun_alloc::AstAlloc::vec())
     }
 }
@@ -3398,7 +3410,7 @@ impl Escape {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
-    fn parse_node(&mut self, opts: ParseNodeOptions<Enc>) -> Result<Expr, ParseError> {
+    fn parse_node(&mut self, opts: ParseNodeOptions<Enc>) -> Result<Expr<'i>, ParseError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ParseError::StackOverflow);
         }
@@ -3416,7 +3428,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // PORT NOTE: labeled-switch loop on `self.token.data`. The Zig
         // `continue :node self.token.data` re-enters with the new token after
         // scanning. We loop and re-match.
-        let node: Expr = 'node: loop {
+        let node: Expr<'i> = 'node: loop {
             match &self.token.data {
                 TokenData::Eof | TokenData::DocumentStart | TokenData::DocumentEnd => {
                     break 'node Expr::init(E::Null {}, self.token.start.loc());

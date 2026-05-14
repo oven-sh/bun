@@ -1273,7 +1273,7 @@ pub struct Options<'a> {
     /// Borrowed from `LinkerGraph.ts_enums` (one shared map for the whole
     /// bundle). Zig passed the unmanaged map header by value; the printer
     /// only reads from it.
-    pub ts_enums: Option<&'a TsEnumsMap>,
+    pub ts_enums: Option<&'a TsEnumsMap<'a>>,
 
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
@@ -1433,7 +1433,7 @@ impl RequireOrImportMetaCallback {
     }
 }
 
-fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> bool {
+fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr<'_>) -> bool {
     use js_ast::ExprData;
     match &expr.data {
         ExprData::EIdentifier(_) | ExprData::EDot(_) | ExprData::EIndex(_) => true,
@@ -1528,7 +1528,7 @@ impl ImportVariant {
         }
     }
 
-    pub fn determine(record: &ImportRecord, s_import: &js_ast::S::Import) -> ImportVariant {
+    pub fn determine(record: &ImportRecord, s_import: &js_ast::S::Import<'_>) -> ImportVariant {
         let mut variant = ImportVariant::PathOnly;
 
         if record
@@ -1650,7 +1650,7 @@ pub mod __gated_printer {
     /// free fn (vs. calling `.slice()` inline) so the ~50 call sites stay
     /// `.zig`-diffable; the printer only ever reads these.
     #[inline(always)]
-    pub(crate) fn slice_of<'a, T>(p: js_ast::StoreSlice<T>) -> &'a [T] {
+    pub(crate) fn slice_of<'a, T>(p: js_ast::StoreSlice<'a, T>) -> &'a [T] {
         p.slice()
     }
     /// `EnumSet<T>` field-style mutation as used by the Zig (`flags.x = true`).
@@ -1690,18 +1690,18 @@ pub mod __gated_printer {
         pub prev_op_end: i32,
         pub prev_num_end: i32,
         pub prev_reg_exp_end: i32,
-        pub call_target: Option<ExprData>,
+        pub call_target: Option<ExprData<'a>>,
         pub writer: W,
 
         pub has_printed_bundled_import_statement: bool,
 
-        pub renamer: rename::Renamer<'a, 'a>,
+        pub renamer: rename::Renamer<'a, 'a, 'a>,
         pub prev_stmt_tag: StmtTag,
         pub source_map_builder: SourceMap::chunk::Builder,
 
         pub symbol_counter: u32,
 
-        pub temporary_bindings: Vec<B::Property>,
+        pub temporary_bindings: Vec<B::Property<'a>>,
 
         pub binary_expression_stack: Vec<BinaryExpressionVisitor<'a>>,
 
@@ -1723,7 +1723,7 @@ pub mod __gated_printer {
         // Inputs
         // PORT NOTE: Zig stored `*const E.Binary`; Phase A keeps the StoreRef so the
         // visitor stack can outlive the by-value `Expr` argument to `print_expr`.
-        pub e: js_ast::StoreRef<E::Binary>,
+        pub e: js_ast::StoreRef<'ast, E::Binary<'ast>>,
         _phantom: core::marker::PhantomData<&'ast ()>,
         pub level: Level,
         pub flags: ExprFlagSet,
@@ -2044,7 +2044,7 @@ pub mod __gated_printer {
             }
         }
 
-        fn print_global_bun_import_statement(&mut self, import: &S::Import) {
+        fn print_global_bun_import_statement(&mut self, import: &S::Import<'a>) {
             if !IS_BUN_PLATFORM {
                 unreachable!();
             }
@@ -2053,7 +2053,7 @@ pub mod __gated_printer {
 
         fn print_internal_bun_import(
             &mut self,
-            import: &S::Import,
+            import: &S::Import<'a>,
             statement: Option<&'static [u8]>,
         ) {
             if !IS_BUN_PLATFORM {
@@ -2223,7 +2223,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_body(&mut self, stmt: Stmt, tlmtlo: TopLevel) {
+        pub fn print_body(&mut self, stmt: Stmt<'a>, tlmtlo: TopLevel) {
             match &stmt.data {
                 StmtData::SBlock(block) => {
                     self.print_space();
@@ -2244,7 +2244,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_block_body(&mut self, stmts: &[Stmt], tlmtlo: TopLevel) {
+        pub fn print_block_body(&mut self, stmts: &[Stmt<'a>], tlmtlo: TopLevel) {
             for stmt in stmts {
                 self.print_semicolon_if_needed();
                 self.print_stmt(*stmt, tlmtlo).expect("unreachable");
@@ -2254,7 +2254,7 @@ pub mod __gated_printer {
         pub fn print_block(
             &mut self,
             loc: bun_ast::Loc,
-            stmts: &[Stmt],
+            stmts: &[Stmt<'a>],
             close_brace_loc: Option<bun_ast::Loc>,
             tlmtlo: TopLevel,
         ) {
@@ -2280,8 +2280,8 @@ pub mod __gated_printer {
         pub fn print_two_blocks_in_one(
             &mut self,
             loc: bun_ast::Loc,
-            stmts: &[Stmt],
-            prepend: &[Stmt],
+            stmts: &[Stmt<'a>],
+            prepend: &[Stmt<'a>],
         ) {
             self.add_source_mapping(loc);
             self.print(b"{");
@@ -2300,7 +2300,7 @@ pub mod __gated_printer {
         pub fn print_decls(
             &mut self,
             keyword: &'static [u8],
-            decls_: &[G::Decl],
+            decls_: &[G::Decl<'a>],
             flags: ExprFlagSet,
             tlm: TopLevelAndIsExport,
         ) {
@@ -2544,7 +2544,7 @@ pub mod __gated_printer {
         pub fn print_fn_args(
             &mut self,
             open_paren_loc: Option<bun_ast::Loc>,
-            args: &[G::Arg],
+            args: &[G::Arg<'a>],
             has_rest_arg: bool,
             // is_arrow can be used for minifying later
             _is_arrow: bool,
@@ -2581,7 +2581,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_func(&mut self, func: &G::Fn) {
+        pub fn print_func(&mut self, func: &G::Fn<'a>) {
             self.print_fn_args(
                 Some(func.open_parens_loc),
                 slice_of(func.args),
@@ -2597,7 +2597,7 @@ pub mod __gated_printer {
             );
         }
 
-        pub fn print_class(&mut self, class: &G::Class) {
+        pub fn print_class(&mut self, class: &G::Class<'a>) {
             if let Some(extends) = &class.extends {
                 self.print(b" extends");
                 self.print_space();
@@ -2647,7 +2647,7 @@ pub mod __gated_printer {
             self.print(b"}");
         }
 
-        pub fn best_quote_char_for_e_string(str: &E::String, allow_backtick: bool) -> u8 {
+        pub fn best_quote_char_for_e_string(str: &E::String<'_>, allow_backtick: bool) -> u8 {
             if IS_JSON {
                 return b'"';
             }
@@ -2716,7 +2716,7 @@ pub mod __gated_printer {
             );
         }
 
-        pub fn is_unbound_eval_identifier(&self, value: Expr) -> bool {
+        pub fn is_unbound_eval_identifier(&self, value: Expr<'a>) -> bool {
             match &value.data {
                 ExprData::EIdentifier(ident) => {
                     if ident.ref_.is_source_contents_slice() {
@@ -2734,7 +2734,7 @@ pub mod __gated_printer {
         }
 
         #[inline]
-        fn symbols(&self) -> &js_ast::symbol::Map {
+        fn symbols(&self) -> &js_ast::symbol::Map<'a> {
             self.renamer.symbols()
         }
 
@@ -2769,7 +2769,7 @@ pub mod __gated_printer {
             &self.import_records[import_record_index]
         }
 
-        pub fn is_unbound_identifier(&self, expr: &Expr) -> bool {
+        pub fn is_unbound_identifier(&self, expr: &Expr<'a>) -> bool {
             let ExprData::EIdentifier(id) = &expr.data else {
                 return false;
             };
@@ -2784,8 +2784,8 @@ pub mod __gated_printer {
             &mut self,
             import_record_index: u32,
             was_unwrapped_require: bool,
-            leading_interior_comments: &[G::Comment],
-            import_options: Expr,
+            leading_interior_comments: &[G::Comment<'a>],
+            import_options: Expr<'a>,
             level_: Level,
             flags: ExprFlagSet,
         ) {
@@ -3068,7 +3068,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_string_literal_e_string(&mut self, str: &E::String, allow_backtick: bool) {
+        pub fn print_string_literal_e_string(&mut self, str: &E::String<'a>, allow_backtick: bool) {
             let quote = Self::best_quote_char_for_e_string(str, allow_backtick);
             self.print(quote);
             self.print_string_characters_e_string(str, quote);
@@ -3089,19 +3089,19 @@ pub mod __gated_printer {
             self.print(quote);
         }
 
-        fn print_clause_item(&mut self, item: &js_ast::ClauseItem) {
+        fn print_clause_item(&mut self, item: &js_ast::ClauseItem<'a>) {
             self.print_clause_item_as(item, ClauseItemAs::Import)
         }
 
-        fn print_export_clause_item(&mut self, item: &js_ast::ClauseItem) {
+        fn print_export_clause_item(&mut self, item: &js_ast::ClauseItem<'a>) {
             self.print_clause_item_as(item, ClauseItemAs::Export)
         }
 
-        fn print_export_from_clause_item(&mut self, item: &js_ast::ClauseItem) {
+        fn print_export_from_clause_item(&mut self, item: &js_ast::ClauseItem<'a>) {
             self.print_clause_item_as(item, ClauseItemAs::ExportFrom)
         }
 
-        fn print_clause_item_as(&mut self, item: &js_ast::ClauseItem, as_: ClauseItemAs) {
+        fn print_clause_item_as(&mut self, item: &js_ast::ClauseItem<'a>, as_: ClauseItemAs) {
             let name = self.name_for_symbol(item.name.ref_.expect("infallible: ref bound"));
 
             match as_ {
@@ -3212,7 +3212,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_expr(&mut self, expr: Expr, level: Level, in_flags: ExprFlagSet) {
+        pub fn print_expr(&mut self, expr: Expr<'a>, level: Level, in_flags: ExprFlagSet) {
             let mut flags = in_flags;
 
             match &expr.data {
@@ -4042,7 +4042,7 @@ pub mod __gated_printer {
                         // Zig: `var part = part.*` — `TemplatePart` is structurally
                         // `Copy` but `EString` doesn't derive it; field-wise copy.
                         #[inline]
-                        fn part_clone(p: &E::TemplatePart) -> E::TemplatePart {
+                        fn part_clone<'p>(p: &E::TemplatePart<'p>) -> E::TemplatePart<'p> {
                             E::TemplatePart {
                                 value: p.value,
                                 tail_loc: p.tail_loc,
@@ -4055,7 +4055,7 @@ pub mod __gated_printer {
                             }
                         }
 
-                        let mut replaced: Vec<E::TemplatePart> = Vec::new();
+                        let mut replaced: Vec<E::TemplatePart<'a>> = Vec::new();
                         for (i, _part) in e.parts().iter().enumerate() {
                             let mut part = part_clone(_part);
                             let inlined_value: Option<Expr> = match &part.value.data {
@@ -4520,7 +4520,7 @@ pub mod __gated_printer {
         }
 
         // This assumes the string has already been quoted.
-        pub fn print_string_characters_e_string(&mut self, str: &E::String, c: u8) {
+        pub fn print_string_characters_e_string(&mut self, str: &E::String<'a>, c: u8) {
             if !str.is_utf8() {
                 self.print_string_characters_utf16(str.slice16(), c);
             } else {
@@ -4531,7 +4531,7 @@ pub mod __gated_printer {
         pub fn print_namespace_alias(
             &mut self,
             _import_record: &ImportRecord,
-            namespace: &G::NamespaceAlias,
+            namespace: &G::NamespaceAlias<'a>,
         ) {
             self.print_symbol(namespace.namespace_ref);
 
@@ -4554,7 +4554,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_reg_exp_literal(&mut self, e: &E::RegExp) {
+        pub fn print_reg_exp_literal(&mut self, e: &E::RegExp<'a>) {
             let n = self.writer.written();
 
             // Avoid forming a single-line comment
@@ -4602,7 +4602,7 @@ pub mod __gated_printer {
             self.prev_reg_exp_end = self.writer.written();
         }
 
-        pub fn print_property(&mut self, item_in: &G::Property) {
+        pub fn print_property(&mut self, item_in: &G::Property<'a>) {
             // PORT NOTE: Zig took G.Property by value (Copy in Zig). Rust's
             // G::Property isn't `Copy`, so take a borrow and shallow-copy the
             // mutable bits we may rewrite (key + flags).
@@ -4897,14 +4897,14 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_initializer(&mut self, initial: Expr) {
+        pub fn print_initializer(&mut self, initial: Expr<'a>) {
             self.print_space();
             self.print(b"=");
             self.print_space();
             self.print_expr(initial, Level::Comma, ExprFlag::none());
         }
 
-        pub fn print_binding(&mut self, binding: Binding, tlm: TopLevelAndIsExport) {
+        pub fn print_binding(&mut self, binding: Binding<'a>, tlm: TopLevelAndIsExport) {
             match &binding.data {
                 BindingData::BMissing(_) => {}
                 BindingData::BIdentifier(b) => {
@@ -5119,7 +5119,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn maybe_print_default_binding_value<P: HasDefaultValue>(&mut self, property: &P) {
+        pub fn maybe_print_default_binding_value<P: HasDefaultValue<'a>>(&mut self, property: &P) {
             if let Some(default) = property.default_value() {
                 self.print_space();
                 self.print(b"=");
@@ -5128,7 +5128,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_stmt(&mut self, stmt: Stmt, tlmtlo: TopLevel) -> Result<(), bun_core::Error> {
+        pub fn print_stmt(&mut self, stmt: Stmt<'a>, tlmtlo: TopLevel) -> Result<(), bun_core::Error> {
             let prev_stmt_tag = self.prev_stmt_tag;
             // Zig: `defer { p.prev_stmt_tag = std.meta.activeTag(stmt.data); }`
             // PORT NOTE: reshaped for borrowck — scopeguard would hold `&mut self.prev_stmt_tag`
@@ -6354,7 +6354,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_bundled_import(&mut self, record: ImportRecord, s: &S::Import) {
+        pub fn print_bundled_import(&mut self, record: ImportRecord, s: &S::Import<'a>) {
             if record.flags.contains(ImportRecordFlags::IS_INTERNAL) {
                 return;
             }
@@ -6509,7 +6509,7 @@ pub mod __gated_printer {
             self.print(b", enumerable: true, configurable: true})");
         }
 
-        pub fn print_for_loop_init(&mut self, init_st: Stmt) {
+        pub fn print_for_loop_init(&mut self, init_st: Stmt<'a>) {
             match &init_st.data {
                 StmtData::SExpr(s) => {
                     self.print_expr(
@@ -6559,7 +6559,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_if(&mut self, s: &S::If, loc: bun_ast::Loc, tlmtlo: TopLevel) {
+        pub fn print_if(&mut self, s: &S::If<'a>, loc: bun_ast::Loc, tlmtlo: TopLevel) {
             self.print_space_before_identifier();
             self.add_source_mapping(loc);
             self.print(b"if");
@@ -6640,7 +6640,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn wrap_to_avoid_ambiguous_else(s_: &StmtData) -> bool {
+        pub fn wrap_to_avoid_ambiguous_else(s_: &StmtData<'_>) -> bool {
             let mut s = s_;
             loop {
                 match s {
@@ -6664,9 +6664,9 @@ pub mod __gated_printer {
 
         pub fn try_to_get_imported_enum_value(
             &self,
-            target: Expr,
+            target: Expr<'a>,
             name: &[u8],
-        ) -> Option<js_ast::InlinedEnumValueDecoded> {
+        ) -> Option<js_ast::InlinedEnumValueDecoded<'a>> {
             if let ExprData::EImportIdentifier(id) = &target.data {
                 let ref_ = self.symbols().follow(id.ref_);
                 if let Some(symbol) = self.symbols().get_const(ref_) {
@@ -6684,7 +6684,7 @@ pub mod __gated_printer {
 
         pub fn print_inlined_enum(
             &mut self,
-            inlined: js_ast::InlinedEnumValueDecoded,
+            inlined: js_ast::InlinedEnumValueDecoded<'a>,
             comment: &[u8],
             level: Level,
         ) {
@@ -6719,7 +6719,7 @@ pub mod __gated_printer {
             &mut self,
             is_export: bool,
             keyword: &'static [u8],
-            decls: &[G::Decl],
+            decls: &[G::Decl<'a>],
             tlmtlo: TopLevel,
         ) {
             if !REWRITE_ESM_TO_CJS && is_export {
@@ -6987,7 +6987,7 @@ pub mod __gated_printer {
             bump: &'a bun_alloc::Arena,
             import_records: &'a [ImportRecord],
             opts: Options<'a>,
-            renamer: rename::Renamer<'a, 'a>,
+            renamer: rename::Renamer<'a, 'a, 'a>,
             source_map_builder: SourceMap::chunk::Builder,
         ) -> Self {
             let mut printer = Self {
@@ -7027,8 +7027,8 @@ pub mod __gated_printer {
         pub fn print_dev_server_module(
             &mut self,
             source: &bun_ast::Source,
-            ast: &js_ast::Ast,
-            part: &js_ast::Part,
+            ast: &js_ast::Ast<'a>,
+            part: &js_ast::Part<'a>,
         ) {
             self.indent();
             self.print_indent();
@@ -7230,18 +7230,18 @@ impl<const N: usize> PrintArg for &[u8; N] {
 }
 
 /// Trait covering `B::ArrayItem` / `B::Property` for `maybe_print_default_binding_value`.
-pub trait HasDefaultValue {
-    fn default_value(&self) -> Option<js_ast::Expr>;
+pub trait HasDefaultValue<'arena> {
+    fn default_value(&self) -> Option<js_ast::Expr<'arena>>;
 }
-impl HasDefaultValue for js_ast::b::Property {
+impl<'arena> HasDefaultValue<'arena> for js_ast::b::Property<'arena> {
     #[inline]
-    fn default_value(&self) -> Option<js_ast::Expr> {
+    fn default_value(&self) -> Option<js_ast::Expr<'arena>> {
         self.default_value
     }
 }
-impl HasDefaultValue for js_ast::ArrayBinding {
+impl<'arena> HasDefaultValue<'arena> for js_ast::ArrayBinding<'arena> {
     #[inline]
-    fn default_value(&self) -> Option<js_ast::Expr> {
+    fn default_value(&self) -> Option<js_ast::Expr<'arena>> {
         self.default_value
     }
 }
@@ -7826,9 +7826,9 @@ use js_ast::Ast;
 // constant in the monomorphized callers.
 pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
     generate_source_map: GenerateSourceMap,
-    opts: &mut Options,
+    opts: &mut Options<'_>,
     source: &bun_ast::Source,
-    tree: &Ast,
+    tree: &Ast<'_>,
 ) -> SourceMap::chunk::Builder {
     if generate_source_map == GenerateSourceMap::Disable {
         // TODO(port): Zig returned `undefined` here.
@@ -7883,9 +7883,9 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
 pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     _writer: W,
     bump: &'a bun_alloc::Arena,
-    tree: &'a Ast,
-    symbols: js_ast::symbol::Map,
-    source: &'a bun_ast::Source,
+    tree: &Ast<'a>,
+    symbols: js_ast::symbol::Map<'a>,
+    source: &bun_ast::Source,
     opts: Options<'a>,
 ) -> Result<usize, bun_core::Error> {
     let _restore =
@@ -7900,7 +7900,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // PORT NOTE: hoisted out of the `minify_identifiers` arm so the
     // `&'r mut MinifyRenamer` borrow stored in `renamer` outlives the branch.
     let mut minify_renamer;
-    let renamer: rename::Renamer<'_, '_>;
+    let renamer: rename::Renamer<'_, '_, '_>;
     // PORT NOTE: Zig copied `tree.module_scope` to a stack local and re-pointed
     // children's `parent` at the local. `Scope` isn't `Copy` here and the only
     // consumer (`compute_reserved_names_for_scope`) walks `members`/`generated`/
@@ -7989,7 +7989,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let mut minifier = tree.char_freq.as_ref().unwrap().compile();
         minify_renamer.assign_names_by_frequency(&mut minifier)?;
 
-        renamer = rename::Renamer::MinifyRenamer(&mut *minify_renamer);
+        renamer = rename::Renamer::MinifyRenamer(&*minify_renamer);
     } else {
         no_op_renamer = rename::NoOpRenamer::init(symbols, source);
         renamer = no_op_renamer.to_renamer();
@@ -8149,7 +8149,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
 pub fn print_json<W: WriterTrait>(
     _writer: W,
-    expr: js_ast::Expr,
+    expr: js_ast::Expr<'_>,
     source: &bun_ast::Source,
     opts: PrintJsonOptions<'_>,
 ) -> Result<usize, bun_core::Error> {
@@ -8192,12 +8192,12 @@ pub fn print_json<W: WriterTrait>(
 pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
-    ast: &Ast,
+    ast: &Ast<'a>,
     source: &bun_ast::Source,
     opts: Options<'a>,
     import_records: &'a [ImportRecord],
-    parts: &[js_ast::Part],
-    renamer: rename::Renamer<'a, 'a>,
+    parts: &[js_ast::Part<'a>],
+    renamer: rename::Renamer<'a, 'a, 'a>,
 ) -> PrintResult {
     let _trace = bun_core::perf::trace("JSPrinter.print");
 
@@ -8223,12 +8223,12 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     writer: W,
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
-    ast: &Ast,
+    ast: &Ast<'a>,
     source: &bun_ast::Source,
     opts: Options<'a>,
     import_records: &'a [ImportRecord],
-    parts: &[js_ast::Part],
-    renamer: rename::Renamer<'a, 'a>,
+    parts: &[js_ast::Part<'a>],
+    renamer: rename::Renamer<'a, 'a, 'a>,
 ) -> PrintResult {
     if target.is_bun() {
         print_with_writer_and_platform::<W, true, GENERATE_SOURCE_MAPS>(
@@ -8264,12 +8264,12 @@ pub fn print_with_writer_and_platform<
 >(
     mut writer: W,
     bump: &'a bun_alloc::Arena,
-    ast: &Ast,
+    ast: &Ast<'a>,
     source: &bun_ast::Source,
     opts: Options<'a>,
     import_records: &'a [ImportRecord],
-    parts: &[js_ast::Part],
-    renamer: rename::Renamer<'a, 'a>,
+    parts: &[js_ast::Part<'a>],
+    renamer: rename::Renamer<'a, 'a, 'a>,
 ) -> PrintResult {
     let _restore =
         bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
@@ -8370,9 +8370,9 @@ pub fn print_common_js<
 >(
     _writer: W,
     bump: &'a bun_alloc::Arena,
-    tree: &'a Ast,
-    symbols: js_ast::symbol::Map,
-    source: &'a bun_ast::Source,
+    tree: &Ast<'a>,
+    symbols: js_ast::symbol::Map<'a>,
+    source: &bun_ast::Source,
     opts: Options<'a>,
 ) -> Result<usize, bun_core::Error> {
     let _restore =

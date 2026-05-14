@@ -55,13 +55,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         level: Level,
         errors: Option<&mut DeferredErrors>,
-        expr: &mut Expr,
+        expr: &mut Expr<'a>,
     ) -> Result<(), Error> {
         self.parse_expr_common(level, errors, EFlags::None, expr)
     }
     // Zig: `inline fn parseExpr(p, level) !Expr`
     #[inline]
-    pub fn parse_expr(&mut self, level: Level) -> Result<Expr, Error> {
+    pub fn parse_expr(&mut self, level: Level) -> Result<Expr<'a>, Error> {
         let mut expr = Expr::EMPTY;
         self.parse_expr_common(level, None, EFlags::None, &mut expr)?;
         Ok(expr)
@@ -72,7 +72,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         level: Level,
         flags: EFlags,
-        expr: &mut Expr,
+        expr: &mut Expr<'a>,
     ) -> Result<(), Error> {
         self.parse_expr_common(level, None, flags, expr)
     }
@@ -81,7 +81,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         level: Level,
         mut errors: Option<&mut DeferredErrors>,
         flags: EFlags,
-        expr: &mut Expr,
+        expr: &mut Expr<'a>,
     ) -> Result<(), Error> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(err!("StackOverflow"));
@@ -115,7 +115,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn parse_yield_expr(&mut self, loc: bun_ast::Loc) -> Result<Expr, Error> {
+    pub fn parse_yield_expr(&mut self, loc: bun_ast::Loc) -> Result<Expr<'a>, Error> {
         let p = self;
         // Parse a yield-from expression, which yields from an iterator
         let is_star = p.lexer.token == T::TAsterisk;
@@ -153,7 +153,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         class_keyword: bun_ast::Range,
         name: Option<js_ast::LocRef>,
         class_opts: ParseClassOptions<'a>,
-    ) -> Result<G::Class, Error> {
+    ) -> Result<G::Class<'a>, Error> {
         let p = self;
         let mut extends: Option<Expr> = None;
         let mut has_decorators: bool = false;
@@ -290,7 +290,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn parse_template_parts(
         &mut self,
         include_raw: bool,
-    ) -> Result<(bun_ast::StoreSlice<E::TemplatePart>, bun_ast::Loc), Error> {
+    ) -> Result<(bun_ast::StoreSlice<'a, E::TemplatePart<'a>>, bun_ast::Loc), Error> {
         let p = self;
         let mut parts = BumpVec::<E::TemplatePart>::with_capacity_in(1, p.arena);
         // Allow "in" inside template literals
@@ -335,7 +335,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
-    pub fn parse_string_literal(&mut self) -> Result<Expr, Error> {
+    pub fn parse_string_literal(&mut self) -> Result<Expr<'a>, Error> {
         let p = self;
         let loc = p.lexer.loc();
         let mut str_ = p.lexer.to_e_string()?;
@@ -346,7 +346,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(expr)
     }
 
-    pub fn parse_call_args(&mut self) -> Result<ExprListLoc, Error> {
+    pub fn parse_call_args(&mut self) -> Result<ExprListLoc<'a>, Error> {
         let p = self;
         // Allow "in" inside call arguments
         let old_allow_in = p.allow_in;
@@ -385,7 +385,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn parse_jsx_prop_value_identifier(
         &mut self,
         previous_string_with_backslash_loc: &mut bun_ast::Loc,
-    ) -> Result<Expr, Error> {
+    ) -> Result<Expr<'a>, Error> {
         let p = self;
         // Use NextInsideJSXElement() not Next() so we can parse a JSX-style string literal
         p.lexer.next_inside_jsx_element()?;
@@ -416,7 +416,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         level: Level,
         opts: ParenExprOpts,
-    ) -> Result<Expr, Error> {
+    ) -> Result<Expr<'a>, Error> {
         let p = self;
         let mut items_list = BumpVec::<Expr>::new_in(p.arena);
         let mut errors = DeferredErrors::default();
@@ -659,7 +659,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions<'a>,
-    ) -> Result<Stmt, Error> {
+    ) -> Result<Stmt<'a>, Error> {
         let p = self;
         let mut name: Option<js_ast::LocRef> = None;
         let class_keyword = p.lexer.range();
@@ -785,7 +785,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn parse_expr_or_let_stmt(
         &mut self,
         opts: &mut ParseStatementOptions<'a>,
-    ) -> Result<ExprOrLetStmt, Error> {
+    ) -> Result<ExprOrLetStmt<'a>, Error> {
         let p = self;
         let token_range = p.lexer.range();
 
@@ -963,7 +963,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(result)
     }
 
-    pub fn parse_binding(&mut self, opts: ParseBindingOptions) -> Result<Binding, Error> {
+    pub fn parse_binding(&mut self, opts: ParseBindingOptions) -> Result<Binding<'a>, Error> {
         let p = self;
         let loc = p.lexer.loc();
 
@@ -1139,7 +1139,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    pub fn parse_property_binding(&mut self) -> Result<B::Property, Error> {
+    pub fn parse_property_binding(&mut self) -> Result<B::Property<'a>, Error> {
         let p = self;
         // Every match arm below assigns `key` (or `return`s) before any read.
         let key: Expr;
@@ -1251,7 +1251,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         kind: js_ast::symbol::Kind,
         opts: &mut ParseStatementOptions<'a>,
-    ) -> Result<G::DeclList, Error> {
+    ) -> Result<G::DeclList<'a>, Error> {
         let p = self;
         let mut decls = BumpVec::<G::Decl>::new_in(p.arena);
 
@@ -1545,7 +1545,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         async_range: bun_ast::Range,
         level: Level,
-    ) -> Result<Expr, Error> {
+    ) -> Result<Expr<'a>, Error> {
         let p = self;
         // "async function() {}"
         if !p.lexer.has_newline_before && p.lexer.token == T::TFunction {

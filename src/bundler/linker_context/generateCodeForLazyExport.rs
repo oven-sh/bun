@@ -19,7 +19,7 @@ use crate::bun_css::{BundlerStyleSheet, CssRef, CssRefTag};
 use crate::{Index, IndexInt, LinkerContext};
 use bun_collections::DynamicBitSetUnmanaged as BitSet;
 
-type SymbolList = Vec<Symbol>;
+type SymbolList<'a> = Vec<Symbol<'a>>;
 
 /// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
 /// can be queried by borrowed `&[u8]` (CSS idents are arena `*const [u8]`).
@@ -101,24 +101,24 @@ pub fn generate_code_for_lazy_export(
             let mut composes_visited: ArrayHashMap<Ref, ()> = ArrayHashMap::new();
             // `defer composes_visited.deinit()` — handled by Drop.
 
-            struct Visitor<'a> {
-                inner_visited: &'a mut BitSet,
+            struct Visitor<'r, 'a> {
+                inner_visited: &'r mut BitSet,
                 // Zig: `std.AutoArrayHashMap(Ref, void)` → `ArrayHashMap` per collections map.
-                composes_visited: &'a mut ArrayHashMap<Ref, ()>,
-                parts: &'a mut Vec<E::TemplatePart>,
-                all_import_records: &'a [Vec<ImportRecord>],
+                composes_visited: &'r mut ArrayHashMap<Ref, ()>,
+                parts: &'r mut Vec<E::TemplatePart<'a>>,
+                all_import_records: &'r [Vec<ImportRecord>],
                 // `BundledAst.css` SoA column.
-                all_css_asts: &'a [crate::bundled_ast::CssCol],
-                all_sources: &'a [Source],
-                all_symbols: &'a [SymbolList],
+                all_css_asts: &'r [crate::bundled_ast::CssCol<'a>],
+                all_sources: &'r [Source],
+                all_symbols: &'r [SymbolList<'a>],
                 source_index: IndexInt,
-                log: &'a mut Log,
+                log: &'r mut Log,
                 loc: Loc,
                 // PERF(port): was `std.mem.Allocator` (arena) — bundler is an AST crate; thread `&'bump Bump`.
-                arena: &'a Arena,
+                arena: &'r Arena,
             }
 
-            impl<'a> Visitor<'a> {
+            impl<'r, 'a> Visitor<'r, 'a> {
                 fn clear_all(&mut self) {
                     self.inner_visited.set_all(false);
                     self.composes_visited.clear_retaining_capacity();

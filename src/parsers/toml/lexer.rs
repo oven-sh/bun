@@ -48,7 +48,7 @@ pub enum T {
     t_empty_array,
 }
 
-pub struct Lexer<'a> {
+pub struct Lexer<'a, 'log> {
     // PORT NOTE: borrowed (`&'a Source`) rather than owned so
     // `identifier`/`string_literal_slice` can borrow `&'a [u8]` from
     // `source.contents` without a self-referential struct. The Zig original
@@ -56,7 +56,8 @@ pub struct Lexer<'a> {
     // `bun_ast::Source.contents` is now `Cow<'static,[u8]>` so an owned copy
     // would tie those slices to `&self` instead of `'a`.
     pub source: &'a bun_ast::Source,
-    pub log: &'a mut bun_ast::Log,
+    // Separate lifetime so the returned `Expr<'a>` does not borrow the log.
+    pub log: &'log mut bun_ast::Log,
     pub start: usize,
     pub end: usize,
     pub current: usize,
@@ -100,7 +101,7 @@ bun_core::oom_from_alloc!(Error);
 
 bun_core::named_error_set!(Error);
 
-impl<'a> LexerLog<'a> for Lexer<'a> {
+impl<'a, 'log> LexerLog<'a> for Lexer<'a, 'log> {
     type Err = Error;
     #[inline]
     fn log_mut(&mut self) -> &mut bun_ast::Log {
@@ -128,7 +129,7 @@ impl<'a> LexerLog<'a> for Lexer<'a> {
     }
 }
 
-impl<'a> Lexer<'a> {
+impl<'a, 'log> Lexer<'a, 'log> {
     #[inline]
     pub fn loc(&self) -> bun_ast::Loc {
         bun_ast::usize2loc(self.start)
@@ -1235,11 +1236,11 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn init(
-        log: &'a mut bun_ast::Log,
+        log: &'log mut bun_ast::Log,
         source: &'a bun_ast::Source,
         bump: &'a Arena,
         redact_logs: bool,
-    ) -> Result<Lexer<'a>, Error> {
+    ) -> Result<Lexer<'a, 'log>, Error> {
         let mut lex = Lexer {
             source,
             log,
@@ -1266,7 +1267,7 @@ impl<'a> Lexer<'a> {
     }
 
     #[inline]
-    pub fn to_string(&self, loc_: bun_ast::Loc) -> js_ast::Expr {
+    pub fn to_string(&self, loc_: bun_ast::Loc) -> js_ast::Expr<'a> {
         if self.string_literal_is_ascii {
             return js_ast::Expr::init(js_ast::E::String::init(self.string_literal_slice), loc_);
         }

@@ -413,7 +413,8 @@ impl InitCommand {
         let mut package_json_contents: MutableString = MutableString::init_empty();
         bun_ast::initialize_store();
         // Arena for JSON parse / Expr building (Zig used the AST store).
-        let bump = bun_alloc::Arena::new();
+        // Process-lifetime CLI arena so `fields.object` (`'static`) can borrow it.
+        let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
         'read_package_json: {
             if let Some(pkg) = package_json_file.as_ref() {
                 let size: u64 = 'brk: {
@@ -477,19 +478,20 @@ impl InitCommand {
         let mut did_load_package_json = false;
         if !package_json_contents.list.is_empty() {
             'process_package_json: {
-                let source = bun_ast::Source::init_path_string(
-                    b"package.json",
-                    package_json_contents.list.as_slice(),
-                );
+                let source: &'static bun_ast::Source =
+                    bump.alloc(bun_ast::Source::init_path_string(
+                        b"package.json",
+                        package_json_contents.list.as_slice(),
+                    ));
                 let mut log = bun_ast::Log::init();
                 // PORT NOTE: bun_parsers::json builds the T2
                 // (bun_ast::js_ast) value tree to avoid a T2->T4 dep
                 // cycle; lift to the full T4 (bun_js_parser) tree here so
                 // the rest of exec can use E::Object::{put,put_string,
                 // get_or_put_object,...} which only exist at T4.
-                let package_json_expr: bun_ast::Expr =
-                    match json::parse_package_json_utf8(&source, &mut log, &bump) {
-                        Ok(e) => bun_ast::Expr::from(e),
+                let package_json_expr =
+                    match json::parse_package_json_utf8(source, &mut log, bump) {
+                        Ok(e) => e,
                         Err(_) => {
                             package_json_file = None;
                             break 'process_package_json;
@@ -675,23 +677,23 @@ impl InitCommand {
 
         if !minimal {
             if !fields.name.is_empty() {
-                object.put_string(&bump, b"name", &fields.name)?;
+                object.put_string(bump, b"name", &fields.name)?;
             }
             if !fields.entry_point.is_empty() {
                 if object.has_property(b"module") {
-                    object.put_string(&bump, b"module", &fields.entry_point)?;
-                    object.put_string(&bump, b"type", b"module")?;
+                    object.put_string(bump, b"module", &fields.entry_point)?;
+                    object.put_string(bump, b"type", b"module")?;
                 } else if object.has_property(b"main") {
-                    object.put_string(&bump, b"main", &fields.entry_point)?;
+                    object.put_string(bump, b"main", &fields.entry_point)?;
                 } else {
-                    object.put_string(&bump, b"module", &fields.entry_point)?;
-                    object.put_string(&bump, b"type", b"module")?;
+                    object.put_string(bump, b"module", &fields.entry_point)?;
+                    object.put_string(bump, b"type", b"module")?;
                 }
             }
 
             if fields.private {
                 object.put(
-                    &bump,
+                    bump,
                     b"private",
                     bun_ast::Expr::init(bun_ast::E::Boolean { value: true }, bun_ast::Loc::EMPTY),
                 )?;
@@ -771,9 +773,9 @@ impl InitCommand {
                         .data
                         .e_object_mut()
                         .unwrap()
-                        .put_string(&bump, dep.name, dep.version)?;
+                        .put_string(bump, dep.name, dep.version)?;
                 }
-                object.put(&bump, b"dependencies", dependencies_object)?;
+                object.put(bump, b"dependencies", dependencies_object)?;
             }
 
             if needs_dev_dependencies {
@@ -786,9 +788,9 @@ impl InitCommand {
                     obj.data
                         .e_object_mut()
                         .unwrap()
-                        .put_string(&bump, dep.name, dep.version)?;
+                        .put_string(bump, dep.name, dep.version)?;
                 }
-                object.put(&bump, b"devDependencies", obj)?;
+                object.put(bump, b"devDependencies", obj)?;
             }
 
             if needs_typescript_dependency {
@@ -796,16 +798,16 @@ impl InitCommand {
                     bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
                 });
                 peer_dependencies.data.e_object_mut().unwrap().put_string(
-                    &bump,
+                    bump,
                     b"typescript",
                     b"^5",
                 )?;
-                object.put(&bump, b"peerDependencies", peer_dependencies)?;
+                object.put(bump, b"peerDependencies", peer_dependencies)?;
             }
         }
 
         if template.is_react() {
-            template.write_to_package_json(&mut fields, &bump)?;
+            template.write_to_package_json(&mut fields, bump)?;
         }
 
         'write_package_json: {
@@ -1149,7 +1151,9 @@ pub struct PackageJSONFields {
     pub name: Vec<u8>,
     pub type_: &'static [u8],
     /// ARENA: allocated from `bun_ast::Expr` Store via `initialize_store()`; no deinit.
-    pub object: Option<StoreRef<bun_ast::E::Object>>,
+    // TRANSITIONAL: `'static` because the backing store is the thread-local
+    // AST store / a CLI-lifetime bump; the struct never outlives `exec()`.
+    pub object: Option<StoreRef<'static, bun_ast::E::Object<'static>>>,
     // TODO(port): Zig type was `[:0]const u8`; we drop the NUL sentinel and
     // re-terminate at FFI boundaries.
     pub entry_point: Vec<u8>,
@@ -1452,13 +1456,13 @@ impl Template {
         fields: &mut PackageJSONFields,
         bump: &bun_alloc::Arena,
     ) -> Result<(), Error> {
-        type Rope = bun_ast::E::Rope;
+        type Rope = bun_ast::E::Rope<'static>;
         fields.name = self.name().to_vec();
         // PORT NOTE: Zig `alloc.create(Rope)` against the default allocator and
         // never frees; allocate in the process-lifetime CLI arena instead.
         let key: &mut Rope = crate::cli::cli_arena().alloc(Rope {
             head: bun_ast::Expr::init(bun_ast::E::String::init(b"scripts"), bun_ast::Loc::EMPTY),
-            next: core::ptr::null_mut(),
+            next: None,
         });
         // SAFETY: object is arena-allocated and live for the command duration.
         let object = unsafe { &mut *fields.object.unwrap().as_ptr() };

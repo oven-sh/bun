@@ -28,18 +28,18 @@ pub use crate::ArrayBinding;
 // 'bump threaded crate-wide (`&'bump mut T`).
 #[derive(Copy, Clone, bun_core::EnumTag)]
 #[enum_tag(existing = super::binding::Tag)]
-pub enum B {
+pub enum B<'arena> {
     // let x = ...
-    BIdentifier(StoreRef<Identifier>),
+    BIdentifier(StoreRef<'arena, Identifier>),
     // let [a, b] = ...
-    BArray(StoreRef<Array>),
+    BArray(StoreRef<'arena, Array<'arena>>),
     // let { a, b: c } = ...
-    BObject(StoreRef<Object>),
+    BObject(StoreRef<'arena, Object<'arena>>),
     // this is used to represent array holes
     BMissing(Missing),
 }
 
-impl Default for B {
+impl<'arena> Default for B<'arena> {
     fn default() -> Self {
         B::BMissing(Missing {})
     }
@@ -53,10 +53,10 @@ impl Default for B {
 // so `Option<B>` packs into the same 16 bytes via the NonNull niche (and
 // would continue to even under a future `#[repr(u8)]`, unlike the prior
 // `*mut T` form which relied solely on spare-tag-value niche).
-const _: () = assert!(core::mem::size_of::<B>() == 16);
-const _: () = assert!(core::mem::size_of::<super::binding::Binding>() == 24);
+const _: () = assert!(core::mem::size_of::<B<'static>>() == 16);
+const _: () = assert!(core::mem::size_of::<super::binding::Binding<'static>>() == 24);
 const _: () = assert!(
-    core::mem::size_of::<Option<B>>() == core::mem::size_of::<B>(),
+    core::mem::size_of::<Option<B<'static>>>() == core::mem::size_of::<B<'static>>(),
     "B lost its niche — check for #[repr] or oversized inline payload"
 );
 
@@ -64,24 +64,24 @@ pub struct Identifier {
     pub r#ref: Ref,
 }
 
-pub struct Property {
+pub struct Property<'arena> {
     pub flags: flags::PropertySet,
-    pub key: ExprNodeIndex,
-    pub value: Binding,
-    pub default_value: Option<Expr>,
+    pub key: ExprNodeIndex<'arena>,
+    pub value: Binding<'arena>,
+    pub default_value: Option<Expr<'arena>>,
 }
 // TODO(port): partial defaults — Zig only defaults `flags`/`default_value`; `key`/`value` have none, so no `impl Default`.
 
-pub struct Object {
-    pub properties: crate::StoreSlice<Property>,
+pub struct Object<'arena> {
+    pub properties: crate::StoreSlice<'arena, Property<'arena>>,
     pub is_single_line: bool,
 }
 // Zig: `pub const Property = B.Property;` — inherent associated type alias.
 // TODO(port): inherent associated types are unstable; callers use `B::Property` directly.
 // TODO(port): partial defaults — Zig only defaults `is_single_line`; `properties` has none, so no `impl Default`.
 
-pub struct Array {
-    pub items: crate::StoreSlice<ArrayBinding>,
+pub struct Array<'arena> {
+    pub items: crate::StoreSlice<'arena, ArrayBinding<'arena>>,
     pub has_spread: bool,
     pub is_single_line: bool,
 }
@@ -95,34 +95,34 @@ pub struct Missing {}
 // Ergonomic slice accessors so P-helpers can `for item in arr.items()`.
 // `&mut self` establishes uniqueness for the `slice_mut()` SAFETY contract
 // (single-threaded parser; arena slice valid for `'a`).
-impl Array {
+impl<'arena> Array<'arena> {
     #[inline]
-    pub fn items(&self) -> &[ArrayBinding] {
+    pub fn items(&self) -> &[ArrayBinding<'arena>] {
         self.items.slice()
     }
     #[inline]
-    pub fn items_mut(&mut self) -> &mut [ArrayBinding] {
+    pub fn items_mut(&mut self) -> &mut [ArrayBinding<'arena>] {
         self.items.slice_mut()
     }
 }
-impl Object {
+impl<'arena> Object<'arena> {
     #[inline]
-    pub fn properties(&self) -> &[Property] {
+    pub fn properties(&self) -> &[Property<'arena>] {
         self.properties.slice()
     }
     #[inline]
-    pub fn properties_mut(&mut self) -> &mut [Property] {
+    pub fn properties_mut(&mut self) -> &mut [Property<'arena>] {
         self.properties.slice_mut()
     }
 }
 
-impl B {
+impl<'arena> B<'arena> {
     /// This hash function is currently only used for React Fast Refresh transform.
     /// This doesn't include the `is_single_line` properties, as they only affect whitespace.
     pub fn write_to_hasher<H, S>(&self, hasher: &mut H, symbol_table: &mut S)
     where
         H: bun_core::Hasher + ?Sized,
-        S: crate::base::SymbolTable + ?Sized,
+        S: crate::base::SymbolTable<'arena> + ?Sized,
         // PORT NOTE: `symbol_table: anytype` — forwarded to `Ref::get_symbol` and
         // `Expr::Data::write_to_hasher`; bound mirrors `Expr::Data::write_to_hasher`.
     {
@@ -180,7 +180,7 @@ impl B {
 
 // Keep `Binding` referenced (it's the conceptual tag-host of `B`).
 #[allow(dead_code)]
-type _BindingTagHost = Binding;
+type _BindingTagHost<'arena> = Binding<'arena>;
 
 pub use crate::g::Class;
 

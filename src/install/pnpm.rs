@@ -194,10 +194,9 @@ impl From<crate::lockfile_real::catalog_map::FromPnpmLockfileError> for MigrateP
 bun_core::named_error_set!(MigratePnpmLockfileError);
 
 #[inline]
-fn as_string(expr: &Expr) -> Option<&'static [u8]> {
+fn as_string<'arena>(expr: &Expr<'arena>) -> Option<&'arena [u8]> {
     // YAML / package.json parse always produces UTF-8 EStrings; `E.String.data`
-    // is a Store-backed slice, so the `'static` here is the field's own
-    // lifetime — no laundering.
+    // is a Store-backed slice valid for `'arena`.
     if let bun_ast::ExprData::EString(s) = &expr.data {
         if s.is_utf8() {
             return Some(s.data.slice());
@@ -207,19 +206,19 @@ fn as_string(expr: &Expr) -> Option<&'static [u8]> {
 }
 
 #[inline]
-fn get_string(expr: &Expr, name: &[u8]) -> Option<(&'static [u8], bun_ast::Loc)> {
+fn get_string<'arena>(expr: &Expr<'arena>, name: &[u8]) -> Option<(&'arena [u8], bun_ast::Loc)> {
     let q = expr.as_property(name)?;
     Some((as_string(&q.expr)?, q.expr.loc))
 }
 
-fn e_object(expr: &Expr) -> &E::Object {
+fn e_object<'a, 'arena>(expr: &'a Expr<'arena>) -> &'a E::Object<'arena> {
     match &expr.data {
         ExprData::EObject(o) => &**o,
         _ => unreachable!("e_object called on non-object"),
     }
 }
 
-fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
+fn e_object_mut<'a, 'arena>(expr: &'a mut Expr<'arena>) -> &'a mut E::Object<'arena> {
     match &mut expr.data {
         ExprData::EObject(o) => &mut **o,
         _ => unreachable!("e_object_mut called on non-object"),
@@ -228,7 +227,7 @@ fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
 
 /// Shallow struct copy (Zig copies `G.Property` by value freely; the Rust
 /// `G::Property` lacks `Clone` because of its `Vec`/`NonNull` fields).
-fn shallow_clone_prop(p: &G::Property) -> G::Property {
+fn shallow_clone_prop<'arena>(p: &G::Property<'arena>) -> G::Property<'arena> {
     G::Property {
         key: p.key,
         value: p.value,
@@ -256,11 +255,11 @@ pub fn migrate_pnpm_lockfile<'a>(
     // `root` survives those resets.
     let yaml_source = bun_ast::Source::init_path_string(b"pnpm-lock.yaml", data);
     let yaml_arena = bun_alloc::Arena::new();
-    let _root: Expr = match bun_parsers::yaml::YAML::parse(&yaml_source, log, &yaml_arena) {
+    let _root: Expr<'_> = match bun_parsers::yaml::YAML::parse(&yaml_source, log, &yaml_arena) {
         Ok(r) => r,
         Err(_) => return Err(MigratePnpmLockfileError::YamlParseError),
     };
-    let root: Expr = bun_core::handle_oom(_root.deep_clone(&yaml_arena));
+    let root: Expr<'_> = bun_core::handle_oom(_root.deep_clone(&yaml_arena));
 
     if !root.is_object() {
         log.add_error_fmt(
@@ -428,7 +427,7 @@ pub fn migrate_pnpm_lockfile<'a>(
             return Err(MigratePnpmLockfileError::PnpmLockfileMissingImporters);
         };
 
-        let mut has_root_pkg_expr: Option<Expr> = None;
+        let mut has_root_pkg_expr: Option<Expr<'_>> = None;
 
         for prop in e_object(&importers_obj).properties.slice() {
             let Some(importer_path) =
@@ -584,7 +583,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                 // PORT NOTE: copy `Expr` out by value so the `&mut manager`
                 // borrow held by `workspace_pkg_json` ends here — `manager`
                 // is reborrowed below for `parse_append_importer_dependencies`.
-                let workspace_root: Expr = workspace_pkg_json.root;
+                let workspace_root: Expr<'_> = workspace_pkg_json.root;
 
                 let name = as_string(&workspace_root.get(b"name").unwrap()).unwrap();
                 let name_hash = semver::string::Builder::string_hash(name);
@@ -758,15 +757,15 @@ pub fn migrate_pnpm_lockfile<'a>(
             }
         }
 
-        struct SnapshotEntry {
-            obj: Expr,
+        struct SnapshotEntry<'arena> {
+            obj: Expr<'arena>,
         }
-        impl Default for SnapshotEntry {
+        impl<'arena> Default for SnapshotEntry<'arena> {
             fn default() -> Self {
                 Self { obj: Expr::EMPTY }
             }
         }
-        let mut snapshots: StringArrayHashMap<SnapshotEntry> = StringArrayHashMap::new();
+        let mut snapshots: StringArrayHashMap<SnapshotEntry<'_>> = StringArrayHashMap::new();
 
         if let Some(packages_obj) = root.get_object(b"packages") {
             let Some(snapshots_obj) = root.get_object(b"snapshots") else {
@@ -1210,8 +1209,8 @@ impl From<ParseAppendDependenciesError> for MigratePnpmLockfileError {
 
 fn parse_append_package_dependencies(
     lockfile: &mut Lockfile,
-    package_obj: &Expr,
-    snapshot_obj: &Expr,
+    package_obj: &Expr<'_>,
+    snapshot_obj: &Expr<'_>,
     log: &mut bun_ast::Log,
 ) -> Result<(u32, u32), ParseAppendDependenciesError> {
     let mut version_buf: Vec<u8> = Vec::new();
@@ -1428,10 +1427,10 @@ fn parse_append_package_dependencies(
 fn parse_append_importer_dependencies(
     lockfile: &mut Lockfile,
     manager: &mut PackageManager,
-    pkg_expr: &Expr,
+    pkg_expr: &Expr<'_>,
     log: &mut bun_ast::Log,
     is_root: bool,
-    importers_obj: &Expr,
+    importers_obj: &Expr<'_>,
     importer_versions: &mut StringArrayHashMap<Box<[u8]>>,
 ) -> Result<(u32, u32), ParseAppendDependenciesError> {
     const IMPORTER_DEPENDENCY_GROUPS: [(&[u8], dependency::Behavior); 3] = [
@@ -1788,11 +1787,18 @@ fn update_package_json_after_migration(
     // Each `&'static [u8]` here is interned into the thread-local `DATA_STORE`
     // (see `data_store_dupe_str` below) so it shares the lifetime of the
     // `Expr` nodes it ends up backing inside the cached `root_pkg_json.root`.
+    //
+    // Hoisted out of the `Ok` arm so the `Expr<'arena>` values stored in
+    // `catalog_obj` / `catalogs_obj` / `workspace_*_obj` below remain valid
+    // for the rest of the function (their `'arena` is tied to these two
+    // borrows).
+    let ws_yaml_arena = bun_alloc::Arena::new();
+    let mut ws_yaml_source = bun_ast::Source::default();
     let mut workspace_paths: Option<Vec<&'static [u8]>> = None;
-    let mut catalog_obj: Option<Expr> = None;
-    let mut catalogs_obj: Option<Expr> = None;
-    let mut workspace_overrides_obj: Option<Expr> = None;
-    let mut workspace_patched_deps_obj: Option<Expr> = None;
+    let mut catalog_obj: Option<Expr<'_>> = None;
+    let mut catalogs_obj: Option<Expr<'_>> = None;
+    let mut workspace_overrides_obj: Option<Expr<'_>> = None;
+    let mut workspace_patched_deps_obj: Option<Expr<'_>> = None;
 
     match sys::File::read_from(Fd::cwd(), b"pnpm-workspace.yaml") {
         Ok(contents) => 'read_pnpm_workspace_yaml: {
@@ -1807,9 +1813,9 @@ fn update_package_json_after_migration(
             // `Expr` nodes — arena ownership, not a leak (bulk-freed on
             // `Expr::data_store_reset`).
             let contents: &'static [u8] = js_ast::data_store_dupe_str(&contents);
-            let yaml_source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
-            let arena = bun_alloc::Arena::new();
-            let Ok(ws_root) = bun_parsers::yaml::YAML::parse(&yaml_source, log, &arena) else {
+            ws_yaml_source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
+            let Ok(ws_root) = bun_parsers::yaml::YAML::parse(&ws_yaml_source, log, &ws_yaml_arena)
+            else {
                 break 'read_pnpm_workspace_yaml;
             };
 

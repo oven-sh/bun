@@ -442,7 +442,7 @@ fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue>
     }
 }
 
-fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
+fn expr_to_js(expr: Expr<'_>, global: &JSGlobalObject) -> JsResult<JSValue> {
     match expr.data {
         ExprData::ENull(_) => Ok(JSValue::NULL),
         ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),

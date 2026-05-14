@@ -113,7 +113,7 @@ impl CatalogMap {
     // PORT NOTE: Zig took `lockfile: *Lockfile` only for `.allocator` (dropped
     // per global-mimalloc rule). Removing it lets `lockfile.catalogs.parse_count`
     // call sites avoid the `&mut self` vs `&mut Lockfile` self-alias.
-    pub fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
+    pub fn parse_count(&mut self, expr: Expr<'_>, builder: &mut StringBuilder) {
         if let Some(default_catalog) = expr.get(b"catalog") {
             if let ExprData::EObject(obj) = &default_catalog.data {
                 for item in obj.properties.slice() {
@@ -175,7 +175,7 @@ impl CatalogMap {
         pm: &mut PackageManager,
         log: &mut Log,
         source: &Source,
-        expr: Expr,
+        expr: Expr<'_>,
         builder: &mut StringBuilder,
     ) -> Result<bool, AllocError> {
         let mut found_any = false;
@@ -309,7 +309,7 @@ impl CatalogMap {
     pub fn from_pnpm_lockfile(
         catalogs: &mut CatalogMap,
         log: &mut Log,
-        catalogs_obj: &mut E::Object,
+        catalogs_obj: &mut E::Object<'_>,
         string_buf: &mut StringBuf,
     ) -> Result<(), FromPnpmLockfileError> {
         for prop in catalogs_obj.properties.slice() {
@@ -471,7 +471,7 @@ bun_core::named_error_set!(FromPnpmLockfileError);
 fn put_entries_from_pnpm_lockfile(
     catalog_map: &mut Map,
     log: &mut Log,
-    entries_obj: &E::Object,
+    entries_obj: &E::Object<'_>,
     string_buf: &mut StringBuf,
 ) -> Result<(), FromPnpmLockfileError> {
     for entry_prop in entries_obj.properties.slice() {

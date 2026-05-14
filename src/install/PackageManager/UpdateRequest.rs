@@ -34,7 +34,9 @@ pub struct UpdateRequest {
     pub failed: bool,
     /// This must be cloned to handle when the AST store resets
     // TODO(port): lifetime — ARENA-owned (AST Expr.Data store); raw ptr per LIFETIMES.tsv
-    pub e_string: Option<*mut js_ast::E::String>,
+    // TRANSITIONAL: raw ptr to arena-backed node; `'static` until `'arena`
+    // is threaded through `UpdateRequest`'s owners.
+    pub e_string: Option<*mut js_ast::E::String<'static>>,
 }
 
 impl Default for UpdateRequest {

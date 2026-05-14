@@ -162,10 +162,14 @@ pub fn filter<'a>(
     // Zig: `jsc.AnyEventLoop.init(allocator)` — Mini loop that
     // `wait_for_parse` ticks to drain parse tasks; `None` panics there.
     let event_loop = arena.alloc(bun_event_loop::AnyEventLoop::init());
+    // Process-lifetime (matches `scan_transpiler`; intentionally leaked per
+    // the CLI arena note above).
+    let arena_pool: &bun_bundler::ArenaPool = arena.alloc(bun_bundler::ArenaPool::new());
 
     let bundle = match BundleV2::scan_module_graph_from_cli(
         scan_transpiler,
         arena,
+        arena_pool,
         Some(core::ptr::NonNull::from(event_loop)),
         &entry_points,
     ) {

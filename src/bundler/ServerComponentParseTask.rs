@@ -146,11 +146,11 @@ fn on_complete_mini(result: *mut parse_task::Result, _ctx: *mut BundleV2<'static
     on_complete(result);
 }
 
-fn task_callback(
+fn task_callback<'a>(
     task: &mut ServerComponentParseTask,
     log: &mut Log,
-    bump: &Arena,
-) -> Result<Success, OOM> {
+    bump: &'a Arena,
+) -> Result<Success<'a>, OOM> {
     // `ctx` is a `ParentRef` BACKREF to the owning BundleV2; safe `Deref`.
     let ctx: &BundleV2 = task
         .ctx
@@ -174,7 +174,7 @@ fn task_callback(
         Data::ClientEntryWrapper(_) => Target::Browser,
     };
     let hmr_api_ref = ab.hmr_api_ref;
-    let mut bundled_ast: JSAst = ab.to_bundled_ast(target)?;
+    let mut bundled_ast: JSAst = (ab.to_bundled_ast(target)?);
 
     // `wrapper_ref` is used to hold the HMR api ref (see comment in
     // `src/ast/Ast.zig`)

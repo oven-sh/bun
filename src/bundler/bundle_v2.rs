@@ -102,7 +102,7 @@ pub struct BundleV2<'a> {
     pub ssr_transpiler: *mut Transpiler<'a>,
     /// When Bun Bake is used, the resolved framework is passed here.
     pub framework: Option<bake::Framework>,
-    pub graph: Graph,
+    pub graph: Graph<'a>,
     // Real `LinkerContext<'a>` (un-gated B-2). Borrows the same arena lifetime
     // as `transpiler` (Zig stored both as raw pointers into the bundler heap).
     pub linker: LinkerContext<'a>,
@@ -2781,7 +2781,9 @@ pub mod bv2_impl {
             Ok(Some(source_index.get()))
         }
 
-        /// `heap` is not freed when `deinit`ing the BundleV2
+        /// `arena_pool` owns every per-worker arena plus the bundler-thread
+        /// arena; it is stack-allocated in the entry point so its lifetime
+        /// unifies with `'a`.
         pub fn init(
             transpiler: &'a mut Transpiler<'a>,
             bake_options: Option<BakeOptions<'a>>,
@@ -2793,7 +2795,7 @@ pub mod bv2_impl {
             // here into `ThreadPool::init`, which stores it as `*mut`. Creating a
             // `&mut` along the way would violate Stacked Borrows.
             thread_pool: Option<NonNull<ThreadPoolLib>>,
-            heap: ThreadLocalArena,
+            arena_pool: &'a crate::ArenaPool,
         ) -> Result<Box<BundleV2<'a>>, Error> {
             // TODO(port): arena-allocate self via bump.alloc — Box::new is wrong arena (Zig: arena.create(@This()) on arena)
             transpiler.env().load_tracy();
@@ -2811,13 +2813,7 @@ pub mod bv2_impl {
                 owned_client_transpiler: None,
                 ssr_transpiler: ssr_alias,
                 framework: None,
-                graph: Graph {
-                    pool: bun_ptr::BackRef::from(NonNull::<ThreadPool>::dangling()), // set below
-                    heap,
-                    kit_referenced_server_data: false,
-                    kit_referenced_client_data: false,
-                    ..Default::default()
-                },
+                graph: Graph::new(arena_pool),
                 linker: LinkerContext {
                     r#loop: event_loop,
                     graph: LinkerGraph::default(),
@@ -2869,8 +2865,8 @@ pub mod bv2_impl {
             // `resolver.arena` / `linker.arena` / `log.msgs.arena`. The
             // Rust `Transpiler<'a>`/`Resolver<'a>` store `&'a Arena` and `Log.msgs`
             // is a `Vec` (global alloc), so only `linker.graph.bump` needs the
-            // backref into the now-stable `this.graph.heap` slot.
-            this.linker.graph.bump = bun_ptr::BackRef::new(&this.graph.heap);
+            // backref into the pool-owned `this.graph.heap` arena.
+            this.linker.graph.bump = bun_ptr::BackRef::new(this.graph.heap);
             this.transpiler.log_mut().clone_line_text = true;
 
             // We don't expose an option to disable this. Bake forbids tree-shaking
@@ -2923,8 +2919,8 @@ pub mod bv2_impl {
             // Arena-owned (Zig: `arena.create(ThreadPool)`). Coerce to `*mut`
             // immediately so the `&this` borrow from `arena()` ends before
             // `ThreadPool::init` takes `&mut this`.
-            let pool: *mut ThreadPool =
-                std::ptr::from_mut(this.arena().alloc(ThreadPool::default()));
+            let pool: *mut ThreadPool<'a> =
+                std::ptr::from_mut(this.arena().alloc(ThreadPool::placeholder(arena_pool)));
             if cli_watch_flag {
                 // CYCLEBREAK GENUINE: hot_reloader is T6; runtime constructs the
                 // `dispatch::WatcherHandle` (erased owner + `&'static WatcherVTable`)
@@ -2937,7 +2933,7 @@ pub mod bv2_impl {
             // SAFETY: arena slot is live for the bundle pass; the default value
             // written above has no Drop, so overwriting via `*pool = ...` is fine.
             unsafe {
-                *pool = ThreadPool::init(&mut *this, thread_pool)?;
+                *pool = ThreadPool::init(&*this, arena_pool, thread_pool)?;
             }
             this.graph.pool =
                 bun_ptr::BackRef::from(NonNull::new(pool).expect("arena allocation is non-null"));
@@ -2946,8 +2942,8 @@ pub mod bv2_impl {
             Ok(this)
         }
 
-        pub fn arena(&self) -> &bun_alloc::Arena {
-            &self.graph.heap
+        pub fn arena(&self) -> &'a bun_alloc::Arena {
+            self.graph.heap
         }
 
         /// Allocate `value` into the bundler's arena (`self.graph.heap`) and return
@@ -3860,6 +3856,7 @@ pub mod bv2_impl {
         pub fn generate_from_cli(
             transpiler: &'a mut Transpiler<'a>,
             alloc: &bun_alloc::Arena,
+            arena_pool: &'a crate::ArenaPool,
             event_loop: EventLoop,
             enable_reloading: bool,
             reachable_files_count: &mut usize,
@@ -3874,7 +3871,7 @@ pub mod bv2_impl {
                 event_loop,
                 enable_reloading,
                 None,
-                ThreadLocalArena::new(),
+                arena_pool,
             )?;
             this.unique_key = generate_unique_key();
 
@@ -4008,6 +4005,7 @@ pub mod bv2_impl {
         pub fn scan_module_graph_from_cli(
             transpiler: &'a mut Transpiler<'a>,
             alloc: &bun_alloc::Arena,
+            arena_pool: &'a crate::ArenaPool,
             event_loop: EventLoop,
             entry_points: &[&[u8]],
         ) -> Result<Box<BundleV2<'a>>, Error> {
@@ -4018,7 +4016,7 @@ pub mod bv2_impl {
                 event_loop,
                 false,
                 None,
-                ThreadLocalArena::new(),
+                arena_pool,
             )?;
             this.unique_key = generate_unique_key();
 
@@ -4048,6 +4046,7 @@ pub mod bv2_impl {
             server_transpiler: &'a mut Transpiler<'a>,
             bake_options: BakeOptions<'a>,
             alloc: &bun_alloc::Arena,
+            arena_pool: &'a crate::ArenaPool,
             event_loop: EventLoop,
         ) -> Result<Vec<options::OutputFile>, Error> {
             let mut this = BundleV2::init(
@@ -4057,7 +4056,7 @@ pub mod bv2_impl {
                 event_loop,
                 false,
                 None,
-                ThreadLocalArena::new(),
+                arena_pool,
             )?;
             this.unique_key = generate_unique_key();
 
@@ -6874,6 +6873,13 @@ pub mod bv2_impl {
                 (&raw mut *transpiler.options.define, transpiler.log)
             };
 
+            // `new_lazy_export_ast` takes `source: &'bump Source`; allocate it
+            // in `graph.heap` so the borrow lives for `'a` (the returned
+            // `Ast<'a>` is appended to `graph.ast` below). The `input_files`
+            // entry gets its own copy via the local (moved at the end).
+            let source_in_heap: &'a bun_ast::Source =
+                self.arena().alloc(empty_html_file_source.clone());
+
             let ast_for_html_entrypoint = JSAst::init(
                 bun_js_parser::new_lazy_export_ast(
                     self.arena(),
@@ -6887,7 +6893,7 @@ pub mod bv2_impl {
                         },
                         bun_ast::Loc::EMPTY,
                     ),
-                    &empty_html_file_source,
+                    source_in_heap,
                     // We replace this runtime API call's ref later via .link on the Symbol.
                     b"__jsonParse",
                 )?
@@ -6929,7 +6935,7 @@ pub mod bv2_impl {
         }
 
         #[cold]
-        pub fn on_parse_task_complete(parse_result: &mut parse_task::Result, this: &mut BundleV2) {
+        pub fn on_parse_task_complete(parse_result: &mut parse_task::Result<'a>, this: &mut BundleV2<'a>) {
             let _trace = crate::ungate_support::perf::trace("Bundler.onParseTaskComplete");
             // PORT NOTE: Zig aliased `const graph = &this.graph;`. Borrowck rejects
             // holding that across the `this.*` method calls below (each takes
@@ -7549,21 +7555,21 @@ pub mod bv2_impl {
 
     /// The lifetime of this structure is tied to the bundler's arena
     pub struct DevServerOutput<'a> {
-        pub chunks: &'a mut [Chunk],
+        pub chunks: &'a mut [Chunk<'a>],
         pub css_file_list: ArrayHashMap<Index, CssEntryPointMeta>,
         pub html_files: ArrayHashMap<Index, ()>,
     }
 
     impl<'a> DevServerOutput<'a> {
-        pub fn js_pseudo_chunk(&mut self) -> &mut Chunk {
+        pub fn js_pseudo_chunk(&mut self) -> &mut Chunk<'a> {
             &mut self.chunks[0]
         }
 
-        pub fn css_chunks(&mut self) -> &mut [Chunk] {
+        pub fn css_chunks(&mut self) -> &mut [Chunk<'a>] {
             &mut self.chunks[1..][..self.css_file_list.count()]
         }
 
-        pub fn html_chunks(&mut self) -> &mut [Chunk] {
+        pub fn html_chunks(&mut self) -> &mut [Chunk<'a>] {
             &mut self.chunks[1 + self.css_file_list.count()..][..self.html_files.count()]
         }
     }

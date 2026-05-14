@@ -101,7 +101,7 @@ pub fn lookup(name: &[u8]) -> Option<KnownGlobal> {
 
 impl KnownGlobal {
     #[inline(always)]
-    fn call_from_new(e: &mut E::New, loc: crate::Loc) -> js_ast::Expr {
+    fn call_from_new<'arena>(e: &mut E::New<'arena>, loc: crate::Loc) -> js_ast::Expr<'arena> {
         let call = E::Call {
             target: e.target,
             args: bun_alloc::AstAlloc::take(&mut e.args),
@@ -115,13 +115,13 @@ impl KnownGlobal {
     // PORT NOTE: `_bump` is kept for call-site shape parity with the Zig
     // `std.mem.Allocator` arg. Phase-A `Vec` uses the global arena.
     #[inline(never)]
-    pub fn minify_global_constructor(
+    pub fn minify_global_constructor<'arena>(
         _bump: &Bump,
-        e: &mut E::New,
-        symbols: &[Symbol],
+        e: &mut E::New<'arena>,
+        symbols: &[Symbol<'_>],
         loc: crate::Loc,
         minify_whitespace: bool,
-    ) -> Option<js_ast::Expr> {
+    ) -> Option<js_ast::Expr<'arena>> {
         let id = if let js_ast::ExprData::EIdentifier(ident) = e.target.data {
             ident.ref_
         } else {

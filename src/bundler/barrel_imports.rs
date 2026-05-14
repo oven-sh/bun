@@ -38,10 +38,10 @@ impl Default for RequestedExports {
 // loop can hold a `BarrelExportResolution` across a `&mut graph.ast` reborrow
 // without the borrow checker seeing an overlap. The pointee outlives the
 // bundler arena, so dereferencing later is sound.
-struct BarrelExportResolution {
+struct BarrelExportResolution<'a> {
     import_record_index: u32,
     /// The original alias in the source module (e.g. "d" for `export { d as c }`)
-    original_alias: Option<bun_ast::StoreStr>,
+    original_alias: Option<bun_ast::StoreStr<'a>>,
     /// True when the underlying import is `import * as ns` — propagation
     /// through this export must treat the target as needing all exports.
     alias_is_star: bool,
@@ -50,11 +50,11 @@ struct BarrelExportResolution {
 /// Look up an export name → import_record_index by chasing
 /// named_exports[alias].ref through named_imports.
 /// Also returns the original alias from the source module for BFS propagation.
-fn resolve_barrel_export(
+fn resolve_barrel_export<'a>(
     alias: &[u8],
     named_exports: &JSAst::NamedExports,
-    named_imports: &JSAst::NamedImports,
-) -> Option<BarrelExportResolution> {
+    named_imports: &JSAst::NamedImports<'a>,
+) -> Option<BarrelExportResolution<'a>> {
     let export_entry = named_exports.get(alias)?;
     let import_entry = named_imports.get(&export_entry.ref_)?;
     Some(BarrelExportResolution {
@@ -359,7 +359,7 @@ pub fn schedule_barrel_deferred_imports(
     // `&mut this.*` borrows don't conflict.
     let file_import_records: bun_ptr::BackRef<import_record::List> =
         bun_ptr::BackRef::new(&this.graph.ast.items_import_records()[result_source_index as usize]);
-    let file_named_imports: bun_ptr::BackRef<JSAst::NamedImports> =
+    let file_named_imports: bun_ptr::BackRef<JSAst::NamedImports<'_>> =
         bun_ptr::BackRef::new(&this.graph.ast.items_named_imports()[result_source_index as usize]);
 
     // PORT NOTE: `DevServerHandle` copied out so `&mut this.*` field borrows

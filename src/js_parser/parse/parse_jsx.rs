@@ -16,7 +16,7 @@ use bun_core::strings;
 // (sealed trait + ZST), so this becomes a direct `impl` on `P` instead of a wrapper struct.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub fn parse_jsx_element(&mut self, loc: bun_ast::Loc) -> Result<Expr, bun_core::Error> {
+    pub fn parse_jsx_element(&mut self, loc: bun_ast::Loc) -> Result<Expr<'a>, bun_core::Error> {
         let p = self;
         if SCAN_ONLY {
             p.needs_jsx_import = true;

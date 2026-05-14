@@ -46,7 +46,7 @@ static DEFAULT_IGNORE: LazyLock<[DefaultIgnore; 1]> = LazyLock::new(|| {
 impl PostinstallOptimizer {
     fn from_string_array_group(
         list: &mut List,
-        expr: &js_ast::Expr,
+        expr: &js_ast::Expr<'_>,
         value: PostinstallOptimizer,
     ) -> Result<bool, bun_alloc::AllocError> {
         // PORT NOTE: Zig `expr.asArray()` returns null for both non-array AND empty
@@ -81,7 +81,7 @@ impl PostinstallOptimizer {
 
     pub fn from_package_json(
         list: &mut List,
-        expr: &js_ast::Expr,
+        expr: &js_ast::Expr<'_>,
     ) -> Result<(), bun_alloc::AllocError> {
         if let Some(native_deps_expr) = expr.get(b"nativeDependencies") {
             list.disable_default_native_binlinks = Self::from_string_array_group(

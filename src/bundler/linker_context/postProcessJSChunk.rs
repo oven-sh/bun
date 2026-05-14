@@ -43,7 +43,7 @@ fn print_result_take_code(r: &mut PrintResult) -> Box<[u8]> {
 pub fn post_process_js_chunk(
     ctx: GenerateChunkCtx,
     worker: &mut ThreadPool::Worker,
-    chunk: &mut Chunk,
+    chunk: &mut Chunk<'_>,
     chunk_index: usize,
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
@@ -144,7 +144,7 @@ pub fn post_process_js_chunk(
             // PERF(port): was appendAssumeCapacity
             cross_chunk_import_records.push(ImportRecord {
                 kind: import_record.import_kind,
-                // `ctx.chunks` is a `BackRef<[Chunk]>` (safe `Deref`); chunk_index is
+                // `ctx.chunks` is a `BackRef<[Chunk<'_>]>` (safe `Deref`); chunk_index is
                 // in-bounds (produced by the linker for this chunks slice).
                 path: bun_paths::fs::Path::init(
                     ctx.chunks[import_record.chunk_index as usize].unique_key,
@@ -865,8 +865,8 @@ fn add_binding_vars_to_module_info(
     mi: &mut ModuleInfo,
     binding: Binding,
     var_kind: analyze_transpiled_module::VarKind,
-    r: &mut js_printer::renamer::Renamer<'_, '_>,
-    symbols: &bun_ast::symbol::Map,
+    r: &mut js_printer::renamer::Renamer<'_, '_, '_>,
+    symbols: &bun_ast::symbol::Map<'_>,
 ) {
     match binding.data {
         B::B::BIdentifier(b) => {
@@ -903,7 +903,7 @@ pub fn generate_entry_point_tail_js<'a>(
     // TODO(port): thread &'bump Bump from worker.arena end-to-end in Phase B
     arena: &'a Arena,
     temp_arena: &Arena,
-    mut r: js_printer::renamer::Renamer<'a, 'a>,
+    mut r: js_printer::renamer::Renamer<'a, 'a, 'a>,
     mut module_info: Option<&'a mut ModuleInfo>,
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];

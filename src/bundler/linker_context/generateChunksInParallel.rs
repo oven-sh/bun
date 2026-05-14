@@ -55,9 +55,9 @@ use crate::linker_context_mod::debug;
 // Rust const generics cannot vary the return type, so we always return
 // `Vec<OutputFile>` and the IS_DEV_SERVER path returns an empty Vec. Phase B may
 // split this into two monomorphized wrappers if the unused Vec matters.
-pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
-    c: &mut LinkerContext,
-    chunks: &mut [Chunk],
+pub fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
+    c: &mut LinkerContext<'a>,
+    chunks: &mut [Chunk<'a>],
 ) -> Result<Vec<options::OutputFile>, bun_core::Error> {
     let _trace = bun_core::perf::trace("Bundler.generateChunksInParallel");
 
@@ -122,10 +122,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             node: ThreadPoolLib::Node::default(),
                             callback: prepare_css_asts_for_chunk,
                         },
-                        chunk: std::ptr::from_mut::<Chunk>(chunk),
-                        // PORT NOTE: `PrepareCssAstTask.linker` is `*mut LinkerContext<'static>`
-                        // (raw ptr is invariant); `.cast()` erases the inner `'a` to satisfy it.
-                        linker: std::ptr::from_mut::<LinkerContext>(c).cast(),
+                        chunk: std::ptr::from_mut(chunk),
+                        linker: std::ptr::from_mut(c),
                     });
                     // Capacity pre-reserved → push never reallocates → ptr stays stable.
                     let task = tasks.last_mut().unwrap();
@@ -159,7 +157,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step.
             let c_ref =
                 unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
-            let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new_mut(chunks);
+            let chunks_ref: bun_ptr::BackRef<[Chunk<'_>]> = bun_ptr::BackRef::new_mut(chunks);
             for chunk in chunks.iter_mut() {
                 chunk_contexts.push(GenerateChunkCtx {
                     c: c_ref,
@@ -356,13 +354,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         let mut path_names_map: StringHashMap<()> = StringHashMap::default();
 
         #[derive(Default)]
-        struct DuplicateEntry {
+        struct DuplicateEntry<'a> {
             // `BackRef` (not `*mut`) — entries point at elements of the
-            // stack-owned `chunks: &mut [Chunk]` above, which outlives the
+            // stack-owned `chunks: &mut [Chunk<'_>]` above, which outlives the
             // `duplicates_map`; reads go through safe `Deref`.
-            sources: Vec<bun_ptr::BackRef<Chunk>>,
+            sources: Vec<bun_ptr::BackRef<Chunk<'a>>>,
         }
-        let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::default();
+        let mut duplicates_map: StringArrayHashMap<DuplicateEntry<'a>> = StringArrayHashMap::default();
 
         let mut chunk_visit_map = AutoBitSet::init_empty(chunks.len())?;
 
@@ -788,7 +786,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             };
             // Tail of the loop body needs `&mut chunk` (`output_source_map.finalize()`);
             // no `&[Chunk]` is needed past this point so an exclusive reborrow is fine.
-            let chunk: &mut Chunk = &mut chunks[chunk_index_in_chunks_list];
+            let chunk: &mut Chunk<'_> = &mut chunks[chunk_index_in_chunks_list];
             chunk.intermediate_output = intermediate_output;
             let mut code_result = _code_result;
 

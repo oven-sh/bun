@@ -18,9 +18,9 @@ pub use crate::b::B as Data;
 
 // Zig file-as-struct: top-level fields `loc`, `data` define `Binding`.
 #[derive(Copy, Clone, Default)]
-pub struct Binding {
+pub struct Binding<'arena> {
     pub loc: crate::Loc,
-    pub data: B,
+    pub data: B<'arena>,
 }
 
 // Zig: `enum(u5)` — Rust has no u5; use u8 repr (values fit).
@@ -59,65 +59,65 @@ pub static ICOUNT: AtomicUsize = AtomicUsize::new(0);
 // per call-site like the Zig original.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub trait BindingInit {
-    fn into_b(self) -> B;
+pub trait BindingInit<'arena> {
+    fn into_b(self) -> B<'arena>;
 }
-impl BindingInit for StoreRef<crate::b::Identifier> {
+impl<'arena> BindingInit<'arena> for StoreRef<'arena, crate::b::Identifier> {
     #[inline]
-    fn into_b(self) -> B {
+    fn into_b(self) -> B<'arena> {
         B::BIdentifier(self)
     }
 }
-impl BindingInit for StoreRef<crate::b::Array> {
+impl<'arena> BindingInit<'arena> for StoreRef<'arena, crate::b::Array<'arena>> {
     #[inline]
-    fn into_b(self) -> B {
+    fn into_b(self) -> B<'arena> {
         B::BArray(self)
     }
 }
-impl BindingInit for StoreRef<crate::b::Object> {
+impl<'arena> BindingInit<'arena> for StoreRef<'arena, crate::b::Object<'arena>> {
     #[inline]
-    fn into_b(self) -> B {
+    fn into_b(self) -> B<'arena> {
         B::BObject(self)
     }
 }
-impl BindingInit for crate::b::Missing {
+impl<'arena> BindingInit<'arena> for crate::b::Missing {
     #[inline]
-    fn into_b(self) -> B {
+    fn into_b(self) -> B<'arena> {
         B::BMissing(self)
     }
 }
 
-pub trait BindingAlloc: Sized {
-    fn alloc_into_b(self, bump: &Arena) -> B;
+pub trait BindingAlloc<'arena>: Sized {
+    fn alloc_into_b(self, bump: &Arena) -> B<'arena>;
 }
-impl BindingAlloc for crate::b::Identifier {
+impl<'arena> BindingAlloc<'arena> for crate::b::Identifier {
     #[inline]
-    fn alloc_into_b(self, bump: &Arena) -> B {
+    fn alloc_into_b(self, bump: &Arena) -> B<'arena> {
         B::BIdentifier(StoreRef::from_bump(bump.alloc(self)))
     }
 }
-impl BindingAlloc for crate::b::Array {
+impl<'arena> BindingAlloc<'arena> for crate::b::Array<'arena> {
     #[inline]
-    fn alloc_into_b(self, bump: &Arena) -> B {
+    fn alloc_into_b(self, bump: &Arena) -> B<'arena> {
         B::BArray(StoreRef::from_bump(bump.alloc(self)))
     }
 }
-impl BindingAlloc for crate::b::Object {
+impl<'arena> BindingAlloc<'arena> for crate::b::Object<'arena> {
     #[inline]
-    fn alloc_into_b(self, bump: &Arena) -> B {
+    fn alloc_into_b(self, bump: &Arena) -> B<'arena> {
         B::BObject(StoreRef::from_bump(bump.alloc(self)))
     }
 }
-impl BindingAlloc for crate::b::Missing {
+impl<'arena> BindingAlloc<'arena> for crate::b::Missing {
     #[inline]
-    fn alloc_into_b(self, _bump: &Arena) -> B {
+    fn alloc_into_b(self, _bump: &Arena) -> B<'arena> {
         B::BMissing(crate::b::Missing {})
     }
 }
 
-impl Binding {
+impl<'arena> Binding<'arena> {
     #[inline]
-    pub fn init(t: impl BindingInit, loc: crate::Loc) -> Binding {
+    pub fn init(t: impl BindingInit<'arena>, loc: crate::Loc) -> Binding<'arena> {
         #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, Ordering::Relaxed);
         Binding {
@@ -126,7 +126,7 @@ impl Binding {
         }
     }
     #[inline]
-    pub fn alloc(bump: &Arena, t: impl BindingAlloc, loc: crate::Loc) -> Binding {
+    pub fn alloc(bump: &Arena, t: impl BindingAlloc<'arena>, loc: crate::Loc) -> Binding<'arena> {
         #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, Ordering::Relaxed);
         Binding {
@@ -153,16 +153,16 @@ impl Binding {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone)]
-pub struct ToExprWrapper {
+pub struct ToExprWrapper<'arena> {
     /// Back-reference to `P.arena`. `BackRef` invariant: the arena is owned by
     /// `P<'a>` and outlives every `ToExprWrapper` (which is stored on `P` and
     /// only used during the visit pass). `None` only for the pre-wire
     /// `dangling()` placeholder; niche-packed so layout matches `*const Arena`.
     arena: Option<bun_ptr::BackRef<Arena>>,
-    wrap: fn(*mut core::ffi::c_void, crate::Loc, Ref) -> Expr,
+    wrap: fn(*mut core::ffi::c_void, crate::Loc, Ref) -> Expr<'arena>,
 }
 
-impl ToExprWrapper {
+impl<'arena> ToExprWrapper<'arena> {
     /// Placeholder used in `P::init` before `prepare_for_visit_pass` wires the
     /// arena + trampoline.
     pub const fn dangling() -> Self {
@@ -179,7 +179,7 @@ impl ToExprWrapper {
     /// coerce to fn pointers, so this stays zero-cost like Zig's comptime fn.
     /// The `*mut P` itself is passed per-call via `Binding::to_expr`.
     #[inline]
-    pub fn new(arena: &Arena, wrap: fn(*mut core::ffi::c_void, crate::Loc, Ref) -> Expr) -> Self {
+    pub fn new(arena: &Arena, wrap: fn(*mut core::ffi::c_void, crate::Loc, Ref) -> Expr<'arena>) -> Self {
         Self {
             arena: Some(bun_ptr::BackRef::new(arena)),
             wrap,
@@ -187,7 +187,7 @@ impl ToExprWrapper {
     }
 
     #[inline]
-    pub fn wrap_identifier(&self, ctx: *mut core::ffi::c_void, loc: crate::Loc, ref_: Ref) -> Expr {
+    pub fn wrap_identifier(&self, ctx: *mut core::ffi::c_void, loc: crate::Loc, ref_: Ref) -> Expr<'arena> {
         (self.wrap)(ctx, loc, ref_)
     }
 
@@ -206,9 +206,9 @@ impl ToExprWrapper {
 /// that want the same per-(P, func) nominal type use this alias and construct
 /// via `ToExprWrapper::new`. Kept as a type alias (not a generic struct) so
 /// `P` can store two of these without threading its own generics through.
-pub type ToExpr = ToExprWrapper;
+pub type ToExpr<'arena> = ToExprWrapper<'arena>;
 
-impl Binding {
+impl<'arena> Binding<'arena> {
     /// Zig: `pub fn toExpr(binding: *const Binding, wrapper: anytype) Expr`.
     ///
     /// `ctx` is the type-erased `*mut P<..>` derived from the *caller's live*
@@ -220,18 +220,18 @@ impl Binding {
     /// `visitStmt.rs` (`p.to_expr_wrapper_namespace`) and the `&mut` call-site
     /// in `maybe.rs` (`&mut p.to_expr_wrapper_hoisted`) type-check without
     /// edits — `T: Borrow<T>` and `&mut T: Borrow<T>` are both blanket impls.
-    pub fn to_expr<W>(binding: &Binding, ctx: *mut core::ffi::c_void, wrapper: W) -> Expr
+    pub fn to_expr<W>(binding: &Binding<'arena>, ctx: *mut core::ffi::c_void, wrapper: W) -> Expr<'arena>
     where
-        W: core::borrow::Borrow<ToExprWrapper>,
+        W: core::borrow::Borrow<ToExprWrapper<'arena>>,
     {
         Self::to_expr_inner(binding, ctx, *wrapper.borrow())
     }
 
     fn to_expr_inner(
-        binding: &Binding,
+        binding: &Binding<'arena>,
         ctx: *mut core::ffi::c_void,
-        wrapper: ToExprWrapper,
-    ) -> Expr {
+        wrapper: ToExprWrapper<'arena>,
+    ) -> Expr<'arena> {
         let loc = binding.loc;
         match binding.data {
             B::BMissing(_) => Expr {
@@ -312,14 +312,14 @@ impl Binding {
 // rustc correctly proves they are never *read*; they are the data contract for
 // when the writer lands, not dead code.
 #[expect(dead_code)]
-pub struct Serializable {
+pub struct Serializable<'arena> {
     r#type: Tag,
     object: &'static [u8],
-    value: B,
+    value: B<'arena>,
     loc: crate::Loc,
 }
 
-impl Binding {
+impl<'arena> Binding<'arena> {
     pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
     where
         W: BindingJsonWriter,
@@ -338,7 +338,7 @@ impl Binding {
 /// currently `&str`-only; this preserves the Zig call-shape until the JSON
 /// layer settles.
 pub trait BindingJsonWriter {
-    fn write(&mut self, value: Serializable) -> Result<(), bun_core::Error>;
+    fn write(&mut self, value: Serializable<'_>) -> Result<(), bun_core::Error>;
 }
 
 // ported from: src/js_parser/ast/Binding.zig

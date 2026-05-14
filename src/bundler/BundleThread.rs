@@ -126,6 +126,7 @@ pub trait CompletionStruct: Node + Send + 'static {
         &mut self,
         transpiler: &'a mut Transpiler<'a>,
         bump: &'a Arena,
+        arena_pool: &'a crate::ArenaPool,
         // Raw `*mut` (not `&'static`) because `BundleV2::init` ultimately
         // stores it as `worker_pool: *mut ThreadPool` and `WorkPool::get()`
         // hands out `&'static`; materializing `&mut` from that would be UB.
@@ -287,6 +288,9 @@ impl<C: CompletionStruct> BundleThread<C> {
         // PORT NOTE: `ThreadLocalArena.init()` → `bun_alloc::Arena::new()` (bumpalo
         // bump arena; `defer heap.deinit()` is handled by Drop).
         let heap = Arena::new();
+        // Owns every per-worker arena plus the bundler-thread arena for this
+        // `Bun.build()` call. Dropped at end-of-fn after `bv2` is torn down.
+        let arena_pool = crate::ArenaPool::new();
 
         let bump = &heap;
         let ast_memory_store: &mut bun_ast::ASTMemoryAllocator =
@@ -311,6 +315,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             // SAFETY: `transpiler` lives in `bump` for the duration of `heap`.
             unsafe { &mut *transpiler_ptr },
             bump,
+            &arena_pool,
             // `WorkPool::get()` returns `&'static ThreadPool`; pass as raw so
             // the impl can hand it to `BundleV2::init` (which stores `*mut`).
             std::ptr::from_ref(bun_threading::work_pool::WorkPool::get()).cast_mut(),

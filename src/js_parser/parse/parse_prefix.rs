@@ -32,7 +32,7 @@ type PResult<T> = core::result::Result<T, bun_core::Error>;
 // names pfx_-prefixed to avoid colliding with parseStmt.rs / parseSuffix.rs mixins on the same `P`.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    fn pfx_t_super(p: &mut Self, level: Level) -> PResult<Expr> {
+    fn pfx_t_super(p: &mut Self, level: Level) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         let super_range = p.lexer.range();
         p.lexer.next()?;
@@ -56,7 +56,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::Super {}, loc))
     }
 
-    fn pfx_t_open_paren(p: &mut Self, level: Level) -> PResult<Expr> {
+    fn pfx_t_open_paren(p: &mut Self, level: Level) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
 
@@ -78,28 +78,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    fn pfx_t_false(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_false(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         Ok(p.new_expr(E::Boolean { value: false }, loc))
     }
 
     #[inline]
-    fn pfx_t_true(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_true(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         Ok(p.new_expr(E::Boolean { value: true }, loc))
     }
 
     #[inline]
-    fn pfx_t_null(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_null(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         Ok(p.new_expr(E::Null {}, loc))
     }
 
     #[inline]
-    fn pfx_t_this(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_this(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         if p.fn_or_arrow_data_parse.is_this_disallowed {
             p.log()
@@ -112,7 +112,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    fn pfx_t_private_identifier(p: &mut Self, level: Level) -> PResult<Expr> {
+    fn pfx_t_private_identifier(p: &mut Self, level: Level) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         if !p.allow_private_identifiers || !p.allow_in || level.gte(Level::Compare) {
             p.lexer.unexpected()?;
@@ -131,7 +131,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::PrivateIdentifier { ref_ }, loc))
     }
 
-    fn pfx_t_identifier(p: &mut Self, level: Level) -> PResult<Expr> {
+    fn pfx_t_identifier(p: &mut Self, level: Level) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         let name = p.lexer.identifier;
 
@@ -291,7 +291,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Expr::init_identifier(ref_, loc))
     }
 
-    fn pfx_t_template_head(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_template_head(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         let head = p.lexer.to_e_string()?;
 
@@ -311,7 +311,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    fn pfx_t_numeric_literal(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_numeric_literal(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         let value = p.new_expr(
             E::Number {
@@ -325,7 +325,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    fn pfx_t_big_integer_literal(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_big_integer_literal(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         let value = E::Str::new(p.lexer.identifier);
         // markSyntaxFeature bigInt
@@ -333,7 +333,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::BigInt { value }, loc))
     }
 
-    fn pfx_t_slash(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_slash(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.scan_reg_exp()?;
         // always set regex_flags_start to null to make sure we don't accidentally use the wrong value later
@@ -355,7 +355,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    fn pfx_t_void(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_void(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
@@ -374,7 +374,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    fn pfx_t_typeof(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_typeof(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
@@ -397,7 +397,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    fn pfx_t_delete(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_delete(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
@@ -441,7 +441,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    fn pfx_t_plus(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_plus(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
@@ -460,7 +460,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    fn pfx_t_minus(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_minus(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
@@ -479,7 +479,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    fn pfx_t_tilde(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_tilde(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
@@ -498,7 +498,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    fn pfx_t_exclamation(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_exclamation(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
@@ -517,7 +517,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    fn pfx_t_minus_minus(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_minus_minus(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
@@ -531,7 +531,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    fn pfx_t_plus_plus(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_plus_plus(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let value = p.parse_expr(Level::Prefix)?;
@@ -546,12 +546,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    fn pfx_t_function(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_function(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.parse_fn_expr(loc, false, bun_ast::Range::NONE)
     }
 
-    fn pfx_t_class(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_class(p: &mut Self) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         let class_keyword = p.lexer.range();
         // markSyntaxFEatuer class
@@ -609,7 +609,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(class, loc))
     }
 
-    fn pfx_t_at(p: &mut Self) -> PResult<Expr> {
+    fn pfx_t_at(p: &mut Self) -> PResult<Expr<'a>> {
         // Parse decorators before a class expression: @dec class { ... }
         let ts_decorators = p.parse_type_script_decorators()?;
 
@@ -683,7 +683,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(class, loc))
     }
 
-    fn pfx_t_new(p: &mut Self, flags: EFlags) -> PResult<Expr> {
+    fn pfx_t_new(p: &mut Self, flags: EFlags) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
 
@@ -735,7 +735,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    fn pfx_t_open_bracket(p: &mut Self, mut errors: Option<&mut DeferredErrors>) -> PResult<Expr> {
+    fn pfx_t_open_bracket(p: &mut Self, mut errors: Option<&mut DeferredErrors>) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let mut is_single_line = !p.lexer.has_newline_before;
@@ -829,7 +829,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    fn pfx_t_open_brace(p: &mut Self, errors: Option<&mut DeferredErrors>) -> PResult<Expr> {
+    fn pfx_t_open_brace(p: &mut Self, errors: Option<&mut DeferredErrors>) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let mut is_single_line = !p.lexer.has_newline_before;
@@ -932,7 +932,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         level: Level,
         errors: Option<&mut DeferredErrors>,
         flags: EFlags,
-    ) -> PResult<Expr> {
+    ) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         // This is a very complicated and highly ambiguous area of TypeScript
         // syntax. Many similar-looking things are overloaded.
@@ -1029,7 +1029,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    fn pfx_t_import(p: &mut Self, level: Level) -> PResult<Expr> {
+    fn pfx_t_import(p: &mut Self, level: Level) -> PResult<Expr<'a>> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         p.parse_import_expr(loc, level)
@@ -1041,7 +1041,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         level: Level,
         errors: Option<&mut DeferredErrors>,
         flags: EFlags,
-    ) -> PResult<Expr> {
+    ) -> PResult<Expr<'a>> {
         let p = self;
         match p.lexer.token {
             T::TOpenBracket => Self::pfx_t_open_bracket(p, errors),

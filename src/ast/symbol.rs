@@ -7,14 +7,14 @@ use crate::ImportItemStatus;
 use crate::base::Ref;
 use crate::g as G;
 
-pub struct Symbol {
+pub struct Symbol<'arena> {
     /// This is the name that came from the parser. Printed names may be renamed
     /// during minification or to avoid name collisions. Do not use the original
     /// name during printing.
     // Arena-owned slice (parser/AST crate). `StoreStr` is the lifetime-erased
     // `[u8]` wrapper used uniformly across AST string fields; it derefs to
     // `[u8]` and is valid until the owning arena resets.
-    pub original_name: crate::StoreStr,
+    pub original_name: crate::StoreStr<'arena>,
 
     /// This is used for symbols that represent items in the import clause of an
     /// ES6 import statement. These should always be referenced by EImportIdentifier
@@ -27,12 +27,12 @@ pub struct Symbol {
     /// mode, re-exported symbols are collapsed using MergeSymbols() and renamed
     /// symbols from other files that end up at this symbol must be able to tell
     /// if it has a namespace alias.
-    pub namespace_alias: Option<G::NamespaceAlias>,
+    pub namespace_alias: Option<G::NamespaceAlias<'arena>>,
 
     /// Used by the parser for single pass parsing.
     ///
     /// `Cell` because union-find (`merge`/`follow`) mutates this through
-    /// `&Symbol` while other shared refs to the same table are live. `Ref` is
+    /// `&Symbol<'arena>` while other shared refs to the same table are live. `Ref` is
     /// `Copy`, so `Cell<Ref>` is zero-cost and lets those algorithms run
     /// without raw-pointer writes.
     pub link: Cell<Ref>,
@@ -51,7 +51,7 @@ pub struct Symbol {
     /// `AtomicU32` (not plain `u32`) because [`Map::assign_chunk_index`] is
     /// invoked from worker threads in
     /// `compute_cross_chunk_dependencies::walk()` while other threads hold a
-    /// shared `&LinkerGraph` (and thus `&Symbol`). The linker invariant is
+    /// shared `&LinkerGraph` (and thus `&Symbol<'arena>`). The linker invariant is
     /// that all declarations of a given top-level symbol are placed in a
     /// single chunk, so cross-thread writes target disjoint slots — but the
     /// invariant is data-dependent, not type-checked, and a plain `u32` write
@@ -177,7 +177,7 @@ pub struct Symbol {
 const INVALID_CHUNK_INDEX: u32 = u32::MAX;
 pub const INVALID_NESTED_SCOPE_SLOT: u32 = u32::MAX;
 
-impl Default for Symbol {
+impl<'arena> Default for Symbol<'arena> {
     fn default() -> Self {
         Self {
             original_name: crate::StoreStr::EMPTY,
@@ -211,7 +211,7 @@ pub enum SlotNamespace {
 // Inherent associated types are nightly-only; expose as a free alias.
 pub type SlotNamespaceCountsArray = enum_map::EnumMap<SlotNamespace, u32>;
 
-impl Symbol {
+impl<'arena> Symbol<'arena> {
     /// This is for generating cross-chunk imports and exports for code splitting.
     #[inline]
     pub fn chunk_index(&self) -> Option<u32> {
@@ -388,11 +388,11 @@ pub struct Use {
     pub count_estimate: u32,
 }
 
-pub type List = Vec<Symbol>;
-pub type NestedList = Vec<List>;
+pub type List<'arena> = Vec<Symbol<'arena>>;
+pub type NestedList<'arena> = Vec<List<'arena>>;
 
-impl Symbol {
-    pub fn merge_contents_with(&mut self, old: &mut Symbol) {
+impl<'arena> Symbol<'arena> {
+    pub fn merge_contents_with(&mut self, old: &mut Symbol<'arena>) {
         self.use_count_estimate += old.use_count_estimate;
         if old.must_not_be_renamed {
             self.original_name = old.original_name;
@@ -404,7 +404,7 @@ impl Symbol {
 }
 
 #[derive(Default)]
-pub struct Map {
+pub struct Map<'arena> {
     // This could be represented as a "map[Ref]Symbol" but a two-level array was
     // more efficient in profiles. This appears to be because it doesn't involve
     // a hash. This representation also makes it trivial to quickly merge symbol
@@ -412,10 +412,10 @@ pub struct Map {
     // single inner array, so you can join the maps together by just make a
     // single outer array containing all of the inner arrays. See the comment on
     // "Ref" for more detail.
-    pub symbols_for_source: NestedList,
+    pub symbols_for_source: NestedList<'arena>,
 }
 
-impl Map {
+impl<'arena> Map<'arena> {
     // Debug-only dump of the symbol table.
     pub fn dump(&self) {
         for (i, symbols) in self.symbols_for_source.slice().iter().enumerate() {
@@ -447,7 +447,7 @@ impl Map {
     // Takes `&self` (not `&mut self`) — the only caller
     // (`computeCrossChunkDependencies::walk`) runs concurrently across worker
     // threads. `Symbol.chunk_index` is `AtomicU32`, so the per-slot write is a
-    // sound interior mutation through `&Symbol`; no raw-pointer or `&mut Map`
+    // sound interior mutation through `&Symbol<'arena>`; no raw-pointer or `&mut Map`
     // escape is needed. Relaxed ordering: see the field doc — the worker-pool
     // join is the only required happens-before edge, and the linker invariant
     // places all declarations of a given symbol in a single chunk (same
@@ -455,12 +455,12 @@ impl Map {
     // `debug_assert!` documents that invariant.
     pub fn assign_chunk_index(&self, decls_: &crate::DeclaredSymbolList, chunk_index: u32) {
         use crate::DeclaredSymbol;
-        struct Iterator<'a> {
-            map: &'a Map,
+        struct Iterator<'a, 'arena> {
+            map: &'a Map<'arena>,
             chunk_index: u32,
         }
 
-        impl Iterator<'_> {
+        impl Iterator<'_, '_> {
             pub(crate) fn next(&mut self, ref_: Ref) {
                 let symbol = self.map.get_const(ref_).unwrap();
                 // Thread-confinement invariant: a top-level symbol's
@@ -529,7 +529,7 @@ impl Map {
         new
     }
 
-    // Returns a raw *mut Symbol because callers (merge/follow/assign_chunk_index/
+    // Returns a raw *mut Symbol<'arena> because callers (merge/follow/assign_chunk_index/
     // get_with_link) hold aliasing pointers into the NestedList and/or recurse through
     // &mut self while holding the pointer. Mirrors Zig's `*const Map -> ?*Symbol`
     // (interior mutability via Vec's raw `[*]T` ptr field).
@@ -540,7 +540,7 @@ impl Map {
     // and would yield read-only provenance, making any later write UB). Callers may write
     // through the result as long as the backing storage is not reallocated and they do
     // not materialize overlapping `&mut`.
-    pub fn get(&self, ref_: Ref) -> Option<*mut Symbol> {
+    pub fn get(&self, ref_: Ref) -> Option<*mut Symbol<'arena>> {
         if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
             return None;
         }
@@ -556,7 +556,7 @@ impl Map {
         }
     }
 
-    pub fn get_const(&self, ref_: Ref) -> Option<&Symbol> {
+    pub fn get_const(&self, ref_: Ref) -> Option<&Symbol<'arena>> {
         if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
             return None;
         }
@@ -583,10 +583,10 @@ impl Map {
         })
     }
 
-    pub fn init(source_count: usize) -> Map {
+    pub fn init(source_count: usize) -> Map<'arena> {
         // Zig: `arena.alloc([]Symbol, sourceCount)` (default_allocator) then NestedList.init.
         // Per PORTING.md §Allocators (non-arena path), use Vec → Vec.
-        let mut v: Vec<List> = Vec::with_capacity(source_count);
+        let mut v: Vec<List<'arena>> = Vec::with_capacity(source_count);
         v.resize_with(source_count, List::default);
         Map {
             symbols_for_source: NestedList::move_from_list(v),
@@ -598,11 +598,11 @@ impl Map {
     // box it into a one-element NestedList instead.
     // PERF(port): one extra allocation vs Zig — profile (single
     // caller is the printer one-shot, cold).
-    pub fn init_with_one_list(list: List) -> Map {
+    pub fn init_with_one_list(list: List<'arena>) -> Map<'arena> {
         Self::init_list(NestedList::move_from_list(vec![list]))
     }
 
-    pub fn init_list(list: NestedList) -> Map {
+    pub fn init_list(list: NestedList<'arena>) -> Map<'arena> {
         Map {
             symbols_for_source: list,
         }
@@ -611,8 +611,8 @@ impl Map {
     /// Safe `&mut` lookup via the `Vec`/`Vec<Symbol>` backing storage. Mirrors
     /// [`get_const`] but returns a unique borrow tied to `&mut self`, so callers
     /// that only need to flip a flag (e.g. `must_not_be_renamed`) don't need the
-    /// raw `*mut Symbol` from [`get`] + an open-coded `(*ptr).field = ...`.
-    pub fn get_mut(&mut self, ref_: Ref) -> Option<&mut Symbol> {
+    /// raw `*mut Symbol<'arena>` from [`get`] + an open-coded `(*ptr).field = ...`.
+    pub fn get_mut(&mut self, ref_: Ref) -> Option<&mut Symbol<'arena>> {
         if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
             return None;
         }
@@ -621,7 +621,7 @@ impl Map {
         self.symbols_for_source.get_mut(src)?.get_mut(idx)
     }
 
-    pub fn get_with_link(&self, ref_: Ref) -> Option<*mut Symbol> {
+    pub fn get_with_link(&self, ref_: Ref) -> Option<*mut Symbol<'arena>> {
         let symbol_ptr = self.get(ref_)?;
         // Read `link` through the safe shared accessor (same indices as `get`);
         // the raw `*mut` is only forwarded to the caller, never derefed here.
@@ -632,7 +632,7 @@ impl Map {
         Some(symbol_ptr)
     }
 
-    pub fn get_with_link_const(&self, ref_: Ref) -> Option<&Symbol> {
+    pub fn get_with_link_const(&self, ref_: Ref) -> Option<&Symbol<'arena>> {
         let symbol = self.get_const(ref_)?;
         if symbol.has_link() {
             return Some(self.get_const(symbol.link.get()).unwrap_or(symbol));
@@ -689,7 +689,7 @@ impl Map {
         // `(source_index, inner_index)` with tag ∈ {Symbol, AllocatedName},
         // never `SourceContentsSlice` and never the null source sentinel.
         let outer = self.symbols_for_source.slice();
-        let lookup = |r: Ref| -> &Symbol {
+        let lookup = |r: Ref| -> &Symbol<'arena> {
             debug_assert!(!r.is_source_contents_slice());
             &outer[r.source_index() as usize].slice()[r.inner_index() as usize]
         };
@@ -708,7 +708,7 @@ impl Map {
         // recursion's post-order `symbol.link = link` writes). The `!=` gate
         // mirrors Zig's `if (!symbol.link.eql(link))` to avoid a redundant
         // store when the chain was already length-1. `link` is `Cell<Ref>`, so
-        // writes go through `&Symbol` safely.
+        // writes go through `&Symbol<'arena>` safely.
         if !link.eql(root) {
             symbol.link.set(root);
             loop {
@@ -730,7 +730,7 @@ impl Map {
     }
 }
 
-impl Symbol {
+impl<'arena> Symbol<'arena> {
     #[inline]
     pub fn is_hoisted(&self) -> bool {
         Symbol::is_kind_hoisted(self.kind)

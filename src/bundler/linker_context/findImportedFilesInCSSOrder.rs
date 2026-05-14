@@ -72,17 +72,17 @@ fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrde
 /// first and last locations and only write out the "@layer" information
 /// for the first location.
 pub fn find_imported_files_in_css_order<'a>(
-    this: &'a mut LinkerContext,
-    temp_arena: &'a Arena,
+    this: &mut LinkerContext<'a>,
+    temp_arena: &Arena,
     entry_points: &[Index],
 ) -> Vec<CssImportOrder> {
     let _ = temp_arena;
 
-    struct Visitor<'a> {
-        arena: &'a Arena,
+    struct Visitor<'r, 'a> {
+        arena: &'r Arena,
         // `BundledAst.css` SoA column.
-        css_asts: &'a [crate::bundled_ast::CssCol],
-        all_import_records: &'a [Vec<ImportRecord>],
+        css_asts: &'r [crate::bundled_ast::CssCol<'a>],
+        all_import_records: &'r [Vec<ImportRecord>],
 
         // PORT NOTE: Zig's `graph: *LinkerGraph` is never read in `visit()`;
         // dropped here to avoid an aliasing `&mut this.graph` borrow against
@@ -90,14 +90,14 @@ pub fn find_imported_files_in_css_order<'a>(
         // `BackRef` (not `&'a Graph`) so the visitor's `'a` borrow stays
         // disjoint from `LinkerContext` (constructed from the raw `parse_graph`
         // backref, valid for the link step).
-        parse_graph: bun_ptr::BackRef<Graph>,
+        parse_graph: bun_ptr::BackRef<Graph<'a>>,
 
         has_external_import: bool,
         visited: Vec<Index>,
         order: Vec<CssImportOrder>,
     }
 
-    impl<'a> Visitor<'a> {
+    impl<'r, 'a> Visitor<'r, 'a> {
         #[inline]
         fn input_file_pretty(&self, source_index: Index) -> &BStr {
             let sources = self.parse_graph.input_files.items_source();

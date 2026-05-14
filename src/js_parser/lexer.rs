@@ -43,16 +43,16 @@ fn tokenToString_get(token: T) -> &'static [u8] {
 pub static EMPTY_JAVASCRIPT_STRING: [u16; 1] = [0];
 
 #[derive(Default, Clone, Copy)]
-pub struct JSXPragma {
-    pub _jsx: js_ast::Span,
-    pub _jsx_frag: js_ast::Span,
-    pub _jsx_runtime: js_ast::Span,
-    pub _jsx_import_source: js_ast::Span,
+pub struct JSXPragma<'arena> {
+    pub _jsx: js_ast::Span<'arena>,
+    pub _jsx_frag: js_ast::Span<'arena>,
+    pub _jsx_runtime: js_ast::Span<'arena>,
+    pub _jsx_import_source: js_ast::Span<'arena>,
 }
 
-impl JSXPragma {
+impl<'arena> JSXPragma<'arena> {
     // `Span.text` is a `StoreStr`; `.len()` via Deref<[u8]>.
-    pub fn jsx(&self) -> Option<js_ast::Span> {
+    pub fn jsx(&self) -> Option<js_ast::Span<'arena>> {
         if self._jsx.text.len() > 0 {
             Some(self._jsx)
         } else {
@@ -278,8 +278,8 @@ pub struct LexerSnapshot<'a> {
     pub is_log_disabled: bool,
     pub code_point: CodePoint,
     pub identifier: &'a [u8],
-    pub jsx_pragma: JSXPragma,
-    pub source_mapping_url: Option<js_ast::Span>,
+    pub jsx_pragma: JSXPragma<'a>,
+    pub source_mapping_url: Option<js_ast::Span<'a>>,
     pub number: f64,
     pub rescan_close_brace_as_template_token: bool,
     pub prev_error_loc: Loc,
@@ -356,11 +356,11 @@ pub struct LexerType<
     pub preserve_all_comments_before: bool,
     pub is_legacy_octal_literal: bool,
     pub is_log_disabled: bool,
-    pub comments_to_preserve_before: Vec<js_ast::G::Comment>,
+    pub comments_to_preserve_before: Vec<js_ast::G::Comment<'a>>,
     pub code_point: CodePoint,
     pub identifier: &'a [u8],
-    pub jsx_pragma: JSXPragma,
-    pub source_mapping_url: Option<js_ast::Span>,
+    pub jsx_pragma: JSXPragma<'a>,
+    pub source_mapping_url: Option<js_ast::Span<'a>>,
     pub number: f64,
     pub rescan_close_brace_as_template_token: bool,
     pub prev_error_loc: Loc,
@@ -2663,7 +2663,7 @@ lexer_impl_header! {
     }
 
     pub fn init_json(
-        log: &'a mut Log,
+        log: &mut Log,
         source: &'a Source,
         arena: &'a Arena,
     ) -> Result<Self, Error> {
@@ -2674,7 +2674,7 @@ lexer_impl_header! {
     }
 
     pub fn init_without_reading(
-        log: &'a mut Log,
+        log: &mut Log,
         source: &'a Source,
         arena: &'a Arena,
     ) -> Self {
@@ -2727,7 +2727,7 @@ lexer_impl_header! {
     }
 
     pub fn init(
-        log: &'a mut Log,
+        log: &mut Log,
         source: &'a Source,
         arena: &'a Arena,
     ) -> Result<Self, Error> {
@@ -2737,7 +2737,7 @@ lexer_impl_header! {
         Ok(lex)
     }
 
-    pub fn to_e_string(&mut self) -> Result<js_ast::E::String, Error> {
+    pub fn to_e_string(&mut self) -> Result<js_ast::E::String<'a>, Error> {
         match self.string_literal_raw_format {
             StringLiteralRawFormat::Ascii => {
                 // string_literal_raw_content contains ascii without escapes
@@ -2786,7 +2786,7 @@ lexer_impl_header! {
         }
     }
 
-    pub fn to_utf8_e_string(&mut self) -> Result<js_ast::E::String, Error> {
+    pub fn to_utf8_e_string(&mut self) -> Result<js_ast::E::String<'a>, Error> {
         let mut res = self.to_e_string()?;
         res.to_utf8(self.arena)?;
         // TODO(port): arena routing for E.String.toUTF8
@@ -4043,13 +4043,13 @@ impl PragmaArg {
         PREFIX as usize + url_len // Correct total length
     }
 
-    pub fn scan(
+    pub fn scan<'arena>(
         kind: PragmaArg,
         offset_: usize,
         pragma: &[u8],
         text_: &[u8],
         allow_newline: bool,
-    ) -> Option<js_ast::Span> {
+    ) -> Option<js_ast::Span<'arena>> {
         let mut text = &text_[pragma.len()..];
         let mut iter = CodepointIterator::init(text);
 

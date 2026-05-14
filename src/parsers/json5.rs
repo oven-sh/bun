@@ -255,7 +255,7 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
-    pub fn parse(source: &'a Source, log: &mut Log, bump: &'a Bump) -> Result<Expr, ExternalError> {
+    pub fn parse(source: &'a Source, log: &mut Log, bump: &'a Bump) -> Result<Expr<'a>, ExternalError> {
         let mut parser = JSON5Parser {
             source: source.contents.as_ref(),
             pos: 0,
@@ -506,7 +506,7 @@ impl<'a> JSON5Parser<'a> {
 
     // ── Parser ──
 
-    fn parse_root(&mut self) -> Result<Expr, ParseError> {
+    fn parse_root(&mut self) -> Result<Expr<'a>, ParseError> {
         self.scan()?;
         let result = self.parse_value()?;
         if !matches!(self.token.data, TokenData::Eof) {
@@ -515,7 +515,7 @@ impl<'a> JSON5Parser<'a> {
         Ok(result)
     }
 
-    fn parse_value(&mut self) -> Result<Expr, ParseError> {
+    fn parse_value(&mut self) -> Result<Expr<'a>, ParseError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ParseError::StackOverflow);
         }
@@ -561,11 +561,11 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
-    fn parse_object(&mut self) -> Result<Expr, ParseError> {
+    fn parse_object(&mut self) -> Result<Expr<'a>, ParseError> {
         let loc = self.token.loc;
         self.scan()?; // advance past '{'
 
-        let mut properties: Vec<G::Property> = Vec::new();
+        let mut properties: Vec<G::Property<'a>> = Vec::new();
 
         while !matches!(self.token.data, TokenData::RightBrace) {
             let key = self.parse_object_key()?;
@@ -607,7 +607,7 @@ impl<'a> JSON5Parser<'a> {
         ))
     }
 
-    fn parse_object_key(&mut self) -> Result<Expr, ParseError> {
+    fn parse_object_key(&mut self) -> Result<Expr<'a>, ParseError> {
         let loc = self.token.loc;
         match self.token.data {
             TokenData::String(s) => {
@@ -632,11 +632,11 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
-    fn parse_array(&mut self) -> Result<Expr, ParseError> {
+    fn parse_array(&mut self) -> Result<Expr<'a>, ParseError> {
         let loc = self.token.loc;
         self.scan()?; // advance past '['
 
-        let mut items: Vec<Expr> = Vec::new();
+        let mut items: Vec<Expr<'a>> = Vec::new();
 
         while !matches!(self.token.data, TokenData::RightBracket) {
             let value = self.parse_value()?;

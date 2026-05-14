@@ -563,7 +563,7 @@ impl TrustCommand {
         // `js_printer::print_json` consume the T4 `bun_ast::Expr`. Lift
         // once via `From<T2> for T4` (same as `updatePackageJSONAndInstall` /
         // `pack_command`).
-        let mut package_json: bun_ast::Expr = match bun_parsers::json::parse_utf8(
+        let mut package_json: bun_ast::Expr<'_> = match bun_parsers::json::parse_utf8(
             &package_json_source,
             unsafe { ctx.log_mut() },
             &bump,

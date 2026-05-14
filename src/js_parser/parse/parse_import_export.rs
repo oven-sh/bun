@@ -14,7 +14,7 @@ use bun_core::Error;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Note: The caller has already parsed the "import" keyword
-    pub fn parse_import_expr(&mut self, loc: bun_ast::Loc, level: Level) -> Result<Expr, Error> {
+    pub fn parse_import_expr(&mut self, loc: bun_ast::Loc, level: Level) -> Result<Expr<'a>, Error> {
         let p = self;
         // Parse an "import.meta" expression
         if p.lexer.token == T::TDot {

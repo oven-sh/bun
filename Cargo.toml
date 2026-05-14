@@ -233,6 +233,7 @@ crossbeam = "0.8"
 smallvec = "1"
 bumpalo = { version = "3", features = ["collections", "boxed"] }
 typed-arena = "2"
+boxcar = "0.2"
 itoa = "1"
 bun_opaque = { path = "src/opaque" }
 bun_analytics = { path = "src/analytics" }

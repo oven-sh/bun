@@ -1,7 +1,6 @@
 use core::ptr::NonNull;
 
 use crate::BundledAst as JSAst;
-use bun_alloc::Arena as ThreadLocalArena;
 use bun_ast::server_component_boundary;
 use bun_collections::{MultiArrayList, VecExt};
 use enum_map::EnumMap;
@@ -17,7 +16,7 @@ use bun_ast::Ref;
 // `bun.ast.Index.Int` — the underlying integer repr of `Index`.
 pub(crate) use crate::IndexInt;
 
-pub struct Graph {
+pub struct Graph<'a> {
     // TODO(port): lifetime — no direct LIFETIMES.tsv row for Graph.pool, but row 170
     // (ThreadPool.v2, BACKREF) evidence states "BundleV2.graph.pool owns ThreadPool".
     // bundle_v2.zig:992 allocates it from `this.arena()` (the `self.heap` arena) and
@@ -25,8 +24,14 @@ pub struct Graph {
     // (sibling field). `BackRef` (not raw `NonNull`) so the read accessor `pool()` is
     // safe — the BACKREF invariant (pointee outlives holder) holds for the entire
     // bundle pass.
-    pub pool: bun_ptr::BackRef<ThreadPool>,
-    pub heap: ThreadLocalArena,
+    pub pool: bun_ptr::BackRef<ThreadPool<'a>>,
+    /// Append-only owner of every per-worker `MimallocArena` plus the
+    /// bundler-thread arena. Stack-allocated in the bundle entry point so its
+    /// lifetime unifies with `'a`. See [`crate::ArenaPool`].
+    pub arena_pool: &'a crate::ArenaPool,
+    /// The bundler-thread arena, allocated from `arena_pool` on the bundler
+    /// thread (so its `owning_thread` stamp is correct).
+    pub heap: &'a bun_alloc::Arena,
 
     /// Mapping user-specified entry points to their Source Index
     // PERF(port): arena-fed ArrayList (self.heap) — self-referential, revisit in Phase B
@@ -37,9 +42,9 @@ pub struct Graph {
     pub input_files: MultiArrayList<InputFile>,
     /// Every source index has an associated Ast
     /// When a parse is in progress / queued, it is `Ast.empty`
-    // PORT NOTE: BundledAst<'arena> borrows from self.heap (sibling-field self-ref);
-    // 'static here is a placeholder — Phase-B lifetime threading via raw ptr or Ouroboros.
-    pub ast: MultiArrayList<JSAst<'static>>,
+    /// `'a` is the [`crate::ArenaPool`] lifetime — every per-worker arena and
+    /// `self.heap` are owned by the pool, so all rows borrow from `'a`.
+    pub ast: MultiArrayList<JSAst<'a>>,
 
     /// During the scan + parse phase, this value keeps a count of the remaining
     /// tasks. Once it hits zero, the scan phase ends and linking begins. Note
@@ -140,13 +145,14 @@ bitflags::bitflags! {
     }
 }
 
-impl Default for Graph {
-    fn default() -> Self {
+impl<'a> Graph<'a> {
+    pub fn new(arena_pool: &'a crate::ArenaPool) -> Self {
         Self {
             // Self-referential arena pointer; real value wired in
             // `BundleV2::init` before any use (Graph.zig has `= undefined`).
-            pool: bun_ptr::BackRef::from(NonNull::<ThreadPool>::dangling()),
-            heap: ThreadLocalArena::new(),
+            pool: bun_ptr::BackRef::from(NonNull::<ThreadPool<'a>>::dangling()),
+            arena_pool,
+            heap: arena_pool.alloc(),
             entry_points: Vec::new(),
             entry_point_original_names: IndexStringMap::default(),
             input_files: MultiArrayList::default(),
@@ -166,7 +172,7 @@ impl Default for Graph {
     }
 }
 
-impl Graph {
+impl<'a> Graph<'a> {
     /// Shared borrow of the bundler `ThreadPool`.
     ///
     /// `pool` is arena-allocated in `BundleV2::init` (bundle_v2.zig:992) and
@@ -177,7 +183,7 @@ impl Graph {
     /// can use this in place of the prior open-coded
     /// `unsafe { self.pool.as_ref() }` / `as_mut()`.
     #[inline]
-    pub fn pool(&self) -> &ThreadPool {
+    pub fn pool(&self) -> &ThreadPool<'a> {
         // BackRef invariant: `pool` is set in `BundleV2::init` to an
         // arena-owned `ThreadPool` and remains valid until `BundleV2::deinit`;
         // no `&mut ThreadPool` is live across any `pool()` borrow (the only
@@ -190,7 +196,7 @@ impl Graph {
     /// `ThreadPool::deinit` during teardown; prefer [`Self::pool`] for
     /// scheduling.
     #[inline]
-    pub fn pool_mut(&mut self) -> &mut ThreadPool {
+    pub fn pool_mut(&mut self) -> &mut ThreadPool<'a> {
         // SAFETY: see `pool()`. `&mut self` excludes other safe borrows of
         // `Graph`, so no aliasing `&ThreadPool` is live.
         unsafe { self.pool.get_mut() }

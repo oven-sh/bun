@@ -40,11 +40,11 @@ use crate::{Chunk, LinkerContext, StableRef, WrapKind};
 /// `c` must point to a live `LinkerContext` for the duration of the call;
 /// caller (the `each_ptr` dispatch) guarantees the link step outlives all
 /// renamer tasks.
-pub unsafe fn rename_symbols_in_chunk(
-    c: *mut LinkerContext,
-    chunk: &mut Chunk,
+pub unsafe fn rename_symbols_in_chunk<'a>(
+    c: *mut LinkerContext<'a>,
+    chunk: &mut Chunk<'a>,
     files_in_order: &[u32],
-) -> Result<ChunkRenamer, bun_core::Error> {
+) -> Result<ChunkRenamer<'a>, bun_core::Error> {
     let _trace = bun_core::perf::trace("Bundler.renameSymbolsInChunk");
 
     // Derive the `symbols` pointer from the raw `*mut LinkerContext` *before*
@@ -115,7 +115,7 @@ pub unsafe fn rename_symbols_in_chunk(
     // over the shared `symbol::Map` — `compute_reserved_names_for_scope` and
     // the renamer constructors only read it. (`symbols` itself is derived
     // above from the raw `*mut LinkerContext` to keep mutable provenance.)
-    let make_symbols_view = |symbols: *mut symbol::Map| -> symbol::Map {
+    let make_symbols_view = |symbols: *mut symbol::Map<'a>| -> symbol::Map<'a> {
         // SAFETY: `symbols` is the live `c.graph.symbols`; we read its inner
         // slice header to build a non-owning shallow `Vec` view.
         let inner = unsafe { (*symbols).symbols_for_source.slice_mut() };
@@ -400,13 +400,13 @@ pub unsafe fn rename_symbols_in_chunk(
             }
 
             r.add_top_level_declared_symbols(&mut part.declared_symbols);
-            // `Part.scopes: StoreSlice<*mut Scope>` — safe `Deref` to `&[*mut Scope]`.
+            // `Part.scopes: StoreSlice<NonNull<Scope>>` — safe `Deref` to `&[NonNull<Scope>]`.
             for scope in part.scopes.iter() {
                 let root: *mut renamer::NumberScope = core::ptr::addr_of_mut!(r.root);
-                // SAFETY: each `*mut Scope` is a valid arena-allocated scope.
+                // SAFETY: each `NonNull<Scope>` is a valid arena-allocated scope.
                 r.assign_names_recursive_with_number_scope(
                     root,
-                    unsafe { &**scope },
+                    unsafe { scope.as_ref() },
                     source_index,
                     &mut sorted,
                 );

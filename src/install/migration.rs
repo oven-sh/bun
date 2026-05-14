@@ -262,8 +262,8 @@ pub fn migrate_npm_lockfile<'a>(
 
     // `StoreRef<T>` is `Copy` + safe-`Deref` (arena-backed), so copy the
     // handles out of the block instead of forging `&'static` via `as_ptr()`.
-    let root_package: bun_ast::StoreRef<E::Object>;
-    let packages_obj: bun_ast::StoreRef<E::Object> = 'brk: {
+    let root_package: bun_ast::StoreRef<'_, E::Object<'_>>;
+    let packages_obj: bun_ast::StoreRef<'_, E::Object<'_>> = 'brk: {
         let Some(obj) = json.get(b"packages") else {
             return Err(err!("InvalidNPMLockfile"));
         };
@@ -309,7 +309,7 @@ pub fn migrate_npm_lockfile<'a>(
                 ExprData::EArray(arr) => *arr,
                 ExprData::EObject(obj) => {
                     // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
-                    let obj: &E::Object = obj;
+                    let obj: &E::Object<'_> = obj;
                     if let Some(packages) = obj.get(b"packages") {
                         match &packages.data {
                             ExprData::EArray(arr) => *arr,
@@ -368,7 +368,7 @@ pub fn migrate_npm_lockfile<'a>(
             return Err(err!("InvalidNPMLockfile"));
         };
         // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
-        let pkg: &E::Object = pkg;
+        let pkg: &E::Object<'_> = pkg;
 
         if pkg.get(b"link").is_some() {
             id_map.put_assume_capacity(
@@ -548,7 +548,7 @@ pub fn migrate_npm_lockfile<'a>(
             unreachable!("npm lockfile: non-object Expr from JSON parser")
         };
         // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
-        let pkg: &E::Object = pkg;
+        let pkg: &E::Object<'_> = pkg;
 
         let pkg_path = entry
             .key
@@ -914,7 +914,7 @@ pub fn migrate_npm_lockfile<'a>(
             unreachable!("npm lockfile: non-object Expr from JSON parser")
         };
         // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
-        let pkg: &E::Object = pkg;
+        let pkg: &E::Object<'_> = pkg;
 
         if pkg.get(b"link").is_some()
             || pkg
@@ -1032,7 +1032,7 @@ pub fn migrate_npm_lockfile<'a>(
             if let Some(deps) = pkg.get(dep_key.prop) {
                 // fetch the peerDependenciesMeta if it exists
                 // this is only done for peerDependencies, obviously
-                let peer_dep_meta: Option<Expr> = if dep_key.behavior == Behavior::PEER {
+                let peer_dep_meta: Option<Expr<'_>> = if dep_key.behavior == Behavior::PEER {
                     if let Some(expr) = pkg.get(b"peerDependenciesMeta") {
                         if !matches!(expr.data, ExprData::EObject(_)) {
                             return Err(err!("InvalidNPMLockfile"));
@@ -1137,7 +1137,7 @@ pub fn migrate_npm_lockfile<'a>(
                                 else {
                                     unreachable!()
                                 };
-                                let ref_pkg: &E::Object = ref_pkg;
+                                let ref_pkg: &E::Object<'_> = ref_pkg;
                                 // the `else` here is technically possible to hit
                                 let resolved_v = ref_pkg
                                     .get(b"resolved")
@@ -1211,7 +1211,7 @@ pub fn migrate_npm_lockfile<'a>(
                                     else {
                                         unreachable!()
                                     };
-                                    let dep_pkg: &E::Object = dep_pkg;
+                                    let dep_pkg: &E::Object<'_> = dep_pkg;
                                     let dep_resolved: &[u8] = 'dep_resolved: {
                                         if let Some(resolved) = dep_pkg.get(b"resolved") {
                                             let dep_resolved = resolved
@@ -1437,7 +1437,7 @@ pub fn migrate_npm_lockfile<'a>(
                                         let ExprData::EObject(meta_obj) = &meta.data else {
                                             return Err(err!("InvalidNPMLockfile"));
                                         };
-                                        let meta_obj: &E::Object = meta_obj;
+                                        let meta_obj: &E::Object<'_> = meta_obj;
                                         if let Some(optional) = meta_obj.get(b"optional") {
                                             let ExprData::EBoolean(b) = optional.data else {
                                                 return Err(err!("InvalidNPMLockfile"));

@@ -32,7 +32,7 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             // threads the arena via the AST nodes themselves. `parse_ts_config` returns
             // the cycle-broken `bun_ast::Expr`; lift it into the full
             // `bun_ast::Expr` (From impl in ast/Expr.rs) so `ExprJsc` applies.
-            let parse_result: bun_ast::Expr = parse_result.into();
+            let parse_result: bun_ast::Expr<'_> = parse_result.into();
             match parse_result.to_js(global) {
                 Ok(v) => Ok(v),
                 Err(ToJSError::OutOfMemory) => Err(JsError::OutOfMemory),

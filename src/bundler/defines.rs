@@ -44,15 +44,15 @@ impl Globals {
     };
 
     #[inline]
-    pub fn undefined_data() -> ExprData {
+    pub fn undefined_data() -> ExprData<'static> {
         ExprData::EUndefined(bun_ast::E::Undefined)
     }
     #[inline]
-    pub fn nan_data() -> ExprData {
+    pub fn nan_data() -> ExprData<'static> {
         ExprData::ENumber(Globals::NAN)
     }
     #[inline]
-    pub fn infinity_data() -> ExprData {
+    pub fn infinity_data() -> ExprData<'static> {
         ExprData::ENumber(Globals::INFINITY)
     }
 }
@@ -323,7 +323,7 @@ impl DefineExt for Define {
 /// Returns `None` for everything else (user `--define` values, env-file
 /// `NODE_ENV` overrides like `staging`, JSON object/array literals, …), which
 /// falls through to the general `parse_env_json` path in `DefineData::parse`.
-fn const_default_define_value(value_str: &[u8]) -> Option<ExprData> {
+fn const_default_define_value(value_str: &[u8]) -> Option<ExprData<'static>> {
     static DEVELOPMENT: bun_ast::E::EString = bun_ast::E::EString::from_static(b"development");
     static PRODUCTION: bun_ast::E::EString = bun_ast::E::EString::from_static(b"production");
     static TEST: bun_ast::E::EString = bun_ast::E::EString::from_static(b"test");
@@ -536,7 +536,11 @@ impl DefineDataExt for DefineData {
         // `.into()` deep-walking T2→T4 and re-boxing the payload; now `.into()`
         // is identity, so without `deep_clone` the `DefineData.value` dangles
         // into a freed slab and `process.env.NODE_ENV` reads garbage.
-        let data: ExprData = expr.data.deep_clone(bump)?;
+        // TODO(arena-lifetimes): drop the transmute once `deep_clone` returns
+        // `Data<'dst>` (see expr.rs `Expr::deep_clone` TODO — blocked on duping
+        // `Str<'arena>` slices).
+        let data: ExprData<'static> =
+            unsafe { core::mem::transmute(expr.data.deep_clone(bump)?) };
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
         Ok(DefineData {
             value: data,

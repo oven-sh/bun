@@ -106,16 +106,16 @@ impl MacroContext {
         }
     }
 
-    pub fn call(
+    pub fn call<'arena>(
         &mut self,
         import_record_path: &[u8],
         source_dir: &[u8],
         log: &mut Log,
         source: &Source,
         import_range: Range,
-        caller: Expr,
+        caller: Expr<'arena>,
         function_name: &[u8],
-    ) -> Result<Expr, Error> {
+    ) -> Result<Expr<'arena>, Error> {
         let _store_guard = DisableStoreReset::new();
         // const is_package_path = isPackagePath(specifier);
         let import_record_path_without_macro_prefix = if is_macro_path(import_record_path) {
@@ -309,16 +309,16 @@ pub fn __bun_macro_context_deinit(data: *mut core::ffi::c_void) {
 }
 
 #[unsafe(no_mangle)]
-pub fn __bun_macro_context_call(
+pub fn __bun_macro_context_call<'arena>(
     ctx: &mut js_parser::Macro::MacroContext,
     import_record_path: &[u8],
     source_dir: &[u8],
     log: &mut Log,
     source: &Source,
     import_range: Range,
-    caller: Expr,
+    caller: Expr<'arena>,
     function_name: &[u8],
-) -> Result<Expr, Error> {
+) -> Result<Expr<'arena>, Error> {
     debug_assert!(
         !ctx.data.is_null(),
         "MacroContext.call reached without init"
@@ -358,9 +358,9 @@ pub fn __bun_macro_context_get_remap(
 // ══════════════════════════════════════════════════════════════════════════
 
 #[derive(Default)]
-pub struct MacroResult {
-    pub import_statements: Box<[S::Import]>,
-    pub replacement: Expr,
+pub struct MacroResult<'arena> {
+    pub import_statements: Box<[S::Import<'arena>]>,
+    pub replacement: Expr<'arena>,
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -501,7 +501,7 @@ impl Macro {
 
 pub struct Runner;
 
-type VisitMap = HashMap<JSValue, Expr>;
+type VisitMap<'arena> = HashMap<JSValue, Expr<'arena>>;
 
 thread_local! {
     static EXCEPTION_HOLDER: Cell<bool> = const { Cell::new(false) };
@@ -543,8 +543,8 @@ impl From<MacroError> for Error {
     }
 }
 
-pub struct Run<'a> {
-    pub caller: Expr,
+pub struct Run<'a, 'arena> {
+    pub caller: Expr<'arena>,
     pub function_name: &'a [u8],
     pub macro_: &'a Macro,
     pub global: &'a JSGlobalObject,
@@ -557,25 +557,25 @@ pub struct Run<'a> {
     // `MacroContext` (stored long-term in the `Transpiler`) so the slices
     // outlive `run_async` — the returned `Expr` is spliced into the AST and
     // printed long after this frame returns.
-    pub bump: &'a bun_alloc::Arena,
+    pub bump: &'arena bun_alloc::Arena,
     pub id: i32,
     pub log: &'a mut Log,
     pub source: &'a Source,
-    pub visited: VisitMap,
+    pub visited: VisitMap<'arena>,
     pub is_top_level: bool,
 }
 
-impl<'a> Run<'a> {
+impl<'a, 'arena> Run<'a, 'arena> {
     pub fn run_async(
         macro_: &Macro,
         log: &mut Log,
-        bump: &bun_alloc::Arena,
+        bump: &'arena bun_alloc::Arena,
         function_name: &[u8],
-        caller: Expr,
+        caller: Expr<'arena>,
         args: &[JSValue],
         source: &Source,
         id: i32,
-    ) -> Result<Expr, MacroError> {
+    ) -> Result<Expr<'arena>, MacroError> {
         let _ = macro_.vm();
         let vm = VirtualMachine::get();
         let Some(&macro_callback) = vm.macros.get(&id) else {
@@ -614,7 +614,7 @@ impl<'a> Run<'a> {
         runner.run(result)
     }
 
-    pub fn run(&mut self, value: JSValue) -> Result<Expr, MacroError> {
+    pub fn run(&mut self, value: JSValue) -> Result<Expr<'arena>, MacroError> {
         use ConsoleObject::formatter::Tag as T;
         // PORT NOTE: `Tag::get` returns `TagResult { tag: TagPayload, .. }`;
         // collapse the payload to its discriminant via `.tag()`.
@@ -659,7 +659,7 @@ impl<'a> Run<'a> {
         &mut self,
         tag: ConsoleObject::formatter::Tag,
         value: JSValue,
-    ) -> Result<Expr, MacroError> {
+    ) -> Result<Expr<'arena>, MacroError> {
         use ConsoleObject::formatter::Tag as T;
         match tag {
             T::Error => {
@@ -955,16 +955,16 @@ impl<'a> Run<'a> {
 }
 
 impl Runner {
-    pub fn run(
+    pub fn run<'arena>(
         macro_: &Macro,
         log: &mut Log,
         bump: &bun_alloc::Arena,
         function_name: &[u8],
-        caller: Expr,
+        caller: Expr<'arena>,
         source: &Source,
         id: i32,
         javascript_object: JSValue,
-    ) -> Result<Expr, MacroError> {
+    ) -> Result<Expr<'arena>, MacroError> {
         if cfg!(debug_assertions) {
             Output::prettyln(format_args!(
                 "<r><d>[macro]<r> call <d><b>{}<r>",
@@ -1063,22 +1063,22 @@ impl Runner {
             static CALL_STATE: Cell<*mut c_void> = const { Cell::new(core::ptr::null_mut()) };
         }
 
-        struct CallData<'c> {
+        struct CallData<'c, 'arena> {
             macro_: &'c Macro,
             log: &'c mut Log,
             bump: &'c bun_alloc::Arena,
             function_name: &'c [u8],
-            caller: Expr,
+            caller: Expr<'arena>,
             js_args: &'c [JSValue],
             source: &'c Source,
             id: i32,
-            result: Result<Expr, MacroError>,
+            result: Result<Expr<'arena>, MacroError>,
         }
 
         extern "C" fn call() {
             CALL_STATE.with(|s| {
                 // SAFETY: set immediately before Bun__startMacro below; cleared after.
-                let state = unsafe { &mut *s.get().cast::<CallData<'_>>() };
+                let state = unsafe { &mut *s.get().cast::<CallData<'_, '_>>() };
                 state.result = Run::run_async(
                     state.macro_,
                     state.log,
@@ -1129,13 +1129,13 @@ unsafe extern "C" {
 /// Zig: `Expr.fromBlob` (`src/js_parser/ast/Expr.zig`). Lives here, not on
 /// `bun_ast::Expr`, because it parses JSON via `bun_parsers` — `bun_ast` is a
 /// leaf below both. Only call site is the macro `Response`/`Blob` arm above.
-fn expr_from_blob(
+fn expr_from_blob<'arena>(
     bytes: &[u8],
-    bump: &bun_alloc::Arena,
+    bump: &'arena bun_alloc::Arena,
     mime_type: &[u8],
     log: &mut Log,
     loc: bun_ast::Loc,
-) -> Result<Expr, bun_core::Error> {
+) -> Result<Expr<'arena>, bun_core::Error> {
     use bun_ast::{E, ExprData, StoreStr as Str};
 
     // MimeType::Category::Json — `application/json` or `+json`/`/json` suffix.
@@ -1144,8 +1144,8 @@ fn expr_from_blob(
         || mime_type.ends_with(b"/json");
 
     if is_json {
-        let source = &Source::init_path_string(b"fetch.json", bytes);
-        let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(source, log, bump) {
+        let source: &'arena Source = bump.alloc(Source::init_path_string(b"fetch.json", bytes));
+        let mut out_expr = match bun_parsers::json::parse_for_macro(source, log, bump) {
             Ok(e) => e,
             Err(_) => return Err(bun_core::err!("MacroFailed")),
         };

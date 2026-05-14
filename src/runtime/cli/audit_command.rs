@@ -532,7 +532,7 @@ fn send_audit_request(
 
 fn parse_vulnerability(
     package_name: &[u8],
-    vuln: &Expr,
+    vuln: &Expr<'_>,
 ) -> Result<VulnerabilityInfo, bun_alloc::AllocError> {
     let mut vulnerability = VulnerabilityInfo {
         severity: Box::<[u8]>::from(b"moderate" as &[u8]),

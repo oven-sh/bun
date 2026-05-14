@@ -92,7 +92,7 @@ impl OverrideMap {
     // (string transcode); JSON strings are already UTF-8 here, so the parameter
     // is dropped — also avoids the `&mut lockfile.overrides` / `&mut lockfile`
     // alias at the only call site.
-    pub fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
+    pub fn parse_count(&mut self, expr: Expr<'_>, builder: &mut StringBuilder) {
         if let Some(overrides) = expr.as_property(b"overrides") {
             let ExprData::EObject(obj) = &overrides.expr.data else {
                 return;
@@ -167,7 +167,7 @@ impl OverrideMap {
         root_package: &Package,
         log: &mut bun_ast::Log,
         json_source: &bun_ast::Source,
-        expr: Expr,
+        expr: Expr<'_>,
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
         debug_assert!(self.map.count() == 0); // only call parse once
@@ -204,7 +204,7 @@ impl OverrideMap {
         root_package: &Package,
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
-        expr: Expr,
+        expr: Expr<'_>,
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
         let ExprData::EObject(obj) = &expr.data else {
@@ -235,7 +235,7 @@ impl OverrideMap {
 
             let name_hash = SemverBuilder::string_hash(k);
 
-            let value: Expr = 'value: {
+            let value: Expr<'_> = 'value: {
                 // for one level deep, we will only support a string and  { ".": value }
                 let value_expr = prop.value.as_ref().expect("infallible: prop has value");
                 if value_expr.data.is_e_string() {
@@ -321,7 +321,7 @@ impl OverrideMap {
         root_package: &Package,
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
-        expr: Expr,
+        expr: Expr<'_>,
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
         let ExprData::EObject(obj) = &expr.data else {

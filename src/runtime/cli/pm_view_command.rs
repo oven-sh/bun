@@ -61,7 +61,7 @@ pub fn view(
                 let Ok(pkg_json) = JSON::parse::<false>(source, &mut pkg_log, &bump) else {
                     break 'from_package_json;
                 };
-                let pkg_json: ast::Expr = pkg_json.into();
+                let pkg_json: ast::Expr<'_> = pkg_json.into();
                 if let Some(name) = pkg_json.get_string_cloned(&bump, b"name").ok().flatten() {
                     if !name.is_empty() {
                         break 'brk name;
@@ -151,7 +151,7 @@ pub fn view(
 
     let mut log = bun_ast::Log::init();
     let source = &bun_ast::Source::init_path_string(b"view.json", response_buf.list.as_slice());
-    let json: ast::Expr = match JSON::parse_utf8(source, &mut log, &bump) {
+    let json: ast::Expr<'_> = match JSON::parse_utf8(source, &mut log, &bump) {
         Ok(j) => j.into(),
         Err(err) => {
             Output::err(err, "failed to parse response body as JSON", ());
@@ -288,7 +288,7 @@ pub fn view(
             .e_object()
             .expect("infallible: variant checked");
         let props = versions_e_obj.properties.slice();
-        let mut keys: Vec<ast::Expr> = Vec::with_capacity(props.len());
+        let mut keys: Vec<ast::Expr<'_>> = Vec::with_capacity(props.len());
         debug_assert_eq!(props.len(), keys.capacity());
         for prop in props {
             keys.push(prop.key.expect("infallible: prop has key"));

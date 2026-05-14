@@ -65,9 +65,9 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn maybe_relocate_vars_to_top_level(
         &mut self,
-        decls: &[G::Decl],
+        decls: &[G::Decl<'a>],
         mode: RelocateVarsMode,
-    ) -> RelocateVars {
+    ) -> RelocateVars<'a> {
         let p = self;
         // Only do this when the scope is not already top-level and when we're not inside a function.
         if p.current_scope == p.module_scope {
@@ -132,11 +132,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn maybe_rewrite_property_access(
         &mut self,
         loc: bun_ast::Loc,
-        target: js_ast::Expr,
+        target: js_ast::Expr<'a>,
         name: &'a [u8],
         name_loc: bun_ast::Loc,
         identifier_opts: IdentifierOpts,
-    ) -> Option<Expr> {
+    ) -> Option<Expr<'a>> {
         let p = self;
         let name_static = E::Str::new(name);
 
@@ -779,10 +779,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn maybe_rewrite_property_access_for_namespace(
         &mut self,
         name: &'a [u8],
-        target: &Expr,
+        target: &Expr<'a>,
         loc: bun_ast::Loc,
         name_loc: bun_ast::Loc,
-    ) -> Option<Expr> {
+    ) -> Option<Expr<'a>> {
         let p = self;
         let map: &js_ast::TSNamespaceMemberMap = &p.ts_namespace.map.unwrap();
         if let Some(value) = map.get(name) {
@@ -846,7 +846,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         None
     }
 
-    pub fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, bun_core::Error> {
+    pub fn check_if_defined_helper(&mut self, expr: Expr<'a>) -> Result<Expr<'a>, bun_core::Error> {
         let p = self;
         // TODO(port): narrow error set
         let flags = if matches!(expr.data, js_ast::ExprData::EIdentifier(_)) {
@@ -873,7 +873,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn maybe_defined_helper(&mut self, identifier_expr: Expr) -> Result<Expr, bun_core::Error> {
+    pub fn maybe_defined_helper(&mut self, identifier_expr: Expr<'a>) -> Result<Expr<'a>, bun_core::Error> {
         let p = self;
         // TODO(port): narrow error set
         let test_ = Self::check_if_defined_helper(p, identifier_expr)?;

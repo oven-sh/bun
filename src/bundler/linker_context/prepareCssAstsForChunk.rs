@@ -27,10 +27,10 @@ use crate::chunk::{Content, CssImportOrderKind};
 // `linker` retains write provenance over the whole bundle, and (b) multiple
 // tasks may hold pointers to the same `LinkerContext` concurrently without
 // materializing aliased Rust references.
-pub struct PrepareCssAstTask {
+pub struct PrepareCssAstTask<'a> {
     pub task: ThreadPoolLib::Task,
-    pub chunk: *mut Chunk,
-    pub linker: *mut LinkerContext<'static>,
+    pub chunk: *mut Chunk<'a>,
+    pub linker: *mut LinkerContext<'a>,
 }
 
 // SAFETY: scheduled on the worker pool via raw `*mut Task` (bypassing the
@@ -38,7 +38,7 @@ pub struct PrepareCssAstTask {
 // (`Chunk: Send`, `LinkerContext: Send`); the callback writes only the
 // per-chunk `chunk.content.css` cell (see `prepare_css_asts_for_chunk`
 // CONCURRENCY note).
-unsafe impl Send for PrepareCssAstTask {}
+unsafe impl Send for PrepareCssAstTask<'_> {}
 
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // CSS chunk. Writes: `chunk.content.css.{asts, ordered_import_records}`
@@ -57,7 +57,7 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     let prepare_css_asts: &PrepareCssAstTask =
         unsafe { &*bun_core::from_field_ptr!(PrepareCssAstTask, task, task) };
     let linker: *mut LinkerContext = prepare_css_asts.linker;
-    let chunk: *mut Chunk = prepare_css_asts.chunk;
+    let chunk: *mut Chunk<'_> = prepare_css_asts.chunk;
     // SAFETY: `linker` is a raw `*mut` to `BundleV2.linker` (embedded by value),
     // carrying provenance over the full `BundleV2` allocation. Recover the
     // parent via container_of. `Worker::get` only needs `&BundleV2`, so we
@@ -80,7 +80,7 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     );
 }
 
-fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bump: &Bump) {
+fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk<'_>, bump: &Bump) {
     // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
     // across the log write below (split borrow).
     let parse_graph = unsafe { &*c.parse_graph };

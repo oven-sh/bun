@@ -220,7 +220,7 @@ pub mod Runtime {
 
     // ─────────────────────────── Runtime.Features ───────────────────────────
 
-    pub struct Features {
+    pub struct Features<'arena> {
         /// Enable the React Fast Refresh transform. What this does exactly
         /// is documented in js_parser, search for `const ReactRefresh`
         pub react_fast_refresh: bool,
@@ -259,7 +259,7 @@ pub mod Runtime {
         /// Allow runtime usage of require(), converting `require` into `__require`
         pub auto_polyfill_require: bool,
 
-        pub replace_exports: ReplaceableExportMap,
+        pub replace_exports: ReplaceableExportMap<'arena>,
 
         /// Scan for '// @bun' at the top of this file, halting a parse if it is
         /// seen. This is used in `bun run` after a `bun build --target=bun`,
@@ -322,7 +322,7 @@ pub mod Runtime {
         pub use_import_meta_require: bool,
     }
 
-    impl Default for Features {
+    impl Default for Features<'_> {
         fn default() -> Self {
             Self {
                 react_fast_refresh: false,
@@ -364,7 +364,7 @@ pub mod Runtime {
         }
     }
 
-    impl Features {
+    impl Features<'_> {
         /// Reborrow the optional `RuntimeTranspilerCache` back-pointer.
         ///
         /// `&self` receiver (not `&mut`) so call sites may hold other shared
@@ -613,7 +613,7 @@ pub mod Runtime {
         }
     }
 }
-pub type RuntimeFeatures = Runtime::Features;
+pub type RuntimeFeatures<'arena> = Runtime::Features<'arena>;
 pub type RuntimeImports = Runtime::Imports;
 pub type RuntimeNames = Runtime::Names;
 
@@ -641,8 +641,8 @@ use crate::defines::Define;
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct ExprListLoc {
-    pub list: ExprNodeList,
+pub struct ExprListLoc<'arena> {
+    pub list: ExprNodeList<'arena>,
     pub loc: bun_ast::Loc,
 }
 
@@ -865,10 +865,10 @@ pub struct MacroRefData<'a> {
 
 type MacroRefs<'a> = ArrayHashMap<Ref, MacroRefData<'a>>;
 
-pub enum Substitution {
-    Success(Expr),
-    Failure(Expr),
-    Continue(Expr),
+pub enum Substitution<'arena> {
+    Success(Expr<'arena>),
+    Failure(Expr<'arena>),
+    Continue(Expr<'arena>),
 }
 
 /// If we are currently in a hoisted child of the module scope, relocate these
@@ -882,8 +882,8 @@ pub enum Substitution {
 /// to nothing is unsafe
 /// Because "foo" was defined. And now it's not.
 #[derive(Default)]
-pub struct RelocateVars {
-    pub stmt: Option<Stmt>,
+pub struct RelocateVars<'arena> {
+    pub stmt: Option<Stmt<'arena>>,
     pub ok: bool,
 }
 
@@ -895,7 +895,7 @@ pub enum RelocateVarsMode {
 
 #[derive(Default)]
 pub struct VisitArgsOpts<'a> {
-    pub body: &'a [Stmt],
+    pub body: &'a [Stmt<'a>],
     pub has_rest_arg: bool,
     /// This is true if the function is an arrow function or a method
     pub is_unique_formal_parameters: bool,
@@ -907,18 +907,18 @@ pub struct VisitArgsOpts<'a> {
 /// `fn` pointer. // PERF(port): was comptime monomorphization — profile in Phase B
 pub struct ExpressionTransposer<'a, Context, State: Copy> {
     pub context: &'a mut Context,
-    visitor: fn(&mut Context, Expr, State) -> Expr,
+    visitor: fn(&mut Context, Expr<'a>, State) -> Expr<'a>,
 }
 
 impl<'a, Context, State: Copy> ExpressionTransposer<'a, Context, State> {
-    pub fn init(c: &'a mut Context, visitor: fn(&mut Context, Expr, State) -> Expr) -> Self {
+    pub fn init(c: &'a mut Context, visitor: fn(&mut Context, Expr<'a>, State) -> Expr<'a>) -> Self {
         Self {
             context: c,
             visitor,
         }
     }
 
-    pub fn maybe_transpose_if(&mut self, arg: Expr, state: State) -> Expr {
+    pub fn maybe_transpose_if(&mut self, arg: Expr<'a>, state: State) -> Expr<'a> {
         match arg.data {
             js_ast::ExprData::EIf(ex) => Expr::init(
                 E::If {
@@ -932,7 +932,7 @@ impl<'a, Context, State: Copy> ExpressionTransposer<'a, Context, State> {
         }
     }
 
-    pub fn transpose_known_to_be_if(&mut self, arg: Expr, state: State) -> Expr {
+    pub fn transpose_known_to_be_if(&mut self, arg: Expr<'a>, state: State) -> Expr<'a> {
         // Caller guarantees `arg.data` is `EIf`.
         let js_ast::ExprData::EIf(ex) = arg.data else {
             unreachable!()
@@ -958,17 +958,17 @@ pub fn loc_after_op(e: &E::Binary) -> bun_ast::Loc {
 }
 
 #[derive(Clone, Copy)]
-pub struct TransposeState {
+pub struct TransposeState<'arena> {
     pub is_await_target: bool,
     pub is_then_catch_target: bool,
     pub is_require_immediately_assigned_to_decl: bool,
     pub loc: bun_ast::Loc,
     pub import_record_tag: Option<bun_ast::ImportRecordTag>,
     pub import_loader: Option<bun_ast::Loader>,
-    pub import_options: Expr,
+    pub import_options: Expr<'arena>,
 }
 
-impl Default for TransposeState {
+impl<'arena> Default for TransposeState<'arena> {
     fn default() -> Self {
         Self {
             is_await_target: false,
@@ -988,13 +988,13 @@ pub enum JSXTagType {
     Tag,
 }
 
-pub enum JSXTagData {
+pub enum JSXTagData<'arena> {
     Fragment(u8),
-    Tag(Expr),
+    Tag(Expr<'arena>),
 }
 
-impl JSXTagData {
-    pub fn as_expr(&self) -> Option<ExprNodeIndex> {
+impl<'arena> JSXTagData<'arena> {
+    pub fn as_expr(&self) -> Option<ExprNodeIndex<'arena>> {
         match self {
             JSXTagData::Tag(tag) => Some(*tag),
             _ => None,
@@ -1003,7 +1003,7 @@ impl JSXTagData {
 }
 
 pub struct JSXTag<'a> {
-    pub data: JSXTagData,
+    pub data: JSXTagData<'a>,
     pub range: bun_ast::Range,
     /// Empty string for fragments.
     pub name: &'a [u8],
@@ -1165,17 +1165,17 @@ macro_rules! generated_symbol_name {
     }};
 }
 
-pub struct ExprOrLetStmt {
-    pub stmt_or_expr: js_ast::StmtOrExpr,
+pub struct ExprOrLetStmt<'arena> {
+    pub stmt_or_expr: js_ast::StmtOrExpr<'arena>,
     // PORT NOTE: Zig writes `.decls = decls.slice()` borrowing the heap buffer
     // that was just moved into `S::Local`. The buffer pointer is stable across
     // the move, but borrowck can't see that — store as `RawSlice` to record the
     // outlives-holder invariant without a per-site unsafe cast. (Neither caller
     // currently reads this field, matching parseStmt.zig:829-836.)
-    pub decls: bun_collections::RawSlice<G::Decl>,
+    pub decls: bun_collections::RawSlice<G::Decl<'arena>>,
 }
 
-impl Default for ExprOrLetStmt {
+impl<'arena> Default for ExprOrLetStmt<'arena> {
     fn default() -> Self {
         Self {
             stmt_or_expr: js_ast::StmtOrExpr::default(),
@@ -1421,17 +1421,17 @@ fn notimpl() -> ! {
 }
 
 #[derive(Default)]
-pub struct ExprBindingTuple {
-    pub expr: Option<ExprNodeIndex>,
-    pub binding: Option<Binding>,
+pub struct ExprBindingTuple<'arena> {
+    pub expr: Option<ExprNodeIndex<'arena>>,
+    pub binding: Option<Binding<'arena>>,
 }
 
-pub struct TempRef {
+pub struct TempRef<'arena> {
     pub r#ref: Ref,
-    pub value: Option<Expr>,
+    pub value: Option<Expr<'arena>>,
 }
 
-impl Default for TempRef {
+impl<'arena> Default for TempRef<'arena> {
     fn default() -> Self {
         Self {
             r#ref: Ref::default(),
@@ -1446,12 +1446,12 @@ pub struct ImportNamespaceCallOrConstruct {
     pub is_construct: bool,
 }
 
-pub struct ThenCatchChain {
-    pub next_target: js_ast::ExprData,
+pub struct ThenCatchChain<'arena> {
+    pub next_target: js_ast::ExprData<'arena>,
     pub has_multiple_args: bool,
     pub has_catch: bool,
 }
-impl Default for ThenCatchChain {
+impl<'arena> Default for ThenCatchChain<'arena> {
     fn default() -> Self {
         Self {
             // Zig: zero-init `js_ast.Expr.Data` → `.e_missing` (tag 0).
@@ -1515,7 +1515,7 @@ impl InvalidLoc {
 }
 
 pub type LocList<'bump> = bun_alloc::ArenaVec<'bump, InvalidLoc>;
-pub type StmtList<'bump> = bun_alloc::ArenaVec<'bump, Stmt>;
+pub type StmtList<'bump> = bun_alloc::ArenaVec<'bump, Stmt<'bump>>;
 
 /// This hash table is used every time we parse function args
 /// Rather than allocating a new hash table each time, we can just reuse the previous allocation
@@ -1577,12 +1577,12 @@ pub type RefRefMap = HashMap<Ref, Ref>; // TODO(port): RefCtx hasher + 80% load 
 #[derive(Clone, Copy)]
 pub struct ScopeOrder<'arena> {
     pub loc: bun_ast::Loc,
-    pub scope: *mut Scope,
-    _phantom: core::marker::PhantomData<&'arena Scope>,
+    pub scope: *mut Scope<'arena>,
+    _phantom: core::marker::PhantomData<&'arena Scope<'arena>>,
 }
 impl<'arena> ScopeOrder<'arena> {
     #[inline]
-    pub fn new(loc: bun_ast::Loc, scope: *mut Scope) -> Self {
+    pub fn new(loc: bun_ast::Loc, scope: *mut Scope<'arena>) -> Self {
         Self {
             loc,
             scope,
@@ -1593,7 +1593,7 @@ impl<'arena> ScopeOrder<'arena> {
     /// so callers read `order.scope_ref().kind` instead of open-coding
     /// `unsafe { &*order.scope }` at every visit-pass check.
     #[inline]
-    pub fn scope_ref(&self) -> js_ast::StoreRef<Scope> {
+    pub fn scope_ref(&self) -> js_ast::StoreRef<'arena, Scope<'arena>> {
         // `scope` is always set from a live arena allocation in
         // `push_scope_for_parse_pass`; never null in practice.
         js_ast::StoreRef::from(
@@ -1809,12 +1809,12 @@ impl DeferredErrors {
 pub struct ImportClause<'a> {
     /// Arena-owned. `&mut` (not `&`) so callers can hand it to AST nodes
     /// (`S::Import.items: StoreSlice<ClauseItem>`).
-    pub items: &'a mut [js_ast::ClauseItem],
+    pub items: &'a mut [js_ast::ClauseItem<'a>],
     pub is_single_line: bool,
     pub had_type_only_imports: bool,
 }
 
-pub struct PropertyOpts {
+pub struct PropertyOpts<'arena> {
     pub async_range: bun_ast::Range,
     pub declare_range: bun_ast::Range,
     pub is_async: bool,
@@ -1826,12 +1826,12 @@ pub struct PropertyOpts {
     pub class_has_extends: bool,
     pub allow_ts_decorators: bool,
     pub is_ts_abstract: bool,
-    pub ts_decorators: ExprNodeList,
+    pub ts_decorators: ExprNodeList<'arena>,
     pub has_argument_decorators: bool,
     pub has_class_decorators: bool,
 }
 
-impl Default for PropertyOpts {
+impl<'arena> Default for PropertyOpts<'arena> {
     fn default() -> Self {
         Self {
             async_range: bun_ast::Range::NONE,
@@ -1850,9 +1850,9 @@ impl Default for PropertyOpts {
     }
 }
 
-pub struct ScanPassResult {
+pub struct ScanPassResult<'arena> {
     pub import_records: Vec<ImportRecord>,
-    pub named_imports: bun_ast::ast_result::NamedImports,
+    pub named_imports: bun_ast::ast_result::NamedImports<'arena>,
     pub used_symbols: ParsePassSymbolUsageMap,
     pub import_records_to_keep: Vec<u32>,
     pub approximate_newline_count: usize,
@@ -1873,8 +1873,8 @@ pub struct NamespaceCounter {
 
 pub type ParsePassSymbolUsageMap = StringArrayHashMap<ParsePassSymbolUse>;
 
-impl ScanPassResult {
-    pub fn init() -> ScanPassResult {
+impl<'arena> ScanPassResult<'arena> {
+    pub fn init() -> ScanPassResult<'arena> {
         ScanPassResult {
             import_records: Vec::new(),
             named_imports: Default::default(),
@@ -1911,14 +1911,14 @@ pub struct FindSymbolResult {
 pub struct ExportClauseResult<'a> {
     /// Arena-owned. `&mut` (not `&`) so callers can hand it to AST nodes
     /// (`S::Export{From,Clause}.items: StoreSlice<ClauseItem>`).
-    pub clauses: &'a mut [js_ast::ClauseItem],
+    pub clauses: &'a mut [js_ast::ClauseItem<'a>],
     pub is_single_line: bool,
     pub had_type_only_exports: bool,
 }
 
 #[derive(Clone, Copy)]
 pub struct DeferredTsDecorators<'a> {
-    pub values: &'a [js_ast::Expr],
+    pub values: &'a [js_ast::Expr<'a>],
 
     /// If this turns out to be a "declare class" statement, we need to undo the
     /// scopes that were potentially pushed while parsing the decorator arguments.
@@ -1937,7 +1937,7 @@ pub enum LexicalDecl {
 
 #[derive(Default)]
 pub struct ParseClassOptions<'a> {
-    pub ts_decorators: &'a [Expr],
+    pub ts_decorators: &'a [Expr<'a>],
     pub allow_ts_decorators: bool,
     pub is_type_script_declare: bool,
 }
@@ -2033,9 +2033,9 @@ pub mod prefill {
 
 #[derive(Default)]
 #[allow(dead_code)]
-struct ReactJSX {
+struct ReactJSX<'arena> {
     // TODO(port): ArrayHashMap with bun.ArrayIdentityContext (identity hash on Ref)
-    hoisted_elements: ArrayHashMap<Ref, G::Decl>,
+    hoisted_elements: ArrayHashMap<Ref, G::Decl<'arena>>,
 }
 
 pub struct ImportOrRequireScanResults {
@@ -2076,7 +2076,7 @@ pub type ImportItemForNamespaceMap = StringArrayHashMap<LocRef>;
 
 pub struct MacroState<'a> {
     pub refs: MacroRefs<'a>,
-    pub prepend_stmts: &'a mut Vec<Stmt>,
+    pub prepend_stmts: &'a mut Vec<Stmt<'a>>,
     pub imports: ArrayHashMap<i32, Ref>,
 }
 
@@ -2084,7 +2084,7 @@ impl<'a> MacroState<'a> {
     // TODO(port): Zig initializes `prepend_stmts = undefined`; Rust cannot leave
     // a `&mut` field uninitialized. Caller must supply a placeholder list, or
     // this field becomes `Option<&'a mut Vec<Stmt>>` set to `None` here.
-    pub fn init(prepend_stmts: &'a mut Vec<Stmt>) -> MacroState<'a> {
+    pub fn init(prepend_stmts: &'a mut Vec<Stmt<'a>>) -> MacroState<'a> {
         MacroState {
             refs: MacroRefs::default(),
             prepend_stmts,
@@ -2218,13 +2218,13 @@ impl Default for DeferredArrowArgErrors {
 
 pub fn new_lazy_export_ast<'bump>(
     bump: &'bump bun_alloc::Arena,
-    define: &mut Define,
-    opts: ParserOptions,
+    define: &'bump mut Define,
+    opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,
-    expr: Expr,
-    source: &bun_ast::Source,
+    expr: Expr<'bump>,
+    source: &'bump bun_ast::Source,
     runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization — profile in Phase B
-) -> Result<Option<js_ast::Ast>, bun_core::Error> {
+) -> Result<Option<js_ast::Ast<'bump>>, bun_core::Error> {
     new_lazy_export_ast_impl(
         bump,
         define,
@@ -2239,14 +2239,14 @@ pub fn new_lazy_export_ast<'bump>(
 
 pub fn new_lazy_export_ast_impl<'bump>(
     bump: &'bump bun_alloc::Arena,
-    define: &mut Define,
-    opts: ParserOptions,
+    define: &'bump mut Define,
+    opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,
-    expr: Expr,
-    source: &bun_ast::Source,
+    expr: Expr<'bump>,
+    source: &'bump bun_ast::Source,
     runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization — profile in Phase B
-    symbols: js_ast::symbol::List,
-) -> Result<Option<js_ast::Ast>, bun_core::Error> {
+    symbols: js_ast::symbol::List<'bump>,
+) -> Result<Option<js_ast::Ast<'bump>>, bun_core::Error> {
     let mut temp_log = bun_ast::Log::init();
     // Zig held two aliasing `*Log` (parser.log + lexer.log). Both sides store
     // `NonNull<Log>` in Rust; copy the lexer's pointer so they share one
@@ -2361,7 +2361,7 @@ pub struct ReactRefresh<'a> {
     /// `.s_local`, as we must hash the variable destructure if the
     /// hook's result is assigned directly to a local.
     // ARENA: identity-compared against Store-allocated AST node.
-    pub last_hook_seen: Option<*const E::Call>,
+    pub last_hook_seen: Option<*const E::Call<'a>>,
 
     /// Every function sets up stack memory to hold data related to it's
     /// hook tracking. This is a pointer to that ?HookContext, where an
@@ -2379,7 +2379,7 @@ pub struct ReactRefresh<'a> {
     /// stack storage on the visiting fn frame. Modeled as `Option<NonNull<_>>`
     /// (Copy) so the save/set/restore dance in visitStmt/visitExpr can take a
     /// stack-local address without the `'a` borrow the visitor cannot satisfy.
-    pub hook_ctx_storage: Option<core::ptr::NonNull<Option<HookContext>>>,
+    pub hook_ctx_storage: Option<core::ptr::NonNull<Option<HookContext<'a>>>>,
 
     /// This is the most recently generated `_s` call. This is used to compare
     /// against seen calls to plain identifiers when in "export default" and in
@@ -2406,13 +2406,13 @@ impl<'a> Default for ReactRefresh<'a> {
     }
 }
 
-pub struct HookContext {
+pub struct HookContext<'arena> {
     pub hasher: Wyhash,
     pub signature_cb: Ref,
-    pub user_hooks: ArrayHashMap<Ref, Expr>,
+    pub user_hooks: ArrayHashMap<Ref, Expr<'arena>>,
 }
 
-impl ReactRefresh<'_> {
+impl<'a> ReactRefresh<'a> {
     /// Reborrow the stack-allocated `Option<HookContext>` that
     /// `hook_ctx_storage` points at (Zig: `?*?HookContext`). The returned
     /// borrow is detached from `self` because the storage lives on a *caller*
@@ -2422,7 +2422,7 @@ impl ReactRefresh<'_> {
     /// once (same uniqueness contract as `P::log()`).
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn hook_ctx_mut<'s>(&self) -> Option<&'s mut Option<HookContext>> {
+    pub fn hook_ctx_mut<'s>(&self) -> Option<&'s mut Option<HookContext<'a>>> {
         // SAFETY: `hook_ctx_storage` is `Some` only while a `visit_*` frame
         // higher on the stack has installed `&mut react_hook_data` (a stack
         // local) and will restore the previous value before returning, so the

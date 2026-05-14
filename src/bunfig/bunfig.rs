@@ -36,7 +36,7 @@ pub struct Bunfig;
 
 /// Owned clone of an `EString` payload (transcoding UTF-16 → UTF-8 if needed).
 #[inline]
-fn estring_to_owned(s: &E::EString, bump: &Bump) -> Box<[u8]> {
+fn estring_to_owned(s: &E::EString<'_>, bump: &Bump) -> Box<[u8]> {
     Box::<[u8]>::from(s.string(bump).expect("OOM"))
 }
 
@@ -48,7 +48,7 @@ fn estring_to_owned(s: &E::EString, bump: &Bump) -> Box<[u8]> {
 /// into `ctx.debug.macros` without crossing the `bun_ast::Expr` /
 /// `StringArrayHashMap` newtype boundary that `bun_resolver`'s copy uses.
 fn parse_macros_json(
-    macros: &Expr,
+    macros: &Expr<'_>,
     log: &mut bun_ast::Log,
     json_source: &bun_ast::Source,
     bump: &Bump,
@@ -145,7 +145,7 @@ fn num_to_u32(n: f64) -> u32 {
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub struct Parser<'a> {
-    json: Expr,
+    json: Expr<'a>,
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
     // PORT NOTE: Zig held both `bunfig: *api.TransformOptions` (= `&ctx.args`)
@@ -188,7 +188,7 @@ impl<'a> Parser<'a> {
         Err(err!("Invalid Bunfig"))
     }
 
-    pub fn expect_string(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
+    pub fn expect_string(&mut self, expr: &Expr<'_>) -> Result<(), bun_core::Error> {
         match &expr.data {
             ExprData::EString(_) => Ok(()),
             _ => self.add_error_format(
@@ -198,7 +198,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn apply_coverage_reporter_item(&mut self, item: &Expr) -> Result<(), bun_core::Error> {
+    fn apply_coverage_reporter_item(&mut self, item: &Expr<'_>) -> Result<(), bun_core::Error> {
         let item_str = item.as_string(self.bump).unwrap_or(b"");
         if item_str == b"text" {
             self.ctx.test_options.coverage.reporters.text = true;
@@ -216,7 +216,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    pub fn expect(&mut self, expr: &Expr, token: ExprTag) -> Result<(), bun_core::Error> {
+    pub fn expect(&mut self, expr: &Expr<'_>, token: ExprTag) -> Result<(), bun_core::Error> {
         if expr.data.tag() != token {
             return self.add_error_format(
                 expr.loc,
@@ -230,7 +230,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn load_log_level(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
+    fn load_log_level(&mut self, expr: &Expr<'_>) -> Result<(), bun_core::Error> {
         self.expect_string(expr)?;
         // PERF(port): Zig used strings.ExactSizeMatcher(8) — profile in Phase B
         let level = match expr.as_string(self.bump).unwrap_or(b"") {
@@ -249,7 +249,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn load_preload(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
+    fn load_preload(&mut self, expr: &Expr<'_>) -> Result<(), bun_core::Error> {
         match &expr.data {
             ExprData::EArray(array) => {
                 let items = array.items.slice();
@@ -280,7 +280,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn load_env_config(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
+    fn load_env_config(&mut self, expr: &Expr<'_>) -> Result<(), bun_core::Error> {
         match &expr.data {
             ExprData::ENull(_) => {
                 // env = null -> disable default .env files
@@ -321,7 +321,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn parse_define_map(&mut self, expr: &Expr) -> Result<api::StringMap, bun_core::Error> {
+    fn parse_define_map(&mut self, expr: &Expr<'_>) -> Result<api::StringMap, bun_core::Error> {
         self.expect(expr, ExprTag::EObject)?;
         let obj = expr.data.e_object().expect("infallible: variant checked");
         let properties = obj.properties.slice();
@@ -1193,7 +1193,7 @@ impl Bunfig {
 impl<'a> Parser<'a> {
     fn parse_registry_url_string(
         &mut self,
-        str: &E::EString,
+        str: &E::EString<'_>,
     ) -> Result<api::NpmRegistry, bun_core::Error> {
         // Dedup D009: body is the canonical port in `bun_api::npm_registry`.
         // The api `Parser` is generic over log/source and never reads them for
@@ -1208,7 +1208,7 @@ impl<'a> Parser<'a> {
 
     fn parse_registry_object(
         &mut self,
-        obj: &E::Object,
+        obj: &E::Object<'_>,
     ) -> Result<api::NpmRegistry, bun_core::Error> {
         let mut registry = api::NpmRegistry::default();
 
@@ -1244,7 +1244,7 @@ impl<'a> Parser<'a> {
         Ok(registry)
     }
 
-    fn parse_registry(&mut self, expr: &Expr) -> Result<api::NpmRegistry, bun_core::Error> {
+    fn parse_registry(&mut self, expr: &Expr<'_>) -> Result<api::NpmRegistry, bun_core::Error> {
         match &expr.data {
             ExprData::EString(s) => self.parse_registry_url_string(s),
             ExprData::EObject(o) => self.parse_registry_object(o),
@@ -1258,7 +1258,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_install(&mut self, install_obj: &Expr) -> Result<(), bun_core::Error> {
+    fn parse_install(&mut self, install_obj: &Expr<'_>) -> Result<(), bun_core::Error> {
         // PORT NOTE: Zig held `*BunInstall` and `*Parser` simultaneously.
         // The helper methods (`expect*`, `add_error`, `parse_registry`) take
         // `&mut self`, which under Stacked Borrows would invalidate any
@@ -1274,7 +1274,7 @@ impl<'a> Parser<'a> {
     fn parse_install_inner(
         &mut self,
         install: &mut api::BunInstall,
-        install_obj: &Expr,
+        install_obj: &Expr<'_>,
     ) -> Result<(), bun_core::Error> {
         if let Some(cafile) = install_obj.get(b"cafile") {
             install.cafile = match cafile.as_string(self.bump) {
@@ -1567,7 +1567,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn parse_serve_static(&mut self, serve_obj: &Expr) -> Result<(), bun_core::Error> {
+    fn parse_serve_static(&mut self, serve_obj: &Expr<'_>) -> Result<(), bun_core::Error> {
         if let Some(config_plugins) = serve_obj.get(b"plugins") {
             let plugins: Option<Vec<Box<[u8]>>> = 'plugins: {
                 if let ExprData::EArray(arr) = &config_plugins.data {

@@ -2357,13 +2357,13 @@ pub struct BundlerTailwindState {
 
 /// Additional data we don't want stored on the stylesheet
 #[derive(Default)]
-pub struct StylesheetExtra {
+pub struct StylesheetExtra<'arena> {
     /// Used when css modules is enabled
-    pub symbols: SymbolList,
+    pub symbols: SymbolList<'arena>,
 }
 
-pub struct ParserExtra {
-    pub symbols: SymbolList,
+pub struct ParserExtra<'arena> {
+    pub symbols: SymbolList<'arena>,
     pub local_scope: LocalScope,
     pub source_index: SrcIndex,
 }
@@ -2583,7 +2583,7 @@ mod stylesheet_impl {
             &mut self,
             arena: &Bump,
             options: &MinifyOptions,
-            extra: &StylesheetExtra,
+            extra: &StylesheetExtra<'_>,
         ) -> Maybe<(), Err<MinifyErrorKind>>
         where
             AtRule: for<'b> generic::DeepClone<'b>,
@@ -2772,7 +2772,7 @@ mod stylesheet_impl {
             options: ParserOptions<'static>,
             import_records: Option<&mut Vec<ImportRecord>>,
             source_index: SrcIndex,
-        ) -> Maybe<(StyleSheet<DefaultAtRule>, StylesheetExtra), Err<ParserError>> {
+        ) -> Maybe<(StyleSheet<DefaultAtRule>, StylesheetExtra<'static>), Err<ParserError>> {
             // PORT NOTE: Zig instantiated `StyleSheet(DefaultAtRule).parse`; Rust
             // cannot vary `Self`'s `AtRule` param against `DefaultAtRuleParser`, so
             // this returns the concrete `StyleSheet<DefaultAtRule>`. Callers that
@@ -2792,14 +2792,14 @@ mod stylesheet_impl {
         // TODO(port): `ParserOptions<'static>` matches the `StyleSheet.options`
         // field's `'static` erasure; re-threads to `<'bump>` alongside the rest of
         // the crate.
-        pub fn parse_with<P: CustomAtRuleParser<AtRule = AtRule>>(
-            arena: &'static Bump,
+        pub fn parse_with<'arena, P: CustomAtRuleParser<AtRule = AtRule>>(
+            arena: &'arena Bump,
             code: &[u8],
             options: ParserOptions<'static>,
             at_rule_parser: &mut P,
             import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
             source_index: SrcIndex,
-        ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
+        ) -> Maybe<(Self, StylesheetExtra<'arena>), Err<ParserError>> {
             // TODO(port): 'bump lifetime threading — every arena-backed slice the
             // parser hands back is currently detached to `'static` (matching the
             // crate-wide erasure on `DeclarationBlock<'static>`/`Token` payloads).
@@ -3121,13 +3121,13 @@ mod stylesheet_impl {
     }
 
     impl StyleSheet<BundlerAtRule> {
-        pub fn parse_bundler(
-            arena: &'static Bump,
+        pub fn parse_bundler<'arena>(
+            arena: &'arena Bump,
             code: &[u8],
             options: ParserOptions<'static>,
             import_records: &mut Vec<ImportRecord>,
             source_index: SrcIndex,
-        ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
+        ) -> Maybe<(Self, StylesheetExtra<'arena>), Err<ParserError>> {
             // PORT NOTE: Zig aliased `import_records` into both `BundlerAtRuleParser`
             // *and* the inner `Parser` (css_parser.zig:3245), and aliased `&options`
             // into the at-rule parser while also passing `options` by value (struct
@@ -3438,7 +3438,10 @@ pub struct Parser<'a> {
     /// derives its own `&mut` from the sibling raw pointer. Each access site
     /// materialises a fresh short-lived `&mut` instead.
     pub import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
-    pub extra: Option<&'a mut ParserExtra>,
+    // TODO(port): 'bump lifetime threading — `ParserExtra<'static>` matches the
+    // crate-wide Phase-A erasure (`arena: &'static Bump` on `parse_with`); a
+    // second `'arena` param on `Parser` re-threads alongside the rest in Phase B.
+    pub extra: Option<&'a mut ParserExtra<'static>>,
 }
 
 impl<'a> Parser<'a> {
@@ -3554,7 +3557,7 @@ impl<'a> Parser<'a> {
         input: &'a mut ParserInput<'a>,
         import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
         flags: ParserOpts,
-        extra: Option<&'a mut ParserExtra>,
+        extra: Option<&'a mut ParserExtra<'static>>,
     ) -> Parser<'a> {
         Parser {
             input,

@@ -43,7 +43,7 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
     // see TODO(ub-audit) on `unsafe impl Sync for Chunk`.)
     let result = {
         let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
-        let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
+        let chunk_mut: &mut Chunk<'_> = unsafe { &mut *chunk_ptr };
         generate_compile_result_for_css_chunk_impl(&mut **worker, c_mut, chunk_mut, part_range.i)
     };
 
@@ -54,9 +54,9 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
 }
 
 fn generate_compile_result_for_css_chunk_impl(
-    worker: &mut Worker,
+    worker: &mut Worker<'_>,
     c: &mut LinkerContext,
-    chunk: &mut Chunk,
+    chunk: &mut Chunk<'_>,
     imports_in_chunk_index: u32,
 ) -> CompileResult {
     let _trace = bun_core::perf::trace("Bundler.generateCodeForFileInChunkCss");
@@ -66,7 +66,7 @@ fn generate_compile_result_for_css_chunk_impl(
     // `worker.temporary_arena` borrowed `&mut` below, so a direct shared
     // borrow via `BackRef::get` is fine. The heap is pinned for the worker's
     // lifetime; see `Worker::arena`.
-    let arena = worker.arena.get();
+    let arena = worker.arena;
     // PERF(port): was arena bulk-free (worker.temporary_arena.reset(.retain_capacity)) — profile in Phase B
     let _arena_reset = scopeguard::guard(&mut worker.temporary_arena, |arena| {
         // temporary_arena is initialized in Worker::create before any task runs.

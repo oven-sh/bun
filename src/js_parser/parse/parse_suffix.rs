@@ -73,7 +73,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p: &mut Self,
         optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
-        left: &mut Expr,
+        left: &mut Expr<'a>,
     ) -> CResult {
         p.lexer.next()?;
         let target = *left;
@@ -132,7 +132,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p: &mut Self,
         level: Level,
         optional_chain: &mut Option<OptionalChain>,
-        left: &mut Expr,
+        left: &mut Expr<'a>,
     ) -> CResult {
         p.lexer.next()?;
         let mut optional_start: Option<OptionalChain> = Some(OptionalChain::Start);
@@ -277,7 +277,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         _level: Level,
         _optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
-        left: &mut Expr,
+        left: &mut Expr<'a>,
     ) -> CResult {
         if old_optional_chain.is_some() {
             p.log().add_range_error(
@@ -308,7 +308,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         _level: Level,
         _optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
-        left: &mut Expr,
+        left: &mut Expr<'a>,
     ) -> CResult {
         if old_optional_chain.is_some() {
             p.log().add_range_error(
@@ -337,7 +337,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p: &mut Self,
         optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
-        left: &mut Expr,
+        left: &mut Expr<'a>,
         flags: EFlags,
     ) -> CResult {
         // When parsing a decorator, ignore EIndex expressions since they may be
@@ -383,7 +383,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         level: Level,
         optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
-        left: &mut Expr,
+        left: &mut Expr<'a>,
     ) -> CResult {
         if level.gte(Level::Call) {
             return Ok(Continuation::Done);
@@ -410,7 +410,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p: &mut Self,
         level: Level,
         errors: Option<&mut DeferredErrors>,
-        left: &mut Expr,
+        left: &mut Expr<'a>,
     ) -> CResult {
         if level.gte(Level::Conditional) {
             return Ok(Continuation::Done);
@@ -498,7 +498,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_minus_minus(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_minus_minus(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if p.lexer.has_newline_before || level.gte(Level::Postfix) {
             return Ok(Continuation::Done);
         }
@@ -517,7 +517,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_plus_plus(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_plus_plus(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if p.lexer.has_newline_before || level.gte(Level::Postfix) {
             return Ok(Continuation::Done);
         }
@@ -536,7 +536,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_comma(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_comma(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Comma) {
             return Ok(Continuation::Done);
         }
@@ -560,7 +560,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // operators below. Rust has no struct-field-name reflection; each is written out.
     // PORT NOTE: bodies are uniform — `if level.gte(L) {Done}; next; new Binary{op,left,right}`.
 
-    fn sfx_t_plus(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_plus(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Add) {
             return Ok(Continuation::Done);
         }
@@ -579,7 +579,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_plus_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_plus_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
@@ -599,7 +599,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_minus(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_minus(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Add) {
             return Ok(Continuation::Done);
         }
@@ -618,7 +618,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_minus_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_minus_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
@@ -637,7 +637,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_asterisk(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_asterisk(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Multiply) {
             return Ok(Continuation::Done);
         }
@@ -656,7 +656,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_asterisk_asterisk(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_asterisk_asterisk(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Exponentiation) {
             return Ok(Continuation::Done);
         }
@@ -675,7 +675,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_asterisk_asterisk_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_asterisk_asterisk_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
@@ -694,7 +694,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_asterisk_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_asterisk_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
@@ -713,7 +713,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_percent(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_percent(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Multiply) {
             return Ok(Continuation::Done);
         }
@@ -732,7 +732,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_percent_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_percent_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
@@ -751,7 +751,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_slash(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_slash(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Multiply) {
             return Ok(Continuation::Done);
         }
@@ -770,7 +770,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_slash_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_slash_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
@@ -789,7 +789,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_equals_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_equals_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Equals) {
             return Ok(Continuation::Done);
         }
@@ -808,7 +808,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_exclamation_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_exclamation_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Equals) {
             return Ok(Continuation::Done);
         }
@@ -827,7 +827,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_equals_equals_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_equals_equals_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Equals) {
             return Ok(Continuation::Done);
         }
@@ -846,7 +846,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_exclamation_equals_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_exclamation_equals_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Equals) {
             return Ok(Continuation::Done);
         }
@@ -870,7 +870,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         level: Level,
         optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
-        left: &mut Expr,
+        left: &mut Expr<'a>,
     ) -> CResult {
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
@@ -899,7 +899,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_less_than_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_less_than_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Compare) {
             return Ok(Continuation::Done);
         }
@@ -918,7 +918,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_greater_than(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_greater_than(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Compare) {
             return Ok(Continuation::Done);
         }
@@ -937,7 +937,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_greater_than_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_greater_than_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Compare) {
             return Ok(Continuation::Done);
         }
@@ -961,7 +961,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         level: Level,
         optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
-        left: &mut Expr,
+        left: &mut Expr<'a>,
     ) -> CResult {
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
@@ -990,7 +990,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_less_than_less_than_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_less_than_less_than_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
@@ -1009,7 +1009,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_greater_than_greater_than(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_greater_than_greater_than(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Shift) {
             return Ok(Continuation::Done);
         }
@@ -1031,7 +1031,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn sfx_t_greater_than_greater_than_equals(
         p: &mut Self,
         level: Level,
-        left: &mut Expr,
+        left: &mut Expr<'a>,
     ) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
@@ -1054,7 +1054,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn sfx_t_greater_than_greater_than_greater_than(
         p: &mut Self,
         level: Level,
-        left: &mut Expr,
+        left: &mut Expr<'a>,
     ) -> CResult {
         if level.gte(Level::Shift) {
             return Ok(Continuation::Done);
@@ -1077,7 +1077,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn sfx_t_greater_than_greater_than_greater_than_equals(
         p: &mut Self,
         level: Level,
-        left: &mut Expr,
+        left: &mut Expr<'a>,
     ) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
@@ -1097,7 +1097,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_question_question(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_question_question(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::NullishCoalescing) {
             return Ok(Continuation::Done);
         }
@@ -1116,7 +1116,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_question_question_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_question_question_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
@@ -1135,7 +1135,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_bar_bar(p: &mut Self, level: Level, left: &mut Expr, flags: EFlags) -> CResult {
+    fn sfx_t_bar_bar(p: &mut Self, level: Level, left: &mut Expr<'a>, flags: EFlags) -> CResult {
         if level.gte(Level::LogicalOr) {
             return Ok(Continuation::Done);
         }
@@ -1170,7 +1170,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_bar_bar_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_bar_bar_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
@@ -1192,7 +1192,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn sfx_t_ampersand_ampersand(
         p: &mut Self,
         level: Level,
-        left: &mut Expr,
+        left: &mut Expr<'a>,
         flags: EFlags,
     ) -> CResult {
         if level.gte(Level::LogicalAnd) {
@@ -1230,7 +1230,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_ampersand_ampersand_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_ampersand_ampersand_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
@@ -1249,7 +1249,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_bar(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_bar(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::BitwiseOr) {
             return Ok(Continuation::Done);
         }
@@ -1268,7 +1268,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_bar_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_bar_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
@@ -1287,7 +1287,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_ampersand(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_ampersand(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::BitwiseAnd) {
             return Ok(Continuation::Done);
         }
@@ -1306,7 +1306,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_ampersand_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_ampersand_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
@@ -1325,7 +1325,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_caret(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_caret(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::BitwiseXor) {
             return Ok(Continuation::Done);
         }
@@ -1344,7 +1344,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_caret_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_caret_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
@@ -1363,7 +1363,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_equals(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_equals(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Assign) {
             return Ok(Continuation::Done);
         }
@@ -1382,7 +1382,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_in(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_in(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Compare) || !p.allow_in {
             return Ok(Continuation::Done);
         }
@@ -1410,7 +1410,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    fn sfx_t_instanceof(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
+    fn sfx_t_instanceof(p: &mut Self, level: Level, left: &mut Expr<'a>) -> CResult {
         if level.gte(Level::Compare) {
             return Ok(Continuation::Done);
         }
@@ -1442,7 +1442,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn parse_suffix(
         &mut self,
-        left: &mut Expr,
+        left: &mut Expr<'a>,
         level: Level,
         mut errors: Option<&mut DeferredErrors>,
         flags: EFlags,

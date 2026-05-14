@@ -13,7 +13,7 @@ pub enum ConfigVersion {
 impl ConfigVersion {
     pub const CURRENT: ConfigVersion = ConfigVersion::V1;
 
-    pub fn from_expr(expr: &Expr) -> Option<ConfigVersion> {
+    pub fn from_expr(expr: &Expr<'_>) -> Option<ConfigVersion> {
         let ExprData::ENumber(e_number) = &expr.data else {
             return None;
         };

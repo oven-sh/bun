@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
 
-test.each(["stdin", "stdout", "stderr", "openStdin"])(
+test.each(["stdin", "stdout", "stderr", "openStdin", "nextTick", "emitWarning"])(
   "process.%s lazy init near stack limit does not assert",
   which => {
     const { stderr, signalCode } = spawnSync({

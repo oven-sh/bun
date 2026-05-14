@@ -17,6 +17,8 @@ function F(a, ...b) {
     else if (which === "stdout") void process.stdout;
     else if (which === "stderr") void process.stderr;
     else if (which === "openStdin") process.openStdin();
+    else if (which === "nextTick") process.nextTick(() => {});
+    else if (which === "emitWarning") process.emitWarning("w", "ExperimentalWarning");
   } catch {}
   process.reallyExit(0);
 }

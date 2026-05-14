@@ -780,8 +780,8 @@ describe("net.connect({ localPort }) with multiple lookup addresses #30697", () 
       host: "localhost",
       // Non-zero localPort is what forces internalConnectMultiple to enter
       // the bind branch that used to reference DEFAULT_IPV*_ADDR. The bind
-      // itself is not actually applied (the underlying call is a TODO in
-      // net.ts), so any non-zero value is fine and won't collide.
+      // itself is not actually applied by net.ts today, so any non-zero
+      // value is fine here and won't collide.
       localPort: 1,
       lookup: (_hostname, _opts, cb) => cb(null, addresses),
     } as any);

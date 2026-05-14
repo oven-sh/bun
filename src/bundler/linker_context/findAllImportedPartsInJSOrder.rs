@@ -70,7 +70,7 @@ pub fn find_imported_parts_in_js_order(
 
     // PORT NOTE: reshaped for borrowck — capture before constructing visitor
     let with_code_splitting = this.graph.code_splitting;
-    let with_scb = this.graph.is_scb_bitset.bit_length > 0;
+    let with_scb = this.graph.is_scb_bitset.bit_length() > 0;
 
     // PORT NOTE: the Zig visitor holds a *LinkerContext alongside SoA column slices
     // borrowed from it, and mutates one column (`entry_point_chunk_index`). Rust

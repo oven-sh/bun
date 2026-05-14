@@ -36,7 +36,7 @@
 //!   allocator, in order to save space.
 
 use core::mem;
-use core::ptr;
+use core::ptr::{self, NonNull};
 use core::slice;
 
 use bun_alloc::AllocError;
@@ -768,26 +768,177 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
 
 // ──────────────────────── DynamicBitSetUnmanaged ────────────────────────
 
-/// A bit set with runtime-known size, backed by an allocated slice
-/// of usize.  The allocator must be tracked externally by the user.
+/// A bit set with runtime-known size, backed by an allocated slice of usize.
 ///
-// TODO(port): the Zig type stores `masks: [*]MaskInt` where `masks[-1]` holds
-// the true allocation length (needed because Zig's allocator API requires the
-// original length on free). The Rust port keeps the same layout because
-// `List` constructs borrowed views into a shared buffer that must look like
-// freestanding `DynamicBitSetUnmanaged`s. Phase B may refactor to `Vec<usize>`
-// once `List` is reworked.
+/// Storage is an owned `Box<[usize]>` stored as a thin pointer (the slice
+/// length is always `num_masks(bit_length)`, so the fat-pointer length word
+/// is redundant) and freed on `Drop`. For non-owning views into a shared
+/// buffer (e.g. `DynamicBitSetList`), use `BitSetRef` / `BitSetMut`.
 pub struct DynamicBitSetUnmanaged {
-    /// The number of valid items in this bit set
-    pub bit_length: usize,
+    /// The number of valid items in this bit set.
+    ///
+    /// Private because the `masks` invariant (and thus `Drop`) derives the
+    /// allocation length from it. Read via `bit_length()` / `capacity()`;
+    /// mutate via `resize()`.
+    bit_length: usize,
 
     /// The bit masks, ordered with lower indices first.
     /// Padding bits at the end must be zeroed.
-    pub masks: *mut usize,
-    // This pointer is one usize after the actual allocation.
-    // That slot holds the size of the true allocation, which
-    // is needed by Zig's allocator interface in case a shrink
-    // fails.
+    ///
+    /// Invariant: `(masks, num_masks(bit_length))` is the `(data, len)` of a
+    /// `Box<[usize]>` — `NonNull::dangling()` with length 0 when
+    /// `bit_length == 0`, otherwise a live allocation of exactly
+    /// `num_masks(bit_length)` words. All access goes through
+    /// `masks_slice{,_mut}` / `take_box` / `from_box`.
+    masks: NonNull<usize>,
+}
+
+const _: () = assert!(mem::size_of::<DynamicBitSetUnmanaged>() == 2 * mem::size_of::<usize>());
+
+impl Default for DynamicBitSetUnmanaged {
+    #[inline(always)]
+    fn default() -> Self {
+        Self {
+            bit_length: 0,
+            masks: NonNull::dangling(),
+        }
+    }
+}
+
+impl Drop for DynamicBitSetUnmanaged {
+    #[inline]
+    fn drop(&mut self) {
+        drop(self.take_box());
+    }
+}
+
+/// Shared borrowed view of a bitset's mask words. `Copy`; binary ops on
+/// owned/mutable bitsets accept any type that converts into this.
+#[derive(Clone, Copy)]
+pub struct BitSetRef<'a> {
+    pub bit_length: usize,
+    masks: &'a [usize],
+}
+
+/// Exclusive borrowed view of a bitset's mask words. Returned by
+/// `DynamicBitSetList::at_mut`.
+pub struct BitSetMut<'a> {
+    pub bit_length: usize,
+    masks: &'a mut [usize],
+}
+
+impl<'a> From<&'a DynamicBitSetUnmanaged> for BitSetRef<'a> {
+    #[inline(always)]
+    fn from(s: &'a DynamicBitSetUnmanaged) -> Self {
+        Self {
+            bit_length: s.bit_length,
+            masks: s.masks_slice(),
+        }
+    }
+}
+impl<'a> From<&'a DynamicBitSet> for BitSetRef<'a> {
+    #[inline(always)]
+    fn from(s: &'a DynamicBitSet) -> Self {
+        Self::from(&s.unmanaged)
+    }
+}
+impl<'a, 'b> From<&'b BitSetRef<'a>> for BitSetRef<'a> {
+    #[inline(always)]
+    fn from(r: &'b BitSetRef<'a>) -> Self {
+        *r
+    }
+}
+impl<'a, 'b> From<&'b BitSetMut<'a>> for BitSetRef<'b> {
+    #[inline(always)]
+    fn from(r: &'b BitSetMut<'a>) -> Self {
+        Self {
+            bit_length: r.bit_length,
+            masks: r.masks,
+        }
+    }
+}
+
+impl<'a> BitSetRef<'a> {
+    pub fn is_set(&self, index: usize) -> bool {
+        debug_assert!(index < self.bit_length);
+        (self.masks[word_mask_index(index)] & word_mask_bit(index)) != 0
+    }
+
+    pub fn count(&self) -> usize {
+        let mut total: usize = 0;
+        for mask in self.masks {
+            total += mask.count_ones() as usize;
+        }
+        total
+    }
+
+    pub fn eql<'b>(&self, other: impl Into<BitSetRef<'b>>) -> bool {
+        let other = other.into();
+        self.bit_length == other.bit_length && self.masks == other.masks
+    }
+
+    pub fn subset_of<'b>(&self, other: impl Into<BitSetRef<'b>>) -> bool {
+        let other = other.into();
+        if self.bit_length != other.bit_length {
+            return false;
+        }
+        for (&a, &b) in self.masks.iter().zip(other.masks) {
+            if a & b != a {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
+        &self,
+    ) -> BitSetIterator<'a, KIND_SET, DIR_FWD> {
+        let num_masks = self.masks.len();
+        let padding_bits =
+            u32::try_from(num_masks * DYN_MASK_BITS as usize - self.bit_length).expect("int cast");
+        let last_item_mask = usize::MAX >> padding_bits;
+        BitSetIterator::init(self.masks, last_item_mask)
+    }
+}
+
+impl<'a> BitSetMut<'a> {
+    #[inline(always)]
+    pub fn as_ref(&self) -> BitSetRef<'_> {
+        BitSetRef {
+            bit_length: self.bit_length,
+            masks: self.masks,
+        }
+    }
+
+    pub fn set(&mut self, index: usize) {
+        debug_assert!(index < self.bit_length);
+        self.masks[word_mask_index(index)] |= word_mask_bit(index);
+    }
+
+    pub fn set_union<'b>(&mut self, other: impl Into<BitSetRef<'b>>) {
+        let other = other.into();
+        debug_assert_eq!(other.bit_length, self.bit_length);
+        for (a, &b) in self.masks.iter_mut().zip(other.masks) {
+            *a |= b;
+        }
+    }
+
+    pub fn copy_into<'b>(&mut self, other: impl Into<BitSetRef<'b>>) {
+        let other = other.into();
+        debug_assert!(self.bit_length >= other.bit_length);
+        let bit_length = self.bit_length;
+        if bit_length == 0 {
+            return;
+        }
+        let num_masks = self.masks.len();
+        let src_masks = other.masks.len();
+        self.masks[..src_masks].copy_from_slice(other.masks);
+        self.masks[src_masks..].fill(0);
+        let padding_bits =
+            u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).expect("int cast");
+        let last_item_mask = usize::MAX >> padding_bits;
+        self.masks[num_masks - 1] &= last_item_mask;
+    }
 }
 
 /// The integer type used to represent a mask in this bit set
@@ -797,94 +948,69 @@ pub type DynShiftInt = u32;
 
 const DYN_MASK_BITS: u32 = usize::BITS;
 
-// Never modified — the Zig comment about needing `static mut` was a Zig
-// limitation (no const-ptr → mut-ptr cast at comptime). All writes through
-// `self.masks` are guarded by `num_masks() > 0`, which is false for the empty
-// sentinel (bit_length == 0). Kept in a `RacyCell` (not `.rodata`) so that
-// forming a `*mut usize` to it remains a legally-mutable pointer target —
-// writing through a pointer derived from an immutable `static` would be UB
-// even if it never happens at runtime, and it lets `masks_slice_mut` form a
-// zero-length `&mut [usize]` without provenance hazards.
-static EMPTY_MASKS_DATA: bun_core::RacyCell<[usize; 2]> = bun_core::RacyCell::new([0, 0]);
-
-#[inline(always)]
-fn empty_masks_ptr() -> *mut usize {
-    // SAFETY: pointer arithmetic into a static array; index 1 is in-bounds.
-    // The `*mut` is never written through while pointing at this static.
-    unsafe { EMPTY_MASKS_DATA.get().cast::<usize>().add(1) }
-}
-
-impl Default for DynamicBitSetUnmanaged {
-    fn default() -> Self {
-        Self {
-            bit_length: 0,
-            masks: empty_masks_ptr(),
-        }
-    }
-}
-
 impl DynamicBitSetUnmanaged {
     pub const EMPTY: fn() -> Self = Self::default;
-    // TODO(port): Zig has `pub const empty: Self = .{ ... }` as a const value.
-    // Rust can't const-init a static-mut-derived pointer; callers should use
-    // `DynamicBitSetUnmanaged::default()`.
+
+    /// Construct from an owned mask buffer. `masks.len()` must equal
+    /// `num_masks(bit_length)`.
+    #[inline(always)]
+    fn from_box(bit_length: usize, masks: Box<[usize]>) -> Self {
+        debug_assert_eq!(masks.len(), Self::num_masks(bit_length));
+        let ptr = Box::into_raw(masks).cast::<usize>();
+        // SAFETY: `Box::into_raw` never returns null; for an empty slice it
+        // yields `NonNull::dangling()`.
+        let masks = unsafe { NonNull::new_unchecked(ptr) };
+        Self { bit_length, masks }
+    }
+
+    /// Take ownership of the mask buffer, leaving `self` as a valid empty
+    /// bitset (`bit_length == 0`, dangling pointer).
+    #[inline(always)]
+    fn take_box(&mut self) -> Box<[usize]> {
+        let len = Self::num_masks(self.bit_length);
+        let data = mem::replace(&mut self.masks, NonNull::dangling()).as_ptr();
+        self.bit_length = 0;
+        // SAFETY: the `(masks, num_masks(bit_length))` invariant guarantees
+        // this is exactly the `(data, len)` that `Box::<[usize]>::into_raw`
+        // produced in `from_box` (or the dangling/0 empty box for a default
+        // instance). `self` was just reset to empty, so this is the unique
+        // reconstruction.
+        unsafe { Box::from_raw(ptr::slice_from_raw_parts_mut(data, len)) }
+    }
 
     /// Borrow the mask words as a shared slice of length `num_masks(bit_length)`.
     #[inline(always)]
     pub fn masks_slice(&self) -> &[usize] {
-        let n = Self::num_masks(self.bit_length);
-        // SAFETY: `masks` is never null (defaults to `empty_masks_ptr()`) and
-        // points to at least `n` valid, initialized usize words, maintained by
-        // `resize` / `List::at`. Padding bits in the last word are zeroed.
-        unsafe { slice::from_raw_parts(self.masks, n) }
+        let len = Self::num_masks(self.bit_length);
+        // SAFETY: the `(masks, num_masks(bit_length))` invariant guarantees
+        // `masks` points to `len` initialized words owned by `self` (or is
+        // dangling with `len == 0`). The returned borrow is tied to `&self`.
+        unsafe { slice::from_raw_parts(self.masks.as_ptr(), len) }
     }
 
     /// Borrow the mask words as an exclusive slice of length `num_masks(bit_length)`.
-    ///
-    /// Note: two `DynamicBitSetUnmanaged` values may share storage (see
-    /// `DynamicBitSetList::at`). Callers must not hold a `masks_slice_mut()`
-    /// borrow on one view while another aliasing view is read or written.
     #[inline(always)]
     pub fn masks_slice_mut(&mut self) -> &mut [usize] {
-        let n = Self::num_masks(self.bit_length);
-        // SAFETY: see `masks_slice`. `&mut self` gives us exclusive access to
-        // *this* struct; the caller is responsible for not aliasing the
-        // underlying storage via another view.
-        unsafe { slice::from_raw_parts_mut(self.masks, n) }
+        let len = Self::num_masks(self.bit_length);
+        // SAFETY: as `masks_slice`; `&mut self` guarantees exclusive access to
+        // the owned allocation for the lifetime of the returned borrow.
+        unsafe { slice::from_raw_parts_mut(self.masks.as_ptr(), len) }
     }
 
-    /// Raw pointer to the mask words. Use this (not `masks_slice{,_mut}`) when
-    /// `self` and another `DynamicBitSetUnmanaged` may point at the same
-    /// storage and both are accessed in the same operation — forming
-    /// overlapping `&mut [usize]` / `&[usize]` would be UB.
     #[inline(always)]
-    pub fn masks_ptr(&self) -> *mut usize {
-        self.masks
+    pub fn as_ref(&self) -> BitSetRef<'_> {
+        BitSetRef::from(self)
     }
 
-    /// `self.masks[i] = f(self.masks[i], other.masks[i])` for every mask word.
-    /// Centralises the binary set-op loop (`set_union` / `set_intersection` /
-    /// `set_exclude` / `toggle_set` / `copy_into`) behind a single audited
-    /// raw-pointer access. Raw pointers — not `masks_slice{,_mut}` — because
-    /// `other.masks` may alias `self.masks` when both are views from the same
-    /// `DynamicBitSetList`; forming overlapping `&mut [usize]` / `&[usize]`
-    /// would be UB. `f` receives copied `usize` values, so the per-index read
-    /// happens-before the write even when `src == dst`.
     #[inline(always)]
-    fn zip_masks_raw(&mut self, other: &Self, mut f: impl FnMut(usize, usize) -> usize) {
-        let num_masks = Self::num_masks(self.bit_length);
-        let dst = self.masks;
-        let src = other.masks;
-        for i in 0..num_masks {
-            // SAFETY: `i < num_masks(self.bit_length)`; `dst`/`src` each point
-            // at ≥ `num_masks` initialized words (`resize`/`List::at` invariant).
-            // The two pointers may be equal — see method doc.
-            unsafe { *dst.add(i) = f(*dst.add(i), *src.add(i)) };
+    pub fn as_mut(&mut self) -> BitSetMut<'_> {
+        BitSetMut {
+            bit_length: self.bit_length,
+            masks: self.masks_slice_mut(),
         }
     }
 
     /// Creates a bit set with no elements present.
-    /// If bit_length is not zero, deinit must eventually be called.
     pub fn init_empty(bit_length: usize) -> Result<Self, AllocError> {
         let mut this = Self::default();
         this.resize(bit_length, false)?;
@@ -892,7 +1018,6 @@ impl DynamicBitSetUnmanaged {
     }
 
     /// Creates a bit set with all elements present.
-    /// If bit_length is not zero, deinit must eventually be called.
     pub fn init_full(bit_length: usize) -> Result<Self, AllocError> {
         let mut this = Self::default();
         this.resize(bit_length, true)?;
@@ -901,56 +1026,35 @@ impl DynamicBitSetUnmanaged {
 
     /// Resizes to a new bit_length.  If the new length is larger
     /// than the old length, fills any added bits with `fill`.
-    /// If new_len is not zero, deinit must eventually be called.
+    /// On allocation failure `self` is left unchanged.
     pub fn resize(&mut self, new_len: usize, fill: bool) -> Result<(), AllocError> {
         let old_len = self.bit_length;
-
         let old_masks = Self::num_masks(old_len);
         let new_masks = Self::num_masks(new_len);
 
-        // SAFETY: `self.masks - 1` is the start of the true allocation (or the
-        // start of EMPTY_MASKS_DATA), and `(self.masks - 1)[0]` holds its
-        // length. Maintained by this function.
-        let alloc_base = unsafe { self.masks.sub(1) };
-        let old_alloc_len = unsafe { *alloc_base };
-
         if new_masks == 0 {
             debug_assert!(new_len == 0);
-            // SAFETY: alloc_base/old_alloc_len describe a valid allocation
-            // (possibly the static EMPTY_MASKS_DATA, in which case len==0 and
-            // free is a no-op handled by `dyn_free`).
-            unsafe { dyn_free(alloc_base, old_alloc_len) };
-            self.masks = empty_masks_ptr();
-            self.bit_length = 0;
+            drop(self.take_box());
             return Ok(());
         }
 
-        'realloc: {
-            if old_alloc_len == new_masks + 1 {
-                break 'realloc;
-            }
-            // If realloc fails, it may mean one of two things.
-            // If we are growing, it means we are out of memory.
-            // If we are shrinking, it means the allocator doesn't
-            // want to move the allocation.  This means we need to
-            // hold on to the extra 8 bytes required to be able to free
-            // this allocation properly.
-            // SAFETY: alloc_base/old_alloc_len describe the current allocation.
-            let new_alloc = match unsafe { dyn_realloc(alloc_base, old_alloc_len, new_masks + 1) } {
-                Ok(p) => p,
-                Err(err) => {
-                    if new_masks + 1 > old_alloc_len {
-                        return Err(err);
-                    }
-                    break 'realloc;
+        if new_masks != old_masks {
+            let mut v = self.take_box().into_vec();
+            if new_masks > v.len() {
+                if let Err(e) = v.try_reserve_exact(new_masks - v.len()) {
+                    // Restore the original allocation so `self` stays valid.
+                    *self = Self::from_box(old_len, v.into_boxed_slice());
+                    let _ = e;
+                    return Err(AllocError);
                 }
-            };
-
-            // SAFETY: new_alloc points to at least new_masks+1 usize words.
-            unsafe { *new_alloc = new_masks + 1 };
-            // SAFETY: new_alloc points to at least new_masks+1 words; +1 is in-bounds.
-            self.masks = unsafe { new_alloc.add(1) };
+            }
+            v.resize(new_masks, bool_mask_usize(fill));
+            *self = Self::from_box(new_len, v.into_boxed_slice());
+        } else {
+            self.bit_length = new_len;
         }
+
+        let masks = self.masks_slice_mut();
 
         // If we increased in size, we need to set any new bits
         // to the fill value.
@@ -960,19 +1064,9 @@ impl DynamicBitSetUnmanaged {
                 let old_padding_bits =
                     u32::try_from(old_masks * DYN_MASK_BITS as usize - old_len).expect("int cast");
                 let old_mask = usize::MAX >> old_padding_bits;
-                // SAFETY: index in [0, new_masks).
-                unsafe { *self.masks.add(old_masks - 1) |= !old_mask };
+                masks[old_masks - 1] |= !old_mask;
             }
-
-            // fill in any new masks
-            if new_masks > old_masks {
-                let fill_value = bool_mask_usize(fill);
-                // SAFETY: range [old_masks, new_masks) is within the allocation.
-                unsafe {
-                    slice::from_raw_parts_mut(self.masks.add(old_masks), new_masks - old_masks)
-                        .fill(fill_value);
-                }
-            }
+            // new mask words were filled by `v.resize` above
         }
 
         // Zero out the padding bits
@@ -980,22 +1074,10 @@ impl DynamicBitSetUnmanaged {
             let padding_bits =
                 u32::try_from(new_masks * DYN_MASK_BITS as usize - new_len).expect("int cast");
             let last_item_mask = usize::MAX >> padding_bits;
-            // SAFETY: new_masks > 0 here.
-            unsafe { *self.masks.add(new_masks - 1) &= last_item_mask };
+            masks[new_masks - 1] &= last_item_mask;
         }
 
-        // And finally, save the new length.
-        self.bit_length = new_len;
         Ok(())
-    }
-
-    /// deinitializes the array and releases its memory.
-    /// The passed allocator must be the same one used for
-    /// init* or resize in the past.
-    // TODO(port): kept as an explicit method (not `Drop`) because `List` hands
-    // out non-owning `DynamicBitSetUnmanaged` views that must NOT free on drop.
-    pub fn deinit(&mut self) {
-        self.resize(0, false).expect("unreachable");
     }
 
     /// Creates a duplicate of this bit set, using the new allocator.
@@ -1009,6 +1091,12 @@ impl DynamicBitSetUnmanaged {
     /// Returns the number of bits in this bit set
     #[inline(always)]
     pub fn capacity(&self) -> usize {
+        self.bit_length
+    }
+
+    /// Returns the number of bits in this bit set (Zig spelling of `capacity()`).
+    #[inline(always)]
+    pub fn bit_length(&self) -> usize {
         self.bit_length
     }
 
@@ -1027,8 +1115,6 @@ impl DynamicBitSetUnmanaged {
     }
 
     pub fn bytes(&self) -> &[u8] {
-        // `masks_slice()` already encapsulates the `(ptr, num_masks)` invariant;
-        // reinterpreting `&[usize]` as `&[u8]` is a safe POD cast.
         bun_core::cast_slice::<usize, u8>(self.masks_slice())
     }
 
@@ -1042,12 +1128,13 @@ impl DynamicBitSetUnmanaged {
         total
     }
 
-    pub fn has_intersection(&self, other: &Self) -> bool {
+    pub fn has_intersection<'a>(&self, other: impl Into<BitSetRef<'a>>) -> bool {
+        let other = other.into();
         debug_assert_eq!(
             Self::num_masks(self.bit_length),
             Self::num_masks(other.bit_length)
         );
-        for (a, b) in self.masks_slice().iter().zip(other.masks_slice()) {
+        for (a, b) in self.masks_slice().iter().zip(other.masks) {
             if (a & b) != 0 {
                 return true;
             }
@@ -1095,19 +1182,23 @@ impl DynamicBitSetUnmanaged {
     /// Flips all bits in this bit set which are present
     /// in the toggles bit set.  Both sets must have the
     /// same bit_length.
-    pub fn toggle_set(&mut self, toggles: &Self) {
+    pub fn toggle_set<'a>(&mut self, toggles: impl Into<BitSetRef<'a>>) {
+        let toggles = toggles.into();
         debug_assert!(toggles.bit_length == self.bit_length);
         let bit_length = self.bit_length;
         if bit_length == 0 {
             return;
         }
         let num_masks = Self::num_masks(self.bit_length);
-        self.zip_masks_raw(toggles, |a, b| a ^ b);
+        let masks = self.masks_slice_mut();
+        for (a, &b) in masks.iter_mut().zip(toggles.masks) {
+            *a ^= b;
+        }
 
         let padding_bits =
             u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).expect("int cast");
         let last_item_mask = usize::MAX >> padding_bits;
-        self.masks_slice_mut()[num_masks - 1] &= last_item_mask;
+        masks[num_masks - 1] &= last_item_mask;
     }
 
     pub fn set_all(&mut self, value: bool) {
@@ -1145,51 +1236,55 @@ impl DynamicBitSetUnmanaged {
         self.masks_slice_mut()[num_masks - 1] &= last_item_mask;
     }
 
-    pub fn copy_into(&mut self, other: &Self) {
-        let bit_length = self.bit_length;
-        // avoid underflow if bit_length is zero
-        if bit_length == 0 {
-            return;
-        }
-
-        let num_masks = Self::num_masks(self.bit_length);
-        self.zip_masks_raw(other, |_, b| b);
-
-        let padding_bits =
-            u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).expect("int cast");
-        let last_item_mask = usize::MAX >> padding_bits;
-        self.masks_slice_mut()[num_masks - 1] &= last_item_mask;
+    pub fn copy_into<'a>(&mut self, other: impl Into<BitSetRef<'a>>) {
+        self.as_mut().copy_into(other);
     }
 
     /// Performs a union of two bit sets, and stores the
     /// result in the first one.  Bits in the result are
     /// set if the corresponding bits were set in either input.
     /// The two sets must both be the same bit_length.
-    pub fn set_union(&mut self, other: &Self) {
-        debug_assert!(other.bit_length == self.bit_length);
-        self.zip_masks_raw(other, |a, b| a | b);
+    pub fn set_union<'a>(&mut self, other: impl Into<BitSetRef<'a>>) {
+        self.as_mut().set_union(other);
     }
 
     /// Performs an intersection of two bit sets, and stores
     /// the result in the first one.  Bits in the result are
     /// set if the corresponding bits were set in both inputs.
     /// The two sets must both be the same bit_length.
-    pub fn set_intersection(&mut self, other: &Self) {
+    pub fn set_intersection<'a>(&mut self, other: impl Into<BitSetRef<'a>>) {
+        let other = other.into();
         debug_assert!(other.bit_length == self.bit_length);
-        self.zip_masks_raw(other, |a, b| a & b);
+        for (a, &b) in self.masks_slice_mut().iter_mut().zip(other.masks) {
+            *a &= b;
+        }
     }
 
-    pub fn set_exclude_two(&mut self, other: &Self, third: &Self) {
+    pub fn set_exclude_two<'a, 'b>(
+        &mut self,
+        other: impl Into<BitSetRef<'a>>,
+        third: impl Into<BitSetRef<'b>>,
+    ) {
+        let other = other.into();
+        let third = third.into();
         debug_assert!(other.bit_length == self.bit_length);
-        // Two passes is equivalent to the original fused loop: each word is
-        // independent, so `(a & !b) & !c` per index is associative across passes.
-        self.zip_masks_raw(other, |a, b| a & !b);
-        self.zip_masks_raw(third, |a, c| a & !c);
+        debug_assert!(third.bit_length == self.bit_length);
+        for ((a, &b), &c) in self
+            .masks_slice_mut()
+            .iter_mut()
+            .zip(other.masks)
+            .zip(third.masks)
+        {
+            *a = (*a & !b) & !c;
+        }
     }
 
-    pub fn set_exclude(&mut self, other: &Self) {
+    pub fn set_exclude<'a>(&mut self, other: impl Into<BitSetRef<'a>>) {
+        let other = other.into();
         debug_assert!(other.bit_length == self.bit_length);
-        self.zip_masks_raw(other, |a, b| a & !b);
+        for (a, &b) in self.masks_slice_mut().iter_mut().zip(other.masks) {
+            *a &= !b;
+        }
     }
 
     /// Finds the index of the first set bit.
@@ -1223,34 +1318,24 @@ impl DynamicBitSetUnmanaged {
 
     /// Returns true iff every corresponding bit in both
     /// bit sets are the same.
-    pub fn eql(&self, other: &Self) -> bool {
-        if self.bit_length != other.bit_length {
-            return false;
-        }
-        self.masks_slice() == other.masks_slice()
+    pub fn eql<'a>(&self, other: impl Into<BitSetRef<'a>>) -> bool {
+        self.as_ref().eql(other)
     }
 
     /// Returns true iff the first bit set is the subset
     /// of the second one.
-    pub fn subset_of(&self, other: &Self) -> bool {
-        if self.bit_length != other.bit_length {
-            return false;
-        }
-        for (&a, &b) in self.masks_slice().iter().zip(other.masks_slice()) {
-            if a & b != a {
-                return false;
-            }
-        }
-        true
+    pub fn subset_of<'a>(&self, other: impl Into<BitSetRef<'a>>) -> bool {
+        self.as_ref().subset_of(other)
     }
 
     /// Returns true iff the first bit set is the superset
     /// of the second one.
-    pub fn superset_of(&self, other: &Self) -> bool {
+    pub fn superset_of<'a>(&self, other: impl Into<BitSetRef<'a>>) -> bool {
+        let other = other.into();
         if self.bit_length != other.bit_length {
             return false;
         }
-        for (&a, &b) in self.masks_slice().iter().zip(other.masks_slice()) {
+        for (&a, &b) in self.masks_slice().iter().zip(other.masks) {
             if a & b != b {
                 return false;
             }
@@ -1279,154 +1364,60 @@ impl DynamicBitSetUnmanaged {
     }
 }
 
-/// Do not resize the bitsets!
-///
-/// Single buffer for multiple bitsets of equal length. Does not
-/// implement all methods of DynamicBitSetUnmanaged and should
-/// be used carefully.
-///
-/// `buf` is a raw heap allocation rather than `Box<[usize]>` because `at()` /
-/// `set()` / `set_union()` hand out and write through `*mut usize` views while
-/// only holding `&self`. With `Box<[usize]>`, the only way to reach the data
-/// from `&self` is `Deref` → `&[usize]` → `as_ptr()`, which yields a pointer
-/// with shared-read-only provenance — writing through it (as the old code did
-/// via `.cast_mut()`) is UB under Stacked Borrows. Owning the allocation as a
-/// raw pointer means the heap words are never covered by a `&`/`&mut`
-/// reference, so reads and writes through `at()`-derived pointers carry the
-/// original allocation's full read-write provenance.
+/// Single buffer for `n` bitsets of equal `bit_length`. `at()` / `at_mut()`
+/// hand out borrowed `BitSetRef` / `BitSetMut` views into the shared buffer.
 pub struct DynamicBitSetList {
-    buf: ptr::NonNull<usize>,
-    buf_len: usize,
+    buf: Box<[usize]>,
     pub n: usize,
     pub bit_length: usize,
 }
 
 impl DynamicBitSetList {
     pub fn init_empty(n: usize, bit_length: usize) -> Result<Self, AllocError> {
-        let masks = DynamicBitSetUnmanaged::num_masks(bit_length);
-        let single_bitset_buf_size = masks + 1;
-        let buf_len = single_bitset_buf_size * n;
-
-        if buf_len == 0 {
-            return Ok(Self {
-                buf: ptr::NonNull::dangling(),
-                buf_len: 0,
-                n,
-                bit_length,
-            });
-        }
-
-        let layout = core::alloc::Layout::array::<usize>(buf_len).map_err(|_| AllocError)?;
-        // SAFETY: `buf_len > 0` so layout has nonzero size.
-        let raw = unsafe { std::alloc::alloc_zeroed(layout) }.cast::<usize>();
-        let buf = ptr::NonNull::new(raw).ok_or(AllocError)?;
-
-        for i in 0..n {
-            // SAFETY: `i * single_bitset_buf_size < buf_len`; allocation is
-            // zero-initialized and at least `buf_len` words long.
-            unsafe { *buf.as_ptr().add(i * single_bitset_buf_size) = single_bitset_buf_size };
-        }
-
+        let stride = DynamicBitSetUnmanaged::num_masks(bit_length);
+        let len = n.checked_mul(stride).ok_or(AllocError)?;
+        let mut v = Vec::new();
+        v.try_reserve_exact(len).map_err(|_| AllocError)?;
+        v.resize(len, 0usize);
         Ok(Self {
-            buf,
-            buf_len,
+            buf: v.into_boxed_slice(),
             n,
             bit_length,
         })
     }
 
-    /// Borrow the `i`th bitset as a non-owning `DynamicBitSetUnmanaged` view.
-    ///
-    /// The returned view's `masks` pointer aliases `self.buf`. It is a raw
-    /// pointer with no lifetime, so the borrow checker will **not** prevent
-    /// use-after-free: the caller must ensure `self` is not dropped (and `buf`
-    /// not reallocated — impossible today, no resize API) while the view is
-    /// live. All current callers (`hoisted_install`, `isolated_install`,
-    /// `PackageInstaller::can_run_scripts`) satisfy this by keeping the list
-    /// alive for the view's entire use. The view must not be `deinit`ed.
-    pub fn at(&self, i: usize) -> DynamicBitSetUnmanaged {
+    #[inline(always)]
+    fn stride(&self) -> usize {
+        DynamicBitSetUnmanaged::num_masks(self.bit_length)
+    }
+
+    /// Borrow the `i`th bitset as a shared view.
+    pub fn at(&self, i: usize) -> BitSetRef<'_> {
         debug_assert!(i < self.n, "DynamicBitSetList::at index out of bounds");
-        let num_masks = DynamicBitSetUnmanaged::num_masks(self.bit_length);
-        let single_bitset_buf_size = num_masks + 1;
-
-        let offset = single_bitset_buf_size * i;
-
-        DynamicBitSetUnmanaged {
+        let s = self.stride();
+        BitSetRef {
             bit_length: self.bit_length,
-            // SAFETY: `i < n` (asserted), so `offset + 1 + num_masks <= buf_len`
-            // and the pointer is in-bounds. `buf` is a raw allocation never
-            // reborrowed as `&[usize]`/`&mut [usize]`, so this `*mut` carries
-            // full read-write provenance and writes through it via the returned
-            // view (e.g. from `set`/`set_union`) are sound even though we only
-            // hold `&self` here — `&self` freezes the pointer *value*, not the
-            // pointee.
-            masks: unsafe { self.buf.as_ptr().add(offset).add(1) },
+            masks: &self.buf[i * s..(i + 1) * s],
         }
     }
 
-    pub fn set(&self, i: usize, j: usize) {
-        let mut bitset = self.at(i);
-        bitset.set(j);
-    }
-
-    pub fn set_union(&self, i: usize, other: &DynamicBitSetUnmanaged) {
-        let mut bitset = self.at(i);
-        bitset.set_union(other);
-    }
-}
-
-impl Drop for DynamicBitSetList {
-    fn drop(&mut self) {
-        if self.buf_len == 0 {
-            return;
+    /// Borrow the `i`th bitset as an exclusive view.
+    pub fn at_mut(&mut self, i: usize) -> BitSetMut<'_> {
+        debug_assert!(i < self.n, "DynamicBitSetList::at_mut index out of bounds");
+        let s = self.stride();
+        BitSetMut {
+            bit_length: self.bit_length,
+            masks: &mut self.buf[i * s..(i + 1) * s],
         }
-        let layout = core::alloc::Layout::array::<usize>(self.buf_len).expect("unreachable");
-        // SAFETY: `buf` was allocated in `init_empty` with exactly this layout
-        // and has not been freed (no other code path deallocates it).
-        unsafe { std::alloc::dealloc(self.buf.as_ptr().cast(), layout) };
     }
-}
 
-// `buf` is a uniquely-owned heap allocation of plain `usize`s; moving the
-// owning struct between threads is as safe as moving a `Box<[usize]>`.
-unsafe impl Send for DynamicBitSetList {}
-
-// Raw allocation helpers for DynamicBitSetUnmanaged. These mirror Zig's
-// allocator.alloc/realloc/free with the size-at-[-1] header convention.
-// TODO(port): move to bun_alloc if useful elsewhere.
-
-unsafe fn dyn_free(base: *mut usize, len: usize) {
-    if len == 0 {
-        // EMPTY_MASKS_DATA sentinel — nothing to free.
-        return;
+    pub fn set(&mut self, i: usize, j: usize) {
+        self.at_mut(i).set(j);
     }
-    let layout = core::alloc::Layout::array::<usize>(len).expect("unreachable");
-    // SAFETY: caller guarantees `base` was allocated with this layout.
-    unsafe { std::alloc::dealloc(base.cast(), layout) };
-}
 
-unsafe fn dyn_realloc(
-    base: *mut usize,
-    old_len: usize,
-    new_len: usize,
-) -> Result<*mut usize, AllocError> {
-    let new_layout = core::alloc::Layout::array::<usize>(new_len).map_err(|_| AllocError)?;
-    if old_len == 0 {
-        // SAFETY: new_layout is nonzero size (caller never passes new_len==0
-        // through this path).
-        let p = unsafe { std::alloc::alloc(new_layout) };
-        if p.is_null() {
-            return Err(AllocError);
-        }
-        return Ok(p.cast());
+    pub fn set_union<'a>(&mut self, i: usize, other: impl Into<BitSetRef<'a>>) {
+        self.at_mut(i).set_union(other);
     }
-    let old_layout = core::alloc::Layout::array::<usize>(old_len).expect("unreachable");
-    // SAFETY: caller guarantees `base` was allocated with `old_layout`.
-    let p = unsafe { std::alloc::realloc(base.cast(), old_layout, new_layout.size()) };
-    if p.is_null() {
-        return Err(AllocError);
-    }
-    Ok(p.cast())
 }
 
 // ───────────────────────────── AutoBitSet ─────────────────────────────
@@ -1553,15 +1544,6 @@ impl AutoBitSet {
 // type alias for any external callers.
 pub type AutoBitSetIterator<'a, const KIND_SET: bool, const DIR_FWD: bool> =
     BitSetIterator<'a, KIND_SET, DIR_FWD>;
-
-impl Drop for AutoBitSet {
-    fn drop(&mut self) {
-        match self {
-            AutoBitSet::Static(_) => {}
-            AutoBitSet::Dynamic(d) => d.deinit(),
-        }
-    }
-}
 
 // ───────────────────────────── DynamicBitSet ─────────────────────────────
 
@@ -1736,12 +1718,6 @@ impl DynamicBitSet {
         &self,
     ) -> BitSetIterator<'_, KIND_SET, DIR_FWD> {
         self.unmanaged.iterator::<KIND_SET, DIR_FWD>()
-    }
-}
-
-impl Drop for DynamicBitSet {
-    fn drop(&mut self) {
-        self.unmanaged.deinit();
     }
 }
 

@@ -367,9 +367,8 @@ pub fn install_isolated_packages(
                     }
                     scratch.set_exclude(&provides.at(pkg_id as usize));
 
-                    let mut dst = leaking_peers.at(pkg_id as usize);
-                    if !scratch.eql(&dst) {
-                        dst.copy_into(&scratch);
+                    if !scratch.eql(leaking_peers.at(pkg_id as usize)) {
+                        leaking_peers.at_mut(pkg_id as usize).copy_into(&scratch);
                         changed = true;
                     }
                 }

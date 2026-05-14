@@ -48,8 +48,8 @@ pub use paste::paste as __mal_paste;
 pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt, prepend_from};
 
 pub use bit_set::{
-    AutoBitSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,
-    StaticBitSet,
+    AutoBitSet, BitSetMut, BitSetRef, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged,
+    IntegerBitSet, StaticBitSet,
 };
 
 // Re-export for back-compat (`bun_jsc::host_fn`, `multi_array_list` import

@@ -710,13 +710,27 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     JSWebView* view = viewFor(entry.viewId);
     if (!view) return; // user dropped both view and the awaited promise
 
-    // PageTitle is generation-gated via m_navTitleChained: chainTitle()
-    // set it; a subsequent beginChromeNavigation() (new navigate, or
-    // navigate retried from a timeout .catch()) cleared it. If a
-    // PageTitle response — success OR error ("Execution context was
-    // destroyed") — arrives after that, settling Navigate would hit
-    // the NEW navigation's promise. Drop instead.
-    if (entry.method == Method::PageTitle && !view->m_navTitleChained) return;
+    // Navigate-slot entries carry the view's m_navGeneration at
+    // enqueue time. armNavTimeout rejects the navigate (bumping gen)
+    // without pruning m_pending, so a response for the abandoned
+    // navigation can arrive after a .catch() retry refilled
+    // m_pendingNavigate. Mismatch → this response is stale; settling
+    // would resolve/reject the RETRY's promise (or, for the attach
+    // chain, create a second tab whose events route to this view).
+    // Covers PageTitle, PageNavigate errorText, PageGetNavigationHistory
+    // boundary, and TargetCreateTarget→…→PageEnable in one place.
+    if (entry.navGen && entry.navGen != view->m_navGeneration) {
+        // TargetCreateTarget already ran in Chrome by the time we
+        // see the response — close the orphaned tab so it doesn't
+        // leak for process lifetime.
+        if (entry.method == Method::TargetCreateTarget && error.empty()) {
+            auto tid = jsonString(jsonField(result, { "targetId", 8 }));
+            if (!tid.empty())
+                send(0, Command(nextId(), "Target.closeTarget"_s)
+                            .str("targetId"_s, WTF::String::fromUTF8(tid)));
+        }
+        return;
+    }
 
     if (!error.empty()) {
         // {"code":-32000,"message":"..."}
@@ -739,7 +753,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         auto tid = jsonString(jsonField(result, { "targetId", 8 }));
         view->m_targetId = WTF::String::fromUTF8(tid);
         uint32_t cid = nextId();
-        m_pending.add(cid, Pending { Method::TargetAttachToTarget, entry.slot, entry.viewId });
+        m_pending.add(cid, Pending { Method::TargetAttachToTarget, entry.slot, entry.viewId, entry.navGen });
         send(cid, Command(cid, "Target.attachToTarget"_s).str("targetId"_s, view->m_targetId).boolean("flatten"_s, true));
         return;
     }
@@ -758,7 +772,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         auto ss = view->m_sessionId.utf8();
         std::span<const char> sidSpan(ss.data(), ss.length());
         uint32_t cid = nextId();
-        m_pending.add(cid, Pending { Method::PageEnable, entry.slot, entry.viewId });
+        m_pending.add(cid, Pending { Method::PageEnable, entry.slot, entry.viewId, entry.navGen });
         send(cid, Command(cid, "Page.enable"_s, sidSpan));
         return;
     }
@@ -790,7 +804,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // confirms completion. We keep the pending entry alive for the
         // response so errorText rejects the right slot.
         uint32_t cid = nextId();
-        m_pending.add(cid, Pending { Method::PageNavigate, entry.slot, entry.viewId });
+        m_pending.add(cid, Pending { Method::PageNavigate, entry.slot, entry.viewId, entry.navGen });
         send(cid, Command(cid, "Page.navigate"_s, sidSpan).str("url"_s, view->m_pendingChromeNavigateUrl));
         view->m_pendingChromeNavigateUrl = WTF::String();
         return;
@@ -857,7 +871,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         int32_t entryId = elem ? elem->getInteger("id"_s).value_or(0) : 0;
         // Chain into navigateToHistoryEntry. Page.loadEventFired settles.
         uint32_t cid = nextId();
-        m_pending.add(cid, Pending { Method::PageNavigateToHistoryEntry, entry.slot, entry.viewId });
+        m_pending.add(cid, Pending { Method::PageNavigateToHistoryEntry, entry.slot, entry.viewId, entry.navGen });
         send(cid, Command(cid, "Page.navigateToHistoryEntry"_s, sidSpan(view->m_sessionId)).num("entryId"_s, entryId));
         return;
     }
@@ -1131,7 +1145,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     auto chainTitle = [&]() {
         view->m_navTitleChained = true;
         uint32_t tid = nextId();
-        m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId });
+        m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId, view->m_navGeneration });
         send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
     };
 
@@ -1461,7 +1475,11 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     }
     v->m_pendingActivityCount.fetch_add(1, std::memory_order_release);
     slot.set(vm, v, promise);
-    t.m_pending.add(id, Pending { m, ps, v->m_viewId });
+    // Navigate-slot entries carry m_navGeneration so handleResponse
+    // can drop a response that arrives after this navigation was
+    // abandoned (armNavTimeout rejected it) and replaced by a retry.
+    uint32_t gen = ps == PendingSlot::Navigate ? v->m_navGeneration : 0;
+    t.m_pending.add(id, Pending { m, ps, v->m_viewId, gen });
     t.send(id, WTF::move(cmd));
     t.updateKeepAlive();
     return promise;

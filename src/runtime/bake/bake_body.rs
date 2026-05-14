@@ -208,14 +208,22 @@ impl UserOptions {
         }
 
         if let Some(js_options) = get_optional_value(config, global, b"bundlerOptions")? {
+            if !js_options.is_object() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'{}.bundlerOptions' must be an object",
+                    API_NAME,
+                )));
+            }
             if let Some(server_options) = get_optional_value(js_options, global, b"server")? {
-                bundler_options.server = BuildConfigSubset::from_js(global, server_options)?;
+                bundler_options.server =
+                    BuildConfigSubset::from_js(global, "server", server_options)?;
             }
             if let Some(client_options) = get_optional_value(js_options, global, b"client")? {
-                bundler_options.client = BuildConfigSubset::from_js(global, client_options)?;
+                bundler_options.client =
+                    BuildConfigSubset::from_js(global, "client", client_options)?;
             }
             if let Some(ssr_options) = get_optional_value(js_options, global, b"ssr")? {
-                bundler_options.ssr = BuildConfigSubset::from_js(global, ssr_options)?;
+                bundler_options.ssr = BuildConfigSubset::from_js(global, "ssr", ssr_options)?;
             }
         }
 
@@ -405,8 +413,19 @@ pub struct BuildConfigSubset {
 }
 
 impl BuildConfigSubset {
-    pub fn from_js(global: &JSGlobalObject, js_options: JSValue) -> JsResult<BuildConfigSubset> {
+    pub fn from_js(
+        global: &JSGlobalObject,
+        name: &str,
+        js_options: JSValue,
+    ) -> JsResult<BuildConfigSubset> {
         let mut options = BuildConfigSubset::default();
+
+        if !js_options.is_object() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "'{}.bundlerOptions.{}' must be an object",
+                API_NAME, name,
+            )));
+        }
 
         'brk: {
             let Some(val) = get_optional_value(js_options, global, b"sourcemap")? else {
@@ -429,11 +448,19 @@ impl BuildConfigSubset {
             let Some(minify_options) = get_optional_value(js_options, global, b"minify")? else {
                 break 'brk;
             };
-            if minify_options.is_boolean() && minify_options.as_boolean() {
-                options.minify_syntax = Some(minify_options.as_boolean());
-                options.minify_identifiers = Some(minify_options.as_boolean());
-                options.minify_whitespace = Some(minify_options.as_boolean());
+            if minify_options.is_boolean() {
+                let enabled = minify_options.as_boolean();
+                options.minify_syntax = Some(enabled);
+                options.minify_identifiers = Some(enabled);
+                options.minify_whitespace = Some(enabled);
                 break 'brk;
+            }
+
+            if !minify_options.is_object() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'{}.bundlerOptions.{}.minify' must be a boolean or an object",
+                    API_NAME, name,
+                )));
             }
 
             if let Some(value) = get_boolean_loose(minify_options, global, b"whitespace")? {

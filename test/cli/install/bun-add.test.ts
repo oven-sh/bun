@@ -2551,8 +2551,9 @@ it("`bun add -g` ignores a workspaces package.json above the global dir", async 
 
   const err = await stderr.text();
   expect(err).not.toContain("Workspace dependency");
-  expect(err).not.toContain("workspace:*");
-  expect(err).not.toContain("failed to resolve");
+  // If bun touches the parent workspace at all, its deps (this one in particular)
+  // would appear in the error output. They must not.
+  expect(err).not.toContain("@scope/nonexistent");
   await stdout.text();
   expect(await exited).not.toBe(0);
 });

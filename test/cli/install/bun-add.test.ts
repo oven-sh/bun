@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import { bunExe, bunEnv as env, readdirSorted, tempDir, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join, relative, resolve } from "path";
 import {
   check_npm_auth_type,
@@ -2472,30 +2472,28 @@ it("should install tarball with tarball dependencies", async () => {
 // "Please upgrade package-lock.json to lockfileVersion 2 or 3".
 // Global installs must be self-contained and not reach outside the install dir.
 it("`bun add -g` ignores package.json/package-lock.json above the global dir", async () => {
-  const home = tmpdirSync();
-  // stray files in the parent of <home>/.bun/install/global
-  await writeFile(join(home, "package.json"), JSON.stringify({ name: "stray-root", version: "1.0.0" }));
-  await writeFile(
-    join(home, "package-lock.json"),
-    JSON.stringify({
+  using home = tempDir("bun-add-global-parent-lockfile", {
+    // stray files in the parent of <home>/.bun/install/global
+    "package.json": JSON.stringify({ name: "stray-root", version: "1.0.0" }),
+    "package-lock.json": JSON.stringify({
       name: "stray-root",
       version: "1.0.0",
       lockfileVersion: 1,
       requires: true,
       dependencies: {},
     }),
-  );
-  await mkdir(join(home, ".bun", "install", "global"), { recursive: true });
+    ".bun": { install: { global: {} } },
+  });
 
   const { stdout, stderr, exited } = spawn({
     // point at an unreachable registry so we never touch the real network,
     // but still exercise the full init/walk-up code path that used to fail.
     cmd: [bunExe(), "add", "-g", "--registry=http://127.0.0.1:1/", "chalk"],
-    cwd: home,
+    cwd: `${home}`,
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env: { ...env, BUN_INSTALL: join(home, ".bun") },
+    env: { ...env, BUN_INSTALL: join(`${home}`, ".bun") },
   });
 
   const err = await stderr.text();
@@ -2503,13 +2501,14 @@ it("`bun add -g` ignores package.json/package-lock.json above the global dir", a
   expect(err).not.toContain("Please upgrade package-lock.json");
   expect(err).not.toContain("lockfileVersion");
   await stdout.text();
-  // exit code isn't asserted — the registry is unreachable on purpose, so the
-  // install itself is expected to fail. We only care that it failed *past*
-  // lockfile migration, not because of it.
-  await exited;
+  // The install itself fails (registry is unreachable on purpose) — but the
+  // failure must be *past* lockfile migration, not because of it.
+  expect(await exited).not.toBe(0);
 
   // And the stray root's package.json must not have been mutated.
-  expect(await file(join(home, "package.json")).text()).toBe(JSON.stringify({ name: "stray-root", version: "1.0.0" }));
+  expect(await file(join(`${home}`, "package.json")).text()).toBe(
+    JSON.stringify({ name: "stray-root", version: "1.0.0" }),
+  );
 });
 
 // https://github.com/oven-sh/bun/issues/28247
@@ -2520,27 +2519,25 @@ it("`bun add -g` ignores package.json/package-lock.json above the global dir", a
 // "error: Workspace dependency \"…\" not found"
 // Global installs shouldn't participate in a parent workspace at all.
 it("`bun add -g` ignores a workspaces package.json above the global dir", async () => {
-  const home = tmpdirSync();
-  // parent package.json declares workspaces + a workspace-protocol dep
-  // that doesn't actually exist on disk — same shape as the reports.
-  await writeFile(
-    join(home, "package.json"),
-    JSON.stringify({
+  using home = tempDir("bun-add-global-parent-workspaces", {
+    // parent package.json declares workspaces + a workspace-protocol dep
+    // that doesn't actually exist on disk — same shape as the reports.
+    "package.json": JSON.stringify({
       name: "stray-root",
       version: "1.0.0",
       workspaces: ["packages/*"],
       dependencies: { "@scope/nonexistent": "workspace:*" },
     }),
-  );
-  await mkdir(join(home, ".bun", "install", "global"), { recursive: true });
+    ".bun": { install: { global: {} } },
+  });
 
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "-g", "--registry=http://127.0.0.1:1/", "chalk"],
-    cwd: home,
+    cwd: `${home}`,
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env: { ...env, BUN_INSTALL: join(home, ".bun") },
+    env: { ...env, BUN_INSTALL: join(`${home}`, ".bun") },
   });
 
   const err = await stderr.text();
@@ -2548,5 +2545,5 @@ it("`bun add -g` ignores a workspaces package.json above the global dir", async 
   expect(err).not.toContain("workspace:*");
   expect(err).not.toContain("failed to resolve");
   await stdout.text();
-  await exited;
+  expect(await exited).not.toBe(0);
 });

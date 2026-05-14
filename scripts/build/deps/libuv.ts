@@ -40,15 +40,28 @@ export const libuv: Dependency = {
     commit: LIBUV_COMMIT,
   }),
 
-  // Re-arm the AFD ioctl before poll_cb (matching wepoll's
-  // port__update_events_if_polling-before-return). AFD is level-triggered
-  // (ReactOS AfdSelect: `Events & FCB->PollState` checked on IRP arrival),
-  // so a peer RST that lands during poll_cb is caught by the freshly-
-  // submitted req. Upstream libuv re-arms *after* poll_cb, leaving a gap
-  // an in-process loopback fetch().abort() can fall into. To upstream:
-  // send to libuv/libuv with the wepoll/ReactOS references in the patch
-  // comment as the rationale.
-  patches: ["patches/libuv/win-poll-rearm-before-callback.patch"],
+  patches: [
+    // Re-arm the AFD ioctl before poll_cb (matching wepoll's
+    // port__update_events_if_polling-before-return). AFD is level-triggered
+    // (ReactOS AfdSelect: `Events & FCB->PollState` checked on IRP arrival),
+    // so a peer RST that lands during poll_cb is caught by the freshly-
+    // submitted req. Upstream libuv re-arms *after* poll_cb, leaving a gap
+    // an in-process loopback fetch().abort() can fall into. To upstream:
+    // send to libuv/libuv with the wepoll/ReactOS references in the patch
+    // comment as the rationale.
+    "patches/libuv/win-poll-rearm-before-callback.patch",
+    // uv__tty_read_stop picked the cancellation path from mode.mode, but
+    // uv_tty_set_mode flips mode.mode *between* stop/start. A synchronous
+    // setRawMode(false); setRawMode(true) hits read_stop twice against the
+    // same still-pending raw request; the second call sees mode=Normal,
+    // takes the line-read path, and sets UV_HANDLE_CANCELLATION_PENDING —
+    // which only uv_process_tty_read_line_req clears. The flag sticks, and
+    // the next real cooked-read cancel is skipped, leaving ReadConsoleW
+    // blocked until Enter (Ink reattach, readline reinit). Fix: dispatch on
+    // read_line_buffer.len (the pending-request type), same as
+    // uv__process_tty_read_req already does. Upstreamable as-is.
+    "patches/libuv/win-tty-read-stop-match-pending-req.patch",
+  ],
 
   build: () => ({
     kind: "direct",

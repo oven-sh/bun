@@ -1503,9 +1503,11 @@ impl<'a> Parser<'a> {
                     install.minimum_release_age_ms = Some(seconds.value * MS_PER_S);
                 }
                 ExprData::EString(s) => {
-                    let text = s.string(self.bump).expect("OOM");
                     // A bare number with no unit is interpreted as seconds for
                     // consistency with the unquoted form and the CLI flag.
+                    // Trim first so `"259200 "` doesn't fall through to
+                    // `parse_ms` (which would treat it as milliseconds).
+                    let text = s.string(self.bump).expect("OOM").trim_ascii();
                     let ms = if let Some(secs) = bun_core::parse_f64(text) {
                         secs * MS_PER_S
                     } else if let Some(ms) = bun_core::parse_ms(text) {
@@ -1517,7 +1519,7 @@ impl<'a> Parser<'a> {
                         )?;
                         return Ok(());
                     };
-                    if ms < 0.0 {
+                    if !(ms.is_finite() && ms >= 0.0) {
                         self.add_error(
                             min_age.loc,
                             b"Expected a non-negative duration for minimumReleaseAge (0 disables)",

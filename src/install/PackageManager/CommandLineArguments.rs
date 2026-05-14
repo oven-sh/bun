@@ -1097,10 +1097,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         if let Some(min_age) = args.option(b"--minimum-release-age") {
             const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
             // A bare number with no unit is interpreted as seconds for
-            // backwards compatibility with earlier releases.
-            let ms: f64 = if let Some(secs) = bun_core::parse_f64(min_age) {
+            // backwards compatibility with earlier releases. Trim first so
+            // `"259200 "` doesn't fall through to `parse_ms` (which would
+            // treat it as milliseconds).
+            let trimmed = min_age.trim_ascii();
+            let ms: f64 = if let Some(secs) = bun_core::parse_f64(trimmed) {
                 secs * MS_PER_S
-            } else if let Some(ms) = bun_core::parse_ms(min_age) {
+            } else if let Some(ms) = bun_core::parse_ms(trimmed) {
                 ms
             } else {
                 Output::err_generic(
@@ -1109,7 +1112,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                 );
                 Global::crash();
             };
-            if ms < 0.0 {
+            if !(ms.is_finite() && ms >= 0.0) {
                 Output::err_generic(
                     "Expected --minimum-release-age to be a non-negative number of seconds or a duration like \"2d\": {}",
                     (bstr::BStr::new(min_age),),

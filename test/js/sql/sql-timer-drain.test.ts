@@ -36,9 +36,17 @@ const HANDSHAKE = Buffer.from([
   0x49, // ReadyForQuery 'I' (idle)
 ]);
 
-// A single-column/single-row response for `SELECT 42 as x`, followed by
-// CommandComplete and ReadyForQuery. Column type 23 = int4.
+// Full response to Bun's extended-query `Parse+Describe+Bind+Execute+Flush+Sync`
+// batch for `SELECT 42 as x`: ParseComplete + ParameterDescription (empty) +
+// RowDescription + BindComplete + DataRow + CommandComplete + ReadyForQuery.
+// Column type 23 = int4.
 function buildQueryResponse(): Buffer {
+  // ParseComplete: '1' + len(4) -> no body
+  const parseComplete = Buffer.from([0x31, 0, 0, 0, 4]);
+
+  // ParameterDescription: 't' + len + int16 numParams(0)
+  const paramDesc = Buffer.from([0x74, 0, 0, 0, 6, 0, 0]);
+
   // RowDescription: 'T' + len + fieldCount(1) + name("x\0") + tableOID(0) +
   //   columnAttrNum(0) + typeOID(23) + typeSize(4) + typeMod(-1) + format(0)
   const name = Buffer.from("x\0");
@@ -65,6 +73,9 @@ function buildQueryResponse(): Buffer {
   rowDesc.writeInt32BE(4 + rowDescBody.length, 1);
   rowDescBody.copy(rowDesc, 5);
 
+  // BindComplete: '2' + len(4) -> no body
+  const bindComplete = Buffer.from([0x32, 0, 0, 0, 4]);
+
   // DataRow: 'D' + len + fieldCount(1) + valueLen(2) + value("42")
   const val = Buffer.from("42");
   const drBody = Buffer.alloc(2 + 4 + val.length);
@@ -86,7 +97,7 @@ function buildQueryResponse(): Buffer {
   // ReadyForQuery: 'Z' + len + 'I'
   const rfq = Buffer.from([0x5a, 0, 0, 0, 5, 0x49]);
 
-  return Buffer.concat([rowDesc, dr, cc, rfq]);
+  return Buffer.concat([parseComplete, paramDesc, rowDesc, bindComplete, dr, cc, rfq]);
 }
 
 const QUERY_RESPONSE = buildQueryResponse();
@@ -100,19 +111,37 @@ function startMockServer(queryDelayMs: number, onClose?: () => void): Promise<{ 
   return new Promise(resolve => {
     const timers = new Set<Timer>();
     const server = net.createServer(socket => {
-      let gotStartup = false;
-      socket.on("data", () => {
-        if (!gotStartup) {
-          gotStartup = true;
+      // State: 'startup' -> accepting any data and replying with HANDSHAKE
+      //        'query' -> buffering inbound bytes until we see a complete 'Q' message,
+      //                   then scheduling one response (guards against TCP chunking).
+      let state: "startup" | "query" = "startup";
+      let buf: Buffer = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        if (state === "startup") {
+          state = "query";
           socket.write(HANDSHAKE);
           return;
         }
-        // Assume any subsequent message is a query we want to reply to.
-        const t = setTimeout(() => {
-          timers.delete(t);
-          if (!socket.destroyed) socket.write(QUERY_RESPONSE);
-        }, queryDelayMs);
-        timers.add(t);
+        buf = buf.length === 0 ? chunk : Buffer.concat([buf, chunk]);
+        // Parse out complete messages; respond once per 'S' (Sync — end of a
+        // Parse+Bind+Execute batch) or 'Q' (Simple Query). Message format:
+        // type(1) + length(4 BE, includes the length field itself).
+        while (buf.length >= 5) {
+          const len = buf.readInt32BE(1);
+          const total = 1 + len;
+          if (buf.length < total) break;
+          const type = buf[0];
+          buf = buf.subarray(total);
+          if (type === 0x53 /* 'S' Sync */ || type === 0x51 /* 'Q' Simple Query */) {
+            const t = setTimeout(() => {
+              timers.delete(t);
+              if (!socket.destroyed) socket.write(QUERY_RESPONSE);
+            }, queryDelayMs);
+            timers.add(t);
+          }
+          // Other message types (Parse/Bind/Describe/Execute/Flush) don't need
+          // an immediate response — the response batch goes out on Sync.
+        }
       });
       socket.on("close", () => {
         onClose?.();

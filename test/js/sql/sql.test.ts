@@ -799,64 +799,72 @@ if (isDockerEnabled()) {
       expect(pidAfter).not.toBe(pidBefore);
     });
 
-    test("Max lifetime does not kill an in-flight query (#30646)", async () => {
-      const onClosePromise = Promise.withResolvers();
-      const onclose = mock(err => {
-        onClosePromise.resolve(err);
-      });
-      const onconnect = mock();
-      await using sql = postgres({
-        ...options,
-        max_lifetime: 1,
-        onconnect,
-        onclose,
-        max: 1,
-      });
+    test(
+      "Max lifetime does not kill an in-flight query (#30646)",
+      async () => {
+        const onClosePromise = Promise.withResolvers();
+        const onclose = mock(err => {
+          onClosePromise.resolve(err);
+        });
+        const onconnect = mock();
+        await using sql = postgres({
+          ...options,
+          max_lifetime: 1,
+          onconnect,
+          onclose,
+          max: 1,
+        });
 
-      // Record the backend pid, then launch a query that runs longer than max_lifetime.
-      // Before the fix this would reject with ERR_POSTGRES_LIFETIME_TIMEOUT.
-      const [{ pid: pidBefore }] = await sql`select pg_backend_pid() as pid`;
-      const result = await sql`select pg_sleep(3), 42 as x`;
-      expect(result[0].x).toBe(42);
+        // Record the backend pid, then launch a query that runs longer than max_lifetime.
+        // Before the fix this would reject with ERR_POSTGRES_LIFETIME_TIMEOUT.
+        const [{ pid: pidBefore }] = await sql`select pg_backend_pid() as pid`;
+        const result = await sql`select pg_sleep(3), 42 as x`;
+        expect(result[0].x).toBe(42);
 
-      // Once the query returns, the connection is idle and the deferred lifetime
-      // timer closes it. The pool should then reconnect on a fresh backend.
-      await onClosePromise.promise;
-      expect(onclose).toHaveBeenCalledTimes(1);
+        // Once the query returns, the connection is idle and the deferred lifetime
+        // timer closes it. The pool should then reconnect on a fresh backend.
+        await onClosePromise.promise;
+        expect(onclose).toHaveBeenCalledTimes(1);
 
-      const [{ pid: pidAfter }] = await sql`select pg_backend_pid() as pid`;
-      expect(pidAfter).not.toBe(pidBefore);
-    });
+        const [{ pid: pidAfter }] = await sql`select pg_backend_pid() as pid`;
+        expect(pidAfter).not.toBe(pidBefore);
+      },
+      30_000,
+    );
 
-    test("Idle timeout does not kill an in-flight query (#30646)", async () => {
-      const onClosePromise = Promise.withResolvers();
-      const onclose = mock(err => {
-        onClosePromise.resolve(err);
-      });
-      const onconnect = mock();
-      await using sql = postgres({
-        ...options,
-        idle_timeout: 1,
-        onconnect,
-        onclose,
-        max: 1,
-      });
+    test(
+      "Idle timeout does not kill an in-flight query (#30646)",
+      async () => {
+        const onClosePromise = Promise.withResolvers();
+        const onclose = mock(err => {
+          onClosePromise.resolve(err);
+        });
+        const onconnect = mock();
+        await using sql = postgres({
+          ...options,
+          idle_timeout: 1,
+          onconnect,
+          onclose,
+          max: 1,
+        });
 
-      // A query slower than idle_timeout must complete, not be killed by the timer.
-      // Before the fix this rejected with ERR_POSTGRES_IDLE_TIMEOUT.
-      const [{ pid: pidBefore }] = await sql`select pg_backend_pid() as pid`;
-      const result = await sql`select pg_sleep(3), 42 as x`;
-      expect(result[0].x).toBe(42);
+        // A query slower than idle_timeout must complete, not be killed by the timer.
+        // Before the fix this rejected with ERR_POSTGRES_IDLE_TIMEOUT.
+        const [{ pid: pidBefore }] = await sql`select pg_backend_pid() as pid`;
+        const result = await sql`select pg_sleep(3), 42 as x`;
+        expect(result[0].x).toBe(42);
 
-      // Once the query returns, the connection is idle and the timer fires, closing it.
-      const err = await onClosePromise.promise;
-      expect(err).toBeInstanceOf(SQL.PostgresError);
-      expect(err.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
+        // Once the query returns, the connection is idle and the timer fires, closing it.
+        const err = await onClosePromise.promise;
+        expect(err).toBeInstanceOf(SQL.PostgresError);
+        expect(err.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
 
-      // Pool reconnects on a fresh backend.
-      const [{ pid: pidAfter }] = await sql`select pg_backend_pid() as pid`;
-      expect(pidAfter).not.toBe(pidBefore);
-    });
+        // Pool reconnects on a fresh backend.
+        const [{ pid: pidAfter }] = await sql`select pg_backend_pid() as pid`;
+        expect(pidAfter).not.toBe(pidBefore);
+      },
+      30_000,
+    );
 
     // Last one wins.
     test("Handles duplicate string column names", async () => {

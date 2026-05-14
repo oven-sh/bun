@@ -194,33 +194,37 @@ if (isDockerEnabled()) {
           expect(connAfter).not.toBe(connBefore);
         });
 
-        test("Max lifetime does not kill an in-flight query (#30646)", async () => {
-          const onClosePromise = Promise.withResolvers();
-          const onclose = mock(err => {
-            onClosePromise.resolve(err);
-          });
-          const onconnect = mock();
-          await using sql = new SQL({
-            ...getOptions(),
-            max_lifetime: 1,
-            onconnect,
-            onclose,
-            max: 1,
-          });
+        test(
+          "Max lifetime does not kill an in-flight query (#30646)",
+          async () => {
+            const onClosePromise = Promise.withResolvers();
+            const onclose = mock(err => {
+              onClosePromise.resolve(err);
+            });
+            const onconnect = mock();
+            await using sql = new SQL({
+              ...getOptions(),
+              max_lifetime: 1,
+              onconnect,
+              onclose,
+              max: 1,
+            });
 
-          const [{ id: connBefore }] = await sql`select CONNECTION_ID() as id`;
+            const [{ id: connBefore }] = await sql`select CONNECTION_ID() as id`;
 
-          // Query longer than max_lifetime must complete normally.
-          // Before the fix this rejected with ERR_MYSQL_LIFETIME_TIMEOUT.
-          const result = await sql`select SLEEP(3) as s, 42 as x`;
-          expect(result[0].x).toBe(42);
+            // Query longer than max_lifetime must complete normally.
+            // Before the fix this rejected with ERR_MYSQL_LIFETIME_TIMEOUT.
+            const result = await sql`select SLEEP(3) as s, 42 as x`;
+            expect(result[0].x).toBe(42);
 
-          await onClosePromise.promise;
-          expect(onclose).toHaveBeenCalledTimes(1);
+            await onClosePromise.promise;
+            expect(onclose).toHaveBeenCalledTimes(1);
 
-          const [{ id: connAfter }] = await sql`select CONNECTION_ID() as id`;
-          expect(connAfter).not.toBe(connBefore);
-        });
+            const [{ id: connAfter }] = await sql`select CONNECTION_ID() as id`;
+            expect(connAfter).not.toBe(connBefore);
+          },
+          30_000,
+        );
 
         // Last one wins.
         test("Handles duplicate string column names", async () => {

@@ -16,7 +16,7 @@ pub fn toContain(
 
     const expected = arguments[0];
     expected.ensureStillAlive();
-    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toContain", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
+    const value: JSValue = try this.getValue(globalThis, thisValue, "toContain", "<green>expected<r>");
 
     const not = this.flags.not;
     var pass = false;

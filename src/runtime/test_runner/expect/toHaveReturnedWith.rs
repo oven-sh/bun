@@ -10,13 +10,9 @@ pub(crate) fn to_have_returned_with(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     let expected = frame.arguments_as_array::<1>()[0];
-    let (this, returns, _value) = this.mock_prologue(
-        global,
-        frame.this(),
-        "toHaveReturnedWith",
-        "<green>expected<r>",
-        mock::MockKind::Returns,
-    )?;
+    let (this, returns, _value) = crate::ready_mock!(this.mock_prologue(
+        global, frame, "toHaveReturnedWith", "<green>expected<r>", mock::MockKind::Returns,
+    )?);
 
     let calls_count = u32::try_from(returns.get_length(global)?).unwrap();
     let mut pass = false;

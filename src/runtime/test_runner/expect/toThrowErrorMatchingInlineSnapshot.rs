@@ -59,12 +59,13 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
 
     // reshaped for borrowck — hoist get_value out so the two &mut self
     // receivers don't overlap.
-    let received = this.get_value(
+    let received = crate::ready_value!(this.get_value(
         global,
         this_value,
+        frame,
         "toThrowErrorMatchingInlineSnapshot",
         "<green>properties<r><d>, <r>hint",
-    )?;
+    )?);
     let Some(value) = this.fn_to_err_string_or_undefined(global, received)? else {
         let signature = Expect::get_signature("toThrowErrorMatchingInlineSnapshot", "", false);
         return this.throw(

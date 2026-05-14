@@ -38,7 +38,7 @@ pub(crate) fn to_be_instance_of(
     expected_value.ensure_still_alive();
 
     let value: JSValue =
-        this.get_value(global, this_value, "toBeInstanceOf", "<green>expected<r>")?;
+        crate::ready_value!(this.get_value(global, this_value, frame, "toBeInstanceOf", "<green>expected<r>")?);
 
     let not = this.flags.get().not();
     let mut pass = value.is_instance_of(global, expected_value)?;

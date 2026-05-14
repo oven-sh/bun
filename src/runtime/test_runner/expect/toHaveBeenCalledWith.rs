@@ -11,13 +11,9 @@ pub(crate) fn to_have_been_called_with(
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
     let arguments = frame.arguments();
-    let (this, calls, _value) = this.mock_prologue(
-        global,
-        frame.this(),
-        "toHaveBeenCalledWith",
-        "<green>...expected<r>",
-        mock::MockKind::CallsWithSig,
-    )?;
+    let (this, calls, _value) = crate::ready_mock!(this.mock_prologue(
+        global, frame, "toHaveBeenCalledWith", "<green>...expected<r>", mock::MockKind::CallsWithSig,
+    )?);
 
     let mut pass = false;
 

@@ -16,7 +16,7 @@ pub fn toContainKey(
 
     const expected = arguments[0];
     expected.ensureStillAlive();
-    const value: JSValue = (try this.getValue(globalThis, thisValue, callFrame, "toContainKey", "<green>expected<r>")) orelse return this.deferredResult(thisValue);
+    const value: JSValue = try this.getValue(globalThis, thisValue, "toContainKey", "<green>expected<r>");
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
     defer formatter.deinit();
 

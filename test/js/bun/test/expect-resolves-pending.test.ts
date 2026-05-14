@@ -293,8 +293,10 @@ describe.concurrent("expect().resolves / .rejects on a still-pending promise", (
     expect(out).toContain("0 fail");
     // If `.resolves` blocks, each test runs to completion before the
     // next starts and maxInFlight stays at 1. With the deferred path
-    // all ten are in flight at once.
-    expect(out).toContain("MAX_INFLIGHT=10");
+    // the tests overlap up to the runner's concurrency cap (5 on ASAN,
+    // 20 otherwise).
+    const maxInFlight = Number(out.match(/MAX_INFLIGHT=(\d+)/)?.[1]);
+    expect(maxInFlight).toBeGreaterThan(1);
     expect(exitCode).toBe(0);
   }, 40_000);
 });

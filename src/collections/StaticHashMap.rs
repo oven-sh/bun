@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 // https://github.com/lithdew/rheia/blob/162293d0f0e8d6572a8954c0add83f13f76b3cc6/hash_map.zig
 // Apache License 2.0
 

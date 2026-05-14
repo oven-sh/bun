@@ -1,3 +1,4 @@
+#![allow(unsafe_code)]
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::NonNull;
 

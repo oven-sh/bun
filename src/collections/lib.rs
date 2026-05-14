@@ -13,6 +13,10 @@
 )]
 #![allow(incomplete_features, internal_features)]
 #![allow(unused, non_snake_case, clippy::all)]
+// Safety posture: deny by default; modules with irreducible unsafe (SoA layout,
+// MaybeUninit pools, FFI/arena pointer round-trips) opt back in via a
+// module-level `#![allow(unsafe_code)]` and document each remaining block.
+#![deny(unsafe_code)]
 #![warn(unused_must_use, unreachable_pub)]
 
 extern crate self as bun_collections;

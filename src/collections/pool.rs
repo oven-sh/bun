@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 use core::cell::RefCell;
 
 use bun_core::UnwrapOrOom;

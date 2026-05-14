@@ -1,3 +1,4 @@
+#![allow(unsafe_code)]
 //! Port of Zig's `std.ArrayHashMap` family + Bun's string-keyed wrappers
 //! (`bun.StringArrayHashMap`, `bun.StringHashMap`,
 //! `bun.CaseInsensitiveASCIIStringArrayHashMap`, `bun.StringHashMapUnowned`).

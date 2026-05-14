@@ -1,3 +1,4 @@
+#![allow(unsafe_code)]
 //! `VecExt` / `ByteVecExt` — Zig-ported method vocabulary on `Vec<T>`.
 //!
 //! Migration shim from the deleted `BabyList<T>` (see

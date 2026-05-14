@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Comptime string map optimized for small sets of disparate string keys.
 //! Works by separating the keys by length at comptime and only checking strings of
 //! equal length at runtime.

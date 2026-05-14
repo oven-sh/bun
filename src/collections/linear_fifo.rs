@@ -1,3 +1,4 @@
+#![allow(unsafe_code)]
 // clone of zig stdlib
 // except, this one vectorizes
 

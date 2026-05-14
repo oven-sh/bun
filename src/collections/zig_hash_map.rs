@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Port of Zig's `std.HashMapUnmanaged` — open-addressing, linear-probe,
 //! tombstone-on-delete, power-of-two capacity, 80% max load. Layout (and
 //! therefore iteration order) must match the Zig spec exactly because callers

@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Port of `bun.StringMap` (`src/bun.zig`).
 //!
 //! A `StringArrayHashMap<Box<[u8]>>` plus a `dupe_keys` flag controlling

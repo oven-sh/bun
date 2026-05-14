@@ -1,3 +1,4 @@
+#![allow(unsafe_code)]
 //! Port of `std.MultiArrayList` with the following Bun-specific additions:
 //!
 //! * `zero` method to zero-initialize memory.

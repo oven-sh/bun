@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 use core::marker::PhantomData;
 
 /// Trait covering the Zig `@typeInfo(Key)` switch in `IdentityContext.hash`:

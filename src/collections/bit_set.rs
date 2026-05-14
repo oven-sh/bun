@@ -1,3 +1,4 @@
+#![allow(unsafe_code)]
 //! This is a fork of Zig standard library bit_set.zig
 //! - https://github.com/ziglang/zig/pull/14129
 //! - AutoBitset which optimally chooses between a dynamic or static bitset.
